@@ -1,0 +1,112 @@
+#include "weft/mesh.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <stdexcept>
+#include <unordered_map>
+
+namespace weft {
+
+size_t PolyMesh::countQuads() const {
+    return std::count_if(polygons.begin(), polygons.end(),
+                         [](const auto& p) { return p.size() == 4; });
+}
+
+size_t PolyMesh::countTris() const {
+    return std::count_if(polygons.begin(), polygons.end(),
+                         [](const auto& p) { return p.size() == 3; });
+}
+
+size_t PolyMesh::countNgons() const {
+    return std::count_if(polygons.begin(), polygons.end(),
+                         [](const auto& p) { return p.size() > 4; });
+}
+
+namespace {
+
+struct CellKey {
+    int64_t x, y, z;
+    bool operator==(const CellKey& o) const {
+        return x == o.x && y == o.y && z == o.z;
+    }
+};
+
+struct CellKeyHash {
+    size_t operator()(const CellKey& k) const {
+        size_t h = std::hash<int64_t>()(k.x);
+        h = h * 31 + std::hash<int64_t>()(k.y);
+        h = h * 31 + std::hash<int64_t>()(k.z);
+        return h;
+    }
+};
+
+}  // namespace
+
+void weldVertices(PolyMesh& mesh, double tolerance) {
+    if (tolerance <= 0 || mesh.vertices.empty()) return;
+
+    std::unordered_map<CellKey, uint32_t, CellKeyHash> firstInCell;
+    std::vector<uint32_t> remap(mesh.vertices.size());
+    std::vector<std::array<double, 3>> kept;
+    kept.reserve(mesh.vertices.size());
+
+    for (size_t i = 0; i < mesh.vertices.size(); ++i) {
+        const auto& v = mesh.vertices[i];
+        CellKey key{static_cast<int64_t>(std::llround(v[0] / tolerance)),
+                    static_cast<int64_t>(std::llround(v[1] / tolerance)),
+                    static_cast<int64_t>(std::llround(v[2] / tolerance))};
+        auto [it, inserted] =
+            firstInCell.try_emplace(key, static_cast<uint32_t>(kept.size()));
+        if (inserted) kept.push_back(v);
+        remap[i] = it->second;
+    }
+    mesh.vertices = std::move(kept);
+
+    std::vector<std::vector<uint32_t>> polys;
+    std::vector<int> polyFace;
+    for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+        std::vector<uint32_t> mapped;
+        mapped.reserve(mesh.polygons[p].size());
+        for (uint32_t idx : mesh.polygons[p]) {
+            uint32_t m = remap[idx];
+            if (mapped.empty() || mapped.back() != m) mapped.push_back(m);
+        }
+        while (mapped.size() > 1 && mapped.front() == mapped.back()) {
+            mapped.pop_back();
+        }
+        if (mapped.size() < 3) continue;  // collapsed by the weld
+        polys.push_back(std::move(mapped));
+        polyFace.push_back(mesh.polygonFaceId[p]);
+    }
+    mesh.polygons = std::move(polys);
+    mesh.polygonFaceId = std::move(polyFace);
+}
+
+void writeObj(const PolyMesh& mesh, const std::string& path) {
+    FILE* f = std::fopen(path.c_str(), "w");
+    if (!f) throw std::runtime_error("cannot open for writing: " + path);
+
+    std::fprintf(f, "# weft phase-0 export\n");
+    for (const auto& v : mesh.vertices) {
+        std::fprintf(f, "v %.9g %.9g %.9g\n", v[0], v[1], v[2]);
+    }
+
+    // Group polygons by source B-rep face so CAD face IDs survive into the
+    // DCC. Polygons of a face are contiguous by construction.
+    int currentGroup = -1;
+    for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+        if (mesh.polygonFaceId[p] != currentGroup) {
+            currentGroup = mesh.polygonFaceId[p];
+            std::fprintf(f, "g face_%d\n", currentGroup);
+        }
+        std::fprintf(f, "f");
+        for (uint32_t idx : mesh.polygons[p]) {
+            std::fprintf(f, " %u", idx + 1);
+        }
+        std::fprintf(f, "\n");
+    }
+    std::fclose(f);
+}
+
+}  // namespace weft
