@@ -1,0 +1,7 @@
+build/
+*.o
+*.obj
+*.step
+!tests/fixtures/*.step
+compile_commands.json
+.cache/
