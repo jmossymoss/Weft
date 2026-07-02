@@ -40,8 +40,14 @@ static int failures = 0;
 namespace {
 
 std::string tmpPath(const std::string& name) {
-    const char* dir = std::getenv("TMPDIR");
-    return std::string(dir ? dir : "/tmp") + "/" + name;
+    // TMPDIR is the Unix convention, TMP/TEMP the Windows one; fall back
+    // to the working directory rather than /tmp, which Windows lacks.
+    for (const char* var : {"TMPDIR", "TMP", "TEMP"}) {
+        if (const char* dir = std::getenv(var); dir && *dir) {
+            return std::string(dir) + "/" + name;
+        }
+    }
+    return name;
 }
 
 // Every mesh edge of a closed solid must be used by exactly two polygons,
@@ -626,19 +632,37 @@ void testHolePlate() {
 
 }  // namespace
 
+// Announce each test and turn stray exceptions into a named failure
+// instead of a silent fail-fast crash (0xc0000409 on Windows).
+#define RUN(fn)                                               \
+    do {                                                      \
+        std::printf("%-32s", #fn);                            \
+        std::fflush(stdout);                                  \
+        try {                                                 \
+            fn();                                             \
+            std::printf("ok\n");                              \
+        } catch (const std::exception& e) {                   \
+            std::printf("EXCEPTION: %s\n", e.what());         \
+            ++failures;                                       \
+        } catch (...) {                                       \
+            std::printf("EXCEPTION (unknown type)\n");        \
+            ++failures;                                       \
+        }                                                     \
+    } while (0)
+
 int main() {
-    testCylinder();
-    testBox();
-    testCone();
-    testSphere();
-    testTorus();
-    testBoxDensityMatching();
-    testMinimalNGon();
-    testSurfaceConstrainedEditing();
-    testFillet();
-    testRecipeRoundTrip();
-    testBoss();
-    testHolePlate();
+    RUN(testCylinder);
+    RUN(testBox);
+    RUN(testCone);
+    RUN(testSphere);
+    RUN(testTorus);
+    RUN(testBoxDensityMatching);
+    RUN(testMinimalNGon);
+    RUN(testSurfaceConstrainedEditing);
+    RUN(testFillet);
+    RUN(testRecipeRoundTrip);
+    RUN(testBoss);
+    RUN(testHolePlate);
     if (failures) {
         std::printf("\n%d FAILURE(S)\n", failures);
         return 1;
