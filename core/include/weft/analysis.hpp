@@ -57,6 +57,10 @@ struct EdgeInfo {
 struct Analysis {
     std::vector<FaceInfo> faces;  // index = FaceId - 1
     std::vector<EdgeInfo> edges;  // index = EdgeId - 1
+    // Object structure: face ids grouped per solid (or per shell/compound
+    // part when the file has no solids). One entry per object, in
+    // traversal order — what an outliner lists.
+    std::vector<std::vector<int>> solidFaces;
 };
 
 // Classify every face and edge and build the face-adjacency graph.
