@@ -166,6 +166,19 @@ echo ========================================
 echo  Running tests
 echo ========================================
 echo.
+REM The test/CLI executables need the OCCT DLLs at runtime. Find the
+REM directory containing TKernel.dll under the install and prepend it.
+set "OCCT_BIN="
+for /f "delims=" %%f in ('dir /s /b "!OCCT_DIR!\TKernel.dll" 2^>nul') do (
+    if not defined OCCT_BIN set "OCCT_BIN=%%~dpf"
+)
+if defined OCCT_BIN (
+    echo   Adding OCCT DLLs to PATH for this session: !OCCT_BIN!
+    set "PATH=!OCCT_BIN!;!PATH!"
+) else (
+    echo   Warning: TKernel.dll not found under !OCCT_DIR! -- tests may
+    echo   fail to start. Add the OCCT bin directory to PATH manually.
+)
 ctest --test-dir build -C Release --output-on-failure
 if %errorLevel% neq 0 (
     echo   Some tests failed ^(build itself succeeded^).
@@ -180,8 +193,13 @@ echo.
 echo   CLI:  build\cli\Release\weft.exe
 echo   App:  build\app\Release\weft_app.exe   ^(if GUI deps were found^)
 echo.
-echo   Note: to RUN the executables, OpenCASCADE DLLs must be on PATH:
-echo     set PATH=!OCCT_DIR!\win64\vc14\bin;%%PATH%%
+echo   Note: to RUN the executables from a new prompt, the OpenCASCADE
+echo   DLLs must be on PATH:
+if defined OCCT_BIN (
+    echo     set PATH=!OCCT_BIN!;%%PATH%%
+) else (
+    echo     set PATH=!OCCT_DIR!\win64\vc14\bin;%%PATH%%
+)
 echo.
 echo   Try it:
 echo     build\cli\Release\weft.exe fixture demo.step --shape demo
