@@ -23,9 +23,9 @@
 
 3. **Try the demo**:
    ```cmd
-   build\cli\Release\weft.exe fixture demo.step --shape demo
-   build\cli\Release\weft.exe inspect demo.step
-   build\cli\Release\weft.exe mesh demo.step -o demo.obj --radial 12 --axial 3
+   build\bin\Release\weft.exe fixture demo.step --shape demo
+   build\bin\Release\weft.exe inspect demo.step
+   build\bin\Release\weft.exe mesh demo.step -o demo.obj --radial 12 --axial 3
    ```
 
 ## Manual Build (if batch fails)
@@ -102,10 +102,12 @@ Alternatively, leave these uninstalled and use the headless CLI and tests exclus
 
 ## Output
 
-After a successful build:
-- **CLI**: `build\cli\Release\weft.exe`
-- **App**: `build\app\Release\weft_app.exe` (if GUI dependencies were found)
-- **Tests**: Run via `ctest --test-dir build`
+After a successful build, everything lives in `build\bin\Release`,
+**including the OpenCASCADE DLLs** — the script copies them next to the
+executables, so they run from any prompt or double-click with no PATH setup:
+- **CLI**: `build\bin\Release\weft.exe`
+- **App**: `build\bin\Release\weft_app.exe` (if GUI dependencies were found)
+- **Tests**: Run via `ctest --test-dir build -C Release`
 
 ## Next Steps
 

@@ -166,31 +166,20 @@ echo ========================================
 echo  Running tests
 echo ========================================
 echo.
-REM The test/CLI executables need the OCCT DLLs at runtime -- and OCCT's
-REM own third-party DLLs (tbb12.dll, freetype, jemalloc, ...) live in
-REM SEPARATE directories from the TK*.dlls in the official installer.
-REM Find each one and prepend its directory to PATH.
-set "OCCT_BIN="
-for /f "delims=" %%f in ('dir /s /b "!OCCT_DIR!\TKernel.dll" 2^>nul') do (
-    if not defined OCCT_BIN set "OCCT_BIN=%%~dpf"
-)
-if defined OCCT_BIN (
-    echo   OCCT DLLs:       !OCCT_BIN!
-    set "PATH=!OCCT_BIN!;!PATH!"
-) else (
-    echo   Warning: TKernel.dll not found under !OCCT_DIR! -- tests may
-    echo   fail to start. Add the OCCT bin directory to PATH manually.
-)
-REM OCCT also loads its bundled third-party DLLs (tbb12, jemalloc,
-REM openvr_api, FreeImage, freetype, ...), each shipped in its OWN
-REM directory. Rather than chase names, prepend every directory under
-REM the install that contains a DLL.
+REM The executables need OCCT's DLLs at runtime: the TK*.dlls plus
+REM OCCT's bundled third-party DLLs (tbb12, jemalloc, openvr_api,
+REM FreeImage, freetype, ...), each shipped in its own directory.
+REM Copy them all NEXT TO the executables (xcopy /D only recopies
+REM newer files), so weft.exe runs from anywhere -- no PATH setup.
+set "BINDIR=%~dp0build\bin\Release"
+if not exist "%BINDIR%" mkdir "%BINDIR%"
+echo   Deploying OCCT DLLs to build\bin\Release ^(first run copies a
+echo   few hundred MB; later runs only copy what changed^)...
 set "DLLDIRS=;"
 for /f "delims=" %%f in ('dir /s /b "!OCCT_DIR!\*.dll" 2^>nul') do (
     if "!DLLDIRS:%%~dpf;=!"=="!DLLDIRS!" (
         set "DLLDIRS=!DLLDIRS!%%~dpf;"
-        set "PATH=%%~dpf;!PATH!"
-        echo   DLL dir on PATH: %%~dpf
+        xcopy "%%~dpf*.dll" "%BINDIR%" /D /Y >nul
     )
 )
 ctest --test-dir build -C Release --output-on-failure
@@ -204,25 +193,15 @@ echo ========================================
 echo  Build complete!
 echo ========================================
 echo.
-echo   CLI:  build\cli\Release\weft.exe
-echo   App:  build\app\Release\weft_app.exe   ^(if GUI deps were found^)
+echo   Everything is in build\bin\Release ^(DLLs included -- the exes
+echo   run from anywhere, no PATH setup needed^):
 echo.
-echo   Note: to RUN the executables from a NEW prompt, the OpenCASCADE
-echo   DLL directories listed above ^("DLL dir on PATH"^) must be on
-echo   PATH. Easiest: use run_weft.bat, generated next to this script.
-REM Generate a launcher that sets up PATH and opens a ready-to-use prompt.
-(
-    echo @echo off
-    echo set "PATH=!DLLDIRS:~1!%%PATH%%"
-    echo cd /d "%%~dp0"
-    echo echo Weft environment ready. Try:
-    echo echo   build\cli\Release\weft.exe fixture demo.step --shape demo
-    echo cmd /k
-) > "%~dp0run_weft.bat"
+echo   CLI:  build\bin\Release\weft.exe
+echo   App:  build\bin\Release\weft_app.exe   ^(if GUI deps were found^)
 echo.
 echo   Try it:
-echo     build\cli\Release\weft.exe fixture demo.step --shape demo
-echo     build\cli\Release\weft.exe mesh demo.step -o demo.obj --radial 12
+echo     build\bin\Release\weft.exe fixture demo.step --shape demo
+echo     build\bin\Release\weft.exe mesh demo.step -o demo.obj --radial 12
 echo.
 pause
 exit /b 0
