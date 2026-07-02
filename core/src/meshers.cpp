@@ -489,7 +489,9 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         MesherKind want = MesherKind(s.forceMesher - 1);
         switch (want) {
             case MesherKind::RevolutionGrid:
-                if (isClosedRevolution(surf)) {
+                // Forced: also accept u-closed freeform surfaces (revolved
+                // bsplines and the like) that the auto path won't touch.
+                if (isClosedRevolution(surf) || surf.IsUClosed()) {
                     finishRevolution();
                     return plan;
                 }
