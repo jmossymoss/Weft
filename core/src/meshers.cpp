@@ -709,11 +709,23 @@ double quadAngleCost(const std::array<gp_Pnt, 4>& q) {
 // flow (§3.5); a real cross-field solver replaces the guidance later.
 void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                   int faceId, const FaceMeshSettings& s, MeshBuilder& out) {
-    BRepMesh_IncrementalMesh mesher(face, s.chordTolerance, Standard_False,
-                                    s.angleToleranceDeg * M_PI / 180.0,
-                                    Standard_True /*parallel*/);
+    // Faces mesh on worker threads, but OCCT triangulation writes shared
+    // per-EDGE data (adjacent faces touch the same TEdge), so the OCCT
+    // calls serialize; the heavy per-node work below stays parallel.
+    // Clean first so a loosened deviation actually re-coarsens instead of
+    // keeping the cached finer triangulation.
     TopLoc_Location loc;
-    Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, loc);
+    Handle(Poly_Triangulation) tri;
+    {
+        static std::mutex occtMeshMutex;
+        std::lock_guard<std::mutex> lock(occtMeshMutex);
+        BRepTools::Clean(face);
+        BRepMesh_IncrementalMesh mesher(face, s.chordTolerance,
+                                        Standard_False,
+                                        s.angleToleranceDeg * M_PI / 180.0,
+                                        Standard_True /*parallel*/);
+        tri = BRep_Tool::Triangulation(face, loc);
+    }
     if (tri.IsNull()) return;
 
     const bool flip = face.Orientation() == TopAbs_REVERSED;
@@ -933,6 +945,14 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
              ex.Next()) {
             int eid = model.edges.FindIndex(ex.Current());
             if (eid < 1) continue;
+            const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+            // Degenerate edges (poles, apexes) carry no 3D curve; seam and
+            // curveless edges can't anchor a chain either.
+            if (BRep_Tool::Degenerated(edge)) continue;
+            {
+                double cf, cl;
+                if (BRep_Tool::Curve(edge, cf, cl).IsNull()) continue;
+            }
             int nfid = 0;
             if (model.edgeToFaces.Contains(ex.Current())) {
                 for (const TopoDS_Shape& s :
@@ -943,7 +963,7 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
             }
             if (nfid < 1 || !isAnalytic(nfid)) continue;
 
-            BRepAdaptor_Curve curve(TopoDS::Edge(model.edges(eid)));
+            BRepAdaptor_Curve curve(edge);
             const double f = curve.FirstParameter(), l = curve.LastParameter();
             const bool closed = curve.IsClosed();
             const double period = l - f;
@@ -960,15 +980,20 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                 double bestT = f;
                 double dl = p.Distance(curve.Value(l));
                 if (dl < bestD) { bestD = dl; bestT = l; }
-                Extrema_ExtPC ext(p, curve);
-                if (ext.IsDone()) {
-                    for (int i = 1; i <= ext.NbExt(); ++i) {
-                        double d = std::sqrt(ext.SquareDistance(i));
-                        if (d < bestD) {
-                            bestD = d;
-                            bestT = ext.Point(i).Parameter();
+                try {
+                    Extrema_ExtPC ext(p, curve);
+                    if (ext.IsDone()) {
+                        for (int i = 1; i <= ext.NbExt(); ++i) {
+                            double d = std::sqrt(ext.SquareDistance(i));
+                            if (d < bestD) {
+                                bestD = d;
+                                bestT = ext.Point(i).Parameter();
+                            }
                         }
                     }
+                } catch (...) {
+                    // Extrema can fail on exotic curves; endpoint distances
+                    // computed above still stand.
                 }
                 if (bestD > tol) return false;
                 *paramOut = bestT;
