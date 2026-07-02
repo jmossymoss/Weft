@@ -566,9 +566,35 @@ static void regenerate(App& app) {
     logLine("regenerate: ops applied, rebuilding buffers");
 
     // Resample the B-rep edge overlay at the solved divisions so its
-    // chords coincide with the mesh instead of ghosting past it.
+    // chords coincide with the mesh instead of ghosting past it. The edge
+    // curve's parameter origin can be rotated against the surface's, so
+    // snap each sample onto the nearest generated vertex too.
     app.brepEdges = weft::sampleEdges(app.model, 28,
                                       app.report.edgeDivisions);
+    for (weft::EdgePolyline& e : app.brepEdges) {
+        if (!app.report.edgeDivisions.count(e.edgeId)) continue;
+        if (e.points.size() < 2) continue;
+        double cl2 = 0;  // squared chord length as the snap radius
+        {
+            double dx = e.points[1][0] - e.points[0][0];
+            double dy = e.points[1][1] - e.points[0][1];
+            double dz = e.points[1][2] - e.points[0][2];
+            cl2 = (dx * dx + dy * dy + dz * dz) * 0.36;  // (0.6*chord)^2
+        }
+        for (auto& p : e.points) {
+            double best = cl2;
+            const std::array<double, 3>* hit = nullptr;
+            for (const auto& v : app.mesh.vertices) {
+                double dx = v[0] - p[0], dy = v[1] - p[1], dz = v[2] - p[2];
+                double d = dx * dx + dy * dy + dz * dz;
+                if (d < best) {
+                    best = d;
+                    hit = &v;
+                }
+            }
+            if (hit) p = *hit;
+        }
+    }
 
     // Open boundary loops (deleted faces leave them) for the bridge tool,
     // each mapped to its nearest sampled B-rep edge for a stable op id.
@@ -1488,6 +1514,13 @@ static void drawUi(App& app) {
                     app.mesh.polygonCount());
         ImGui::Text("%zu quads  %zu tris  %zu n-gons", app.mesh.countQuads(),
                     app.mesh.countTris(), app.mesh.countNgons());
+        if (!app.bLoops.empty()) {
+            ImGui::TextColored({1.0f, 0.6f, 0.3f, 1.0f},
+                               "%zu open border loop(s)",
+                               app.bLoops.size());
+            ImGui::SameLine();
+            ImGui::TextDisabled("(J bridges, deleted faces expected)");
+        }
         ImGui::Separator();
         ImGui::TextDisabled("defaults (live)");
         if (settingsEditor(app.recipe.settings.defaults)) markDirty(app);
