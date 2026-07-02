@@ -180,6 +180,8 @@ Analysis analyze(const Model& model) {
     }
 
     // Fillets: cylindrical/toroidal faces stitched in by tangent joins.
+    // Holes: full cylindrical bores, i.e. the surface's natural outward
+    // normal is flipped so material lies outside the cylinder.
     for (FaceInfo& f : a.faces) {
         if (f.type != SurfaceType::Cylinder && f.type != SurfaceType::Torus) {
             continue;
@@ -189,6 +191,13 @@ Analysis analyze(const Model& model) {
             if (a.edges[eid - 1].convexity == EdgeConvexity::Smooth) ++smooth;
         }
         f.isFillet = smooth >= 2;
+
+        if (f.type == SurfaceType::Cylinder) {
+            const TopoDS_Face face = TopoDS::Face(model.faces(f.id));
+            BRepAdaptor_Surface surf(face);
+            f.isHole = surf.IsUClosed() &&
+                       face.Orientation() == TopAbs_REVERSED;
+        }
     }
 
     // Adjacency: two faces are neighbors when they share an edge.

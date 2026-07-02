@@ -36,6 +36,12 @@ of Phase 3:
   blends (`inspect` tags them). They get `--loops N` divisions across the
   blend — density-matched into the rest of the model — and `--hold F`
   clusters those loops toward the creases for bake-friendly shading.
+- **Hole/boss recognition + ring junctions** (plan §3.3's junction
+  patterns, first entry): bores are detected and tagged, and a planar face
+  carrying a circular hole or boss root meshes as concentric quad rings
+  (`--rings N`) instead of triangle soup. The ring count is derived from
+  the face's border and propagates through density matching to the
+  boss/bore itself — a drilled plate comes out as 100% quads, watertight.
 - **Recipes** (plan §5, first slice): save the full density setup —
   defaults, per-face overrides, per-edge pins — keyed to stable CAD IDs
   (`--save-recipe` / `--recipe`), and regenerate identical topology from
