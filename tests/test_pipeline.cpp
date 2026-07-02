@@ -10,6 +10,10 @@
 #include "weft/model.hpp"
 #include "weft/recipe.hpp"
 
+#include <BRepAlgoAPI_Cut.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
+#include <gp_Ax2.hxx>
+
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -472,17 +476,24 @@ void testFillet() {
     CHECK_EQ(polysPerFace[filletFaceId], 5 * 4);
 
     // The notched end faces can't take a grid; guided pairing + one
-    // midpoint subdivision must turn them into pure quads, not tri soup.
+    // midpoint subdivision turns their interiors into quads, while their
+    // border polygons conform to the neighbouring grids' divisions (which
+    // can add or drop sides). Quad-dominant, and the solid is watertight.
     int quadDominantFaces = 0;
+    size_t qdPolys = 0, qdQuads = 0;
     for (const auto& [fid, kind] : report.faceMesher) {
         if (kind != weft::MesherKind::QuadDominant) continue;
         ++quadDominantFaces;
         for (size_t p = 0; p < mesh.polygons.size(); ++p) {
             if (mesh.polygonFaceId[p] != fid) continue;
-            CHECK_EQ(mesh.polygons[p].size(), 4);
+            ++qdPolys;
+            if (mesh.polygons[p].size() == 4) ++qdQuads;
         }
     }
     CHECK_EQ(quadDominantFaces, 2);
+    CHECK(qdQuads > 0);         // pairing still yields interior quads
+    CHECK(qdPolys > qdQuads);   // borders conformed (non-quads at seams)
+    CHECK(isWatertight(mesh));  // ...which is the point: no leaks
 
     // Hold clustering: same counts, but the loops crowd toward the creases —
     // the first across-interval must shrink vs the uniform mesh.
@@ -701,6 +712,47 @@ void testBridge() {
     CHECK(isWatertight(replayed));
 }
 
+// A washer (cylinder minus coaxial bore): the two annulus faces have no
+// parametric mesher, so they triangulate freeform — their borders must
+// still conform vertex-for-vertex to the analytic rims (plan §7.1's first
+// bite) or the solid leaks at every shared edge.
+void testFreeformBorderConformity() {
+    std::printf("-- freeform border conformity --\n");
+    TopoDS_Shape outer =
+        BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)),
+                                 20.0, 8.0)
+            .Shape();
+    TopoDS_Shape bore =
+        BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(0, 0, -1), gp_Dir(0, 0, 1)),
+                                 12.0, 10.0)
+            .Shape();
+    TopoDS_Shape washer = BRepAlgoAPI_Cut(outer, bore).Shape();
+    std::string stepPath = tmpPath("weft_test_washer.step");
+    weft::writeStep(washer, stepPath);
+
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis a = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.radial = 24;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
+
+    int freeform = 0;
+    for (const auto& [fid, kind] : report.faceMesher) {
+        if (kind == weft::MesherKind::QuadDominant ||
+            kind == weft::MesherKind::Fallback) {
+            ++freeform;
+        }
+    }
+    CHECK(freeform >= 2);  // the two annulus faces
+    CHECK(isWatertight(mesh));
+
+    // Pure-triangle fallback conforms too.
+    gs.defaults.quadDominant = false;
+    weft::PolyMesh triMesh = weft::generate(model, a, gs);
+    CHECK(isWatertight(triMesh));
+}
+
 // Announce each test and turn stray exceptions into a named failure
 // instead of a silent fail-fast crash (0xc0000409 on Windows).
 #define RUN(fn)                                               \
@@ -733,6 +785,7 @@ int main() {
     RUN(testBoss);
     RUN(testHolePlate);
     RUN(testBridge);
+    RUN(testFreeformBorderConformity);
     if (failures) {
         std::printf("\n%d FAILURE(S)\n", failures);
         return 1;

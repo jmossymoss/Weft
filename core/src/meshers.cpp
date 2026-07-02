@@ -1,8 +1,11 @@
 #include "weft/meshers.hpp"
 
+#include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepClass_FaceClassifier.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <Extrema_ExtPC.hxx>
+#include <GCPnts_AbscissaPoint.hxx>
 #include <BRepTools.hxx>
 #include <BRep_Tool.hxx>
 #include <ElCLib.hxx>
@@ -26,8 +29,10 @@
 #include <algorithm>
 #include <cmath>
 #include <atomic>
+#include <map>
 #include <mutex>
 #include <numeric>
+#include <set>
 #include <thread>
 #include <vector>
 
@@ -871,6 +876,205 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     }
 }
 
+// ---------------------------------------------------------------------------
+// Border conformity (plan §7.1, first bite): freeform faces triangulate to
+// chord tolerance, so their borders never agree with an analytic
+// neighbour's solved divisions — T-junctions along every shared edge. Fix
+// after meshing: for each edge where a fallback face meets a constraining
+// analytic face, snap the fallback border chain onto the analytic vertex
+// chain and insert any analytic verts the chain skips; the weld then fuses
+// the seam exactly.
+
+struct EdgeParamPoint {
+    uint32_t vert;
+    double param;
+};
+
+void conformFallbackBorders(PolyMesh& mesh, const Model& model,
+                            const std::map<int, FacePlan>& plans,
+                            const GenerationSettings& settings,
+                            const std::vector<std::array<size_t, 2>>& range) {
+    auto isFreeform = [&](int fid) {
+        MesherKind k = plans.at(fid).kind;
+        return (k == MesherKind::Fallback || k == MesherKind::QuadDominant) &&
+               !settings.forFace(fid).exclude;
+    };
+    auto isAnalytic = [&](int fid) {
+        MesherKind k = plans.at(fid).kind;
+        return plans.at(fid).constrains && k != MesherKind::Fallback &&
+               k != MesherKind::QuadDominant && !settings.forFace(fid).exclude;
+    };
+
+    for (int fid = 1; fid <= model.faceCount(); ++fid) {
+        if (!isFreeform(fid)) continue;
+
+        // Topological border vertices of this face's sub-mesh.
+        std::map<std::pair<uint32_t, uint32_t>, int> use;
+        std::vector<size_t> facePolys;
+        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+            if (mesh.polygonFaceId[p] != fid) continue;
+            facePolys.push_back(p);
+            const auto& poly = mesh.polygons[p];
+            for (size_t i = 0; i < poly.size(); ++i) {
+                uint32_t a = poly[i], b = poly[(i + 1) % poly.size()];
+                ++use[a < b ? std::make_pair(a, b) : std::make_pair(b, a)];
+            }
+        }
+        std::set<uint32_t> borderVerts;
+        for (const auto& [e, count] : use) {
+            if (count == 1) {
+                borderVerts.insert(e.first);
+                borderVerts.insert(e.second);
+            }
+        }
+        if (borderVerts.empty()) continue;
+
+        for (TopExp_Explorer ex(model.faces(fid), TopAbs_EDGE); ex.More();
+             ex.Next()) {
+            int eid = model.edges.FindIndex(ex.Current());
+            if (eid < 1) continue;
+            int nfid = 0;
+            if (model.edgeToFaces.Contains(ex.Current())) {
+                for (const TopoDS_Shape& s :
+                     model.edgeToFaces.FindFromKey(ex.Current())) {
+                    int f2 = model.faces.FindIndex(s);
+                    if (f2 != fid) nfid = f2;
+                }
+            }
+            if (nfid < 1 || !isAnalytic(nfid)) continue;
+
+            BRepAdaptor_Curve curve(TopoDS::Edge(model.edges(eid)));
+            const double f = curve.FirstParameter(), l = curve.LastParameter();
+            const bool closed = curve.IsClosed();
+            const double period = l - f;
+            GCPnts_AbscissaPoint lenTool;
+            double edgeLen = GCPnts_AbscissaPoint::Length(curve);
+            (void)lenTool;
+
+            // Exact distance/parameter on the curve for a mesh vertex.
+            auto project = [&](uint32_t v, double tol,
+                               double* paramOut) -> bool {
+                gp_Pnt p(mesh.vertices[v][0], mesh.vertices[v][1],
+                         mesh.vertices[v][2]);
+                double bestD = p.Distance(curve.Value(f));
+                double bestT = f;
+                double dl = p.Distance(curve.Value(l));
+                if (dl < bestD) { bestD = dl; bestT = l; }
+                Extrema_ExtPC ext(p, curve);
+                if (ext.IsDone()) {
+                    for (int i = 1; i <= ext.NbExt(); ++i) {
+                        double d = std::sqrt(ext.SquareDistance(i));
+                        if (d < bestD) {
+                            bestD = d;
+                            bestT = ext.Point(i).Parameter();
+                        }
+                    }
+                }
+                if (bestD > tol) return false;
+                *paramOut = bestT;
+                return true;
+            };
+
+            // The analytic side's verts on this edge: the authoritative
+            // chain (exactly on the curve).
+            const double tolTarget = 1e-6 * (1.0 + edgeLen);
+            std::vector<EdgeParamPoint> targets;
+            for (size_t v = range[nfid][0]; v < range[nfid][1]; ++v) {
+                double t;
+                if (project(uint32_t(v), tolTarget, &t)) {
+                    targets.push_back({uint32_t(v), t});
+                }
+            }
+            if (targets.size() < 2) continue;
+            std::sort(targets.begin(), targets.end(),
+                      [](const EdgeParamPoint& a, const EdgeParamPoint& b) {
+                          return a.param < b.param;
+                      });
+
+            // The freeform side's border verts near this edge. Subdivision
+            // midpoints sit on the surface but off the curve by up to the
+            // chord sagitta, so the tolerance is the face's deviation.
+            const double tolMover = std::max(
+                1e-6 * (1.0 + edgeLen),
+                settings.forFace(fid).chordTolerance * 1.2);
+            std::map<uint32_t, double> movers;  // vert -> snapped param
+            for (uint32_t v : borderVerts) {
+                double t;
+                if (project(v, tolMover, &t)) movers[v] = t;
+            }
+            if (movers.empty()) continue;
+
+            auto paramGap = [&](double a, double b) {  // |a-b| wrap-aware
+                double d = std::abs(a - b);
+                return closed ? std::min(d, period - d) : d;
+            };
+            // Snap every mover to the nearest target (position + param).
+            for (auto& [v, t] : movers) {
+                const EdgeParamPoint* best = &targets[0];
+                for (const EdgeParamPoint& cand : targets) {
+                    if (paramGap(cand.param, t) < paramGap(best->param, t)) {
+                        best = &cand;
+                    }
+                }
+                mesh.vertices[v] = mesh.vertices[best->vert];
+                t = best->param;
+            }
+
+            // Insert targets skipped between consecutive border movers so
+            // the chains agree vertex-for-vertex.
+            for (size_t p : facePolys) {
+                std::vector<uint32_t>& poly = mesh.polygons[p];
+                std::vector<uint32_t> ring;
+                ring.reserve(poly.size() + 4);
+                for (size_t i = 0; i < poly.size(); ++i) {
+                    uint32_t u = poly[i], w = poly[(i + 1) % poly.size()];
+                    ring.push_back(u);
+                    auto mu = movers.find(u), mw = movers.find(w);
+                    if (mu == movers.end() || mw == movers.end()) continue;
+                    // Border segment on the edge: walk the shorter param
+                    // arc from u to w, inserting the targets inside it.
+                    double pu = mu->second, pw = mw->second;
+                    if (paramGap(pu, pw) < 1e-12) continue;
+                    bool forward = closed
+                        ? std::fmod(pw - pu + period, period) <= period * 0.5
+                        : pw > pu;
+                    std::vector<const EdgeParamPoint*> between;
+                    for (const EdgeParamPoint& cand : targets) {
+                        double rel = closed
+                            ? std::fmod((forward ? cand.param - pu
+                                                 : pu - cand.param) + period,
+                                        period)
+                            : (forward ? cand.param - pu : pu - cand.param);
+                        double span = closed
+                            ? std::fmod((forward ? pw - pu : pu - pw) + period,
+                                        period)
+                            : std::abs(pw - pu);
+                        if (rel > 1e-12 && rel < span - 1e-12) {
+                            between.push_back(&cand);
+                        }
+                    }
+                    std::sort(between.begin(), between.end(),
+                              [&](const EdgeParamPoint* a,
+                                  const EdgeParamPoint* b) {
+                                  auto key = [&](double t) {
+                                      return closed
+                                          ? std::fmod((forward ? t - pu
+                                                               : pu - t) +
+                                                          period, period)
+                                          : (forward ? t - pu : pu - t);
+                                  };
+                                  return key(a->param) < key(b->param);
+                              });
+                    for (const EdgeParamPoint* c : between) {
+                        ring.push_back(c->vert);
+                    }
+                }
+                poly = std::move(ring);
+            }
+        }
+    }
+}
+
 }  // namespace
 
 PolyMesh generate(const Model& model, const Analysis& analysis,
@@ -996,9 +1200,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     }
 
     PolyMesh mesh;
+    std::vector<std::array<size_t, 2>> range(faceN + 1, {0, 0});
     for (int fid = 1; fid <= faceN; ++fid) {
         PolyMesh& part = parts[fid];
         uint32_t base = uint32_t(mesh.vertices.size());
+        range[fid] = {size_t(base), size_t(base) + part.vertices.size()};
         mesh.vertices.insert(mesh.vertices.end(), part.vertices.begin(),
                              part.vertices.end());
         mesh.anchors.insert(mesh.anchors.end(), part.anchors.begin(),
@@ -1011,6 +1217,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                   part.polygonFaceId.begin(),
                                   part.polygonFaceId.end());
     }
+
+    conformFallbackBorders(mesh, model, plans, settings, range);
 
     if (report) {
         for (int fid = 1; fid <= faceN; ++fid) {

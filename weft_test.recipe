@@ -1,0 +1,5 @@
+weft-recipe 1
+default radial=20,axial=4,gridu=4,gridv=4,cap=fan,chord=0.1,angle=28,loops=3,hold=0,rings=2,quads=1,minimal=0,skip=0
+face 3 radial=40,axial=4,gridu=4,gridv=7,cap=fan,chord=0.1,angle=28,loops=3,hold=0,rings=2,quads=1,minimal=0,skip=0
+edge 5 13
+op loop 1 0.25 7.5 0.5

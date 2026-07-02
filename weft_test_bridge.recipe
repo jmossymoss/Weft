@@ -1,0 +1,5 @@
+weft-recipe 1
+default radial=12,axial=4,gridu=4,gridv=4,cap=ngon,chord=0.1,angle=28,loops=3,hold=0,rings=2,quads=1,minimal=0,skip=0
+face 1 radial=12,axial=4,gridu=4,gridv=4,cap=ngon,chord=0.1,angle=28,loops=3,hold=0,rings=2,quads=1,minimal=0,skip=1
+edge 3 18
+op bridge 1 3
