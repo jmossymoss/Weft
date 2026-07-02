@@ -30,6 +30,10 @@ struct FaceMeshSettings {
     // Ring junctions (a hole/boss circle inside a rectangular planar face):
     // number of concentric quad loops between the circle and the boundary.
     int junctionRings = 2;
+    // Trimmed/freeform faces that fall back to triangulation: pair the
+    // triangles into quads where quality allows (guided by the surface's
+    // parametric directions). Off = pure triangles.
+    bool quadDominant = true;
 };
 
 struct GenerationSettings {
@@ -56,7 +60,10 @@ enum class MesherKind {
     RingJunction,    // rectangular planar face with one circular hole:
                      // concentric quad rings from the circle to the border
                      // (the cylinder-to-plane junction pattern, plan §3.3/4.2)
-    Fallback,        // OCCT incremental triangulation
+    QuadDominant,    // fallback triangulation + guided tri-pairing into
+                     // quads (plan §3.5 seed; a cross-field solver slots in
+                     // here later)
+    Fallback,        // OCCT incremental triangulation, pure triangles
 };
 
 const char* mesherKindName(MesherKind k);

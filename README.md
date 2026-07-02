@@ -21,8 +21,14 @@ Headless C++ core + CLI covering the plan's Phases 0–3 essentials:
     sphere poles collapse to clean triangle fans
   - circular caps → n-gon or triangle-fan, ring-aligned with the side face
   - planar/parametric faces → quad grids (with trim-boundary containment
-    check; trimmed faces fall back to OCCT triangulation — conforming grids
-    to trim curves is the plan's §7.1 hard problem, still ahead)
+    check)
+  - trimmed/freeform faces → **guided quad-dominant meshing** (plan §3.5
+    seed): OCCT triangulation, greedy tri-pairing scored by quad quality
+    and alignment with the surface's parametric directions, then one
+    midpoint subdivision — pure quads, with every new vertex evaluated
+    exactly on the B-rep. `--pure-tris` disables it. (A cross-field
+    solver slots in here later; grid conformity to trim curves is the
+    plan's §7.1 hard problem, still ahead.)
 - **Density matching across shared edges** (plan §4.2): edge subdivision
   counts are solved as shared constraints over the adjacency graph —
   opposite sides of a grid and the rings of a revolution face are grouped,
