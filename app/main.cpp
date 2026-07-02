@@ -1290,7 +1290,8 @@ static void drawOverlay(App& app) {
                      ImGuiWindowFlags_NoNav);
     ImGui::TextDisabled(
         "tab face/edge mode   shift+click multi-select   ctrl+Z undo\n"
-        "shift+wheel density   ctrl+wheel 2nd axis   12<enter>   [ ] nudge\n"
+        "shift+wheel density   ctrl+wheel 2nd axis   ctrl+shift+wheel loops\n"
+        "12<enter> divisions   [ ] nudge\n"
         "X delete face   H hide (shift+H show all)   R loop cut   J bridge\n"
         "C cap   T tris   M minimal   W wire   B edges   F focus   esc");
     ImGui::End();
@@ -1323,10 +1324,21 @@ static void drawFacePopup(App& app) {
     auto it = app.report.faceMesher.find(f.id);
     if (it != app.report.faceMesher.end()) kind = it->second;
     ImGui::TextDisabled("mesher: %s", weft::mesherKindName(kind));
-    ImGui::Separator();
 
     // Editing auto-overrides: changes land on every selected face.
     weft::FaceMeshSettings edited = activeSettings(app);
+    // When a mesher is forced, show ITS controls (so it can be tuned
+    // before/despite building) and flag when it couldn't build here.
+    if (edited.forceMesher > 0) {
+        weft::MesherKind forced = weft::MesherKind(edited.forceMesher - 1);
+        if (forced != kind) {
+            ImGui::TextColored({1.0f, 0.6f, 0.3f, 1.0f},
+                               "forced %s couldn't build here",
+                               weft::mesherKindName(forced));
+        }
+        kind = forced;
+    }
+    ImGui::Separator();
     ImGui::PushID("ctx");
     ImGui::PushItemWidth(150 * gUiScale);
     bool changed = settingsEditor(edited, &kind, f.isFillet);
@@ -1579,6 +1591,16 @@ static void drawUi(App& app) {
             }
             // Editing auto-overrides every selected face.
             weft::FaceMeshSettings edited = activeSettings(app);
+            if (edited.forceMesher > 0) {
+                weft::MesherKind forced =
+                    weft::MesherKind(edited.forceMesher - 1);
+                if (forced != kind) {
+                    ImGui::TextColored({1.0f, 0.6f, 0.3f, 1.0f},
+                                       "forced %s couldn't build here",
+                                       weft::mesherKindName(forced));
+                }
+                kind = forced;
+            }
             ImGui::PushID("perface");
             bool changed = settingsEditor(edited, &kind, f.isFillet);
             ImGui::PopID();
@@ -1889,6 +1911,17 @@ int main(int argc, char** argv) {
                     std::snprintf(app.hudText, sizeof app.hudText,
                                   "edge verts: %d",
                                   app.recipe.settings.perEdge[eid]);
+                    app.hudUntil = glfwGetTime() + 0.9;
+                } else if (app.hasModel && ctrl && shift &&
+                           !app.selFaces.empty()) {
+                    // ctrl+shift+wheel: fillet support loops.
+                    editSelected(app, [&](weft::FaceMeshSettings& s) {
+                        s.filletLoops = std::max(1, s.filletLoops + steps);
+                    });
+                    std::snprintf(app.hudText, sizeof app.hudText,
+                                  "fillet loops: %d",
+                                  app.recipe.settings.forFace(app.activeFace)
+                                      .filletLoops);
                     app.hudUntil = glfwGetTime() + 0.9;
                 } else if (app.hasModel && (shift || ctrl) &&
                            (!app.selFaces.empty())) {

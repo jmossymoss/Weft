@@ -20,8 +20,8 @@ enum class CapStyle {
 struct FaceMeshSettings {
     int radial = 16;        // divisions around a surface of revolution (u)
     int axial = 1;          // divisions along the axis / pole-to-pole (v)
-    int gridU = 4;          // planar/parametric grid divisions
-    int gridV = 4;
+    int gridU = 1;          // planar/parametric grid divisions — start
+    int gridV = 1;          // minimal (game topology), densify on demand
     CapStyle cap = CapStyle::NGon;
     // Freeform/trimmed faces (the fallback mesher) are driven by these two,
     // Plasticity-style: max chordal deviation from the true surface, and max
@@ -36,7 +36,7 @@ struct FaceMeshSettings {
     double filletHold = 0.0;
     // Ring junctions (a hole/boss circle inside a rectangular planar face):
     // number of concentric quad loops between the circle and the boundary.
-    int junctionRings = 2;
+    int junctionRings = 1;
     // Trimmed/freeform faces that fall back to triangulation: pair the
     // triangles into quads where quality allows (guided by the surface's
     // parametric directions). Off (default) = pure triangles, which keep
