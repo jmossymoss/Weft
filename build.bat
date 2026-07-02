@@ -186,12 +186,15 @@ for /f "delims=" %%f in ('dir /s /b "!OCCT_DIR!\TKernel.dll" 2^>nul') do (
         xcopy "%%~dpfTK*.dll" "%BINDIR%" /D /Y >nul
     )
 )
-REM Third-party runtimes the TK dlls import (wildcards catch versioned
-REM names like avcodec-57.dll; ffmpeg is imported by TKService when OCCT
-REM was built with video support, even though Weft never uses it).
-for %%d in (tbb* jemalloc* freetype* FreeImage* openvr* zlib*
-            avcodec* avformat* avutil* swscale* swresample*) do (
-    for /f "delims=" %%f in ('dir /s /b "!OCCT_DIR!\%%d.dll" 2^>nul') do (
+REM Third-party runtimes the TK dlls import. The FOR set must stay
+REM wildcard-free (cmd globs * against the current directory); the
+REM wildcard goes in the dir pattern so versioned names match too
+REM (tbb12.dll, avcodec-57.dll...). ffmpeg is imported by TKService
+REM when OCCT was built with video support, even though Weft never
+REM uses it.
+for %%d in (tbb jemalloc freetype FreeImage openvr zlib
+            avcodec avformat avutil swscale swresample) do (
+    for /f "delims=" %%f in ('dir /s /b "!OCCT_DIR!\%%d*.dll" 2^>nul') do (
         xcopy "%%f" "%BINDIR%" /D /Y >nul
     )
 )
