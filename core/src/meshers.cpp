@@ -25,7 +25,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <atomic>
+#include <mutex>
 #include <numeric>
+#include <thread>
 #include <vector>
 
 namespace weft {
@@ -702,7 +705,8 @@ double quadAngleCost(const std::array<gp_Pnt, 4>& q) {
 void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                   int faceId, const FaceMeshSettings& s, MeshBuilder& out) {
     BRepMesh_IncrementalMesh mesher(face, s.chordTolerance, Standard_False,
-                                    s.angleToleranceDeg * M_PI / 180.0);
+                                    s.angleToleranceDeg * M_PI / 180.0,
+                                    Standard_True /*parallel*/);
     TopLoc_Location loc;
     Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, loc);
     if (tri.IsNull()) return;
@@ -885,38 +889,65 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
 
     DensitySolution density = solveDensity(model, plans, settings);
 
-    PolyMesh mesh;
-    MeshBuilder out(mesh);
-    for (int fid = 1; fid <= model.faceCount(); ++fid) {
-        const TopoDS_Face face = TopoDS::Face(model.faces(fid));
+    // Resolve every face's division counts up front (union-find lookups
+    // path-compress, so they must not run concurrently) — after this the
+    // per-face meshing is embarrassingly parallel.
+    const int faceN = model.faceCount();
+    std::vector<std::array<int, 2>> counts(faceN + 1, {0, 0});
+    for (int fid = 1; fid <= faceN; ++fid) {
         const FaceMeshSettings& s = settings.forFace(fid);
-        if (s.exclude) continue;
         const FacePlan& plan = plans.at(fid);
-        BRepAdaptor_Surface surf(face);
-
         auto solved = [&](const std::vector<int>& edges, int fallback) {
             return edges.empty() ? fallback
                                  : density.countFor(edges[0], fallback);
         };
-
         switch (plan.kind) {
             case MesherKind::RevolutionGrid:
-                meshRevolutionGrid(face, surf, fid, solved(plan.uEdges, s.radial),
-                                   solved(plan.vEdges, s.axial), out);
-                break;
             case MesherKind::DiskCap:
-                meshDiskCap(face, surf, plan.circ, fid,
-                            solved(plan.uEdges, s.radial), s.cap, out);
+                counts[fid] = {solved(plan.uEdges, s.radial),
+                               solved(plan.vEdges, s.axial)};
                 break;
             case MesherKind::PlanarGrid: {
                 int defU = plan.isFillet && plan.acrossIsU ? s.filletLoops
                                                            : s.gridU;
                 int defV = plan.isFillet && !plan.acrossIsU ? s.filletLoops
                                                             : s.gridV;
-                int nu = plan.constrains ? solved(plan.uEdges, defU)
-                                         : std::max(1, defU);
-                int nv = plan.constrains ? solved(plan.vEdges, defV)
-                                         : std::max(1, defV);
+                counts[fid] = {plan.constrains ? solved(plan.uEdges, defU)
+                                               : std::max(1, defU),
+                               plan.constrains ? solved(plan.vEdges, defV)
+                                               : std::max(1, defV)};
+                break;
+            }
+            case MesherKind::MinimalNGon:
+            case MesherKind::RingJunction:
+                counts[fid] = {solved(plan.uEdges, s.gridU),
+                               solved(plan.vEdges, s.gridV)};
+                break;
+            default:
+                break;
+        }
+    }
+
+    // Mesh every face into its own part, in parallel, then merge in face
+    // order so the output is deterministic (identical to the serial order).
+    std::vector<PolyMesh> parts(faceN + 1);
+    auto meshFace = [&](int fid) {
+        const FaceMeshSettings& s = settings.forFace(fid);
+        if (s.exclude) return;
+        const TopoDS_Face face = TopoDS::Face(model.faces(fid));
+        const FacePlan& plan = plans.at(fid);
+        BRepAdaptor_Surface surf(face);
+        MeshBuilder out(parts[fid]);
+        const int nu = counts[fid][0], nv = counts[fid][1];
+
+        switch (plan.kind) {
+            case MesherKind::RevolutionGrid:
+                meshRevolutionGrid(face, surf, fid, nu, nv, out);
+                break;
+            case MesherKind::DiskCap:
+                meshDiskCap(face, surf, plan.circ, fid, nu, s.cap, out);
+                break;
+            case MesherKind::PlanarGrid: {
                 // Support loops hug the creases on fillet strips.
                 double holdU = plan.isFillet && plan.acrossIsU ? s.filletHold : 0;
                 double holdV = plan.isFillet && !plan.acrossIsU ? s.filletHold : 0;
@@ -925,22 +956,66 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 break;
             }
             case MesherKind::MinimalNGon:
-                meshMinimalNGon(face, surf, fid, solved(plan.uEdges, s.gridU),
-                                solved(plan.vEdges, s.gridV), out);
+                meshMinimalNGon(face, surf, fid, nu, nv, out);
                 break;
             case MesherKind::RingJunction:
-                meshRingJunction(face, surf, plan.circ, fid,
-                                 solved(plan.uEdges, s.gridU),
-                                 solved(plan.vEdges, s.gridV), s.junctionRings,
-                                 out);
+                meshRingJunction(face, surf, plan.circ, fid, nu, nv,
+                                 s.junctionRings, out);
                 break;
             case MesherKind::QuadDominant:
             case MesherKind::Fallback:
                 meshFallback(face, surf, fid, s, out);
                 break;
         }
+    };
 
-        if (report) {
+    unsigned threads = std::min<unsigned>(
+        std::max(1u, std::thread::hardware_concurrency()), unsigned(faceN));
+    if (threads <= 1) {
+        for (int fid = 1; fid <= faceN; ++fid) meshFace(fid);
+    } else {
+        std::atomic<int> nextFace{1};
+        std::exception_ptr firstError;
+        std::mutex errorMutex;
+        std::vector<std::thread> pool;
+        for (unsigned t = 0; t < threads; ++t) {
+            pool.emplace_back([&] {
+                try {
+                    for (int fid = nextFace.fetch_add(1); fid <= faceN;
+                         fid = nextFace.fetch_add(1)) {
+                        meshFace(fid);
+                    }
+                } catch (...) {
+                    std::lock_guard<std::mutex> lock(errorMutex);
+                    if (!firstError) firstError = std::current_exception();
+                }
+            });
+        }
+        for (std::thread& th : pool) th.join();
+        if (firstError) std::rethrow_exception(firstError);
+    }
+
+    PolyMesh mesh;
+    for (int fid = 1; fid <= faceN; ++fid) {
+        PolyMesh& part = parts[fid];
+        uint32_t base = uint32_t(mesh.vertices.size());
+        mesh.vertices.insert(mesh.vertices.end(), part.vertices.begin(),
+                             part.vertices.end());
+        mesh.anchors.insert(mesh.anchors.end(), part.anchors.begin(),
+                            part.anchors.end());
+        for (auto& poly : part.polygons) {
+            for (uint32_t& v : poly) v += base;
+            mesh.polygons.push_back(std::move(poly));
+        }
+        mesh.polygonFaceId.insert(mesh.polygonFaceId.end(),
+                                  part.polygonFaceId.begin(),
+                                  part.polygonFaceId.end());
+    }
+
+    if (report) {
+        for (int fid = 1; fid <= faceN; ++fid) {
+            const FaceMeshSettings& s = settings.forFace(fid);
+            const FacePlan& plan = plans.at(fid);
             report->faceMesher[fid] =
                 plan.kind == MesherKind::Fallback && s.quadDominant
                     ? MesherKind::QuadDominant
