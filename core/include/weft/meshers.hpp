@@ -22,6 +22,11 @@ struct FaceMeshSettings {
     int gridV = 4;
     CapStyle cap = CapStyle::NGon;
     double chordTolerance = 0.1;  // fallback triangulation accuracy
+    // Fillet/blend faces: divisions ACROSS the blend (support loops for
+    // baking) and how strongly the loops cluster toward the creases
+    // ("hold" loops; 0 = uniform spacing, toward 1 = tight at the edges).
+    int filletLoops = 3;
+    double filletHold = 0.0;
 };
 
 struct GenerationSettings {
@@ -49,6 +54,11 @@ enum class MesherKind {
 };
 
 const char* mesherKindName(MesherKind k);
+
+// n+1 monotonically increasing parameters in [0,1] splitting it into n
+// intervals. hold=0 is uniform; hold in (0,1) squeezes the intervals toward
+// both ends, which is how fillet support loops hug the creases.
+std::vector<double> clusteredParams(int divisions, double hold);
 
 struct GenerationReport {
     std::map<int, MesherKind> faceMesher;  // FaceId -> strategy used

@@ -179,6 +179,18 @@ Analysis analyze(const Model& model) {
         info.convexity = s > 0 ? EdgeConvexity::Convex : EdgeConvexity::Concave;
     }
 
+    // Fillets: cylindrical/toroidal faces stitched in by tangent joins.
+    for (FaceInfo& f : a.faces) {
+        if (f.type != SurfaceType::Cylinder && f.type != SurfaceType::Torus) {
+            continue;
+        }
+        int smooth = 0;
+        for (int eid : f.edgeIds) {
+            if (a.edges[eid - 1].convexity == EdgeConvexity::Smooth) ++smooth;
+        }
+        f.isFillet = smooth >= 2;
+    }
+
     // Adjacency: two faces are neighbors when they share an edge.
     for (const EdgeInfo& e : a.edges) {
         for (int f1 : e.faceIds) {
