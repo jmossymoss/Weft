@@ -14,9 +14,16 @@ target_include_directories(weft_core
   PUBLIC ${OpenCASCADE_INCLUDE_DIR}
 )
 
+# OCCT 7.8 merged TKSTEP/TKSTEPBase/TKSTEPAttr/TKSTEP209 into TKDESTEP.
+if(TARGET TKDESTEP)
+  set(WEFT_OCCT_STEP TKDESTEP)
+else()
+  set(WEFT_OCCT_STEP TKSTEP)
+endif()
+
 target_link_libraries(weft_core PUBLIC
   TKernel TKMath
   TKBRep TKG2d TKG3d TKGeomBase
   TKTopAlgo TKGeomAlgo TKPrim TKBO TKFillet TKShHealing TKMesh
-  TKXSBase TKSTEP
+  TKXSBase ${WEFT_OCCT_STEP}
 )
