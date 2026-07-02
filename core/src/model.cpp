@@ -4,6 +4,7 @@
 #include <IFSelect_ReturnStatus.hxx>
 #include <STEPControl_Reader.hxx>
 #include <STEPControl_Writer.hxx>
+#include <BRepBuilderAPI_Sewing.hxx>
 #include <ShapeFix_Shape.hxx>
 #include <TopAbs_ShapeEnum.hxx>
 #include <TopExp.hxx>
@@ -33,6 +34,14 @@ Model loadStep(const std::string& path) {
     if (shape.IsNull()) {
         throw std::runtime_error("STEP file contained no transferable shapes: " + path);
     }
+
+    // Sew faces that arrive with their own duplicate copies of shared
+    // edges (common in some exporters): unshared edges can't take part in
+    // density matching or welding, leaving open seams through the model.
+    BRepBuilderAPI_Sewing sewing(1e-4);
+    sewing.Add(shape);
+    sewing.Perform();
+    if (!sewing.SewedShape().IsNull()) shape = sewing.SewedShape();
 
     ShapeFix_Shape fixer(shape);
     fixer.Perform();

@@ -7,6 +7,7 @@
 #include <Extrema_ExtPC.hxx>
 #include <GCPnts_AbscissaPoint.hxx>
 #include <BRepTools.hxx>
+#include <BRepTools_WireExplorer.hxx>
 #include <BRep_Tool.hxx>
 #include <ElCLib.hxx>
 #include <ElSLib.hxx>
@@ -27,6 +28,7 @@
 #include <gp_Vec.hxx>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <atomic>
 #include <cstdarg>
@@ -78,6 +80,7 @@ const char* mesherKindName(MesherKind k) {
         case MesherKind::RevolutionGrid: return "revolution-grid";
         case MesherKind::DiskCap: return "disk-cap";
         case MesherKind::PlanarGrid: return "parametric-grid";
+        case MesherKind::CoonsGrid: return "coons-grid";
         case MesherKind::RingJunction: return "ring-junction";
         case MesherKind::QuadDominant: return "quad-dominant";
         case MesherKind::MinimalNGon: return "minimal-ngon";
@@ -287,6 +290,169 @@ bool parametricGridFits(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
     return true;
 }
 
+// A closed revolution face is only a clean band if it actually covers its
+// surface's full parametric rectangle — a cylinder with pockets trimmed
+// into it must NOT mesh as an untrimmed band overlapping its neighbours.
+bool revolutionCovers(const TopoDS_Face& face) {
+    double umin, umax, vmin, vmax;
+    BRepTools::UVBounds(face, umin, umax, vmin, vmax);
+    const double tol = BRep_Tool::Tolerance(face);
+    for (int j = 1; j < 4; ++j) {
+        for (int i = 0; i < 8; ++i) {
+            gp_Pnt2d p(umin + (i + 0.5) / 8.0 * (umax - umin),
+                       vmin + j / 4.0 * (vmax - vmin));
+            BRepClass_FaceClassifier cls(const_cast<TopoDS_Face&>(face), p,
+                                         tol);
+            if (cls.State() == TopAbs_OUT) return false;
+        }
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Coons patch for four-sided freeform faces (plan §3.5): a structured grid
+// blended between the four boundary pcurves in UV. Turns bspline strips
+// into flowing quads instead of chord triangles, and its opposite sides
+// take part in density matching like any grid.
+
+struct CoonsPatch {
+    std::array<int, 4> edgeIds{};
+    std::array<Handle(Geom2d_Curve), 4> pc;
+    std::array<double, 4> first{}, last{};
+    std::array<bool, 4> rev{};
+
+    // Point along side i at t in [0,1], walking the wire direction.
+    gp_Pnt2d side(int i, double t) const {
+        double tt = rev[i] ? 1.0 - t : t;
+        return pc[i]->Value(first[i] + tt * (last[i] - first[i]));
+    }
+
+    // Bilinearly blended interior: a along side0->side2, b across.
+    gp_Pnt2d uv(double a, double b) const {
+        gp_Pnt2d bo = side(0, a), ri = side(1, b);
+        gp_Pnt2d to = side(2, 1.0 - a), le = side(3, 1.0 - b);
+        gp_Pnt2d c00 = side(0, 0.0), c10 = side(0, 1.0);
+        gp_Pnt2d c11 = side(1, 1.0), c01 = side(3, 0.0);
+        double x = (1 - b) * bo.X() + b * to.X() + (1 - a) * le.X() +
+                   a * ri.X() -
+                   ((1 - a) * (1 - b) * c00.X() + a * (1 - b) * c10.X() +
+                    a * b * c11.X() + (1 - a) * b * c01.X());
+        double y = (1 - b) * bo.Y() + b * to.Y() + (1 - a) * le.Y() +
+                   a * ri.Y() -
+                   ((1 - a) * (1 - b) * c00.Y() + a * (1 - b) * c10.Y() +
+                    a * b * c11.Y() + (1 - a) * b * c01.Y());
+        return {x, y};
+    }
+};
+
+// Build the patch from the face's outer wire: exactly four non-degenerate
+// edges with pcurves, chained head-to-tail, interior probes inside the
+// face. Anything else returns false and the face meshes another way.
+bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
+                    CoonsPatch& patch) {
+    TopoDS_Wire outer = BRepTools::OuterWire(face);
+    if (outer.IsNull()) return false;
+    int n = 0;
+    for (BRepTools_WireExplorer wx(outer, face); wx.More(); wx.Next()) {
+        if (n >= 4) return false;
+        const TopoDS_Edge edge = wx.Current();
+        if (BRep_Tool::Degenerated(edge)) return false;
+        double f, l;
+        Handle(Geom2d_Curve) pcurve = BRep_Tool::CurveOnSurface(edge, face, f, l);
+        if (pcurve.IsNull()) return false;
+        patch.edgeIds[n] = model.edges.FindIndex(edge);
+        patch.pc[n] = pcurve;
+        patch.first[n] = f;
+        patch.last[n] = l;
+        patch.rev[n] = edge.Orientation() == TopAbs_REVERSED;
+        ++n;
+    }
+    if (n != 4) return false;
+    for (int i = 0; i < 4; ++i) {
+        if (patch.edgeIds[i] < 1) return false;
+    }
+    // Head-to-tail continuity in UV (a seam on a periodic surface breaks
+    // the chain; such faces are not Coons candidates).
+    double umin, umax, vmin, vmax;
+    BRepTools::UVBounds(face, umin, umax, vmin, vmax);
+    const double span = std::max(umax - umin, vmax - vmin);
+    for (int i = 0; i < 4; ++i) {
+        gp_Pnt2d a = patch.side(i, 1.0);
+        gp_Pnt2d b = patch.side((i + 1) % 4, 0.0);
+        if (a.Distance(b) > 1e-4 * span) return false;
+    }
+    // Interior probes must land inside the face.
+    const double tol = BRep_Tool::Tolerance(face);
+    for (int j = 1; j < 4; ++j) {
+        for (int i = 1; i < 4; ++i) {
+            gp_Pnt2d p = patch.uv(i / 4.0, j / 4.0);
+            BRepClass_FaceClassifier cls(const_cast<TopoDS_Face&>(face), p,
+                                         tol);
+            if (cls.State() == TopAbs_OUT) return false;
+        }
+    }
+    return true;
+}
+
+// Emit the Coons grid. uParams/vParams are the 0..1 splits (clustered for
+// fillet strips); vertices evaluate exactly on the surface.
+bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
+                   const std::vector<double>& uParams,
+                   const std::vector<double>& vParams, MeshBuilder& out) {
+    CoonsPatch patch;
+    if (!makeCoonsPatch(face, model, patch)) return false;
+    Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+
+    // Border vertices evaluate on the shared 3D edge curves, not through
+    // this face's pcurve: both faces of an edge then produce bit-identical
+    // points and the weld is exact (pcurves only agree with the curve to
+    // the edge tolerance, which exceeds the weld tolerance).
+    std::array<BRepAdaptor_Curve, 4> c3d;
+    for (int i = 0; i < 4; ++i) {
+        c3d[i].Initialize(TopoDS::Edge(model.edges(patch.edgeIds[i])));
+    }
+    auto sidePnt = [&](int i, double t) {
+        double tt = patch.rev[i] ? 1.0 - t : t;
+        double f = c3d[i].FirstParameter(), l = c3d[i].LastParameter();
+        return c3d[i].Value(f + tt * (l - f));
+    };
+    const int nu = int(uParams.size()) - 1;
+    const int nv = int(vParams.size()) - 1;
+    // The (a,b) lattice follows the wire, whose UV handedness varies; the
+    // Jacobian sign says whether the grid is CCW in UV, and combined with
+    // the face orientation that decides the polygon winding.
+    gp_Pnt2d c0 = patch.uv(0.5, 0.5);
+    gp_Pnt2d ca = patch.uv(0.55, 0.5);
+    gp_Pnt2d cb = patch.uv(0.5, 0.55);
+    const double jac = (ca.X() - c0.X()) * (cb.Y() - c0.Y()) -
+                       (ca.Y() - c0.Y()) * (cb.X() - c0.X());
+    const bool flip = (face.Orientation() == TopAbs_REVERSED) != (jac < 0);
+
+    std::vector<uint32_t> grid((nu + 1) * (nv + 1));
+    for (int j = 0; j <= nv; ++j) {
+        for (int i = 0; i <= nu; ++i) {
+            gp_Pnt2d p = patch.uv(uParams[i], vParams[j]);
+            gp_Pnt pos;
+            if (j == 0) pos = sidePnt(0, uParams[i]);
+            else if (j == nv) pos = sidePnt(2, 1.0 - uParams[i]);
+            else if (i == nu) pos = sidePnt(1, vParams[j]);
+            else if (i == 0) pos = sidePnt(3, 1.0 - vParams[j]);
+            else pos = surface->Value(p.X(), p.Y());
+            grid[j * (nu + 1) + i] =
+                out.addVertex(pos, {faceId, p.X(), p.Y()});
+        }
+    }
+    for (int j = 0; j < nv; ++j) {
+        for (int i = 0; i < nu; ++i) {
+            out.addPolygon({grid[j * (nu + 1) + i], grid[j * (nu + 1) + i + 1],
+                            grid[(j + 1) * (nu + 1) + i + 1],
+                            grid[(j + 1) * (nu + 1) + i]},
+                           faceId, flip);
+        }
+    }
+    return true;
+}
+
 FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                   const GenerationSettings& settings) {
     const TopoDS_Face face = TopoDS::Face(model.faces(fid));
@@ -295,7 +461,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     BRepAdaptor_Surface surf(face);
     FacePlan plan;
 
-    if (isClosedRevolution(surf)) {
+    if (isClosedRevolution(surf) && revolutionCovers(face)) {
         plan.kind = MesherKind::RevolutionGrid;
         collectIsoEdges(face, model, info.edgeIds, plan);
         return plan;
@@ -338,6 +504,30 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             plan.kind = MesherKind::PlanarGrid;
         }
         return plan;
+    }
+
+    // Four-sided freeform/trimmed faces get a structured Coons grid; the
+    // across-the-blend direction of a fillet strip is whichever side pair
+    // is shorter in 3D.
+    {
+        CoonsPatch patch;
+        if (makeCoonsPatch(face, model, patch)) {
+            plan.kind = MesherKind::CoonsGrid;
+            plan.uEdges = {patch.edgeIds[0], patch.edgeIds[2]};
+            plan.vEdges = {patch.edgeIds[1], patch.edgeIds[3]};
+            plan.constrains = true;
+            if (info.isFillet) {
+                plan.isFillet = true;
+                auto sideLen = [&](int i) {
+                    BRepAdaptor_Curve c(
+                        TopoDS::Edge(model.edges(patch.edgeIds[i])));
+                    return GCPnts_AbscissaPoint::Length(c);
+                };
+                plan.acrossIsU =
+                    sideLen(0) + sideLen(2) < sideLen(1) + sideLen(3);
+            }
+            return plan;
+        }
     }
 
     plan.kind = MesherKind::Fallback;
@@ -417,6 +607,7 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
         const FaceMeshSettings& s = settings.forFace(fid);
         const bool overridden = settings.perFace.count(fid) > 0;
         if (plan.kind == MesherKind::PlanarGrid ||
+            plan.kind == MesherKind::CoonsGrid ||
             plan.kind == MesherKind::MinimalNGon ||
             plan.kind == MesherKind::RingJunction) {
             int nu = std::max(1, plan.isFillet && plan.acrossIsU
@@ -1023,8 +1214,12 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
             };
 
             // The analytic side's verts on this edge: the authoritative
-            // chain (exactly on the curve).
-            const double tolTarget = 1e-6 * (1.0 + edgeLen);
+            // chain. Coons verts evaluate through the pcurve, which is
+            // only guaranteed to agree with the 3D curve to the edge
+            // tolerance, so include it.
+            const double tolTarget =
+                std::max(1e-6 * (1.0 + edgeLen),
+                         10.0 * BRep_Tool::Tolerance(edge));
             std::vector<EdgeParamPoint> targets;
             for (size_t v = range[nfid][0]; v < range[nfid][1]; ++v) {
                 double t;
@@ -1078,6 +1273,13 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                     ring.push_back(u);
                     auto mu = movers.find(u), mw = movers.find(w);
                     if (mu == movers.end() || mw == movers.end()) continue;
+                    // Only true border segments take insertions — a
+                    // triangulation also has interior chords whose both
+                    // ends sit on the curve, and inserting into those
+                    // duplicates the chain.
+                    auto useIt = use.find(
+                        u < w ? std::make_pair(u, w) : std::make_pair(w, u));
+                    if (useIt == use.end() || useIt->second != 1) continue;
                     // Border segment on the edge: walk the shorter param
                     // arc from u to w, inserting the targets inside it.
                     double pu = mu->second, pw = mw->second;
@@ -1163,7 +1365,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 counts[fid] = {solved(plan.uEdges, s.radial),
                                solved(plan.vEdges, s.axial)};
                 break;
-            case MesherKind::PlanarGrid: {
+            case MesherKind::PlanarGrid:
+            case MesherKind::CoonsGrid: {
                 int defU = plan.isFillet && plan.acrossIsU ? s.filletLoops
                                                            : s.gridU;
                 int defV = plan.isFillet && !plan.acrossIsU ? s.filletLoops
@@ -1210,6 +1413,15 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 double holdV = plan.isFillet && !plan.acrossIsU ? s.filletHold : 0;
                 meshParametricGrid(face, surf, fid, clusteredParams(nu, holdU),
                                    clusteredParams(nv, holdV), out);
+                break;
+            }
+            case MesherKind::CoonsGrid: {
+                double holdU = plan.isFillet && plan.acrossIsU ? s.filletHold : 0;
+                double holdV = plan.isFillet && !plan.acrossIsU ? s.filletHold : 0;
+                if (!meshCoonsGrid(face, model, fid, clusteredParams(nu, holdU),
+                                   clusteredParams(nv, holdV), out)) {
+                    meshFallback(face, surf, fid, s, out);
+                }
                 break;
             }
             case MesherKind::MinimalNGon:
