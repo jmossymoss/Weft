@@ -3,6 +3,7 @@
 #include "weft/model.hpp"
 
 #include <array>
+#include <map>
 #include <vector>
 
 namespace weft {
@@ -15,5 +16,11 @@ struct EdgePolyline {
 };
 
 std::vector<EdgePolyline> sampleEdges(const Model& model, int segmentsPerEdge);
+
+// Same, but edges with a solved subdivision count (GenerationReport's
+// edgeDivisions) sample at exactly that count, so the overlay's chords
+// coincide with the generated mesh instead of ghosting past it.
+std::vector<EdgePolyline> sampleEdges(const Model& model, int segmentsPerEdge,
+                                      const std::map<int, int>& perEdge);
 
 }  // namespace weft

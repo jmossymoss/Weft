@@ -18,7 +18,7 @@ enum class CapStyle {
 // defaults unless an override is present for its FaceId.
 struct FaceMeshSettings {
     int radial = 16;        // divisions around a surface of revolution (u)
-    int axial = 4;          // divisions along the axis / pole-to-pole (v)
+    int axial = 1;          // divisions along the axis / pole-to-pole (v)
     int gridU = 4;          // planar/parametric grid divisions
     int gridV = 4;
     CapStyle cap = CapStyle::NGon;
@@ -38,8 +38,9 @@ struct FaceMeshSettings {
     int junctionRings = 2;
     // Trimmed/freeform faces that fall back to triangulation: pair the
     // triangles into quads where quality allows (guided by the surface's
-    // parametric directions). Off = pure triangles.
-    bool quadDominant = true;
+    // parametric directions). Off (default) = pure triangles, which keep
+    // their borders exactly on the B-rep edges for clean seam conformity.
+    bool quadDominant = false;
     // Game-topology minimalism (plan §1/§4.1): a flat face doesn't need an
     // interior grid. When set, a planar grid-safe face emits one boundary
     // n-gon instead — border vertices stay density-matched, so neighbours
@@ -76,6 +77,9 @@ enum class MesherKind {
                      // wrap-around seams and collapsed apex/pole rows
     DiskCap,         // planar face bounded by one full circle
     PlanarGrid,      // planar/parametric UV grid that passed containment
+    CoonsGrid,       // four-sided (trimmed/freeform) face: structured quad
+                     // grid blended between its four boundary pcurves —
+                     // clean flow on bspline strips instead of triangles
     RingJunction,    // rectangular planar face with one circular hole:
                      // concentric quad rings from the circle to the border
                      // (the cylinder-to-plane junction pattern, plan §3.3/4.2)

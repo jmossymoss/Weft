@@ -46,26 +46,48 @@ struct CellKeyHash {
 void weldVertices(PolyMesh& mesh, double tolerance) {
     if (tolerance <= 0 || mesh.vertices.empty()) return;
 
-    std::unordered_map<CellKey, uint32_t, CellKeyHash> firstInCell;
+    // Spatial hash with a true distance test over the 27 neighbouring
+    // cells: two points inside tolerance can still straddle a cell
+    // boundary, so a plain cell-identity weld leaves hairline seams.
+    std::unordered_map<CellKey, std::vector<uint32_t>, CellKeyHash> cells;
     std::vector<uint32_t> remap(mesh.vertices.size());
     std::vector<std::array<double, 3>> kept;
     std::vector<Anchor> keptAnchors;
     kept.reserve(mesh.vertices.size());
     keptAnchors.reserve(mesh.vertices.size());
+    const double tol2 = tolerance * tolerance;
 
     for (size_t i = 0; i < mesh.vertices.size(); ++i) {
         const auto& v = mesh.vertices[i];
-        CellKey key{static_cast<int64_t>(std::llround(v[0] / tolerance)),
-                    static_cast<int64_t>(std::llround(v[1] / tolerance)),
-                    static_cast<int64_t>(std::llround(v[2] / tolerance))};
-        auto [it, inserted] =
-            firstInCell.try_emplace(key, static_cast<uint32_t>(kept.size()));
-        if (inserted) {
+        const int64_t cx = int64_t(std::llround(v[0] / tolerance));
+        const int64_t cy = int64_t(std::llround(v[1] / tolerance));
+        const int64_t cz = int64_t(std::llround(v[2] / tolerance));
+        uint32_t match = UINT32_MAX;
+        for (int dz = -1; dz <= 1 && match == UINT32_MAX; ++dz) {
+            for (int dy = -1; dy <= 1 && match == UINT32_MAX; ++dy) {
+                for (int dx = -1; dx <= 1 && match == UINT32_MAX; ++dx) {
+                    auto it = cells.find({cx + dx, cy + dy, cz + dz});
+                    if (it == cells.end()) continue;
+                    for (uint32_t k : it->second) {
+                        const auto& q = kept[k];
+                        double ddx = q[0] - v[0], ddy = q[1] - v[1],
+                               ddz = q[2] - v[2];
+                        if (ddx * ddx + ddy * ddy + ddz * ddz <= tol2) {
+                            match = k;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if (match == UINT32_MAX) {
+            match = uint32_t(kept.size());
             kept.push_back(v);
             keptAnchors.push_back(i < mesh.anchors.size() ? mesh.anchors[i]
                                                           : Anchor{});
+            cells[{cx, cy, cz}].push_back(match);
         }
-        remap[i] = it->second;
+        remap[i] = match;
     }
     mesh.vertices = std::move(kept);
     mesh.anchors = std::move(keptAnchors);

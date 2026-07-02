@@ -465,6 +465,7 @@ void testFillet() {
     gs.defaults.gridU = 4;
     gs.defaults.gridV = 4;
     gs.defaults.filletLoops = 5;
+    gs.defaults.quadDominant = true;  // exercise guided pairing explicitly
     weft::GenerationReport report;
     weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
 
@@ -734,6 +735,7 @@ void testFreeformBorderConformity() {
     weft::Analysis a = weft::analyze(model);
     weft::GenerationSettings gs;
     gs.defaults.radial = 24;
+    gs.defaults.quadDominant = true;  // subdivision midpoints conform too
     weft::GenerationReport report;
     weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
 

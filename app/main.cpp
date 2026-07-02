@@ -495,6 +495,11 @@ static void regenerate(App& app) {
     }
     logLine("regenerate: ops applied, rebuilding buffers");
 
+    // Resample the B-rep edge overlay at the solved divisions so its
+    // chords coincide with the mesh instead of ghosting past it.
+    app.brepEdges = weft::sampleEdges(app.model, 28,
+                                      app.report.edgeDivisions);
+
     // Open boundary loops (deleted faces leave them) for the bridge tool,
     // each mapped to its nearest sampled B-rep edge for a stable op id.
     app.bLoops = weft::boundaryLoops(app.mesh);
@@ -601,6 +606,39 @@ static std::string openFileDialog() {
         "zenity --file-selection --title='Open STEP' "
         "--file-filter='STEP | *.step *.stp *.STEP *.STP' 2>/dev/null",
         "r");
+    if (!p) return "";
+    char buf[1024] = "";
+    std::string r;
+    if (fgets(buf, sizeof buf, p)) {
+        r = buf;
+        while (!r.empty() && (r.back() == '\n' || r.back() == '\r')) {
+            r.pop_back();
+        }
+    }
+    pclose(p);
+    return r;
+#endif
+}
+
+// Native "save file" dialog for exports.
+static std::string saveFileDialog(const char* defaultName) {
+#ifdef _WIN32
+    char file[1024];
+    std::snprintf(file, sizeof file, "%s", defaultName);
+    OPENFILENAMEA ofn = {};
+    ofn.lStructSize = sizeof ofn;
+    ofn.lpstrFilter = "Wavefront OBJ (*.obj)\0*.obj\0All files\0*.*\0";
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = sizeof file;
+    ofn.lpstrDefExt = "obj";
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
+    if (GetSaveFileNameA(&ofn)) return file;
+    return "";
+#else
+    std::string cmd =
+        "zenity --file-selection --save --title='Export OBJ' "
+        "--filename='" + std::string(defaultName) + "' 2>/dev/null";
+    FILE* p = popen(cmd.c_str(), "r");
     if (!p) return "";
     char buf[1024] = "";
     std::string r;
@@ -1187,6 +1225,27 @@ static void drawUi(App& app) {
                                  sizeof app.pathBuf);
         ImGui::SameLine();
         if (ImGui::Button("Load")) loadModel(app, app.pathBuf);
+        if (app.hasModel && ImGui::Button("Export OBJ...", {-1, 0})) {
+            // Default name: the source file with .obj — one group per
+            // B-rep face, so CAD face IDs survive into Blender.
+            std::string base = app.sourcePath;
+            size_t slash = base.find_last_of("/\\");
+            if (slash != std::string::npos) base = base.substr(slash + 1);
+            size_t dot = base.find_last_of('.');
+            if (dot != std::string::npos) base = base.substr(0, dot);
+            if (base.empty()) base = "weft";
+            std::string out = saveFileDialog((base + ".obj").c_str());
+            if (!out.empty()) {
+                try {
+                    weft::writeObj(app.mesh, out);
+                    app.status = "exported " + out;
+                    logLine("export: %s (%zu verts, %zu polys)", out.c_str(),
+                            app.mesh.vertexCount(), app.mesh.polygonCount());
+                } catch (const std::exception& e) {
+                    app.status = std::string("export failed: ") + e.what();
+                }
+            }
+        }
         ImGui::TextWrapped("%s", app.status.c_str());
     }
 
