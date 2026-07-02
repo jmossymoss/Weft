@@ -873,7 +873,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                   const GenerationSettings& settings, GenerationReport* report) {
     std::map<int, FacePlan> plans;
     for (int fid = 1; fid <= model.faceCount(); ++fid) {
-        plans.emplace(fid, planFace(fid, model, analysis, settings));
+        FacePlan plan = planFace(fid, model, analysis, settings);
+        if (settings.forFace(fid).exclude) {
+            // Deleted faces neither mesh nor constrain their neighbours'
+            // densities — their borders become free boundary loops.
+            plan.kind = MesherKind::Fallback;
+            plan.constrains = false;
+        }
+        plans.emplace(fid, std::move(plan));
     }
 
     DensitySolution density = solveDensity(model, plans, settings);
@@ -883,6 +890,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     for (int fid = 1; fid <= model.faceCount(); ++fid) {
         const TopoDS_Face face = TopoDS::Face(model.faces(fid));
         const FaceMeshSettings& s = settings.forFace(fid);
+        if (s.exclude) continue;
         const FacePlan& plan = plans.at(fid);
         BRepAdaptor_Surface surf(face);
 

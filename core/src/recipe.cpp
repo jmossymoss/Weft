@@ -20,6 +20,7 @@ void applySetting(FaceMeshSettings& s, const std::string& key,
     else if (key == "rings") s.junctionRings = std::stoi(value);
     else if (key == "quads") s.quadDominant = std::stoi(value) != 0;
     else if (key == "minimal") s.minimal = std::stoi(value) != 0;
+    else if (key == "skip") s.exclude = std::stoi(value) != 0;
     else if (key == "cap") {
         if (value == "ngon") s.cap = CapStyle::NGon;
         else if (value == "fan") s.cap = CapStyle::Fan;
@@ -44,14 +45,16 @@ void applySettingsList(FaceMeshSettings& s, const std::string& list) {
 }
 
 static std::string settingsToString(const FaceMeshSettings& s) {
-    char buf[256];
+    char buf[288];
     std::snprintf(buf, sizeof buf,
                   "radial=%d,axial=%d,gridu=%d,gridv=%d,cap=%s,chord=%g,"
-                  "angle=%g,loops=%d,hold=%g,rings=%d,quads=%d,minimal=%d",
+                  "angle=%g,loops=%d,hold=%g,rings=%d,quads=%d,minimal=%d,"
+                  "skip=%d",
                   s.radial, s.axial, s.gridU, s.gridV,
                   s.cap == CapStyle::Fan ? "fan" : "ngon", s.chordTolerance,
                   s.angleToleranceDeg, s.filletLoops, s.filletHold,
-                  s.junctionRings, s.quadDominant ? 1 : 0, s.minimal ? 1 : 0);
+                  s.junctionRings, s.quadDominant ? 1 : 0, s.minimal ? 1 : 0,
+                  s.exclude ? 1 : 0);
     return buf;
 }
 
@@ -68,8 +71,12 @@ void saveRecipe(const Recipe& recipe, const std::string& path) {
     }
     out.precision(17);
     for (const ManualOp& op : recipe.ops) {
-        out << "op loop " << op.faceId << " " << op.u << " " << op.v << " "
-            << op.t << "\n";
+        if (op.kind == ManualOp::Kind::Bridge) {
+            out << "op bridge " << op.edgeA << " " << op.edgeB << "\n";
+        } else {
+            out << "op loop " << op.faceId << " " << op.u << " " << op.v
+                << " " << op.t << "\n";
+        }
     }
 }
 
@@ -113,12 +120,17 @@ Recipe loadRecipe(const std::string& path) {
             } else if (kind == "op") {
                 std::string opKind;
                 ss >> opKind;
-                if (opKind != "loop") {
+                ManualOp op;
+                if (opKind == "loop") {
+                    ss >> op.faceId >> op.u >> op.v >> op.t;
+                    if (!ss) throw std::runtime_error("malformed op loop");
+                } else if (opKind == "bridge") {
+                    op.kind = ManualOp::Kind::Bridge;
+                    ss >> op.edgeA >> op.edgeB;
+                    if (!ss) throw std::runtime_error("malformed op bridge");
+                } else {
                     throw std::runtime_error("unknown op: " + opKind);
                 }
-                ManualOp op;
-                ss >> op.faceId >> op.u >> op.v >> op.t;
-                if (!ss) throw std::runtime_error("malformed op loop");
                 recipe.ops.push_back(op);
             } else {
                 throw std::runtime_error("unknown directive: " + kind);
