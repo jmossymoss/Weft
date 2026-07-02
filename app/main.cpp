@@ -237,6 +237,8 @@ struct Camera {
     }
 };
 
+enum class Mode { Idle, LoopCut };
+
 struct App {
     // Document.
     std::string sourcePath;
@@ -252,13 +254,19 @@ struct App {
     int selectedFace = 0;
     bool dirty = false;  // regenerate this frame
 
+    // Keyboard-centric editing state.
+    Mode mode = Mode::Idle;
+    std::string numberEntry;   // typed digits, Enter applies to density
+    weft::ManualOp hoverOp;    // loop-cut candidate under the cursor
+    bool hoverValid = false;
+
     // Display toggles.
     bool showFill = true;
     bool showWire = true;
     bool showBrepEdges = true;
 
     // GPU.
-    Buffer fill, wire, brep, pick;
+    Buffer fill, wire, brep, pick, preview;
     Camera cam;
 
     // UI buffers.
@@ -404,6 +412,158 @@ static void loadFixture(App& app, const std::string& name) {
 }
 
 // ---------------------------------------------------------------------------
+// Keyboard editing helpers.
+
+// The density field the bracket keys / typed numbers drive, chosen by what
+// kind of face is selected (radial for revolved faces, grid for planar...).
+static int* primaryDensity(App& app, weft::FaceMeshSettings& s, bool secondary) {
+    weft::MesherKind kind = weft::MesherKind::RevolutionGrid;
+    if (app.selectedFace > 0) {
+        auto it = app.report.faceMesher.find(app.selectedFace);
+        if (it != app.report.faceMesher.end()) kind = it->second;
+    }
+    switch (kind) {
+        case weft::MesherKind::RevolutionGrid:
+        case weft::MesherKind::DiskCap:
+            return secondary ? &s.axial : &s.radial;
+        case weft::MesherKind::RingJunction:
+            return secondary ? &s.junctionRings : &s.gridU;
+        default:
+            return secondary ? &s.gridV : &s.gridU;
+    }
+}
+
+// Settings block keyboard edits act on: the selected face's override
+// (created on first use), or the defaults when nothing is selected.
+static weft::FaceMeshSettings& editTarget(App& app) {
+    if (app.selectedFace > 0) {
+        auto it = app.recipe.settings.perFace.find(app.selectedFace);
+        if (it == app.recipe.settings.perFace.end()) {
+            it = app.recipe.settings.perFace
+                     .emplace(app.selectedFace, app.recipe.settings.defaults)
+                     .first;
+        }
+        return it->second;
+    }
+    return app.recipe.settings.defaults;
+}
+
+static void projectPoint(const Mat4& mvp, const std::array<double, 3>& p,
+                         int fbw, int fbh, float out[3]) {
+    float x = float(p[0]), y = float(p[1]), z = float(p[2]);
+    float cx = mvp.m[0] * x + mvp.m[4] * y + mvp.m[8] * z + mvp.m[12];
+    float cy = mvp.m[1] * x + mvp.m[5] * y + mvp.m[9] * z + mvp.m[13];
+    float cw = mvp.m[3] * x + mvp.m[7] * y + mvp.m[11] * z + mvp.m[15];
+    out[2] = cw;
+    if (cw <= 1e-6f) return;
+    out[0] = (cx / cw * 0.5f + 0.5f) * fbw;
+    out[1] = (1.0f - (cy / cw * 0.5f + 0.5f)) * fbh;
+}
+
+// Loop-cut hover: nearest same-face mesh edge under the cursor, split
+// fraction from the cursor's position along it. The preview is computed by
+// actually running the op on a scratch copy — what you see IS the replay.
+static void updateLoopCutHover(App& app, const Mat4& mvp, double mx, double my,
+                               int fbw, int fbh) {
+    app.hoverValid = false;
+    app.preview.count = 0;
+    if (!app.hasModel) return;
+
+    const weft::PolyMesh& m = app.mesh;
+    double bestDist = 26.0;  // px
+    uint32_t bestA = 0, bestB = 0;
+    double bestT = 0.5;
+    for (size_t p = 0; p < m.polygons.size(); ++p) {
+        const auto& poly = m.polygons[p];
+        for (size_t i = 0; i < poly.size(); ++i) {
+            uint32_t a = poly[i], b = poly[(i + 1) % poly.size()];
+            if (a > b) continue;  // undirected once
+            const weft::Anchor& aa = m.anchors[a];
+            const weft::Anchor& ab = m.anchors[b];
+            if (aa.faceId == 0 || aa.faceId != ab.faceId) continue;
+            float pa[3] = {0, 0, -1}, pb[3] = {0, 0, -1};
+            projectPoint(mvp, m.vertices[a], fbw, fbh, pa);
+            projectPoint(mvp, m.vertices[b], fbw, fbh, pb);
+            if (pa[2] <= 0 || pb[2] <= 0) continue;
+            float ex = pb[0] - pa[0], ey = pb[1] - pa[1];
+            float len2 = ex * ex + ey * ey;
+            if (len2 < 1e-6f) continue;
+            float t = (float(mx) - pa[0]) * ex + (float(my) - pa[1]) * ey;
+            t = std::clamp(t / len2, 0.0f, 1.0f);
+            float dx = float(mx) - (pa[0] + t * ex);
+            float dy = float(my) - (pa[1] + t * ey);
+            double d = std::sqrt(dx * dx + dy * dy);
+            if (d < bestDist) {
+                bestDist = d;
+                bestA = a;
+                bestB = b;
+                bestT = std::clamp(double(t), 0.05, 0.95);
+            }
+        }
+    }
+    if (bestA == bestB) return;
+
+    const weft::Anchor& aa = m.anchors[bestA];
+    const weft::Anchor& ab = m.anchors[bestB];
+    weft::ManualOp op;
+    op.faceId = aa.faceId;
+    op.u = 0.5 * (aa.u + ab.u);
+    op.v = 0.5 * (aa.v + ab.v);
+    op.t = bestT;
+
+    // Probe on a copy; if the split lands on the far side of the edge from
+    // the cursor (the walker picked the reversed ordering), mirror t.
+    auto previewSegments = [&](const weft::ManualOp& probe,
+                               double* splitScreenDist) -> std::vector<float> {
+        weft::PolyMesh copy = m;
+        if (weft::insertLoop(copy, app.model, probe) == 0) return {};
+        size_t firstNew = m.vertexCount();
+        if (splitScreenDist) {
+            *splitScreenDist = 1e30;
+            for (size_t v = firstNew; v < copy.vertexCount(); ++v) {
+                float s[3] = {0, 0, -1};
+                projectPoint(mvp, copy.vertices[v], fbw, fbh, s);
+                if (s[2] <= 0) continue;
+                double d = std::hypot(s[0] - mx, s[1] - my);
+                *splitScreenDist = std::min(*splitScreenDist, d);
+            }
+        }
+        std::vector<float> lines;
+        for (const auto& poly : copy.polygons) {
+            for (size_t i = 0; i < poly.size(); ++i) {
+                uint32_t v0 = poly[i], v1 = poly[(i + 1) % poly.size()];
+                if (v0 < firstNew || v1 < firstNew || v0 > v1) continue;
+                for (uint32_t v : {v0, v1}) {
+                    lines.push_back(float(copy.vertices[v][0]));
+                    lines.push_back(float(copy.vertices[v][1]));
+                    lines.push_back(float(copy.vertices[v][2]));
+                    lines.push_back(1.0f);
+                    lines.push_back(0.85f);
+                    lines.push_back(0.25f);
+                }
+            }
+        }
+        return lines;
+    };
+
+    double dist = 0, distFlipped = 0;
+    std::vector<float> lines = previewSegments(op, &dist);
+    weft::ManualOp flipped = op;
+    flipped.t = 1.0 - op.t;
+    std::vector<float> linesFlipped = previewSegments(flipped, &distFlipped);
+    if (!linesFlipped.empty() &&
+        (lines.empty() || distFlipped + 1.0 < dist)) {
+        op = flipped;
+        lines = std::move(linesFlipped);
+    }
+    if (lines.empty()) return;
+
+    app.preview.upload(lines);
+    app.hoverOp = op;
+    app.hoverValid = true;
+}
+
+// ---------------------------------------------------------------------------
 // Face picking: render IDs into the back buffer, read one pixel.
 
 static int pickFace(App& app, GLuint flatProg, const Mat4& mvp, int px, int py,
@@ -471,7 +631,51 @@ static bool settingsEditor(weft::FaceMeshSettings& s) {
         ch = true;
     }
     ch |= ImGui::Checkbox("quad-dominant fallback", &s.quadDominant);
+    ch |= ImGui::Checkbox("minimal n-gon (flat panels)", &s.minimal);
     return ch;
+}
+
+// Mode indicator + typed-number + hotkey reference, floating over the
+// viewport so the keyboard flow never needs the side panel.
+static void drawOverlay(App& app) {
+    ImGui::SetNextWindowPos({12, 12});
+    ImGui::SetNextWindowBgAlpha(0.55f);
+    ImGui::Begin("##overlay", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoFocusOnAppearing |
+                     ImGuiWindowFlags_NoNav);
+    if (app.mode == Mode::LoopCut) {
+        ImGui::TextColored({1.0f, 0.85f, 0.25f, 1.0f}, "LOOP CUT");
+        ImGui::SameLine();
+        ImGui::TextDisabled("hover an edge - click commits - R/esc exits");
+    } else {
+        ImGui::TextDisabled(app.selectedFace > 0 ? "face #%d selected"
+                                                 : "no selection",
+                            app.selectedFace);
+    }
+    if (!app.numberEntry.empty()) {
+        ImGui::TextColored({1.0f, 0.85f, 0.25f, 1.0f}, "divisions: %s_",
+                           app.numberEntry.c_str());
+        ImGui::SameLine();
+        ImGui::TextDisabled("enter applies (shift+enter: secondary)");
+    }
+    ImGui::End();
+
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos({12, vp->WorkSize.y - 12}, ImGuiCond_Always,
+                            {0.0f, 1.0f});
+    ImGui::SetNextWindowBgAlpha(0.45f);
+    ImGui::Begin("##hotkeys", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoFocusOnAppearing |
+                     ImGuiWindowFlags_NoNav);
+    ImGui::TextDisabled(
+        "R loop cut   12<enter> set divisions   [ ] nudge (+shift: 2nd axis)\n"
+        "C cap ngon/fan   T tris ok   M minimal n-gon   ctrl+Z undo op\n"
+        "W wire   B feature edges   F frame   esc deselect/cancel");
+    ImGui::End();
 }
 
 static void drawUi(App& app) {
@@ -582,6 +786,7 @@ static void drawUi(App& app) {
         ImGui::Checkbox("feature edges", &app.showBrepEdges);
         ImGui::TextDisabled("orange convex / blue concave / green smooth");
         ImGui::TextDisabled("LMB select · RMB orbit · shift pan · wheel zoom");
+        ImGui::Text("%zu manual op(s)", app.recipe.ops.size());
     }
 
     ImGui::End();
@@ -598,6 +803,7 @@ int main(int argc, char** argv) {
     std::string screenshotPath, startModel, startFixture = "demo";
     int startSelect = 0;
     float startYaw = 0.9f, startPitch = 0.5f;
+    bool demoLoopCut = false;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--screenshot" && i + 1 < argc) screenshotPath = argv[++i];
@@ -605,6 +811,7 @@ int main(int argc, char** argv) {
         else if (a == "--select" && i + 1 < argc) startSelect = std::stoi(argv[++i]);
         else if (a == "--yaw" && i + 1 < argc) startYaw = std::stof(argv[++i]);
         else if (a == "--pitch" && i + 1 < argc) startPitch = std::stof(argv[++i]);
+        else if (a == "--loopcut") demoLoopCut = true;  // screenshot testing
         else startModel = a;
     }
 
@@ -658,6 +865,11 @@ int main(int argc, char** argv) {
         glfwGetFramebufferSize(window, &fbw, &fbh);
         double mx, my;
         glfwGetCursorPos(window, &mx, &my);
+        if (demoLoopCut) {  // scripted screenshots: cursor at viewport center
+            app.mode = Mode::LoopCut;
+            mx = fbw * 0.42;
+            my = fbh * 0.5;
+        }
 
         // Camera controls (Blender-ish): RMB/MMB orbit, +shift pan, wheel zoom.
         if (!io.WantCaptureMouse) {
@@ -693,8 +905,80 @@ int main(int argc, char** argv) {
                 app.cam.dist *= std::pow(0.92f, gScroll);
                 app.cam.dist = std::clamp(app.cam.dist, 0.5f, 10000.0f);
             }
-            if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS) frameModel(app);
         }
+
+        // Keyboard-centric editing (plan §6: modal verbs, typed precision).
+        if (!io.WantCaptureKeyboard) {
+            bool shift = io.KeyShift;
+            if (ImGui::IsKeyPressed(ImGuiKey_F, false)) frameModel(app);
+            if (ImGui::IsKeyPressed(ImGuiKey_R, false)) {
+                app.mode = app.mode == Mode::LoopCut ? Mode::Idle : Mode::LoopCut;
+                app.hoverValid = false;
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                if (app.mode != Mode::Idle) app.mode = Mode::Idle;
+                else if (!app.numberEntry.empty()) app.numberEntry.clear();
+                else if (app.selectedFace) {
+                    app.selectedFace = 0;
+                    rebuildBuffers(app);
+                }
+            }
+            for (int d = 0; d <= 9; ++d) {
+                if (ImGui::IsKeyPressed(ImGuiKey(ImGuiKey_0 + d), false) ||
+                    ImGui::IsKeyPressed(ImGuiKey(ImGuiKey_Keypad0 + d), false)) {
+                    if (app.numberEntry.size() < 4) {
+                        app.numberEntry += char('0' + d);
+                    }
+                }
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_Backspace, false) &&
+                !app.numberEntry.empty()) {
+                app.numberEntry.pop_back();
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_Enter, false) &&
+                !app.numberEntry.empty() && app.hasModel) {
+                int value = std::atoi(app.numberEntry.c_str());
+                weft::FaceMeshSettings& s = editTarget(app);
+                *primaryDensity(app, s, shift) = std::max(1, value);
+                app.numberEntry.clear();
+                app.dirty = true;
+            }
+            bool dec = ImGui::IsKeyPressed(ImGuiKey_LeftBracket);
+            bool inc = ImGui::IsKeyPressed(ImGuiKey_RightBracket);
+            if ((dec || inc) && app.hasModel) {
+                weft::FaceMeshSettings& s = editTarget(app);
+                int* v = primaryDensity(app, s, shift);
+                *v = std::max(1, *v + (inc ? 1 : -1));
+                app.dirty = true;
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_C, false) && app.hasModel) {
+                weft::FaceMeshSettings& s = editTarget(app);
+                s.cap = s.cap == weft::CapStyle::NGon ? weft::CapStyle::Fan
+                                                      : weft::CapStyle::NGon;
+                app.dirty = true;
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_T, false) && app.hasModel) {
+                weft::FaceMeshSettings& s = editTarget(app);
+                s.quadDominant = !s.quadDominant;
+                app.dirty = true;
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_M, false) && app.hasModel) {
+                weft::FaceMeshSettings& s = editTarget(app);
+                s.minimal = !s.minimal;
+                app.dirty = true;
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_W, false)) app.showWire = !app.showWire;
+            if (ImGui::IsKeyPressed(ImGuiKey_B, false)) {
+                app.showBrepEdges = !app.showBrepEdges;
+            }
+            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false) &&
+                !app.recipe.ops.empty()) {
+                app.recipe.ops.pop_back();
+                app.dirty = true;
+                app.status = "undid last op";
+            }
+        }
+
         bool lmb = !io.WantCaptureMouse &&
                    glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) ==
                        GLFW_PRESS;
@@ -711,8 +995,17 @@ int main(int argc, char** argv) {
         Mat4 view = matLookAt(app.cam.eye(), app.cam.target, {0, 0, 1});
         Mat4 mvp = matMul(proj, view);
 
-        // Click-select (on release, small travel): pick pass + pixel read.
-        if (clicked && app.hasModel) {
+        // Loop-cut hover preview follows the cursor; click commits the op
+        // into the recipe (regeneration replays it — fully non-destructive).
+        if (app.mode == Mode::LoopCut && !io.WantCaptureMouse) {
+            updateLoopCutHover(app, mvp, mx, my, fbw, fbh);
+            if (clicked && app.hoverValid) {
+                app.recipe.ops.push_back(app.hoverOp);
+                app.dirty = true;
+                app.status = "loop cut committed (ctrl+z undoes)";
+            }
+        } else if (clicked && app.hasModel) {
+            // Click-select: pick pass + pixel read.
             glViewport(0, 0, fbw, fbh);
             int hit = pickFace(app, flatProg, mvp, int(mx), int(my), fbw, fbh);
             app.selectedFace = hit == app.selectedFace ? 0 : hit;
@@ -723,6 +1016,7 @@ int main(int argc, char** argv) {
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
         drawUi(app);
+        drawOverlay(app);
         ImGui::Render();
 
         glViewport(0, 0, fbw, fbh);
@@ -754,6 +1048,14 @@ int main(int argc, char** argv) {
             glBindVertexArray(app.brep.vao);
             glDrawArrays(GL_LINES, 0, app.brep.count);
             glLineWidth(1.0f);
+        }
+        if (app.mode == Mode::LoopCut && app.hoverValid && app.preview.count) {
+            glDisable(GL_DEPTH_TEST);
+            glLineWidth(3.0f);
+            glBindVertexArray(app.preview.vao);
+            glDrawArrays(GL_LINES, 0, app.preview.count);
+            glLineWidth(1.0f);
+            glEnable(GL_DEPTH_TEST);
         }
         glBindVertexArray(0);
 
