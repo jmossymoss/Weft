@@ -639,7 +639,7 @@ static void loadFixture(App& app, const std::string& name) {
 // Every recipe mutation goes through this so the undo stack can snapshot
 // the pre-edit state once per gesture (see the frame bookkeeping in main).
 static void markDirty(App& app) {
-    markDirty(app);
+    app.dirty = true;
     app.mutatedThisFrame = true;
 }
 
