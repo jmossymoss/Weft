@@ -7,9 +7,10 @@ per-face controllable, regenerable at any density without losing manual work.
 
 Full plan and architecture: [docs/PLAN.md](docs/PLAN.md).
 
-## Status: Phase 1 — analytic primitives + density matching
+## Status: Phase 3 — feature recognition + fillet support loops
 
-Headless C++ core + CLI covering the plan's Phases 0–1:
+Headless C++ core + CLI covering the plan's Phases 0–1 and the fillet half
+of Phase 3:
 
 - STEP import via OpenCASCADE (with shape healing) and stable face/edge IDs
 - B-rep analysis: surface classification (plane/cylinder/cone/sphere/torus/
@@ -30,6 +31,11 @@ Headless C++ core + CLI covering the plan's Phases 0–1:
   Change one face's density and its neighbours follow; the solid stays
   watertight with no T-junctions. Edges can also be pinned exactly
   (`--edge 3:20`), the first slice of the plan's per_edge_settings.
+- **Fillet recognition + support loops** (plan §3.3): cylindrical/toroidal
+  strips joined to their neighbours by tangent-smooth edges are detected as
+  blends (`inspect` tags them). They get `--loops N` divisions across the
+  blend — density-matched into the rest of the model — and `--hold F`
+  clusters those loops toward the creases for bake-friendly shading.
 - **Recipes** (plan §5, first slice): save the full density setup —
   defaults, per-face overrides, per-edge pins — keyed to stable CAD IDs
   (`--save-recipe` / `--recipe`), and regenerate identical topology from

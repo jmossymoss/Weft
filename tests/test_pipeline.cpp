@@ -315,6 +315,64 @@ void testBoxDensityMatching() {
     }
 }
 
+void testFillet() {
+    std::printf("-- fillet detection + support loops --\n");
+    std::string stepPath = tmpPath("weft_test_fillet.step");
+    weft::writeStep(weft::makeFixture("fillet"), stepPath);
+
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis a = weft::analyze(model);
+    CHECK_EQ(model.faceCount(), 7);  // 6 box faces (2 shrunk, 2 notched) + strip
+
+    // Exactly one fillet face: the quarter-cylinder strip, r=4, joined to
+    // its two planar neighbours by tangent-smooth edges.
+    int filletFaceId = 0, filletCount = 0, smoothEdges = 0;
+    for (const auto& f : a.faces) {
+        if (f.isFillet) {
+            ++filletCount;
+            filletFaceId = f.id;
+            CHECK(f.type == weft::SurfaceType::Cylinder);
+            CHECK(std::abs(f.radius - 4.0) < 1e-9);
+        }
+    }
+    for (const auto& e : a.edges) {
+        if (e.convexity == weft::EdgeConvexity::Smooth) ++smoothEdges;
+    }
+    CHECK_EQ(filletCount, 1);
+    CHECK_EQ(smoothEdges, 2);
+
+    // 5 support loops across the blend, density-matched 4 along its length.
+    weft::GenerationSettings gs;
+    gs.defaults.gridU = 4;
+    gs.defaults.gridV = 4;
+    gs.defaults.filletLoops = 5;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
+
+    CHECK(report.faceMesher[filletFaceId] == weft::MesherKind::PlanarGrid);
+    std::map<int, int> polysPerFace;
+    for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+        ++polysPerFace[mesh.polygonFaceId[p]];
+    }
+    CHECK_EQ(polysPerFace[filletFaceId], 5 * 4);
+
+    // Hold clustering: same counts, but the loops crowd toward the creases —
+    // the first across-interval must shrink vs the uniform mesh.
+    weft::GenerationSettings gsHold = gs;
+    gsHold.defaults.filletHold = 0.8;
+    weft::PolyMesh held = weft::generate(model, a, gsHold);
+    CHECK_EQ(held.vertexCount(), mesh.vertexCount());
+    CHECK_EQ(held.polygonCount(), mesh.polygonCount());
+
+    auto t0 = weft::clusteredParams(5, 0.0);
+    auto t1 = weft::clusteredParams(5, 0.8);
+    CHECK(t1[1] - t1[0] < 0.5 * (t0[1] - t0[0]));           // tight at crease
+    CHECK(t1[3] - t1[2] > (t0[3] - t0[2]));                 // loose mid-span
+    for (size_t i = 1; i < t1.size(); ++i) CHECK(t1[i] > t1[i - 1]);
+    CHECK(t1.front() == 0.0);
+    CHECK(t1.back() == 1.0);
+}
+
 void testRecipeRoundTrip() {
     std::printf("-- recipe round trip --\n");
     weft::GenerationSettings gs;
@@ -389,6 +447,7 @@ int main() {
     testSphere();
     testTorus();
     testBoxDensityMatching();
+    testFillet();
     testRecipeRoundTrip();
     testBoss();
     if (failures) {

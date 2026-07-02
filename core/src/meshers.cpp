@@ -27,6 +27,21 @@
 
 namespace weft {
 
+std::vector<double> clusteredParams(int divisions, double hold) {
+    int n = std::max(1, divisions);
+    hold = std::min(0.95, std::max(0.0, hold));
+    std::vector<double> t(n + 1);
+    for (int i = 0; i <= n; ++i) {
+        double x = double(i) / n;
+        // Monotonic for hold < 1: slope 1-hold at the ends, 1+hold mid-span,
+        // so intervals shrink near the creases and grow in the middle.
+        t[i] = x - hold * std::sin(2.0 * M_PI * x) / (2.0 * M_PI);
+    }
+    t.front() = 0.0;
+    t.back() = 1.0;
+    return t;
+}
+
 const char* mesherKindName(MesherKind k) {
     switch (k) {
         case MesherKind::RevolutionGrid: return "revolution-grid";
@@ -70,6 +85,10 @@ struct FacePlan {
     std::vector<int> vEdges;
     // Whether this plan's edge lists participate in density matching.
     bool constrains = false;
+    // Fillet strips get support loops across the blend instead of plain
+    // grid divisions; `acrossIsU` says which parametric direction spans it.
+    bool isFillet = false;
+    bool acrossIsU = true;
     gp_Circ circ;  // DiskCap only
 };
 
@@ -206,6 +225,12 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     if (parametricGridFits(face, surf, std::max(1, s.gridU),
                            std::max(1, s.gridV))) {
         plan.kind = MesherKind::PlanarGrid;
+        if (info.isFillet) {
+            plan.isFillet = true;
+            // The blend arc runs along u for a cylinder strip and along the
+            // minor circle (v) for a toroidal corner patch.
+            plan.acrossIsU = surf.GetType() == GeomAbs_Cylinder;
+        }
         // Only a plain 2u+2v rectangle ties its grid to its edges; anything
         // else meshes with its own settings, unconstrained.
         collectIsoEdges(face, model, info.edgeIds, plan);
@@ -281,8 +306,12 @@ DensitySolution solveDensity(const Model& model,
         if (!plan.constrains) continue;
         const FaceMeshSettings& s = settings.forFace(fid);
         if (plan.kind == MesherKind::PlanarGrid) {
-            propose(plan.uEdges, std::max(1, s.gridU));
-            propose(plan.vEdges, std::max(1, s.gridV));
+            int nu = std::max(1, plan.isFillet && plan.acrossIsU
+                                     ? s.filletLoops : s.gridU);
+            int nv = std::max(1, plan.isFillet && !plan.acrossIsU
+                                     ? s.filletLoops : s.gridV);
+            propose(plan.uEdges, nu);
+            propose(plan.vEdges, nv);
         } else {  // revolution sides and disk caps subdivide rings radially
             propose(plan.uEdges, std::max(3, s.radial));
             propose(plan.vEdges, std::max(1, s.axial));
@@ -389,18 +418,20 @@ void meshDiskCap(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
 }
 
 void meshParametricGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
-                        int faceId, int nu, int nv, MeshBuilder& out) {
+                        int faceId, const std::vector<double>& uParams,
+                        const std::vector<double>& vParams, MeshBuilder& out) {
     double umin, umax, vmin, vmax;
     BRepTools::UVBounds(face, umin, umax, vmin, vmax);
-    const double du = (umax - umin) / nu;
-    const double dv = (vmax - vmin) / nv;
+    const int nu = static_cast<int>(uParams.size()) - 1;
+    const int nv = static_cast<int>(vParams.size()) - 1;
     const bool flip = face.Orientation() == TopAbs_REVERSED;
 
     std::vector<uint32_t> grid((nu + 1) * (nv + 1));
     for (int j = 0; j <= nv; ++j) {
         for (int i = 0; i <= nu; ++i) {
-            grid[j * (nu + 1) + i] =
-                out.addVertex(surf.Value(umin + i * du, vmin + j * dv));
+            grid[j * (nu + 1) + i] = out.addVertex(
+                surf.Value(umin + uParams[i] * (umax - umin),
+                           vmin + vParams[j] * (vmax - vmin)));
         }
     }
     for (int j = 0; j < nv; ++j) {
@@ -466,14 +497,22 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 meshDiskCap(face, surf, plan.circ, fid,
                             solved(plan.uEdges, s.radial), s.cap, out);
                 break;
-            case MesherKind::PlanarGrid:
-                meshParametricGrid(face, surf, fid,
-                                   plan.constrains ? solved(plan.uEdges, s.gridU)
-                                                   : std::max(1, s.gridU),
-                                   plan.constrains ? solved(plan.vEdges, s.gridV)
-                                                   : std::max(1, s.gridV),
-                                   out);
+            case MesherKind::PlanarGrid: {
+                int defU = plan.isFillet && plan.acrossIsU ? s.filletLoops
+                                                           : s.gridU;
+                int defV = plan.isFillet && !plan.acrossIsU ? s.filletLoops
+                                                            : s.gridV;
+                int nu = plan.constrains ? solved(plan.uEdges, defU)
+                                         : std::max(1, defU);
+                int nv = plan.constrains ? solved(plan.vEdges, defV)
+                                         : std::max(1, defV);
+                // Support loops hug the creases on fillet strips.
+                double holdU = plan.isFillet && plan.acrossIsU ? s.filletHold : 0;
+                double holdV = plan.isFillet && !plan.acrossIsU ? s.filletHold : 0;
+                meshParametricGrid(face, surf, fid, clusteredParams(nu, holdU),
+                                   clusteredParams(nv, holdV), out);
                 break;
+            }
             case MesherKind::Fallback:
                 meshFallback(face, fid, s, out);
                 break;
