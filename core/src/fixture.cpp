@@ -2,7 +2,10 @@
 
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepPrimAPI_MakeCone.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepPrimAPI_MakeSphere.hxx>
+#include <BRepPrimAPI_MakeTorus.hxx>
 #include <BRep_Builder.hxx>
 #include <TopoDS_Compound.hxx>
 #include <gp_Ax2.hxx>
@@ -18,6 +21,15 @@ TopoDS_Shape makeFixture(const std::string& name) {
     }
     if (name == "box") {
         return BRepPrimAPI_MakeBox(20.0, 30.0, 15.0).Shape();
+    }
+    if (name == "cone") {
+        return BRepPrimAPI_MakeCone(10.0, 0.0, 20.0).Shape();
+    }
+    if (name == "sphere") {
+        return BRepPrimAPI_MakeSphere(10.0).Shape();
+    }
+    if (name == "torus") {
+        return BRepPrimAPI_MakeTorus(10.0, 3.0).Shape();
     }
     if (name == "demo") {
         TopoDS_Shape cyl = BRepPrimAPI_MakeCylinder(10.0, 30.0).Shape();
@@ -39,8 +51,9 @@ TopoDS_Shape makeFixture(const std::string& name) {
         TopoDS_Shape boss = BRepPrimAPI_MakeCylinder(axis, 8.0, 15.0).Shape();
         return BRepAlgoAPI_Fuse(base, boss).Shape();
     }
-    throw std::runtime_error("unknown fixture: " + name +
-                             " (expected cylinder|box|demo|boss)");
+    throw std::runtime_error(
+        "unknown fixture: " + name +
+        " (expected cylinder|box|cone|sphere|torus|demo|boss)");
 }
 
 }  // namespace weft
