@@ -5,3 +5,4 @@ build/
 !tests/fixtures/*.step
 compile_commands.json
 .cache/
+imgui.ini
