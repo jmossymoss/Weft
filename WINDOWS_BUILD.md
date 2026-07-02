@@ -28,6 +28,27 @@
    build\bin\Release\weft.exe mesh demo.step -o demo.obj --radial 12 --axial 3
    ```
 
+## Fast iteration (`dev.bat`)
+
+`build.bat` re-checks dependencies, reconfigures CMake, redeploys DLLs, and
+runs the full test suite every time — thorough, but slow for a one-line
+change. Once `build.bat` has succeeded at least once, use `dev.bat` instead:
+
+```cmd
+dev.bat            REM build + run weft_app (incremental, no other checks)
+dev.bat tests      REM build + run weft_tests
+dev.bat cli mesh demo.step -o demo.obj --radial 12
+dev.bat build      REM compile everything, run nothing
+dev.bat -d app     REM Debug config: compiles faster, runs slower
+```
+
+Each of these is a plain `cmake --build --target <x>` under the hood, so
+only what changed gets recompiled — normally a few seconds, not minutes.
+
+The fastest loop of all is opening `build\weft.sln` directly in Visual
+Studio: set `weft_app` as the startup project and hit F5/Ctrl+F5 for
+incremental builds with breakpoints and edit-and-continue.
+
 ## Manual Build (if batch fails)
 
 If `build.bat` encounters issues, build manually:
