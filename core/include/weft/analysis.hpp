@@ -36,6 +36,10 @@ struct FaceInfo {
     int id = 0;
     SurfaceType type = SurfaceType::Other;
     double radius = 0.0;  // cylinder/cone/sphere/torus major radius, else 0
+    // Constant-radius blend detection: a cylindrical/toroidal strip whose
+    // boundary joins at least two neighbours tangentially. These are the
+    // faces that get support loops across their width (plan §3.3).
+    bool isFillet = false;
     std::vector<int> edgeIds;
     std::vector<int> neighborFaceIds;  // via shared edges (adjacency graph)
 };

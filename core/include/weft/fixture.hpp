@@ -14,6 +14,8 @@ namespace weft {
 //   "cone"     - solid cone to an apex (r=10, h=20)
 //   "sphere"   - solid sphere (r=10)
 //   "torus"    - solid torus (R=10, r=3)
+//   "fillet"   - box with one long edge blended r=4 (a fillet strip with
+//                two tangent-smooth joins, for support-loop testing)
 //   "demo"     - compound of cylinder and box side by side
 //   "boss"     - box fused with a cylindrical boss (exercises trimmed
 //                planar faces, which must fall back to triangulation)

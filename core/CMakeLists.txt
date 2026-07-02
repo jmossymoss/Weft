@@ -15,6 +15,6 @@ target_include_directories(weft_core
 target_link_libraries(weft_core PUBLIC
   TKernel TKMath
   TKBRep TKG2d TKG3d TKGeomBase
-  TKTopAlgo TKGeomAlgo TKPrim TKBO TKShHealing TKMesh
+  TKTopAlgo TKGeomAlgo TKPrim TKBO TKFillet TKShHealing TKMesh
   TKXSBase TKSTEP
 )
