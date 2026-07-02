@@ -398,10 +398,24 @@ static void rebuildBuffers(App& app) {
 
 static void regenerate(App& app) {
     if (!app.hasModel) return;
-    app.report = {};
-    app.mesh = weft::generate(app.model, app.analysis, app.recipe.settings,
-                              &app.report);
-    weft::applyOps(app.mesh, app.model, app.recipe.ops);
+    // Never let a geometry failure take the app down: keep the previous
+    // mesh, surface the error, and let the user undo the change.
+    try {
+        weft::GenerationReport report;
+        weft::PolyMesh mesh = weft::generate(app.model, app.analysis,
+                                             app.recipe.settings, &report);
+        weft::applyOps(mesh, app.model, app.recipe.ops);
+        app.mesh = std::move(mesh);
+        app.report = std::move(report);
+    } catch (const std::exception& e) {
+        app.status = std::string("regenerate failed (ctrl+Z): ") + e.what();
+        app.dirty = false;
+        return;
+    } catch (...) {
+        app.status = "regenerate failed (ctrl+Z to revert)";
+        app.dirty = false;
+        return;
+    }
 
     // Open boundary loops (deleted faces leave them) for the bridge tool,
     // each mapped to its nearest sampled B-rep edge for a stable op id.
