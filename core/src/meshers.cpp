@@ -51,6 +51,7 @@ const char* mesherKindName(MesherKind k) {
         case MesherKind::DiskCap: return "disk-cap";
         case MesherKind::PlanarGrid: return "parametric-grid";
         case MesherKind::RingJunction: return "ring-junction";
+        case MesherKind::QuadDominant: return "quad-dominant";
         case MesherKind::Fallback: return "fallback-tri";
     }
     return "fallback-tri";
@@ -630,9 +631,28 @@ void meshRingJunction(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     }
 }
 
-// Last resort: OCCT chord-tolerance triangulation of the single face.
-void meshFallback(const TopoDS_Face& face, int faceId, const FaceMeshSettings& s,
-                  MeshBuilder& out) {
+// Corner-angle quality of a polygon: total deviation from 90-degree
+// corners, or a large penalty when a corner is degenerate/reflex.
+double quadAngleCost(const std::array<gp_Pnt, 4>& q) {
+    double cost = 0;
+    for (int i = 0; i < 4; ++i) {
+        gp_Vec e1(q[i], q[(i + 1) % 4]);
+        gp_Vec e2(q[i], q[(i + 3) % 4]);
+        if (e1.Magnitude() < 1e-12 || e2.Magnitude() < 1e-12) return 1e9;
+        double deg = e1.Angle(e2) * 180.0 / M_PI;
+        if (deg < 20.0 || deg > 160.0) return 1e9;
+        cost += std::abs(deg - 90.0);
+    }
+    return cost;
+}
+
+// Last resort for trimmed/freeform faces: OCCT chord-tolerance
+// triangulation, optionally paired into quads. Pairing is greedy over a
+// quality score that prefers near-rectangular quads whose edges follow the
+// surface's parametric directions — the seed of the plan's guided quad
+// flow (§3.5); a real cross-field solver replaces the guidance later.
+void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
+                  int faceId, const FaceMeshSettings& s, MeshBuilder& out) {
     BRepMesh_IncrementalMesh mesher(face, s.chordTolerance);
     TopLoc_Location loc;
     Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, loc);
@@ -641,19 +661,160 @@ void meshFallback(const TopoDS_Face& face, int faceId, const FaceMeshSettings& s
     const bool flip = face.Orientation() == TopAbs_REVERSED;
     const bool hasUV = tri->HasUVNodes();
     std::vector<uint32_t> verts(tri->NbNodes());
+    std::vector<gp_Pnt> pts(tri->NbNodes());
     for (int i = 1; i <= tri->NbNodes(); ++i) {
         Anchor a;
         if (hasUV) {
             gp_Pnt2d uv = tri->UVNode(i);
             a = {faceId, uv.X(), uv.Y()};
         }
-        verts[i - 1] = out.addVertex(
-            tri->Node(i).Transformed(loc.Transformation()), a);
+        pts[i - 1] = tri->Node(i).Transformed(loc.Transformation());
+        verts[i - 1] = out.addVertex(pts[i - 1], a);
     }
+
+    std::vector<std::array<int, 3>> tris(tri->NbTriangles());
     for (int i = 1; i <= tri->NbTriangles(); ++i) {
         int a, b, c;
         tri->Triangle(i).Get(a, b, c);
-        out.addPolygon({verts[a - 1], verts[b - 1], verts[c - 1]}, faceId, flip);
+        tris[i - 1] = {a - 1, b - 1, c - 1};
+    }
+
+    if (!s.quadDominant) {
+        for (const auto& t : tris) {
+            out.addPolygon({verts[t[0]], verts[t[1]], verts[t[2]]}, faceId, flip);
+        }
+        return;
+    }
+    std::vector<std::vector<int>> paired;  // local rings, tris and quads
+
+    // Candidate merges: two triangles sharing an edge form the quad
+    // (opp1, a, opp2, b) with the shared diagonal (a,b) removed.
+    struct Candidate {
+        double cost;
+        int t1, t2;
+        std::array<int, 4> ring;
+    };
+    std::map<std::pair<int, int>, std::pair<int, int>> edgeUse;  // edge -> tris
+    for (size_t t = 0; t < tris.size(); ++t) {
+        for (int i = 0; i < 3; ++i) {
+            int a = tris[t][i], b = tris[t][(i + 1) % 3];
+            auto key = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
+            auto it = edgeUse.find(key);
+            if (it == edgeUse.end()) edgeUse[key] = {static_cast<int>(t), -1};
+            else it->second.second = static_cast<int>(t);
+        }
+    }
+
+    auto thirdVertex = [&](int t, int a, int b) {
+        for (int v : tris[t]) {
+            if (v != a && v != b) return v;
+        }
+        return -1;
+    };
+
+    std::vector<Candidate> candidates;
+    for (const auto& [key, owners] : edgeUse) {
+        if (owners.second < 0) continue;
+        int a = key.first, b = key.second;
+        int c1 = thirdVertex(owners.first, a, b);
+        int c2 = thirdVertex(owners.second, a, b);
+        // Orient the ring with t1's winding: when t1 traverses the shared
+        // edge a->b, the merged boundary cycle is c1->a->c2->b; reversed
+        // when t1 runs b->a.
+        std::array<int, 4> ring{c1, a, c2, b};
+        for (int i = 0; i < 3; ++i) {
+            if (tris[owners.first][i] == b &&
+                tris[owners.first][(i + 1) % 3] == a) {
+                ring = {c1, b, c2, a};
+                break;
+            }
+        }
+        double cost =
+            quadAngleCost({pts[ring[0]], pts[ring[1]], pts[ring[2]],
+                           pts[ring[3]]});
+        if (cost > 1e8) continue;
+
+        // Guidance: reward quads whose edges follow the parametric
+        // directions at the quad center (trivial direction field).
+        if (hasUV) {
+            gp_Pnt2d uv0 = tri->UVNode(ring[0] + 1);
+            gp_Pnt2d uv2 = tri->UVNode(ring[2] + 1);
+            gp_Pnt p;
+            gp_Vec du, dv;
+            surf.D1(0.5 * (uv0.X() + uv2.X()), 0.5 * (uv0.Y() + uv2.Y()), p,
+                    du, dv);
+            if (du.Magnitude() > 1e-9 && dv.Magnitude() > 1e-9) {
+                gp_Vec e(pts[ring[0]], pts[ring[1]]);
+                if (e.Magnitude() > 1e-12) {
+                    double alignU = std::abs(e.Normalized().Dot(du.Normalized()));
+                    double alignV = std::abs(e.Normalized().Dot(dv.Normalized()));
+                    // 0 when aligned with u or v, up to ~20 when diagonal.
+                    cost += 20.0 * std::min(1.0, 1.0 - std::max(alignU, alignV));
+                }
+            }
+        }
+        candidates.push_back({cost, owners.first, owners.second, ring});
+    }
+    std::sort(candidates.begin(), candidates.end(),
+              [](const Candidate& x, const Candidate& y) {
+                  return x.cost < y.cost;
+              });
+
+    std::vector<bool> used(tris.size(), false);
+    for (const Candidate& c : candidates) {
+        if (used[c.t1] || used[c.t2]) continue;
+        used[c.t1] = used[c.t2] = true;
+        paired.push_back({c.ring[0], c.ring[1], c.ring[2], c.ring[3]});
+    }
+    for (size_t t = 0; t < tris.size(); ++t) {
+        if (used[t]) continue;
+        paired.push_back({tris[t][0], tris[t][1], tris[t][2]});
+    }
+
+    // One midpoint (Catmull-Clark-style) subdivision turns the paired mesh
+    // into pure quads: each tri becomes 3, each quad 4. New vertices are
+    // evaluated on the surface through averaged UVs, so they sit exactly on
+    // the B-rep, not on the chord.
+    auto emitVertex = [&](double u, double v, const gp_Pnt& fallbackPnt) {
+        if (!hasUV) return out.addVertex(fallbackPnt, {});
+        gp_Pnt p = surf.Value(u, v);
+        return out.addVertex(p, {faceId, u, v});
+    };
+    std::vector<gp_Pnt2d> uvs(pts.size());
+    if (hasUV) {
+        for (size_t i = 0; i < pts.size(); ++i) uvs[i] = tri->UVNode(i + 1);
+    }
+    std::map<std::pair<int, int>, uint32_t> midOf;
+    auto midpoint = [&](int a, int b) {
+        auto key = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
+        auto it = midOf.find(key);
+        if (it != midOf.end()) return it->second;
+        gp_Pnt mid(0.5 * (pts[a].X() + pts[b].X()),
+                   0.5 * (pts[a].Y() + pts[b].Y()),
+                   0.5 * (pts[a].Z() + pts[b].Z()));
+        uint32_t idx = emitVertex(0.5 * (uvs[a].X() + uvs[b].X()),
+                                  0.5 * (uvs[a].Y() + uvs[b].Y()), mid);
+        midOf[key] = idx;
+        return idx;
+    };
+
+    for (const auto& ring : paired) {
+        const int n = static_cast<int>(ring.size());
+        double cu = 0, cv = 0, cx = 0, cy = 0, cz = 0;
+        for (int v : ring) {
+            cu += uvs[v].X();
+            cv += uvs[v].Y();
+            cx += pts[v].X();
+            cy += pts[v].Y();
+            cz += pts[v].Z();
+        }
+        uint32_t center =
+            emitVertex(cu / n, cv / n, gp_Pnt(cx / n, cy / n, cz / n));
+        for (int i = 0; i < n; ++i) {
+            out.addPolygon({verts[ring[i]], midpoint(ring[i], ring[(i + 1) % n]),
+                            center, midpoint(ring[(i + n - 1) % n], ring[i])},
+                           faceId, flip);
+        }
     }
 }
 
@@ -712,13 +873,17 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                  solved(plan.vEdges, s.gridV), s.junctionRings,
                                  out);
                 break;
+            case MesherKind::QuadDominant:
             case MesherKind::Fallback:
-                meshFallback(face, fid, s, out);
+                meshFallback(face, surf, fid, s, out);
                 break;
         }
 
         if (report) {
-            report->faceMesher[fid] = plan.kind;
+            report->faceMesher[fid] =
+                plan.kind == MesherKind::Fallback && s.quadDominant
+                    ? MesherKind::QuadDominant
+                    : plan.kind;
             if (plan.constrains) {
                 for (int eid : plan.uEdges) {
                     report->edgeDivisions[eid] = density.countFor(eid, 0);

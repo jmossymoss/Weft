@@ -426,6 +426,19 @@ void testFillet() {
     }
     CHECK_EQ(polysPerFace[filletFaceId], 5 * 4);
 
+    // The notched end faces can't take a grid; guided pairing + one
+    // midpoint subdivision must turn them into pure quads, not tri soup.
+    int quadDominantFaces = 0;
+    for (const auto& [fid, kind] : report.faceMesher) {
+        if (kind != weft::MesherKind::QuadDominant) continue;
+        ++quadDominantFaces;
+        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+            if (mesh.polygonFaceId[p] != fid) continue;
+            CHECK_EQ(mesh.polygons[p].size(), 4);
+        }
+    }
+    CHECK_EQ(quadDominantFaces, 2);
+
     // Hold clustering: same counts, but the loops crowd toward the creases —
     // the first across-interval must shrink vs the uniform mesh.
     weft::GenerationSettings gsHold = gs;

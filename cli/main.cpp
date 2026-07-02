@@ -41,6 +41,8 @@ void usage() {
         "    --hold F          cluster fillet loops toward the creases, 0..0.95\n"
         "    --rings N         concentric quad loops around holes/bosses in\n"
         "                      planar faces (default 2)\n"
+        "    --pure-tris       disable quad pairing on fallback-triangulated\n"
+        "                      faces (default: quad-dominant)\n"
         "    --chord T         fallback triangulation tolerance (default 0.1)\n"
         "    --face ID:k=v[,k=v...]\n"
         "                      per-face override, e.g. --face 1:radial=24,axial=2\n"
@@ -140,6 +142,7 @@ int cmdMesh(const std::vector<std::string>& args) {
         else if (a == "--loops") gs.defaults.filletLoops = std::stoi(next());
         else if (a == "--hold") gs.defaults.filletHold = std::stod(next());
         else if (a == "--rings") gs.defaults.junctionRings = std::stoi(next());
+        else if (a == "--pure-tris") gs.defaults.quadDominant = false;
         else if (a == "--recipe") recipe = weft::loadRecipe(next());
         else if (a == "--save-recipe") recipeOut = next();
         else if (a == "--op-loop") {
