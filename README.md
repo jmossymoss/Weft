@@ -61,8 +61,30 @@ Headless C++ core + CLI covering the plan's Phases 0–3 essentials:
 - OBJ export with one group per B-rep face, so CAD face IDs survive into
   Blender
 
-The viewport shell, manual editing layer, and Blender bridge come later; the
-core is headless-first by design (plan §2.1).
+## The app
+
+`weft_app` is the interactive shell over the same core (plan §6, v0):
+
+- 3D viewport (GLFW + OpenGL): orbit (RMB/MMB), pan (shift), zoom (wheel),
+  `F` to frame
+- Load a STEP file or any built-in fixture with one click
+- **Feature colouring**: fillets orange, holes purple, surface types
+  tinted; B-rep edges drawn orange (convex) / blue (concave) / green
+  (smooth tangent)
+- **Click a face to select it** (GPU picking) — see its type, radius, and
+  which mesher produced it
+- **Live density**: drag radial/axial/grid/loops/hold/rings and the
+  topology regenerates as you drag; per-face overrides on the selection
+- Save/load the session recipe from the panel
+
+Requires `libglfw3-dev libgl1-mesa-dev libimgui-dev libstb-dev`; the app
+target is skipped automatically when they're absent, so the headless core
+always builds. `weft_app --fixture boss --screenshot out.png` renders
+headlessly (e.g. under `xvfb-run`) for CI/visual checks.
+
+The in-viewport editing verbs (loop cut on hover, vertex slide) and the
+Blender bridge are the next layers; the core is headless-first by design
+(plan §2.1).
 
 ## Build
 
