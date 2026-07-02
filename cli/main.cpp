@@ -23,7 +23,7 @@ void usage() {
         "\n"
         "usage:\n"
         "  weft fixture <out.step> [--shape cylinder|box|cone|sphere|torus|\n"
-        "                                    fillet|demo|boss]\n"
+        "                                    fillet|hole|demo|boss]\n"
         "      generate a test STEP file from OCCT primitives\n"
         "\n"
         "  weft inspect <in.step>\n"
@@ -38,6 +38,8 @@ void usage() {
         "    --cap ngon|fan    cylinder cap style (default ngon)\n"
         "    --loops N         support loops across fillet/blend faces (default 3)\n"
         "    --hold F          cluster fillet loops toward the creases, 0..0.95\n"
+        "    --rings N         concentric quad loops around holes/bosses in\n"
+        "                      planar faces (default 2)\n"
         "    --chord T         fallback triangulation tolerance (default 0.1)\n"
         "    --face ID:k=v[,k=v...]\n"
         "                      per-face override, e.g. --face 1:radial=24,axial=2\n"
@@ -89,7 +91,8 @@ int cmdInspect(const std::vector<std::string>& args) {
         std::printf("  #%-3d %-10s", f.id, weft::surfaceTypeName(f.type));
         if (f.radius > 0) std::printf(" r=%-8.3f", f.radius);
         else std::printf("           ");
-        std::printf("%s", f.isFillet ? " fillet " : "        ");
+        std::printf("%s", f.isFillet ? " fillet " : f.isHole ? " hole   "
+                                                            : "        ");
         std::printf(" edges=%zu neighbors=[", f.edgeIds.size());
         for (size_t i = 0; i < f.neighborFaceIds.size(); ++i) {
             std::printf("%s%d", i ? "," : "", f.neighborFaceIds[i]);
@@ -129,6 +132,7 @@ int cmdMesh(const std::vector<std::string>& args) {
         else if (a == "--cap") weft::applySetting(gs.defaults, "cap", next());
         else if (a == "--loops") gs.defaults.filletLoops = std::stoi(next());
         else if (a == "--hold") gs.defaults.filletHold = std::stod(next());
+        else if (a == "--rings") gs.defaults.junctionRings = std::stoi(next());
         else if (a == "--recipe") gs = weft::loadRecipe(next());
         else if (a == "--save-recipe") recipeOut = next();
         else if (a == "--grid") {

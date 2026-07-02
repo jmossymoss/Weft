@@ -27,6 +27,9 @@ struct FaceMeshSettings {
     // ("hold" loops; 0 = uniform spacing, toward 1 = tight at the edges).
     int filletLoops = 3;
     double filletHold = 0.0;
+    // Ring junctions (a hole/boss circle inside a rectangular planar face):
+    // number of concentric quad loops between the circle and the boundary.
+    int junctionRings = 2;
 };
 
 struct GenerationSettings {
@@ -50,6 +53,9 @@ enum class MesherKind {
                      // wrap-around seams and collapsed apex/pole rows
     DiskCap,         // planar face bounded by one full circle
     PlanarGrid,      // planar/parametric UV grid that passed containment
+    RingJunction,    // rectangular planar face with one circular hole:
+                     // concentric quad rings from the circle to the border
+                     // (the cylinder-to-plane junction pattern, plan §3.3/4.2)
     Fallback,        // OCCT incremental triangulation
 };
 

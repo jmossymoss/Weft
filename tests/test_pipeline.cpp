@@ -408,34 +408,91 @@ void testRecipeRoundTrip() {
 }
 
 void testBoss() {
-    std::printf("-- boss (trimmed faces -> fallback) --\n");
+    std::printf("-- boss (ring junction) --\n");
     std::string stepPath = tmpPath("weft_test_boss.step");
     weft::writeStep(weft::makeFixture("boss"), stepPath);
 
     weft::Model model = weft::loadStep(stepPath);
     weft::Analysis a = weft::analyze(model);
 
-    // The boss root edge is concave (material on both sides of the joint).
+    // The boss root edge is concave (material on both sides of the joint),
+    // and the boss wall is a shaft, not a hole.
     int concave = 0;
     for (const auto& e : a.edges) {
         if (e.convexity == weft::EdgeConvexity::Concave) ++concave;
     }
     CHECK(concave >= 1);
+    for (const auto& f : a.faces) CHECK(!f.isHole);
 
     weft::GenerationSettings gs;
+    gs.defaults.gridU = 3;
+    gs.defaults.gridV = 3;
+    gs.defaults.junctionRings = 2;
     weft::GenerationReport report;
     weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
 
-    // The box top carries the boss's circular trim: parametric grid must
-    // refuse it and fall back rather than emit a broken grid.
-    int fallbacks = 0, grids = 0;
+    // The box top (rectangle with the boss's circular trim) is the
+    // cylinder-to-plane junction: no face needs fallback triangulation.
+    int fallbacks = 0, junctions = 0;
     for (const auto& [fid, kind] : report.faceMesher) {
         if (kind == weft::MesherKind::Fallback) ++fallbacks;
-        if (kind == weft::MesherKind::PlanarGrid) ++grids;
+        if (kind == weft::MesherKind::RingJunction) ++junctions;
     }
-    CHECK(fallbacks >= 1);
-    CHECK(grids >= 4);
-    CHECK(mesh.polygonCount() > 0);
+    CHECK_EQ(fallbacks, 0);
+    CHECK_EQ(junctions, 1);
+
+    // The plate drives the boss: ring count = 2*(3+3) = 12, so the boss
+    // wall gets 12 radial divisions and its cap is a 12-gon; the whole
+    // fused solid is watertight quads + one n-gon.
+    CHECK_EQ(mesh.countTris(), 0);
+    CHECK_EQ(mesh.countNgons(), 1);
+    for (const auto& poly : mesh.polygons) {
+        if (poly.size() > 4) CHECK_EQ(poly.size(), 12);
+    }
+    CHECK(isWatertight(mesh));
+}
+
+void testHolePlate() {
+    std::printf("-- hole (through-bore plate) --\n");
+    std::string stepPath = tmpPath("weft_test_hole.step");
+    weft::writeStep(weft::makeFixture("hole"), stepPath);
+
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis a = weft::analyze(model);
+
+    int holes = 0;
+    for (const auto& f : a.faces) {
+        if (f.isHole) {
+            ++holes;
+            CHECK(f.type == weft::SurfaceType::Cylinder);
+            CHECK(std::abs(f.radius - 8.0) < 1e-9);
+        }
+    }
+    CHECK_EQ(holes, 1);
+
+    weft::GenerationSettings gs;
+    gs.defaults.gridU = 4;
+    gs.defaults.gridV = 4;
+    gs.defaults.axial = 2;
+    gs.defaults.junctionRings = 3;
+    // Deliberately absurd radial: the junctions must override it to 16.
+    gs.defaults.radial = 99;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
+
+    int junctions = 0, fallbacks = 0;
+    for (const auto& [fid, kind] : report.faceMesher) {
+        if (kind == weft::MesherKind::RingJunction) ++junctions;
+        if (kind == weft::MesherKind::Fallback) ++fallbacks;
+    }
+    CHECK_EQ(junctions, 2);  // top and bottom of the plate
+    CHECK_EQ(fallbacks, 0);
+    CHECK_EQ(mesh.countTris(), 0);
+    CHECK_EQ(mesh.countNgons(), 0);
+    CHECK(isWatertight(mesh));
+
+    // 2 junctions (3 rings x 16) + bore wall (16 x 2) + 4 sides (4x4 each).
+    CHECK_EQ(mesh.countQuads(), 2 * 3 * 16 + 16 * 2 + 4 * 16);
 }
 
 }  // namespace
@@ -450,6 +507,7 @@ int main() {
     testFillet();
     testRecipeRoundTrip();
     testBoss();
+    testHolePlate();
     if (failures) {
         std::printf("\n%d FAILURE(S)\n", failures);
         return 1;

@@ -40,6 +40,9 @@ struct FaceInfo {
     // boundary joins at least two neighbours tangentially. These are the
     // faces that get support loops across their width (plan §3.3).
     bool isFillet = false;
+    // A bore wall: closed cylindrical face whose material normal points
+    // toward the axis. Bosses/shafts point away and stay false.
+    bool isHole = false;
     std::vector<int> edgeIds;
     std::vector<int> neighborFaceIds;  // via shared edges (adjacency graph)
 };
