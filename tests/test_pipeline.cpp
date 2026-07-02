@@ -632,6 +632,75 @@ void testHolePlate() {
 
 }  // namespace
 
+// Delete a face, bridge the resulting boundary loops (equal counts -> pure
+// quad ring, unequal -> triangle zipper), stay watertight throughout.
+void testBridge() {
+    std::printf("-- bridge --\n");
+    std::string stepPath = tmpPath("weft_test_bridge.step");
+    weft::writeStep(weft::makeFixture("cylinder"), stepPath);
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis a = weft::analyze(model);
+
+    int sideFace = 0;
+    for (const auto& f : a.faces) {
+        if (f.type == weft::SurfaceType::Cylinder) sideFace = f.id;
+    }
+    CHECK(sideFace > 0);
+    // The two rim circles are the side face's edges shared with the caps.
+    std::vector<int> rims;
+    for (const auto& e : a.edges) {
+        for (int fid : e.faceIds) {
+            if (fid == sideFace && e.faceIds.size() == 2) rims.push_back(e.id);
+        }
+    }
+    CHECK_EQ(rims.size(), 2);
+
+    weft::GenerationSettings gs;
+    gs.defaults.radial = 12;
+    gs.perFace[sideFace] = gs.defaults;
+    gs.perFace[sideFace].exclude = true;  // delete the wall
+
+    weft::PolyMesh open = weft::generate(model, a, gs);
+    CHECK(!isWatertight(open));  // two open rims
+    CHECK_EQ(weft::boundaryLoops(open).size(), 2);
+
+    // Equal rim counts (both caps at radial=12): bridging yields a pure
+    // quad ring and the solid closes back up as a plain tube.
+    weft::ManualOp bridge;
+    bridge.kind = weft::ManualOp::Kind::Bridge;
+    bridge.edgeA = rims[0];
+    bridge.edgeB = rims[1];
+    weft::PolyMesh closed = open;
+    size_t before = closed.polygonCount();
+    CHECK_EQ(weft::bridgeLoops(closed, model, bridge), 12);
+    CHECK_EQ(closed.polygonCount(), before + 12);
+    CHECK(isWatertight(closed));
+    CHECK_EQ(closed.countQuads(), 12);
+
+    // Unequal rim counts: pin one rim to 18. The strip triangulates
+    // (12 + 18 edges -> 30 triangles) and still closes watertight.
+    gs.perEdge[rims[1]] = 18;
+    weft::PolyMesh open2 = weft::generate(model, a, gs);
+    CHECK(!isWatertight(open2));
+    weft::PolyMesh closed2 = open2;
+    CHECK_EQ(weft::bridgeLoops(closed2, model, bridge), 30);
+    CHECK(isWatertight(closed2));
+
+    // The op replays through applyOps and recipes round-trip it.
+    weft::Recipe recipe;
+    recipe.settings = gs;
+    recipe.ops.push_back(bridge);
+    std::string rPath = tmpPath("weft_test_bridge.recipe");
+    weft::saveRecipe(recipe, rPath);
+    weft::Recipe loaded = weft::loadRecipe(rPath);
+    CHECK_EQ(loaded.ops.size(), 1);
+    CHECK(loaded.ops[0].kind == weft::ManualOp::Kind::Bridge);
+    CHECK(loaded.settings.forFace(sideFace).exclude);
+    weft::PolyMesh replayed = weft::generate(model, a, loaded.settings);
+    weft::applyOps(replayed, model, loaded.ops);
+    CHECK(isWatertight(replayed));
+}
+
 // Announce each test and turn stray exceptions into a named failure
 // instead of a silent fail-fast crash (0xc0000409 on Windows).
 #define RUN(fn)                                               \
@@ -663,6 +732,7 @@ int main() {
     RUN(testRecipeRoundTrip);
     RUN(testBoss);
     RUN(testHolePlate);
+    RUN(testBridge);
     if (failures) {
         std::printf("\n%d FAILURE(S)\n", failures);
         return 1;

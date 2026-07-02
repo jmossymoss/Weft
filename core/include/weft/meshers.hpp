@@ -44,6 +44,10 @@ struct FaceMeshSettings {
     // n-gon instead — border vertices stay density-matched, so neighbours
     // still weld watertight, and the engine triangulates however it likes.
     bool minimal = false;
+    // Exclude this face from the output entirely (delete it). Its borders
+    // become open boundary loops, which a Bridge op can then reconnect —
+    // e.g. drop a bore wall and bridge the two rims shut.
+    bool exclude = false;
 };
 
 struct GenerationSettings {

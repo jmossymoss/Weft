@@ -14,12 +14,19 @@ struct ManualOp {
     enum class Kind {
         LoopInsert,  // insert an edge loop crossing the mesh edge nearest
                      // to (faceId,u,v), at fraction t along that edge
+        Bridge,      // connect the two open boundary loops nearest to the
+                     // B-rep edges edgeA/edgeB with a strip: equal vertex
+                     // counts give a pure quad ring, unequal counts a
+                     // triangulated zipper. Boundaries appear when faces
+                     // are excluded from output (FaceMeshSettings.exclude).
     };
     Kind kind = Kind::LoopInsert;
     int faceId = 0;
     double u = 0.0;
     double v = 0.0;
     double t = 0.5;
+    int edgeA = 0;  // Bridge: stable B-rep edge ids the two loops hug
+    int edgeB = 0;
 };
 
 // Snap a point onto a B-rep face: exact re-projection, not shrinkwrap.
@@ -40,6 +47,16 @@ void moveVertex(PolyMesh& mesh, const Model& model, size_t vertIdx,
 // interpolation on-face and re-projection across face borders.
 // Returns the number of quads the loop crossed (0 = no suitable edge).
 int insertLoop(PolyMesh& mesh, const Model& model, const ManualOp& op);
+
+// Bridge the two open boundary loops nearest to op.edgeA / op.edgeB (see
+// ManualOp::Kind::Bridge). Vertex counts per boundary come from the density
+// solver (pin them per-edge to choose quads vs triangles). Returns the
+// number of polygons added (0 = loops not found / same loop).
+int bridgeLoops(PolyMesh& mesh, const Model& model, const ManualOp& op);
+
+// An open boundary loop of the mesh: ordered vertex ring where each edge is
+// used by exactly one polygon. Exposed for interactive tools (hover/pick).
+std::vector<std::vector<uint32_t>> boundaryLoops(const PolyMesh& mesh);
 
 // Re-apply recorded ops after (re)generation, in order.
 void applyOps(PolyMesh& mesh, const Model& model,

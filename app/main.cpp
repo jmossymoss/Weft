@@ -251,7 +251,7 @@ struct Camera {
     }
 };
 
-enum class Mode { Idle, LoopCut };
+enum class Mode { Idle, LoopCut, Bridge };
 
 struct App {
     // Document.
@@ -275,6 +275,13 @@ struct App {
     std::string numberEntry;   // typed digits, Enter applies to density
     weft::ManualOp hoverOp;    // loop-cut candidate under the cursor
     bool hoverValid = false;
+
+    // Bridge tool: open boundary loops of the current mesh, each mapped to
+    // its nearest B-rep edge (the stable id recorded in the op).
+    std::vector<std::vector<uint32_t>> bLoops;
+    std::vector<int> bLoopEdge;
+    int hoverLoop = -1;
+    int bridgeFirstEdge = 0;  // first clicked loop's edge id (0 = none yet)
 
     // Display toggles.
     bool showFill = true;
@@ -326,11 +333,14 @@ static void rebuildBuffers(App& app) {
         v.push_back(c[2]);
     };
 
+    static const weft::FaceInfo kBridgeInfo{};  // bridge strips: faceId 0
     for (size_t i = 0; i < m.polygons.size(); ++i) {
         int fid = m.polygonFaceId[i];
-        if (app.hiddenFaces.count(fid)) continue;
-        const weft::FaceInfo& info = app.analysis.faces[fid - 1];
-        std::array<float, 3> col = faceColor(info, fid == app.selectedFace);
+        if (fid > 0 && app.hiddenFaces.count(fid)) continue;
+        const weft::FaceInfo& info =
+            fid > 0 ? app.analysis.faces[fid - 1] : kBridgeInfo;
+        std::array<float, 3> col = faceColor(info, fid == app.selectedFace &&
+                                                       fid > 0);
         std::array<float, 3> id{float(fid & 255) / 255.0f,
                                 float((fid >> 8) & 255) / 255.0f,
                                 170.0f / 255.0f};
@@ -377,6 +387,33 @@ static void regenerate(App& app) {
     app.mesh = weft::generate(app.model, app.analysis, app.recipe.settings,
                               &app.report);
     weft::applyOps(app.mesh, app.model, app.recipe.ops);
+
+    // Open boundary loops (deleted faces leave them) for the bridge tool,
+    // each mapped to its nearest sampled B-rep edge for a stable op id.
+    app.bLoops = weft::boundaryLoops(app.mesh);
+    app.bLoopEdge.assign(app.bLoops.size(), 0);
+    app.hoverLoop = -1;
+    for (size_t li = 0; li < app.bLoops.size(); ++li) {
+        double bestDist = 1e300;
+        for (const weft::EdgePolyline& e : app.brepEdges) {
+            double sum = 0;
+            for (uint32_t v : app.bLoops[li]) {
+                const auto& p = app.mesh.vertices[v];
+                double dmin = 1e300;
+                for (const auto& q : e.points) {
+                    double dx = p[0] - q[0], dy = p[1] - q[1],
+                           dz = p[2] - q[2];
+                    dmin = std::min(dmin, dx * dx + dy * dy + dz * dz);
+                }
+                sum += dmin;
+            }
+            if (sum < bestDist) {
+                bestDist = sum;
+                app.bLoopEdge[li] = e.edgeId;
+            }
+        }
+    }
+
     rebuildBuffers(app);
     app.dirty = false;
 }
@@ -619,6 +656,66 @@ static void updateLoopCutHover(App& app, const Mat4& mvp, double mx, double my,
     app.hoverValid = true;
 }
 
+// Bridge hover: nearest open boundary loop under the cursor. The hovered
+// loop previews yellow; the first-clicked loop stays orange until the
+// second click commits the bridge op.
+static void updateBridgeHover(App& app, const Mat4& mvp, double mx, double my,
+                              int fbw, int fbh) {
+    app.hoverLoop = -1;
+    app.preview.count = 0;
+    if (!app.hasModel || app.bLoops.empty()) return;
+
+    double bestDist = 30.0;  // px
+    for (size_t li = 0; li < app.bLoops.size(); ++li) {
+        const auto& loop = app.bLoops[li];
+        for (size_t i = 0; i < loop.size(); ++i) {
+            float pa[3] = {0, 0, -1}, pb[3] = {0, 0, -1};
+            projectPoint(mvp, app.mesh.vertices[loop[i]], fbw, fbh, pa);
+            projectPoint(mvp, app.mesh.vertices[loop[(i + 1) % loop.size()]],
+                         fbw, fbh, pb);
+            if (pa[2] <= 0 || pb[2] <= 0) continue;
+            float ex = pb[0] - pa[0], ey = pb[1] - pa[1];
+            float len2 = ex * ex + ey * ey;
+            float t = len2 < 1e-6f
+                          ? 0.0f
+                          : std::clamp(((float(mx) - pa[0]) * ex +
+                                        (float(my) - pa[1]) * ey) / len2,
+                                       0.0f, 1.0f);
+            double d = std::hypot(double(mx) - (pa[0] + t * ex),
+                                  double(my) - (pa[1] + t * ey));
+            if (d < bestDist) {
+                bestDist = d;
+                app.hoverLoop = int(li);
+            }
+        }
+    }
+
+    std::vector<float> lines;
+    auto pushLoop = [&](size_t li, float r, float g, float b) {
+        const auto& loop = app.bLoops[li];
+        for (size_t i = 0; i < loop.size(); ++i) {
+            for (uint32_t v : {loop[i], loop[(i + 1) % loop.size()]}) {
+                lines.push_back(float(app.mesh.vertices[v][0]));
+                lines.push_back(float(app.mesh.vertices[v][1]));
+                lines.push_back(float(app.mesh.vertices[v][2]));
+                lines.push_back(r);
+                lines.push_back(g);
+                lines.push_back(b);
+            }
+        }
+    };
+    for (size_t li = 0; li < app.bLoops.size(); ++li) {
+        if (app.bridgeFirstEdge && app.bLoopEdge[li] == app.bridgeFirstEdge) {
+            pushLoop(li, 1.0f, 0.55f, 0.15f);  // committed first pick
+        } else if (int(li) == app.hoverLoop) {
+            pushLoop(li, 1.0f, 0.85f, 0.25f);  // hovered
+        } else {
+            pushLoop(li, 0.35f, 0.75f, 0.95f);  // available boundary
+        }
+    }
+    if (!lines.empty()) app.preview.upload(lines);
+}
+
 // ---------------------------------------------------------------------------
 // Face picking: render IDs into the back buffer, read one pixel.
 
@@ -735,6 +832,9 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
             ch = true;
         }
     }
+    if (kind) {  // per-face contexts only: delete leaves bridgeable borders
+        ch |= ImGui::Checkbox("delete face (bridge with J)", &s.exclude);
+    }
     return ch;
 }
 
@@ -752,6 +852,23 @@ static void drawOverlay(App& app) {
         ImGui::TextColored({1.0f, 0.85f, 0.25f, 1.0f}, "LOOP CUT");
         ImGui::SameLine();
         ImGui::TextDisabled("hover an edge - click commits - R/esc exits");
+    } else if (app.mode == Mode::Bridge) {
+        ImGui::TextColored({1.0f, 0.85f, 0.25f, 1.0f}, "BRIDGE");
+        ImGui::SameLine();
+        ImGui::TextDisabled(app.bridgeFirstEdge
+                                ? "pick the second loop - esc restarts"
+                                : "pick two boundary loops - J/esc exits");
+        if (app.hoverLoop >= 0) {
+            ImGui::Text("loop: edge #%d, %zu verts",
+                        app.bLoopEdge[app.hoverLoop],
+                        app.bLoops[app.hoverLoop].size());
+            ImGui::SameLine();
+            ImGui::TextDisabled("( [ ] or 12<enter> pins the count )");
+        }
+        if (app.bLoops.empty()) {
+            ImGui::TextDisabled(
+                "no open boundaries - delete a face first (popup or outliner)");
+        }
     } else {
         ImGui::TextDisabled(app.selectedFace > 0 ? "face #%d selected"
                                                  : "no selection",
@@ -775,7 +892,7 @@ static void drawOverlay(App& app) {
                      ImGuiWindowFlags_NoFocusOnAppearing |
                      ImGuiWindowFlags_NoNav);
     ImGui::TextDisabled(
-        "R loop cut   12<enter> set divisions   [ ] nudge (+shift: 2nd axis)\n"
+        "R loop cut   J bridge loops   12<enter> divisions   [ ] nudge\n"
         "C cap ngon/fan   T tris ok   M minimal n-gon   ctrl+Z undo op\n"
         "H hide face (shift+H show all)   W wire   B feature edges\n"
         "F frame   esc deselect/cancel   MMB orbit (+shift pan, +ctrl zoom)");
@@ -903,11 +1020,15 @@ static void drawUi(App& app) {
                     rebuildBuffers(app);
                 }
                 ImGui::SameLine();
-                char label[96];
-                std::snprintf(label, sizeof label, "face %-4d %s%s%s", f.id,
+                auto ov = app.recipe.settings.perFace.find(f.id);
+                bool deleted = ov != app.recipe.settings.perFace.end() &&
+                               ov->second.exclude;
+                char label[112];
+                std::snprintf(label, sizeof label, "face %-4d %s%s%s%s", f.id,
                               weft::surfaceTypeName(f.type),
                               f.isFillet ? " [fillet]" : "",
-                              f.isHole ? " [hole]" : "");
+                              f.isHole ? " [hole]" : "",
+                              deleted ? " [deleted]" : "");
                 if (ImGui::Selectable(label, app.selectedFace == f.id)) {
                     app.selectedFace =
                         app.selectedFace == f.id ? 0 : f.id;
@@ -1162,8 +1283,19 @@ int main(int argc, char** argv) {
                 app.mode = app.mode == Mode::LoopCut ? Mode::Idle : Mode::LoopCut;
                 app.hoverValid = false;
             }
+            if (ImGui::IsKeyPressed(ImGuiKey_J, false)) {
+                app.mode = app.mode == Mode::Bridge ? Mode::Idle : Mode::Bridge;
+                app.bridgeFirstEdge = 0;
+                app.hoverLoop = -1;
+                if (app.mode == Mode::Bridge && app.bLoops.empty()) {
+                    app.status =
+                        "bridge: no open boundaries (delete a face first)";
+                }
+            }
             if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-                if (app.mode != Mode::Idle) app.mode = Mode::Idle;
+                if (app.mode == Mode::Bridge && app.bridgeFirstEdge) {
+                    app.bridgeFirstEdge = 0;
+                } else if (app.mode != Mode::Idle) app.mode = Mode::Idle;
                 else if (!app.numberEntry.empty()) app.numberEntry.clear();
                 else if (app.selectedFace) {
                     app.selectedFace = 0;
@@ -1185,17 +1317,35 @@ int main(int argc, char** argv) {
             if (ImGui::IsKeyPressed(ImGuiKey_Enter, false) &&
                 !app.numberEntry.empty() && app.hasModel) {
                 int value = std::atoi(app.numberEntry.c_str());
-                weft::FaceMeshSettings& s = editTarget(app);
-                *primaryDensity(app, s, shift) = std::max(1, value);
+                if (app.mode == Mode::Bridge && app.hoverLoop >= 0) {
+                    // Pin the hovered boundary loop's vertex count: equal
+                    // counts bridge as quads, unequal as triangles.
+                    int eid = app.bLoopEdge[app.hoverLoop];
+                    app.recipe.settings.perEdge[eid] = std::max(3, value);
+                } else {
+                    weft::FaceMeshSettings& s = editTarget(app);
+                    *primaryDensity(app, s, shift) = std::max(1, value);
+                }
                 app.numberEntry.clear();
                 app.dirty = true;
             }
             bool dec = ImGui::IsKeyPressed(ImGuiKey_LeftBracket);
             bool inc = ImGui::IsKeyPressed(ImGuiKey_RightBracket);
             if ((dec || inc) && app.hasModel) {
-                weft::FaceMeshSettings& s = editTarget(app);
-                int* v = primaryDensity(app, s, shift);
-                *v = std::max(1, *v + (inc ? 1 : -1));
+                if (app.mode == Mode::Bridge && app.hoverLoop >= 0) {
+                    int eid = app.bLoopEdge[app.hoverLoop];
+                    int cur = int(app.bLoops[app.hoverLoop].size());
+                    auto it = app.recipe.settings.perEdge.find(eid);
+                    if (it != app.recipe.settings.perEdge.end()) {
+                        cur = it->second;
+                    }
+                    app.recipe.settings.perEdge[eid] =
+                        std::max(3, cur + (inc ? 1 : -1));
+                } else {
+                    weft::FaceMeshSettings& s = editTarget(app);
+                    int* v = primaryDensity(app, s, shift);
+                    *v = std::max(1, *v + (inc ? 1 : -1));
+                }
                 app.dirty = true;
             }
             if (ImGui::IsKeyPressed(ImGuiKey_C, false) && app.hasModel) {
@@ -1263,6 +1413,24 @@ int main(int argc, char** argv) {
                 app.dirty = true;
                 app.status = "loop cut committed (ctrl+z undoes)";
             }
+        } else if (app.mode == Mode::Bridge && !io.WantCaptureMouse) {
+            updateBridgeHover(app, mvp, mx, my, fbw, fbh);
+            if (clicked && app.hoverLoop >= 0) {
+                int eid = app.bLoopEdge[app.hoverLoop];
+                if (app.bridgeFirstEdge == 0) {
+                    app.bridgeFirstEdge = eid;
+                    app.status = "bridge: pick the second boundary loop";
+                } else if (eid != app.bridgeFirstEdge) {
+                    weft::ManualOp op;
+                    op.kind = weft::ManualOp::Kind::Bridge;
+                    op.edgeA = app.bridgeFirstEdge;
+                    op.edgeB = eid;
+                    app.recipe.ops.push_back(op);
+                    app.bridgeFirstEdge = 0;
+                    app.dirty = true;
+                    app.status = "bridge committed (ctrl+z undoes)";
+                }
+            }
         } else if (clicked && app.hasModel) {
             // Click-select: pick pass + pixel read. A hit opens the
             // context popup at the cursor; clicking the same face again
@@ -1312,7 +1480,9 @@ int main(int argc, char** argv) {
             glDrawArrays(GL_LINES, 0, app.brep.count);
             glLineWidth(1.0f);
         }
-        if (app.mode == Mode::LoopCut && app.hoverValid && app.preview.count) {
+        if (((app.mode == Mode::LoopCut && app.hoverValid) ||
+             app.mode == Mode::Bridge) &&
+            app.preview.count) {
             glDisable(GL_DEPTH_TEST);
             glLineWidth(3.0f);
             glBindVertexArray(app.preview.vao);

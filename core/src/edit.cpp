@@ -1,9 +1,11 @@
 #include "weft/edit.hpp"
 
+#include <BRepAdaptor_Curve.hxx>
 #include <BRep_Tool.hxx>
 #include <GeomAPI_ProjectPointOnSurf.hxx>
 #include <Geom_Surface.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
 #include <gp_Pnt.hxx>
 
@@ -261,11 +263,176 @@ int insertLoop(PolyMesh& mesh, const Model& model, const ManualOp& op) {
     return static_cast<int>(walk.crossed.size());
 }
 
+std::vector<std::vector<uint32_t>> boundaryLoops(const PolyMesh& mesh) {
+    // Directed edges used exactly once with no reverse partner are open
+    // boundary; chain them into loops.
+    std::map<EdgeKey, int> directed;  // (a,b) key with a<b: +1 fwd, -1 rev
+    std::map<uint32_t, uint32_t> next;
+    std::map<std::pair<uint32_t, uint32_t>, bool> seen;
+    for (const auto& poly : mesh.polygons) {
+        for (size_t i = 0; i < poly.size(); ++i) {
+            uint32_t a = poly[i], b = poly[(i + 1) % poly.size()];
+            seen[{a, b}] = true;
+        }
+    }
+    for (const auto& [e, _] : seen) {
+        if (!seen.count({e.second, e.first})) {
+            // Boundary rings must run OPPOSITE the existing polygon edge so
+            // a closing strip cancels it; store the reversed direction.
+            next[e.second] = e.first;
+        }
+    }
+    std::vector<std::vector<uint32_t>> loops;
+    std::map<uint32_t, bool> used;
+    for (const auto& [start, _] : next) {
+        if (used[start]) continue;
+        std::vector<uint32_t> loop;
+        uint32_t v = start;
+        while (!used[v]) {
+            used[v] = true;
+            loop.push_back(v);
+            auto it = next.find(v);
+            if (it == next.end()) break;
+            v = it->second;
+        }
+        if (loop.size() >= 3 && v == start) loops.push_back(std::move(loop));
+    }
+    return loops;
+}
+
+namespace {
+
+// Mean distance from a vertex loop to a sampled B-rep edge curve — used to
+// find which open boundary hugs which CAD edge.
+double loopToEdgeDistance(const PolyMesh& mesh,
+                          const std::vector<uint32_t>& loop,
+                          const std::vector<gp_Pnt>& samples) {
+    double sum = 0;
+    for (uint32_t v : loop) {
+        gp_Pnt p(mesh.vertices[v][0], mesh.vertices[v][1],
+                 mesh.vertices[v][2]);
+        double best = 1e300;
+        for (const gp_Pnt& s : samples) best = std::min(best, p.Distance(s));
+        sum += best;
+    }
+    return sum / double(loop.size());
+}
+
+std::vector<gp_Pnt> sampleEdgeCurve(const Model& model, int edgeId, int n) {
+    std::vector<gp_Pnt> pts;
+    if (edgeId < 1 || edgeId > model.edgeCount()) return pts;
+    BRepAdaptor_Curve curve(TopoDS::Edge(model.edges(edgeId)));
+    double f = curve.FirstParameter(), l = curve.LastParameter();
+    for (int i = 0; i <= n; ++i) {
+        pts.push_back(curve.Value(f + (l - f) * i / double(n)));
+    }
+    return pts;
+}
+
+double vdist(const PolyMesh& m, uint32_t a, uint32_t b) {
+    const auto& p = m.vertices[a];
+    const auto& q = m.vertices[b];
+    return std::sqrt((p[0] - q[0]) * (p[0] - q[0]) +
+                     (p[1] - q[1]) * (p[1] - q[1]) +
+                     (p[2] - q[2]) * (p[2] - q[2]));
+}
+
+}  // namespace
+
+int bridgeLoops(PolyMesh& mesh, const Model& model, const ManualOp& op) {
+    std::vector<std::vector<uint32_t>> loops = boundaryLoops(mesh);
+    if (loops.size() < 2) return 0;
+
+    auto nearestLoop = [&](int edgeId, int excludeIdx) -> int {
+        std::vector<gp_Pnt> samples = sampleEdgeCurve(model, edgeId, 32);
+        if (samples.empty()) return -1;
+        int best = -1;
+        double bestDist = 1e300;
+        for (int i = 0; i < int(loops.size()); ++i) {
+            if (i == excludeIdx) continue;
+            double d = loopToEdgeDistance(mesh, loops[i], samples);
+            if (d < bestDist) {
+                bestDist = d;
+                best = i;
+            }
+        }
+        return best;
+    };
+    int ia = nearestLoop(op.edgeA, -1);
+    int ib = nearestLoop(op.edgeB, ia);
+    if (ia < 0 || ib < 0 || ia == ib) return 0;
+
+    // boundaryLoops stores each loop REVERSED relative to its polygons'
+    // windings, so a bridge polygon must traverse loop edges in loop order
+    // to cancel the open edge. The two rims counter-rotate geometrically,
+    // which pairs A's forward walk with a DECREASING index walk on B.
+    const std::vector<uint32_t>& A = loops[ia];
+    const std::vector<uint32_t>& B = loops[ib];
+    const int n = int(A.size()), m = int(B.size());
+    auto wrapB = [&](int k) { return ((k % m) + m) % m; };
+
+    // Rotational alignment: pair A[i] with B[off - i]; pick the offset
+    // minimizing total rail length.
+    int bestOff = 0;
+    double bestSum = 1e300;
+    for (int off = 0; off < m; ++off) {
+        double sum = 0;
+        for (int i = 0; i < n; ++i) {
+            sum += vdist(mesh, A[i], B[wrapB(off - i)]);
+        }
+        if (sum < bestSum) {
+            bestSum = sum;
+            bestOff = off;
+        }
+    }
+
+    int added = 0;
+    auto emit = [&](std::vector<uint32_t> poly) {
+        mesh.polygons.push_back(std::move(poly));
+        mesh.polygonFaceId.push_back(0);  // bridge strip: no source face
+        ++added;
+    };
+
+    if (n == m) {
+        // Equal counts: one clean quad ring.
+        for (int i = 0; i < n; ++i) {
+            int k = wrapB(bestOff - i);
+            emit({A[i], A[(i + 1) % n], B[k], B[(k + 1) % m]});
+        }
+        return added;
+    }
+
+    // Unequal counts: greedy triangle zipper. i counts consumed A edges
+    // (walking forward), t consumed B edges (index walking backward from
+    // bestOff); advance whichever makes the shorter bridging diagonal.
+    int i = 0, t = 0;
+    while (i < n || t < m) {
+        int ai = i % n;            // current A vertex
+        int bp = wrapB(bestOff - t);  // current B vertex
+        bool stepA;
+        if (i >= n) stepA = false;
+        else if (t >= m) stepA = true;
+        else {
+            stepA = vdist(mesh, A[(ai + 1) % n], B[bp]) <=
+                    vdist(mesh, A[ai], B[wrapB(bp - 1)]);
+        }
+        if (stepA) {
+            emit({A[ai], A[(ai + 1) % n], B[bp]});
+            ++i;
+        } else {
+            emit({A[ai], B[wrapB(bp - 1)], B[bp]});
+            ++t;
+        }
+    }
+    return added;
+}
+
 void applyOps(PolyMesh& mesh, const Model& model,
               const std::vector<ManualOp>& ops) {
     for (const ManualOp& op : ops) {
         switch (op.kind) {
             case ManualOp::Kind::LoopInsert: insertLoop(mesh, model, op); break;
+            case ManualOp::Kind::Bridge: bridgeLoops(mesh, model, op); break;
         }
     }
 }
