@@ -195,7 +195,8 @@ EdgeIso edgeIsoDirection(const TopoDS_Edge& edge, const TopoDS_Face& face,
 }
 
 void collectIsoEdges(const TopoDS_Face& face, const Model& model,
-                     const std::vector<int>& edgeIds, FacePlan& plan) {
+                     const std::vector<int>& edgeIds, FacePlan& plan,
+                     bool skipNonIso = false) {
     BRepAdaptor_Surface surf(face);
     double uRange = surf.LastUParameter() - surf.FirstUParameter();
     double vRange = surf.LastVParameter() - surf.FirstVParameter();
@@ -205,7 +206,13 @@ void collectIsoEdges(const TopoDS_Face& face, const Model& model,
         switch (edgeIsoDirection(edge, face, uRange, vRange)) {
             case EdgeIso::UAligned: plan.uEdges.push_back(eid); break;
             case EdgeIso::VAligned: plan.vEdges.push_back(eid); break;
-            case EdgeIso::Neither: plan.constrains = false; return;
+            case EdgeIso::Neither:
+                // Revolution bands tolerate non-iso edges (pocket cuts,
+                // forced full bands): the rims still constrain. Grids
+                // need the full 2u+2v structure and bail instead.
+                if (skipNonIso) continue;
+                plan.constrains = false;
+                return;
         }
     }
     plan.constrains = true;
@@ -470,7 +477,9 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
 
     auto finishRevolution = [&]() {
         plan.kind = MesherKind::RevolutionGrid;
-        collectIsoEdges(face, model, info.edgeIds, plan);
+        collectIsoEdges(face, model, info.edgeIds, plan,
+                        /*skipNonIso=*/true);
+        if (plan.uEdges.empty()) plan.constrains = false;
         if (!s.linkRims && plan.uEdges.size() == 2) plan.linkRims = false;
     };
 
