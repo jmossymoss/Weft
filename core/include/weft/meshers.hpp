@@ -21,7 +21,12 @@ struct FaceMeshSettings {
     int gridU = 4;          // planar/parametric grid divisions
     int gridV = 4;
     CapStyle cap = CapStyle::NGon;
-    double chordTolerance = 0.1;  // fallback triangulation accuracy
+    // Freeform/trimmed faces (the fallback mesher) are driven by these two,
+    // Plasticity-style: max chordal deviation from the true surface, and max
+    // angle between adjacent facets. On an imported model most faces are
+    // freeform, so these ARE the global density controls.
+    double chordTolerance = 0.1;   // max deviation (model units)
+    double angleToleranceDeg = 28.0;  // max facet turn angle (degrees)
     // Fillet/blend faces: divisions ACROSS the blend (support loops for
     // baking) and how strongly the loops cluster toward the creases
     // ("hold" loops; 0 = uniform spacing, toward 1 = tight at the edges).

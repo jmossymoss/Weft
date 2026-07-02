@@ -92,10 +92,11 @@ Headless C++ core + CLI covering the plan's Phases 0–3 essentials:
   - `W` wire · `B` feature edges · `F` frame · `esc` cancel/deselect
 - Save/load the session recipe from the panel
 
-Requires `libglfw3-dev libgl1-mesa-dev libimgui-dev libstb-dev`; the app
-target is skipped automatically when they're absent, so the headless core
-always builds. `weft_app --fixture boss --screenshot out.png` renders
-headlessly (e.g. under `xvfb-run`) for CI/visual checks.
+Uses system `libglfw3-dev libgl1-mesa-dev libimgui-dev libstb-dev` when
+present; otherwise CMake fetches and builds GLFW/ImGui from source (the
+normal path on Windows), so the app builds everywhere OpenGL exists.
+`weft_app --fixture boss --screenshot out.png` renders headlessly (e.g.
+under `xvfb-run`) for CI/visual checks.
 
 The in-viewport editing verbs (loop cut on hover, vertex slide) and the
 Blender bridge are the next layers; the core is headless-first by design
