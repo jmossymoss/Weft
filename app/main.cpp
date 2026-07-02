@@ -56,6 +56,12 @@
 
 static FILE* gDebugLog = nullptr;
 
+// UI scale from the monitor's content scale (Windows DPI setting). Fonts
+// and style metrics rebuild when it changes (e.g. dragging the window to
+// a monitor with a different scale).
+static float gUiScale = 1.0f;
+static float gPendingUiScale = 0.0f;
+
 static void logLine(const char* fmt, ...) {
     if (!gDebugLog) return;
     va_list args;
@@ -768,7 +774,7 @@ static void updateLoopCutHover(App& app, const Mat4& mvp, double mx, double my,
     if (!app.hasModel) return;
 
     const weft::PolyMesh& m = app.mesh;
-    double bestDist = 26.0;  // px
+    double bestDist = 26.0 * gUiScale;  // px
     uint32_t bestA = 0, bestB = 0;
     double bestT = 0.5;
     for (size_t p = 0; p < m.polygons.size(); ++p) {
@@ -871,7 +877,7 @@ static void updateBridgeHover(App& app, const Mat4& mvp, double mx, double my,
     app.preview.count = 0;
     if (!app.hasModel || app.bLoops.empty()) return;
 
-    double bestDist = 30.0;  // px
+    double bestDist = 30.0 * gUiScale;  // px
     for (size_t li = 0; li < app.bLoops.size(); ++li) {
         const auto& loop = app.bLoops[li];
         for (size_t i = 0; i < loop.size(); ++i) {
@@ -948,7 +954,17 @@ static int pickFace(App& app, GLuint flatProg, const Mat4& mvp, int px, int py,
 // ---------------------------------------------------------------------------
 // UI.
 
+static void buildUiScale(float scale) {
+    gUiScale = scale;
+    ImGuiIO& io = ImGui::GetIO();
+    io.Fonts->Clear();
+    ImFontConfig cfg;
+    cfg.SizePixels = std::floor(13.0f * scale);
+    io.Fonts->AddFontDefault(&cfg);
+}
+
 static void styleUi() {
+    ImGui::GetStyle() = ImGuiStyle();  // reset before rescaling
     ImGui::StyleColorsDark();
     ImGuiStyle& s = ImGui::GetStyle();
     s.WindowRounding = 6.0f;
@@ -969,6 +985,7 @@ static void styleUi() {
     c[ImGuiCol_ButtonActive] = {0.95f, 0.62f, 0.18f, 0.85f};
     c[ImGuiCol_SliderGrab] = {0.95f, 0.62f, 0.18f, 0.9f};
     c[ImGuiCol_CheckMark] = {0.95f, 0.62f, 0.18f, 1.0f};
+    s.ScaleAllSizes(gUiScale);
 }
 
 // Density controls. With a mesher kind, only the settings that actually
@@ -1047,7 +1064,7 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
 // Mode indicator + typed-number + hotkey reference, floating over the
 // viewport so the keyboard flow never needs the side panel.
 static void drawOverlay(App& app) {
-    ImGui::SetNextWindowPos({12, 12});
+    ImGui::SetNextWindowPos({12 * gUiScale, 12 * gUiScale});
     ImGui::SetNextWindowBgAlpha(0.55f);
     ImGui::Begin("##overlay", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
@@ -1106,8 +1123,8 @@ static void drawOverlay(App& app) {
     ImGui::End();
 
     const ImGuiViewport* vp = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos({12, vp->WorkSize.y - 12}, ImGuiCond_Always,
-                            {0.0f, 1.0f});
+    ImGui::SetNextWindowPos({12 * gUiScale, vp->WorkSize.y - 12 * gUiScale},
+                            ImGuiCond_Always, {0.0f, 1.0f});
     ImGui::SetNextWindowBgAlpha(0.45f);
     ImGui::Begin("##hotkeys", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
@@ -1154,7 +1171,7 @@ static void drawFacePopup(App& app) {
     // Editing auto-overrides: changes land on every selected face.
     weft::FaceMeshSettings edited = activeSettings(app);
     ImGui::PushID("ctx");
-    ImGui::PushItemWidth(150);
+    ImGui::PushItemWidth(150 * gUiScale);
     bool changed = settingsEditor(edited, &kind, f.isFillet);
     ImGui::PopItemWidth();
     ImGui::PopID();
@@ -1199,7 +1216,7 @@ static void drawFacePopup(App& app) {
 
 static void drawUi(App& app) {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
-    const float width = 330.0f;
+    const float width = 330.0f * gUiScale;
     ImGui::SetNextWindowPos({vp->WorkPos.x + vp->WorkSize.x - width,
                              vp->WorkPos.y});
     ImGui::SetNextWindowSize({width, vp->WorkSize.y});
@@ -1259,7 +1276,7 @@ static void drawUi(App& app) {
         ImGui::TextDisabled("%zu object(s), %zu hidden face(s)",
                             app.analysis.solidFaces.size(),
                             app.hiddenFaces.size());
-        ImGui::BeginChild("##outliner", {0, 200}, true);
+        ImGui::BeginChild("##outliner", {0, 200 * gUiScale}, true);
         for (size_t si = 0; si < app.analysis.solidFaces.size(); ++si) {
             const std::vector<int>& fids = app.analysis.solidFaces[si];
             ImGui::PushID(int(si));
@@ -1478,7 +1495,7 @@ static void drawUi(App& app) {
                                   "torus",    "fillet", "hole", "boss", "demo"};
         for (int i = 0; i < 9; ++i) {
             if (i % 3) ImGui::SameLine();
-            if (ImGui::Button(fixtures[i], {96, 0})) {
+            if (ImGui::Button(fixtures[i], {96 * gUiScale, 0})) {
                 loadFixture(app, fixtures[i]);
             }
         }
@@ -1520,6 +1537,9 @@ int main(int argc, char** argv) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_SAMPLES, 4);
+    // Windows DPI: size the window by the monitor's content scale and
+    // track scale changes when it moves between monitors.
+    glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);
     GLFWwindow* window =
         glfwCreateWindow(1600, 950, "weft — b-rep retopology", nullptr, nullptr);
     if (!window) {
@@ -1534,7 +1554,15 @@ int main(int argc, char** argv) {
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    {
+        float sx = 1.0f, sy = 1.0f;
+        glfwGetWindowContentScale(window, &sx, &sy);
+        buildUiScale(sx > 0 ? sx : 1.0f);
+        logLine("ui scale: %.2f", gUiScale);
+    }
     styleUi();
+    glfwSetWindowContentScaleCallback(
+        window, [](GLFWwindow*, float sx, float) { gPendingUiScale = sx; });
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
 
@@ -1561,6 +1589,17 @@ int main(int argc, char** argv) {
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
         ImGuiIO& io = ImGui::GetIO();
+
+        // DPI changed (window moved to a different-scale monitor):
+        // rebuild fonts and style metrics at the new scale.
+        if (gPendingUiScale > 0 &&
+            std::abs(gPendingUiScale - gUiScale) > 0.01f) {
+            buildUiScale(gPendingUiScale);
+            styleUi();
+            ImGui_ImplOpenGL3_DestroyDeviceObjects();  // re-uploads fonts
+            logLine("ui scale changed: %.2f", gUiScale);
+        }
+        gPendingUiScale = 0.0f;
 
         // Undo bookkeeping: snapshot the recipe before this frame's edits;
         // if a gesture STARTS this frame (markDirty after a quiet frame),
@@ -1869,7 +1908,7 @@ int main(int argc, char** argv) {
             if (app.selectMode == SelectMode::Edge && clicked) {
                 // Edge picking: nearest projected B-rep edge polyline.
                 int hit = 0;
-                double best = 14.0;  // px
+                double best = 14.0 * gUiScale;  // px
                 for (const weft::EdgePolyline& e : app.brepEdges) {
                     for (size_t i = 0; i + 1 < e.points.size(); ++i) {
                         float pa[3] = {0, 0, -1}, pb[3] = {0, 0, -1};
