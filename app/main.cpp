@@ -15,6 +15,13 @@
 #include "weft/recipe.hpp"
 #include "weft/viz.hpp"
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <commdlg.h>
+#endif
+
 #include <GLFW/glfw3.h>
 #include "gl_compat.hpp"
 
@@ -29,8 +36,10 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -253,6 +262,8 @@ struct App {
 
     int selectedFace = 0;
     bool dirty = false;  // regenerate this frame
+    std::set<int> hiddenFaces;
+    bool openFacePopup = false;  // context popup requested at the cursor
 
     // Keyboard-centric editing state.
     Mode mode = Mode::Idle;
@@ -312,6 +323,7 @@ static void rebuildBuffers(App& app) {
 
     for (size_t i = 0; i < m.polygons.size(); ++i) {
         int fid = m.polygonFaceId[i];
+        if (app.hiddenFaces.count(fid)) continue;
         const weft::FaceInfo& info = app.analysis.faces[fid - 1];
         std::array<float, 3> col = faceColor(info, fid == app.selectedFace);
         std::array<float, 3> id{float(fid & 255) / 255.0f,
@@ -398,10 +410,48 @@ static void loadModel(App& app, const std::string& path) {
     }
 }
 
+// Native "open file" dialog: comdlg32 on Windows, zenity on Linux (falls
+// back to the text field in the panel when neither is available).
+static std::string openFileDialog() {
+#ifdef _WIN32
+    char file[1024] = "";
+    OPENFILENAMEA ofn = {};
+    ofn.lStructSize = sizeof ofn;
+    ofn.lpstrFilter = "STEP files (*.step;*.stp)\0*.step;*.stp\0"
+                      "All files\0*.*\0";
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = sizeof file;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+    if (GetOpenFileNameA(&ofn)) return file;
+    return "";
+#else
+    FILE* p = popen(
+        "zenity --file-selection --title='Open STEP' "
+        "--file-filter='STEP | *.step *.stp *.STEP *.STP' 2>/dev/null",
+        "r");
+    if (!p) return "";
+    char buf[1024] = "";
+    std::string r;
+    if (fgets(buf, sizeof buf, p)) {
+        r = buf;
+        while (!r.empty() && (r.back() == '\n' || r.back() == '\r')) {
+            r.pop_back();
+        }
+    }
+    pclose(p);
+    return r;
+#endif
+}
+
+static std::string tempDir() {
+    for (const char* var : {"TMPDIR", "TMP", "TEMP"}) {
+        if (const char* d = std::getenv(var); d && *d) return d;
+    }
+    return ".";
+}
+
 static void loadFixture(App& app, const std::string& name) {
-    const char* tmp = std::getenv("TMPDIR");
-    std::string path = std::string(tmp ? tmp : "/tmp") + "/weft_fixture_" +
-                       name + ".step";
+    std::string path = tempDir() + "/weft_fixture_" + name + ".step";
     try {
         weft::writeStep(weft::makeFixture(name), path);
         loadModel(app, path);
@@ -474,6 +524,7 @@ static void updateLoopCutHover(App& app, const Mat4& mvp, double mx, double my,
     uint32_t bestA = 0, bestB = 0;
     double bestT = 0.5;
     for (size_t p = 0; p < m.polygons.size(); ++p) {
+        if (app.hiddenFaces.count(m.polygonFaceId[p])) continue;
         const auto& poly = m.polygons[p];
         for (size_t i = 0; i < poly.size(); ++i) {
             uint32_t a = poly[i], b = poly[(i + 1) % poly.size()];
@@ -612,26 +663,73 @@ static void styleUi() {
     c[ImGuiCol_CheckMark] = {0.95f, 0.62f, 0.18f, 1.0f};
 }
 
-static bool settingsEditor(weft::FaceMeshSettings& s) {
+// Density controls. With a mesher kind, only the settings that actually
+// drive that face are shown — everything visible has a visible effect.
+// Without one (the defaults), everything is shown, grouped by what it
+// applies to; "freeform" leads because on an imported model most faces
+// are freeform and deviation/angle are the real global density knobs.
+static bool settingsEditor(weft::FaceMeshSettings& s,
+                           const weft::MesherKind* kind = nullptr,
+                           bool isFillet = false) {
+    using MK = weft::MesherKind;
+    const bool all = kind == nullptr;
+    const MK k = kind ? *kind : MK::Fallback;
+    const bool revolved = all || k == MK::RevolutionGrid || k == MK::DiskCap;
+    const bool grid = all || k == MK::PlanarGrid || k == MK::MinimalNGon ||
+                      k == MK::RingJunction;
+    const bool freeform = all || k == MK::QuadDominant || k == MK::Fallback;
     bool ch = false;
-    ch |= ImGui::DragInt("radial", &s.radial, 0.2f, 3, 256);
-    ch |= ImGui::DragInt("axial", &s.axial, 0.2f, 1, 256);
-    ch |= ImGui::DragInt("grid u", &s.gridU, 0.2f, 1, 256);
-    ch |= ImGui::DragInt("grid v", &s.gridV, 0.2f, 1, 256);
-    ch |= ImGui::DragInt("fillet loops", &s.filletLoops, 0.2f, 1, 64);
-    float hold = float(s.filletHold);
-    if (ImGui::SliderFloat("hold", &hold, 0.0f, 0.95f)) {
-        s.filletHold = hold;
-        ch = true;
+
+    if (freeform) {
+        if (all) ImGui::TextDisabled("freeform / imported surfaces");
+        float dev = float(s.chordTolerance);
+        if (ImGui::DragFloat("deviation", &dev, 0.01f, 0.0005f, 100.0f,
+                             "%.4f", ImGuiSliderFlags_Logarithmic)) {
+            s.chordTolerance = dev;
+            ch = true;
+        }
+        float ang = float(s.angleToleranceDeg);
+        if (ImGui::DragFloat("angle", &ang, 0.25f, 1.0f, 60.0f, "%.1f deg")) {
+            s.angleToleranceDeg = ang;
+            ch = true;
+        }
+        ch |= ImGui::Checkbox("quad-dominant fallback", &s.quadDominant);
     }
-    ch |= ImGui::DragInt("junction rings", &s.junctionRings, 0.2f, 1, 32);
-    int cap = s.cap == weft::CapStyle::Fan ? 1 : 0;
-    if (ImGui::Combo("cap style", &cap, "ngon\0fan\0")) {
-        s.cap = cap ? weft::CapStyle::Fan : weft::CapStyle::NGon;
-        ch = true;
+    if (revolved) {
+        if (all) ImGui::TextDisabled("revolved surfaces");
+        ch |= ImGui::DragInt("radial", &s.radial, 0.2f, 3, 256);
+        if (all || k == MK::RevolutionGrid) {
+            ch |= ImGui::DragInt("axial", &s.axial, 0.2f, 1, 256);
+        }
+        if (all || k == MK::DiskCap) {
+            int cap = s.cap == weft::CapStyle::Fan ? 1 : 0;
+            if (ImGui::Combo("cap style", &cap, "ngon\0fan\0")) {
+                s.cap = cap ? weft::CapStyle::Fan : weft::CapStyle::NGon;
+                ch = true;
+            }
+        }
     }
-    ch |= ImGui::Checkbox("quad-dominant fallback", &s.quadDominant);
-    ch |= ImGui::Checkbox("minimal n-gon (flat panels)", &s.minimal);
+    if (grid) {
+        if (all) ImGui::TextDisabled("planar / parametric grids");
+        ch |= ImGui::DragInt("grid u", &s.gridU, 0.2f, 1, 256);
+        ch |= ImGui::DragInt("grid v", &s.gridV, 0.2f, 1, 256);
+        if (all || k == MK::RingJunction) {
+            ch |= ImGui::DragInt("junction rings", &s.junctionRings, 0.2f, 1,
+                                 32);
+        }
+        if (all || k == MK::PlanarGrid || k == MK::MinimalNGon) {
+            ch |= ImGui::Checkbox("minimal n-gon (flat panels)", &s.minimal);
+        }
+    }
+    if (all || isFillet) {
+        if (all) ImGui::TextDisabled("fillets / blends");
+        ch |= ImGui::DragInt("fillet loops", &s.filletLoops, 0.2f, 1, 64);
+        float hold = float(s.filletHold);
+        if (ImGui::SliderFloat("hold", &hold, 0.0f, 0.95f)) {
+            s.filletHold = hold;
+            ch = true;
+        }
+    }
     return ch;
 }
 
@@ -674,8 +772,75 @@ static void drawOverlay(App& app) {
     ImGui::TextDisabled(
         "R loop cut   12<enter> set divisions   [ ] nudge (+shift: 2nd axis)\n"
         "C cap ngon/fan   T tris ok   M minimal n-gon   ctrl+Z undo op\n"
-        "W wire   B feature edges   F frame   esc deselect/cancel");
+        "H hide face (shift+H show all)   W wire   B feature edges\n"
+        "F frame   esc deselect/cancel   MMB orbit (+shift pan, +ctrl zoom)");
     ImGui::End();
+}
+
+// Context popup at the cursor after picking a face: only the controls that
+// drive that face's mesher, plus visibility actions — edit where you click
+// instead of hunting through the side panel.
+static void drawFacePopup(App& app) {
+    if (app.openFacePopup) {
+        if (app.selectedFace > 0) ImGui::OpenPopup("##facectx");
+        app.openFacePopup = false;
+    }
+    if (!ImGui::BeginPopup("##facectx")) return;
+    if (app.selectedFace <= 0) {
+        ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        return;
+    }
+    const weft::FaceInfo& f = app.analysis.faces[app.selectedFace - 1];
+    ImGui::Text("face #%d  %s%s%s", f.id, weft::surfaceTypeName(f.type),
+                f.isFillet ? "  [fillet]" : "", f.isHole ? "  [hole]" : "");
+    weft::MesherKind kind = weft::MesherKind::Fallback;
+    auto it = app.report.faceMesher.find(f.id);
+    if (it != app.report.faceMesher.end()) kind = it->second;
+    ImGui::TextDisabled("mesher: %s", weft::mesherKindName(kind));
+    ImGui::Separator();
+
+    bool overridden = app.recipe.settings.perFace.count(f.id) > 0;
+    if (ImGui::Checkbox("override this face", &overridden)) {
+        if (overridden) {
+            app.recipe.settings.perFace[f.id] = app.recipe.settings.defaults;
+        } else {
+            app.recipe.settings.perFace.erase(f.id);
+        }
+        app.dirty = true;
+    }
+    if (!overridden) {
+        ImGui::TextDisabled("editing defaults (affects all faces)");
+    }
+    weft::FaceMeshSettings& s = overridden
+                                    ? app.recipe.settings.perFace[f.id]
+                                    : app.recipe.settings.defaults;
+    ImGui::PushID("ctx");
+    ImGui::PushItemWidth(150);
+    if (settingsEditor(s, &kind, f.isFillet)) app.dirty = true;
+    ImGui::PopItemWidth();
+    ImGui::PopID();
+
+    ImGui::Separator();
+    if (ImGui::MenuItem("hide face", "H")) {
+        app.hiddenFaces.insert(f.id);
+        app.selectedFace = 0;
+        rebuildBuffers(app);
+        ImGui::CloseCurrentPopup();
+    }
+    if (ImGui::MenuItem("isolate face")) {
+        app.hiddenFaces.clear();
+        for (const auto& fi : app.analysis.faces) {
+            if (fi.id != f.id) app.hiddenFaces.insert(fi.id);
+        }
+        rebuildBuffers(app);
+    }
+    if (!app.hiddenFaces.empty() && ImGui::MenuItem("show all", "shift+H")) {
+        app.hiddenFaces.clear();
+        rebuildBuffers(app);
+    }
+    if (ImGui::MenuItem("loop cut mode", "R")) app.mode = Mode::LoopCut;
+    ImGui::EndPopup();
 }
 
 static void drawUi(App& app) {
@@ -694,18 +859,59 @@ static void drawUi(App& app) {
     ImGui::Separator();
 
     if (ImGui::CollapsingHeader("Model", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::InputTextWithHint("##path", "path/to/model.step", app.pathBuf,
+        if (ImGui::Button("Open STEP...", {-1, 0})) {
+            std::string p = openFileDialog();
+            if (!p.empty()) {
+                std::snprintf(app.pathBuf, sizeof app.pathBuf, "%s",
+                              p.c_str());
+                loadModel(app, p);
+            }
+        }
+        ImGui::InputTextWithHint("##path", "or type a path...", app.pathBuf,
                                  sizeof app.pathBuf);
         ImGui::SameLine();
         if (ImGui::Button("Load")) loadModel(app, app.pathBuf);
-        ImGui::TextDisabled("fixtures:");
-        const char* fixtures[] = {"cylinder", "box",  "cone", "sphere",
-                                  "torus",    "fillet", "hole", "boss", "demo"};
-        for (int i = 0; i < 9; ++i) {
-            if (i % 3) ImGui::SameLine();
-            if (ImGui::Button(fixtures[i], {96, 0})) loadFixture(app, fixtures[i]);
-        }
         ImGui::TextWrapped("%s", app.status.c_str());
+    }
+
+    if (app.hasModel &&
+        ImGui::CollapsingHeader("Outliner", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::SmallButton("show all")) {
+            app.hiddenFaces.clear();
+            rebuildBuffers(app);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("%zu faces, %zu hidden",
+                            app.analysis.faces.size(),
+                            app.hiddenFaces.size());
+        ImGui::BeginChild("##outliner", {0, 190}, true);
+        ImGuiListClipper clipper;
+        clipper.Begin(int(app.analysis.faces.size()));
+        while (clipper.Step()) {
+            for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
+                const weft::FaceInfo& f = app.analysis.faces[i];
+                ImGui::PushID(f.id);
+                bool vis = !app.hiddenFaces.count(f.id);
+                if (ImGui::Checkbox("##vis", &vis)) {
+                    if (vis) app.hiddenFaces.erase(f.id);
+                    else app.hiddenFaces.insert(f.id);
+                    rebuildBuffers(app);
+                }
+                ImGui::SameLine();
+                char label[96];
+                std::snprintf(label, sizeof label, "face %-4d %s%s%s", f.id,
+                              weft::surfaceTypeName(f.type),
+                              f.isFillet ? " [fillet]" : "",
+                              f.isHole ? " [hole]" : "");
+                if (ImGui::Selectable(label, app.selectedFace == f.id)) {
+                    app.selectedFace =
+                        app.selectedFace == f.id ? 0 : f.id;
+                    rebuildBuffers(app);
+                }
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndChild();
     }
 
     if (app.hasModel &&
@@ -729,9 +935,11 @@ static void drawUi(App& app) {
                         f.isFillet ? "  [fillet]" : "",
                         f.isHole ? "  [hole]" : "");
             if (f.radius > 0) ImGui::Text("radius %.3f", f.radius);
+            weft::MesherKind kind = weft::MesherKind::Fallback;
             auto it = app.report.faceMesher.find(f.id);
             if (it != app.report.faceMesher.end()) {
-                ImGui::Text("mesher: %s", weft::mesherKindName(it->second));
+                kind = it->second;
+                ImGui::Text("mesher: %s", weft::mesherKindName(kind));
             }
             bool overridden =
                 app.recipe.settings.perFace.count(app.selectedFace) > 0;
@@ -746,8 +954,8 @@ static void drawUi(App& app) {
             }
             if (overridden) {
                 ImGui::PushID("perface");
-                if (settingsEditor(
-                        app.recipe.settings.perFace[app.selectedFace])) {
+                if (settingsEditor(app.recipe.settings.perFace[app.selectedFace],
+                                   &kind, f.isFillet)) {
                     app.dirty = true;
                 }
                 ImGui::PopID();
@@ -785,8 +993,21 @@ static void drawUi(App& app) {
         ImGui::SameLine();
         ImGui::Checkbox("feature edges", &app.showBrepEdges);
         ImGui::TextDisabled("orange convex / blue concave / green smooth");
-        ImGui::TextDisabled("LMB select · RMB orbit · shift pan · wheel zoom");
+        ImGui::TextDisabled("LMB select · MMB orbit · shift+MMB pan");
+        ImGui::TextDisabled("ctrl+MMB zoom · alt+MMB axis view · wheel");
         ImGui::Text("%zu manual op(s)", app.recipe.ops.size());
+    }
+
+    if (ImGui::CollapsingHeader("Dev fixtures")) {
+        ImGui::TextDisabled("built-in test shapes");
+        const char* fixtures[] = {"cylinder", "box",  "cone", "sphere",
+                                  "torus",    "fillet", "hole", "boss", "demo"};
+        for (int i = 0; i < 9; ++i) {
+            if (i % 3) ImGui::SameLine();
+            if (ImGui::Button(fixtures[i], {96, 0})) {
+                loadFixture(app, fixtures[i]);
+            }
+        }
     }
 
     ImGui::End();
@@ -852,7 +1073,7 @@ int main(int argc, char** argv) {
     }
 
     double lastX = 0, lastY = 0;
-    bool rotating = false, panning = false;
+    bool navOrbit = false, navPan = false, navZoom = false, navSnap = false;
     double downX = 0, downY = 0;
     bool prevLmb = false;
     int frame = 0;
@@ -871,25 +1092,42 @@ int main(int argc, char** argv) {
             my = fbh * 0.5;
         }
 
-        // Camera controls (Blender-ish): RMB/MMB orbit, +shift pan, wheel zoom.
+        // Blender-standard navigation: MMB orbit, shift+MMB pan, ctrl+MMB
+        // drag-zoom, wheel zoom; alt+MMB orbits and snaps to the nearest
+        // axis-aligned view on release.
         if (!io.WantCaptureMouse) {
-            bool orbitBtn =
-                glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS ||
-                glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS;
-            bool shift = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
-            if (orbitBtn && !rotating && !panning) {
-                rotating = !shift;
-                panning = shift;
+            bool mmb = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_MIDDLE) ==
+                       GLFW_PRESS;
+            bool shift = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+                         glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+            bool ctrl = glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
+                        glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
+            bool alt = glfwGetKey(window, GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||
+                       glfwGetKey(window, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS;
+            if (mmb && !navOrbit && !navPan && !navZoom) {
+                navPan = shift;
+                navZoom = ctrl && !shift;
+                navOrbit = !navPan && !navZoom;
+                navSnap = alt;
                 lastX = mx;
                 lastY = my;
             }
-            if (!orbitBtn) rotating = panning = false;
-            if (rotating) {
+            if (!mmb) {
+                if (navOrbit && navSnap) {  // alt+MMB: nearest axis view
+                    const float halfPi = 1.5707964f;
+                    app.cam.yaw = std::round(app.cam.yaw / halfPi) * halfPi;
+                    app.cam.pitch =
+                        std::round(app.cam.pitch / halfPi) * halfPi;
+                    app.cam.pitch = std::clamp(app.cam.pitch, -1.55f, 1.55f);
+                }
+                navOrbit = navPan = navZoom = navSnap = false;
+            }
+            if (navOrbit) {
                 app.cam.yaw -= float(mx - lastX) * 0.008f;
                 app.cam.pitch += float(my - lastY) * 0.008f;
                 app.cam.pitch = std::clamp(app.cam.pitch, -1.55f, 1.55f);
             }
-            if (panning) {
+            if (navPan) {
                 float k = app.cam.dist * 0.0016f;
                 Vec3 eye = app.cam.eye();
                 Vec3 f = norm(sub(app.cam.target, eye));
@@ -898,6 +1136,10 @@ int main(int argc, char** argv) {
                 app.cam.target.x -= (float(mx - lastX) * r.x - float(my - lastY) * u.x) * k;
                 app.cam.target.y -= (float(mx - lastX) * r.y - float(my - lastY) * u.y) * k;
                 app.cam.target.z -= (float(mx - lastX) * r.z - float(my - lastY) * u.z) * k;
+            }
+            if (navZoom) {
+                app.cam.dist *= std::pow(1.006f, float(my - lastY));
+                app.cam.dist = std::clamp(app.cam.dist, 0.5f, 10000.0f);
             }
             lastX = mx;
             lastY = my;
@@ -967,6 +1209,18 @@ int main(int argc, char** argv) {
                 s.minimal = !s.minimal;
                 app.dirty = true;
             }
+            if (ImGui::IsKeyPressed(ImGuiKey_H, false) && app.hasModel) {
+                if (shift) {
+                    app.hiddenFaces.clear();
+                    rebuildBuffers(app);
+                    app.status = "all faces shown";
+                } else if (app.selectedFace > 0) {
+                    app.hiddenFaces.insert(app.selectedFace);
+                    app.selectedFace = 0;
+                    rebuildBuffers(app);
+                    app.status = "face hidden (shift+H shows all)";
+                }
+            }
             if (ImGui::IsKeyPressed(ImGuiKey_W, false)) app.showWire = !app.showWire;
             if (ImGui::IsKeyPressed(ImGuiKey_B, false)) {
                 app.showBrepEdges = !app.showBrepEdges;
@@ -1005,10 +1259,13 @@ int main(int argc, char** argv) {
                 app.status = "loop cut committed (ctrl+z undoes)";
             }
         } else if (clicked && app.hasModel) {
-            // Click-select: pick pass + pixel read.
+            // Click-select: pick pass + pixel read. A hit opens the
+            // context popup at the cursor; clicking the same face again
+            // deselects.
             glViewport(0, 0, fbw, fbh);
             int hit = pickFace(app, flatProg, mvp, int(mx), int(my), fbw, fbh);
             app.selectedFace = hit == app.selectedFace ? 0 : hit;
+            app.openFacePopup = app.selectedFace > 0;
             rebuildBuffers(app);
         }
 
@@ -1017,6 +1274,7 @@ int main(int argc, char** argv) {
         ImGui::NewFrame();
         drawUi(app);
         drawOverlay(app);
+        drawFacePopup(app);
         ImGui::Render();
 
         glViewport(0, 0, fbw, fbh);
