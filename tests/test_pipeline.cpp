@@ -7,6 +7,7 @@
 #include "weft/mesh.hpp"
 #include "weft/meshers.hpp"
 #include "weft/model.hpp"
+#include "weft/recipe.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -314,6 +315,40 @@ void testBoxDensityMatching() {
     }
 }
 
+void testRecipeRoundTrip() {
+    std::printf("-- recipe round trip --\n");
+    weft::GenerationSettings gs;
+    gs.defaults.radial = 20;
+    gs.defaults.cap = weft::CapStyle::Fan;
+    weft::FaceMeshSettings dense = gs.defaults;
+    dense.radial = 40;
+    dense.gridV = 7;
+    gs.perFace[3] = dense;
+    gs.perEdge[5] = 13;
+
+    std::string path = tmpPath("weft_test.recipe");
+    weft::saveRecipe(gs, path);
+    weft::GenerationSettings loaded = weft::loadRecipe(path);
+
+    CHECK_EQ(loaded.defaults.radial, 20);
+    CHECK(loaded.defaults.cap == weft::CapStyle::Fan);
+    CHECK_EQ(loaded.perFace.size(), 1);
+    CHECK_EQ(loaded.perFace[3].radial, 40);
+    CHECK_EQ(loaded.perFace[3].gridV, 7);
+    CHECK_EQ(loaded.perEdge[5], 13);
+
+    // Same recipe, same B-rep => identical topology (regenerability is the
+    // point of persisting decisions instead of meshes).
+    std::string stepPath = tmpPath("weft_test_recipe_cyl.step");
+    weft::writeStep(weft::makeFixture("cylinder"), stepPath);
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis a = weft::analyze(model);
+    weft::PolyMesh m1 = weft::generate(model, a, gs);
+    weft::PolyMesh m2 = weft::generate(model, a, loaded);
+    CHECK_EQ(m1.vertexCount(), m2.vertexCount());
+    CHECK_EQ(m1.polygonCount(), m2.polygonCount());
+}
+
 void testBoss() {
     std::printf("-- boss (trimmed faces -> fallback) --\n");
     std::string stepPath = tmpPath("weft_test_boss.step");
@@ -354,6 +389,7 @@ int main() {
     testSphere();
     testTorus();
     testBoxDensityMatching();
+    testRecipeRoundTrip();
     testBoss();
     if (failures) {
         std::printf("\n%d FAILURE(S)\n", failures);
