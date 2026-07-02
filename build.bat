@@ -166,18 +166,32 @@ echo ========================================
 echo  Running tests
 echo ========================================
 echo.
-REM The test/CLI executables need the OCCT DLLs at runtime. Find the
-REM directory containing TKernel.dll under the install and prepend it.
+REM The test/CLI executables need the OCCT DLLs at runtime -- and OCCT's
+REM own third-party DLLs (tbb12.dll, freetype, jemalloc, ...) live in
+REM SEPARATE directories from the TK*.dlls in the official installer.
+REM Find each one and prepend its directory to PATH.
 set "OCCT_BIN="
 for /f "delims=" %%f in ('dir /s /b "!OCCT_DIR!\TKernel.dll" 2^>nul') do (
     if not defined OCCT_BIN set "OCCT_BIN=%%~dpf"
 )
 if defined OCCT_BIN (
-    echo   Adding OCCT DLLs to PATH for this session: !OCCT_BIN!
+    echo   OCCT DLLs:       !OCCT_BIN!
     set "PATH=!OCCT_BIN!;!PATH!"
 ) else (
     echo   Warning: TKernel.dll not found under !OCCT_DIR! -- tests may
     echo   fail to start. Add the OCCT bin directory to PATH manually.
+)
+REM OCCT also loads its bundled third-party DLLs (tbb12, jemalloc,
+REM openvr_api, FreeImage, freetype, ...), each shipped in its OWN
+REM directory. Rather than chase names, prepend every directory under
+REM the install that contains a DLL.
+set "DLLDIRS=;"
+for /f "delims=" %%f in ('dir /s /b "!OCCT_DIR!\*.dll" 2^>nul') do (
+    if "!DLLDIRS:%%~dpf;=!"=="!DLLDIRS!" (
+        set "DLLDIRS=!DLLDIRS!%%~dpf;"
+        set "PATH=%%~dpf;!PATH!"
+        echo   DLL dir on PATH: %%~dpf
+    )
 )
 ctest --test-dir build -C Release --output-on-failure
 if %errorLevel% neq 0 (
@@ -193,13 +207,18 @@ echo.
 echo   CLI:  build\cli\Release\weft.exe
 echo   App:  build\app\Release\weft_app.exe   ^(if GUI deps were found^)
 echo.
-echo   Note: to RUN the executables from a new prompt, the OpenCASCADE
-echo   DLLs must be on PATH:
-if defined OCCT_BIN (
-    echo     set PATH=!OCCT_BIN!;%%PATH%%
-) else (
-    echo     set PATH=!OCCT_DIR!\win64\vc14\bin;%%PATH%%
-)
+echo   Note: to RUN the executables from a NEW prompt, the OpenCASCADE
+echo   DLL directories listed above ^("DLL dir on PATH"^) must be on
+echo   PATH. Easiest: use run_weft.bat, generated next to this script.
+REM Generate a launcher that sets up PATH and opens a ready-to-use prompt.
+(
+    echo @echo off
+    echo set "PATH=!DLLDIRS:~1!%%PATH%%"
+    echo cd /d "%%~dp0"
+    echo echo Weft environment ready. Try:
+    echo echo   build\cli\Release\weft.exe fixture demo.step --shape demo
+    echo cmd /k
+) > "%~dp0run_weft.bat"
 echo.
 echo   Try it:
 echo     build\cli\Release\weft.exe fixture demo.step --shape demo
