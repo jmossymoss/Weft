@@ -6,6 +6,7 @@
 #include <BRepTools.hxx>
 #include <BRep_Tool.hxx>
 #include <ElCLib.hxx>
+#include <ElSLib.hxx>
 #include <Geom2d_Curve.hxx>
 #include <Geom_Circle.hxx>
 #include <Geom_Curve.hxx>
@@ -17,6 +18,7 @@
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Wire.hxx>
 #include <gp_Circ.hxx>
+#include <gp_Pln.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Pnt2d.hxx>
 #include <gp_Vec.hxx>
@@ -60,8 +62,9 @@ class MeshBuilder {
 public:
     explicit MeshBuilder(PolyMesh& mesh) : mesh_(mesh) {}
 
-    uint32_t addVertex(const gp_Pnt& p) {
+    uint32_t addVertex(const gp_Pnt& p, const Anchor& anchor) {
         mesh_.vertices.push_back({p.X(), p.Y(), p.Z()});
+        mesh_.anchors.push_back(anchor);
         return static_cast<uint32_t>(mesh_.vertices.size() - 1);
     }
 
@@ -430,17 +433,20 @@ void meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
 
     std::vector<std::vector<uint32_t>> ring(rows);
     for (int j = 0; j < rows; ++j) {
+        double v = v0 + j * dv;
         std::vector<gp_Pnt> pts(nu);
         bool degenerate = true;
         for (int i = 0; i < nu; ++i) {
-            pts[i] = surf.Value(u0 + i * du, v0 + j * dv);
+            pts[i] = surf.Value(u0 + i * du, v);
             if (i > 0 && pts[i].Distance(pts[0]) > 1e-9) degenerate = false;
         }
         if (degenerate) {
-            ring[j].assign(nu, out.addVertex(pts[0]));
+            ring[j].assign(nu, out.addVertex(pts[0], {faceId, u0, v}));
         } else {
             ring[j].resize(nu);
-            for (int i = 0; i < nu; ++i) ring[j][i] = out.addVertex(pts[i]);
+            for (int i = 0; i < nu; ++i) {
+                ring[j][i] = out.addVertex(pts[i], {faceId, u0 + i * du, v});
+            }
         }
     }
 
@@ -470,6 +476,12 @@ void meshDiskCap(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                  const gp_Circ& circ, int faceId, int n, CapStyle cap,
                  MeshBuilder& out) {
     n = std::max(3, n);
+    const gp_Pln pln = surf.Plane();
+    auto planeAnchor = [&](const gp_Pnt& p) {
+        Anchor a{faceId, 0.0, 0.0};
+        ElSLib::Parameters(pln, p, a.u, a.v);
+        return a;
+    };
     // Ring points come from the circle's own parametrization so they land on
     // the same positions as an adjacent revolution side sharing this circle;
     // the weld pass then stitches the two faces watertight.
@@ -477,7 +489,7 @@ void meshDiskCap(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     std::vector<gp_Pnt> pts(n);
     for (int i = 0; i < n; ++i) {
         pts[i] = ElCLib::Value(i * 2.0 * M_PI / n, circ);
-        ring[i] = out.addVertex(pts[i]);
+        ring[i] = out.addVertex(pts[i], planeAnchor(pts[i]));
     }
 
     // Ring order follows circle parametrization, which is unrelated to the
@@ -488,7 +500,8 @@ void meshDiskCap(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     if (cap == CapStyle::NGon) {
         out.addPolygon(ring, faceId, flip);
     } else {
-        uint32_t center = out.addVertex(circ.Location());
+        uint32_t center =
+            out.addVertex(circ.Location(), planeAnchor(circ.Location()));
         for (int i = 0; i < n; ++i) {
             out.addPolygon({center, ring[i], ring[(i + 1) % n]}, faceId, flip);
         }
@@ -507,9 +520,10 @@ void meshParametricGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
     std::vector<uint32_t> grid((nu + 1) * (nv + 1));
     for (int j = 0; j <= nv; ++j) {
         for (int i = 0; i <= nu; ++i) {
-            grid[j * (nu + 1) + i] = out.addVertex(
-                surf.Value(umin + uParams[i] * (umax - umin),
-                           vmin + vParams[j] * (vmax - vmin)));
+            double u = umin + uParams[i] * (umax - umin);
+            double v = vmin + vParams[j] * (vmax - vmin);
+            grid[j * (nu + 1) + i] =
+                out.addVertex(surf.Value(u, v), {faceId, u, v});
         }
     }
     for (int j = 0; j < nv; ++j) {
@@ -579,18 +593,28 @@ void meshRingJunction(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     std::rotate(border.begin(), border.begin() + best, border.end());
 
     // Concentric rings: r=0 is the circle, r=loops is the border.
+    const gp_Pln pln = surf.Plane();
+    auto planeAnchor = [&](const gp_Pnt& p) {
+        Anchor a{faceId, 0.0, 0.0};
+        ElSLib::Parameters(pln, p, a.u, a.v);
+        return a;
+    };
     std::vector<std::vector<uint32_t>> rows(loops + 1, std::vector<uint32_t>(n));
-    for (int k = 0; k < n; ++k) rows[0][k] = out.addVertex(ring[k]);
+    for (int k = 0; k < n; ++k) {
+        rows[0][k] = out.addVertex(ring[k], planeAnchor(ring[k]));
+    }
     for (int r = 1; r < loops; ++r) {
         double t = double(r) / loops;
         for (int k = 0; k < n; ++k) {
             gp_Pnt p(ring[k].X() + t * (border[k].X() - ring[k].X()),
                      ring[k].Y() + t * (border[k].Y() - ring[k].Y()),
                      ring[k].Z() + t * (border[k].Z() - ring[k].Z()));
-            rows[r][k] = out.addVertex(p);
+            rows[r][k] = out.addVertex(p, planeAnchor(p));
         }
     }
-    for (int k = 0; k < n; ++k) rows[loops][k] = out.addVertex(border[k]);
+    for (int k = 0; k < n; ++k) {
+        rows[loops][k] = out.addVertex(border[k], planeAnchor(border[k]));
+    }
 
     // Winding: the ring runs counter-clockwise around the circle axis; flip
     // if that disagrees with the face's outward normal.
@@ -615,9 +639,16 @@ void meshFallback(const TopoDS_Face& face, int faceId, const FaceMeshSettings& s
     if (tri.IsNull()) return;
 
     const bool flip = face.Orientation() == TopAbs_REVERSED;
+    const bool hasUV = tri->HasUVNodes();
     std::vector<uint32_t> verts(tri->NbNodes());
     for (int i = 1; i <= tri->NbNodes(); ++i) {
-        verts[i - 1] = out.addVertex(tri->Node(i).Transformed(loc.Transformation()));
+        Anchor a;
+        if (hasUV) {
+            gp_Pnt2d uv = tri->UVNode(i);
+            a = {faceId, uv.X(), uv.Y()};
+        }
+        verts[i - 1] = out.addVertex(
+            tri->Node(i).Transformed(loc.Transformation()), a);
     }
     for (int i = 1; i <= tri->NbTriangles(); ++i) {
         int a, b, c;

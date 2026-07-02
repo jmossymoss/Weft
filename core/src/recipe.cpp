@@ -51,20 +51,25 @@ static std::string settingsToString(const FaceMeshSettings& s) {
     return buf;
 }
 
-void saveRecipe(const GenerationSettings& settings, const std::string& path) {
+void saveRecipe(const Recipe& recipe, const std::string& path) {
     std::ofstream out(path);
     if (!out) throw std::runtime_error("cannot open for writing: " + path);
     out << "weft-recipe 1\n";
-    out << "default " << settingsToString(settings.defaults) << "\n";
-    for (const auto& [fid, s] : settings.perFace) {
+    out << "default " << settingsToString(recipe.settings.defaults) << "\n";
+    for (const auto& [fid, s] : recipe.settings.perFace) {
         out << "face " << fid << " " << settingsToString(s) << "\n";
     }
-    for (const auto& [eid, count] : settings.perEdge) {
+    for (const auto& [eid, count] : recipe.settings.perEdge) {
         out << "edge " << eid << " " << count << "\n";
+    }
+    out.precision(17);
+    for (const ManualOp& op : recipe.ops) {
+        out << "op loop " << op.faceId << " " << op.u << " " << op.v << " "
+            << op.t << "\n";
     }
 }
 
-GenerationSettings loadRecipe(const std::string& path) {
+Recipe loadRecipe(const std::string& path) {
     std::ifstream in(path);
     if (!in) throw std::runtime_error("cannot open recipe: " + path);
 
@@ -74,7 +79,8 @@ GenerationSettings loadRecipe(const std::string& path) {
         throw std::runtime_error("not a weft recipe (v1): " + path);
     }
 
-    GenerationSettings gs;
+    Recipe recipe;
+    GenerationSettings& gs = recipe.settings;
     std::string line;
     std::getline(in, line);  // finish the header line
     int lineNo = 1;
@@ -100,6 +106,16 @@ GenerationSettings loadRecipe(const std::string& path) {
                 int eid, count;
                 ss >> eid >> count;
                 gs.perEdge[eid] = count;
+            } else if (kind == "op") {
+                std::string opKind;
+                ss >> opKind;
+                if (opKind != "loop") {
+                    throw std::runtime_error("unknown op: " + opKind);
+                }
+                ManualOp op;
+                ss >> op.faceId >> op.u >> op.v >> op.t;
+                if (!ss) throw std::runtime_error("malformed op loop");
+                recipe.ops.push_back(op);
             } else {
                 throw std::runtime_error("unknown directive: " + kind);
             }
@@ -108,7 +124,7 @@ GenerationSettings loadRecipe(const std::string& path) {
                                      ": " + e.what());
         }
     }
-    return gs;
+    return recipe;
 }
 
 }  // namespace weft
