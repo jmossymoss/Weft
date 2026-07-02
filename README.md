@@ -30,6 +30,10 @@ Headless C++ core + CLI covering the plan's Phases 0–1:
   Change one face's density and its neighbours follow; the solid stays
   watertight with no T-junctions. Edges can also be pinned exactly
   (`--edge 3:20`), the first slice of the plan's per_edge_settings.
+- **Recipes** (plan §5, first slice): save the full density setup —
+  defaults, per-face overrides, per-edge pins — keyed to stable CAD IDs
+  (`--save-recipe` / `--recipe`), and regenerate identical topology from
+  it later. Decisions persist; the mesh is just a view.
 - Vertex welding across B-rep face borders (watertight where divisions match)
 - OBJ export with one group per B-rep face, so CAD face IDs survive into
   Blender

@@ -7,6 +7,7 @@
 #include "weft/mesh.hpp"
 #include "weft/meshers.hpp"
 #include "weft/model.hpp"
+#include "weft/recipe.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -40,26 +41,14 @@ void usage() {
         "                      keys: radial, axial, gridu, gridv, cap, chord\n"
         "    --edge ID:N       pin an edge (and its density-matched group) to\n"
         "                      exactly N subdivisions\n"
+        "    --recipe FILE     load settings from a saved recipe (flags given\n"
+        "                      after it override; --face/--edge always apply)\n"
+        "    --save-recipe FILE\n"
+        "                      persist the final settings, keyed to CAD IDs\n"
         "\n"
         "  Divisions are density-matched: edges shared between parametric\n"
         "  faces resolve to one count (max of the faces' proposals), so\n"
         "  neighbours meet vertex-for-vertex.\n");
-}
-
-void applyKeyValue(weft::FaceMeshSettings& s, const std::string& key,
-                   const std::string& value) {
-    if (key == "radial") s.radial = std::stoi(value);
-    else if (key == "axial") s.axial = std::stoi(value);
-    else if (key == "gridu") s.gridU = std::stoi(value);
-    else if (key == "gridv") s.gridV = std::stoi(value);
-    else if (key == "chord") s.chordTolerance = std::stod(value);
-    else if (key == "cap") {
-        if (value == "ngon") s.cap = weft::CapStyle::NGon;
-        else if (value == "fan") s.cap = weft::CapStyle::Fan;
-        else throw std::runtime_error("unknown cap style: " + value);
-    } else {
-        throw std::runtime_error("unknown setting: " + key);
-    }
 }
 
 // "ID:k=v,k=v" → per-face override starting from the current defaults.
@@ -70,18 +59,7 @@ void parseFaceOverride(weft::GenerationSettings& gs, const std::string& spec) {
     }
     int faceId = std::stoi(spec.substr(0, colon));
     weft::FaceMeshSettings s = gs.defaults;
-    std::string rest = spec.substr(colon + 1);
-    size_t pos = 0;
-    while (pos < rest.size()) {
-        size_t comma = rest.find(',', pos);
-        std::string pair = rest.substr(pos, comma - pos);
-        size_t eq = pair.find('=');
-        if (eq == std::string::npos) {
-            throw std::runtime_error("expected key=val in --face, got " + pair);
-        }
-        applyKeyValue(s, pair.substr(0, eq), pair.substr(eq + 1));
-        pos = comma == std::string::npos ? rest.size() : comma + 1;
-    }
+    weft::applySettingsList(s, spec.substr(colon + 1));
     gs.perFace[faceId] = s;
 }
 
@@ -130,6 +108,7 @@ int cmdMesh(const std::vector<std::string>& args) {
     if (args.empty()) { usage(); return 2; }
     std::string input = args[0];
     std::string output;
+    std::string recipeOut;
     weft::GenerationSettings gs;
     std::vector<std::string> faceSpecs;
 
@@ -143,7 +122,9 @@ int cmdMesh(const std::vector<std::string>& args) {
         else if (a == "--radial") gs.defaults.radial = std::stoi(next());
         else if (a == "--axial") gs.defaults.axial = std::stoi(next());
         else if (a == "--chord") gs.defaults.chordTolerance = std::stod(next());
-        else if (a == "--cap") applyKeyValue(gs.defaults, "cap", next());
+        else if (a == "--cap") weft::applySetting(gs.defaults, "cap", next());
+        else if (a == "--recipe") gs = weft::loadRecipe(next());
+        else if (a == "--save-recipe") recipeOut = next();
         else if (a == "--grid") {
             std::string g = next();
             size_t x = g.find('x');
@@ -167,6 +148,10 @@ int cmdMesh(const std::vector<std::string>& args) {
     }
     if (output.empty()) throw std::runtime_error("missing -o <out.obj>");
     for (const std::string& spec : faceSpecs) parseFaceOverride(gs, spec);
+    if (!recipeOut.empty()) {
+        weft::saveRecipe(gs, recipeOut);
+        std::printf("saved recipe %s\n", recipeOut.c_str());
+    }
 
     weft::Model model = weft::loadStep(input);
     weft::Analysis analysis = weft::analyze(model);
