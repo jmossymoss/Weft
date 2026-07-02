@@ -109,6 +109,36 @@ Analysis analyze(const Model& model) {
     a.faces.resize(model.faceCount());
     a.edges.resize(model.edgeCount());
 
+    // Object structure for the outliner: faces grouped per solid; shells
+    // outside any solid count as their own objects; anything left over
+    // (free faces) becomes one final group.
+    std::vector<bool> grouped(model.faceCount() + 1, false);
+    auto collect = [&](const TopoDS_Shape& obj) {
+        std::vector<int> fids;
+        for (TopExp_Explorer fx(obj, TopAbs_FACE); fx.More(); fx.Next()) {
+            int fid = model.faces.FindIndex(fx.Current());
+            if (fid > 0 && !grouped[fid]) {
+                grouped[fid] = true;
+                fids.push_back(fid);
+            }
+        }
+        if (!fids.empty()) a.solidFaces.push_back(std::move(fids));
+    };
+    for (TopExp_Explorer sx(model.shape, TopAbs_SOLID); sx.More(); sx.Next()) {
+        collect(sx.Current());
+    }
+    for (TopExp_Explorer sx(model.shape, TopAbs_SHELL, TopAbs_SOLID);
+         sx.More(); sx.Next()) {
+        collect(sx.Current());
+    }
+    {
+        std::vector<int> loose;
+        for (int fid = 1; fid <= model.faceCount(); ++fid) {
+            if (!grouped[fid]) loose.push_back(fid);
+        }
+        if (!loose.empty()) a.solidFaces.push_back(std::move(loose));
+    }
+
     for (int fid = 1; fid <= model.faceCount(); ++fid) {
         const TopoDS_Face face = TopoDS::Face(model.faces(fid));
         FaceInfo& info = a.faces[fid - 1];

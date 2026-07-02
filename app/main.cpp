@@ -252,6 +252,7 @@ struct Camera {
 };
 
 enum class Mode { Idle, LoopCut, Bridge };
+enum class SelectMode { Face, Edge };
 
 struct App {
     // Document.
@@ -265,10 +266,23 @@ struct App {
     weft::GenerationReport report;
     std::vector<weft::EdgePolyline> brepEdges;
 
-    int selectedFace = 0;
+    // Selection: Blender-style modes. Face mode selects B-rep faces, edge
+    // mode selects B-rep edges (for per-edge density pins and bridging).
+    // shift+click extends; activeFace is the last-clicked face (drives the
+    // panels and which mesher kind modal edits key off).
+    SelectMode selectMode = SelectMode::Face;
+    std::set<int> selFaces;
+    std::set<int> selEdges;
+    int activeFace = 0;
     bool dirty = false;  // regenerate this frame
     std::set<int> hiddenFaces;
     bool openFacePopup = false;  // context popup requested at the cursor
+
+    // Undo: recipe snapshots, one per edit gesture (drags coalesce).
+    std::vector<weft::Recipe> undoStack;
+    weft::Recipe preFrame;
+    bool mutatedThisFrame = false;
+    bool changedLastFrame = false;
 
     // Keyboard-centric editing state.
     Mode mode = Mode::Idle;
@@ -339,8 +353,8 @@ static void rebuildBuffers(App& app) {
         if (fid > 0 && app.hiddenFaces.count(fid)) continue;
         const weft::FaceInfo& info =
             fid > 0 ? app.analysis.faces[fid - 1] : kBridgeInfo;
-        std::array<float, 3> col = faceColor(info, fid == app.selectedFace &&
-                                                       fid > 0);
+        std::array<float, 3> col =
+            faceColor(info, fid > 0 && app.selFaces.count(fid) > 0);
         std::array<float, 3> id{float(fid & 255) / 255.0f,
                                 float((fid >> 8) & 255) / 255.0f,
                                 170.0f / 255.0f};
@@ -373,6 +387,7 @@ static void rebuildBuffers(App& app) {
             case weft::EdgeConvexity::Smooth: c = {0.30f, 0.78f, 0.42f}; break;
             default: break;
         }
+        if (app.selEdges.count(e.edgeId)) c = {1.0f, 1.0f, 1.0f};  // selected
         for (size_t i = 0; i + 1 < e.points.size(); ++i) {
             push(brep, e.points[i], c);
             push(brep, e.points[i + 1], c);
@@ -418,13 +433,30 @@ static void regenerate(App& app) {
     app.dirty = false;
 }
 
+// Frame the selection if there is one, else the whole model (F).
 static void frameModel(App& app) {
     if (app.mesh.vertices.empty()) return;
     std::array<double, 3> lo{1e30, 1e30, 1e30}, hi{-1e30, -1e30, -1e30};
-    for (const auto& v : app.mesh.vertices) {
-        for (int i = 0; i < 3; ++i) {
-            lo[i] = std::min(lo[i], v[i]);
-            hi[i] = std::max(hi[i], v[i]);
+    bool any = false;
+    if (!app.selFaces.empty()) {
+        for (size_t p = 0; p < app.mesh.polygons.size(); ++p) {
+            if (!app.selFaces.count(app.mesh.polygonFaceId[p])) continue;
+            for (uint32_t vi : app.mesh.polygons[p]) {
+                const auto& v = app.mesh.vertices[vi];
+                for (int i = 0; i < 3; ++i) {
+                    lo[i] = std::min(lo[i], v[i]);
+                    hi[i] = std::max(hi[i], v[i]);
+                }
+                any = true;
+            }
+        }
+    }
+    if (!any) {
+        for (const auto& v : app.mesh.vertices) {
+            for (int i = 0; i < 3; ++i) {
+                lo[i] = std::min(lo[i], v[i]);
+                hi[i] = std::max(hi[i], v[i]);
+            }
         }
     }
     app.cam.target = {float(lo[0] + hi[0]) * 0.5f, float(lo[1] + hi[1]) * 0.5f,
@@ -440,7 +472,10 @@ static void loadModel(App& app, const std::string& path) {
         app.brepEdges = weft::sampleEdges(app.model, 28);
         app.sourcePath = path;
         app.hasModel = true;
-        app.selectedFace = 0;
+        app.selFaces.clear();
+        app.selEdges.clear();
+        app.activeFace = 0;
+        app.undoStack.clear();
         app.recipe = {};
         regenerate(app);
         frameModel(app);
@@ -504,14 +539,21 @@ static void loadFixture(App& app, const std::string& name) {
 }
 
 // ---------------------------------------------------------------------------
-// Keyboard editing helpers.
+// Modal editing helpers.
 
-// The density field the bracket keys / typed numbers drive, chosen by what
-// kind of face is selected (radial for revolved faces, grid for planar...).
+// Every recipe mutation goes through this so the undo stack can snapshot
+// the pre-edit state once per gesture (see the frame bookkeeping in main).
+static void markDirty(App& app) {
+    markDirty(app);
+    app.mutatedThisFrame = true;
+}
+
+// The density field the modal keys / wheel drive, chosen by what kind of
+// face is active (radial for revolved faces, grid for planar...).
 static int* primaryDensity(App& app, weft::FaceMeshSettings& s, bool secondary) {
     weft::MesherKind kind = weft::MesherKind::RevolutionGrid;
-    if (app.selectedFace > 0) {
-        auto it = app.report.faceMesher.find(app.selectedFace);
+    if (app.activeFace > 0) {
+        auto it = app.report.faceMesher.find(app.activeFace);
         if (it != app.report.faceMesher.end()) kind = it->second;
     }
     switch (kind) {
@@ -525,19 +567,48 @@ static int* primaryDensity(App& app, weft::FaceMeshSettings& s, bool secondary) 
     }
 }
 
-// Settings block keyboard edits act on: the selected face's override
-// (created on first use), or the defaults when nothing is selected.
-static weft::FaceMeshSettings& editTarget(App& app) {
-    if (app.selectedFace > 0) {
-        auto it = app.recipe.settings.perFace.find(app.selectedFace);
-        if (it == app.recipe.settings.perFace.end()) {
-            it = app.recipe.settings.perFace
-                     .emplace(app.selectedFace, app.recipe.settings.defaults)
-                     .first;
+// Apply an edit to every selected face, auto-creating overrides — clicking
+// a face and changing a value IS overriding it, no checkbox first. With
+// no selection, edits go to the defaults.
+template <typename F>
+static void editSelected(App& app, F&& fn) {
+    if (app.selFaces.empty()) {
+        fn(app.recipe.settings.defaults);
+    } else {
+        for (int fid : app.selFaces) {
+            auto it = app.recipe.settings.perFace.find(fid);
+            if (it == app.recipe.settings.perFace.end()) {
+                it = app.recipe.settings.perFace
+                         .emplace(fid, app.recipe.settings.defaults)
+                         .first;
+            }
+            fn(it->second);
         }
-        return it->second;
     }
-    return app.recipe.settings.defaults;
+    markDirty(app);
+}
+
+// Read-only view of the active selection's current settings.
+static const weft::FaceMeshSettings& activeSettings(const App& app) {
+    return app.recipe.settings.forFace(app.activeFace);
+}
+
+// Adjust a per-edge division pin for every selected edge (edge mode).
+static void adjustSelectedEdges(App& app, int typedValue, int delta) {
+    for (int eid : app.selEdges) {
+        int cur = typedValue;
+        if (typedValue <= 0) {
+            auto pin = app.recipe.settings.perEdge.find(eid);
+            if (pin != app.recipe.settings.perEdge.end()) cur = pin->second;
+            else {
+                auto it = app.report.edgeDivisions.find(eid);
+                cur = it != app.report.edgeDivisions.end() ? it->second : 8;
+            }
+            cur += delta;
+        }
+        app.recipe.settings.perEdge[eid] = std::max(1, cur);
+    }
+    if (!app.selEdges.empty()) markDirty(app);
 }
 
 static void projectPoint(const Mat4& mvp, const std::array<double, 3>& p,
@@ -869,10 +940,27 @@ static void drawOverlay(App& app) {
             ImGui::TextDisabled(
                 "no open boundaries - delete a face first (popup or outliner)");
         }
+    } else if (app.selectMode == SelectMode::Edge) {
+        ImGui::TextColored({0.6f, 0.8f, 1.0f, 1.0f}, "EDGE MODE");
+        ImGui::SameLine();
+        if (app.selEdges.empty()) {
+            ImGui::TextDisabled("click edges (shift extends) - tab: faces");
+        } else {
+            ImGui::TextDisabled("%zu edge(s) - wheel/[ ]/number pins verts"
+                                " - J bridges 2",
+                                app.selEdges.size());
+        }
+    } else if (!app.selFaces.empty()) {
+        if (app.selFaces.size() == 1) {
+            ImGui::TextDisabled("face #%d selected", app.activeFace);
+        } else {
+            ImGui::TextDisabled("%zu faces selected (active #%d)",
+                                app.selFaces.size(), app.activeFace);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled(" shift+wheel density, ctrl+wheel 2nd axis");
     } else {
-        ImGui::TextDisabled(app.selectedFace > 0 ? "face #%d selected"
-                                                 : "no selection",
-                            app.selectedFace);
+        ImGui::TextDisabled("no selection - click a face, tab for edges");
     }
     if (!app.numberEntry.empty()) {
         ImGui::TextColored({1.0f, 0.85f, 0.25f, 1.0f}, "divisions: %s_",
@@ -892,68 +980,77 @@ static void drawOverlay(App& app) {
                      ImGuiWindowFlags_NoFocusOnAppearing |
                      ImGuiWindowFlags_NoNav);
     ImGui::TextDisabled(
-        "R loop cut   J bridge loops   12<enter> divisions   [ ] nudge\n"
-        "C cap ngon/fan   T tris ok   M minimal n-gon   ctrl+Z undo op\n"
-        "H hide face (shift+H show all)   W wire   B feature edges\n"
-        "F frame   esc deselect/cancel   MMB orbit (+shift pan, +ctrl zoom)");
+        "tab face/edge mode   shift+click multi-select   ctrl+Z undo\n"
+        "shift+wheel density   ctrl+wheel 2nd axis   12<enter>   [ ] nudge\n"
+        "X delete face   H hide (shift+H show all)   R loop cut   J bridge\n"
+        "C cap   T tris   M minimal   W wire   B edges   F focus   esc");
     ImGui::End();
 }
 
-// Context popup at the cursor after picking a face: only the controls that
-// drive that face's mesher, plus visibility actions — edit where you click
-// instead of hunting through the side panel.
+// Context popup on RIGHT-click over a face (Blender-style): the active
+// face's live controls (edits apply to the whole selection and override
+// automatically) plus visibility actions. Left-click just selects; the
+// modal keys/wheel are the primary editing path.
 static void drawFacePopup(App& app) {
     if (app.openFacePopup) {
-        if (app.selectedFace > 0) ImGui::OpenPopup("##facectx");
+        if (app.activeFace > 0) ImGui::OpenPopup("##facectx");
         app.openFacePopup = false;
     }
     if (!ImGui::BeginPopup("##facectx")) return;
-    if (app.selectedFace <= 0) {
+    if (app.activeFace <= 0) {
         ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
         return;
     }
-    const weft::FaceInfo& f = app.analysis.faces[app.selectedFace - 1];
-    ImGui::Text("face #%d  %s%s%s", f.id, weft::surfaceTypeName(f.type),
-                f.isFillet ? "  [fillet]" : "", f.isHole ? "  [hole]" : "");
+    const weft::FaceInfo& f = app.analysis.faces[app.activeFace - 1];
+    if (app.selFaces.size() > 1) {
+        ImGui::Text("%zu faces (active #%d %s)", app.selFaces.size(), f.id,
+                    weft::surfaceTypeName(f.type));
+    } else {
+        ImGui::Text("face #%d  %s%s%s", f.id, weft::surfaceTypeName(f.type),
+                    f.isFillet ? "  [fillet]" : "", f.isHole ? "  [hole]" : "");
+    }
     weft::MesherKind kind = weft::MesherKind::Fallback;
     auto it = app.report.faceMesher.find(f.id);
     if (it != app.report.faceMesher.end()) kind = it->second;
     ImGui::TextDisabled("mesher: %s", weft::mesherKindName(kind));
     ImGui::Separator();
 
-    bool overridden = app.recipe.settings.perFace.count(f.id) > 0;
-    if (ImGui::Checkbox("override this face", &overridden)) {
-        if (overridden) {
-            app.recipe.settings.perFace[f.id] = app.recipe.settings.defaults;
-        } else {
-            app.recipe.settings.perFace.erase(f.id);
-        }
-        app.dirty = true;
-    }
-    if (!overridden) {
-        ImGui::TextDisabled("editing defaults (affects all faces)");
-    }
-    weft::FaceMeshSettings& s = overridden
-                                    ? app.recipe.settings.perFace[f.id]
-                                    : app.recipe.settings.defaults;
+    // Editing auto-overrides: changes land on every selected face.
+    weft::FaceMeshSettings edited = activeSettings(app);
     ImGui::PushID("ctx");
     ImGui::PushItemWidth(150);
-    if (settingsEditor(s, &kind, f.isFillet)) app.dirty = true;
+    bool changed = settingsEditor(edited, &kind, f.isFillet);
     ImGui::PopItemWidth();
     ImGui::PopID();
+    if (changed) {
+        editSelected(app, [&](weft::FaceMeshSettings& s) { s = edited; });
+    }
+    if (app.recipe.settings.perFace.count(app.activeFace)) {
+        if (ImGui::SmallButton("clear override(s)")) {
+            for (int fid : app.selFaces) {
+                app.recipe.settings.perFace.erase(fid);
+            }
+            markDirty(app);
+        }
+    }
 
     ImGui::Separator();
-    if (ImGui::MenuItem("hide face", "H")) {
-        app.hiddenFaces.insert(f.id);
-        app.selectedFace = 0;
+    if (ImGui::MenuItem("delete face(s)", "X")) {
+        editSelected(app, [](weft::FaceMeshSettings& s) { s.exclude = true; });
+        ImGui::CloseCurrentPopup();
+    }
+    if (ImGui::MenuItem("hide face(s)", "H")) {
+        for (int fid : app.selFaces) app.hiddenFaces.insert(fid);
+        app.selFaces.clear();
+        app.activeFace = 0;
         rebuildBuffers(app);
         ImGui::CloseCurrentPopup();
     }
-    if (ImGui::MenuItem("isolate face")) {
+    if (ImGui::MenuItem("isolate selection")) {
         app.hiddenFaces.clear();
         for (const auto& fi : app.analysis.faces) {
-            if (fi.id != f.id) app.hiddenFaces.insert(fi.id);
+            if (!app.selFaces.count(fi.id)) app.hiddenFaces.insert(fi.id);
         }
         rebuildBuffers(app);
     }
@@ -1003,39 +1100,77 @@ static void drawUi(App& app) {
             rebuildBuffers(app);
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("%zu faces, %zu hidden",
-                            app.analysis.faces.size(),
+        ImGui::TextDisabled("%zu object(s), %zu hidden face(s)",
+                            app.analysis.solidFaces.size(),
                             app.hiddenFaces.size());
-        ImGui::BeginChild("##outliner", {0, 190}, true);
-        ImGuiListClipper clipper;
-        clipper.Begin(int(app.analysis.faces.size()));
-        while (clipper.Step()) {
-            for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
-                const weft::FaceInfo& f = app.analysis.faces[i];
-                ImGui::PushID(f.id);
-                bool vis = !app.hiddenFaces.count(f.id);
-                if (ImGui::Checkbox("##vis", &vis)) {
-                    if (vis) app.hiddenFaces.erase(f.id);
-                    else app.hiddenFaces.insert(f.id);
-                    rebuildBuffers(app);
-                }
-                ImGui::SameLine();
-                auto ov = app.recipe.settings.perFace.find(f.id);
-                bool deleted = ov != app.recipe.settings.perFace.end() &&
-                               ov->second.exclude;
-                char label[112];
-                std::snprintf(label, sizeof label, "face %-4d %s%s%s%s", f.id,
-                              weft::surfaceTypeName(f.type),
-                              f.isFillet ? " [fillet]" : "",
-                              f.isHole ? " [hole]" : "",
-                              deleted ? " [deleted]" : "");
-                if (ImGui::Selectable(label, app.selectedFace == f.id)) {
-                    app.selectedFace =
-                        app.selectedFace == f.id ? 0 : f.id;
-                    rebuildBuffers(app);
-                }
-                ImGui::PopID();
+        ImGui::BeginChild("##outliner", {0, 200}, true);
+        for (size_t si = 0; si < app.analysis.solidFaces.size(); ++si) {
+            const std::vector<int>& fids = app.analysis.solidFaces[si];
+            ImGui::PushID(int(si));
+            // Object row: visibility eye + expandable face list.
+            bool anyVisible = false;
+            for (int fid : fids) {
+                if (!app.hiddenFaces.count(fid)) anyVisible = true;
             }
+            bool vis = anyVisible;
+            if (ImGui::Checkbox("##ovis", &vis)) {
+                for (int fid : fids) {
+                    if (vis) app.hiddenFaces.erase(fid);
+                    else app.hiddenFaces.insert(fid);
+                }
+                rebuildBuffers(app);
+            }
+            ImGui::SameLine();
+            char objLabel[64];
+            std::snprintf(objLabel, sizeof objLabel, "object %zu (%zu faces)",
+                          si + 1, fids.size());
+            bool open = ImGui::TreeNodeEx(
+                objLabel, ImGuiTreeNodeFlags_OpenOnArrow |
+                              ImGuiTreeNodeFlags_SpanAvailWidth);
+            if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+                // Select the whole object's faces (shift extends).
+                if (!ImGui::GetIO().KeyShift) app.selFaces.clear();
+                for (int fid : fids) app.selFaces.insert(fid);
+                if (!fids.empty()) app.activeFace = fids[0];
+                rebuildBuffers(app);
+            }
+            if (open) {
+                for (int fid : fids) {
+                    const weft::FaceInfo& f = app.analysis.faces[fid - 1];
+                    ImGui::PushID(fid);
+                    bool fvis = !app.hiddenFaces.count(fid);
+                    if (ImGui::Checkbox("##vis", &fvis)) {
+                        if (fvis) app.hiddenFaces.erase(fid);
+                        else app.hiddenFaces.insert(fid);
+                        rebuildBuffers(app);
+                    }
+                    ImGui::SameLine();
+                    auto ov = app.recipe.settings.perFace.find(fid);
+                    bool deleted = ov != app.recipe.settings.perFace.end() &&
+                                   ov->second.exclude;
+                    char label[112];
+                    std::snprintf(label, sizeof label, "face %-4d %s%s%s%s",
+                                  fid, weft::surfaceTypeName(f.type),
+                                  f.isFillet ? " [fillet]" : "",
+                                  f.isHole ? " [hole]" : "",
+                                  deleted ? " [deleted]" : "");
+                    if (ImGui::Selectable(label,
+                                          app.selFaces.count(fid) > 0)) {
+                        if (!ImGui::GetIO().KeyShift) app.selFaces.clear();
+                        if (app.selFaces.count(fid) &&
+                            ImGui::GetIO().KeyShift) {
+                            app.selFaces.erase(fid);
+                        } else {
+                            app.selFaces.insert(fid);
+                            app.activeFace = fid;
+                        }
+                        rebuildBuffers(app);
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
         }
         ImGui::EndChild();
     }
@@ -1048,15 +1183,50 @@ static void drawUi(App& app) {
                     app.mesh.countTris(), app.mesh.countNgons());
         ImGui::Separator();
         ImGui::TextDisabled("defaults (live)");
-        if (settingsEditor(app.recipe.settings.defaults)) app.dirty = true;
+        if (settingsEditor(app.recipe.settings.defaults)) markDirty(app);
     }
 
     if (app.hasModel &&
         ImGui::CollapsingHeader("Selection", ImGuiTreeNodeFlags_DefaultOpen)) {
-        if (app.selectedFace <= 0) {
+        if (app.selectMode == SelectMode::Edge) {
+            if (app.selEdges.empty()) {
+                ImGui::TextDisabled("click edges (shift extends)");
+            } else {
+                ImGui::Text("%zu edge(s) selected", app.selEdges.size());
+                for (int eid : app.selEdges) {
+                    auto pin = app.recipe.settings.perEdge.find(eid);
+                    auto cur = app.report.edgeDivisions.find(eid);
+                    ImGui::TextDisabled(
+                        "edge #%d: %d divisions%s", eid,
+                        pin != app.recipe.settings.perEdge.end()
+                            ? pin->second
+                            : (cur != app.report.edgeDivisions.end()
+                                   ? cur->second
+                                   : 0),
+                        pin != app.recipe.settings.perEdge.end()
+                            ? " (pinned)"
+                            : "");
+                }
+                ImGui::TextDisabled("wheel / [ ] / 12<enter> pins verts");
+                bool anyPinned = false;
+                for (int eid : app.selEdges) {
+                    anyPinned |= app.recipe.settings.perEdge.count(eid) > 0;
+                }
+                if (anyPinned && ImGui::SmallButton("clear pin(s)")) {
+                    for (int eid : app.selEdges) {
+                        app.recipe.settings.perEdge.erase(eid);
+                    }
+                    markDirty(app);
+                }
+            }
+        } else if (app.activeFace <= 0) {
             ImGui::TextDisabled("click a face in the viewport");
         } else {
-            const weft::FaceInfo& f = app.analysis.faces[app.selectedFace - 1];
+            const weft::FaceInfo& f = app.analysis.faces[app.activeFace - 1];
+            if (app.selFaces.size() > 1) {
+                ImGui::Text("%zu faces (active #%d)", app.selFaces.size(),
+                            f.id);
+            }
             ImGui::Text("face #%d  %s%s%s", f.id, weft::surfaceTypeName(f.type),
                         f.isFillet ? "  [fillet]" : "",
                         f.isHole ? "  [hole]" : "");
@@ -1067,24 +1237,24 @@ static void drawUi(App& app) {
                 kind = it->second;
                 ImGui::Text("mesher: %s", weft::mesherKindName(kind));
             }
-            bool overridden =
-                app.recipe.settings.perFace.count(app.selectedFace) > 0;
-            if (ImGui::Checkbox("override this face", &overridden)) {
-                if (overridden) {
-                    app.recipe.settings.perFace[app.selectedFace] =
-                        app.recipe.settings.defaults;
-                } else {
-                    app.recipe.settings.perFace.erase(app.selectedFace);
-                }
-                app.dirty = true;
+            // Editing auto-overrides every selected face.
+            weft::FaceMeshSettings edited = activeSettings(app);
+            ImGui::PushID("perface");
+            bool changed = settingsEditor(edited, &kind, f.isFillet);
+            ImGui::PopID();
+            if (changed) {
+                editSelected(app,
+                             [&](weft::FaceMeshSettings& s) { s = edited; });
             }
-            if (overridden) {
-                ImGui::PushID("perface");
-                if (settingsEditor(app.recipe.settings.perFace[app.selectedFace],
-                                   &kind, f.isFillet)) {
-                    app.dirty = true;
+            if (app.recipe.settings.perFace.count(app.activeFace)) {
+                ImGui::TextDisabled("overridden");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("clear")) {
+                    for (int fid : app.selFaces) {
+                        app.recipe.settings.perFace.erase(fid);
+                    }
+                    markDirty(app);
                 }
-                ImGui::PopID();
             }
         }
     }
@@ -1103,7 +1273,7 @@ static void drawUi(App& app) {
         if (ImGui::Button("Load recipe")) {
             try {
                 app.recipe = weft::loadRecipe(app.recipeBuf);
-                app.dirty = true;
+                markDirty(app);
                 app.status = std::string("loaded ") + app.recipeBuf;
             } catch (const std::exception& e) {
                 app.status = e.what();
@@ -1194,19 +1364,26 @@ int main(int argc, char** argv) {
     app.cam.yaw = startYaw;
     app.cam.pitch = startPitch;
     if (startSelect > 0 && startSelect <= app.model.faceCount()) {
-        app.selectedFace = startSelect;
+        app.selFaces = {startSelect};
+        app.activeFace = startSelect;
         rebuildBuffers(app);
     }
 
     double lastX = 0, lastY = 0;
     bool navOrbit = false, navPan = false, navZoom = false, navSnap = false;
-    double downX = 0, downY = 0;
-    bool prevLmb = false;
+    double downX = 0, downY = 0, downRX = 0, downRY = 0;
+    bool prevLmb = false, prevRmb = false;
     int frame = 0;
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
         ImGuiIO& io = ImGui::GetIO();
+
+        // Undo bookkeeping: snapshot the recipe before this frame's edits;
+        // if a gesture STARTS this frame (markDirty after a quiet frame),
+        // that snapshot becomes the undo point. Drags coalesce into one.
+        app.preFrame = app.recipe;
+        app.mutatedThisFrame = false;
 
         int fbw, fbh;
         glfwGetFramebufferSize(window, &fbw, &fbh);
@@ -1270,8 +1447,26 @@ int main(int argc, char** argv) {
             lastX = mx;
             lastY = my;
             if (gScroll != 0.0f) {
-                app.cam.dist *= std::pow(0.92f, gScroll);
-                app.cam.dist = std::clamp(app.cam.dist, 0.5f, 10000.0f);
+                // Modal density: shift+wheel drives the primary axis
+                // (radial/grid-u), ctrl+wheel the secondary (axial/grid-v),
+                // on the whole selection — Blender-style. Plain wheel zooms.
+                int steps = int(gScroll > 0 ? std::ceil(gScroll)
+                                            : std::floor(gScroll));
+                if (app.hasModel && (shift || ctrl) &&
+                    app.selectMode == SelectMode::Edge &&
+                    !app.selEdges.empty()) {
+                    adjustSelectedEdges(app, 0, steps);
+                } else if (app.hasModel && (shift || ctrl) &&
+                           (!app.selFaces.empty())) {
+                    bool secondary = ctrl;
+                    editSelected(app, [&](weft::FaceMeshSettings& s) {
+                        int* v = primaryDensity(app, s, secondary);
+                        *v = std::max(1, *v + steps);
+                    });
+                } else {
+                    app.cam.dist *= std::pow(0.92f, gScroll);
+                    app.cam.dist = std::clamp(app.cam.dist, 0.5f, 10000.0f);
+                }
             }
         }
 
@@ -1284,12 +1479,29 @@ int main(int argc, char** argv) {
                 app.hoverValid = false;
             }
             if (ImGui::IsKeyPressed(ImGuiKey_J, false)) {
-                app.mode = app.mode == Mode::Bridge ? Mode::Idle : Mode::Bridge;
-                app.bridgeFirstEdge = 0;
-                app.hoverLoop = -1;
-                if (app.mode == Mode::Bridge && app.bLoops.empty()) {
-                    app.status =
-                        "bridge: no open boundaries (delete a face first)";
+                if (app.selectMode == SelectMode::Edge &&
+                    app.selEdges.size() == 2) {
+                    // Direct bridge between the two selected edges.
+                    auto it = app.selEdges.begin();
+                    weft::ManualOp op;
+                    op.kind = weft::ManualOp::Kind::Bridge;
+                    op.edgeA = *it++;
+                    op.edgeB = *it;
+                    app.recipe.ops.push_back(op);
+                    markDirty(app);
+                    app.status = app.bLoops.empty()
+                                     ? "bridge recorded (needs open "
+                                       "boundaries - X deletes faces)"
+                                     : "bridge committed (ctrl+Z undoes)";
+                } else {
+                    app.mode =
+                        app.mode == Mode::Bridge ? Mode::Idle : Mode::Bridge;
+                    app.bridgeFirstEdge = 0;
+                    app.hoverLoop = -1;
+                    if (app.mode == Mode::Bridge && app.bLoops.empty()) {
+                        app.status =
+                            "bridge: no open boundaries (delete a face first)";
+                    }
                 }
             }
             if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
@@ -1297,10 +1509,20 @@ int main(int argc, char** argv) {
                     app.bridgeFirstEdge = 0;
                 } else if (app.mode != Mode::Idle) app.mode = Mode::Idle;
                 else if (!app.numberEntry.empty()) app.numberEntry.clear();
-                else if (app.selectedFace) {
-                    app.selectedFace = 0;
+                else if (!app.selFaces.empty() || !app.selEdges.empty()) {
+                    app.selFaces.clear();
+                    app.selEdges.clear();
+                    app.activeFace = 0;
                     rebuildBuffers(app);
                 }
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_Tab, false)) {
+                app.selectMode = app.selectMode == SelectMode::Face
+                                     ? SelectMode::Edge
+                                     : SelectMode::Face;
+                app.status = app.selectMode == SelectMode::Edge
+                                 ? "edge select mode"
+                                 : "face select mode";
             }
             for (int d = 0; d <= 9; ++d) {
                 if (ImGui::IsKeyPressed(ImGuiKey(ImGuiKey_0 + d), false) ||
@@ -1322,16 +1544,20 @@ int main(int argc, char** argv) {
                     // counts bridge as quads, unequal as triangles.
                     int eid = app.bLoopEdge[app.hoverLoop];
                     app.recipe.settings.perEdge[eid] = std::max(3, value);
+                    markDirty(app);
+                } else if (app.selectMode == SelectMode::Edge) {
+                    adjustSelectedEdges(app, value, 0);
                 } else {
-                    weft::FaceMeshSettings& s = editTarget(app);
-                    *primaryDensity(app, s, shift) = std::max(1, value);
+                    editSelected(app, [&](weft::FaceMeshSettings& s) {
+                        *primaryDensity(app, s, shift) = std::max(1, value);
+                    });
                 }
                 app.numberEntry.clear();
-                app.dirty = true;
             }
             bool dec = ImGui::IsKeyPressed(ImGuiKey_LeftBracket);
             bool inc = ImGui::IsKeyPressed(ImGuiKey_RightBracket);
             if ((dec || inc) && app.hasModel) {
+                int delta = inc ? 1 : -1;
                 if (app.mode == Mode::Bridge && app.hoverLoop >= 0) {
                     int eid = app.bLoopEdge[app.hoverLoop];
                     int cur = int(app.bLoops[app.hoverLoop].size());
@@ -1339,52 +1565,68 @@ int main(int argc, char** argv) {
                     if (it != app.recipe.settings.perEdge.end()) {
                         cur = it->second;
                     }
-                    app.recipe.settings.perEdge[eid] =
-                        std::max(3, cur + (inc ? 1 : -1));
+                    app.recipe.settings.perEdge[eid] = std::max(3, cur + delta);
+                    markDirty(app);
+                } else if (app.selectMode == SelectMode::Edge) {
+                    adjustSelectedEdges(app, 0, delta);
                 } else {
-                    weft::FaceMeshSettings& s = editTarget(app);
-                    int* v = primaryDensity(app, s, shift);
-                    *v = std::max(1, *v + (inc ? 1 : -1));
+                    editSelected(app, [&](weft::FaceMeshSettings& s) {
+                        int* v = primaryDensity(app, s, shift);
+                        *v = std::max(1, *v + delta);
+                    });
                 }
-                app.dirty = true;
             }
             if (ImGui::IsKeyPressed(ImGuiKey_C, false) && app.hasModel) {
-                weft::FaceMeshSettings& s = editTarget(app);
-                s.cap = s.cap == weft::CapStyle::NGon ? weft::CapStyle::Fan
-                                                      : weft::CapStyle::NGon;
-                app.dirty = true;
+                weft::CapStyle next = activeSettings(app).cap ==
+                                              weft::CapStyle::NGon
+                                          ? weft::CapStyle::Fan
+                                          : weft::CapStyle::NGon;
+                editSelected(app,
+                             [&](weft::FaceMeshSettings& s) { s.cap = next; });
             }
             if (ImGui::IsKeyPressed(ImGuiKey_T, false) && app.hasModel) {
-                weft::FaceMeshSettings& s = editTarget(app);
-                s.quadDominant = !s.quadDominant;
-                app.dirty = true;
+                bool next = !activeSettings(app).quadDominant;
+                editSelected(app, [&](weft::FaceMeshSettings& s) {
+                    s.quadDominant = next;
+                });
             }
             if (ImGui::IsKeyPressed(ImGuiKey_M, false) && app.hasModel) {
-                weft::FaceMeshSettings& s = editTarget(app);
-                s.minimal = !s.minimal;
-                app.dirty = true;
+                bool next = !activeSettings(app).minimal;
+                editSelected(app,
+                             [&](weft::FaceMeshSettings& s) { s.minimal = next; });
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_X, false) && app.hasModel &&
+                !app.selFaces.empty()) {
+                editSelected(app,
+                             [](weft::FaceMeshSettings& s) { s.exclude = true; });
+                app.status = "face(s) deleted (ctrl+Z undoes, J bridges rims)";
             }
             if (ImGui::IsKeyPressed(ImGuiKey_H, false) && app.hasModel) {
                 if (shift) {
                     app.hiddenFaces.clear();
                     rebuildBuffers(app);
                     app.status = "all faces shown";
-                } else if (app.selectedFace > 0) {
-                    app.hiddenFaces.insert(app.selectedFace);
-                    app.selectedFace = 0;
+                } else if (!app.selFaces.empty()) {
+                    for (int fid : app.selFaces) app.hiddenFaces.insert(fid);
+                    app.selFaces.clear();
+                    app.activeFace = 0;
                     rebuildBuffers(app);
-                    app.status = "face hidden (shift+H shows all)";
+                    app.status = "face(s) hidden (shift+H shows all)";
                 }
             }
             if (ImGui::IsKeyPressed(ImGuiKey_W, false)) app.showWire = !app.showWire;
             if (ImGui::IsKeyPressed(ImGuiKey_B, false)) {
                 app.showBrepEdges = !app.showBrepEdges;
             }
-            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false) &&
-                !app.recipe.ops.empty()) {
-                app.recipe.ops.pop_back();
-                app.dirty = true;
-                app.status = "undid last op";
+            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
+                if (!app.undoStack.empty()) {
+                    app.recipe = app.undoStack.back();
+                    app.undoStack.pop_back();
+                    app.dirty = true;  // not a mutation: no undo push
+                    app.status = "undo";
+                } else {
+                    app.status = "nothing to undo";
+                }
             }
         }
 
@@ -1395,6 +1637,13 @@ int main(int argc, char** argv) {
         bool clicked = prevLmb && !lmb && std::abs(mx - downX) < 4 &&
                        std::abs(my - downY) < 4;
         prevLmb = lmb;
+        bool rmb = !io.WantCaptureMouse &&
+                   glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) ==
+                       GLFW_PRESS;
+        if (rmb && !prevRmb) { downRX = mx; downRY = my; }
+        bool rClicked = prevRmb && !rmb && std::abs(mx - downRX) < 4 &&
+                        std::abs(my - downRY) < 4;
+        prevRmb = rmb;
         gScroll = 0.0f;
 
         if (app.dirty) regenerate(app);
@@ -1410,7 +1659,7 @@ int main(int argc, char** argv) {
             updateLoopCutHover(app, mvp, mx, my, fbw, fbh);
             if (clicked && app.hoverValid) {
                 app.recipe.ops.push_back(app.hoverOp);
-                app.dirty = true;
+                markDirty(app);
                 app.status = "loop cut committed (ctrl+z undoes)";
             }
         } else if (app.mode == Mode::Bridge && !io.WantCaptureMouse) {
@@ -1427,19 +1676,88 @@ int main(int argc, char** argv) {
                     op.edgeB = eid;
                     app.recipe.ops.push_back(op);
                     app.bridgeFirstEdge = 0;
-                    app.dirty = true;
+                    markDirty(app);
                     app.status = "bridge committed (ctrl+z undoes)";
                 }
             }
-        } else if (clicked && app.hasModel) {
-            // Click-select: pick pass + pixel read. A hit opens the
-            // context popup at the cursor; clicking the same face again
-            // deselects.
-            glViewport(0, 0, fbw, fbh);
-            int hit = pickFace(app, flatProg, mvp, int(mx), int(my), fbw, fbh);
-            app.selectedFace = hit == app.selectedFace ? 0 : hit;
-            app.openFacePopup = app.selectedFace > 0;
-            rebuildBuffers(app);
+        } else if ((clicked || rClicked) && app.hasModel) {
+            bool shift = io.KeyShift;
+            if (app.selectMode == SelectMode::Edge && clicked) {
+                // Edge picking: nearest projected B-rep edge polyline.
+                int hit = 0;
+                double best = 14.0;  // px
+                for (const weft::EdgePolyline& e : app.brepEdges) {
+                    for (size_t i = 0; i + 1 < e.points.size(); ++i) {
+                        float pa[3] = {0, 0, -1}, pb[3] = {0, 0, -1};
+                        projectPoint(mvp, e.points[i], fbw, fbh, pa);
+                        projectPoint(mvp, e.points[i + 1], fbw, fbh, pb);
+                        if (pa[2] <= 0 || pb[2] <= 0) continue;
+                        float ex = pb[0] - pa[0], ey = pb[1] - pa[1];
+                        float len2 = ex * ex + ey * ey;
+                        float t = len2 < 1e-6f
+                                      ? 0.0f
+                                      : std::clamp(((float(mx) - pa[0]) * ex +
+                                                    (float(my) - pa[1]) * ey) /
+                                                       len2,
+                                                   0.0f, 1.0f);
+                        double d = std::hypot(double(mx) - (pa[0] + t * ex),
+                                              double(my) - (pa[1] + t * ey));
+                        if (d < best) {
+                            best = d;
+                            hit = e.edgeId;
+                        }
+                    }
+                }
+                if (!shift) app.selEdges.clear();
+                if (hit > 0) {
+                    if (shift && app.selEdges.count(hit)) {
+                        app.selEdges.erase(hit);
+                    } else {
+                        app.selEdges.insert(hit);
+                    }
+                }
+                rebuildBuffers(app);
+            } else {
+                // Face picking: pick pass + pixel read. Plain click
+                // replaces the selection, shift+click extends/toggles;
+                // right-click opens the context popup for the hit face.
+                glViewport(0, 0, fbw, fbh);
+                int hit =
+                    pickFace(app, flatProg, mvp, int(mx), int(my), fbw, fbh);
+                if (rClicked) {
+                    if (hit > 0) {
+                        if (!app.selFaces.count(hit)) {
+                            app.selFaces = {hit};
+                        }
+                        app.activeFace = hit;
+                        app.openFacePopup = true;
+                    }
+                } else if (shift) {
+                    if (hit > 0) {
+                        if (app.selFaces.count(hit)) {
+                            app.selFaces.erase(hit);
+                            if (app.activeFace == hit) {
+                                app.activeFace = app.selFaces.empty()
+                                                     ? 0
+                                                     : *app.selFaces.begin();
+                            }
+                        } else {
+                            app.selFaces.insert(hit);
+                            app.activeFace = hit;
+                        }
+                    }
+                } else {
+                    if (hit > 0 && !(app.selFaces.size() == 1 &&
+                                     app.selFaces.count(hit))) {
+                        app.selFaces = {hit};
+                        app.activeFace = hit;
+                    } else {
+                        app.selFaces.clear();
+                        app.activeFace = 0;
+                    }
+                }
+                rebuildBuffers(app);
+            }
         }
 
         ImGui_ImplOpenGL3_NewFrame();
@@ -1491,6 +1809,14 @@ int main(int argc, char** argv) {
             glEnable(GL_DEPTH_TEST);
         }
         glBindVertexArray(0);
+
+        if (app.mutatedThisFrame && !app.changedLastFrame) {
+            app.undoStack.push_back(app.preFrame);
+            if (app.undoStack.size() > 100) {
+                app.undoStack.erase(app.undoStack.begin());
+            }
+        }
+        app.changedLastFrame = app.mutatedThisFrame;
 
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         glfwSwapBuffers(window);
