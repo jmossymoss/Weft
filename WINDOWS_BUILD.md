@@ -50,12 +50,11 @@ ctest --test-dir build --output-on-failure
 - **C++17 Compiler**: Visual Studio Build Tools or Visual Studio Community
 - **OpenCASCADE dev**: https://www.opencascade.com/content/latest-release
 
-### Optional (for GUI app)
-- **GLFW** (3.x)
-- **ImGui**
-- **STB image library**
-
-Without these, only the headless CLI builds; the app target is skipped automatically.
+### GUI app dependencies — automatic
+GLFW and Dear ImGui are downloaded and built from source by CMake
+automatically when they aren't installed (the normal case on Windows), so
+`weft_app.exe` builds with no extra setup. The first configure needs
+internet access for the two small source downloads.
 
 ## Setting up OpenCASCADE
 
@@ -90,15 +89,11 @@ Or manually install dependencies:
 ### Permission denied errors
 Run the batch script as Administrator (right-click → Run as Administrator).
 
-### Missing GUI libraries (libglfw3-dev, etc.)
-The app target will be skipped. The CLI and tests build normally.
-
-On Windows, to enable the GUI app, you may need to:
-1. Install GLFW pre-built binaries from: https://www.glfw.org/download.html
-2. Install ImGui and STB headers/libraries manually
-3. Point CMake to them via `-DGLFW_DIR`, etc.
-
-Alternatively, leave these uninstalled and use the headless CLI and tests exclusively.
+### GUI app (weft_app.exe) missing from build\bin\Release
+CMake fetches GLFW/ImGui sources during configure; if that download failed
+(no internet at configure time), the app target is skipped and the CLI
+still builds. Re-run `build.bat` with internet access, or delete
+`build\CMakeCache.txt` first to force a fresh configure.
 
 ## Output
 
