@@ -367,15 +367,27 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
         sol.groups.unite(plan.vEdges);
     }
 
-    auto propose = [&](const std::vector<int>& edges, int count) {
+    // A face with an explicit per-face override PINS its groups: the user
+    // asked for that density by name, so it must not be silently outvoted
+    // by neighbours' defaults. Groups touched only by defaulted faces
+    // resolve to the max proposal as before; several overrides sharing a
+    // group still resolve by max among themselves.
+    std::map<int, int> facePinned;
+    auto propose = [&](const std::vector<int>& edges, int count,
+                       bool overridden) {
         if (edges.empty()) return;
         int root = sol.groups.find(edges[0]);
         auto [it, inserted] = sol.groupCount.try_emplace(root, count);
         if (!inserted) it->second = std::max(it->second, count);
+        if (overridden) {
+            auto [pit, pIns] = facePinned.try_emplace(root, count);
+            if (!pIns) pit->second = std::max(pit->second, count);
+        }
     };
     for (const auto& [fid, plan] : plans) {
         if (!plan.constrains) continue;
         const FaceMeshSettings& s = settings.forFace(fid);
+        const bool overridden = settings.perFace.count(fid) > 0;
         if (plan.kind == MesherKind::PlanarGrid ||
             plan.kind == MesherKind::MinimalNGon ||
             plan.kind == MesherKind::RingJunction) {
@@ -383,15 +395,17 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                                      ? s.filletLoops : s.gridU);
             int nv = std::max(1, plan.isFillet && !plan.acrossIsU
                                      ? s.filletLoops : s.gridV);
-            propose(plan.uEdges, nu);
-            propose(plan.vEdges, nv);
+            propose(plan.uEdges, nu, overridden);
+            propose(plan.vEdges, nv, overridden);
         } else {  // revolution sides and disk caps subdivide rings radially
-            propose(plan.uEdges, std::max(3, s.radial));
-            propose(plan.vEdges, std::max(1, s.axial));
+            propose(plan.uEdges, std::max(3, s.radial), overridden);
+            propose(plan.vEdges, std::max(1, s.axial), overridden);
         }
     }
+    for (const auto& [root, count] : facePinned) sol.groupCount[root] = count;
 
-    // Explicit per-edge overrides pin their whole group (max if several).
+    // Explicit per-edge overrides pin their whole group (max if several),
+    // winning over both defaults and per-face overrides.
     std::map<int, int> pinned;
     for (const auto& [eid, count] : settings.perEdge) {
         if (eid < 1 || eid > model.edgeCount()) continue;
@@ -687,7 +701,8 @@ double quadAngleCost(const std::array<gp_Pnt, 4>& q) {
 // flow (§3.5); a real cross-field solver replaces the guidance later.
 void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                   int faceId, const FaceMeshSettings& s, MeshBuilder& out) {
-    BRepMesh_IncrementalMesh mesher(face, s.chordTolerance);
+    BRepMesh_IncrementalMesh mesher(face, s.chordTolerance, Standard_False,
+                                    s.angleToleranceDeg * M_PI / 180.0);
     TopLoc_Location loc;
     Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, loc);
     if (tri.IsNull()) return;

@@ -1,0 +1,234 @@
+@echo off
+REM Weft Build Script for Windows
+REM Installs missing dependencies, configures, builds, and tests.
+REM All output is also written to build_log.txt next to this script.
+REM The window ALWAYS pauses before closing so errors stay readable.
+
+setlocal enabledelayedexpansion
+cd /d "%~dp0"
+set "LOG=%~dp0build_log.txt"
+echo Weft build started %date% %time% > "%LOG%"
+
+echo.
+echo ========================================
+echo  Weft Builder for Windows
+echo  (log: build_log.txt)
+echo ========================================
+echo.
+
+REM ---------------------------------------------------------------
+REM [1/5] Visual Studio / Build Tools
+REM Do NOT look for cl.exe on PATH -- it only exists inside a
+REM "Developer Command Prompt". Use vswhere, which ships with any
+REM VS 2017+ install, to find a C++ toolset properly.
+REM ---------------------------------------------------------------
+echo [1/5] Checking Visual Studio C++ toolset...
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+set "VS_PATH="
+if exist "%VSWHERE%" (
+    for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VS_PATH=%%i"
+)
+
+if defined VS_PATH (
+    echo   Found: !VS_PATH!
+    echo Found VS at !VS_PATH! >> "%LOG%"
+) else (
+    echo   No C++ toolset found.
+    call :ensure_choco || goto :fail
+    echo   Installing Visual Studio 2022 Build Tools -- this is a LARGE
+    echo   download and can take 10-30 minutes. Please wait...
+    choco install visualstudio2022buildtools -y --no-progress ^
+        --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --passive" >> "%LOG%" 2>&1
+    if !errorLevel! neq 0 (
+        echo   Chocolatey install failed ^(exit code !errorLevel!^).
+        echo   Check build_log.txt for details, or install manually:
+        echo     https://visualstudio.microsoft.com/visual-cpp-build-tools/
+        echo   ^(select the "Desktop development with C++" workload^)
+        goto :fail
+    )
+    REM Re-detect after install
+    if exist "%VSWHERE%" (
+        for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VS_PATH=%%i"
+    )
+    if not defined VS_PATH (
+        echo   Build Tools installed but the C++ toolset was not detected.
+        echo   You may need to reboot, or re-run this script from a fresh
+        echo   command prompt. If it persists, open the Visual Studio
+        echo   Installer and confirm "Desktop development with C++" is ticked.
+        goto :fail
+    )
+    echo   Installed and detected at !VS_PATH!
+)
+
+REM ---------------------------------------------------------------
+REM [2/5] CMake
+REM ---------------------------------------------------------------
+echo [2/5] Checking CMake...
+where cmake >nul 2>&1
+if %errorLevel% neq 0 (
+    call :ensure_choco || goto :fail
+    echo   Installing CMake...
+    choco install cmake -y --no-progress --installargs "ADD_CMAKE_TO_PATH=System" >> "%LOG%" 2>&1
+    if !errorLevel! neq 0 (
+        echo   Failed. Install manually from https://cmake.org/download/
+        goto :fail
+    )
+    REM Pick up the new PATH without needing a new console
+    set "PATH=%PATH%;%ProgramFiles%\CMake\bin"
+    where cmake >nul 2>&1 || (
+        echo   CMake installed but not on PATH yet. Open a NEW command
+        echo   prompt and re-run this script.
+        goto :fail
+    )
+)
+echo   Found
+
+REM ---------------------------------------------------------------
+REM [3/5] Git (only needed if you want to pull updates; not fatal)
+REM ---------------------------------------------------------------
+echo [3/5] Checking Git...
+where git >nul 2>&1
+if %errorLevel% neq 0 (
+    echo   Not found ^(not required to build^) -- skipping.
+) else (
+    echo   Found
+)
+
+REM ---------------------------------------------------------------
+REM [4/5] OpenCASCADE
+REM ---------------------------------------------------------------
+echo [4/5] Checking OpenCASCADE...
+set "OCCT_DIR="
+if defined CASROOT if exist "%CASROOT%" set "OCCT_DIR=%CASROOT%"
+if not defined OCCT_DIR if exist "C:\OCCT" set "OCCT_DIR=C:\OCCT"
+if not defined OCCT_DIR (
+    for /d %%d in ("C:\OpenCASCADE*") do (
+        if exist "%%d\cmake" set "OCCT_DIR=%%d"
+        for /d %%s in ("%%d\opencascade-*") do set "OCCT_DIR=%%s"
+    )
+)
+
+if not defined OCCT_DIR (
+    echo.
+    echo   OpenCASCADE was not found. It has no reliable Chocolatey
+    echo   package, so it needs a one-time manual install:
+    echo.
+    echo     1. Download the Windows installer from
+    echo        https://dev.opencascade.org/release
+    echo        ^(e.g. opencascade-7.8.x-vc14-64.exe^)
+    echo     2. Run it ^(default location is C:\OpenCASCADE\...^)
+    echo     3. Re-run this script -- it auto-detects C:\OCCT,
+    echo        C:\OpenCASCADE*, or the CASROOT environment variable.
+    echo.
+    goto :fail
+)
+echo   Found at !OCCT_DIR!
+echo Using OCCT at !OCCT_DIR! >> "%LOG%"
+
+REM ---------------------------------------------------------------
+REM [5/5] Optional GUI deps (GLFW/ImGui/stb) -- app target skips
+REM itself when absent, so this is informational only.
+REM ---------------------------------------------------------------
+echo [5/5] GUI dependencies...
+echo   GLFW and ImGui are fetched and built from source automatically
+echo   during configure ^(needs internet the first time^), so the
+echo   interactive weft_app.exe builds with no extra installs.
+
+echo.
+echo ========================================
+echo  Configuring
+echo ========================================
+echo.
+
+REM Use the VS generator: CMake locates the compiler through the VS
+REM installation itself, so we never need cl.exe on PATH or vcvars.
+cmake -B build -G "Visual Studio 17 2022" -A x64 ^
+    -DCMAKE_PREFIX_PATH="!OCCT_DIR!" ^
+    -DOCCT_SEARCH_PATH="!OCCT_DIR!"
+if %errorLevel% neq 0 (
+    echo.
+    echo   CMake configuration failed -- the error is printed above.
+    goto :fail
+)
+
+echo.
+echo ========================================
+echo  Compiling
+echo ========================================
+echo.
+cmake --build build --config Release -j
+if %errorLevel% neq 0 (
+    echo   Build failed -- scroll up for the first error, or see build_log.txt.
+    goto :fail
+)
+
+echo.
+echo ========================================
+echo  Running tests
+echo ========================================
+echo.
+REM The executables need OCCT's DLLs at runtime: the TK*.dlls plus
+REM OCCT's bundled third-party DLLs (tbb12, jemalloc, openvr_api,
+REM FreeImage, freetype, ...), each shipped in its own directory.
+REM Copy them all NEXT TO the executables (xcopy /D only recopies
+REM newer files), so weft.exe runs from anywhere -- no PATH setup.
+set "BINDIR=%~dp0build\bin\Release"
+if not exist "%BINDIR%" mkdir "%BINDIR%"
+echo   Deploying OCCT DLLs to build\bin\Release ^(first run copies a
+echo   few hundred MB; later runs only copy what changed^)...
+set "DLLDIRS=;"
+for /f "delims=" %%f in ('dir /s /b "!OCCT_DIR!\*.dll" 2^>nul') do (
+    if "!DLLDIRS:%%~dpf;=!"=="!DLLDIRS!" (
+        set "DLLDIRS=!DLLDIRS!%%~dpf;"
+        xcopy "%%~dpf*.dll" "%BINDIR%" /D /Y >nul
+    )
+)
+ctest --test-dir build -C Release --output-on-failure
+if %errorLevel% neq 0 (
+    echo   Some tests failed ^(build itself succeeded^).
+    goto :fail
+)
+
+echo.
+echo ========================================
+echo  Build complete!
+echo ========================================
+echo.
+echo   Everything is in build\bin\Release ^(DLLs included -- the exes
+echo   run from anywhere, no PATH setup needed^):
+echo.
+echo   CLI:  build\bin\Release\weft.exe
+echo   App:  build\bin\Release\weft_app.exe   ^(if GUI deps were found^)
+echo.
+echo   Try it:
+echo     build\bin\Release\weft.exe fixture demo.step --shape demo
+echo     build\bin\Release\weft.exe mesh demo.step -o demo.obj --radial 12
+echo.
+pause
+exit /b 0
+
+REM ---------------------------------------------------------------
+:ensure_choco
+where choco >nul 2>&1 && exit /b 0
+echo   Chocolatey is needed to auto-install this dependency.
+net session >nul 2>&1
+if %errorLevel% neq 0 (
+    echo   ERROR: Installing dependencies requires an ADMINISTRATOR prompt.
+    echo   Right-click build.bat and choose "Run as administrator".
+    exit /b 1
+)
+echo   Installing Chocolatey...
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "[System.Net.ServicePointManager]::SecurityProtocol = 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))" >> "%LOG%" 2>&1
+set "PATH=%PATH%;%ProgramData%\chocolatey\bin"
+where choco >nul 2>&1 && exit /b 0
+echo   Chocolatey install failed -- see build_log.txt.
+exit /b 1
+
+REM ---------------------------------------------------------------
+:fail
+echo.
+echo ======== BUILD SCRIPT STOPPED ^(details above / build_log.txt^) ========
+echo.
+pause
+exit /b 1
