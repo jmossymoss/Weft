@@ -15,9 +15,12 @@
 #include "weft/recipe.hpp"
 #include "weft/viz.hpp"
 
+// Full windows.h (not LEAN_AND_MEAN): commdlg.h needs the common-control
+// types that the lean variant strips out.
 #ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #include <commdlg.h>
 #endif
