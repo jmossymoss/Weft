@@ -6,6 +6,18 @@
 //
 //   weft_app [model.step] [--fixture demo] [--screenshot out.png]
 
+// windows.h + commdlg.h must come FIRST: OCCT's headers include windows.h
+// themselves with slimmed-down defines, and a later re-include is a no-op
+// (header guard), leaving commdlg.h without the dialog types it needs.
+// Full windows.h here wins the race and satisfies everyone.
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <commdlg.h>
+#endif
+
 #include "weft/analysis.hpp"
 #include "weft/edit.hpp"
 #include "weft/fixture.hpp"
@@ -14,16 +26,6 @@
 #include "weft/model.hpp"
 #include "weft/recipe.hpp"
 #include "weft/viz.hpp"
-
-// Full windows.h (not LEAN_AND_MEAN): commdlg.h needs the common-control
-// types that the lean variant strips out.
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#include <commdlg.h>
-#endif
 
 #include <GLFW/glfw3.h>
 #include "gl_compat.hpp"
