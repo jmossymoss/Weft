@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <cmath>
 #include <atomic>
+#include <cstdarg>
 #include <map>
 #include <mutex>
 #include <numeric>
@@ -37,6 +38,25 @@
 #include <vector>
 
 namespace weft {
+
+// Stage-by-stage debug trace. Guarded by a mutex, flushed per line, so a
+// crash log's last line names the exact face/edge/stage that died.
+static std::FILE* gDebugLog = nullptr;
+static std::mutex gDebugMutex;
+
+void setGenerateDebugLog(std::FILE* f) { gDebugLog = f; }
+
+static void dbg(const char* fmt, ...) {
+    if (!gDebugLog) return;
+    std::lock_guard<std::mutex> lock(gDebugMutex);
+    va_list args;
+    va_start(args, fmt);
+    std::fprintf(gDebugLog, "[core] ");
+    std::vfprintf(gDebugLog, fmt, args);
+    std::fputc('\n', gDebugLog);
+    std::fflush(gDebugLog);
+    va_end(args);
+}
 
 std::vector<double> clusteredParams(int divisions, double hold) {
     int n = std::max(1, divisions);
@@ -962,6 +982,8 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                 }
             }
             if (nfid < 1 || !isAnalytic(nfid)) continue;
+            dbg("conform: face %d edge %d (analytic neighbour %d)", fid, eid,
+                nfid);
 
             BRepAdaptor_Curve curve(edge);
             const double f = curve.FirstParameter(), l = curve.LastParameter();
@@ -1104,6 +1126,9 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
 
 PolyMesh generate(const Model& model, const Analysis& analysis,
                   const GenerationSettings& settings, GenerationReport* report) {
+    dbg("generate: begin (%d faces, %d edges, parallel=%d, conform=%d)",
+        model.faceCount(), model.edgeCount(), settings.parallelMeshing ? 1 : 0,
+        settings.conformBorders ? 1 : 0);
     std::map<int, FacePlan> plans;
     for (int fid = 1; fid <= model.faceCount(); ++fid) {
         FacePlan plan = planFace(fid, model, analysis, settings);
@@ -1115,8 +1140,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         }
         plans.emplace(fid, std::move(plan));
     }
+    dbg("generate: plans done");
 
     DensitySolution density = solveDensity(model, plans, settings);
+    dbg("generate: density solved");
 
     // Resolve every face's division counts up front (union-find lookups
     // path-compress, so they must not run concurrently) — after this the
@@ -1165,6 +1192,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         if (s.exclude) return;
         const TopoDS_Face face = TopoDS::Face(model.faces(fid));
         const FacePlan& plan = plans.at(fid);
+        dbg("mesh face %d: %s", fid, mesherKindName(plan.kind));
         BRepAdaptor_Surface surf(face);
         MeshBuilder out(parts[fid]);
         const int nu = counts[fid][0], nv = counts[fid][1];
@@ -1200,6 +1228,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
 
     unsigned threads = std::min<unsigned>(
         std::max(1u, std::thread::hardware_concurrency()), unsigned(faceN));
+    if (!settings.parallelMeshing) threads = 1;
+    dbg("generate: meshing on %u thread(s)", threads);
     if (threads <= 1) {
         for (int fid = 1; fid <= faceN; ++fid) meshFace(fid);
     } else {
@@ -1243,7 +1273,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                   part.polygonFaceId.end());
     }
 
-    conformFallbackBorders(mesh, model, plans, settings, range);
+    dbg("generate: merged (%zu verts, %zu polys)", mesh.vertexCount(),
+        mesh.polygonCount());
+    if (settings.conformBorders) {
+        conformFallbackBorders(mesh, model, plans, settings, range);
+        dbg("generate: borders conformed");
+    }
 
     if (report) {
         for (int fid = 1; fid <= faceN; ++fid) {
@@ -1268,7 +1303,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         }
     }
 
+    dbg("generate: welding");
     weldVertices(mesh, settings.weldTolerance);
+    dbg("generate: done (%zu verts, %zu polys)", mesh.vertexCount(),
+        mesh.polygonCount());
     return mesh;
 }
 

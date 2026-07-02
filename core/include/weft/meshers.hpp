@@ -4,6 +4,7 @@
 #include "weft/mesh.hpp"
 #include "weft/model.hpp"
 
+#include <cstdio>
 #include <map>
 
 namespace weft {
@@ -57,6 +58,10 @@ struct GenerationSettings {
     // whole shared-edge group it belongs to (plan §5 per_edge_settings).
     std::map<int, int> perEdge;
     double weldTolerance = 1e-6;
+    // Runtime/debug knobs (not persisted in recipes): turn off worker
+    // threads or the freeform border-conformity pass to bisect problems.
+    bool parallelMeshing = true;
+    bool conformBorders = true;
 
     const FaceMeshSettings& forFace(int faceId) const {
         auto it = perFace.find(faceId);
@@ -95,6 +100,11 @@ struct GenerationReport {
     // density matching. Adjacent faces sharing an edge agree on this count.
     std::map<int, int> edgeDivisions;
 };
+
+// Route the generator's stage-by-stage debug trace (plans, density solve,
+// each face meshed, conformity per edge, weld) to a stream; null disables.
+// Lines are flushed as written so a crash log ends at the crash site.
+void setGenerateDebugLog(std::FILE* f);
 
 // Generate topology for every face of the model, per-face controllable.
 //

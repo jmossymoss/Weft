@@ -8,3 +8,5 @@ compile_commands.json
 imgui.ini
 weft_test*.recipe
 weft_test*.step
+weft_debug.log
+weft_fixture_*.step

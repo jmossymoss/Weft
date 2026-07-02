@@ -49,6 +49,50 @@
 #include <vector>
 
 // ---------------------------------------------------------------------------
+// Debug log: weft_debug.log next to the working directory, one flushed line
+// per action/stage, so after a crash its tail names the culprit. A crash
+// handler appends the exception/signal before the process dies.
+
+static FILE* gDebugLog = nullptr;
+
+static void logLine(const char* fmt, ...) {
+    if (!gDebugLog) return;
+    va_list args;
+    va_start(args, fmt);
+    std::fprintf(gDebugLog, "[app ] ");
+    std::vfprintf(gDebugLog, fmt, args);
+    std::fputc('\n', gDebugLog);
+    std::fflush(gDebugLog);
+    va_end(args);
+}
+
+#ifdef _WIN32
+static LONG WINAPI crashFilter(EXCEPTION_POINTERS* info) {
+    logLine("FATAL: unhandled exception 0x%08lX at %p",
+            info->ExceptionRecord->ExceptionCode,
+            info->ExceptionRecord->ExceptionAddress);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+#else
+#include <csignal>
+static void crashSignal(int sig) {
+    logLine("FATAL: signal %d", sig);
+    std::signal(sig, SIG_DFL);
+    std::raise(sig);
+}
+#endif
+
+static void installCrashHandler() {
+#ifdef _WIN32
+    SetUnhandledExceptionFilter(crashFilter);
+#else
+    std::signal(SIGSEGV, crashSignal);
+    std::signal(SIGABRT, crashSignal);
+    std::signal(SIGFPE, crashSignal);
+#endif
+}
+
+// ---------------------------------------------------------------------------
 // Minimal GL 3.3 loader: core entry points fetched through GLFW.
 
 #define WEFT_GL_FUNCS(X)                                    \
@@ -400,22 +444,30 @@ static void regenerate(App& app) {
     if (!app.hasModel) return;
     // Never let a geometry failure take the app down: keep the previous
     // mesh, surface the error, and let the user undo the change.
+    logLine("regenerate: begin (%zu overrides, %zu edge pins, %zu ops)",
+            app.recipe.settings.perFace.size(),
+            app.recipe.settings.perEdge.size(), app.recipe.ops.size());
     try {
         weft::GenerationReport report;
         weft::PolyMesh mesh = weft::generate(app.model, app.analysis,
                                              app.recipe.settings, &report);
+        logLine("regenerate: generate ok, applying %zu op(s)",
+                app.recipe.ops.size());
         weft::applyOps(mesh, app.model, app.recipe.ops);
         app.mesh = std::move(mesh);
         app.report = std::move(report);
     } catch (const std::exception& e) {
+        logLine("regenerate: FAILED: %s", e.what());
         app.status = std::string("regenerate failed (ctrl+Z): ") + e.what();
         app.dirty = false;
         return;
     } catch (...) {
+        logLine("regenerate: FAILED (unknown exception)");
         app.status = "regenerate failed (ctrl+Z to revert)";
         app.dirty = false;
         return;
     }
+    logLine("regenerate: ops applied, rebuilding buffers");
 
     // Open boundary loops (deleted faces leave them) for the bridge tool,
     // each mapped to its nearest sampled B-rep edge for a stable op id.
@@ -445,6 +497,8 @@ static void regenerate(App& app) {
 
     rebuildBuffers(app);
     app.dirty = false;
+    logLine("regenerate: done (%zu verts, %zu polys)",
+            app.mesh.vertexCount(), app.mesh.polygonCount());
 }
 
 // Frame the selection if there is one, else the whole model (F).
@@ -480,6 +534,7 @@ static void frameModel(App& app) {
 }
 
 static void loadModel(App& app, const std::string& path) {
+    logLine("load: %s", path.c_str());
     try {
         app.model = weft::loadStep(path);
         app.analysis = weft::analyze(app.model);
@@ -586,6 +641,8 @@ static int* primaryDensity(App& app, weft::FaceMeshSettings& s, bool secondary) 
 // no selection, edits go to the defaults.
 template <typename F>
 static void editSelected(App& app, F&& fn) {
+    logLine("edit: %zu selected face(s), active %d", app.selFaces.size(),
+            app.activeFace);
     if (app.selFaces.empty()) {
         fn(app.recipe.settings.defaults);
     } else {
@@ -1308,6 +1365,28 @@ static void drawUi(App& app) {
         ImGui::Text("%zu manual op(s)", app.recipe.ops.size());
     }
 
+    if (ImGui::CollapsingHeader("Debug")) {
+        ImGui::TextDisabled("bisect switches — try these if it crashes");
+        bool single = !app.recipe.settings.parallelMeshing;
+        if (ImGui::Checkbox("single-threaded meshing", &single)) {
+            app.recipe.settings.parallelMeshing = !single;
+            markDirty(app);
+        }
+        bool conform = app.recipe.settings.conformBorders;
+        if (ImGui::Checkbox("border conformity pass", &conform)) {
+            app.recipe.settings.conformBorders = conform;
+            markDirty(app);
+        }
+        static bool coreTrace = true;
+        if (ImGui::Checkbox("core trace in log", &coreTrace)) {
+            weft::setGenerateDebugLog(coreTrace ? gDebugLog : nullptr);
+        }
+        if (ImGui::Button("force regenerate")) app.dirty = true;
+        ImGui::TextDisabled("log: weft_debug.log next to the exe/cwd,");
+        ImGui::TextDisabled("flushed per line — after a crash its tail");
+        ImGui::TextDisabled("names the face/stage that died.");
+    }
+
     if (ImGui::CollapsingHeader("Dev fixtures")) {
         ImGui::TextDisabled("built-in test shapes");
         const char* fixtures[] = {"cylinder", "box",  "cone", "sphere",
@@ -1331,6 +1410,11 @@ static void scrollCb(GLFWwindow*, double, double dy) {
 }
 
 int main(int argc, char** argv) {
+    gDebugLog = std::fopen("weft_debug.log", "w");
+    installCrashHandler();
+    weft::setGenerateDebugLog(gDebugLog);
+    logLine("weft_app start (built %s %s)", __DATE__, __TIME__);
+
     std::string screenshotPath, startModel, startFixture = "demo";
     int startSelect = 0;
     float startYaw = 0.9f, startPitch = 0.5f;
