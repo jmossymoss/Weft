@@ -7,10 +7,9 @@ per-face controllable, regenerable at any density without losing manual work.
 
 Full plan and architecture: [docs/PLAN.md](docs/PLAN.md).
 
-## Status: Phase 3 — feature recognition + fillet support loops
+## Status: Phase 2/3 — surface-constrained editing + feature recognition
 
-Headless C++ core + CLI covering the plan's Phases 0–1 and the fillet half
-of Phase 3:
+Headless C++ core + CLI covering the plan's Phases 0–3 essentials:
 
 - STEP import via OpenCASCADE (with shape healing) and stable face/edge IDs
 - B-rep analysis: surface classification (plane/cylinder/cone/sphere/torus/
@@ -42,10 +41,16 @@ of Phase 3:
   (`--rings N`) instead of triangle soup. The ring count is derived from
   the face's border and propagates through density matching to the
   boss/bore itself — a drilled plate comes out as 100% quads, watertight.
-- **Recipes** (plan §5, first slice): save the full density setup —
-  defaults, per-face overrides, per-edge pins — keyed to stable CAD IDs
-  (`--save-recipe` / `--recipe`), and regenerate identical topology from
-  it later. Decisions persist; the mesh is just a view.
+- **Surface-constrained editing** (plan §3.4): every generated vertex
+  carries a `(faceId,u,v)` anchor onto the live B-rep. Edge-loop insertion
+  walks quad strips (closing on itself or absorbing into terminal n-gons,
+  always watertight) and evaluates new vertices exactly on the CAD surface;
+  vertex moves re-project exactly — true snapping, not shrinkwrap.
+- **Recipes** (plan §5): save the full setup — density defaults, per-face
+  overrides, per-edge pins, AND manual ops — keyed to stable CAD IDs
+  (`--save-recipe` / `--recipe`). Manual edits anchor to `(faceId,u,v)`,
+  so a loop inserted at one density re-applies itself after you change the
+  density and regenerate. Decisions persist; the mesh is just a view.
 - Vertex welding across B-rep face borders (watertight where divisions match)
 - OBJ export with one group per B-rep face, so CAD face IDs survive into
   Blender

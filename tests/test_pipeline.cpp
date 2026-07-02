@@ -3,6 +3,7 @@
 // prints and exits non-zero on failure so CTest reports it.
 
 #include "weft/analysis.hpp"
+#include "weft/edit.hpp"
 #include "weft/fixture.hpp"
 #include "weft/mesh.hpp"
 #include "weft/meshers.hpp"
@@ -315,6 +316,75 @@ void testBoxDensityMatching() {
     }
 }
 
+void testSurfaceConstrainedEditing() {
+    std::printf("-- surface-constrained editing --\n");
+    std::string stepPath = tmpPath("weft_test_edit_cyl.step");
+    weft::writeStep(weft::makeFixture("cylinder"), stepPath);
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis a = weft::analyze(model);
+
+    int sideFaceId = 0;
+    for (const auto& f : a.faces) {
+        if (f.type == weft::SurfaceType::Cylinder) sideFaceId = f.id;
+    }
+
+    weft::GenerationSettings gs;
+    gs.defaults.radial = 12;
+    gs.defaults.axial = 2;
+    weft::PolyMesh mesh = weft::generate(model, a, gs);
+    CHECK_EQ(mesh.anchors.size(), mesh.vertices.size());
+    CHECK_EQ(mesh.countQuads(), 24);
+    size_t vertsBefore = mesh.vertexCount();
+
+    auto radiusOf = [](const std::array<double, 3>& p) {
+        return std::sqrt(p[0] * p[0] + p[1] * p[1]);  // cylinder axis = Z
+    };
+
+    // Horizontal loop around the cylinder: crosses the 12 axial edges of
+    // the bottom band and closes on itself. (u,v) targets the seam column's
+    // vertical edge midpoint; v is height on the cylinder (h=30, rows at
+    // 0/15/30).
+    weft::ManualOp op{weft::ManualOp::Kind::LoopInsert, sideFaceId, 0.0, 7.5,
+                      0.5};
+    int crossed = weft::insertLoop(mesh, model, op);
+    CHECK_EQ(crossed, 12);
+    CHECK_EQ(mesh.countQuads(), 24 + 12);
+    CHECK_EQ(mesh.vertexCount(), vertsBefore + 12);
+    CHECK(isWatertight(mesh));
+
+    // The killer property: every inserted vertex lies EXACTLY on the CAD
+    // surface (true snapping, not shrinkwrap).
+    for (size_t v = vertsBefore; v < mesh.vertexCount(); ++v) {
+        CHECK(std::abs(radiusOf(mesh.vertices[v]) - 10.0) < 1e-9);
+        CHECK_EQ(mesh.anchors[v].faceId, sideFaceId);
+    }
+
+    // Vertical loop: runs pole-to-pole equivalent — from cap to cap —
+    // terminating at both n-gon caps, which must absorb the new vertices
+    // to stay watertight (13-gons now).
+    weft::ManualOp vop{weft::ManualOp::Kind::LoopInsert, sideFaceId,
+                       M_PI / 12.0, 0.0, 0.5};
+    size_t quadsBefore = mesh.countQuads();
+    int vcrossed = weft::insertLoop(mesh, model, vop);
+    CHECK(vcrossed >= 3);  // three bands after the horizontal loop
+    CHECK(isWatertight(mesh));
+    size_t ngonMax = 0;
+    for (const auto& poly : mesh.polygons) {
+        ngonMax = std::max(ngonMax, poly.size());
+    }
+    CHECK_EQ(ngonMax, 13);  // caps absorbed one vertex each
+    CHECK_EQ(mesh.countQuads(), quadsBefore + vcrossed);
+
+    // moveVertex snaps back to the surface: shove a side vertex outward,
+    // it must land exactly on r=10 again.
+    size_t vid = vertsBefore;  // one of the loop vertices
+    std::array<double, 3> p = mesh.vertices[vid];
+    std::array<double, 3> target{p[0] * 1.7, p[1] * 1.7, p[2] + 3.0};
+    weft::moveVertex(mesh, model, vid, target);
+    CHECK(std::abs(radiusOf(mesh.vertices[vid]) - 10.0) < 1e-9);
+    CHECK(std::abs(mesh.vertices[vid][2] - (p[2] + 3.0)) < 1e-9);
+}
+
 void testFillet() {
     std::printf("-- fillet detection + support loops --\n");
     std::string stepPath = tmpPath("weft_test_fillet.step");
@@ -375,7 +445,8 @@ void testFillet() {
 
 void testRecipeRoundTrip() {
     std::printf("-- recipe round trip --\n");
-    weft::GenerationSettings gs;
+    weft::Recipe recipe;
+    weft::GenerationSettings& gs = recipe.settings;
     gs.defaults.radial = 20;
     gs.defaults.cap = weft::CapStyle::Fan;
     weft::FaceMeshSettings dense = gs.defaults;
@@ -383,26 +454,32 @@ void testRecipeRoundTrip() {
     dense.gridV = 7;
     gs.perFace[3] = dense;
     gs.perEdge[5] = 13;
+    recipe.ops.push_back({weft::ManualOp::Kind::LoopInsert, 1, 0.25, 7.5, 0.5});
 
     std::string path = tmpPath("weft_test.recipe");
-    weft::saveRecipe(gs, path);
-    weft::GenerationSettings loaded = weft::loadRecipe(path);
+    weft::saveRecipe(recipe, path);
+    weft::Recipe loaded = weft::loadRecipe(path);
 
-    CHECK_EQ(loaded.defaults.radial, 20);
-    CHECK(loaded.defaults.cap == weft::CapStyle::Fan);
-    CHECK_EQ(loaded.perFace.size(), 1);
-    CHECK_EQ(loaded.perFace[3].radial, 40);
-    CHECK_EQ(loaded.perFace[3].gridV, 7);
-    CHECK_EQ(loaded.perEdge[5], 13);
+    CHECK_EQ(loaded.settings.defaults.radial, 20);
+    CHECK(loaded.settings.defaults.cap == weft::CapStyle::Fan);
+    CHECK_EQ(loaded.settings.perFace.size(), 1);
+    CHECK_EQ(loaded.settings.perFace[3].radial, 40);
+    CHECK_EQ(loaded.settings.perFace[3].gridV, 7);
+    CHECK_EQ(loaded.settings.perEdge[5], 13);
+    CHECK_EQ(loaded.ops.size(), 1);
+    CHECK_EQ(loaded.ops[0].faceId, 1);
+    CHECK(std::abs(loaded.ops[0].t - 0.5) < 1e-12);
 
-    // Same recipe, same B-rep => identical topology (regenerability is the
-    // point of persisting decisions instead of meshes).
+    // Same recipe, same B-rep => identical topology, manual ops included
+    // (regenerability is the point of persisting decisions, not meshes).
     std::string stepPath = tmpPath("weft_test_recipe_cyl.step");
     weft::writeStep(weft::makeFixture("cylinder"), stepPath);
     weft::Model model = weft::loadStep(stepPath);
     weft::Analysis a = weft::analyze(model);
     weft::PolyMesh m1 = weft::generate(model, a, gs);
-    weft::PolyMesh m2 = weft::generate(model, a, loaded);
+    weft::applyOps(m1, model, recipe.ops);
+    weft::PolyMesh m2 = weft::generate(model, a, loaded.settings);
+    weft::applyOps(m2, model, loaded.ops);
     CHECK_EQ(m1.vertexCount(), m2.vertexCount());
     CHECK_EQ(m1.polygonCount(), m2.polygonCount());
 }
@@ -504,6 +581,7 @@ int main() {
     testSphere();
     testTorus();
     testBoxDensityMatching();
+    testSurfaceConstrainedEditing();
     testFillet();
     testRecipeRoundTrip();
     testBoss();

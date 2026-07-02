@@ -3,6 +3,7 @@ add_library(weft_core
   src/analysis.cpp
   src/mesh.cpp
   src/meshers.cpp
+  src/edit.cpp
   src/recipe.cpp
   src/fixture.cpp
 )

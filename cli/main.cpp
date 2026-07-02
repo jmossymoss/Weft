@@ -3,6 +3,7 @@
 // topology generation → OBJ out. See docs/PLAN.md §9.
 
 #include "weft/analysis.hpp"
+#include "weft/edit.hpp"
 #include "weft/fixture.hpp"
 #include "weft/mesh.hpp"
 #include "weft/meshers.hpp"
@@ -46,10 +47,15 @@ void usage() {
         "                      keys: radial, axial, gridu, gridv, cap, chord\n"
         "    --edge ID:N       pin an edge (and its density-matched group) to\n"
         "                      exactly N subdivisions\n"
-        "    --recipe FILE     load settings from a saved recipe (flags given\n"
-        "                      after it override; --face/--edge always apply)\n"
+        "    --op-loop ID:u,v,t\n"
+        "                      manual edit: insert an edge loop crossing the\n"
+        "                      mesh edge nearest (u,v) on B-rep face ID, at\n"
+        "                      fraction t; anchored to the CAD, so it replays\n"
+        "                      after density changes\n"
+        "    --recipe FILE     load settings + manual ops from a saved recipe\n"
+        "                      (flags given after it override)\n"
         "    --save-recipe FILE\n"
-        "                      persist the final settings, keyed to CAD IDs\n"
+        "                      persist settings AND manual ops, keyed to CAD IDs\n"
         "\n"
         "  Divisions are density-matched: edges shared between parametric\n"
         "  faces resolve to one count (max of the faces' proposals), so\n"
@@ -116,7 +122,8 @@ int cmdMesh(const std::vector<std::string>& args) {
     std::string input = args[0];
     std::string output;
     std::string recipeOut;
-    weft::GenerationSettings gs;
+    weft::Recipe recipe;
+    weft::GenerationSettings& gs = recipe.settings;
     std::vector<std::string> faceSpecs;
 
     for (size_t i = 1; i < args.size(); ++i) {
@@ -133,8 +140,31 @@ int cmdMesh(const std::vector<std::string>& args) {
         else if (a == "--loops") gs.defaults.filletLoops = std::stoi(next());
         else if (a == "--hold") gs.defaults.filletHold = std::stod(next());
         else if (a == "--rings") gs.defaults.junctionRings = std::stoi(next());
-        else if (a == "--recipe") gs = weft::loadRecipe(next());
+        else if (a == "--recipe") recipe = weft::loadRecipe(next());
         else if (a == "--save-recipe") recipeOut = next();
+        else if (a == "--op-loop") {
+            // faceId:u,v,t — insert a loop crossing the mesh edge nearest
+            // to (u,v) on that B-rep face, at fraction t along the edge.
+            std::string spec = next();
+            size_t colon = spec.find(':');
+            if (colon == std::string::npos) {
+                throw std::runtime_error("--op-loop expects ID:u,v,t, got " +
+                                         spec);
+            }
+            weft::ManualOp op;
+            op.faceId = std::stoi(spec.substr(0, colon));
+            std::string rest = spec.substr(colon + 1);
+            size_t c1 = rest.find(',');
+            size_t c2 = rest.find(',', c1 + 1);
+            if (c1 == std::string::npos || c2 == std::string::npos) {
+                throw std::runtime_error("--op-loop expects ID:u,v,t, got " +
+                                         spec);
+            }
+            op.u = std::stod(rest.substr(0, c1));
+            op.v = std::stod(rest.substr(c1 + 1, c2 - c1 - 1));
+            op.t = std::stod(rest.substr(c2 + 1));
+            recipe.ops.push_back(op);
+        }
         else if (a == "--grid") {
             std::string g = next();
             size_t x = g.find('x');
@@ -159,7 +189,7 @@ int cmdMesh(const std::vector<std::string>& args) {
     if (output.empty()) throw std::runtime_error("missing -o <out.obj>");
     for (const std::string& spec : faceSpecs) parseFaceOverride(gs, spec);
     if (!recipeOut.empty()) {
-        weft::saveRecipe(gs, recipeOut);
+        weft::saveRecipe(recipe, recipeOut);
         std::printf("saved recipe %s\n", recipeOut.c_str());
     }
 
@@ -167,6 +197,7 @@ int cmdMesh(const std::vector<std::string>& args) {
     weft::Analysis analysis = weft::analyze(model);
     weft::GenerationReport report;
     weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    weft::applyOps(mesh, model, recipe.ops);
     weft::writeObj(mesh, output);
 
     std::printf("%s -> %s\n", input.c_str(), output.c_str());
