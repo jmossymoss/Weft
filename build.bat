@@ -129,9 +129,10 @@ REM ---------------------------------------------------------------
 REM [5/5] Optional GUI deps (GLFW/ImGui/stb) -- app target skips
 REM itself when absent, so this is informational only.
 REM ---------------------------------------------------------------
-echo [5/5] GUI dependencies ^(optional^)...
-echo   The interactive app needs GLFW/ImGui/stb. If CMake does not
-echo   find them the GUI target is skipped and the CLI still builds.
+echo [5/5] GUI dependencies...
+echo   GLFW and ImGui are fetched and built from source automatically
+echo   during configure ^(needs internet the first time^), so the
+echo   interactive weft_app.exe builds with no extra installs.
 
 echo.
 echo ========================================
