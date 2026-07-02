@@ -755,6 +755,38 @@ void testFreeformBorderConformity() {
     CHECK(isWatertight(triMesh));
 }
 
+// Unlinked rims: a revolution band whose two rims carry different counts
+// meshes as a triangulated taper and the solid stays watertight.
+void testUnlinkedRims() {
+    std::printf("-- unlinked rims --\n");
+    std::string stepPath = tmpPath("weft_test_rims.step");
+    weft::writeStep(weft::makeFixture("cylinder"), stepPath);
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis a = weft::analyze(model);
+
+    int side = 0;
+    for (const auto& f : a.faces) {
+        if (f.type == weft::SurfaceType::Cylinder) side = f.id;
+    }
+    weft::GenerationSettings gs;
+    gs.defaults.radial = 12;
+    gs.perFace[side] = gs.defaults;
+    gs.perFace[side].linkRims = false;
+
+    weft::GenerationReport report;
+    weft::PolyMesh linked = weft::generate(model, a, gs, &report);
+    CHECK(isWatertight(linked));  // equal rims: still the quad band
+    CHECK(report.faceRims.count(side) == 1);
+
+    // Pin one rim higher: taper (12+18 triangles), still watertight, and
+    // the caps follow their own rims (12-gon and 18-gon).
+    gs.perEdge[report.faceRims[side][1]] = 18;
+    weft::PolyMesh tapered = weft::generate(model, a, gs);
+    CHECK(isWatertight(tapered));
+    CHECK_EQ(tapered.countTris(), 12 + 18);
+    CHECK_EQ(tapered.countNgons(), 2);
+}
+
 // Announce each test and turn stray exceptions into a named failure
 // instead of a silent fail-fast crash (0xc0000409 on Windows).
 #define RUN(fn)                                               \
@@ -788,6 +820,7 @@ int main() {
     RUN(testHolePlate);
     RUN(testBridge);
     RUN(testFreeformBorderConformity);
+    RUN(testUnlinkedRims);
     if (failures) {
         std::printf("\n%d FAILURE(S)\n", failures);
         return 1;

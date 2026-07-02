@@ -21,6 +21,10 @@ void applySetting(FaceMeshSettings& s, const std::string& key,
     else if (key == "quads") s.quadDominant = std::stoi(value) != 0;
     else if (key == "minimal") s.minimal = std::stoi(value) != 0;
     else if (key == "skip") s.exclude = std::stoi(value) != 0;
+    else if (key == "mesher") s.forceMesher = std::stoi(value);
+    else if (key == "linkrims") s.linkRims = std::stoi(value) != 0;
+    else if (key == "minsize") s.minSize = std::stod(value);
+    else if (key == "reldev") s.relativeDeviation = std::stoi(value) != 0;
     else if (key == "cap") {
         if (value == "ngon") s.cap = CapStyle::NGon;
         else if (value == "fan") s.cap = CapStyle::Fan;
@@ -45,16 +49,17 @@ void applySettingsList(FaceMeshSettings& s, const std::string& list) {
 }
 
 static std::string settingsToString(const FaceMeshSettings& s) {
-    char buf[288];
+    char buf[384];
     std::snprintf(buf, sizeof buf,
                   "radial=%d,axial=%d,gridu=%d,gridv=%d,cap=%s,chord=%g,"
                   "angle=%g,loops=%d,hold=%g,rings=%d,quads=%d,minimal=%d,"
-                  "skip=%d",
+                  "skip=%d,mesher=%d,linkrims=%d,minsize=%g,reldev=%d",
                   s.radial, s.axial, s.gridU, s.gridV,
                   s.cap == CapStyle::Fan ? "fan" : "ngon", s.chordTolerance,
                   s.angleToleranceDeg, s.filletLoops, s.filletHold,
                   s.junctionRings, s.quadDominant ? 1 : 0, s.minimal ? 1 : 0,
-                  s.exclude ? 1 : 0);
+                  s.exclude ? 1 : 0, s.forceMesher, s.linkRims ? 1 : 0,
+                  s.minSize, s.relativeDeviation ? 1 : 0);
     return buf;
 }
 

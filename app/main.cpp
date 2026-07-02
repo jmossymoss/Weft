@@ -166,6 +166,8 @@ static void installCrashHandler() {
     X(PFNGLUSEPROGRAMPROC, glUseProgram)                    \
     X(PFNGLGETUNIFORMLOCATIONPROC, glGetUniformLocation)    \
     X(PFNGLUNIFORMMATRIX4FVPROC, glUniformMatrix4fv)        \
+    X(PFNGLUNIFORM1FPROC, glUniform1f)                     \
+    X(PFNGLUNIFORM3FVPROC, glUniform3fv)                   \
     X(PFNGLGENVERTEXARRAYSPROC, glGenVertexArrays)          \
     X(PFNGLBINDVERTEXARRAYPROC, glBindVertexArray)          \
     X(PFNGLGENBUFFERSPROC, glGenBuffers)                    \
@@ -287,12 +289,15 @@ static const char* kLitFS = R"(#version 330 core
 in vec3 vPosVS;
 in vec3 vColor;
 out vec4 frag;
+uniform float uAmbient;
+uniform float uDiffuse;
+uniform float uRim;
 void main() {
     vec3 n = normalize(cross(dFdx(vPosVS), dFdy(vPosVS)));
     vec3 l = normalize(-vPosVS);
     float diff = abs(dot(n, l));
-    float rim = pow(1.0 - diff, 2.0) * 0.12;
-    frag = vec4(vColor * (0.28 + 0.68 * diff) + vec3(rim), 1.0);
+    float rim = pow(1.0 - diff, 2.0) * uRim;
+    frag = vec4(vColor * (uAmbient + uDiffuse * diff) + vec3(rim), 1.0);
 })";
 
 static const char* kFlatVS = R"(#version 330 core
@@ -308,7 +313,9 @@ void main() {
 static const char* kFlatFS = R"(#version 330 core
 in vec3 vColor;
 out vec4 frag;
-void main() { frag = vec4(vColor, 1.0); })";
+uniform float uMix;    // 0 = per-vertex colour, 1 = uColor override
+uniform vec3 uColor;
+void main() { frag = vec4(mix(vColor, uColor, uMix), 1.0); })";
 
 // ---------------------------------------------------------------------------
 // GPU vertex buffers (pos3 + col3).
@@ -397,13 +404,29 @@ struct App {
     int hoverLoop = -1;
     int bridgeFirstEdge = 0;  // first clicked loop's edge id (0 = none yet)
 
-    // Display toggles.
+    // Display / viewport preferences.
+    int shadingMode = 0;  // 0 shaded+wire, 1 shaded, 2 wireframe, 3 flat+wire
     bool showFill = true;
     bool showWire = true;
     bool showBrepEdges = true;
+    bool showVerts = true;  // vertices of the selected faces
+    float bgColor[3] = {0.117f, 0.125f, 0.145f};
+    float wireColor[3] = {0.10f, 0.11f, 0.13f};
+    float vertColor[3] = {1.0f, 0.72f, 0.25f};
+    float lightAmbient = 0.28f;
+    float lightDiffuse = 0.68f;
+    float lightRim = 0.12f;
+
+    // Floating value HUD for modal wheel edits.
+    char hudText[64] = "";
+    double hudUntil = 0.0;
+
+    // Undo gesture: coalesce a whole drag / wheel burst into one step.
+    bool gestureActive = false;
+    double lastMutationTime = 0.0;
 
     // GPU.
-    Buffer fill, wire, brep, pick, preview;
+    Buffer fill, wire, brep, pick, preview, verts;
     Camera cam;
 
     // UI buffers.
@@ -476,6 +499,23 @@ static void rebuildBuffers(App& app) {
     app.fill.upload(fill);
     app.pick.upload(pick);
     app.wire.upload(wire);
+
+    // Vertices of the selected faces (drawn as points; colour comes from
+    // the uniform tint, so the values here are placeholders).
+    std::vector<float> verts;
+    if (!app.selFaces.empty()) {
+        std::set<uint32_t> seen;
+        for (size_t i = 0; i < m.polygons.size(); ++i) {
+            int fid = m.polygonFaceId[i];
+            if (fid <= 0 || !app.selFaces.count(fid)) continue;
+            if (app.hiddenFaces.count(fid)) continue;
+            for (uint32_t v : m.polygons[i]) {
+                if (!seen.insert(v).second) continue;
+                push(verts, m.vertices[v], {1, 1, 1});
+            }
+        }
+    }
+    app.verts.upload(verts);
 
     std::vector<float> brep;
     for (const weft::EdgePolyline& e : app.brepEdges) {
@@ -1025,7 +1065,7 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
     const MK k = kind ? *kind : MK::Fallback;
     const bool revolved = all || k == MK::RevolutionGrid || k == MK::DiskCap;
     const bool grid = all || k == MK::PlanarGrid || k == MK::MinimalNGon ||
-                      k == MK::RingJunction;
+                      k == MK::RingJunction || k == MK::CoonsGrid;
     const bool freeform = all || k == MK::QuadDominant || k == MK::Fallback;
     bool ch = false;
 
@@ -1043,6 +1083,12 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
             ch = true;
         }
         ch |= ImGui::Checkbox("quad-dominant fallback", &s.quadDominant);
+        float ms = float(s.minSize);
+        if (ImGui::DragFloat("min size", &ms, 0.01f, 0.0f, 100.0f, "%.3f")) {
+            s.minSize = ms;
+            ch = true;
+        }
+        ch |= ImGui::Checkbox("relative deviation", &s.relativeDeviation);
     }
     if (revolved) {
         if (all) ImGui::TextDisabled("revolved surfaces");
@@ -1079,10 +1125,55 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
             ch = true;
         }
     }
-    if (kind) {  // per-face contexts only: delete leaves bridgeable borders
+    if (kind) {  // per-face contexts only
+        // Manual mesher choice: auto picks per geometry; forcing one that
+        // can't build on the face falls back to triangulation.
+        static const char* kMesherItems =
+            "auto\0revolution-grid\0disk-cap\0parametric-grid\0"
+            "coons-grid\0ring-junction\0quad-dominant\0minimal-ngon\0"
+            "fallback-tri\0";
+        int mesher = s.forceMesher;
+        if (ImGui::Combo("mesher", &mesher, kMesherItems)) {
+            s.forceMesher = mesher;
+            ch = true;
+        }
         ch |= ImGui::Checkbox("delete face (bridge with J)", &s.exclude);
     }
     return ch;
+}
+
+// Rim controls for revolution bands: linked (one radial count, quad band)
+// or unlinked (each rim pinned individually, triangulated taper between).
+static void rimControls(App& app, int fid) {
+    auto rims = app.report.faceRims.find(fid);
+    if (rims == app.report.faceRims.end()) return;
+    const weft::FaceMeshSettings& cur = app.recipe.settings.forFace(fid);
+    bool linked = cur.linkRims;
+    if (ImGui::Checkbox("link rims", &linked)) {
+        editSelected(app,
+                     [&](weft::FaceMeshSettings& s) { s.linkRims = linked; });
+    }
+    if (linked) return;
+    ImGui::SameLine();
+    ImGui::TextDisabled("(taper: tris between rims)");
+    for (int r = 0; r < 2; ++r) {
+        int eid = (*rims).second[r];
+        int count = 8;
+        auto pin = app.recipe.settings.perEdge.find(eid);
+        if (pin != app.recipe.settings.perEdge.end()) count = pin->second;
+        else {
+            auto it = app.report.edgeDivisions.find(eid);
+            if (it != app.report.edgeDivisions.end()) count = it->second;
+        }
+        ImGui::PushID(r);
+        char label[32];
+        std::snprintf(label, sizeof label, "rim %c (edge %d)", 'A' + r, eid);
+        if (ImGui::DragInt(label, &count, 0.2f, 3, 256)) {
+            app.recipe.settings.perEdge[eid] = std::max(3, count);
+            markDirty(app);
+        }
+        ImGui::PopID();
+    }
 }
 
 // Mode indicator + typed-number + hotkey reference, floating over the
@@ -1146,6 +1237,22 @@ static void drawOverlay(App& app) {
     }
     ImGui::End();
 
+    // Floating value readout at the cursor while wheel-editing density.
+    if (glfwGetTime() < app.hudUntil && app.hudText[0]) {
+        ImVec2 mp = ImGui::GetMousePos();
+        ImGui::SetNextWindowPos({mp.x + 20 * gUiScale, mp.y + 16 * gUiScale});
+        ImGui::SetNextWindowBgAlpha(0.75f);
+        ImGui::Begin("##wheelhud", nullptr,
+                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                         ImGuiWindowFlags_AlwaysAutoResize |
+                         ImGuiWindowFlags_NoInputs |
+                         ImGuiWindowFlags_NoFocusOnAppearing |
+                         ImGuiWindowFlags_NoNav);
+        ImGui::SetWindowFontScale(1.5f);
+        ImGui::TextColored({1.0f, 0.85f, 0.25f, 1.0f}, "%s", app.hudText);
+        ImGui::End();
+    }
+
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos({12 * gUiScale, vp->WorkSize.y - 12 * gUiScale},
                             ImGuiCond_Always, {0.0f, 1.0f});
@@ -1197,11 +1304,14 @@ static void drawFacePopup(App& app) {
     ImGui::PushID("ctx");
     ImGui::PushItemWidth(150 * gUiScale);
     bool changed = settingsEditor(edited, &kind, f.isFillet);
-    ImGui::PopItemWidth();
-    ImGui::PopID();
     if (changed) {
         editSelected(app, [&](weft::FaceMeshSettings& s) { s = edited; });
     }
+    if (kind == weft::MesherKind::RevolutionGrid) {
+        rimControls(app, app.activeFace);
+    }
+    ImGui::PopItemWidth();
+    ImGui::PopID();
     if (app.recipe.settings.perFace.count(app.activeFace)) {
         if (ImGui::SmallButton("clear override(s)")) {
             for (int fid : app.selFaces) {
@@ -1443,6 +1553,11 @@ static void drawUi(App& app) {
                 editSelected(app,
                              [&](weft::FaceMeshSettings& s) { s = edited; });
             }
+            if (kind == weft::MesherKind::RevolutionGrid) {
+                ImGui::PushID("rims");
+                rimControls(app, app.activeFace);
+                ImGui::PopID();
+            }
             if (app.recipe.settings.perFace.count(app.activeFace)) {
                 ImGui::TextDisabled("overridden");
                 ImGui::SameLine();
@@ -1480,11 +1595,42 @@ static void drawUi(App& app) {
     }
 
     if (ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Checkbox("fill", &app.showFill);
-        ImGui::SameLine();
-        ImGui::Checkbox("wire", &app.showWire);
-        ImGui::SameLine();
+        if (ImGui::Combo("shading", &app.shadingMode,
+                         "shaded + wire\0shaded\0wireframe\0"
+                         "flat + wire\0")) {
+            app.showFill = app.shadingMode != 2;
+            app.showWire = app.shadingMode != 1;
+        }
         ImGui::Checkbox("feature edges", &app.showBrepEdges);
+        ImGui::SameLine();
+        ImGui::Checkbox("selection verts", &app.showVerts);
+        ImGui::ColorEdit3("background", app.bgColor,
+                          ImGuiColorEditFlags_NoInputs);
+        ImGui::SameLine();
+        ImGui::ColorEdit3("wireframe", app.wireColor,
+                          ImGuiColorEditFlags_NoInputs);
+        ImGui::SameLine();
+        ImGui::ColorEdit3("verts", app.vertColor,
+                          ImGuiColorEditFlags_NoInputs);
+        ImGui::TextDisabled("lighting (image-based HDRI planned)");
+        ImGui::SliderFloat("ambient", &app.lightAmbient, 0.0f, 1.0f);
+        ImGui::SliderFloat("diffuse", &app.lightDiffuse, 0.0f, 1.5f);
+        ImGui::SliderFloat("rim light", &app.lightRim, 0.0f, 0.5f);
+        ImGui::TextDisabled("theme:");
+        ImGui::SameLine();
+        auto theme = [&](const char* name, float br, float bg2, float bb,
+                         float wr, float wg, float wb) {
+            if (ImGui::SmallButton(name)) {
+                app.bgColor[0] = br; app.bgColor[1] = bg2; app.bgColor[2] = bb;
+                app.wireColor[0] = wr; app.wireColor[1] = wg;
+                app.wireColor[2] = wb;
+            }
+            ImGui::SameLine();
+        };
+        theme("dark", 0.117f, 0.125f, 0.145f, 0.10f, 0.11f, 0.13f);
+        theme("light", 0.86f, 0.87f, 0.89f, 0.28f, 0.29f, 0.32f);
+        theme("slate", 0.16f, 0.19f, 0.24f, 0.09f, 0.11f, 0.15f);
+        ImGui::NewLine();
         ImGui::TextDisabled("orange convex / blue concave / green smooth");
         ImGui::TextDisabled("LMB select · MMB orbit · shift+MMB pan");
         ImGui::TextDisabled("ctrl+MMB zoom · alt+MMB axis view · wheel");
@@ -1706,6 +1852,11 @@ int main(int argc, char** argv) {
                     app.selectMode == SelectMode::Edge &&
                     !app.selEdges.empty()) {
                     adjustSelectedEdges(app, 0, steps);
+                    int eid = *app.selEdges.begin();
+                    std::snprintf(app.hudText, sizeof app.hudText,
+                                  "edge verts: %d",
+                                  app.recipe.settings.perEdge[eid]);
+                    app.hudUntil = glfwGetTime() + 0.9;
                 } else if (app.hasModel && (shift || ctrl) &&
                            (!app.selFaces.empty())) {
                     bool secondary = ctrl;
@@ -1713,6 +1864,12 @@ int main(int argc, char** argv) {
                         int* v = primaryDensity(app, s, secondary);
                         *v = std::max(1, *v + steps);
                     });
+                    weft::FaceMeshSettings cur =
+                        app.recipe.settings.forFace(app.activeFace);
+                    std::snprintf(app.hudText, sizeof app.hudText, "%s: %d",
+                                  secondary ? "secondary" : "primary",
+                                  *primaryDensity(app, cur, secondary));
+                    app.hudUntil = glfwGetTime() + 0.9;
                 } else {
                     app.cam.dist *= std::pow(0.92f, gScroll);
                     app.cam.dist = std::clamp(app.cam.dist, 0.5f, 10000.0f);
@@ -2020,18 +2177,31 @@ int main(int argc, char** argv) {
         ImGui::Render();
 
         glViewport(0, 0, fbw, fbh);
-        glClearColor(0.117f, 0.125f, 0.145f, 1.0f);
+        glClearColor(app.bgColor[0], app.bgColor[1], app.bgColor[2], 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glEnable(GL_DEPTH_TEST);
 
-        if (app.hasModel && app.showFill && app.fill.count) {
+        const bool wantFill = app.showFill && app.shadingMode != 2;
+        const bool wantWire = app.showWire && app.shadingMode != 1;
+        const bool flatFill = app.shadingMode == 3;
+        if (app.hasModel && wantFill && app.fill.count) {
             glEnable(GL_POLYGON_OFFSET_FILL);
             glPolygonOffset(1.0f, 1.0f);
-            glUseProgram(litProg);
-            glUniformMatrix4fv(glGetUniformLocation(litProg, "uMVP"), 1,
+            GLuint prog = flatFill ? flatProg : litProg;
+            glUseProgram(prog);
+            glUniformMatrix4fv(glGetUniformLocation(prog, "uMVP"), 1,
                                GL_FALSE, mvp.m);
-            glUniformMatrix4fv(glGetUniformLocation(litProg, "uMV"), 1,
-                               GL_FALSE, view.m);
+            if (flatFill) {
+                glUniform1f(glGetUniformLocation(prog, "uMix"), 0.0f);
+            } else {
+                glUniformMatrix4fv(glGetUniformLocation(prog, "uMV"), 1,
+                                   GL_FALSE, view.m);
+                glUniform1f(glGetUniformLocation(prog, "uAmbient"),
+                            app.lightAmbient);
+                glUniform1f(glGetUniformLocation(prog, "uDiffuse"),
+                            app.lightDiffuse);
+                glUniform1f(glGetUniformLocation(prog, "uRim"), app.lightRim);
+            }
             glBindVertexArray(app.fill.vao);
             glDrawArrays(GL_TRIANGLES, 0, app.fill.count);
             glDisable(GL_POLYGON_OFFSET_FILL);
@@ -2039,15 +2209,30 @@ int main(int argc, char** argv) {
         glUseProgram(flatProg);
         glUniformMatrix4fv(glGetUniformLocation(flatProg, "uMVP"), 1, GL_FALSE,
                            mvp.m);
-        if (app.hasModel && app.showWire && app.wire.count) {
+        GLint uMix = glGetUniformLocation(flatProg, "uMix");
+        GLint uColor = glGetUniformLocation(flatProg, "uColor");
+        if (app.hasModel && wantWire && app.wire.count) {
+            glUniform1f(uMix, 1.0f);  // live wireframe colour, no rebuild
+            glUniform3fv(uColor, 1, app.wireColor);
             glBindVertexArray(app.wire.vao);
             glDrawArrays(GL_LINES, 0, app.wire.count);
         }
+        glUniform1f(uMix, 0.0f);
         if (app.hasModel && app.showBrepEdges && app.brep.count) {
             glLineWidth(2.0f);
             glBindVertexArray(app.brep.vao);
             glDrawArrays(GL_LINES, 0, app.brep.count);
             glLineWidth(1.0f);
+        }
+        if (app.hasModel && app.showVerts && app.verts.count) {
+            glDisable(GL_DEPTH_TEST);
+            glPointSize(5.0f * gUiScale);
+            glUniform1f(uMix, 1.0f);
+            glUniform3fv(uColor, 1, app.vertColor);
+            glBindVertexArray(app.verts.vao);
+            glDrawArrays(GL_POINTS, 0, app.verts.count);
+            glUniform1f(uMix, 0.0f);
+            glEnable(GL_DEPTH_TEST);
         }
         if (((app.mode == Mode::LoopCut && app.hoverValid) ||
              app.mode == Mode::Bridge) &&
@@ -2062,15 +2247,25 @@ int main(int argc, char** argv) {
         glBindVertexArray(0);
 
         if (app.mutatedThisFrame) logLine("frame: ui/render done");
-        if (app.mutatedThisFrame && !app.changedLastFrame) {
-            app.undoStack.push_back(app.preFrame);
-            if (app.undoStack.size() > 100) {
-                app.undoStack.erase(app.undoStack.begin());
+        // One undo step per GESTURE: a slider drag or a burst of wheel
+        // steps coalesces (active widget, or mutations within 0.35s).
+        {
+            double now = glfwGetTime();
+            if (app.mutatedThisFrame && !app.gestureActive) {
+                app.undoStack.push_back(app.preFrame);
+                if (app.undoStack.size() > 100) {
+                    app.undoStack.erase(app.undoStack.begin());
+                }
+                logLine("frame: undo snapshot pushed (%zu)",
+                        app.undoStack.size());
             }
-            logLine("frame: undo snapshot pushed (%zu)",
-                    app.undoStack.size());
+            if (app.mutatedThisFrame || ImGui::IsAnyItemActive()) {
+                app.lastMutationTime = now;
+            }
+            app.gestureActive = app.mutatedThisFrame ||
+                                ImGui::IsAnyItemActive() ||
+                                (now - app.lastMutationTime < 0.35);
         }
-        app.changedLastFrame = app.mutatedThisFrame;
 
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         glfwSwapBuffers(window);
