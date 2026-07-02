@@ -1,5 +1,6 @@
 #include "weft/fixture.hpp"
 
+#include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
@@ -60,6 +61,13 @@ TopoDS_Shape makeFixture(const std::string& name) {
         builder.Add(comp, box);
         return comp;
     }
+    if (name == "hole") {
+        // Plate with a through-bore: two ring-junction faces + a bore wall.
+        TopoDS_Shape plate = BRepPrimAPI_MakeBox(40.0, 40.0, 10.0).Shape();
+        gp_Ax2 axis(gp_Pnt(20.0, 20.0, -1.0), gp_Dir(0, 0, 1));
+        TopoDS_Shape drill = BRepPrimAPI_MakeCylinder(axis, 8.0, 12.0).Shape();
+        return BRepAlgoAPI_Cut(plate, drill).Shape();
+    }
     if (name == "boss") {
         TopoDS_Shape base = BRepPrimAPI_MakeBox(40.0, 40.0, 10.0).Shape();
         gp_Ax2 axis(gp_Pnt(20.0, 20.0, 10.0), gp_Dir(0, 0, 1));
@@ -68,7 +76,7 @@ TopoDS_Shape makeFixture(const std::string& name) {
     }
     throw std::runtime_error(
         "unknown fixture: " + name +
-        " (expected cylinder|box|cone|sphere|torus|fillet|demo|boss)");
+        " (expected cylinder|box|cone|sphere|torus|fillet|hole|demo|boss)");
 }
 
 }  // namespace weft

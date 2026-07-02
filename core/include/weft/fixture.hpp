@@ -16,6 +16,8 @@ namespace weft {
 //   "torus"    - solid torus (R=10, r=3)
 //   "fillet"   - box with one long edge blended r=4 (a fillet strip with
 //                two tangent-smooth joins, for support-loop testing)
+//   "hole"     - plate with a through-bore r=8 (two ring junctions and a
+//                bore wall, for hole detection and junction testing)
 //   "demo"     - compound of cylinder and box side by side
 //   "boss"     - box fused with a cylindrical boss (exercises trimmed
 //                planar faces, which must fall back to triangulation)
