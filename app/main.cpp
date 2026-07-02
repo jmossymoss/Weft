@@ -16,6 +16,7 @@
 #endif
 #include <windows.h>
 #include <commdlg.h>
+#include <dbghelp.h>
 #endif
 
 #include "weft/analysis.hpp"
@@ -71,6 +72,27 @@ static LONG WINAPI crashFilter(EXCEPTION_POINTERS* info) {
     logLine("FATAL: unhandled exception 0x%08lX at %p",
             info->ExceptionRecord->ExceptionCode,
             info->ExceptionRecord->ExceptionAddress);
+    // Symbolized backtrace (needs the .pdb next to the exe). For a stack
+    // overflow this runs on the reserved guarantee area set in
+    // installCrashHandler.
+    void* frames[48];
+    USHORT n = CaptureStackBackTrace(0, 48, frames, nullptr);
+    HANDLE proc = GetCurrentProcess();
+    SymSetOptions(SYMOPT_DEFERRED_LOADS | SYMOPT_UNDNAME);
+    SymInitialize(proc, nullptr, TRUE);
+    char buf[sizeof(SYMBOL_INFO) + 256];
+    for (USHORT i = 0; i < n; ++i) {
+        auto* sym = reinterpret_cast<SYMBOL_INFO*>(buf);
+        sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+        sym->MaxNameLen = 255;
+        DWORD64 disp = 0;
+        if (SymFromAddr(proc, DWORD64(frames[i]), &disp, sym)) {
+            logLine("  #%02d %s +0x%llx", i, sym->Name,
+                    (unsigned long long)disp);
+        } else {
+            logLine("  #%02d %p", i, frames[i]);
+        }
+    }
     return EXCEPTION_EXECUTE_HANDLER;
 }
 #else
@@ -84,6 +106,10 @@ static void crashSignal(int sig) {
 
 static void installCrashHandler() {
 #ifdef _WIN32
+    // Reserve stack for the crash filter so it can run (and symbolize)
+    // even when the crash IS a stack overflow.
+    ULONG guarantee = 64 * 1024;
+    SetThreadStackGuarantee(&guarantee);
     SetUnhandledExceptionFilter(crashFilter);
 #else
     std::signal(SIGSEGV, crashSignal);
@@ -1744,6 +1770,7 @@ int main(int argc, char** argv) {
         prevRmb = rmb;
         gScroll = 0.0f;
 
+        if (app.mutatedThisFrame) logLine("frame: input handled, dirty");
         if (app.dirty) regenerate(app);
 
         Mat4 proj = matPerspective(42.0f, fbh > 0 ? float(fbw) / fbh : 1.6f,
@@ -1908,11 +1935,14 @@ int main(int argc, char** argv) {
         }
         glBindVertexArray(0);
 
+        if (app.mutatedThisFrame) logLine("frame: ui/render done");
         if (app.mutatedThisFrame && !app.changedLastFrame) {
             app.undoStack.push_back(app.preFrame);
             if (app.undoStack.size() > 100) {
                 app.undoStack.erase(app.undoStack.begin());
             }
+            logLine("frame: undo snapshot pushed (%zu)",
+                    app.undoStack.size());
         }
         app.changedLastFrame = app.mutatedThisFrame;
 

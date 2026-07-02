@@ -1,3 +1,8 @@
+if(MSVC)
+  # PDBs even in Release so crash traces resolve core frames too.
+  add_compile_options(/Zi)
+endif()
+
 add_library(weft_core
   src/model.cpp
   src/analysis.cpp
