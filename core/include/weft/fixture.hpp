@@ -11,7 +11,10 @@ namespace weft {
 //
 //   "cylinder" - a single solid cylinder (r=10, h=30)
 //   "box"      - a single solid box (20 x 30 x 15)
-//   "demo"     - compound of the two side by side
+//   "cone"     - solid cone to an apex (r=10, h=20)
+//   "sphere"   - solid sphere (r=10)
+//   "torus"    - solid torus (R=10, r=3)
+//   "demo"     - compound of cylinder and box side by side
 //   "boss"     - box fused with a cylindrical boss (exercises trimmed
 //                planar faces, which must fall back to triangulation)
 TopoDS_Shape makeFixture(const std::string& name);

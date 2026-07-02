@@ -7,20 +7,29 @@ per-face controllable, regenerable at any density without losing manual work.
 
 Full plan and architecture: [docs/PLAN.md](docs/PLAN.md).
 
-## Status: Phase 0 — prove the loop
+## Status: Phase 1 — analytic primitives + density matching
 
-Headless C++ core + CLI covering the plan's Phase 0 spike end to end:
+Headless C++ core + CLI covering the plan's Phases 0–1:
 
 - STEP import via OpenCASCADE (with shape healing) and stable face/edge IDs
 - B-rep analysis: surface classification (plane/cylinder/cone/sphere/torus/
   NURBS...), edge convexity (convex/concave/smooth) with dihedral angles,
   face-adjacency graph
 - Per-surface topology generation with **named, per-face density controls**:
-  - full-revolution cylinders → exact radial × axial quad grids
+  - closed surfaces of revolution (cylinder/cone/sphere/torus) → exact
+    radial × axial quad grids with wrap-around seams; cone apexes and
+    sphere poles collapse to clean triangle fans
   - circular caps → n-gon or triangle-fan, ring-aligned with the side face
   - planar/parametric faces → quad grids (with trim-boundary containment
     check; trimmed faces fall back to OCCT triangulation — conforming grids
-    to trim curves is the Phase 1+ hard problem, plan §7.1)
+    to trim curves is the plan's §7.1 hard problem, still ahead)
+- **Density matching across shared edges** (plan §4.2): edge subdivision
+  counts are solved as shared constraints over the adjacency graph —
+  opposite sides of a grid and the rings of a revolution face are grouped,
+  each face proposes its settings, groups resolve to the max proposal.
+  Change one face's density and its neighbours follow; the solid stays
+  watertight with no T-junctions. Edges can also be pinned exactly
+  (`--edge 3:20`), the first slice of the plan's per_edge_settings.
 - Vertex welding across B-rep face borders (watertight where divisions match)
 - OBJ export with one group per B-rep face, so CAD face IDs survive into
   Blender
