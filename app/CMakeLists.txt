@@ -82,3 +82,7 @@ target_link_libraries(weft_app PRIVATE
   glfw
   OpenGL::GL
 )
+
+if(WIN32)
+  target_link_libraries(weft_app PRIVATE comdlg32)  # native open-file dialog
+endif()

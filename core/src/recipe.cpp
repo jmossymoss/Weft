@@ -14,6 +14,7 @@ void applySetting(FaceMeshSettings& s, const std::string& key,
     else if (key == "gridu") s.gridU = std::stoi(value);
     else if (key == "gridv") s.gridV = std::stoi(value);
     else if (key == "chord") s.chordTolerance = std::stod(value);
+    else if (key == "angle") s.angleToleranceDeg = std::stod(value);
     else if (key == "loops") s.filletLoops = std::stoi(value);
     else if (key == "hold") s.filletHold = std::stod(value);
     else if (key == "rings") s.junctionRings = std::stoi(value);
@@ -43,14 +44,14 @@ void applySettingsList(FaceMeshSettings& s, const std::string& list) {
 }
 
 static std::string settingsToString(const FaceMeshSettings& s) {
-    char buf[220];
+    char buf[256];
     std::snprintf(buf, sizeof buf,
                   "radial=%d,axial=%d,gridu=%d,gridv=%d,cap=%s,chord=%g,"
-                  "loops=%d,hold=%g,rings=%d,quads=%d,minimal=%d",
+                  "angle=%g,loops=%d,hold=%g,rings=%d,quads=%d,minimal=%d",
                   s.radial, s.axial, s.gridU, s.gridV,
                   s.cap == CapStyle::Fan ? "fan" : "ngon", s.chordTolerance,
-                  s.filletLoops, s.filletHold, s.junctionRings,
-                  s.quadDominant ? 1 : 0, s.minimal ? 1 : 0);
+                  s.angleToleranceDeg, s.filletLoops, s.filletHold,
+                  s.junctionRings, s.quadDominant ? 1 : 0, s.minimal ? 1 : 0);
     return buf;
 }
 
