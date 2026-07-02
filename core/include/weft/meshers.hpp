@@ -4,6 +4,7 @@
 #include "weft/mesh.hpp"
 #include "weft/model.hpp"
 
+#include <array>
 #include <cstdio>
 #include <map>
 
@@ -50,6 +51,18 @@ struct FaceMeshSettings {
     // become open boundary loops, which a Bridge op can then reconnect —
     // e.g. drop a bore wall and bridge the two rims shut.
     bool exclude = false;
+    // Force a specific mesher instead of the automatic pick (0 = auto,
+    // else 1 + MesherKind value). If the forced strategy can't build on
+    // the face it falls back to triangulation, so the choice is visible.
+    int forceMesher = 0;
+    // Revolution bands: keep the two rims at the same count (a quad band)
+    // or let them differ — the band then meshes as a triangulated taper
+    // between the rims (pin each rim's count per-edge / in the UI).
+    bool linkRims = true;
+    // Freeform fallback extras: minimum element size (0 = no floor) and
+    // deviation measured relative to face size instead of absolute.
+    double minSize = 0.0;
+    bool relativeDeviation = false;
 };
 
 struct GenerationSettings {
@@ -103,6 +116,9 @@ struct GenerationReport {
     // EdgeId -> solved subdivision count, for edges that took part in
     // density matching. Adjacent faces sharing an edge agree on this count.
     std::map<int, int> edgeDivisions;
+    // Revolution faces: the edge ids of their two rims (u-boundary rings),
+    // so UIs can pin each rim's count individually when rims are unlinked.
+    std::map<int, std::array<int, 2>> faceRims;
 };
 
 // Route the generator's stage-by-stage debug trace (plans, density solve,

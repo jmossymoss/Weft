@@ -57,6 +57,9 @@ typedef void(APIENTRYP PFNGLUNIFORMMATRIX4FVPROC)(GLint location,
                                                   GLsizei count,
                                                   GLboolean transpose,
                                                   const GLfloat* value);
+typedef void(APIENTRYP PFNGLUNIFORM1FPROC)(GLint location, GLfloat v0);
+typedef void(APIENTRYP PFNGLUNIFORM3FVPROC)(GLint location, GLsizei count,
+                                            const GLfloat* value);
 typedef void(APIENTRYP PFNGLGENVERTEXARRAYSPROC)(GLsizei n, GLuint* arrays);
 typedef void(APIENTRYP PFNGLBINDVERTEXARRAYPROC)(GLuint array);
 typedef void(APIENTRYP PFNGLGENBUFFERSPROC)(GLsizei n, GLuint* buffers);

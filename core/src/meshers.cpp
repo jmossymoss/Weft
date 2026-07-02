@@ -4,6 +4,7 @@
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepClass_FaceClassifier.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <IMeshTools_Parameters.hxx>
 #include <Extrema_ExtPC.hxx>
 #include <GCPnts_AbscissaPoint.hxx>
 #include <BRepTools.hxx>
@@ -129,6 +130,12 @@ struct FacePlan {
     bool acrossIsU = true;
     gp_Circ circ;          // DiskCap and RingJunction
     int circleEdgeId = 0;  // RingJunction: the hole's edge
+    // Revolution bands: false lets the two rims solve independently and
+    // the band meshes as a triangulated taper between them.
+    bool linkRims = true;
+    // Forced fallback flavour: -1 = follow settings, 0 = pure tris,
+    // 1 = quad-dominant (used when the user forces a mesher).
+    int forceFallbackQuads = -1;
 };
 
 bool isClosedRevolution(const BRepAdaptor_Surface& surf) {
@@ -461,9 +468,78 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     BRepAdaptor_Surface surf(face);
     FacePlan plan;
 
-    if (isClosedRevolution(surf) && revolutionCovers(face)) {
+    auto finishRevolution = [&]() {
         plan.kind = MesherKind::RevolutionGrid;
         collectIsoEdges(face, model, info.edgeIds, plan);
+        if (!s.linkRims && plan.uEdges.size() == 2) plan.linkRims = false;
+    };
+
+    // The user can force a strategy; if it can't build on this face the
+    // plan degrades to plain triangulation so the choice is visible.
+    if (s.forceMesher > 0) {
+        MesherKind want = MesherKind(s.forceMesher - 1);
+        switch (want) {
+            case MesherKind::RevolutionGrid:
+                if (isClosedRevolution(surf)) {
+                    finishRevolution();
+                    return plan;
+                }
+                break;
+            case MesherKind::DiskCap: {
+                int capEdgeId = 0;
+                if (surf.GetType() == GeomAbs_Plane &&
+                    boundingCircle(face, plan.circ, capEdgeId, model)) {
+                    plan.kind = MesherKind::DiskCap;
+                    plan.uEdges.push_back(capEdgeId);
+                    plan.constrains = true;
+                    return plan;
+                }
+                break;
+            }
+            case MesherKind::RingJunction:
+                if (planRingJunction(face, model, plan)) return plan;
+                break;
+            case MesherKind::PlanarGrid:
+            case MesherKind::MinimalNGon:
+                if (parametricGridFits(face, surf, std::max(1, s.gridU),
+                                       std::max(1, s.gridV))) {
+                    plan.kind = want;
+                    collectIsoEdges(face, model, info.edgeIds, plan);
+                    if (plan.uEdges.size() != 2 || plan.vEdges.size() != 2) {
+                        plan.constrains = false;
+                        if (want == MesherKind::MinimalNGon) {
+                            plan.kind = MesherKind::PlanarGrid;
+                        }
+                    }
+                    return plan;
+                }
+                break;
+            case MesherKind::CoonsGrid: {
+                CoonsPatch patch;
+                if (makeCoonsPatch(face, model, patch)) {
+                    plan.kind = MesherKind::CoonsGrid;
+                    plan.uEdges = {patch.edgeIds[0], patch.edgeIds[2]};
+                    plan.vEdges = {patch.edgeIds[1], patch.edgeIds[3]};
+                    plan.constrains = true;
+                    return plan;
+                }
+                break;
+            }
+            case MesherKind::QuadDominant:
+                plan.kind = MesherKind::Fallback;
+                plan.forceFallbackQuads = 1;
+                return plan;
+            case MesherKind::Fallback:
+                plan.kind = MesherKind::Fallback;
+                plan.forceFallbackQuads = 0;
+                return plan;
+        }
+        plan.kind = MesherKind::Fallback;
+        return plan;
+    }
+
+    if (isClosedRevolution(surf) && revolutionCovers(face)) {
+        finishRevolution();
         return plan;
     }
 
@@ -581,7 +657,7 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
 
     for (const auto& [fid, plan] : plans) {
         if (!plan.constrains) continue;
-        sol.groups.unite(plan.uEdges);
+        if (plan.linkRims) sol.groups.unite(plan.uEdges);
         sol.groups.unite(plan.vEdges);
     }
 
@@ -617,7 +693,14 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
             propose(plan.uEdges, nu, overridden);
             propose(plan.vEdges, nv, overridden);
         } else {  // revolution sides and disk caps subdivide rings radially
-            propose(plan.uEdges, std::max(3, s.radial), overridden);
+            if (!plan.linkRims && plan.uEdges.size() == 2) {
+                // Unlinked rims: each ring solves on its own (pin per-edge
+                // or via the rim fields to make them differ).
+                propose({plan.uEdges[0]}, std::max(3, s.radial), overridden);
+                propose({plan.uEdges[1]}, std::max(3, s.radial), overridden);
+            } else {
+                propose(plan.uEdges, std::max(3, s.radial), overridden);
+            }
             propose(plan.vEdges, std::max(1, s.axial), overridden);
         }
     }
@@ -660,6 +743,45 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
 
 // ---------------------------------------------------------------------------
 // Execution.
+
+// A revolution band whose two rims carry DIFFERENT counts (linkRims off):
+// one ring per rim, zippered with triangles by angular fraction. Rim
+// vertices evaluate exactly like the quad band's, so caps still weld.
+void meshRevolutionTaper(const TopoDS_Face& face,
+                         const BRepAdaptor_Surface& surf, int faceId, int nA,
+                         int nB, MeshBuilder& out) {
+    nA = std::max(3, nA);
+    nB = std::max(3, nB);
+    const double u0 = surf.FirstUParameter();
+    const double uRange = surf.LastUParameter() - u0;
+    const double v0 = surf.FirstVParameter();
+    const double v1 = surf.LastVParameter();
+    const bool flip = face.Orientation() == TopAbs_REVERSED;
+
+    std::vector<uint32_t> A(nA), B(nB);
+    for (int i = 0; i < nA; ++i) {
+        double u = u0 + uRange * i / nA;
+        A[i] = out.addVertex(surf.Value(u, v0), {faceId, u, v0});
+    }
+    for (int j = 0; j < nB; ++j) {
+        double u = u0 + uRange * j / nB;
+        B[j] = out.addVertex(surf.Value(u, v1), {faceId, u, v1});
+    }
+    int ia = 0, ib = 0;
+    while (ia < nA || ib < nB) {
+        double fa = double(ia + 1) / nA, fb = double(ib + 1) / nB;
+        bool stepA = ib >= nB || (ia < nA && fa <= fb);
+        if (stepA) {
+            out.addPolygon({A[ia % nA], A[(ia + 1) % nA], B[ib % nB]},
+                           faceId, flip);
+            ++ia;
+        } else {
+            out.addPolygon({A[ia % nA], B[(ib + 1) % nB], B[ib % nB]},
+                           faceId, flip);
+            ++ib;
+        }
+    }
+}
 
 // Quad grid over a closed-in-u surface of revolution. Handles a closed v
 // (torus) by wrapping rows, and degenerate rows (cone apex, sphere poles)
@@ -931,10 +1053,13 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         static std::mutex occtMeshMutex;
         std::lock_guard<std::mutex> lock(occtMeshMutex);
         BRepTools::Clean(face);
-        BRepMesh_IncrementalMesh mesher(face, s.chordTolerance,
-                                        Standard_False,
-                                        s.angleToleranceDeg * M_PI / 180.0,
-                                        Standard_True /*parallel*/);
+        IMeshTools_Parameters mp;
+        mp.Deflection = s.chordTolerance;
+        mp.Angle = s.angleToleranceDeg * M_PI / 180.0;
+        mp.Relative = s.relativeDeviation;
+        if (s.minSize > 0) mp.MinSize = s.minSize;
+        mp.InParallel = Standard_True;
+        BRepMesh_IncrementalMesh mesher(face, mp);
         tri = BRep_Tool::Triangulation(face, loc);
     }
     if (tri.IsNull()) return;
@@ -1351,7 +1476,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     // path-compress, so they must not run concurrently) — after this the
     // per-face meshing is embarrassingly parallel.
     const int faceN = model.faceCount();
-    std::vector<std::array<int, 2>> counts(faceN + 1, {0, 0});
+    std::vector<std::array<int, 3>> counts(faceN + 1, {0, 0, 0});
     for (int fid = 1; fid <= faceN; ++fid) {
         const FaceMeshSettings& s = settings.forFace(fid);
         const FacePlan& plan = plans.at(fid);
@@ -1361,10 +1486,15 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         };
         switch (plan.kind) {
             case MesherKind::RevolutionGrid:
-            case MesherKind::DiskCap:
-                counts[fid] = {solved(plan.uEdges, s.radial),
-                               solved(plan.vEdges, s.axial)};
+            case MesherKind::DiskCap: {
+                int nuA = solved(plan.uEdges, s.radial);
+                int nuB = nuA;
+                if (!plan.linkRims && plan.uEdges.size() == 2) {
+                    nuB = density.countFor(plan.uEdges[1], s.radial);
+                }
+                counts[fid] = {nuA, solved(plan.vEdges, s.axial), nuB};
                 break;
+            }
             case MesherKind::PlanarGrid:
             case MesherKind::CoonsGrid: {
                 int defU = plan.isFillet && plan.acrossIsU ? s.filletLoops
@@ -1374,13 +1504,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 counts[fid] = {plan.constrains ? solved(plan.uEdges, defU)
                                                : std::max(1, defU),
                                plan.constrains ? solved(plan.vEdges, defV)
-                                               : std::max(1, defV)};
+                                               : std::max(1, defV),
+                               0};
                 break;
             }
             case MesherKind::MinimalNGon:
             case MesherKind::RingJunction:
                 counts[fid] = {solved(plan.uEdges, s.gridU),
-                               solved(plan.vEdges, s.gridV)};
+                               solved(plan.vEdges, s.gridV), 0};
                 break;
             default:
                 break;
@@ -1402,7 +1533,32 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
 
         switch (plan.kind) {
             case MesherKind::RevolutionGrid:
-                meshRevolutionGrid(face, surf, fid, nu, nv, out);
+                if (!plan.linkRims && counts[fid][2] > 0 &&
+                    counts[fid][2] != nu && !surf.IsVClosed()) {
+                    // counts[0] belongs to uEdges[0]; find which v-end that
+                    // rim sits at so the taper's rings land on their caps.
+                    int nA = nu, nB = counts[fid][2];
+                    BRepAdaptor_Curve rim(
+                        TopoDS::Edge(model.edges(plan.uEdges[0])));
+                    gp_Pnt pm = rim.Value(
+                        (rim.FirstParameter() + rim.LastParameter()) / 2);
+                    double d0 = 1e300, d1 = 1e300;
+                    const double u0 = surf.FirstUParameter();
+                    const double du =
+                        (surf.LastUParameter() - u0) / 16.0;
+                    for (int k = 0; k < 16; ++k) {
+                        d0 = std::min(d0, pm.Distance(surf.Value(
+                                              u0 + k * du,
+                                              surf.FirstVParameter())));
+                        d1 = std::min(d1, pm.Distance(surf.Value(
+                                              u0 + k * du,
+                                              surf.LastVParameter())));
+                    }
+                    if (d1 < d0) std::swap(nA, nB);
+                    meshRevolutionTaper(face, surf, fid, nA, nB, out);
+                } else {
+                    meshRevolutionGrid(face, surf, fid, nu, nv, out);
+                }
                 break;
             case MesherKind::DiskCap:
                 meshDiskCap(face, surf, plan.circ, fid, nu, s.cap, out);
@@ -1432,9 +1588,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                  s.junctionRings, out);
                 break;
             case MesherKind::QuadDominant:
-            case MesherKind::Fallback:
-                meshFallback(face, surf, fid, s, out);
+            case MesherKind::Fallback: {
+                FaceMeshSettings fs = s;
+                if (plan.forceFallbackQuads >= 0) {
+                    fs.quadDominant = plan.forceFallbackQuads != 0;
+                }
+                meshFallback(face, surf, fid, fs, out);
                 break;
+            }
         }
     };
 
@@ -1496,10 +1657,17 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         for (int fid = 1; fid <= faceN; ++fid) {
             const FaceMeshSettings& s = settings.forFace(fid);
             const FacePlan& plan = plans.at(fid);
+            bool fallbackQuads = plan.forceFallbackQuads >= 0
+                                     ? plan.forceFallbackQuads != 0
+                                     : s.quadDominant;
             report->faceMesher[fid] =
-                plan.kind == MesherKind::Fallback && s.quadDominant
+                plan.kind == MesherKind::Fallback && fallbackQuads
                     ? MesherKind::QuadDominant
                     : plan.kind;
+            if (plan.kind == MesherKind::RevolutionGrid &&
+                plan.uEdges.size() == 2) {
+                report->faceRims[fid] = {plan.uEdges[0], plan.uEdges[1]};
+            }
             if (plan.constrains) {
                 for (int eid : plan.uEdges) {
                     report->edgeDivisions[eid] = density.countFor(eid, 0);
