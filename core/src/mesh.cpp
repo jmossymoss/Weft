@@ -49,7 +49,9 @@ void weldVertices(PolyMesh& mesh, double tolerance) {
     std::unordered_map<CellKey, uint32_t, CellKeyHash> firstInCell;
     std::vector<uint32_t> remap(mesh.vertices.size());
     std::vector<std::array<double, 3>> kept;
+    std::vector<Anchor> keptAnchors;
     kept.reserve(mesh.vertices.size());
+    keptAnchors.reserve(mesh.vertices.size());
 
     for (size_t i = 0; i < mesh.vertices.size(); ++i) {
         const auto& v = mesh.vertices[i];
@@ -58,10 +60,15 @@ void weldVertices(PolyMesh& mesh, double tolerance) {
                     static_cast<int64_t>(std::llround(v[2] / tolerance))};
         auto [it, inserted] =
             firstInCell.try_emplace(key, static_cast<uint32_t>(kept.size()));
-        if (inserted) kept.push_back(v);
+        if (inserted) {
+            kept.push_back(v);
+            keptAnchors.push_back(i < mesh.anchors.size() ? mesh.anchors[i]
+                                                          : Anchor{});
+        }
         remap[i] = it->second;
     }
     mesh.vertices = std::move(kept);
+    mesh.anchors = std::move(keptAnchors);
 
     std::vector<std::vector<uint32_t>> polys;
     std::vector<int> polyFace;
