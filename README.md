@@ -47,6 +47,12 @@ Headless C++ core + CLI covering the plan's Phases 0–3 essentials:
   (`--rings N`) instead of triangle soup. The ring count is derived from
   the face's border and propagates through density matching to the
   boss/bore itself — a drilled plate comes out as 100% quads, watertight.
+- **Game-topology output is the point** (plan §1/§4.1): tris, quads, and
+  n-gons are all first-class. Caps can be n-gons or triangle fans; poles
+  and cone apexes are fans; trimmed faces can stay triangle-based
+  (`--pure-tris`); and a flat panel can collapse to a **single boundary
+  n-gon** (`minimal=1` per face) while its border stays density-matched —
+  watertight with zero interior topology. Not everything has to be quads.
 - **Surface-constrained editing** (plan §3.4): every generated vertex
   carries a `(faceId,u,v)` anchor onto the live B-rep. Edge-loop insertion
   walks quad strips (closing on itself or absorbing into terminal n-gons,
@@ -75,6 +81,15 @@ Headless C++ core + CLI covering the plan's Phases 0–3 essentials:
   which mesher produced it
 - **Live density**: drag radial/axial/grid/loops/hold/rings and the
   topology regenerates as you drag; per-face overrides on the selection
+- **Keyboard-centric editing** (plan §6 — the panel is optional):
+  - `R` — loop-cut mode: hover any edge, a live preview loop follows the
+    cursor, click commits (recorded as a recipe op, `ctrl+Z` undoes)
+  - type `12` then `Enter` — set the selection's primary divisions
+    (radial for revolved faces, grid for planar; `shift+Enter` = 2nd axis)
+  - `[` / `]` — nudge divisions (`shift` for the second axis)
+  - `C` — cap n-gon/fan · `T` — allow tris (quad-dominant toggle) ·
+    `M` — minimal n-gon
+  - `W` wire · `B` feature edges · `F` frame · `esc` cancel/deselect
 - Save/load the session recipe from the panel
 
 Requires `libglfw3-dev libgl1-mesa-dev libimgui-dev libstb-dev`; the app

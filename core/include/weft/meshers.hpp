@@ -34,6 +34,11 @@ struct FaceMeshSettings {
     // triangles into quads where quality allows (guided by the surface's
     // parametric directions). Off = pure triangles.
     bool quadDominant = true;
+    // Game-topology minimalism (plan §1/§4.1): a flat face doesn't need an
+    // interior grid. When set, a planar grid-safe face emits one boundary
+    // n-gon instead — border vertices stay density-matched, so neighbours
+    // still weld watertight, and the engine triangulates however it likes.
+    bool minimal = false;
 };
 
 struct GenerationSettings {
@@ -63,6 +68,8 @@ enum class MesherKind {
     QuadDominant,    // fallback triangulation + guided tri-pairing into
                      // quads (plan §3.5 seed; a cross-field solver slots in
                      // here later)
+    MinimalNGon,     // planar face as a single boundary n-gon (flat panels
+                     // don't need interior topology for game meshes)
     Fallback,        // OCCT incremental triangulation, pure triangles
 };
 
