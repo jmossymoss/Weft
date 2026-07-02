@@ -40,6 +40,7 @@
 
 #include <algorithm>
 #include <array>
+#include <filesystem>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -55,6 +56,29 @@
 // handler appends the exception/signal before the process dies.
 
 static FILE* gDebugLog = nullptr;
+static std::string gDataDir;   // per-user app data (log, imgui.ini)
+static std::string gLogPath;
+
+// %LOCALAPPDATA%\Weft on Windows, ~/.local/state/weft elsewhere — keeps
+// the app's own files (debug log, UI layout) out of whatever directory
+// it was launched from.
+static std::string userDataDir() {
+#ifdef _WIN32
+    const char* base = std::getenv("LOCALAPPDATA");
+    std::string dir = std::string(base && *base ? base : ".") + "\\Weft";
+#else
+    std::string dir;
+    if (const char* x = std::getenv("XDG_STATE_HOME"); x && *x) {
+        dir = std::string(x) + "/weft";
+    } else {
+        const char* home = std::getenv("HOME");
+        dir = std::string(home && *home ? home : ".") + "/.local/state/weft";
+    }
+#endif
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    return dir;
+}
 
 // UI scale from the monitor's content scale (Windows DPI setting). Fonts
 // and style metrics rebuild when it changes (e.g. dragging the window to
@@ -1484,9 +1508,9 @@ static void drawUi(App& app) {
             weft::setGenerateDebugLog(coreTrace ? gDebugLog : nullptr);
         }
         if (ImGui::Button("force regenerate")) app.dirty = true;
-        ImGui::TextDisabled("log: weft_debug.log next to the exe/cwd,");
-        ImGui::TextDisabled("flushed per line — after a crash its tail");
-        ImGui::TextDisabled("names the face/stage that died.");
+        ImGui::TextDisabled("log (flushed per line — after a crash its");
+        ImGui::TextDisabled("tail names the face/stage that died):");
+        ImGui::TextWrapped("%s", gLogPath.c_str());
     }
 
     if (ImGui::CollapsingHeader("Dev fixtures")) {
@@ -1512,7 +1536,9 @@ static void scrollCb(GLFWwindow*, double, double dy) {
 }
 
 int main(int argc, char** argv) {
-    gDebugLog = std::fopen("weft_debug.log", "w");
+    gDataDir = userDataDir();
+    gLogPath = gDataDir + "/weft_debug.log";
+    gDebugLog = std::fopen(gLogPath.c_str(), "w");
     installCrashHandler();
     weft::setGenerateDebugLog(gDebugLog);
     logLine("weft_app start (built %s %s)", __DATE__, __TIME__);
@@ -1554,6 +1580,8 @@ int main(int argc, char** argv) {
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    static std::string iniPath = gDataDir + "/imgui.ini";
+    ImGui::GetIO().IniFilename = iniPath.c_str();
     {
         float sx = 1.0f, sy = 1.0f;
         glfwGetWindowContentScale(window, &sx, &sy);

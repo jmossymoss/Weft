@@ -167,21 +167,33 @@ echo ========================================
 echo  Running tests
 echo ========================================
 echo.
-REM The executables need OCCT's DLLs at runtime: the TK*.dlls plus
-REM OCCT's bundled third-party DLLs (tbb12, jemalloc, openvr_api,
-REM FreeImage, freetype, ...), each shipped in its own directory.
-REM Copy them all NEXT TO the executables (xcopy /D only recopies
-REM newer files), so weft.exe runs from anywhere -- no PATH setup.
+REM The executables need OCCT's DLLs at runtime. Deploy ONLY what Weft
+REM actually loads next to the exes: the TK*.dlls plus OCCT's bundled
+REM third-party runtimes -- NOT the whole install (tcl/tk, Qt, ffmpeg
+REM and friends stay out of the bin folder). xcopy /D keeps re-runs
+REM incremental; stale DLLs from older builds are cleared first.
 set "BINDIR=%~dp0build\bin\Release"
 if not exist "%BINDIR%" mkdir "%BINDIR%"
-echo   Deploying OCCT DLLs to build\bin\Release ^(first run copies a
-echo   few hundred MB; later runs only copy what changed^)...
+echo   Deploying OCCT runtime DLLs to build\bin\Release...
+if exist "%BINDIR%\tcl86.dll" (
+    echo   ^(clearing DLLs from a previous full-copy deploy^)
+    del /q "%BINDIR%\*.dll" >nul 2>nul
+)
 set "DLLDIRS=;"
-for /f "delims=" %%f in ('dir /s /b "!OCCT_DIR!\*.dll" 2^>nul') do (
+for /f "delims=" %%f in ('dir /s /b "!OCCT_DIR!\TKernel.dll" 2^>nul') do (
     if "!DLLDIRS:%%~dpf;=!"=="!DLLDIRS!" (
         set "DLLDIRS=!DLLDIRS!%%~dpf;"
-        xcopy "%%~dpf*.dll" "%BINDIR%" /D /Y >nul
+        xcopy "%%~dpfTK*.dll" "%BINDIR%" /D /Y >nul
     )
+)
+for %%d in (tbb tbb12 tbbmalloc jemalloc freetype FreeImage openvr_api
+            zlib zlib1) do (
+    for /f "delims=" %%f in ('dir /s /b "!OCCT_DIR!\%%d.dll" 2^>nul') do (
+        xcopy "%%f" "%BINDIR%" /D /Y >nul
+    )
+)
+for /f %%c in ('dir /b "%BINDIR%\*.dll" 2^>nul ^| find /c ".dll"') do (
+    echo   %%c runtime DLL^(s^) in place
 )
 ctest --test-dir build -C Release --output-on-failure
 if %errorLevel% neq 0 (
