@@ -316,6 +316,45 @@ void testBoxDensityMatching() {
     }
 }
 
+void testMinimalNGon() {
+    std::printf("-- minimal n-gon (flat panels stay flat) --\n");
+    std::string stepPath = tmpPath("weft_test_minimal_box.step");
+    weft::writeStep(weft::makeFixture("box"), stepPath);
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis a = weft::analyze(model);
+
+    weft::GenerationSettings gs;
+    gs.defaults.gridU = 3;
+    gs.defaults.gridV = 3;
+    weft::FaceMeshSettings flat = gs.defaults;
+    flat.minimal = true;
+    gs.perFace[1] = flat;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
+
+    // Face 1 is one 12-vertex n-gon (3+3+3+3 border divisions); everything
+    // else keeps its grid, and the solid still welds watertight because the
+    // ring carries the density-matched border vertices.
+    CHECK(report.faceMesher[1] == weft::MesherKind::MinimalNGon);
+    CHECK_EQ(mesh.countNgons(), 1);
+    CHECK_EQ(mesh.countQuads(), 5 * 9);
+    for (const auto& poly : mesh.polygons) {
+        if (poly.size() > 4) CHECK_EQ(poly.size(), 12);
+    }
+    CHECK(isWatertight(mesh));
+
+    // All-minimal box: 6 n-gons, still watertight — the game-topology
+    // "flat panel needs no interior" case taken to its extreme.
+    weft::GenerationSettings gsAll;
+    gsAll.defaults.gridU = 3;
+    gsAll.defaults.gridV = 3;
+    gsAll.defaults.minimal = true;
+    weft::PolyMesh minimalMesh = weft::generate(model, a, gsAll);
+    CHECK_EQ(minimalMesh.countNgons(), 6);
+    CHECK_EQ(minimalMesh.countQuads(), 0);
+    CHECK(isWatertight(minimalMesh));
+}
+
 void testSurfaceConstrainedEditing() {
     std::printf("-- surface-constrained editing --\n");
     std::string stepPath = tmpPath("weft_test_edit_cyl.step");
@@ -594,6 +633,7 @@ int main() {
     testSphere();
     testTorus();
     testBoxDensityMatching();
+    testMinimalNGon();
     testSurfaceConstrainedEditing();
     testFillet();
     testRecipeRoundTrip();

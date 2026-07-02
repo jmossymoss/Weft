@@ -52,6 +52,7 @@ const char* mesherKindName(MesherKind k) {
         case MesherKind::PlanarGrid: return "parametric-grid";
         case MesherKind::RingJunction: return "ring-junction";
         case MesherKind::QuadDominant: return "quad-dominant";
+        case MesherKind::MinimalNGon: return "minimal-ngon";
         case MesherKind::Fallback: return "fallback-tri";
     }
     return "fallback-tri";
@@ -286,6 +287,11 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     if (parametricGridFits(face, surf, std::max(1, s.gridU),
                            std::max(1, s.gridV))) {
         plan.kind = MesherKind::PlanarGrid;
+        // Flat panels collapse to one boundary n-gon on request; the border
+        // still carries the density-matched vertices, so neighbours weld.
+        if (s.minimal && surf.GetType() == GeomAbs_Plane) {
+            plan.kind = MesherKind::MinimalNGon;
+        }
         if (info.isFillet) {
             plan.isFillet = true;
             // The blend arc runs along u for a cylinder strip and along the
@@ -297,6 +303,11 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         collectIsoEdges(face, model, info.edgeIds, plan);
         if (plan.uEdges.size() != 2 || plan.vEdges.size() != 2) {
             plan.constrains = false;
+        }
+        // The n-gon's ring is a rectangle perimeter walk; without the 2u+2v
+        // structure there is nothing reliable to walk.
+        if (plan.kind == MesherKind::MinimalNGon && !plan.constrains) {
+            plan.kind = MesherKind::PlanarGrid;
         }
         return plan;
     }
@@ -366,6 +377,7 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
         if (!plan.constrains) continue;
         const FaceMeshSettings& s = settings.forFace(fid);
         if (plan.kind == MesherKind::PlanarGrid ||
+            plan.kind == MesherKind::MinimalNGon ||
             plan.kind == MesherKind::RingJunction) {
             int nu = std::max(1, plan.isFillet && plan.acrossIsU
                                      ? s.filletLoops : s.gridU);
@@ -631,6 +643,28 @@ void meshRingJunction(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     }
 }
 
+// A planar face as one boundary n-gon: perimeter walk over the solved
+// border subdivisions. Interior topology is the engine's problem.
+void meshMinimalNGon(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
+                     int faceId, int nu, int nv, MeshBuilder& out) {
+    double umin, umax, vmin, vmax;
+    BRepTools::UVBounds(face, umin, umax, vmin, vmax);
+    const double du = (umax - umin) / nu;
+    const double dv = (vmax - vmin) / nv;
+
+    std::vector<uint32_t> ring;
+    ring.reserve(2 * (nu + nv));
+    auto add = [&](double u, double v) {
+        ring.push_back(out.addVertex(surf.Value(u, v), {faceId, u, v}));
+    };
+    for (int i = 0; i < nu; ++i) add(umin + i * du, vmin);
+    for (int j = 0; j < nv; ++j) add(umax, vmin + j * dv);
+    for (int i = nu; i > 0; --i) add(umin + i * du, vmax);
+    for (int j = nv; j > 0; --j) add(umin, vmin + j * dv);
+
+    out.addPolygon(ring, faceId, face.Orientation() == TopAbs_REVERSED);
+}
+
 // Corner-angle quality of a polygon: total deviation from 90-degree
 // corners, or a large penalty when a corner is degenerate/reflex.
 double quadAngleCost(const std::array<gp_Pnt, 4>& q) {
@@ -867,6 +901,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                    clusteredParams(nv, holdV), out);
                 break;
             }
+            case MesherKind::MinimalNGon:
+                meshMinimalNGon(face, surf, fid, solved(plan.uEdges, s.gridU),
+                                solved(plan.vEdges, s.gridV), out);
+                break;
             case MesherKind::RingJunction:
                 meshRingJunction(face, surf, plan.circ, fid,
                                  solved(plan.uEdges, s.gridU),
