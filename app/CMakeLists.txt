@@ -84,5 +84,13 @@ target_link_libraries(weft_app PRIVATE
 )
 
 if(WIN32)
-  target_link_libraries(weft_app PRIVATE comdlg32)  # native open-file dialog
+  # comdlg32: native open-file dialog. dbghelp: symbolized crash traces.
+  target_link_libraries(weft_app PRIVATE comdlg32 dbghelp)
+endif()
+if(MSVC)
+  # PDBs even in Release so the crash handler can name functions, and an
+  # 8MB stack reserve (also inherited by worker threads): OCCT meshing
+  # recurses deeply and the 1MB Windows default can overflow (0xC00000FD).
+  target_compile_options(weft_app PRIVATE /Zi)
+  target_link_options(weft_app PRIVATE /DEBUG /STACK:8388608)
 endif()
