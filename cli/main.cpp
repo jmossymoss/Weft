@@ -21,7 +21,7 @@ void usage() {
         "weft — B-rep retopology core (phase 0)\n"
         "\n"
         "usage:\n"
-        "  weft fixture <out.step> [--shape cylinder|box|demo|boss]\n"
+        "  weft fixture <out.step> [--shape cylinder|box|cone|sphere|torus|demo|boss]\n"
         "      generate a test STEP file from OCCT primitives\n"
         "\n"
         "  weft inspect <in.step>\n"
@@ -37,7 +37,13 @@ void usage() {
         "    --chord T         fallback triangulation tolerance (default 0.1)\n"
         "    --face ID:k=v[,k=v...]\n"
         "                      per-face override, e.g. --face 1:radial=24,axial=2\n"
-        "                      keys: radial, axial, gridu, gridv, cap, chord\n");
+        "                      keys: radial, axial, gridu, gridv, cap, chord\n"
+        "    --edge ID:N       pin an edge (and its density-matched group) to\n"
+        "                      exactly N subdivisions\n"
+        "\n"
+        "  Divisions are density-matched: edges shared between parametric\n"
+        "  faces resolve to one count (max of the faces' proposals), so\n"
+        "  neighbours meet vertex-for-vertex.\n");
 }
 
 void applyKeyValue(weft::FaceMeshSettings& s, const std::string& key,
@@ -147,6 +153,14 @@ int cmdMesh(const std::vector<std::string>& args) {
                                        : std::stoi(g.substr(x + 1));
         } else if (a == "--face") {
             faceSpecs.push_back(next());  // parsed after defaults are final
+        } else if (a == "--edge") {
+            std::string spec = next();
+            size_t colon = spec.find(':');
+            if (colon == std::string::npos) {
+                throw std::runtime_error("--edge expects ID:N, got " + spec);
+            }
+            gs.perEdge[std::stoi(spec.substr(0, colon))] =
+                std::stoi(spec.substr(colon + 1));
         } else {
             throw std::runtime_error("unknown option: " + a);
         }
@@ -166,6 +180,13 @@ int cmdMesh(const std::vector<std::string>& args) {
                 mesh.countTris(), mesh.countNgons());
     for (const auto& [fid, kind] : report.faceMesher) {
         std::printf("  face #%-3d %s\n", fid, weft::mesherKindName(kind));
+    }
+    if (!report.edgeDivisions.empty()) {
+        std::printf("  density-matched edges:");
+        for (const auto& [eid, div] : report.edgeDivisions) {
+            std::printf(" #%d=%d", eid, div);
+        }
+        std::printf("\n");
     }
     return 0;
 }
