@@ -364,6 +364,7 @@ enum class SelectMode { Face, Edge };
 struct App {
     // Document.
     std::string sourcePath;
+    std::string recipePath;  // <model>.recipe next to the source
     std::string status = "load a STEP file or a fixture";
     bool hasModel = false;
     weft::Model model;
@@ -382,6 +383,9 @@ struct App {
     std::set<int> selFaces;
     std::set<int> selEdges;
     int activeFace = 0;
+    int hoverFace = 0;  // pre-click feedback (face mode, idle)
+    // Contiguous fill-buffer runs per face, for tint-only highlight draws.
+    std::vector<std::array<int, 3>> fillSegs;  // {fid, firstVert, count}
     bool dirty = false;  // regenerate this frame
     std::set<int> hiddenFaces;
     bool openFacePopup = false;  // context popup requested at the cursor
@@ -472,9 +476,17 @@ static void rebuildBuffers(App& app) {
     };
 
     static const weft::FaceInfo kBridgeInfo{};  // bridge strips: faceId 0
+    app.fillSegs.clear();
     for (size_t i = 0; i < m.polygons.size(); ++i) {
         int fid = m.polygonFaceId[i];
         if (fid > 0 && app.hiddenFaces.count(fid)) continue;
+        int segStart = int(fill.size() / 6);
+        if (!app.fillSegs.empty() && app.fillSegs.back()[0] == fid &&
+            app.fillSegs.back()[1] + app.fillSegs.back()[2] == segStart) {
+            // extended below
+        } else {
+            app.fillSegs.push_back({fid, segStart, 0});
+        }
         const weft::FaceInfo& info =
             fid > 0 ? app.analysis.faces[fid - 1] : kBridgeInfo;
         std::array<float, 3> col =
@@ -496,6 +508,7 @@ static void rebuildBuffers(App& app) {
             push(wire, m.vertices[poly[k]], wc);
             push(wire, m.vertices[poly[(k + 1) % poly.size()]], wc);
         }
+        app.fillSegs.back()[2] = int(fill.size() / 6) - app.fillSegs.back()[1];
     }
     app.fill.upload(fill);
     app.pick.upload(pick);
@@ -684,6 +697,24 @@ static void loadModel(App& app, const std::string& path) {
         app.status = path + ": " + std::to_string(app.model.faceCount()) +
                      " faces, " + std::to_string(app.model.edgeCount()) +
                      " edges";
+        // Session persistence: a recipe next to the model auto-loads, and
+        // ctrl+S writes back to the same file.
+        size_t dot = path.find_last_of('.');
+        app.recipePath = (dot == std::string::npos ? path
+                                                   : path.substr(0, dot)) +
+                         ".recipe";
+        std::snprintf(app.recipeBuf, sizeof app.recipeBuf, "%s",
+                      app.recipePath.c_str());
+        if (std::filesystem::exists(app.recipePath)) {
+            try {
+                app.recipe = weft::loadRecipe(app.recipePath);
+                regenerate(app);
+                app.status += "  (recipe loaded)";
+                logLine("load: applied %s", app.recipePath.c_str());
+            } catch (const std::exception& e) {
+                app.status = std::string("recipe load failed: ") + e.what();
+            }
+        }
     } catch (const std::exception& e) {
         app.status = std::string("load failed: ") + e.what();
     }
@@ -1034,6 +1065,7 @@ static int pickFace(App& app, GLuint flatProg, const Mat4& mvp, int px, int py,
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_DEPTH_TEST);
     glUseProgram(flatProg);
+    glUniform1f(glGetUniformLocation(flatProg, "uMix"), 0.0f);
     glUniformMatrix4fv(glGetUniformLocation(flatProg, "uMVP"), 1, GL_FALSE,
                        mvp.m);
     glBindVertexArray(app.pick.vao);
@@ -1045,6 +1077,42 @@ static int pickFace(App& app, GLuint flatProg, const Mat4& mvp, int px, int py,
     (void)fbw;
     if (rgba[2] != 170) return 0;
     return int(rgba[0]) + (int(rgba[1]) << 8);
+}
+
+// All face ids whose pick pixels appear inside the given screen rect.
+static std::set<int> pickFacesInRect(App& app, GLuint flatProg,
+                                     const Mat4& mvp, int x0, int y0, int x1,
+                                     int y1, int fbw, int fbh) {
+    std::set<int> hits;
+    if (!app.hasModel || app.pick.count == 0) return hits;
+    glViewport(0, 0, fbw, fbh);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    glUseProgram(flatProg);
+    glUniform1f(glGetUniformLocation(flatProg, "uMix"), 0.0f);
+    glUniformMatrix4fv(glGetUniformLocation(flatProg, "uMVP"), 1, GL_FALSE,
+                       mvp.m);
+    glBindVertexArray(app.pick.vao);
+    glDrawArrays(GL_TRIANGLES, 0, app.pick.count);
+    glBindVertexArray(0);
+    glFinish();
+    if (x0 > x1) std::swap(x0, x1);
+    if (y0 > y1) std::swap(y0, y1);
+    x0 = std::clamp(x0, 0, fbw - 1);
+    x1 = std::clamp(x1, 0, fbw - 1);
+    y0 = std::clamp(y0, 0, fbh - 1);
+    y1 = std::clamp(y1, 0, fbh - 1);
+    const int w = x1 - x0 + 1, h = y1 - y0 + 1;
+    std::vector<unsigned char> px(size_t(w) * h * 4);
+    glReadPixels(x0, fbh - 1 - y1, w, h, GL_RGBA, GL_UNSIGNED_BYTE,
+                 px.data());
+    for (size_t i = 0; i + 3 < px.size(); i += 4) {
+        if (px[i + 2] != 170) continue;
+        int fid = int(px[i]) + (int(px[i + 1]) << 8);
+        if (fid > 0) hits.insert(fid);
+    }
+    return hits;
 }
 
 // ---------------------------------------------------------------------------
@@ -1820,6 +1888,9 @@ int main(int argc, char** argv) {
     bool navOrbit = false, navPan = false, navZoom = false, navSnap = false;
     double downX = 0, downY = 0, downRX = 0, downRY = 0;
     bool prevLmb = false, prevRmb = false;
+    double lastClickTime = 0;  // double-click select-similar
+    int lastClickFace = 0;
+    double hoverX = -1, hoverY = -1;  // last hover-picked cursor position
     int frame = 0;
 
     while (!glfwWindowShouldClose(window)) {
@@ -2112,6 +2183,16 @@ int main(int argc, char** argv) {
             if (ImGui::IsKeyPressed(ImGuiKey_B, false)) {
                 app.showBrepEdges = !app.showBrepEdges;
             }
+            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false) &&
+                app.hasModel && !app.recipePath.empty()) {
+                try {
+                    weft::saveRecipe(app.recipe, app.recipePath);
+                    app.status = "saved " + app.recipePath;
+                    logLine("saved recipe %s", app.recipePath.c_str());
+                } catch (const std::exception& e) {
+                    app.status = std::string("save failed: ") + e.what();
+                }
+            }
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
                 if (!app.undoStack.empty()) {
                     app.recipe = app.undoStack.back();
@@ -2130,6 +2211,13 @@ int main(int argc, char** argv) {
         if (lmb && !prevLmb) { downX = mx; downY = my; }
         bool clicked = prevLmb && !lmb && std::abs(mx - downX) < 4 &&
                        std::abs(my - downY) < 4;
+        // Box select: an LMB drag in idle face mode rubber-bands.
+        bool boxDrag = lmb && app.mode == Mode::Idle &&
+                       app.selectMode == SelectMode::Face &&
+                       (std::abs(mx - downX) > 6 || std::abs(my - downY) > 6);
+        bool boxReleased = prevLmb && !lmb && !clicked &&
+                           app.mode == Mode::Idle &&
+                           app.selectMode == SelectMode::Face;
         prevLmb = lmb;
         bool rmb = !io.WantCaptureMouse &&
                    glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) ==
@@ -2175,6 +2263,16 @@ int main(int argc, char** argv) {
                     app.status = "bridge committed (ctrl+z undoes)";
                 }
             }
+        } else if (boxReleased && app.hasModel) {
+            // Box select: everything whose pick pixels fall in the rect.
+            std::set<int> hits =
+                pickFacesInRect(app, flatProg, mvp, int(downX), int(downY),
+                                int(mx), int(my), fbw, fbh);
+            if (!io.KeyShift) app.selFaces.clear();
+            for (int fid : hits) app.selFaces.insert(fid);
+            if (!hits.empty()) app.activeFace = *hits.begin();
+            else if (!io.KeyShift) app.activeFace = 0;
+            rebuildBuffers(app);
         } else if ((clicked || rClicked) && app.hasModel) {
             bool shift = io.KeyShift;
             if (app.selectMode == SelectMode::Edge && clicked) {
@@ -2242,22 +2340,62 @@ int main(int argc, char** argv) {
                         }
                     }
                 } else {
-                    if (hit > 0 && !(app.selFaces.size() == 1 &&
-                                     app.selFaces.count(hit))) {
+                    double now = glfwGetTime();
+                    if (hit > 0 && hit == lastClickFace &&
+                        now - lastClickTime < 0.35) {
+                        // Double-click: select everything similar (same
+                        // surface type and fillet/hole tags).
+                        const weft::FaceInfo& ref =
+                            app.analysis.faces[hit - 1];
+                        app.selFaces.clear();
+                        for (const auto& fi : app.analysis.faces) {
+                            if (fi.type == ref.type &&
+                                fi.isFillet == ref.isFillet &&
+                                fi.isHole == ref.isHole) {
+                                app.selFaces.insert(fi.id);
+                            }
+                        }
+                        app.activeFace = hit;
+                        app.status = "selected similar (" +
+                                     std::to_string(app.selFaces.size()) +
+                                     " faces)";
+                    } else if (hit > 0 && !(app.selFaces.size() == 1 &&
+                                            app.selFaces.count(hit))) {
                         app.selFaces = {hit};
                         app.activeFace = hit;
                     } else {
                         app.selFaces.clear();
                         app.activeFace = 0;
                     }
+                    lastClickTime = now;
+                    lastClickFace = hit;
                 }
                 rebuildBuffers(app);
             }
         }
 
+        // Hover pre-highlight: pick under the cursor when it moved (idle
+        // face mode only; the tint draw below needs no buffer rebuild).
+        if (app.hasModel && app.mode == Mode::Idle &&
+            app.selectMode == SelectMode::Face && !io.WantCaptureMouse &&
+            !lmb && !rmb &&
+            (std::abs(mx - hoverX) > 1 || std::abs(my - hoverY) > 1)) {
+            glViewport(0, 0, fbw, fbh);
+            app.hoverFace = pickFace(app, flatProg, mvp, int(mx), int(my),
+                                     fbw, fbh);
+            hoverX = mx;
+            hoverY = my;
+        }
+        if (io.WantCaptureMouse) app.hoverFace = 0;
+
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+        if (boxDrag) {
+            ImGui::GetForegroundDrawList()->AddRect(
+                {float(downX), float(downY)}, {float(mx), float(my)},
+                IM_COL32(255, 200, 80, 200), 0.0f, 0, 1.5f);
+        }
         drawUi(app);
         drawOverlay(app);
         drawFacePopup(app);
@@ -2291,6 +2429,24 @@ int main(int argc, char** argv) {
             }
             glBindVertexArray(app.fill.vao);
             glDrawArrays(GL_TRIANGLES, 0, app.fill.count);
+            // Hover highlight: re-draw just that face's runs, tinted.
+            if (app.hoverFace > 0 && !app.selFaces.count(app.hoverFace)) {
+                glDepthFunc(GL_LEQUAL);
+                glUseProgram(flatProg);
+                glUniformMatrix4fv(glGetUniformLocation(flatProg, "uMVP"), 1,
+                                   GL_FALSE, mvp.m);
+                glUniform1f(glGetUniformLocation(flatProg, "uMix"), 0.30f);
+                float hl[3] = {1.0f, 0.95f, 0.75f};
+                glUniform3fv(glGetUniformLocation(flatProg, "uColor"), 1, hl);
+                glBindVertexArray(app.fill.vao);
+                for (const auto& seg : app.fillSegs) {
+                    if (seg[0] == app.hoverFace) {
+                        glDrawArrays(GL_TRIANGLES, seg[1], seg[2]);
+                    }
+                }
+                glUniform1f(glGetUniformLocation(flatProg, "uMix"), 0.0f);
+                glDepthFunc(GL_LESS);
+            }
             glDisable(GL_POLYGON_OFFSET_FILL);
         }
         glUseProgram(flatProg);

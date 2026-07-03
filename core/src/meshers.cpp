@@ -475,61 +475,65 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
 // the neighbours generated (phase-exact welds).
 bool planAnnulus(const TopoDS_Face& face, const Model& model, FacePlan& plan) {
     int wires = 0;
-    std::array<int, 2> loopEdge{0, 0};
+    std::array<std::vector<int>, 2> loop;
+    TopoDS_Wire outer = BRepTools::OuterWire(face);
+    int outerIdx = -1;
     for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
         if (wires >= 2) return false;
-        int edges = 0;
-        int eid = 0;
-        for (TopExp_Explorer ex(wx.Current(), TopAbs_EDGE); ex.More();
-             ex.Next()) {
-            ++edges;
-            eid = model.edges.FindIndex(ex.Current());
-            const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+        const TopoDS_Wire wire = TopoDS::Wire(wx.Current());
+        // Wire order + orientation matter for chain sampling.
+        for (BRepTools_WireExplorer we(wire, face); we.More(); we.Next()) {
+            const TopoDS_Edge edge = we.Current();
             if (BRep_Tool::Degenerated(edge)) return false;
             double f, l;
             if (BRep_Tool::Curve(edge, f, l).IsNull()) return false;
+            int eid = model.edges.FindIndex(edge);
+            if (eid < 1) return false;
+            loop[wires].push_back(eid);
         }
-        if (edges != 1 || eid < 1) return false;
-        BRepAdaptor_Curve c(TopoDS::Edge(model.edges(eid)));
-        if (c.Value(c.FirstParameter())
-                .Distance(c.Value(c.LastParameter())) > 1e-6) {
-            return false;  // loop must close on itself
-        }
-        loopEdge[wires++] = eid;
+        if (loop[wires].empty() || loop[wires].size() > 8) return false;
+        if (!outer.IsNull() && wire.IsSame(outer)) outerIdx = wires;
+        ++wires;
     }
     if (wires != 2) return false;
-    // Outer loop first (purely conventional — the zipper doesn't care).
-    TopoDS_Wire outer = BRepTools::OuterWire(face);
-    int outerEid = 0;
-    if (!outer.IsNull()) {
-        for (TopExp_Explorer ex(outer, TopAbs_EDGE); ex.More(); ex.Next()) {
-            outerEid = model.edges.FindIndex(ex.Current());
-        }
-    }
-    if (outerEid == loopEdge[1]) std::swap(loopEdge[0], loopEdge[1]);
+    if (outerIdx == 1) std::swap(loop[0], loop[1]);
     plan.kind = MesherKind::AnnulusRing;
-    plan.uEdges = {loopEdge[0]};
-    plan.vEdges = {loopEdge[1]};
+    plan.uEdges = loop[0];
+    plan.vEdges = loop[1];
     plan.constrains = true;
-    return plan.uEdges[0] != plan.vEdges[0];
+    return true;
 }
 
 void meshAnnulusRing(const TopoDS_Face& face, const Model& model, int faceId,
-                     int outerEid, int innerEid, int nOut, int nIn,
+                     const std::vector<int>& outerLoop,
+                     const std::vector<int>& innerLoop,
+                     const std::vector<int>& solvedEdge, int radialDefault,
                      MeshBuilder& out) {
-    nOut = std::max(3, nOut);
-    nIn = std::max(3, nIn);
-    auto sampleRing = [&](int eid, int n) {
-        std::vector<gp_Pnt> pts(n);
-        BRepAdaptor_Curve c(TopoDS::Edge(model.edges(eid)));
-        double f = c.FirstParameter(), l = c.LastParameter();
-        for (int i = 0; i < n; ++i) {
-            pts[i] = c.Value(f + (l - f) * i / double(n));
+    // A ring = the wire's edges chained in order, each sampled at its own
+    // solved count (endpoints shared with the next edge, so a loop of K
+    // edges at counts c_k has sum(c_k) vertices).
+    auto sampleRing = [&](const std::vector<int>& loop) {
+        std::vector<gp_Pnt> pts;
+        for (int eid : loop) {
+            const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+            int n = eid < int(solvedEdge.size()) ? solvedEdge[eid] : 0;
+            if (n < 1) n = std::max(3, radialDefault) / int(loop.size());
+            n = std::max(1, n);
+            BRepAdaptor_Curve c(edge);
+            double f = c.FirstParameter(), l = c.LastParameter();
+            const bool rev = edge.Orientation() == TopAbs_REVERSED;
+            for (int i = 0; i < n; ++i) {  // skip the shared endpoint
+                double t = rev ? 1.0 - double(i) / n : double(i) / n;
+                pts.push_back(c.Value(f + (l - f) * t));
+            }
         }
         return pts;
     };
-    std::vector<gp_Pnt> A = sampleRing(outerEid, nOut);
-    std::vector<gp_Pnt> B = sampleRing(innerEid, nIn);
+    std::vector<gp_Pnt> A = sampleRing(outerLoop);
+    std::vector<gp_Pnt> B = sampleRing(innerLoop);
+    if (A.size() < 3 || B.size() < 3) return;
+    const int nOut = int(A.size());
+    const int nIn = int(B.size());
 
     // Direction + start alignment: try B forward and reversed at every
     // offset, keep the pairing with the shortest total rails.
@@ -1693,6 +1697,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     dbg("generate: plans done");
 
     DensitySolution density = solveDensity(model, plans, settings);
+    // Flat per-edge count table: lets meshers consume per-edge counts from
+    // worker threads (union-find lookups path-compress, so countFor can't
+    // run concurrently).
+    std::vector<int> solvedEdge(model.edgeCount() + 1, 0);
+    for (int eid = 1; eid <= model.edgeCount(); ++eid) {
+        solvedEdge[eid] = density.countFor(eid, 0);
+    }
     dbg("generate: density solved");
 
     // Resolve every face's division counts up front (union-find lookups
@@ -1766,6 +1777,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             s.minimal ? 1 : 0, s.exclude ? 1 : 0, s.minSize,
             s.relativeDeviation ? 1 : 0);
         cacheKey[fid] = key;
+        if (plan.kind == MesherKind::AnnulusRing) {
+            for (int eid : plan.uEdges) {
+                cacheKey[fid] += "u" + std::to_string(solvedEdge[eid]);
+            }
+            for (int eid : plan.vEdges) {
+                cacheKey[fid] += "v" + std::to_string(solvedEdge[eid]);
+            }
+        }
     }
 
     // Mesh every face into its own part, in parallel, then merge in face
@@ -1850,8 +1869,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                  s.junctionRings, out);
                 break;
             case MesherKind::AnnulusRing:
-                meshAnnulusRing(face, model, fid, plan.uEdges[0],
-                                plan.vEdges[0], nu, nv, out);
+                meshAnnulusRing(face, model, fid, plan.uEdges, plan.vEdges,
+                                solvedEdge, s.radial, out);
                 break;
             case MesherKind::QuadDominant:
             case MesherKind::Fallback: {
