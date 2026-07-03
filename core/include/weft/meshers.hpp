@@ -66,6 +66,10 @@ struct FaceMeshSettings {
     // Plate-web collars: square borders instead of hole-shaped rings —
     // the classic game pattern (round hole -> square collar -> plate).
     bool squareCollar = false;
+    // Coons patch rotation (0-3): shifts which wire edge becomes side 0,
+    // picking the corner the grid anchors to — on triangular patches
+    // this chooses the corner the fan terminates in.
+    int coonsRotate = 0;
     // Plate-web / quad-fill boundary control: total vertex count around
     // the face's OUTER loop, distributed across its edges by arc length
     // and pinned (drives the neighbouring walls' shared edges too).
