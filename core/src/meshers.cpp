@@ -3152,17 +3152,15 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
 
             std::vector<EdgeParamPoint> targets;
             if (analyticNb || freeformSeam) {
-                // A freeform authority's border verts sit off the curve by
-                // up to its chord sagitta, so accept a looser projection.
-                const double tolT =
-                    freeformSeam
-                        ? std::max(tolTarget,
-                                   settings.forFace(nfid).chordTolerance *
-                                       1.2)
-                        : tolTarget;
+                // Triangulation NODES on an edge lie exactly on its curve
+                // (only chord midpoints sag), so a freeform authority uses
+                // the same tight projection as an analytic one. A loose
+                // tolerance here captured the neighbour's verts on OTHER
+                // nearly-collinear edges as targets, and the insertion
+                // step then dragged this border onto them (folds).
                 for (size_t v = range[nfid][0]; v < range[nfid][1]; ++v) {
                     double t;
-                    if (project(uint32_t(v), tolT, &t)) {
+                    if (project(uint32_t(v), tolTarget, &t)) {
                         targets.push_back({uint32_t(v), t});
                     }
                 }
@@ -3196,6 +3194,23 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                 double d = std::abs(a - b);
                 return closed ? std::min(d, period - d) : d;
             };
+            // Largest spacing between consecutive targets: a mover whose
+            // nearest target is farther than this has NO partner on the
+            // chain (the neighbour's matching vert sits off-curve on a
+            // sloppy edge, or the chain doesn't reach the mover's end) —
+            // snapping it anyway teleports it across the edge and folds
+            // its polygons. Leave such movers where they are.
+            double maxGap = 0.0;
+            for (size_t i = 1; i < targets.size(); ++i) {
+                maxGap = std::max(
+                    maxGap, targets[i].param - targets[i - 1].param);
+            }
+            if (closed) {
+                maxGap = std::max(
+                    maxGap, period - (targets.back().param -
+                                      targets.front().param));
+            }
+
             // Snap every mover to the nearest target (position + param).
             for (auto& [v, t] : movers) {
                 const EdgeParamPoint* best = &targets[0];
@@ -3203,6 +3218,12 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                     if (paramGap(cand.param, t) < paramGap(best->param, t)) {
                         best = &cand;
                     }
+                }
+                if (paramGap(best->param, t) > 0.75 * maxGap) {
+                    dbg("conform: face %d edge %d vert %u kept (nearest "
+                        "target %.4g away, max gap %.4g)",
+                        fid, eid, v, paramGap(best->param, t), maxGap);
+                    continue;
                 }
                 mesh.vertices[v] = mesh.vertices[best->vert];
                 t = best->param;
@@ -3674,11 +3695,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         TopExp::MapShapes(model.shape, TopAbs_VERTEX, vmap);
 
         // Micro-edge collapse: CAD booleans leave hairline edges (a few
-        // microns on mm-scale parts) whose two vertices are distinct, so
-        // sliver faces and unmatchable seams survive every weld. Union
-        // the endpoints of any edge shorter than 1e-4 of the model
-        // diagonal — sliver polygons then degenerate away in the weld and
-        // the flanking faces zip directly.
+        // microns to ~0.1mm on real parts) whose two vertices are
+        // distinct, so sliver faces and unmatchable seams survive every
+        // weld. Union the endpoints of any edge shorter than 5e-4 of the
+        // model diagonal (a conventional stitch tolerance) — sliver
+        // polygons then degenerate away in the weld and the flanking
+        // faces zip directly.
         std::vector<int> root(vmap.Extent() + 1);
         std::iota(root.begin(), root.end(), 0);
         auto find = [&](int i) {
@@ -3687,7 +3709,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         };
         Bnd_Box bb;
         BRepBndLib::Add(model.shape, bb);
-        const double microTol = 1e-4 * std::sqrt(bb.SquareExtent());
+        const double microTol = 5e-4 * std::sqrt(bb.SquareExtent());
         int microEdges = 0;
         // Reach: capture radius a fused group needs so that mesh verts
         // SAMPLED ALONG a collapsed micro-edge (a fallback neighbour puts
