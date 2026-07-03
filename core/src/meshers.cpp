@@ -1703,7 +1703,13 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         return plan;
     }
 
-    if (parametricGridFits(face, surf, std::max(1, s.gridU),
+    // Curved surfaces skip the parametric grid on auto: its border rows
+    // sample the SURFACE uniformly, which never lands vertex-for-vertex on
+    // a neighbour's sampling of the shared edge. Four-sided curved faces
+    // fall through to the Coons patch below, whose border rows evaluate on
+    // the 3D edge curves (weld-exact); the rest conform as freeform.
+    if (surf.GetType() == GeomAbs_Plane &&
+        parametricGridFits(face, surf, std::max(1, s.gridU),
                            std::max(1, s.gridV))) {
         plan.kind = MesherKind::PlanarGrid;
         if (info.isFillet) {
@@ -2012,11 +2018,11 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
 // vertices evaluate exactly like the quad band's, so caps still weld.
 void meshRevolutionTaper(const TopoDS_Face& face,
                          const BRepAdaptor_Surface& surf, int faceId, int nA,
-                         int nB, MeshBuilder& out) {
+                         int nB, double uPhase, MeshBuilder& out) {
     nA = std::max(3, nA);
     nB = std::max(3, nB);
-    const double u0 = surf.FirstUParameter();
-    const double uRange = surf.LastUParameter() - u0;
+    const double u0 = uPhase;
+    const double uRange = surf.LastUParameter() - surf.FirstUParameter();
     const double v0 = surf.FirstVParameter();
     const double v1 = surf.LastVParameter();
     const bool flip = face.Orientation() == TopAbs_REVERSED;
@@ -2050,13 +2056,59 @@ void meshRevolutionTaper(const TopoDS_Face& face,
 // (torus) by wrapping rows, and degenerate rows (cone apex, sphere poles)
 // by collapsing them to one vertex — the weld pass then turns the adjacent
 // quads into triangles.
+// Phase-align a revolution grid's u sampling to a rim EDGE's curve start:
+// two analytic faces sharing that circle then sample the identical points
+// (each surface's own u origin can be rotated arbitrarily — torus vs
+// cylinder — which used to leave every shared rim vertex slightly off).
+double revolutionUPhase(const BRepAdaptor_Surface& surf,
+                        const Model& model, int rimEdgeId) {
+    const double u0 = surf.FirstUParameter();
+    if (rimEdgeId < 1 || rimEdgeId > model.edgeCount()) return u0;
+    const TopoDS_Edge edge = TopoDS::Edge(model.edges(rimEdgeId));
+    if (BRep_Tool::Degenerated(edge)) return u0;
+    double f, l;
+    if (BRep_Tool::Curve(edge, f, l).IsNull()) return u0;
+    BRepAdaptor_Curve c(edge);
+    const gp_Pnt p0 = c.Value(c.FirstParameter());
+    const double range = surf.LastUParameter() - u0;
+    // Which v end the rim lives at.
+    double dFirst = 1e300, dLast = 1e300;
+    for (int k = 0; k < 8; ++k) {
+        double u = u0 + range * k / 8.0;
+        dFirst = std::min(dFirst,
+                          p0.Distance(surf.Value(u, surf.FirstVParameter())));
+        dLast = std::min(dLast,
+                         p0.Distance(surf.Value(u, surf.LastVParameter())));
+    }
+    const double v = dFirst <= dLast ? surf.FirstVParameter()
+                                     : surf.LastVParameter();
+    // Coarse scan + a few bisection refinements onto the edge start.
+    double best = u0, bestD = 1e300;
+    const int kCoarse = 64;
+    for (int k = 0; k < kCoarse; ++k) {
+        double u = u0 + range * k / kCoarse;
+        double d = p0.Distance(surf.Value(u, v));
+        if (d < bestD) { bestD = d; best = u; }
+    }
+    double step = range / kCoarse;
+    for (int it = 0; it < 24; ++it) {
+        step /= 2;
+        for (double u : {best - step, best + step}) {
+            double d = p0.Distance(surf.Value(u, v));
+            if (d < bestD) { bestD = d; best = u; }
+        }
+    }
+    return best;
+}
+
 void meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
-                        int faceId, int nu, int nv, MeshBuilder& out) {
+                        int faceId, int nu, int nv, double uPhase,
+                        MeshBuilder& out) {
     nu = std::max(3, nu);
     nv = std::max(1, nv);
-    const double u0 = surf.FirstUParameter();
+    const double u0 = uPhase;
     const double v0 = surf.FirstVParameter();
-    const double du = (surf.LastUParameter() - u0) / nu;
+    const double du = (surf.LastUParameter() - surf.FirstUParameter()) / nu;
     const bool vWrap = surf.IsVClosed();
     const double dv = (surf.LastVParameter() - v0) / nv;
     const int rows = vWrap ? nv : nv + 1;
@@ -2509,7 +2561,9 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
         MesherKind k = plans.at(fid).kind;
         return (k == MesherKind::Fallback || k == MesherKind::QuadDominant ||
                 k == MesherKind::AnnulusRing ||
-                !plans.at(fid).loops.empty()) &&
+                !plans.at(fid).loops.empty() ||
+                (k == MesherKind::PlanarGrid &&
+                 !plans.at(fid).constrains)) &&
                !settings.forFace(fid).exclude;
     };
     auto isAnalytic = [&](int fid) {
@@ -2571,9 +2625,17 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
             const bool pinnedResample =
                 !analyticNb && pinIt != settings.perEdge.end() &&
                 pinIt->second >= 2;
-            if (!analyticNb && !pinnedResample) continue;
+            // Freeform-to-freeform seams: the DENSER side is the
+            // authority (ties: lower id) and only the sparser side moves,
+            // exactly like the analytic case — snapping never collapses
+            // because the target chain has at least as many verts.
+            const bool freeformSeam = !analyticNb && !pinnedResample &&
+                                      nfid >= 1 && isFreeform(nfid);
+            if (!analyticNb && !pinnedResample && !freeformSeam) continue;
             dbg("conform: face %d edge %d (%s)", fid, eid,
-                analyticNb ? "analytic neighbour" : "pinned resample");
+                analyticNb ? "analytic neighbour"
+                : pinnedResample ? "pinned resample"
+                                 : "freeform seam");
 
             BRepAdaptor_Curve curve(edge);
             const double f = curve.FirstParameter(), l = curve.LastParameter();
@@ -2635,11 +2697,34 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
             const double tolTarget =
                 std::max(1e-6 * (1.0 + edgeLen),
                          10.0 * BRep_Tool::Tolerance(edge));
+            // My border verts on this edge (needed up front: seams pick
+            // the denser side as authority before any vertex moves).
+            const double tolMoverPre = std::max(
+                1e-6 * (1.0 + edgeLen),
+                std::max(settings.forFace(fid).chordTolerance,
+                         nfid >= 1 ? settings.forFace(nfid).chordTolerance
+                                   : 0.0) *
+                    1.2);
+            std::map<uint32_t, double> movers;  // vert -> snapped param
+            for (uint32_t v : borderVerts) {
+                double t;
+                if (project(v, tolMoverPre, &t)) movers[v] = t;
+            }
+            if (movers.empty()) continue;
+
             std::vector<EdgeParamPoint> targets;
-            if (analyticNb) {
+            if (analyticNb || freeformSeam) {
+                // A freeform authority's border verts sit off the curve by
+                // up to its chord sagitta, so accept a looser projection.
+                const double tolT =
+                    freeformSeam
+                        ? std::max(tolTarget,
+                                   settings.forFace(nfid).chordTolerance *
+                                       1.2)
+                        : tolTarget;
                 for (size_t v = range[nfid][0]; v < range[nfid][1]; ++v) {
                     double t;
-                    if (project(uint32_t(v), tolTarget, &t)) {
+                    if (project(uint32_t(v), tolT, &t)) {
                         targets.push_back({uint32_t(v), t});
                     }
                 }
@@ -2656,23 +2741,17 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                 }
             }
             if (targets.size() < 2) continue;
+            // Seam authority: only the sparser side conforms; the denser
+            // (or equal-count lower-id) side keeps its chain.
+            if (freeformSeam &&
+                (targets.size() < movers.size() ||
+                 (targets.size() == movers.size() && fid < nfid))) {
+                continue;
+            }
             std::sort(targets.begin(), targets.end(),
                       [](const EdgeParamPoint& a, const EdgeParamPoint& b) {
                           return a.param < b.param;
                       });
-
-            // The freeform side's border verts near this edge. Subdivision
-            // midpoints sit on the surface but off the curve by up to the
-            // chord sagitta, so the tolerance is the face's deviation.
-            const double tolMover = std::max(
-                1e-6 * (1.0 + edgeLen),
-                settings.forFace(fid).chordTolerance * 1.2);
-            std::map<uint32_t, double> movers;  // vert -> snapped param
-            for (uint32_t v : borderVerts) {
-                double t;
-                if (project(v, tolMover, &t)) movers[v] = t;
-            }
-            if (movers.empty()) continue;
 
             auto paramGap = [&](double a, double b) {  // |a-b| wrap-aware
                 double d = std::abs(a - b);
@@ -2889,6 +2968,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         MeshBuilder out(parts[fid]);
         const int nu = counts[fid][0], nv = counts[fid][1];
 
+        auto revPhase = [&]() {
+            return plan.uEdges.empty()
+                       ? surf.FirstUParameter()
+                       : revolutionUPhase(surf, model, plan.uEdges[0]);
+        };
         switch (plan.kind) {
             case MesherKind::RevolutionGrid:
                 if (!plan.linkRims && counts[fid][2] > 0 &&
@@ -2913,9 +2997,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                               surf.LastVParameter())));
                     }
                     if (d1 < d0) std::swap(nA, nB);
-                    meshRevolutionTaper(face, surf, fid, nA, nB, out);
+                    meshRevolutionTaper(face, surf, fid, nA, nB,
+                                        revPhase(), out);
                 } else {
-                    meshRevolutionGrid(face, surf, fid, nu, nv, out);
+                    meshRevolutionGrid(face, surf, fid, nu, nv, revPhase(),
+                                       out);
                 }
                 break;
             case MesherKind::DiskCap:
@@ -2976,6 +3062,31 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 }
                 meshFallback(face, surf, fid, fs, out);
                 break;
+            }
+        }
+        // Safety net: any directed edge repeated inside one face's part is
+        // degenerate topology (it would leak non-manifold edges into the
+        // weld). Throw the part away and triangulate honestly instead.
+        if (plan.kind != MesherKind::Fallback &&
+            plan.kind != MesherKind::QuadDominant) {
+            std::set<std::pair<uint32_t, uint32_t>> seen;
+            bool sane = true;
+            for (const auto& poly : parts[fid].polygons) {
+                for (size_t i = 0; i < poly.size() && sane; ++i) {
+                    if (!seen.insert({poly[i],
+                                      poly[(i + 1) % poly.size()]})
+                             .second) {
+                        sane = false;
+                    }
+                }
+                if (!sane) break;
+            }
+            if (!sane) {
+                dbg("mesh face %d: self-check failed (%s), falling back",
+                    fid, mesherKindName(plan.kind));
+                parts[fid] = PolyMesh();
+                MeshBuilder retry(parts[fid]);
+                meshFallback(face, surf, fid, s, retry);
             }
         }
     };
