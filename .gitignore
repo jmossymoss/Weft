@@ -10,3 +10,4 @@ weft_test*.recipe
 weft_test*.step
 weft_debug.log
 weft_fixture_*.step
+__pycache__/
