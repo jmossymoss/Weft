@@ -86,6 +86,7 @@ const char* mesherKindName(MesherKind k) {
         case MesherKind::QuadDominant: return "quad-dominant";
         case MesherKind::MinimalNGon: return "minimal-ngon";
         case MesherKind::Fallback: return "fallback-tri";
+        case MesherKind::AnnulusRing: return "annulus-ring";
     }
     return "fallback-tri";
 }
@@ -467,6 +468,143 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
     return true;
 }
 
+// A face bounded by exactly two closed single-edge loops — the flat ring
+// between two revolution rims. Meshes as one zippered band: equal loop
+// counts give pure quads, unequal a clean taper. Its borders sample the
+// 3D edge curves, and the conformity pass then snaps them onto whatever
+// the neighbours generated (phase-exact welds).
+bool planAnnulus(const TopoDS_Face& face, const Model& model, FacePlan& plan) {
+    int wires = 0;
+    std::array<int, 2> loopEdge{0, 0};
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        if (wires >= 2) return false;
+        int edges = 0;
+        int eid = 0;
+        for (TopExp_Explorer ex(wx.Current(), TopAbs_EDGE); ex.More();
+             ex.Next()) {
+            ++edges;
+            eid = model.edges.FindIndex(ex.Current());
+            const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+            if (BRep_Tool::Degenerated(edge)) return false;
+            double f, l;
+            if (BRep_Tool::Curve(edge, f, l).IsNull()) return false;
+        }
+        if (edges != 1 || eid < 1) return false;
+        BRepAdaptor_Curve c(TopoDS::Edge(model.edges(eid)));
+        if (c.Value(c.FirstParameter())
+                .Distance(c.Value(c.LastParameter())) > 1e-6) {
+            return false;  // loop must close on itself
+        }
+        loopEdge[wires++] = eid;
+    }
+    if (wires != 2) return false;
+    // Outer loop first (purely conventional — the zipper doesn't care).
+    TopoDS_Wire outer = BRepTools::OuterWire(face);
+    int outerEid = 0;
+    if (!outer.IsNull()) {
+        for (TopExp_Explorer ex(outer, TopAbs_EDGE); ex.More(); ex.Next()) {
+            outerEid = model.edges.FindIndex(ex.Current());
+        }
+    }
+    if (outerEid == loopEdge[1]) std::swap(loopEdge[0], loopEdge[1]);
+    plan.kind = MesherKind::AnnulusRing;
+    plan.uEdges = {loopEdge[0]};
+    plan.vEdges = {loopEdge[1]};
+    plan.constrains = true;
+    return plan.uEdges[0] != plan.vEdges[0];
+}
+
+void meshAnnulusRing(const TopoDS_Face& face, const Model& model, int faceId,
+                     int outerEid, int innerEid, int nOut, int nIn,
+                     MeshBuilder& out) {
+    nOut = std::max(3, nOut);
+    nIn = std::max(3, nIn);
+    auto sampleRing = [&](int eid, int n) {
+        std::vector<gp_Pnt> pts(n);
+        BRepAdaptor_Curve c(TopoDS::Edge(model.edges(eid)));
+        double f = c.FirstParameter(), l = c.LastParameter();
+        for (int i = 0; i < n; ++i) {
+            pts[i] = c.Value(f + (l - f) * i / double(n));
+        }
+        return pts;
+    };
+    std::vector<gp_Pnt> A = sampleRing(outerEid, nOut);
+    std::vector<gp_Pnt> B = sampleRing(innerEid, nIn);
+
+    // Direction + start alignment: try B forward and reversed at every
+    // offset, keep the pairing with the shortest total rails.
+    auto pairingCost = [&](const std::vector<gp_Pnt>& b, int off) {
+        double sum = 0;
+        for (int i = 0; i < nOut; ++i) {
+            int j = (off + i * nIn / nOut) % nIn;
+            sum += A[i].Distance(b[j]);
+        }
+        return sum;
+    };
+    std::vector<gp_Pnt> Brev(B.rbegin(), B.rend());
+    double best = 1e300;
+    int bestOff = 0;
+    bool rev = false;
+    for (int off = 0; off < nIn; ++off) {
+        double c1 = pairingCost(B, off);
+        if (c1 < best) { best = c1; bestOff = off; rev = false; }
+        double c2 = pairingCost(Brev, off);
+        if (c2 < best) { best = c2; bestOff = off; rev = true; }
+    }
+    if (rev) B = Brev;
+
+    std::vector<uint32_t> av(nOut), bv(nIn);
+    for (int i = 0; i < nOut; ++i) av[i] = out.addVertex(A[i], {});
+    for (int j = 0; j < nIn; ++j) {
+        bv[j] = out.addVertex(B[(bestOff + j) % nIn], {});
+    }
+
+    // Zipper by fraction (equal counts -> pure quads). Winding is fixed
+    // afterwards against the surface normal at the first polygon.
+    struct Poly { std::vector<uint32_t> ring; };
+    std::vector<std::vector<uint32_t>> polys;
+    int ia = 0, ib = 0;
+    while (ia < nOut && ib < nIn &&
+           nOut == nIn) {  // quad ring fast path
+        polys.push_back({av[ia % nOut], av[(ia + 1) % nOut],
+                         bv[(ib + 1) % nIn], bv[ib % nIn]});
+        ++ia;
+        ++ib;
+    }
+    while (ia < nOut || ib < nIn) {
+        double fa = double(ia + 1) / nOut, fb = double(ib + 1) / nIn;
+        bool stepA = ib >= nIn || (ia < nOut && fa <= fb);
+        if (stepA) {
+            polys.push_back({av[ia % nOut], av[(ia + 1) % nOut],
+                             bv[ib % nIn]});
+            ++ia;
+        } else {
+            polys.push_back({av[ia % nOut], bv[(ib + 1) % nIn],
+                             bv[ib % nIn]});
+            ++ib;
+        }
+    }
+
+    // Face normal at the ring midpoint decides the winding.
+    BRepAdaptor_Surface surf(face);
+    double um = (surf.FirstUParameter() + surf.LastUParameter()) / 2;
+    double vm = (surf.FirstVParameter() + surf.LastVParameter()) / 2;
+    gp_Pnt sp;
+    gp_Vec du, dv;
+    surf.D1(um, vm, sp, du, dv);
+    gp_Vec n = du.Crossed(dv);
+    if (face.Orientation() == TopAbs_REVERSED) n.Reverse();
+    bool flip = false;
+    if (!polys.empty() && n.Magnitude() > 1e-12) {
+        // Newell normal of the first polygon via the builder's positions
+        // is awkward pre-build; use the sampled points directly.
+        gp_Pnt p0 = A[0], p1 = A[1 % nOut], p2 = B[bestOff % nIn];
+        gp_Vec pn = gp_Vec(p0, p1).Crossed(gp_Vec(p0, p2));
+        flip = pn.Dot(n) < 0;
+    }
+    for (auto& poly : polys) out.addPolygon(std::move(poly), faceId, flip);
+}
+
 FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                   const GenerationSettings& settings) {
     const TopoDS_Face face = TopoDS::Face(model.faces(fid));
@@ -536,6 +674,9 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 }
                 break;
             }
+            case MesherKind::AnnulusRing:
+                if (planAnnulus(face, model, plan)) return plan;
+                break;
             case MesherKind::QuadDominant:
                 plan.kind = MesherKind::Fallback;
                 plan.forceFallbackQuads = 1;
@@ -564,6 +705,8 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     }
 
     if (planRingJunction(face, model, plan)) return plan;
+
+    if (planAnnulus(face, model, plan)) return plan;
 
     if (parametricGridFits(face, surf, std::max(1, s.gridU),
                            std::max(1, s.gridV))) {
@@ -703,6 +846,11 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                                      ? s.filletLoops : s.gridV);
             propose(plan.uEdges, nu, overridden);
             propose(plan.vEdges, nv, overridden);
+        } else if (plan.kind == MesherKind::AnnulusRing) {
+            // Both loops are rings; they solve independently (their own
+            // neighbours usually drive them) at the radial default.
+            propose(plan.uEdges, std::max(3, s.radial), overridden);
+            propose(plan.vEdges, std::max(3, s.radial), overridden);
         } else {  // revolution sides and disk caps subdivide rings radially
             if (!plan.linkRims && plan.uEdges.size() == 2) {
                 // Unlinked rims: each ring solves on its own (pin per-edge
@@ -1255,7 +1403,8 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                             const std::vector<std::array<size_t, 2>>& range) {
     auto isFreeform = [&](int fid) {
         MesherKind k = plans.at(fid).kind;
-        return (k == MesherKind::Fallback || k == MesherKind::QuadDominant) &&
+        return (k == MesherKind::Fallback || k == MesherKind::QuadDominant ||
+                k == MesherKind::AnnulusRing) &&
                !settings.forFace(fid).exclude;
     };
     auto isAnalytic = [&](int fid) {
@@ -1547,6 +1696,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 counts[fid] = {solved(plan.uEdges, s.gridU),
                                solved(plan.vEdges, s.gridV), 0};
                 break;
+            case MesherKind::AnnulusRing:
+                counts[fid] = {solved(plan.uEdges, s.radial),
+                               solved(plan.vEdges, s.radial), 0};
+                break;
             default:
                 break;
         }
@@ -1620,6 +1773,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             case MesherKind::RingJunction:
                 meshRingJunction(face, surf, plan.circ, fid, nu, nv,
                                  s.junctionRings, out);
+                break;
+            case MesherKind::AnnulusRing:
+                meshAnnulusRing(face, model, fid, plan.uEdges[0],
+                                plan.vEdges[0], nu, nv, out);
                 break;
             case MesherKind::QuadDominant:
             case MesherKind::Fallback: {
