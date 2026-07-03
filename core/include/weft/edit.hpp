@@ -27,6 +27,10 @@ struct ManualOp {
     double t = 0.5;
     int edgeA = 0;  // Bridge: stable B-rep edge ids the two loops hug
     int edgeB = 0;
+    // Bridge: rotate the rail pairing by N steps around loop B — the
+    // automatic alignment can land a step off on symmetric loops, which
+    // reads as a spiral. [ ] adjusts this on the last bridge in the app.
+    int twist = 0;
 };
 
 // Snap a point onto a B-rep face: exact re-projection, not shrinkwrap.

@@ -1221,7 +1221,8 @@ static void drawOverlay(App& app) {
         ImGui::SameLine();
         ImGui::TextDisabled(app.bridgeFirstEdge
                                 ? "pick the second loop - esc restarts"
-                                : "pick two boundary loops - J/esc exits");
+                                : "pick two loops - [ ] twists last bridge"
+                                  " - J/esc exits");
         if (app.hoverLoop >= 0) {
             ImGui::Text("loop: edge #%d, %zu verts",
                         app.bLoopEdge[app.hoverLoop],
@@ -2040,6 +2041,20 @@ int main(int argc, char** argv) {
                     }
                     app.recipe.settings.perEdge[eid] = std::max(3, cur + delta);
                     markDirty(app);
+                } else if (app.mode == Mode::Bridge) {
+                    // Nothing hovered: twist the most recent bridge so its
+                    // rails stop spiralling.
+                    for (auto op = app.recipe.ops.rbegin();
+                         op != app.recipe.ops.rend(); ++op) {
+                        if (op->kind != weft::ManualOp::Kind::Bridge) continue;
+                        op->twist += delta;
+                        markDirty(app);
+                        std::snprintf(app.hudText, sizeof app.hudText,
+                                      "bridge twist: %+d", op->twist);
+                        app.hudUntil = glfwGetTime() + 0.9;
+                        app.status = "bridge twist adjusted";
+                        break;
+                    }
                 } else if (app.selectMode == SelectMode::Edge) {
                     adjustSelectedEdges(app, 0, delta);
                 } else {

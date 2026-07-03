@@ -682,6 +682,7 @@ void testBridge() {
     bridge.kind = weft::ManualOp::Kind::Bridge;
     bridge.edgeA = rims[0];
     bridge.edgeB = rims[1];
+    bridge.twist = 3;
     weft::PolyMesh closed = open;
     size_t before = closed.polygonCount();
     CHECK_EQ(weft::bridgeLoops(closed, model, bridge), 12);
@@ -698,6 +699,30 @@ void testBridge() {
     CHECK_EQ(weft::bridgeLoops(closed2, model, bridge), 30);
     CHECK(isWatertight(closed2));
 
+    // Twisting the pairing keeps the strip watertight (any rotation of
+    // the rails is still a closed strip) and rotates the rail seams.
+    for (int twist : {1, -2, 7}) {
+        weft::ManualOp twisted = bridge;
+        twisted.twist = twist;
+        weft::PolyMesh tw = open;
+        CHECK_EQ(weft::bridgeLoops(tw, model, twisted), 12);
+        CHECK(isWatertight(tw));
+    }
+
+    // Pinned resample on a boundary with no analytic driver: the wall is
+    // deleted, so its rims border nothing — pinning a rim re-cuts that
+    // boundary loop to exactly the pinned count, on the curve.
+    {
+        weft::GenerationSettings gsPin = gs;
+        gsPin.perEdge[rims[0]] = 9;
+        weft::PolyMesh pinned = weft::generate(model, a, gsPin);
+        bool found = false;
+        for (const auto& loop : weft::boundaryLoops(pinned)) {
+            if (loop.size() == 9) found = true;
+        }
+        CHECK(found);
+    }
+
     // The op replays through applyOps and recipes round-trip it.
     weft::Recipe recipe;
     recipe.settings = gs;
@@ -707,6 +732,7 @@ void testBridge() {
     weft::Recipe loaded = weft::loadRecipe(rPath);
     CHECK_EQ(loaded.ops.size(), 1);
     CHECK(loaded.ops[0].kind == weft::ManualOp::Kind::Bridge);
+    CHECK_EQ(loaded.ops[0].twist, bridge.twist);
     CHECK(loaded.settings.forFace(sideFace).exclude);
     weft::PolyMesh replayed = weft::generate(model, a, loaded.settings);
     weft::applyOps(replayed, model, loaded.ops);
