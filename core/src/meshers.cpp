@@ -149,6 +149,48 @@ struct FacePlan {
     std::vector<std::vector<int>> loops;
 };
 
+// A genuine full revolution band's boundary consists only of its two
+// v-rims and (possibly) a seam. Sampled through the pcurves: an edge that
+// is neither a rim-hugging v-iso nor a u-iso seam means the face is
+// TRIMMED, and drawing the full band would over-mesh across the trim —
+// the classifier probe grid can miss small notches entirely.
+bool edgesHugRims(const TopoDS_Face& face, const BRepAdaptor_Surface& surf) {
+    const double u0 = surf.FirstUParameter(), u1 = surf.LastUParameter();
+    const double v0 = surf.FirstVParameter(), v1 = surf.LastVParameter();
+    const double uspan = std::max(1e-12, u1 - u0);
+    const double vspan = std::max(1e-12, v1 - v0);
+    for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+        const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+        if (BRep_Tool::Degenerated(edge)) continue;
+        double f, l;
+        Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(edge, face, f, l);
+        // A boundary edge we can't even place on the surface is exactly
+        // the kind the probe grid misses — refuse the full band.
+        if (pc.IsNull()) return false;
+        double umin = 1e300, umax = -1e300, vmin = 1e300, vmax = -1e300;
+        for (int k = 0; k <= 4; ++k) {
+            gp_Pnt2d uv = pc->Value(f + (l - f) * k / 4.0);
+            umin = std::min(umin, uv.X());
+            umax = std::max(umax, uv.X());
+            vmin = std::min(vmin, uv.Y());
+            vmax = std::max(vmax, uv.Y());
+        }
+        if (vmax - vmin < 0.02 * vspan) {  // v-iso: must hug a rim
+            double v = (vmin + vmax) / 2;
+            if (std::min(std::abs(v - v0), std::abs(v - v1)) > 0.05 * vspan) {
+                return false;  // a ring mid-band: the face is split there
+            }
+        } else if (umax - umin < 0.02 * uspan) {
+            // u-iso: only a true SEAM (full v traversal) belongs to a
+            // full band; a partial u-iso edge is a trim boundary.
+            if (vmax - vmin < 0.9 * vspan) return false;
+        } else {
+            return false;  // slanted/trimmed boundary
+        }
+    }
+    return true;
+}
+
 bool isClosedRevolution(const BRepAdaptor_Surface& surf) {
     switch (surf.GetType()) {
         case GeomAbs_Cylinder:
@@ -1917,7 +1959,8 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         return plan;
     }
 
-    if (isClosedRevolution(surf) && revCovers()) {
+    if (isClosedRevolution(surf) && revCovers() &&
+        edgesHugRims(face, surf)) {
         finishRevolution();
         return plan;
     }
