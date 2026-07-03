@@ -376,7 +376,9 @@ static Vec3 mouseRay(const Camera& cam, double mx, double my, int fbw,
 }
 
 enum class Mode { Idle, LoopCut, Bridge, Grab };
-enum class SelectMode { Face, Edge, Poly };
+// Selection modes on 1-5 (Blender-style): mesh verts, mesh edges, mesh
+// faces (polygons), B-rep feature edges, B-rep elements (faces).
+enum class SelectMode { Vert, MeshEdge, Poly, Edge, Face };
 
 struct App {
     // Document.
@@ -403,6 +405,12 @@ struct App {
     // indices are only meaningful for the current mesh). Selects ANY
     // polygon, including bridge/fill strips that carry no B-rep face.
     std::set<size_t> selPolys;
+    // Vert / mesh-edge modes: direct mesh element selection (cleared on
+    // regenerate with selPolys — indices belong to the current mesh).
+    std::set<uint32_t> selVerts;
+    int64_t hoverVert = -1;
+    std::set<uint64_t> selMeshEdges;  // (min vert << 32) | max vert
+    uint64_t hoverMeshEdge = UINT64_MAX;
     int activeFace = 0;
     int hoverFace = 0;  // pre-click feedback (face mode, idle)
     // Contiguous fill-buffer runs per face, for tint-only highlight draws.
@@ -421,7 +429,6 @@ struct App {
 
     // Keyboard-centric editing state.
     Mode mode = Mode::Idle;
-    std::string numberEntry;   // typed digits, Enter applies to density
     weft::ManualOp hoverOp;    // loop-cut candidate under the cursor
     bool hoverValid = false;
 
@@ -636,7 +643,11 @@ static void regenerate(App& app) {
         weft::applyOps(mesh, app.model, app.recipe.ops);
         app.mesh = std::move(mesh);
         app.report = std::move(report);
-        app.selPolys.clear();  // polygon indices died with the old mesh
+        app.selPolys.clear();  // mesh indices died with the old mesh
+        app.selVerts.clear();
+        app.selMeshEdges.clear();
+        app.hoverVert = -1;
+        app.hoverMeshEdge = UINT64_MAX;
     } catch (const std::exception& e) {
         logLine("regenerate: FAILED: %s", e.what());
         app.status = std::string("regenerate failed (ctrl+Z): ") + e.what();
@@ -1344,6 +1355,72 @@ static int pickPolygon(App& app, const Mat4& mvp, double mx, double my,
     return best;
 }
 
+// Nearest visible mesh vertex / polygon edge to the cursor, for the vert
+// and mesh-edge selection modes. Both walk the polygons so hidden faces'
+// geometry never captures the pick.
+static int64_t pickMeshVert(App& app, const Mat4& mvp, double mx, double my,
+                            int fbw, int fbh) {
+    const weft::PolyMesh& m = app.mesh;
+    double best = 12.0 * gUiScale;  // px
+    int64_t bestV = -1;
+    std::vector<bool> seen(m.vertexCount(), false);
+    for (size_t p = 0; p < m.polygons.size(); ++p) {
+        int fid = m.polygonFaceId[p];
+        if (fid > 0 && app.hiddenFaces.count(fid)) continue;
+        for (uint32_t v : m.polygons[p]) {
+            if (seen[v]) continue;
+            seen[v] = true;
+            float sp[3] = {0, 0, -1};
+            projectPoint(mvp, m.vertices[v], fbw, fbh, sp);
+            if (sp[2] <= 0) continue;
+            double d = std::hypot(sp[0] - mx, sp[1] - my);
+            if (d < best) {
+                best = d;
+                bestV = int64_t(v);
+            }
+        }
+    }
+    return bestV;
+}
+
+static uint64_t meshEdgeKey(uint32_t a, uint32_t b) {
+    return (uint64_t(std::min(a, b)) << 32) | std::max(a, b);
+}
+
+static uint64_t pickMeshEdge(App& app, const Mat4& mvp, double mx, double my,
+                             int fbw, int fbh) {
+    const weft::PolyMesh& m = app.mesh;
+    double best = 10.0 * gUiScale;  // px
+    uint64_t bestE = UINT64_MAX;
+    for (size_t p = 0; p < m.polygons.size(); ++p) {
+        int fid = m.polygonFaceId[p];
+        if (fid > 0 && app.hiddenFaces.count(fid)) continue;
+        const auto& poly = m.polygons[p];
+        for (size_t i = 0; i < poly.size(); ++i) {
+            uint32_t a = poly[i], b = poly[(i + 1) % poly.size()];
+            float pa[3] = {0, 0, -1}, pb[3] = {0, 0, -1};
+            projectPoint(mvp, m.vertices[a], fbw, fbh, pa);
+            projectPoint(mvp, m.vertices[b], fbw, fbh, pb);
+            if (pa[2] <= 0 || pb[2] <= 0) continue;
+            float ex = pb[0] - pa[0], ey = pb[1] - pa[1];
+            float len2 = ex * ex + ey * ey;
+            float t = len2 < 1e-6f
+                          ? 0.0f
+                          : std::clamp(((float(mx) - pa[0]) * ex +
+                                        (float(my) - pa[1]) * ey) /
+                                           len2,
+                                       0.0f, 1.0f);
+            double d = std::hypot(double(mx) - (pa[0] + t * ex),
+                                  double(my) - (pa[1] + t * ey));
+            if (d < best) {
+                best = d;
+                bestE = meshEdgeKey(a, b);
+            }
+        }
+    }
+    return bestE;
+}
+
 // Vertex grab (G): pick the interior vertex nearest the cursor and start a
 // NudgeVertex op. Only face-anchored vertices qualify — border vertices
 // belong to shared B-rep edges and are owned by density + conformity.
@@ -1504,7 +1581,7 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
 
     // Curvature-adaptive density: deviation/angle size every curved edge;
     // the manual counts below become floors. Nudging a count via the
-    // wheel/typed digits flips the face back to manual.
+    // wheel flips the face back to manual.
     ch |= ImGui::Checkbox("adaptive density (curvature)", &s.adaptive);
     if (freeform || s.adaptive) {
         if (all) ImGui::TextDisabled("freeform / imported surfaces");
@@ -1568,6 +1645,15 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
         if (all || k == MK::PlanarGrid || k == MK::MinimalNGon) {
             ch |= ImGui::Checkbox("minimal n-gon (flat panels)", &s.minimal);
         }
+        if (!all && k == MK::CoonsGrid) {
+            // Which corner anchors the grid; on triangular patches this
+            // moves the corner the fan terminates in.
+            int rot = s.coonsRotate;
+            if (ImGui::SliderInt("rotate patch", &rot, 0, 3)) {
+                s.coonsRotate = rot;
+                ch = true;
+            }
+        }
     }
     if (all || isFillet) {
         if (all) ImGui::TextDisabled("fillets / blends");
@@ -1629,7 +1715,7 @@ static void rimControls(App& app, int fid) {
     }
 }
 
-// Mode indicator + typed-number + hotkey reference, floating over the
+// Mode indicator + hotkey reference, floating over the
 // viewport so the keyboard flow never needs the side panel.
 static void drawOverlay(App& app) {
     ImGui::SetNextWindowPos({12 * gUiScale, 12 * gUiScale});
@@ -1662,28 +1748,46 @@ static void drawOverlay(App& app) {
                         app.bLoopEdge[app.hoverLoop],
                         app.bLoops[app.hoverLoop].size());
             ImGui::SameLine();
-            ImGui::TextDisabled("( [ ] or 12<enter> pins the count )");
+            ImGui::TextDisabled("( [ ] pins the count )");
         }
         if (app.bLoops.empty()) {
             ImGui::TextDisabled(
                 "no open boundaries - delete a face first (popup or outliner)");
         }
+    } else if (app.selectMode == SelectMode::Vert) {
+        ImGui::TextColored({0.55f, 1.0f, 0.7f, 1.0f}, "VERT MODE");
+        ImGui::SameLine();
+        if (app.selVerts.empty()) {
+            ImGui::TextDisabled(
+                "click verts (shift extends) - G grabs interior verts");
+        } else {
+            ImGui::TextDisabled("%zu vert(s) - G grabs", app.selVerts.size());
+        }
+    } else if (app.selectMode == SelectMode::MeshEdge) {
+        ImGui::TextColored({0.55f, 0.9f, 1.0f, 1.0f}, "EDGE MODE");
+        ImGui::SameLine();
+        if (app.selMeshEdges.empty()) {
+            ImGui::TextDisabled("click mesh edges (shift extends)");
+        } else {
+            ImGui::TextDisabled("%zu edge(s) selected",
+                                app.selMeshEdges.size());
+        }
     } else if (app.selectMode == SelectMode::Edge) {
-        ImGui::TextColored({0.6f, 0.8f, 1.0f, 1.0f}, "EDGE MODE");
+        ImGui::TextColored({0.6f, 0.8f, 1.0f, 1.0f}, "FEATURE EDGES");
         ImGui::SameLine();
         if (app.selEdges.empty()) {
-            ImGui::TextDisabled("click edges (shift extends) - tab cycles");
+            ImGui::TextDisabled("click feature edges (shift extends)");
         } else {
-            ImGui::TextDisabled("%zu edge(s) - wheel/[ ]/number sets loop"
+            ImGui::TextDisabled("%zu edge(s) - wheel/[ ] sets loop"
                                 " total - J bridges - F fills",
                                 app.selEdges.size());
         }
     } else if (app.selectMode == SelectMode::Poly) {
-        ImGui::TextColored({0.85f, 0.7f, 1.0f, 1.0f}, "POLY MODE");
+        ImGui::TextColored({0.85f, 0.7f, 1.0f, 1.0f}, "FACE MODE");
         ImGui::SameLine();
         if (app.selPolys.empty()) {
             ImGui::TextDisabled(
-                "click polygons (bridge strips too) - X deletes - tab cycles");
+                "click polygons (bridge strips too) - X deletes - G grabs");
         } else {
             ImGui::TextDisabled("%zu polygon(s) - X deletes",
                                 app.selPolys.size());
@@ -1698,13 +1802,8 @@ static void drawOverlay(App& app) {
         ImGui::SameLine();
         ImGui::TextDisabled(" shift+wheel density, ctrl+wheel 2nd axis");
     } else {
-        ImGui::TextDisabled("no selection - click a face, tab for edges");
-    }
-    if (!app.numberEntry.empty()) {
-        ImGui::TextColored({1.0f, 0.85f, 0.25f, 1.0f}, "divisions: %s_",
-                           app.numberEntry.c_str());
-        ImGui::SameLine();
-        ImGui::TextDisabled("enter applies (shift+enter: secondary)");
+        ImGui::TextDisabled("no selection - 1 verts, 2 edges, 3 faces, "
+                            "4 feature edges, 5 elements");
     }
     ImGui::End();
 
@@ -1734,10 +1833,10 @@ static void drawOverlay(App& app) {
                      ImGuiWindowFlags_NoFocusOnAppearing |
                      ImGuiWindowFlags_NoNav);
     ImGui::TextDisabled(
-        "1/2/3 select mode (face/edge/poly)   0-prefix typed counts\n"
+        "1 verts   2 edges   3 faces   4 feature edges   5 elements\n"
         "shift+click multi-select   ctrl+Z undo\n"
         "shift+wheel density   ctrl+wheel 2nd axis   ctrl+shift+wheel loops\n"
-        "12<enter> divisions   [ ] nudge\n"
+        "[ ] nudge counts\n"
         "X delete face   H hide (shift+H show all)   R loop cut   J bridge\n"
         "G grab vertex   C cap   T tris   M minimal   W wire   B edges\n"
         "F focus   esc");
@@ -2034,7 +2133,7 @@ static void drawUi(App& app) {
                             ? " (pinned)"
                             : "");
                 }
-                ImGui::TextDisabled("wheel / [ ] / 12<enter> pins verts");
+                ImGui::TextDisabled("wheel / [ ] pins verts");
                 bool anyPinned = false;
                 for (int eid : app.selEdges) {
                     anyPinned |= app.recipe.settings.perEdge.count(eid) > 0;
@@ -2501,76 +2600,58 @@ int main(int argc, char** argv) {
                 } else if (app.mode == Mode::Bridge && app.bridgeFirstEdge) {
                     app.bridgeFirstEdge = 0;
                 } else if (app.mode != Mode::Idle) app.mode = Mode::Idle;
-                else if (!app.numberEntry.empty()) app.numberEntry.clear();
-                else if (!app.selFaces.empty() || !app.selEdges.empty()) {
+                else if (!app.selFaces.empty() || !app.selEdges.empty() ||
+                         !app.selVerts.empty() || !app.selMeshEdges.empty()) {
                     app.selFaces.clear();
                     app.selEdges.clear();
+                    app.selVerts.clear();
+                    app.selMeshEdges.clear();
                     app.activeFace = 0;
                     rebuildBuffers(app);
                 }
             }
-            // Selection modes: 1 B-rep faces, 2 edges, 3 mesh polygons
-            // (Tab cycles). Switching clears the other modes' selections
-            // so stale highlights never linger.
+            // Selection modes on 1-5: verts, mesh edges, mesh faces,
+            // feature edges (B-rep), elements (B-rep faces). Switching
+            // clears the other modes' selections so stale highlights
+            // never linger. Counts are adjusted with the wheel and [ ] —
+            // digits never type values (that UI confused more than it
+            // helped).
             auto setSelectMode = [&](SelectMode next) {
                 if (next == app.selectMode) return;
                 app.selectMode = next;
                 app.selFaces.clear();
                 app.selEdges.clear();
                 app.selPolys.clear();
+                app.selVerts.clear();
+                app.selMeshEdges.clear();
                 app.activeFace = 0;
                 app.hoverFace = 0;
+                app.hoverVert = -1;
+                app.hoverMeshEdge = UINT64_MAX;
                 rebuildBuffers(app);
-                app.status = next == SelectMode::Face ? "face select mode"
+                app.status = next == SelectMode::Vert     ? "vert mode"
+                             : next == SelectMode::MeshEdge ? "edge mode"
+                             : next == SelectMode::Poly     ? "face mode"
                              : next == SelectMode::Edge
-                                 ? "edge select mode"
-                                 : "polygon select mode";
+                                 ? "feature edge mode"
+                                 : "element mode";
             };
-            // 1/2/3: B-rep faces / edges / polygons (Blender-style).
-            // A typed count that starts with 1-3 takes a leading zero
-            // ("016<enter>"); 0 and 4-9 start entry directly.
-            if (app.numberEntry.empty() && !io.KeyCtrl) {
+            if (!io.KeyCtrl) {
                 if (ImGui::IsKeyPressed(ImGuiKey_1, false)) {
-                    setSelectMode(SelectMode::Face);
+                    setSelectMode(SelectMode::Vert);
                 }
                 if (ImGui::IsKeyPressed(ImGuiKey_2, false)) {
-                    setSelectMode(SelectMode::Edge);
+                    setSelectMode(SelectMode::MeshEdge);
                 }
                 if (ImGui::IsKeyPressed(ImGuiKey_3, false)) {
                     setSelectMode(SelectMode::Poly);
                 }
-            }
-            for (int d = 0; d <= 9 && !io.KeyCtrl; ++d) {
-                if (app.numberEntry.empty() && d >= 1 && d <= 3) continue;
-                if (ImGui::IsKeyPressed(ImGuiKey(ImGuiKey_0 + d), false) ||
-                    ImGui::IsKeyPressed(ImGuiKey(ImGuiKey_Keypad0 + d), false)) {
-                    if (app.numberEntry.size() < 4) {
-                        app.numberEntry += char('0' + d);
-                    }
+                if (ImGui::IsKeyPressed(ImGuiKey_4, false)) {
+                    setSelectMode(SelectMode::Edge);
                 }
-            }
-            if (ImGui::IsKeyPressed(ImGuiKey_Backspace, false) &&
-                !app.numberEntry.empty()) {
-                app.numberEntry.pop_back();
-            }
-            if (ImGui::IsKeyPressed(ImGuiKey_Enter, false) &&
-                !app.numberEntry.empty() && app.hasModel) {
-                int value = std::atoi(app.numberEntry.c_str());
-                if (app.mode == Mode::Bridge && app.hoverLoop >= 0) {
-                    // Pin the hovered boundary loop's vertex count: equal
-                    // counts bridge as quads, unequal as triangles.
-                    int eid = app.bLoopEdge[app.hoverLoop];
-                    app.recipe.settings.perEdge[eid] = std::max(3, value);
-                    markDirty(app);
-                } else if (app.selectMode == SelectMode::Edge) {
-                    adjustSelectedEdges(app, value, 0);
-                } else {
-                    editSelected(app, [&](weft::FaceMeshSettings& s) {
-                        *primaryDensity(app, s, shift) = std::max(1, value);
-                        s.adaptive = false;  // explicit count = manual
-                    });
+                if (ImGui::IsKeyPressed(ImGuiKey_5, false)) {
+                    setSelectMode(SelectMode::Face);
                 }
-                app.numberEntry.clear();
             }
             bool dec = ImGui::IsKeyPressed(ImGuiKey_LeftBracket);
             bool inc = ImGui::IsKeyPressed(ImGuiKey_RightBracket);
@@ -2904,7 +2985,28 @@ int main(int argc, char** argv) {
             rebuildBuffers(app);
         } else if ((clicked || rClicked) && app.hasModel) {
             bool shift = io.KeyShift;
-            if (app.selectMode == SelectMode::Poly) {
+            if (app.selectMode == SelectMode::Vert && clicked) {
+                int64_t hit = pickMeshVert(app, mvp, mx, my, fbw, fbh);
+                if (!shift) app.selVerts.clear();
+                if (hit >= 0) {
+                    uint32_t h = uint32_t(hit);
+                    if (shift && app.selVerts.count(h)) {
+                        app.selVerts.erase(h);
+                    } else {
+                        app.selVerts.insert(h);
+                    }
+                }
+            } else if (app.selectMode == SelectMode::MeshEdge && clicked) {
+                uint64_t hit = pickMeshEdge(app, mvp, mx, my, fbw, fbh);
+                if (!shift) app.selMeshEdges.clear();
+                if (hit != UINT64_MAX) {
+                    if (shift && app.selMeshEdges.count(hit)) {
+                        app.selMeshEdges.erase(hit);
+                    } else {
+                        app.selMeshEdges.insert(hit);
+                    }
+                }
+            } else if (app.selectMode == SelectMode::Poly) {
                 // Polygon picking: front-most poly under the cursor (works
                 // on bridge/fill strips too). Right-click does nothing —
                 // the context popup is face-scoped.
@@ -3020,18 +3122,27 @@ int main(int argc, char** argv) {
         }
 
         // Hover pre-highlight: pick under the cursor when it moved (idle
-        // face mode only; the tint draw below needs no buffer rebuild).
-        if (app.hasModel && app.mode == Mode::Idle &&
-            app.selectMode == SelectMode::Face && !io.WantCaptureMouse &&
+        // only; the overlay draws below need no buffer rebuild).
+        if (app.hasModel && app.mode == Mode::Idle && !io.WantCaptureMouse &&
             !lmb && !rmb &&
             (std::abs(mx - hoverX) > 1 || std::abs(my - hoverY) > 1)) {
-            glViewport(0, 0, fbw, fbh);
-            app.hoverFace = pickFace(app, flatProg, mvp, int(mx), int(my),
-                                     fbw, fbh);
+            if (app.selectMode == SelectMode::Face) {
+                glViewport(0, 0, fbw, fbh);
+                app.hoverFace = pickFace(app, flatProg, mvp, int(mx),
+                                         int(my), fbw, fbh);
+            } else if (app.selectMode == SelectMode::Vert) {
+                app.hoverVert = pickMeshVert(app, mvp, mx, my, fbw, fbh);
+            } else if (app.selectMode == SelectMode::MeshEdge) {
+                app.hoverMeshEdge = pickMeshEdge(app, mvp, mx, my, fbw, fbh);
+            }
             hoverX = mx;
             hoverY = my;
         }
-        if (io.WantCaptureMouse) app.hoverFace = 0;
+        if (io.WantCaptureMouse) {
+            app.hoverFace = 0;
+            app.hoverVert = -1;
+            app.hoverMeshEdge = UINT64_MAX;
+        }
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
@@ -3040,6 +3151,58 @@ int main(int argc, char** argv) {
             ImGui::GetForegroundDrawList()->AddRect(
                 {float(downX), float(downY)}, {float(mx), float(my)},
                 IM_COL32(255, 200, 80, 200), 0.0f, 0, 1.5f);
+        }
+        // Vert / mesh-edge mode overlays: screen-space markers for the
+        // hover candidate and the selection (under the UI panels).
+        if (app.hasModel && (app.selectMode == SelectMode::Vert ||
+                             app.selectMode == SelectMode::MeshEdge)) {
+            ImDrawList* dl = ImGui::GetBackgroundDrawList();
+            auto projV = [&](uint32_t v, float* sp) {
+                projectPoint(mvp, app.mesh.vertices[v], fbw, fbh, sp);
+                return sp[2] > 0;
+            };
+            const float r = 3.5f * gUiScale;
+            if (app.selectMode == SelectMode::Vert) {
+                for (uint32_t v : app.selVerts) {
+                    if (v >= app.mesh.vertexCount()) continue;
+                    float sp[3];
+                    if (projV(v, sp)) {
+                        dl->AddRectFilled({sp[0] - r, sp[1] - r},
+                                          {sp[0] + r, sp[1] + r},
+                                          IM_COL32(255, 196, 64, 255));
+                    }
+                }
+                if (app.hoverVert >= 0 &&
+                    app.hoverVert < int64_t(app.mesh.vertexCount())) {
+                    float sp[3];
+                    if (projV(uint32_t(app.hoverVert), sp)) {
+                        dl->AddCircle({sp[0], sp[1]}, 6.0f * gUiScale,
+                                      IM_COL32(255, 255, 255, 220), 0,
+                                      1.5f * gUiScale);
+                    }
+                }
+            } else {
+                auto edgeLine = [&](uint64_t key, ImU32 col, float w) {
+                    uint32_t a = uint32_t(key >> 32);
+                    uint32_t b = uint32_t(key & 0xffffffffu);
+                    if (a >= app.mesh.vertexCount() ||
+                        b >= app.mesh.vertexCount()) {
+                        return;
+                    }
+                    float sa[3], sb[3];
+                    if (projV(a, sa) && projV(b, sb)) {
+                        dl->AddLine({sa[0], sa[1]}, {sb[0], sb[1]}, col, w);
+                    }
+                };
+                for (uint64_t e : app.selMeshEdges) {
+                    edgeLine(e, IM_COL32(255, 196, 64, 255),
+                             3.0f * gUiScale);
+                }
+                if (app.hoverMeshEdge != UINT64_MAX) {
+                    edgeLine(app.hoverMeshEdge,
+                             IM_COL32(255, 255, 255, 200), 2.0f * gUiScale);
+                }
+            }
         }
         drawUi(app);
         drawOverlay(app);
