@@ -26,6 +26,7 @@
 #include "weft/meshers.hpp"
 #include "weft/model.hpp"
 #include "weft/recipe.hpp"
+#include "weft/remap.hpp"
 #include "weft/viz.hpp"
 
 #include <GLFW/glfw3.h>
@@ -436,6 +437,17 @@ struct App {
     int hoverLoop = -1;
     int bridgeFirstEdge = 0;  // first clicked loop's edge id (0 = none yet)
 
+    // STEP hot-reload: watch the source file and re-import when the CAD
+    // app re-exports over it. The in-memory recipe is remapped onto the
+    // new B-rep geometrically (see weft/remap.hpp), so overrides follow
+    // their features even when face/edge ids shuffle. Debounced: reload
+    // only once the mtime stops moving (the exporter finished writing).
+    bool watchSource = true;
+    std::filesystem::file_time_type sourceMtime{};
+    bool reloadPending = false;
+    std::filesystem::file_time_type pendingMtime{};
+    double pendingSince = 0.0;
+
     // Blender live link: every regenerate mirrors the mesh to this OBJ
     // (atomic tmp+rename); blender/weft_link.py watches it and reimports,
     // keeping CAD face ids as the "weft_face" face attribute.
@@ -731,6 +743,9 @@ static void loadModel(App& app, const std::string& path) {
         app.analysis = weft::analyze(app.model);
         app.brepEdges = weft::sampleEdges(app.model, 28);
         app.sourcePath = path;
+        std::error_code ec;
+        app.sourceMtime = std::filesystem::last_write_time(path, ec);
+        app.reloadPending = false;
         app.hasModel = true;
         app.selFaces.clear();
         app.selEdges.clear();
@@ -763,6 +778,76 @@ static void loadModel(App& app, const std::string& path) {
         }
     } catch (const std::exception& e) {
         app.status = std::string("load failed: ") + e.what();
+    }
+}
+
+// Hot-reload: the source STEP changed on disk (the CAD app re-exported
+// over it). Re-import, remap the LIVE recipe onto the new B-rep by
+// geometric signature — the recipe file on disk is not re-read, so
+// unsaved edits survive — and regenerate; the Blender live link then
+// pushes the result downstream. Selection and hidden faces follow the
+// same mapping. The undo stack refers to old ids, so it resets.
+static void reloadModel(App& app) {
+    logLine("hot-reload: %s", app.sourcePath.c_str());
+    try {
+        weft::Model fresh = weft::loadStep(app.sourcePath);
+        weft::Analysis freshAnalysis = weft::analyze(fresh);
+        weft::RemapReport rep;
+        weft::Recipe remapped =
+            weft::remapRecipe(app.recipe, app.model, app.analysis, fresh,
+                              freshAnalysis, &rep);
+        app.model = std::move(fresh);
+        app.analysis = std::move(freshAnalysis);
+        app.recipe = std::move(remapped);
+
+        auto mapSet = [](std::set<int>& ids, const std::map<int, int>& m) {
+            std::set<int> out;
+            for (int id : ids) {
+                auto it = m.find(id);
+                if (it != m.end() && it->second > 0) out.insert(it->second);
+            }
+            ids = std::move(out);
+        };
+        mapSet(app.selFaces, rep.faceMap);
+        mapSet(app.hiddenFaces, rep.faceMap);
+        mapSet(app.selEdges, rep.edgeMap);
+        auto af = rep.faceMap.find(app.activeFace);
+        app.activeFace = af != rep.faceMap.end() ? af->second : 0;
+        if (app.activeFace == 0 && !app.selFaces.empty()) {
+            app.activeFace = *app.selFaces.begin();
+        }
+
+        app.genCache.clear();
+        app.undoStack.clear();
+        app.mode = Mode::Idle;
+        app.slideOp = -1;
+        app.grabOp = -1;
+        app.bridgeFirstEdge = 0;
+        app.hoverFace = 0;
+        app.hoverValid = false;
+        regenerate(app);
+
+        int dropped = rep.facesDropped + rep.edgesDropped + rep.opsDropped;
+        char msg[256];
+        if (dropped == 0) {
+            std::snprintf(msg, sizeof msg,
+                          "reloaded from disk: %d faces, recipe followed "
+                          "(%zu overrides, %zu pins, %zu ops)",
+                          app.model.faceCount(),
+                          app.recipe.settings.perFace.size(),
+                          app.recipe.settings.perEdge.size(),
+                          app.recipe.ops.size());
+        } else {
+            std::snprintf(msg, sizeof msg,
+                          "reloaded from disk: %d faces — %d recipe "
+                          "reference(s) matched nothing and were dropped",
+                          app.model.faceCount(), dropped);
+        }
+        app.status = msg;
+        logLine("hot-reload: done (%d dropped refs)", dropped);
+    } catch (const std::exception& e) {
+        app.status = std::string("hot-reload failed: ") + e.what();
+        logLine("hot-reload: FAILED: %s", e.what());
     }
 }
 
@@ -1600,6 +1685,13 @@ static void drawUi(App& app) {
         ImGui::SameLine();
         if (ImGui::Button("Load")) loadModel(app, app.pathBuf);
         if (app.hasModel) {
+            // Hot-reload: re-export from the CAD app over the same STEP
+            // and Weft re-imports it, carrying the recipe across.
+            if (ImGui::Checkbox("watch file (reload + remap recipe)",
+                                &app.watchSource) &&
+                app.watchSource) {
+                app.status = "watching " + app.sourcePath;
+            }
             // Live link: mirror every regenerate into the watched OBJ that
             // the bundled Blender addon (blender/weft_link.py) reimports.
             if (ImGui::Checkbox("live link (Blender)", &app.liveLink) &&
@@ -2372,6 +2464,32 @@ int main(int argc, char** argv) {
                         std::abs(my - downRY) < 4;
         prevRmb = rmb;
         gScroll = 0.0f;
+
+        // STEP hot-reload: poll the source file's mtime (cheap) and reload
+        // once it changes AND stops changing — exporters write in bursts,
+        // and a half-written STEP must never be parsed.
+        if (app.hasModel && app.watchSource && !app.sourcePath.empty()) {
+            double now = glfwGetTime();
+            static double nextPoll = 0.0;
+            if (now >= nextPoll) {
+                nextPoll = now + 0.5;
+                std::error_code ec;
+                auto m = std::filesystem::last_write_time(app.sourcePath, ec);
+                if (!ec && m != app.sourceMtime) {
+                    if (!app.reloadPending || m != app.pendingMtime) {
+                        app.reloadPending = true;   // (re)start the debounce
+                        app.pendingMtime = m;
+                        app.pendingSince = now;
+                    } else if (now - app.pendingSince > 0.4) {
+                        app.sourceMtime = m;
+                        app.reloadPending = false;
+                        reloadModel(app);
+                    }
+                } else if (!ec) {
+                    app.reloadPending = false;
+                }
+            }
+        }
 
         if (app.mutatedThisFrame) logLine("frame: input handled, dirty");
         if (app.dirty) regenerate(app);
