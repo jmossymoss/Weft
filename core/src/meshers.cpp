@@ -90,6 +90,7 @@ const char* mesherKindName(MesherKind k) {
         case MesherKind::Fallback: return "fallback-tri";
         case MesherKind::AnnulusRing: return "annulus-ring";
         case MesherKind::PlateWeb: return "plate-web";
+        case MesherKind::QuadFill: return "quad-fill";
     }
     return "fallback-tri";
 }
@@ -1187,6 +1188,331 @@ bool meshMinimalPlanar(const TopoDS_Face& face, const Model& model,
     return true;
 }
 
+bool planQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
+                  const Model& model, FacePlan& plan) {
+    FacePlan probe;
+    if (!collectPlanarLoops(face, surf, model, probe)) return false;
+    plan.loops = std::move(probe.loops);
+    plan.uEdges = std::move(probe.uEdges);
+    plan.constrains = true;
+    plan.kind = MesherKind::QuadFill;
+    return true;
+}
+
+// Quad-fill: a planar face of any outline gets an interior quad grid sized
+// from its border density, and the gap between the grid and the exact
+// boundary closes with the hole-bridged ear-clip web. Large clean quad
+// flow on plates instead of fan triangulations.
+bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
+                  const Model& model, int faceId,
+                  const std::vector<int>& solvedEdge, int radialDefault,
+                  double minSize, MeshBuilder& out) {
+    std::vector<PlanarRing> rings;
+    if (!samplePlanarRings(face, model, solvedEdge, radialDefault, rings)) {
+        return false;
+    }
+    if (rings.empty()) return false;
+    const bool flip = face.Orientation() == TopAbs_REVERSED;
+
+    // Boundary segments (for spacing, containment, and clearance tests).
+    struct Seg {
+        gp_Pnt2d a, b;
+    };
+    std::vector<Seg> segs;
+    std::vector<double> lens;
+    double umin = 1e300, umax = -1e300, vmin = 1e300, vmax = -1e300;
+    for (const PlanarRing& r : rings) {
+        for (size_t i = 0; i < r.uv.size(); ++i) {
+            const gp_Pnt2d& a = r.uv[i];
+            const gp_Pnt2d& b = r.uv[(i + 1) % r.uv.size()];
+            segs.push_back({a, b});
+            lens.push_back(a.Distance(b));
+            umin = std::min(umin, a.X());
+            umax = std::max(umax, a.X());
+            vmin = std::min(vmin, a.Y());
+            vmax = std::max(vmax, a.Y());
+        }
+    }
+    if (segs.size() < 3) return false;
+    std::sort(lens.begin(), lens.end());
+    // Slightly finer than the border spacing: the rim web needs a cell of
+    // clearance, so a coarser grid would waste most of the face on rim.
+    double h = std::max(0.55 * lens[lens.size() / 2], minSize);
+    if (h < 1e-9) return false;
+    // Cap the grid size; a tiny median segment on a huge plate would
+    // otherwise explode the cell count.
+    while ((umax - umin) / h * ((vmax - vmin) / h) > 20000.0) h *= 1.5;
+
+    auto insideDomain = [&](const gp_Pnt2d& p) {
+        int crossings = 0;
+        for (const Seg& s : segs) {
+            if ((s.a.Y() > p.Y()) == (s.b.Y() > p.Y())) continue;
+            double x = s.a.X() + (p.Y() - s.a.Y()) / (s.b.Y() - s.a.Y()) *
+                                     (s.b.X() - s.a.X());
+            if (x > p.X()) ++crossings;
+        }
+        return (crossings & 1) != 0;
+    };
+
+    const int nx = std::max(1, int((umax - umin) / h));
+    const int ny = std::max(1, int((vmax - vmin) / h));
+    // Center the grid in the bbox so border cells get equal clearance on
+    // both sides instead of sitting flush against one edge.
+    const double u0 = umin + 0.5 * ((umax - umin) - nx * h);
+    const double v0 = vmin + 0.5 * ((vmax - vmin) - ny * h);
+    auto cornerUV = [&](int i, int j) {
+        return gp_Pnt2d(u0 + i * h, v0 + j * h);
+    };
+
+    // Bin boundary segments by grid row so the per-cell clearance test
+    // only looks at nearby geometry.
+    std::vector<std::vector<int>> rowSegs(ny + 1);
+    for (int si = 0; si < int(segs.size()); ++si) {
+        double y0 = std::min(segs[si].a.Y(), segs[si].b.Y()) - h;
+        double y1 = std::max(segs[si].a.Y(), segs[si].b.Y()) + h;
+        int j0 = std::max(0, int(std::floor((y0 - v0) / h)));
+        int j1 = std::min(ny, int(std::floor((y1 - v0) / h)) + 1);
+        for (int j = j0; j <= j1; ++j) rowSegs[j].push_back(si);
+    }
+
+    // A cell is kept when its four corners are inside the domain and no
+    // boundary segment comes near its (slightly inflated) box — the rim
+    // web needs breathing room to stay well-shaped.
+    const double margin = 0.30 * h;
+    std::vector<char> keep(size_t(nx) * ny, 0);
+    auto keepAt = [&](int i, int j) -> char& {
+        return keep[size_t(j) * nx + i];
+    };
+    for (int j = 0; j < ny; ++j) {
+        for (int i = 0; i < nx; ++i) {
+            bool ok = true;
+            for (int c = 0; c < 4 && ok; ++c) {
+                ok = insideDomain(cornerUV(i + (c & 1), j + (c >> 1)));
+            }
+            if (!ok) continue;
+            double x0 = u0 + i * h - margin, x1 = x0 + h + 2 * margin;
+            double y0 = v0 + j * h - margin, y1 = y0 + h + 2 * margin;
+            for (int si : rowSegs[j]) {
+                const Seg& s = segs[si];
+                // Conservative: reject when the segment's box overlaps the
+                // inflated cell box (exact seg/box adds little here).
+                if (std::max(s.a.X(), s.b.X()) < x0 ||
+                    std::min(s.a.X(), s.b.X()) > x1 ||
+                    std::max(s.a.Y(), s.b.Y()) < y0 ||
+                    std::min(s.a.Y(), s.b.Y()) > y1) {
+                    continue;
+                }
+                ok = false;
+                break;
+            }
+            if (ok) keepAt(i, j) = 1;
+        }
+    }
+
+    // Diagonal pinches (two kept cells touching only at a corner) would
+    // give that corner four frontier edges; drop one cell until clean.
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int j = 0; j + 1 < ny; ++j) {
+            for (int i = 0; i + 1 < nx; ++i) {
+                char& a = keepAt(i, j);
+                char& b = keepAt(i + 1, j + 1);
+                char& c = keepAt(i + 1, j);
+                char& d = keepAt(i, j + 1);
+                if (a && b && !c && !d) { a = 0; changed = true; }
+                else if (c && d && !a && !b) { c = 0; changed = true; }
+            }
+        }
+    }
+
+    auto kept = [&](int i, int j) {
+        return i >= 0 && j >= 0 && i < nx && j < ny && keepAt(i, j);
+    };
+
+    // Interior quad grid. Corner vertices are created on demand and shared
+    // with the frontier loops, so the rim web welds to the grid exactly.
+    std::map<std::pair<int, int>, uint32_t> cornerVert;
+    auto vertAt = [&](int i, int j) {
+        auto it = cornerVert.find({i, j});
+        if (it != cornerVert.end()) return it->second;
+        gp_Pnt2d uv = cornerUV(i, j);
+        uint32_t v = out.addVertex(surf.Value(uv.X(), uv.Y()),
+                                   {faceId, uv.X(), uv.Y()});
+        cornerVert[{i, j}] = v;
+        return v;
+    };
+    bool anyCell = false;
+    for (int j = 0; j < ny; ++j) {
+        for (int i = 0; i < nx; ++i) {
+            if (!keepAt(i, j)) continue;
+            anyCell = true;
+            out.addPolygon({vertAt(i, j), vertAt(i + 1, j),
+                            vertAt(i + 1, j + 1), vertAt(i, j + 1)},
+                           faceId, flip);
+        }
+    }
+
+    // Ring -> web points, and boundary ring vertices (anchorless).
+    auto ringWeb = [&](const PlanarRing& r) {
+        std::vector<WebPoint> web;
+        for (size_t i = 0; i < r.uv.size(); ++i) {
+            web.push_back({r.uv[i], out.addVertex(r.p[i], {})});
+        }
+        return web;
+    };
+    std::vector<WebPoint> faceOuter;
+    std::vector<std::vector<WebPoint>> faceHoles;
+    for (const PlanarRing& r : rings) {
+        if (r.isOuter) faceOuter = ringWeb(r);
+        else faceHoles.push_back(ringWeb(r));
+    }
+    if (faceOuter.size() < 3) return false;
+
+    if (!anyCell) {  // no room for a grid: plain web over the whole face
+        triangulateWeb(std::move(faceOuter), std::move(faceHoles), faceId,
+                       flip, out);
+        return true;
+    }
+
+    // Frontier: kept-region boundary edges, traced into closed loops on
+    // the grid corners (pinch removal guarantees two frontier edges per
+    // frontier corner).
+    std::map<std::pair<int, int>, std::vector<std::pair<int, int>>> adj;
+    auto frontierEdge = [&](int i0, int j0, int i1, int j1) {
+        adj[{i0, j0}].push_back({i1, j1});
+        adj[{i1, j1}].push_back({i0, j0});
+    };
+    for (int j = 0; j < ny; ++j) {
+        for (int i = 0; i < nx; ++i) {
+            if (!keepAt(i, j)) continue;
+            if (!kept(i, j - 1)) frontierEdge(i, j, i + 1, j);
+            if (!kept(i, j + 1)) frontierEdge(i, j + 1, i + 1, j + 1);
+            if (!kept(i - 1, j)) frontierEdge(i, j, i, j + 1);
+            if (!kept(i + 1, j)) frontierEdge(i + 1, j, i + 1, j + 1);
+        }
+    }
+    std::vector<std::vector<std::pair<int, int>>> frontierLoops;
+    std::set<std::pair<std::pair<int, int>, std::pair<int, int>>> used;
+    for (const auto& [start, nbrs] : adj) {
+        for (const auto& first : nbrs) {
+            if (used.count({start, first})) continue;
+            std::vector<std::pair<int, int>> loop{start};
+            std::pair<int, int> prev = start, cur = first;
+            used.insert({start, first});
+            used.insert({first, start});  // one traversal per edge
+            bool closed = false;
+            for (size_t guard = 0; guard < adj.size() * 4 + 4; ++guard) {
+                if (cur == start) { closed = true; break; }
+                loop.push_back(cur);
+                const auto& next = adj.at(cur);
+                std::pair<int, int> step{-1, -1};
+                for (const auto& n : next) {
+                    if (n != prev && !used.count({cur, n})) {
+                        step = n;
+                        break;
+                    }
+                }
+                if (step.first < 0) break;
+                used.insert({cur, step});
+                used.insert({step, cur});
+                prev = cur;
+                cur = step;
+            }
+            if (closed && loop.size() >= 4) {
+                frontierLoops.push_back(std::move(loop));
+            }
+        }
+    }
+    if (frontierLoops.empty()) return false;  // shouldn't happen with cells
+
+    // Every frontier loop either encloses a web POCKET (its inside is not
+    // kept: it acts as that pocket's outer ring) or wraps a kept ISLAND
+    // (it is a hole of the enclosing web region).
+    struct Region {
+        std::vector<WebPoint> outer;
+        std::vector<std::vector<WebPoint>> holes;
+        double area = 0;  // |signed| of the outer, for nesting
+    };
+    std::vector<Region> regions;
+    regions.push_back({std::move(faceOuter), {}, 1e300});
+
+    auto loopWeb = [&](const std::vector<std::pair<int, int>>& loop) {
+        std::vector<WebPoint> web;
+        for (const auto& [i, j] : loop) web.push_back({cornerUV(i, j),
+                                                       vertAt(i, j)});
+        return web;
+    };
+    auto signedAreaOf = [&](const std::vector<WebPoint>& web) {
+        double a = 0;
+        for (size_t i = 0; i < web.size(); ++i) {
+            const gp_Pnt2d& p = web[i].uv;
+            const gp_Pnt2d& q = web[(i + 1) % web.size()].uv;
+            a += p.X() * q.Y() - q.X() * p.Y();
+        }
+        return a / 2;
+    };
+    std::vector<std::vector<WebPoint>> pendingHoles;
+    for (const auto& loop : frontierLoops) {
+        std::vector<WebPoint> web = loopWeb(loop);
+        double area = signedAreaOf(web);
+        // A point just inside the loop: offset from the first edge's
+        // midpoint toward the interior; kept there => island (hole).
+        gp_Pnt2d m((web[0].uv.X() + web[1].uv.X()) / 2,
+                   (web[0].uv.Y() + web[1].uv.Y()) / 2);
+        gp_Pnt2d dir(web[1].uv.X() - web[0].uv.X(),
+                     web[1].uv.Y() - web[0].uv.Y());
+        double side = area > 0 ? 1.0 : -1.0;  // interior is left of CCW
+        gp_Pnt2d probe(m.X() - side * dir.Y() * 0.25,
+                       m.Y() + side * dir.X() * 0.25);
+        int pi = int(std::floor((probe.X() - u0) / h));
+        int pj = int(std::floor((probe.Y() - v0) / h));
+        if (kept(pi, pj)) {
+            // Island: a hole of whichever region contains it.
+            if (area > 0) {
+                std::reverse(web.begin(), web.end());  // holes wind CW
+            }
+            pendingHoles.push_back(std::move(web));
+        } else {
+            // Pocket: its own web region, outer CCW.
+            if (area < 0) std::reverse(web.begin(), web.end());
+            regions.push_back({std::move(web), {}, std::abs(area)});
+        }
+    }
+    for (auto& hole : faceHoles) pendingHoles.push_back(std::move(hole));
+
+    // Assign each hole to the smallest region whose outer contains it.
+    auto containsPoint = [&](const std::vector<WebPoint>& ring,
+                             const gp_Pnt2d& p) {
+        int crossings = 0;
+        for (size_t i = 0; i < ring.size(); ++i) {
+            const gp_Pnt2d& a = ring[i].uv;
+            const gp_Pnt2d& b = ring[(i + 1) % ring.size()].uv;
+            if ((a.Y() > p.Y()) == (b.Y() > p.Y())) continue;
+            double x = a.X() + (p.Y() - a.Y()) / (b.Y() - a.Y()) *
+                                   (b.X() - a.X());
+            if (x > p.X()) ++crossings;
+        }
+        return (crossings & 1) != 0;
+    };
+    for (auto& hole : pendingHoles) {
+        int best = 0;
+        double bestArea = 1e300;
+        for (size_t r = 0; r < regions.size(); ++r) {
+            if (regions[r].area >= bestArea) continue;
+            if (r == 0 || containsPoint(regions[r].outer, hole[0].uv)) {
+                best = int(r);
+                bestArea = regions[r].area;
+            }
+        }
+        regions[best].holes.push_back(std::move(hole));
+    }
+    for (Region& r : regions) {
+        triangulateWeb(std::move(r.outer), std::move(r.holes), faceId, flip,
+                       out);
+    }
+    return true;
+}
+
 FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                   const GenerationSettings& settings,
                   GenerationCache* cache) {
@@ -1293,6 +1619,9 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                     return plan;
                 }
                 break;
+            case MesherKind::QuadFill:
+                if (planQuadFill(face, surf, model, plan)) return plan;
+                break;
             case MesherKind::QuadDominant:
                 plan.kind = MesherKind::Fallback;
                 plan.forceFallbackQuads = 1;
@@ -1376,6 +1705,10 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             return plan;
         }
     }
+
+    // Flat faces with quad-dominant set get the structured grid + rim
+    // fill instead of OCCT triangulation + pairing.
+    if (s.quadDominant && planQuadFill(face, surf, model, plan)) return plan;
 
     plan.kind = MesherKind::Fallback;
     return plan;
@@ -2503,6 +2836,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             case MesherKind::PlateWeb:
                 if (!meshPlateWeb(face, surf, model, fid, solvedEdge,
                                   s.radial, out)) {
+                    meshFallback(face, surf, fid, s, out);
+                }
+                break;
+            case MesherKind::QuadFill:
+                if (!meshQuadFill(face, surf, model, fid, solvedEdge,
+                                  s.radial, s.minSize, out)) {
                     meshFallback(face, surf, fid, s, out);
                 }
                 break;

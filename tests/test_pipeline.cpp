@@ -484,25 +484,25 @@ void testFillet() {
     }
     CHECK_EQ(polysPerFace[filletFaceId], 5 * 4);
 
-    // The notched end faces can't take a grid; guided pairing + one
-    // midpoint subdivision turns their interiors into quads, while their
-    // border polygons conform to the neighbouring grids' divisions (which
-    // can add or drop sides). Quad-dominant, and the solid is watertight.
-    int quadDominantFaces = 0;
+    // The notched end faces can't take a grid; with quad-dominant set
+    // they now take the structured quad-fill (interior quad grid + a thin
+    // conforming rim web) instead of triangulate-and-pair. Interior quads,
+    // rim polygons conforming to the neighbours, and the solid watertight.
+    int quadFillFaces = 0;
     size_t qdPolys = 0, qdQuads = 0;
     for (const auto& [fid, kind] : report.faceMesher) {
-        if (kind != weft::MesherKind::QuadDominant) continue;
-        ++quadDominantFaces;
+        if (kind != weft::MesherKind::QuadFill) continue;
+        ++quadFillFaces;
         for (size_t p = 0; p < mesh.polygons.size(); ++p) {
             if (mesh.polygonFaceId[p] != fid) continue;
             ++qdPolys;
             if (mesh.polygons[p].size() == 4) ++qdQuads;
         }
     }
-    CHECK_EQ(quadDominantFaces, 2);
-    CHECK(qdQuads > 0);         // pairing still yields interior quads
-    CHECK(qdPolys > qdQuads);   // borders conformed (non-quads at seams)
-    CHECK(isWatertight(mesh));  // ...which is the point: no leaks
+    CHECK_EQ(quadFillFaces, 2);
+    CHECK(qdQuads > 0);          // the interior grid is quads
+    CHECK(qdPolys >= qdQuads);   // plus the conforming rim
+    CHECK(isWatertight(mesh));   // ...which is the point: no leaks
 
     // Hold clustering: same counts, but the loops crowd toward the creases —
     // the first across-interval must shrink vs the uniform mesh.
@@ -931,6 +931,44 @@ void testAutoGates() {
     CHECK(isWatertight(minimal));
 }
 
+// Quad-fill: a slotted plate with quad-dominant set gets an interior quad
+// grid joined to the exact boundary by a rim web — mostly quads, fully
+// watertight, instead of the fan triangulations of triangulate-and-pair.
+void testQuadFill() {
+    std::printf("-- quad fill (slotted plate) --\n");
+    TopoDS_Shape plate = BRepPrimAPI_MakeBox(80.0, 30.0, 5.0).Shape();
+    TopoDS_Shape slot =
+        BRepPrimAPI_MakeBox(gp_Ax2(gp_Pnt(25.0, 12.0, -1.0), gp_Dir(0, 0, 1)),
+                            30.0, 6.0, 7.0)
+            .Shape();
+    plate = BRepAlgoAPI_Cut(plate, slot).Shape();
+    std::string stepPath = tmpPath("weft_test_quadfill.step");
+    weft::writeStep(plate, stepPath);
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis a = weft::analyze(model);
+
+    weft::GenerationSettings gs;
+    gs.defaults.quadDominant = true;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
+
+    int quadFill = 0;
+    size_t fillQuads = 0;
+    for (const auto& [fid, kind] : report.faceMesher) {
+        if (kind != weft::MesherKind::QuadFill) continue;
+        ++quadFill;
+        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+            if (mesh.polygonFaceId[p] == fid &&
+                mesh.polygons[p].size() == 4) {
+                ++fillQuads;
+            }
+        }
+    }
+    CHECK(quadFill >= 2);      // the two slotted plate faces
+    CHECK(fillQuads >= 2 * 20);  // real interior grids, not fans
+    CHECK(isWatertight(mesh));
+}
+
 // Same-loop bridge + fill: deleting a face leaves ONE boundary loop; the
 // bridge must split it between the two picked edges (a band whose rims
 // merged), and the fill tool must cap it with a single n-gon.
@@ -1226,6 +1264,7 @@ int main() {
     RUN(testNudgeVertex);
     RUN(testRecipeRemap);
     RUN(testAutoGates);
+    RUN(testQuadFill);
     RUN(testSameLoopBridgeAndFill);
     RUN(testGenerationCache);
     if (failures) {

@@ -110,6 +110,11 @@ enum class MesherKind {
                      // ear-clipped web tying collars to the outer boundary.
                      // All borders sample the B-rep edge curves at solved
                      // counts, so every neighbour welds watertight.
+    QuadFill,        // planar face of any shape: an interior quad grid
+                     // sized from the border density, joined to the exact
+                     // B-rep boundary by a thin triangulated rim — clean
+                     // quad flow on plates instead of fan triangulations.
+                     // Auto when quad-dominant is set; always forcible.
 };
 
 const char* mesherKindName(MesherKind k);
