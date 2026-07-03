@@ -478,7 +478,9 @@ void testFillet() {
     weft::GenerationReport report;
     weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
 
-    CHECK(report.faceMesher[filletFaceId] == weft::MesherKind::PlanarGrid);
+    // Curved fillet strips now take the Coons patch (border rows on
+    // the 3D edge curves) instead of a surface-sampled grid.
+    CHECK(report.faceMesher[filletFaceId] == weft::MesherKind::CoonsGrid);
     std::map<int, int> polysPerFace;
     for (size_t p = 0; p < mesh.polygons.size(); ++p) {
         ++polysPerFace[mesh.polygonFaceId[p]];

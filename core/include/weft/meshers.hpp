@@ -63,6 +63,9 @@ struct FaceMeshSettings {
     // deviation measured relative to face size instead of absolute.
     double minSize = 0.0;
     bool relativeDeviation = false;
+    // Plate-web collars: square borders instead of hole-shaped rings —
+    // the classic game pattern (round hole -> square collar -> plate).
+    bool squareCollar = false;
     // Plate-web / quad-fill boundary control: total vertex count around
     // the face's OUTER loop, distributed across its edges by arc length
     // and pinned (drives the neighbouring walls' shared edges too).

@@ -27,6 +27,7 @@ void applySetting(FaceMeshSettings& s, const std::string& key,
     else if (key == "reldev") s.relativeDeviation = std::stoi(value) != 0;
     else if (key == "adapt") s.adaptive = std::stoi(value) != 0;
     else if (key == "boundary") s.boundary = std::stoi(value);
+    else if (key == "sqcollar") s.squareCollar = std::stoi(value) != 0;
     else if (key == "cap") {
         if (value == "ngon") s.cap = CapStyle::NGon;
         else if (value == "fan") s.cap = CapStyle::Fan;
@@ -56,14 +57,14 @@ static std::string settingsToString(const FaceMeshSettings& s) {
                   "radial=%d,axial=%d,gridu=%d,gridv=%d,cap=%s,chord=%g,"
                   "angle=%g,loops=%d,hold=%g,rings=%d,quads=%d,minimal=%d,"
                   "skip=%d,mesher=%d,linkrims=%d,minsize=%g,reldev=%d,"
-                  "adapt=%d,boundary=%d",
+                  "adapt=%d,boundary=%d,sqcollar=%d",
                   s.radial, s.axial, s.gridU, s.gridV,
                   s.cap == CapStyle::Fan ? "fan" : "ngon", s.chordTolerance,
                   s.angleToleranceDeg, s.filletLoops, s.filletHold,
                   s.junctionRings, s.quadDominant ? 1 : 0, s.minimal ? 1 : 0,
                   s.exclude ? 1 : 0, s.forceMesher, s.linkRims ? 1 : 0,
                   s.minSize, s.relativeDeviation ? 1 : 0,
-                  s.adaptive ? 1 : 0, s.boundary);
+                  s.adaptive ? 1 : 0, s.boundary, s.squareCollar ? 1 : 0);
     return buf;
 }
 

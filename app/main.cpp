@@ -1547,6 +1547,7 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
             // under the grid section already).
             ch |= ImGui::DragInt("junction rings", &s.junctionRings, 0.2f,
                                  1, 32);
+            ch |= ImGui::Checkbox("square collars", &s.squareCollar);
         }
         if (!all && (k == MK::PlateWeb || k == MK::QuadFill ||
                      k == MK::MinimalNGon)) {
