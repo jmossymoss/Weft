@@ -124,6 +124,23 @@ struct GenerationReport {
     std::map<int, std::array<int, 2>> faceRims;
 };
 
+// Per-face mesh reuse across generate() calls: pass the same cache and
+// only faces whose settings, solved counts, or plan changed re-mesh —
+// dragging one face's density re-meshes one face, not the model. The
+// merge/conform/weld stages still run (they're cheap next to meshing).
+struct GenerationCache {
+    std::map<int, std::pair<std::string, PolyMesh>> faces;  // fid -> key+part
+    // Geometry-only memos (settings-independent, per model): results of
+    // the point-classifier probes planning runs on every face.
+    std::map<int, bool> revolutionCovers;
+    std::map<int, bool> coonsValid;
+    void clear() {
+        faces.clear();
+        revolutionCovers.clear();
+        coonsValid.clear();
+    }
+};
+
 // Route the generator's stage-by-stage debug trace (plans, density solve,
 // each face meshed, conformity per edge, weld) to a stream; null disables.
 // Lines are flushed as written so a crash log ends at the crash site.
@@ -142,6 +159,7 @@ void setGenerateDebugLog(std::FILE* f);
 // Every polygon carries its source FaceId; vertices are welded across faces.
 PolyMesh generate(const Model& model, const Analysis& analysis,
                   const GenerationSettings& settings,
-                  GenerationReport* report = nullptr);
+                  GenerationReport* report = nullptr,
+                  GenerationCache* cache = nullptr);
 
 }  // namespace weft

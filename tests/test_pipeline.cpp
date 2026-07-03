@@ -811,6 +811,35 @@ void testUnlinkedRims() {
     CHECK_EQ(tapered.countNgons(), 2);
 }
 
+// The generation cache must be invisible: cached regenerates match fresh
+// ones exactly, including after a single face's settings change.
+void testGenerationCache() {
+    std::printf("-- generation cache --\n");
+    std::string stepPath = tmpPath("weft_test_cache.step");
+    weft::writeStep(weft::makeFixture("boss"), stepPath);
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis a = weft::analyze(model);
+
+    weft::GenerationSettings gs;
+    gs.defaults.radial = 14;
+    weft::GenerationCache cache;
+    weft::PolyMesh first = weft::generate(model, a, gs, nullptr, &cache);
+    weft::PolyMesh again = weft::generate(model, a, gs, nullptr, &cache);
+    CHECK_EQ(again.vertexCount(), first.vertexCount());
+    CHECK_EQ(again.polygonCount(), first.polygonCount());
+    CHECK(isWatertight(again));
+
+    // Change one face; the cached result must equal a cache-less one.
+    gs.perFace[1] = gs.defaults;
+    gs.perFace[1].gridU = 3;
+    gs.perFace[1].gridV = 3;
+    weft::PolyMesh cachedRun = weft::generate(model, a, gs, nullptr, &cache);
+    weft::PolyMesh freshRun = weft::generate(model, a, gs);
+    CHECK_EQ(cachedRun.vertexCount(), freshRun.vertexCount());
+    CHECK_EQ(cachedRun.polygonCount(), freshRun.polygonCount());
+    CHECK(isWatertight(cachedRun));
+}
+
 // Announce each test and turn stray exceptions into a named failure
 // instead of a silent fail-fast crash (0xc0000409 on Windows).
 #define RUN(fn)                                               \
@@ -845,6 +874,7 @@ int main() {
     RUN(testBridge);
     RUN(testFreeformBorderConformity);
     RUN(testUnlinkedRims);
+    RUN(testGenerationCache);
     if (failures) {
         std::printf("\n%d FAILURE(S)\n", failures);
         return 1;

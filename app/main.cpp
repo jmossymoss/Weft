@@ -371,6 +371,7 @@ struct App {
     weft::Recipe recipe;
     weft::PolyMesh mesh;
     weft::GenerationReport report;
+    weft::GenerationCache genCache;  // per-face reuse across regenerates
     std::vector<weft::EdgePolyline> brepEdges;
 
     // Selection: Blender-style modes. Face mode selects B-rep faces, edge
@@ -545,8 +546,12 @@ static void regenerate(App& app) {
             app.recipe.settings.perEdge.size(), app.recipe.ops.size());
     try {
         weft::GenerationReport report;
-        weft::PolyMesh mesh = weft::generate(app.model, app.analysis,
-                                             app.recipe.settings, &report);
+        double t0 = glfwGetTime();
+        weft::PolyMesh mesh =
+            weft::generate(app.model, app.analysis, app.recipe.settings,
+                           &report, &app.genCache);
+        logLine("regenerate: generate took %.1f ms",
+                (glfwGetTime() - t0) * 1000.0);
         logLine("regenerate: generate ok, applying %zu op(s)",
                 app.recipe.ops.size());
         weft::applyOps(mesh, app.model, app.recipe.ops);
@@ -672,6 +677,7 @@ static void loadModel(App& app, const std::string& path) {
         app.selEdges.clear();
         app.activeFace = 0;
         app.undoStack.clear();
+        app.genCache.clear();
         app.recipe = {};
         regenerate(app);
         frameModel(app);
