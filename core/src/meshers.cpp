@@ -87,6 +87,7 @@ const char* mesherKindName(MesherKind k) {
         case MesherKind::MinimalNGon: return "minimal-ngon";
         case MesherKind::Fallback: return "fallback-tri";
         case MesherKind::AnnulusRing: return "annulus-ring";
+        case MesherKind::PlateWeb: return "plate-web";
     }
     return "fallback-tri";
 }
@@ -137,6 +138,9 @@ struct FacePlan {
     // Forced fallback flavour: -1 = follow settings, 0 = pure tris,
     // 1 = quad-dominant (used when the user forces a mesher).
     int forceFallbackQuads = -1;
+    // PlateWeb: every boundary wire's edge chain (loops[0] = outer wire).
+    // Each edge solves independently — a bore drives its own hole loop.
+    std::vector<std::vector<int>> loops;
 };
 
 bool isClosedRevolution(const BRepAdaptor_Surface& surf) {
@@ -609,6 +613,429 @@ void meshAnnulusRing(const TopoDS_Face& face, const Model& model, int faceId,
     for (auto& poly : polys) out.addPolygon(std::move(poly), faceId, flip);
 }
 
+// A planar face with hole loops that the simpler patterns can't take
+// (three or more wires, or two wires too edge-rich for the annulus band):
+// the bolt-hole plate. Each hole gets a quad collar, the rest is an
+// ear-clipped triangle web — every boundary vertex sits on its B-rep edge
+// curve at the solved count, so all neighbours weld watertight.
+bool planPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
+                  const Model& model, FacePlan& plan) {
+    if (surf.GetType() != GeomAbs_Plane) return false;
+    TopoDS_Wire outer = BRepTools::OuterWire(face);
+    if (outer.IsNull()) return false;
+    std::vector<std::vector<int>> loops;
+    int outerIdx = -1, wires = 0;
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        const TopoDS_Wire wire = TopoDS::Wire(wx.Current());
+        std::vector<int> loop;
+        for (BRepTools_WireExplorer we(wire, face); we.More(); we.Next()) {
+            const TopoDS_Edge edge = we.Current();
+            if (BRep_Tool::Degenerated(edge)) return false;
+            double f, l;
+            if (BRep_Tool::Curve(edge, f, l).IsNull()) return false;
+            if (BRep_Tool::CurveOnSurface(edge, face, f, l).IsNull()) {
+                return false;
+            }
+            int eid = model.edges.FindIndex(edge);
+            if (eid < 1) return false;
+            loop.push_back(eid);
+        }
+        if (loop.empty() || loop.size() > 16) return false;
+        if (wire.IsSame(outer)) outerIdx = wires;
+        loops.push_back(std::move(loop));
+        ++wires;
+    }
+    if (wires < 2 || outerIdx < 0) return false;
+    if (outerIdx != 0) std::swap(loops[0], loops[outerIdx]);
+    plan.kind = MesherKind::PlateWeb;
+    plan.loops = std::move(loops);
+    // Flattened list for reporting/conformity; densities stay per-edge
+    // (solveDensity never unites a plate's edges with each other).
+    for (const auto& loop : plan.loops) {
+        plan.uEdges.insert(plan.uEdges.end(), loop.begin(), loop.end());
+    }
+    plan.constrains = true;
+    return true;
+}
+
+// --- Plate-web execution: 2D machinery -------------------------------------
+// The plate is planar, so its UV space is an isometric chart — offsets and
+// intersection tests run there and map straight back to 3D.
+
+struct WebPoint {
+    gp_Pnt2d uv;
+    uint32_t vert;  // index in the MeshBuilder
+};
+
+double loopSignedArea(const std::vector<WebPoint>& pts) {
+    double a = 0;
+    for (size_t i = 0; i < pts.size(); ++i) {
+        const gp_Pnt2d& p = pts[i].uv;
+        const gp_Pnt2d& q = pts[(i + 1) % pts.size()].uv;
+        a += p.X() * q.Y() - q.X() * p.Y();
+    }
+    return a / 2;
+}
+
+double webCross(const gp_Pnt2d& o, const gp_Pnt2d& a, const gp_Pnt2d& b) {
+    return (a.X() - o.X()) * (b.Y() - o.Y()) -
+           (a.Y() - o.Y()) * (b.X() - o.X());
+}
+
+// Proper segment intersection (shared endpoints don't count): used to keep
+// hole-to-outer bridges from crossing any boundary edge.
+bool webSegmentsCross(const gp_Pnt2d& a, const gp_Pnt2d& b, const gp_Pnt2d& c,
+                      const gp_Pnt2d& d) {
+    const double eps = 1e-12;
+    auto near2 = [&](const gp_Pnt2d& p, const gp_Pnt2d& q) {
+        return p.SquareDistance(q) < eps;
+    };
+    if (near2(a, c) || near2(a, d) || near2(b, c) || near2(b, d)) return false;
+    double d1 = webCross(c, d, a), d2 = webCross(c, d, b);
+    double d3 = webCross(a, b, c), d4 = webCross(a, b, d);
+    return ((d1 > 0) != (d2 > 0)) && ((d3 > 0) != (d4 > 0)) &&
+           std::abs(d1 - d2) > eps && std::abs(d3 - d4) > eps;
+}
+
+// Ear clipping over a CCW polygon (may contain coincident bridge vertex
+// pairs from hole merging — they share `vert`, so the doubled bridge edges
+// cancel and the result stays watertight).
+void earClip(std::vector<WebPoint> poly, int faceId, bool flip,
+             MeshBuilder& out) {
+    const size_t n = poly.size();
+    if (n < 3) return;
+    // Scale-free epsilon for convexity/containment decisions.
+    double span = 0;
+    for (const WebPoint& p : poly) {
+        span = std::max({span, std::abs(p.uv.X()), std::abs(p.uv.Y())});
+    }
+    const double eps = 1e-12 * std::max(1.0, span * span);
+
+    std::vector<size_t> idx(n);
+    std::iota(idx.begin(), idx.end(), 0);
+    auto insideTri = [&](const gp_Pnt2d& a, const gp_Pnt2d& b,
+                         const gp_Pnt2d& c, const gp_Pnt2d& p) {
+        return webCross(a, b, p) > eps && webCross(b, c, p) > eps &&
+               webCross(c, a, p) > eps;
+    };
+    size_t guard = 3 * n * n + 16;
+    while (idx.size() > 3 && guard-- > 0) {
+        bool clipped = false;
+        for (size_t k = 0; k < idx.size(); ++k) {
+            size_t ip = idx[(k + idx.size() - 1) % idx.size()];
+            size_t ic = idx[k];
+            size_t in = idx[(k + 1) % idx.size()];
+            const gp_Pnt2d &a = poly[ip].uv, &b = poly[ic].uv,
+                           &c = poly[in].uv;
+            if (webCross(a, b, c) <= eps) continue;  // reflex or collinear
+            bool blocked = false;
+            for (size_t other : idx) {
+                if (other == ip || other == ic || other == in) continue;
+                const gp_Pnt2d& p = poly[other].uv;
+                // Coincident duplicates (bridge twins) never block an ear.
+                if (p.SquareDistance(a) < eps || p.SquareDistance(b) < eps ||
+                    p.SquareDistance(c) < eps) {
+                    continue;
+                }
+                if (insideTri(a, b, c, p)) {
+                    blocked = true;
+                    break;
+                }
+            }
+            if (blocked) continue;
+            out.addPolygon({poly[ip].vert, poly[ic].vert, poly[in].vert},
+                           faceId, flip);
+            idx.erase(idx.begin() + k);
+            clipped = true;
+            break;
+        }
+        if (!clipped) {
+            // Numerical dead end (should not happen on sane plates): close
+            // the rest as a fan so the face at least stays connected.
+            for (size_t k = 1; k + 1 < idx.size(); ++k) {
+                out.addPolygon({poly[idx[0]].vert, poly[idx[k]].vert,
+                                poly[idx[k + 1]].vert},
+                               faceId, flip);
+            }
+            return;
+        }
+    }
+    if (idx.size() == 3) {
+        out.addPolygon({poly[idx[0]].vert, poly[idx[1]].vert,
+                        poly[idx[2]].vert},
+                       faceId, flip);
+    }
+}
+
+// Merge hole rings into the outer ring via non-crossing bridges (doubled
+// bridge vertices), rightmost holes first, then ear-clip the result.
+void triangulateWeb(std::vector<WebPoint> outer,
+                    std::vector<std::vector<WebPoint>> holes, int faceId,
+                    bool flip, MeshBuilder& out) {
+    auto maxX = [](const std::vector<WebPoint>& ring) {
+        size_t best = 0;
+        for (size_t i = 1; i < ring.size(); ++i) {
+            if (ring[i].uv.X() > ring[best].uv.X()) best = i;
+        }
+        return best;
+    };
+    std::sort(holes.begin(), holes.end(),
+              [&](const std::vector<WebPoint>& a,
+                  const std::vector<WebPoint>& b) {
+                  return a[maxX(a)].uv.X() > b[maxX(b)].uv.X();
+              });
+
+    for (size_t h = 0; h < holes.size(); ++h) {
+        const std::vector<WebPoint>& hole = holes[h];
+        const size_t m = maxX(hole);
+        const gp_Pnt2d& M = hole[m].uv;
+        // Candidate bridge target: nearest outer vertex whose connecting
+        // segment crosses no boundary (outer so far, this hole, or any
+        // hole still waiting to merge). Non-crossing => inside the domain.
+        auto crossesAny = [&](const gp_Pnt2d& from, const gp_Pnt2d& to) {
+            auto crossesRing = [&](const std::vector<WebPoint>& ring) {
+                for (size_t i = 0; i < ring.size(); ++i) {
+                    if (webSegmentsCross(from, to, ring[i].uv,
+                                         ring[(i + 1) % ring.size()].uv)) {
+                        return true;
+                    }
+                }
+                return false;
+            };
+            if (crossesRing(outer) || crossesRing(hole)) return true;
+            for (size_t j = h + 1; j < holes.size(); ++j) {
+                if (crossesRing(holes[j])) return true;
+            }
+            return false;
+        };
+        size_t bestP = outer.size();
+        double bestD = 1e300;
+        for (size_t p = 0; p < outer.size(); ++p) {
+            double d = M.SquareDistance(outer[p].uv);
+            if (d >= bestD) continue;
+            if (crossesAny(M, outer[p].uv)) continue;
+            bestD = d;
+            bestP = p;
+        }
+        if (bestP == outer.size()) {
+            // No visible vertex (pathological): mesh the hole ring away as
+            // its own fan so we don't lose the boundary vertices entirely.
+            for (size_t k = 1; k + 1 < hole.size(); ++k) {
+                out.addPolygon(
+                    {hole[0].vert, hole[k + 1].vert, hole[k].vert}, faceId,
+                    flip);
+            }
+            continue;
+        }
+        // Splice: ...P, M, M+1, ..., M-1, M, P, ... — P and M appear twice
+        // sharing their vertex ids, so the bridge edges cancel pairwise.
+        std::vector<WebPoint> merged;
+        merged.reserve(outer.size() + hole.size() + 2);
+        merged.insert(merged.end(), outer.begin(),
+                      outer.begin() + bestP + 1);
+        for (size_t k = 0; k <= hole.size(); ++k) {
+            merged.push_back(hole[(m + k) % hole.size()]);
+        }
+        merged.insert(merged.end(), outer.begin() + bestP, outer.end());
+        outer = std::move(merged);
+    }
+    earClip(std::move(outer), faceId, flip, out);
+}
+
+bool meshPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
+                  const Model& model, int faceId,
+                  const std::vector<int>& solvedEdge, int radialDefault,
+                  MeshBuilder& out) {
+    // Sample every wire as one chained ring: each edge at its own solved
+    // count, positions on the 3D edge curve (weld-exact), UV from the
+    // pcurve (the plate's isometric chart).
+    struct Ring {
+        std::vector<gp_Pnt2d> uv;
+        std::vector<gp_Pnt> p;
+        bool isOuter = false;
+    };
+    TopoDS_Wire outerWire = BRepTools::OuterWire(face);
+    std::vector<Ring> rings;
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        const TopoDS_Wire wire = TopoDS::Wire(wx.Current());
+        Ring ring;
+        ring.isOuter = wire.IsSame(outerWire);
+        int wireEdges = 0;
+        for (BRepTools_WireExplorer we(wire, face); we.More(); we.Next()) {
+            ++wireEdges;
+        }
+        for (BRepTools_WireExplorer we(wire, face); we.More(); we.Next()) {
+            const TopoDS_Edge edge = we.Current();
+            int eid = model.edges.FindIndex(edge);
+            int n = (eid >= 1 && eid < int(solvedEdge.size()))
+                        ? solvedEdge[eid]
+                        : 0;
+            if (n < 1) {
+                n = std::max(1, std::max(3, radialDefault) /
+                                    std::max(1, wireEdges));
+            }
+            double f3, l3, f2, l2;
+            Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, f3, l3);
+            Handle(Geom2d_Curve) c2 =
+                BRep_Tool::CurveOnSurface(edge, face, f2, l2);
+            if (c3.IsNull() || c2.IsNull()) return false;
+            const bool rev = edge.Orientation() == TopAbs_REVERSED;
+            for (int i = 0; i < n; ++i) {  // endpoint owned by the next edge
+                double t = rev ? 1.0 - double(i) / n : double(i) / n;
+                ring.uv.push_back(c2->Value(f2 + (l2 - f2) * t));
+                ring.p.push_back(c3->Value(f3 + (l3 - f3) * t));
+            }
+        }
+        if (ring.uv.size() < 3) return false;
+        rings.push_back(std::move(ring));
+    }
+    if (rings.size() < 2) return false;
+
+    // Normalize winding in UV: outer CCW, holes CW (triangles then come
+    // out CCW in UV; one global flip against the face normal at the end).
+    auto ringArea = [](const Ring& r) {
+        double a = 0;
+        for (size_t i = 0; i < r.uv.size(); ++i) {
+            const gp_Pnt2d& p = r.uv[i];
+            const gp_Pnt2d& q = r.uv[(i + 1) % r.uv.size()];
+            a += p.X() * q.Y() - q.X() * p.Y();
+        }
+        return a / 2;
+    };
+    for (Ring& r : rings) {
+        double a = ringArea(r);
+        if (std::abs(a) < 1e-14) return false;
+        if (r.isOuter != (a > 0)) {
+            std::reverse(r.uv.begin(), r.uv.end());
+            std::reverse(r.p.begin(), r.p.end());
+        }
+    }
+
+    // Boundary vertices (anchorless: they live on shared B-rep edges).
+    std::vector<std::vector<uint32_t>> ringVerts(rings.size());
+    for (size_t r = 0; r < rings.size(); ++r) {
+        for (const gp_Pnt& p : rings[r].p) {
+            ringVerts[r].push_back(out.addVertex(p, {}));
+        }
+    }
+
+    // A UV-CCW polygon's 3D normal equals du×dv on a plane chart, so the
+    // face orientation alone decides the global flip.
+    const bool flip = face.Orientation() == TopAbs_REVERSED;
+
+    // Even-odd containment against the sampled rings: cheap, and exactly
+    // consistent with the polygon domain the web is triangulated over
+    // (the true-face classifier costs ~1ms per probe on plates this size).
+    auto insideDomain = [&](const gp_Pnt2d& p) {
+        int crossings = 0;
+        for (const Ring& r : rings) {
+            for (size_t i = 0; i < r.uv.size(); ++i) {
+                const gp_Pnt2d& a = r.uv[i];
+                const gp_Pnt2d& b = r.uv[(i + 1) % r.uv.size()];
+                if ((a.Y() > p.Y()) == (b.Y() > p.Y())) continue;
+                double x = a.X() + (p.Y() - a.Y()) / (b.Y() - a.Y()) *
+                                       (b.X() - a.X());
+                if (x > p.X()) ++crossings;
+            }
+        }
+        return (crossings & 1) != 0;
+    };
+
+    // Quad collar around every hole: radial offset in UV away from the
+    // hole's centroid, clamped so it can't reach any other loop, dropped
+    // if the offset points leave the face or the ring degenerates.
+    const size_t outerIdx = [&] {
+        for (size_t r = 0; r < rings.size(); ++r) {
+            if (rings[r].isOuter) return r;
+        }
+        return size_t(0);
+    }();
+    std::vector<WebPoint> webOuter;
+    for (size_t i = 0; i < rings[outerIdx].uv.size(); ++i) {
+        webOuter.push_back({rings[outerIdx].uv[i], ringVerts[outerIdx][i]});
+    }
+    std::vector<std::vector<WebPoint>> webHoles;
+    for (size_t r = 0; r < rings.size(); ++r) {
+        if (r == outerIdx) continue;
+        const Ring& hole = rings[r];
+        const size_t n = hole.uv.size();
+        gp_XY centroid(0, 0);
+        double perimeter = 0;
+        for (size_t i = 0; i < n; ++i) {
+            centroid += hole.uv[i].XY();
+            perimeter += hole.uv[i].Distance(hole.uv[(i + 1) % n]);
+        }
+        centroid /= double(n);
+        double d = 1.2 * perimeter / double(n);
+        // Clearance to every other loop's vertices caps the collar depth.
+        double clearance = 1e300;
+        for (size_t o = 0; o < rings.size(); ++o) {
+            if (o == r) continue;
+            for (const gp_Pnt2d& q : rings[o].uv) {
+                for (const gp_Pnt2d& p : hole.uv) {
+                    clearance = std::min(clearance, p.Distance(q));
+                }
+            }
+        }
+        d = std::min(d, 0.35 * clearance);
+
+        std::vector<WebPoint> boundary;  // what the web sees for this hole
+        for (size_t i = 0; i < n; ++i) {
+            boundary.push_back({hole.uv[i], ringVerts[r][i]});
+        }
+        bool collared = false;
+        while (d > 1e-9 * (1.0 + perimeter) && !collared) {
+            std::vector<gp_Pnt2d> collar(n);
+            bool ok = true;
+            for (size_t i = 0; i < n && ok; ++i) {
+                gp_XY dir = hole.uv[i].XY() - centroid;
+                double len = dir.Modulus();
+                if (len < 1e-12) { ok = false; break; }
+                collar[i] = gp_Pnt2d(hole.uv[i].XY() + dir * (d / len));
+                if (!insideDomain(collar[i])) ok = false;
+            }
+            if (ok) {
+                // The collar must stay a sane ring: same orientation as
+                // the hole and strictly larger.
+                double holeA = ringArea(hole);
+                double collarA = 0;
+                for (size_t i = 0; i < n; ++i) {
+                    const gp_Pnt2d& p = collar[i];
+                    const gp_Pnt2d& q = collar[(i + 1) % n];
+                    collarA += p.X() * q.Y() - q.X() * p.Y();
+                }
+                collarA /= 2;
+                ok = (collarA < 0) == (holeA < 0) &&
+                     std::abs(collarA) > std::abs(holeA);
+            }
+            if (!ok) {
+                d /= 2;  // pull the collar in and retry, or give up
+                continue;
+            }
+            std::vector<WebPoint> collarPts(n);
+            for (size_t i = 0; i < n; ++i) {
+                gp_Pnt cp = surf.Value(collar[i].X(), collar[i].Y());
+                collarPts[i] = {collar[i],
+                                out.addVertex(cp, {faceId, collar[i].X(),
+                                                   collar[i].Y()})};
+            }
+            for (size_t i = 0; i < n; ++i) {
+                size_t j = (i + 1) % n;
+                out.addPolygon({ringVerts[r][i], ringVerts[r][j],
+                                collarPts[j].vert, collarPts[i].vert},
+                               faceId, flip);
+            }
+            boundary = std::move(collarPts);
+            collared = true;
+        }
+        webHoles.push_back(std::move(boundary));
+    }
+
+    triangulateWeb(std::move(webOuter), std::move(webHoles), faceId, flip,
+                   out);
+    return true;
+}
+
 FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                   const GenerationSettings& settings,
                   GenerationCache* cache) {
@@ -705,6 +1132,9 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             case MesherKind::AnnulusRing:
                 if (planAnnulus(face, model, plan)) return plan;
                 break;
+            case MesherKind::PlateWeb:
+                if (planPlateWeb(face, surf, model, plan)) return plan;
+                break;
             case MesherKind::QuadDominant:
                 plan.kind = MesherKind::Fallback;
                 plan.forceFallbackQuads = 1;
@@ -735,6 +1165,8 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     if (planRingJunction(face, model, plan)) return plan;
 
     if (planAnnulus(face, model, plan)) return plan;
+
+    if (planPlateWeb(face, surf, model, plan)) return plan;
 
     if (parametricGridFits(face, surf, std::max(1, s.gridU),
                            std::max(1, s.gridV))) {
@@ -839,6 +1271,9 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
 
     for (const auto& [fid, plan] : plans) {
         if (!plan.constrains) continue;
+        // Plate webs never tie their edges together: each hole/border edge
+        // solves on its own (the bore through a hole drives that hole).
+        if (plan.kind == MesherKind::PlateWeb) continue;
         if (plan.linkRims) sol.groups.unite(plan.uEdges);
         sol.groups.unite(plan.vEdges);
     }
@@ -879,6 +1314,15 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
             // neighbours usually drive them) at the radial default.
             propose(plan.uEdges, std::max(3, s.radial), overridden);
             propose(plan.vEdges, std::max(3, s.radial), overridden);
+        } else if (plan.kind == MesherKind::PlateWeb) {
+            // Every border edge proposes independently: a one-edge hole
+            // circle gets the full radial default, multi-edge loops share
+            // it out; a neighbouring bore's larger proposal still wins.
+            for (const auto& loop : plan.loops) {
+                int per = std::max(1, std::max(3, s.radial) /
+                                          int(loop.size()));
+                for (int eid : loop) propose({eid}, per, overridden);
+            }
         } else {  // revolution sides and disk caps subdivide rings radially
             if (!plan.linkRims && plan.uEdges.size() == 2) {
                 // Unlinked rims: each ring solves on its own (pin per-edge
@@ -1432,7 +1876,7 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
     auto isFreeform = [&](int fid) {
         MesherKind k = plans.at(fid).kind;
         return (k == MesherKind::Fallback || k == MesherKind::QuadDominant ||
-                k == MesherKind::AnnulusRing) &&
+                k == MesherKind::AnnulusRing || k == MesherKind::PlateWeb) &&
                !settings.forFace(fid).exclude;
     };
     auto isAnalytic = [&](int fid) {
@@ -1777,7 +2221,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             s.minimal ? 1 : 0, s.exclude ? 1 : 0, s.minSize,
             s.relativeDeviation ? 1 : 0);
         cacheKey[fid] = key;
-        if (plan.kind == MesherKind::AnnulusRing) {
+        if (plan.kind == MesherKind::AnnulusRing ||
+            plan.kind == MesherKind::PlateWeb) {
             for (int eid : plan.uEdges) {
                 cacheKey[fid] += "u" + std::to_string(solvedEdge[eid]);
             }
@@ -1871,6 +2316,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             case MesherKind::AnnulusRing:
                 meshAnnulusRing(face, model, fid, plan.uEdges, plan.vEdges,
                                 solvedEdge, s.radial, out);
+                break;
+            case MesherKind::PlateWeb:
+                if (!meshPlateWeb(face, surf, model, fid, solvedEdge,
+                                  s.radial, out)) {
+                    meshFallback(face, surf, fid, s, out);
+                }
                 break;
             case MesherKind::QuadDominant:
             case MesherKind::Fallback: {

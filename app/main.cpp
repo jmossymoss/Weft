@@ -1163,7 +1163,11 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
     using MK = weft::MesherKind;
     const bool all = kind == nullptr;
     const MK k = kind ? *kind : MK::Fallback;
-    const bool revolved = all || k == MK::RevolutionGrid || k == MK::DiskCap;
+    // Annulus loops and plate-web borders take the radial default too
+    // (each closed loop, or each hole circle, proposes it).
+    const bool revolved = all || k == MK::RevolutionGrid ||
+                          k == MK::DiskCap || k == MK::AnnulusRing ||
+                          k == MK::PlateWeb;
     const bool grid = all || k == MK::PlanarGrid || k == MK::MinimalNGon ||
                       k == MK::RingJunction || k == MK::CoonsGrid;
     const bool freeform = all || k == MK::QuadDominant || k == MK::Fallback;
@@ -1231,7 +1235,7 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
         static const char* kMesherItems =
             "auto\0revolution-grid\0disk-cap\0parametric-grid\0"
             "coons-grid\0ring-junction\0quad-dominant\0minimal-ngon\0"
-            "fallback-tri\0annulus-ring\0";
+            "fallback-tri\0annulus-ring\0plate-web\0";
         int mesher = s.forceMesher;
         if (ImGui::Combo("mesher", &mesher, kMesherItems)) {
             s.forceMesher = mesher;

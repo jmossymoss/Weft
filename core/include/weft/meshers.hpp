@@ -105,6 +105,11 @@ enum class MesherKind {
     AnnulusRing,     // face bounded by exactly two closed loops (the flat
                      // ring between two revolution rims): one zippered
                      // band — equal counts give pure quads
+    PlateWeb,        // planar face with any number of hole loops (bolt-hole
+                     // plates): a quad collar around every hole + an
+                     // ear-clipped web tying collars to the outer boundary.
+                     // All borders sample the B-rep edge curves at solved
+                     // counts, so every neighbour welds watertight.
 };
 
 const char* mesherKindName(MesherKind k);
