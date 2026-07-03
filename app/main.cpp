@@ -2588,18 +2588,27 @@ int main(int argc, char** argv) {
                     }
                     app.recipe.settings.perEdge[eid] = std::max(3, cur + delta);
                     markDirty(app);
-                } else if (app.mode == Mode::Bridge) {
-                    // Nothing hovered: twist the most recent bridge so its
-                    // rails stop spiralling.
+                } else if (app.mode == Mode::Bridge ||
+                           (app.selectMode == SelectMode::Edge && shift &&
+                            !app.recipe.ops.empty() &&
+                            app.recipe.ops.back().kind ==
+                                weft::ManualOp::Kind::Bridge)) {
+                    // Adjust the most recent bridge: [ ] twists the rail
+                    // pairing, shift+[ ] changes the rows across (spans).
                     for (auto op = app.recipe.ops.rbegin();
                          op != app.recipe.ops.rend(); ++op) {
                         if (op->kind != weft::ManualOp::Kind::Bridge) continue;
-                        op->twist += delta;
+                        if (shift) {
+                            op->spans = std::max(1, op->spans + delta);
+                            std::snprintf(app.hudText, sizeof app.hudText,
+                                          "bridge spans: %d", op->spans);
+                        } else {
+                            op->twist += delta;
+                            std::snprintf(app.hudText, sizeof app.hudText,
+                                          "bridge twist: %+d", op->twist);
+                        }
                         markDirty(app);
-                        std::snprintf(app.hudText, sizeof app.hudText,
-                                      "bridge twist: %+d", op->twist);
                         app.hudUntil = glfwGetTime() + 0.9;
-                        app.status = "bridge twist adjusted";
                         break;
                     }
                 } else if (app.selectMode == SelectMode::Edge) {
@@ -2679,7 +2688,20 @@ int main(int argc, char** argv) {
             }
             if (ImGui::IsKeyPressed(ImGuiKey_W, false)) app.showWire = !app.showWire;
             if (ImGui::IsKeyPressed(ImGuiKey_B, false)) {
-                app.showBrepEdges = !app.showBrepEdges;
+                if (app.selectMode == SelectMode::Edge &&
+                    app.selEdges.size() == 2 && app.hasModel) {
+                    auto it = app.selEdges.begin();
+                    weft::ManualOp op;
+                    op.kind = weft::ManualOp::Kind::Bridge;
+                    op.edgeA = *it++;
+                    op.edgeB = *it;
+                    app.recipe.ops.push_back(op);
+                    markDirty(app);
+                    app.status = "bridged ([ ] twist, shift+[ ] spans, "
+                                 "ctrl+Z undoes)";
+                } else {
+                    app.showBrepEdges = !app.showBrepEdges;
+                }
             }
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false) &&
                 app.hasModel && !app.recipePath.empty()) {

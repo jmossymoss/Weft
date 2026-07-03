@@ -501,10 +501,33 @@ int bridgeLoops(PolyMesh& mesh, const Model& model, const ManualOp& op) {
     };
 
     if (n == m) {
-        // Equal counts: one clean quad ring.
+        // Equal counts: a clean quad ring — subdivided into `spans` rows
+        // across the strip (each column's rail lerped between its ends).
+        const int rows = std::max(1, op.spans);
+        std::vector<std::vector<uint32_t>> R(rows + 1,
+                                             std::vector<uint32_t>(n));
         for (int i = 0; i < n; ++i) {
-            int k = wrapB(bestOff - i);
-            emit({A[i], A[(i + 1) % n], B[k], B[(k + 1) % m]});
+            uint32_t top = A[i];
+            uint32_t bot = B[wrapB(bestOff - i + 1)];
+            R[0][i] = top;
+            R[rows][i] = bot;
+            for (int j = 1; j < rows; ++j) {
+                double t = double(j) / rows;
+                std::array<double, 3> p;
+                for (int c = 0; c < 3; ++c) {
+                    p[c] = (1.0 - t) * mesh.vertices[top][c] +
+                           t * mesh.vertices[bot][c];
+                }
+                R[j][i] = uint32_t(mesh.vertices.size());
+                mesh.vertices.push_back(p);
+                mesh.anchors.push_back({});
+            }
+        }
+        for (int j = 0; j < rows; ++j) {
+            for (int i = 0; i < n; ++i) {
+                emit({R[j][i], R[j][(i + 1) % n], R[j + 1][(i + 1) % n],
+                      R[j + 1][i]});
+            }
         }
         return added;
     }

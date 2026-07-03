@@ -1128,6 +1128,88 @@ bool meshPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
             boundary.push_back({hole.uv[i], ringVerts[r][i]});
         }
         const double holeA = planarRingArea(hole);
+
+        // Square collars collapse the ring to exactly FOUR corner verts:
+        // every hole vertex fans into its quadrant's corner, transitions
+        // become quads, and the web onward sees a clean 4-gon — the
+        // classic game pattern for a round hole in a plate.
+        if (squareCollar && n >= 8) {
+            double off = dStep * wantRings;
+            bool built = false;
+            while (off > 1e-9 * (1.0 + perimeter) && !built) {
+                double bx0 = 1e300, bx1 = -1e300, by0 = 1e300, by1 = -1e300;
+                for (const gp_Pnt2d& p : hole.uv) {
+                    bx0 = std::min(bx0, p.X());
+                    bx1 = std::max(bx1, p.X());
+                    by0 = std::min(by0, p.Y());
+                    by1 = std::max(by1, p.Y());
+                }
+                bx0 -= off; bx1 += off;
+                by0 -= off; by1 += off;
+                // CW to match the hole's winding.
+                const gp_Pnt2d corner[4] = {{bx0, by0}, {bx0, by1},
+                                            {bx1, by1}, {bx1, by0}};
+                bool ok = true;
+                for (int k = 0; k < 4 && ok; ++k) {
+                    ok = insideDomain(corner[k]);
+                }
+                // Quadrant of every hole vertex (nearest corner by angle);
+                // must step by at most one corner between neighbours.
+                std::vector<int> sect(n);
+                if (ok) {
+                    for (size_t i = 0; i < n; ++i) {
+                        double best = -1e300;
+                        for (int k = 0; k < 4; ++k) {
+                            gp_XY a = hole.uv[i].XY() - centroid;
+                            gp_XY b = corner[k].XY() - centroid;
+                            double dot =
+                                (a * b) / std::max(1e-12, a.Modulus() *
+                                                              b.Modulus());
+                            if (dot > best) {
+                                best = dot;
+                                sect[i] = k;
+                            }
+                        }
+                    }
+                    for (size_t i = 0; i < n && ok; ++i) {
+                        int a = sect[i], b = sect[(i + 1) % n];
+                        int step = ((b - a) % 4 + 4) % 4;
+                        if (step > 1) ok = false;  // empty quadrant
+                    }
+                }
+                if (!ok) {
+                    off /= 2;
+                    continue;
+                }
+                std::array<uint32_t, 4> cv;
+                std::array<WebPoint, 4> cw;
+                for (int k = 0; k < 4; ++k) {
+                    gp_Pnt cp = surf.Value(corner[k].X(), corner[k].Y());
+                    cv[k] = out.addVertex(cp, {faceId, corner[k].X(),
+                                               corner[k].Y()});
+                    cw[k] = {corner[k], cv[k]};
+                }
+                for (size_t i = 0; i < n; ++i) {
+                    size_t j = (i + 1) % n;
+                    if (sect[i] == sect[j]) {
+                        out.addPolygon({ringVerts[r][i], ringVerts[r][j],
+                                        cv[sect[i]]},
+                                       faceId, flip);
+                    } else {  // quadrant transition: one quad
+                        out.addPolygon({ringVerts[r][i], ringVerts[r][j],
+                                        cv[sect[j]], cv[sect[i]]},
+                                       faceId, flip);
+                    }
+                }
+                boundary.assign(cw.begin(), cw.end());
+                built = true;
+            }
+            if (built) {
+                webHoles.push_back(std::move(boundary));
+                continue;
+            }
+            // No room for the square: fall through to the radial rings.
+        }
         while (dStep > 1e-9 * (1.0 + perimeter)) {
             // Grow ring by ring; stop at the first one that leaves the
             // face or degenerates (keeping what fit so far).
@@ -1278,6 +1360,62 @@ bool planQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
 // from its border density, and the gap between the grid and the exact
 // boundary closes with the hole-bridged ear-clip web. Large clean quad
 // flow on plates instead of fan triangulations.
+// Zipper a simple band between an outer ring (CCW in UV) and a hole ring
+// (CW): rotational alignment by total rail length, then a greedy walk that
+// advances whichever side makes the shorter diagonal. Equal counts give a
+// pure quad ring; the rim of a quad-fill face reads as flow, not ear soup.
+void zipperRings(const std::vector<WebPoint>& outer,
+                 const std::vector<WebPoint>& hole, int faceId, bool flip,
+                 MeshBuilder& out) {
+    const int n = int(outer.size());
+    const int m = int(hole.size());
+    // The hole winds opposite to the outer; reverse it so both progress
+    // the same way around the band.
+    std::vector<WebPoint> ring(hole.rbegin(), hole.rend());
+    auto d2 = [](const WebPoint& a, const WebPoint& b) {
+        return a.uv.SquareDistance(b.uv);
+    };
+    int bestOff = 0;
+    double bestSum = 1e300;
+    for (int off = 0; off < m; ++off) {
+        double sum = 0;
+        for (int i = 0; i < n; i += std::max(1, n / 64)) {
+            sum += d2(outer[i], ring[(off + i * m / n) % m]);
+        }
+        if (sum < bestSum) {
+            bestSum = sum;
+            bestOff = off;
+        }
+    }
+    if (n == m) {  // pure quad ring
+        for (int i = 0; i < n; ++i) {
+            int j = (bestOff + i) % m;
+            out.addPolygon({outer[i].vert, outer[(i + 1) % n].vert,
+                            ring[(j + 1) % m].vert, ring[j].vert},
+                           faceId, flip);
+        }
+        return;
+    }
+    int ia = 0, ib = 0;
+    while (ia < n || ib < m) {
+        const WebPoint& a = outer[ia % n];
+        const WebPoint& a1 = outer[(ia + 1) % n];
+        const WebPoint& b = ring[(bestOff + ib) % m];
+        const WebPoint& b1 = ring[(bestOff + ib + 1) % m];
+        bool stepA;
+        if (ia >= n) stepA = false;
+        else if (ib >= m) stepA = true;
+        else stepA = d2(a1, b) <= d2(a, b1);
+        if (stepA) {
+            out.addPolygon({a.vert, a1.vert, b.vert}, faceId, flip);
+            ++ia;
+        } else {
+            out.addPolygon({a.vert, b1.vert, b.vert}, faceId, flip);
+            ++ib;
+        }
+    }
+}
+
 bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                   const Model& model, int faceId,
                   const std::vector<int>& solvedEdge, int radialDefault,
@@ -1603,8 +1741,16 @@ bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         regions[best].holes.push_back(std::move(hole));
     }
     for (Region& r : regions) {
-        triangulateWeb(std::move(r.outer), std::move(r.holes), faceId, flip,
-                       out);
+        // A simple band (one boundary ring around one frontier ring, or a
+        // frontier pocket around one hole ring) zippers into flowing
+        // quads/tris; anything more complex keeps the ear-clipped web.
+        if (r.holes.size() == 1 && r.outer.size() >= 3 &&
+            r.holes[0].size() >= 3) {
+            zipperRings(r.outer, r.holes[0], faceId, flip, out);
+        } else {
+            triangulateWeb(std::move(r.outer), std::move(r.holes), faceId,
+                           flip, out);
+        }
     }
     return true;
 }
