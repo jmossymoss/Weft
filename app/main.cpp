@@ -1157,7 +1157,7 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
         static const char* kMesherItems =
             "auto\0revolution-grid\0disk-cap\0parametric-grid\0"
             "coons-grid\0ring-junction\0quad-dominant\0minimal-ngon\0"
-            "fallback-tri\0";
+            "fallback-tri\0annulus-ring\0";
         int mesher = s.forceMesher;
         if (ImGui::Combo("mesher", &mesher, kMesherItems)) {
             s.forceMesher = mesher;

@@ -102,6 +102,9 @@ enum class MesherKind {
     MinimalNGon,     // planar face as a single boundary n-gon (flat panels
                      // don't need interior topology for game meshes)
     Fallback,        // OCCT incremental triangulation, pure triangles
+    AnnulusRing,     // face bounded by exactly two closed loops (the flat
+                     // ring between two revolution rims): one zippered
+                     // band — equal counts give pure quads
 };
 
 const char* mesherKindName(MesherKind k);

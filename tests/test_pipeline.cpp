@@ -765,14 +765,12 @@ void testFreeformBorderConformity() {
     weft::GenerationReport report;
     weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
 
-    int freeform = 0;
+    int annulus = 0;
     for (const auto& [fid, kind] : report.faceMesher) {
-        if (kind == weft::MesherKind::QuadDominant ||
-            kind == weft::MesherKind::Fallback) {
-            ++freeform;
-        }
+        if (kind == weft::MesherKind::AnnulusRing) ++annulus;
     }
-    CHECK(freeform >= 2);  // the two annulus faces
+    CHECK(annulus >= 2);           // the two flat rings
+    CHECK(mesh.countQuads() >= 2 * 24);  // ...as pure quad rings
     CHECK(isWatertight(mesh));
 
     // Pure-triangle fallback conforms too.
