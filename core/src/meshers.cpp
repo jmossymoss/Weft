@@ -20,7 +20,9 @@
 #include <Geom_Circle.hxx>
 #include <Geom_Curve.hxx>
 #include <Poly_Triangulation.hxx>
+#include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopoDS_Vertex.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
@@ -3471,6 +3473,35 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 }
             }
         }
+    }
+
+    // Corner canonicalization: curve endpoints of DIFFERENT edges meeting
+    // at one B-rep vertex disagree by the vertex tolerance (~1e-4 on real
+    // exports), far above the weld tolerance — every face computes its
+    // corner from its own edge, so corners never welded. Snap any mesh
+    // vertex within a B-rep vertex's tolerance onto its exact point.
+    {
+        std::vector<std::pair<gp_Pnt, double>> corners;
+        TopTools_IndexedMapOfShape vmap;
+        TopExp::MapShapes(model.shape, TopAbs_VERTEX, vmap);
+        for (int i = 1; i <= vmap.Extent(); ++i) {
+            const TopoDS_Vertex v = TopoDS::Vertex(vmap(i));
+            corners.push_back(
+                {BRep_Tool::Pnt(v),
+                 std::max(1e-7, 2.0 * BRep_Tool::Tolerance(v))});
+        }
+        size_t snapped = 0;
+        for (auto& mv : mesh.vertices) {
+            gp_Pnt p(mv[0], mv[1], mv[2]);
+            for (const auto& [q, tol] : corners) {
+                if (p.SquareDistance(q) < tol * tol) {
+                    mv = {q.X(), q.Y(), q.Z()};
+                    ++snapped;
+                    break;
+                }
+            }
+        }
+        dbg("generate: %zu corner verts canonicalized", snapped);
     }
 
     dbg("generate: welding");
