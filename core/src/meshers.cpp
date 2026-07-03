@@ -3635,8 +3635,42 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         dbg("generate: %zu corner verts canonicalized", snapped);
     }
 
-    dbg("generate: welding");
-    weldVertices(mesh, settings.weldTolerance);
+    // Solid-scoped weld: contacting bodies in a multi-body file have
+    // coincident skins with opposing windings — a global weld fuses them
+    // into non-manifold shared edges (every directed edge used twice).
+    // Group vertices by owning solid so only same-body seams merge.
+    std::vector<int> weldGroup;
+    {
+        std::vector<int> faceSolid(faceN + 1, 0);
+        int solidId = 0;
+        auto assign = [&](const TopoDS_Shape& obj) {
+            ++solidId;
+            for (TopExp_Explorer fx(obj, TopAbs_FACE); fx.More(); fx.Next()) {
+                int fid = model.faces.FindIndex(fx.Current());
+                if (fid > 0 && faceSolid[fid] == 0) faceSolid[fid] = solidId;
+            }
+        };
+        for (TopExp_Explorer sx(model.shape, TopAbs_SOLID); sx.More();
+             sx.Next()) {
+            assign(sx.Current());
+        }
+        for (TopExp_Explorer sx(model.shape, TopAbs_SHELL, TopAbs_SOLID);
+             sx.More(); sx.Next()) {
+            assign(sx.Current());
+        }
+        if (solidId > 1) {
+            weldGroup.assign(mesh.vertices.size(), 0);
+            for (int fid = 1; fid <= faceN; ++fid) {
+                for (size_t v = range[fid][0]; v < range[fid][1]; ++v) {
+                    weldGroup[v] = faceSolid[fid];
+                }
+            }
+        }
+    }
+
+    dbg("generate: welding%s", weldGroup.empty() ? "" : " (per solid)");
+    weldVertices(mesh, settings.weldTolerance,
+                 weldGroup.empty() ? nullptr : &weldGroup);
     dbg("generate: done (%zu verts, %zu polys)", mesh.vertexCount(),
         mesh.polygonCount());
     return mesh;

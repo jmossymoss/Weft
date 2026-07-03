@@ -36,7 +36,11 @@ struct PolyMesh {
 };
 
 // Merge vertices closer than `tolerance` and drop degenerate polygons.
-void weldVertices(PolyMesh& mesh, double tolerance);
+// With `group`, only vertices in the same group merge — generation welds
+// per SOLID, so contacting bodies in a multi-body file keep their own
+// coincident skins instead of fusing into non-manifold shared edges.
+void weldVertices(PolyMesh& mesh, double tolerance,
+                  const std::vector<int>* group = nullptr);
 
 // Write Wavefront OBJ. Polygons are grouped per B-rep face
 // ("g face_<id>") so CAD face IDs survive into the DCC. When the source
