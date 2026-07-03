@@ -3082,18 +3082,23 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
             }
             const double slack = edgeLen / 16.0;
 
-            // Exact distance/parameter on the curve for a point.
+            // Exact distance/parameter on the curve for a point. The
+            // coarse polyline seeds the answer — Extrema can return
+            // nothing at all on tiny curves, and an endpoint-only
+            // fallback then bunches every projection at the two ends,
+            // scrambling the nearest-by-param snap.
             auto projectPnt = [&](const gp_Pnt& p, double tol,
                                   double* paramOut) -> bool {
-                double quick = 1e300;
-                for (const gp_Pnt& c : coarse) {
-                    quick = std::min(quick, p.SquareDistance(c));
-                }
-                if (quick > (tol + slack) * (tol + slack)) return false;
-                double bestD = p.Distance(curve.Value(f));
+                double bestD = 1e300;
                 double bestT = f;
-                double dl = p.Distance(curve.Value(l));
-                if (dl < bestD) { bestD = dl; bestT = l; }
+                for (int i = 0; i < 33; ++i) {
+                    double d = p.Distance(coarse[i]);
+                    if (d < bestD) {
+                        bestD = d;
+                        bestT = f + (l - f) * i / 32.0;
+                    }
+                }
+                if (bestD > tol + slack) return false;
                 try {
                     Extrema_ExtPC ext(p, curve);
                     if (ext.IsDone()) {
@@ -3131,12 +3136,34 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                          10.0 * BRep_Tool::Tolerance(edge));
             // My border verts on this edge (needed up front: seams pick
             // the denser side as authority before any vertex moves).
-            const double tolMoverPre = std::max(
-                1e-6 * (1.0 + edgeLen),
-                std::max(settings.forFace(fid).chordTolerance,
-                         nfid >= 1 ? settings.forFace(nfid).chordTolerance
-                                   : 0.0) *
-                    1.2);
+            // Fallback/ring borders lie ON their curves, so capture them
+            // tightly — a loose radius kidnaps verts that belong to
+            // ADJACENT edges when a face is thinner than the slack (a
+            // 0.19mm strip's interior verts are within 0.12 of every
+            // edge around it) and snapping folds them onto the corners.
+            // Only decimated borders (quad-dominant simplification,
+            // unconstrained grids) genuinely sit off-curve and keep the
+            // loose chord-scaled capture.
+            const FacePlan& myPlan = plans.at(fid);
+            const bool decimatedBorder =
+                myPlan.kind == MesherKind::QuadDominant ||
+                (myPlan.kind == MesherKind::Fallback &&
+                 (myPlan.forceFallbackQuads >= 0
+                      ? myPlan.forceFallbackQuads != 0
+                      : settings.forFace(fid).quadDominant)) ||
+                (myPlan.kind == MesherKind::PlanarGrid &&
+                 !myPlan.constrains);
+            const double tolMoverPre =
+                decimatedBorder
+                    ? std::max(
+                          1e-6 * (1.0 + edgeLen),
+                          std::max(settings.forFace(fid).chordTolerance,
+                                   nfid >= 1
+                                       ? settings.forFace(nfid)
+                                             .chordTolerance
+                                       : 0.0) *
+                              1.2)
+                    : tolTarget;
             std::map<uint32_t, double> movers;  // vert -> snapped param
             std::map<uint32_t, gp_Pnt> moverOrig;  // pre-snap positions
             for (uint32_t v : borderVerts) {
@@ -3176,6 +3203,8 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                     targets.push_back({nv, t});
                 }
             }
+            dbg("conform: face %d edge %d: %zu movers, %zu targets", fid,
+                eid, movers.size(), targets.size());
             if (targets.size() < 2) continue;
             // Seam authority: only the sparser side conforms; the denser
             // (or equal-count lower-id) side keeps its chain.
@@ -3276,13 +3305,21 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                                         std::max(tolMoverPre,
                                                  0.3 * a.Distance(b)),
                                         &tm)) {
+                            dbg("conform: face %d edge %d seg %u-%u skipped "
+                                "(midpoint off curve)",
+                                fid, eid, u, w);
                             continue;
                         }
                         double relm = closed
                             ? std::fmod((forward ? tm - pu : pu - tm) +
                                             period, period)
                             : (forward ? tm - pu : pu - tm);
-                        if (relm < 0.1 * span || relm > 0.9 * span) continue;
+                        if (relm < 0.1 * span || relm > 0.9 * span) {
+                            dbg("conform: face %d edge %d seg %u-%u skipped "
+                                "(midpoint rel %.3g of span %.4g)",
+                                fid, eid, u, w, relm / span, span);
+                            continue;
+                        }
                     }
                     std::vector<const EdgeParamPoint*> between;
                     for (const EdgeParamPoint& cand : targets) {
