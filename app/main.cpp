@@ -376,9 +376,10 @@ static Vec3 mouseRay(const Camera& cam, double mx, double my, int fbw,
 }
 
 enum class Mode { Idle, LoopCut, Bridge, Grab };
-// Selection modes on 1-5 (Blender-style): mesh verts, mesh edges, mesh
-// faces (polygons), B-rep feature edges, B-rep elements (faces).
-enum class SelectMode { Vert, MeshEdge, Poly, Edge, Face };
+// Selection modes on 1-6 (Blender-style): mesh verts, mesh edges, mesh
+// faces (polygons), B-rep feature edges, B-rep elements (faces), whole
+// objects (solids).
+enum class SelectMode { Vert, MeshEdge, Poly, Edge, Face, Object };
 
 struct App {
     // Document.
@@ -411,6 +412,10 @@ struct App {
     int64_t hoverVert = -1;
     std::set<uint64_t> selMeshEdges;  // (min vert << 32) | max vert
     uint64_t hoverMeshEdge = UINT64_MAX;
+    // Vert -> owning B-rep faces, for occlusion tests against the pick
+    // buffer (a vert/edge is selectable only where ITS face is what the
+    // camera actually sees — no selecting through the mesh).
+    std::vector<std::vector<int>> vertFaces;
     int activeFace = 0;
     int hoverFace = 0;  // pre-click feedback (face mode, idle)
     // Contiguous fill-buffer runs per face, for tint-only highlight draws.
@@ -433,6 +438,10 @@ struct App {
     // the cursor; the sector under the mouse commits on click.
     int pieKind = -1;  // -1 closed, 0 = modes, 1 = tools
     float pieCenter[2] = {0, 0};
+    // Blender-style hold-to-choose: while the opening key is held the
+    // pie is live and RELEASING over a sector commits; a quick tap
+    // leaves it open for a click instead.
+    bool pieHold = false;
     weft::ManualOp hoverOp;    // loop-cut candidate under the cursor
     bool hoverValid = false;
 
@@ -652,6 +661,17 @@ static void regenerate(App& app) {
         app.selMeshEdges.clear();
         app.hoverVert = -1;
         app.hoverMeshEdge = UINT64_MAX;
+        app.vertFaces.assign(app.mesh.vertexCount(), {});
+        for (size_t p = 0; p < app.mesh.polygons.size(); ++p) {
+            int fid = app.mesh.polygonFaceId[p];
+            if (fid <= 0) continue;
+            for (uint32_t v : app.mesh.polygons[p]) {
+                auto& vf = app.vertFaces[v];
+                if (std::find(vf.begin(), vf.end(), fid) == vf.end()) {
+                    vf.push_back(fid);
+                }
+            }
+        }
     } catch (const std::exception& e) {
         logLine("regenerate: FAILED: %s", e.what());
         app.status = std::string("regenerate failed (ctrl+Z): ") + e.what();
@@ -1112,32 +1132,86 @@ static void setSelectMode(App& app, SelectMode next) {
                  : next == SelectMode::MeshEdge ? "edge mode"
                  : next == SelectMode::Poly     ? "face mode"
                  : next == SelectMode::Edge     ? "feature edge mode"
-                                                : "element mode";
+                 : next == SelectMode::Face     ? "element mode"
+                                                : "object mode";
+}
+
+// Object mode: a click selects the whole solid the face belongs to, so
+// every face-scoped tool (density, hide, delete) acts per body.
+static void selectSolidOf(App& app, int fid, bool extend) {
+    if (!extend) app.selFaces.clear();
+    for (const auto& fids : app.analysis.solidFaces) {
+        if (std::find(fids.begin(), fids.end(), fid) != fids.end()) {
+            for (int f : fids) app.selFaces.insert(f);
+        }
+    }
+    app.activeFace = fid;
+}
+
+static uint64_t meshEdgeKey(uint32_t a, uint32_t b) {
+    return (uint64_t(std::min(a, b)) << 32) | std::max(a, b);
 }
 
 static void deleteSelection(App& app) {
+    // Polygon surgery: recorded ops anchored to the poly's world
+    // centroid, replayed by nearest-centroid match. Deleting verts or
+    // mesh edges deletes their adjacent polygons, Blender-style.
+    auto deletePoly = [&](size_t p) {
+        double c[3] = {0, 0, 0};
+        for (uint32_t v : app.mesh.polygons[p]) {
+            c[0] += app.mesh.vertices[v][0];
+            c[1] += app.mesh.vertices[v][1];
+            c[2] += app.mesh.vertices[v][2];
+        }
+        double k = double(app.mesh.polygons[p].size());
+        weft::ManualOp op;
+        op.kind = weft::ManualOp::Kind::DeletePoly;
+        op.u = c[0] / k;
+        op.v = c[1] / k;
+        op.t = c[2] / k;
+        app.recipe.ops.push_back(op);
+    };
     if (app.selectMode == SelectMode::Poly && !app.selPolys.empty()) {
-        // Polygon surgery: recorded ops anchored to the poly's world
-        // centroid, replayed by nearest-centroid match.
         for (size_t p : app.selPolys) {
-            if (p >= app.mesh.polygons.size()) continue;
-            double c[3] = {0, 0, 0};
-            for (uint32_t v : app.mesh.polygons[p]) {
-                c[0] += app.mesh.vertices[v][0];
-                c[1] += app.mesh.vertices[v][1];
-                c[2] += app.mesh.vertices[v][2];
-            }
-            double k = double(app.mesh.polygons[p].size());
-            weft::ManualOp op;
-            op.kind = weft::ManualOp::Kind::DeletePoly;
-            op.u = c[0] / k;
-            op.v = c[1] / k;
-            op.t = c[2] / k;
-            app.recipe.ops.push_back(op);
+            if (p < app.mesh.polygons.size()) deletePoly(p);
         }
         app.selPolys.clear();
         markDirty(app);
         app.status = "polygon(s) deleted (ctrl+Z undoes, F/J refills)";
+    } else if (app.selectMode == SelectMode::Vert && !app.selVerts.empty()) {
+        size_t n = 0;
+        for (size_t p = 0; p < app.mesh.polygons.size(); ++p) {
+            for (uint32_t v : app.mesh.polygons[p]) {
+                if (app.selVerts.count(v)) {
+                    deletePoly(p);
+                    ++n;
+                    break;
+                }
+            }
+        }
+        app.selVerts.clear();
+        markDirty(app);
+        app.status = std::to_string(n) +
+                     " polygon(s) around verts deleted (ctrl+Z undoes)";
+    } else if (app.selectMode == SelectMode::MeshEdge &&
+               !app.selMeshEdges.empty()) {
+        size_t n = 0;
+        for (size_t p = 0; p < app.mesh.polygons.size(); ++p) {
+            const auto& poly = app.mesh.polygons[p];
+            bool hit = false;
+            for (size_t i = 0; i < poly.size() && !hit; ++i) {
+                hit = app.selMeshEdges.count(meshEdgeKey(
+                    poly[i], poly[(i + 1) % poly.size()])) != 0;
+            }
+            if (hit) {
+                deletePoly(p);
+                ++n;
+            }
+        }
+        app.selMeshEdges.clear();
+        markDirty(app);
+        app.status = std::to_string(n) +
+                     " polygon(s) around edges deleted (ctrl+Z undoes)";
     } else if (!app.selFaces.empty()) {
         editSelected(app,
                      [](weft::FaceMeshSettings& s) { s.exclude = true; });
@@ -1501,11 +1575,75 @@ static int pickPolygon(App& app, const Mat4& mvp, double mx, double my,
     return best;
 }
 
-// Nearest visible mesh vertex / polygon edge to the cursor, for the vert
-// and mesh-edge selection modes. Both walk the polygons so hidden faces'
-// geometry never captures the pick.
+// Face ids the camera actually sees over a screen rect, read from one
+// render of the pick buffer. This is the occlusion oracle for every
+// selection mode: a vert/edge is only pickable where one of ITS faces is
+// the front-most pixel — nothing selects through the mesh.
+struct PickRect {
+    int x0 = 0, y0 = 0, w = 0, h = 0;
+    std::vector<int> fid;  // row-major from (x0,y0); 0 = background
+    int at(double x, double y) const {
+        int ix = int(std::lround(x)) - x0;
+        int iy = int(std::lround(y)) - y0;
+        if (ix < 0 || iy < 0 || ix >= w || iy >= h) return 0;
+        return fid[size_t(iy) * w + ix];
+    }
+};
+
+static PickRect readPickRect(App& app, GLuint flatProg, const Mat4& mvp,
+                             int x0, int y0, int x1, int y1, int fbw,
+                             int fbh) {
+    PickRect pr;
+    if (!app.hasModel || app.pick.count == 0) return pr;
+    glViewport(0, 0, fbw, fbh);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    glUseProgram(flatProg);
+    glUniform1f(glGetUniformLocation(flatProg, "uMix"), 0.0f);
+    glUniformMatrix4fv(glGetUniformLocation(flatProg, "uMVP"), 1, GL_FALSE,
+                       mvp.m);
+    glBindVertexArray(app.pick.vao);
+    glDrawArrays(GL_TRIANGLES, 0, app.pick.count);
+    glBindVertexArray(0);
+    glFinish();
+    if (x0 > x1) std::swap(x0, x1);
+    if (y0 > y1) std::swap(y0, y1);
+    x0 = std::clamp(x0, 0, fbw - 1);
+    x1 = std::clamp(x1, 0, fbw - 1);
+    y0 = std::clamp(y0, 0, fbh - 1);
+    y1 = std::clamp(y1, 0, fbh - 1);
+    pr.x0 = x0;
+    pr.y0 = y0;
+    pr.w = x1 - x0 + 1;
+    pr.h = y1 - y0 + 1;
+    std::vector<unsigned char> px(size_t(pr.w) * pr.h * 4);
+    glReadPixels(x0, fbh - 1 - y1, pr.w, pr.h, GL_RGBA, GL_UNSIGNED_BYTE,
+                 px.data());
+    pr.fid.assign(size_t(pr.w) * pr.h, 0);
+    // glReadPixels rows run bottom-up; PickRect::at expects top-down.
+    for (int iy = 0; iy < pr.h; ++iy) {
+        for (int ix = 0; ix < pr.w; ++ix) {
+            size_t src = (size_t(pr.h - 1 - iy) * pr.w + ix) * 4;
+            if (px[src + 2] != 170) continue;
+            pr.fid[size_t(iy) * pr.w + ix] =
+                int(px[src]) + (int(px[src + 1]) << 8);
+        }
+    }
+    return pr;
+}
+
+static bool vertVisibleAt(const App& app, uint32_t v, int fidAtPixel) {
+    if (fidAtPixel <= 0 || v >= app.vertFaces.size()) return false;
+    const auto& vf = app.vertFaces[v];
+    return std::find(vf.begin(), vf.end(), fidAtPixel) != vf.end();
+}
+
+// Nearest VISIBLE mesh vertex / polygon edge to the cursor, for the vert
+// and mesh-edge selection modes: hidden faces are skipped and the pick
+// buffer must show one of the element's own faces at its pixel.
 static int64_t pickMeshVert(App& app, const Mat4& mvp, double mx, double my,
-                            int fbw, int fbh) {
+                            int fbw, int fbh, const PickRect& pr) {
     const weft::PolyMesh& m = app.mesh;
     double best = 12.0 * gUiScale;  // px
     int64_t bestV = -1;
@@ -1520,7 +1658,7 @@ static int64_t pickMeshVert(App& app, const Mat4& mvp, double mx, double my,
             projectPoint(mvp, m.vertices[v], fbw, fbh, sp);
             if (sp[2] <= 0) continue;
             double d = std::hypot(sp[0] - mx, sp[1] - my);
-            if (d < best) {
+            if (d < best && vertVisibleAt(app, v, pr.at(sp[0], sp[1]))) {
                 best = d;
                 bestV = int64_t(v);
             }
@@ -1529,12 +1667,8 @@ static int64_t pickMeshVert(App& app, const Mat4& mvp, double mx, double my,
     return bestV;
 }
 
-static uint64_t meshEdgeKey(uint32_t a, uint32_t b) {
-    return (uint64_t(std::min(a, b)) << 32) | std::max(a, b);
-}
-
 static uint64_t pickMeshEdge(App& app, const Mat4& mvp, double mx, double my,
-                             int fbw, int fbh) {
+                             int fbw, int fbh, const PickRect& pr) {
     const weft::PolyMesh& m = app.mesh;
     double best = 10.0 * gUiScale;  // px
     uint64_t bestE = UINT64_MAX;
@@ -1556,9 +1690,11 @@ static uint64_t pickMeshEdge(App& app, const Mat4& mvp, double mx, double my,
                                         (float(my) - pa[1]) * ey) /
                                            len2,
                                        0.0f, 1.0f);
-            double d = std::hypot(double(mx) - (pa[0] + t * ex),
-                                  double(my) - (pa[1] + t * ey));
-            if (d < best) {
+            double px = pa[0] + t * ex, py = pa[1] + t * ey;
+            double d = std::hypot(double(mx) - px, double(my) - py);
+            int atPx = pr.at(px, py);
+            if (d < best && vertVisibleAt(app, a, atPx) &&
+                vertVisibleAt(app, b, atPx)) {
                 best = d;
                 bestE = meshEdgeKey(a, b);
             }
@@ -1636,32 +1772,8 @@ static std::set<int> pickFacesInRect(App& app, GLuint flatProg,
                                      const Mat4& mvp, int x0, int y0, int x1,
                                      int y1, int fbw, int fbh) {
     std::set<int> hits;
-    if (!app.hasModel || app.pick.count == 0) return hits;
-    glViewport(0, 0, fbw, fbh);
-    glClearColor(0, 0, 0, 1);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glEnable(GL_DEPTH_TEST);
-    glUseProgram(flatProg);
-    glUniform1f(glGetUniformLocation(flatProg, "uMix"), 0.0f);
-    glUniformMatrix4fv(glGetUniformLocation(flatProg, "uMVP"), 1, GL_FALSE,
-                       mvp.m);
-    glBindVertexArray(app.pick.vao);
-    glDrawArrays(GL_TRIANGLES, 0, app.pick.count);
-    glBindVertexArray(0);
-    glFinish();
-    if (x0 > x1) std::swap(x0, x1);
-    if (y0 > y1) std::swap(y0, y1);
-    x0 = std::clamp(x0, 0, fbw - 1);
-    x1 = std::clamp(x1, 0, fbw - 1);
-    y0 = std::clamp(y0, 0, fbh - 1);
-    y1 = std::clamp(y1, 0, fbh - 1);
-    const int w = x1 - x0 + 1, h = y1 - y0 + 1;
-    std::vector<unsigned char> px(size_t(w) * h * 4);
-    glReadPixels(x0, fbh - 1 - y1, w, h, GL_RGBA, GL_UNSIGNED_BYTE,
-                 px.data());
-    for (size_t i = 0; i + 3 < px.size(); i += 4) {
-        if (px[i + 2] != 170) continue;
-        int fid = int(px[i]) + (int(px[i + 1]) << 8);
+    PickRect pr = readPickRect(app, flatProg, mvp, x0, y0, x1, y1, fbw, fbh);
+    for (int fid : pr.fid) {
         if (fid > 0) hits.insert(fid);
     }
     return hits;
@@ -1938,6 +2050,16 @@ static void drawOverlay(App& app) {
             ImGui::TextDisabled("%zu polygon(s) - X deletes",
                                 app.selPolys.size());
         }
+    } else if (app.selectMode == SelectMode::Object) {
+        ImGui::TextColored({1.0f, 0.75f, 0.45f, 1.0f}, "OBJECT MODE");
+        ImGui::SameLine();
+        if (app.selFaces.empty()) {
+            ImGui::TextDisabled("click a body (shift extends) - X deletes"
+                                " - H hides");
+        } else {
+            ImGui::TextDisabled("%zu face(s) across selected object(s)",
+                                app.selFaces.size());
+        }
     } else if (!app.selFaces.empty()) {
         if (app.selFaces.size() == 1) {
             ImGui::TextDisabled("face #%d selected", app.activeFace);
@@ -1949,7 +2071,7 @@ static void drawOverlay(App& app) {
         ImGui::TextDisabled(" shift+wheel density, ctrl+wheel 2nd axis");
     } else {
         ImGui::TextDisabled("no selection - 1 verts, 2 edges, 3 faces, "
-                            "4 feature edges, 5 elements");
+                            "4 feature edges, 5 elements, 6 objects");
     }
     ImGui::End();
 
@@ -1979,12 +2101,13 @@ static void drawOverlay(App& app) {
                      ImGuiWindowFlags_NoFocusOnAppearing |
                      ImGuiWindowFlags_NoNav);
     ImGui::TextDisabled(
-        "1 verts   2 edges   3 faces   4 feature edges   5 elements\n"
-        "Tab mode pie   Q tools pie\n"
+        "1-6 verts/edges/faces/feature edges/elements/objects\n"
+        "Tab mode pie   Q tools pie   (hold + release picks)\n"
+        "drag box-select (shift extends)\n"
         "shift+click multi-select   ctrl+Z undo\n"
         "shift+wheel density   ctrl+wheel 2nd axis   ctrl+shift+wheel loops\n"
         "[ ] nudge counts\n"
-        "X delete face   H hide (shift+H show all)   R loop cut   J bridge\n"
+        "X delete   H/ctrl+H hide   alt+H show all   R loop cut   J bridge\n"
         "G grab vertex   C cap   T tris   M minimal   W wire   B edges\n"
         "F focus   esc");
     ImGui::End();
@@ -2758,8 +2881,13 @@ int main(int argc, char** argv) {
                 if (ImGui::IsKeyPressed(ImGuiKey_5, false)) {
                     setSelectMode(app, SelectMode::Face);
                 }
+                if (ImGui::IsKeyPressed(ImGuiKey_6, false)) {
+                    setSelectMode(app, SelectMode::Object);
+                }
             }
             // Pie menus at the cursor: Tab = select modes, Q = tools.
+            // Blender-style: HOLD the key and release over a sector to
+            // commit; a quick tap leaves the pie open for a click.
             if (app.hasModel &&
                 (ImGui::IsKeyPressed(ImGuiKey_Tab, false) ||
                  ImGui::IsKeyPressed(ImGuiKey_Q, false))) {
@@ -2768,6 +2896,7 @@ int main(int argc, char** argv) {
                     app.pieKind = -1;
                 } else {
                     app.pieKind = want;
+                    app.pieHold = true;
                     app.pieCenter[0] = float(mx);
                     app.pieCenter[1] = float(my);
                 }
@@ -2836,8 +2965,9 @@ int main(int argc, char** argv) {
             if (ImGui::IsKeyPressed(ImGuiKey_X, false) && app.hasModel) {
                 deleteSelection(app);
             }
+            // H / ctrl+H hide the selection, alt+H / shift+H show all.
             if (ImGui::IsKeyPressed(ImGuiKey_H, false) && app.hasModel) {
-                hideSelection(app, shift);
+                hideSelection(app, shift || io.KeyAlt);
             }
             if (ImGui::IsKeyPressed(ImGuiKey_W, false)) app.showWire = !app.showWire;
             if (ImGui::IsKeyPressed(ImGuiKey_B, false) &&
@@ -2882,13 +3012,11 @@ int main(int argc, char** argv) {
         if (lmbPressed) { downX = mx; downY = my; }
         bool clicked = prevLmb && !lmb && std::abs(mx - downX) < 4 &&
                        std::abs(my - downY) < 4;
-        // Box select: an LMB drag in idle face mode rubber-bands.
-        bool boxDrag = lmb && app.mode == Mode::Idle &&
-                       app.selectMode == SelectMode::Face &&
+        // Box select: an LMB drag in idle rubber-bands in EVERY mode.
+        bool boxDrag = lmb && app.mode == Mode::Idle && app.pieKind < 0 &&
                        (std::abs(mx - downX) > 6 || std::abs(my - downY) > 6);
         bool boxReleased = prevLmb && !lmb && !clicked &&
-                           app.mode == Mode::Idle &&
-                           app.selectMode == SelectMode::Face;
+                           app.mode == Mode::Idle && app.pieKind < 0;
         prevLmb = lmb;
         bool rmb = !io.WantCaptureMouse &&
                    glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) ==
@@ -3049,20 +3177,133 @@ int main(int argc, char** argv) {
                 }
             }
         } else if (boxReleased && app.hasModel) {
-            // Box select: everything whose pick pixels fall in the rect.
-            std::set<int> hits =
-                pickFacesInRect(app, flatProg, mvp, int(downX), int(downY),
-                                int(mx), int(my), fbw, fbh);
-            if (!io.KeyShift) app.selFaces.clear();
-            for (int fid : hits) app.selFaces.insert(fid);
-            if (!hits.empty()) app.activeFace = *hits.begin();
-            else if (!io.KeyShift) app.activeFace = 0;
-            rebuildBuffers(app);
+            // Box select in every mode; the pick buffer is the occlusion
+            // oracle, so only what the camera sees gets selected.
+            PickRect pr = readPickRect(app, flatProg, mvp, int(downX),
+                                       int(downY), int(mx), int(my), fbw,
+                                       fbh);
+            const bool extend = io.KeyShift;
+            auto inRect = [&](double x, double y) {
+                return x >= std::min(downX, mx) && x <= std::max(downX, mx) &&
+                       y >= std::min(downY, my) && y <= std::max(downY, my);
+            };
+            if (app.selectMode == SelectMode::Vert) {
+                if (!extend) app.selVerts.clear();
+                std::vector<bool> seen(app.mesh.vertexCount(), false);
+                for (size_t p = 0; p < app.mesh.polygons.size(); ++p) {
+                    int fid = app.mesh.polygonFaceId[p];
+                    if (fid > 0 && app.hiddenFaces.count(fid)) continue;
+                    for (uint32_t v : app.mesh.polygons[p]) {
+                        if (seen[v]) continue;
+                        seen[v] = true;
+                        float sp[3] = {0, 0, -1};
+                        projectPoint(mvp, app.mesh.vertices[v], fbw, fbh, sp);
+                        if (sp[2] <= 0 || !inRect(sp[0], sp[1])) continue;
+                        if (vertVisibleAt(app, v, pr.at(sp[0], sp[1]))) {
+                            app.selVerts.insert(v);
+                        }
+                    }
+                }
+            } else if (app.selectMode == SelectMode::MeshEdge) {
+                if (!extend) app.selMeshEdges.clear();
+                for (size_t p = 0; p < app.mesh.polygons.size(); ++p) {
+                    int fid = app.mesh.polygonFaceId[p];
+                    if (fid > 0 && app.hiddenFaces.count(fid)) continue;
+                    const auto& poly = app.mesh.polygons[p];
+                    for (size_t i = 0; i < poly.size(); ++i) {
+                        uint32_t a = poly[i], b = poly[(i + 1) % poly.size()];
+                        float pa[3] = {0, 0, -1}, pb[3] = {0, 0, -1};
+                        projectPoint(mvp, app.mesh.vertices[a], fbw, fbh, pa);
+                        projectPoint(mvp, app.mesh.vertices[b], fbw, fbh, pb);
+                        if (pa[2] <= 0 || pb[2] <= 0) continue;
+                        if (!inRect(pa[0], pa[1]) || !inRect(pb[0], pb[1])) {
+                            continue;
+                        }
+                        int atPx = pr.at((pa[0] + pb[0]) / 2,
+                                         (pa[1] + pb[1]) / 2);
+                        if (vertVisibleAt(app, a, atPx) &&
+                            vertVisibleAt(app, b, atPx)) {
+                            app.selMeshEdges.insert(meshEdgeKey(a, b));
+                        }
+                    }
+                }
+            } else if (app.selectMode == SelectMode::Poly) {
+                if (!extend) app.selPolys.clear();
+                for (size_t p = 0; p < app.mesh.polygons.size(); ++p) {
+                    int fid = app.mesh.polygonFaceId[p];
+                    if (fid <= 0 || app.hiddenFaces.count(fid)) continue;
+                    double cx = 0, cy = 0;
+                    bool ok = true;
+                    for (uint32_t v : app.mesh.polygons[p]) {
+                        float sp[3] = {0, 0, -1};
+                        projectPoint(mvp, app.mesh.vertices[v], fbw, fbh, sp);
+                        if (sp[2] <= 0) {
+                            ok = false;
+                            break;
+                        }
+                        cx += sp[0];
+                        cy += sp[1];
+                    }
+                    if (!ok) continue;
+                    cx /= double(app.mesh.polygons[p].size());
+                    cy /= double(app.mesh.polygons[p].size());
+                    if (inRect(cx, cy) && pr.at(cx, cy) == fid) {
+                        app.selPolys.insert(p);
+                    }
+                }
+            } else if (app.selectMode == SelectMode::Edge) {
+                if (!extend) app.selEdges.clear();
+                for (const weft::EdgePolyline& e : app.brepEdges) {
+                    if (e.edgeId < 1 ||
+                        size_t(e.edgeId) > app.analysis.edges.size()) {
+                        continue;
+                    }
+                    const auto& adj =
+                        app.analysis.edges[e.edgeId - 1].faceIds;
+                    for (const auto& pt : e.points) {
+                        float sp[3] = {0, 0, -1};
+                        projectPoint(mvp, pt, fbw, fbh, sp);
+                        if (sp[2] <= 0 || !inRect(sp[0], sp[1])) continue;
+                        int atPx = pr.at(sp[0], sp[1]);
+                        if (atPx > 0 && std::find(adj.begin(), adj.end(),
+                                                  atPx) != adj.end()) {
+                            app.selEdges.insert(e.edgeId);
+                            break;
+                        }
+                    }
+                }
+                rebuildBuffers(app);
+            } else {
+                // Element / object mode: visible faces in the rect
+                // (objects expand to their whole solid).
+                std::set<int> hits;
+                for (int fid : pr.fid) {
+                    if (fid > 0) hits.insert(fid);
+                }
+                if (!extend) app.selFaces.clear();
+                for (int fid : hits) {
+                    if (app.selectMode == SelectMode::Object) {
+                        selectSolidOf(app, fid, /*extend=*/true);
+                    } else {
+                        app.selFaces.insert(fid);
+                    }
+                }
+                if (!hits.empty()) app.activeFace = *hits.begin();
+                else if (!extend) app.activeFace = 0;
+                rebuildBuffers(app);
+            }
         } else if ((clicked || rClicked) && app.hasModel &&
                    app.pieKind < 0) {
             bool shift = io.KeyShift;
+            const double pickR = 16.0 * gUiScale;
+            auto pickRectAtCursor = [&]() {
+                return readPickRect(app, flatProg, mvp, int(mx - pickR),
+                                    int(my - pickR), int(mx + pickR),
+                                    int(my + pickR), fbw, fbh);
+            };
             if (app.selectMode == SelectMode::Vert && clicked) {
-                int64_t hit = pickMeshVert(app, mvp, mx, my, fbw, fbh);
+                PickRect pr = pickRectAtCursor();
+                int64_t hit = pickMeshVert(app, mvp, mx, my, fbw, fbh, pr);
                 if (!shift) app.selVerts.clear();
                 if (hit >= 0) {
                     uint32_t h = uint32_t(hit);
@@ -3073,7 +3314,8 @@ int main(int argc, char** argv) {
                     }
                 }
             } else if (app.selectMode == SelectMode::MeshEdge && clicked) {
-                uint64_t hit = pickMeshEdge(app, mvp, mx, my, fbw, fbh);
+                PickRect pr = pickRectAtCursor();
+                uint64_t hit = pickMeshEdge(app, mvp, mx, my, fbw, fbh, pr);
                 if (!shift) app.selMeshEdges.clear();
                 if (hit != UINT64_MAX) {
                     if (shift && app.selMeshEdges.count(hit)) {
@@ -3099,10 +3341,19 @@ int main(int argc, char** argv) {
                     }
                 }
             } else if (app.selectMode == SelectMode::Edge && clicked) {
-                // Edge picking: nearest projected B-rep edge polyline.
+                // Edge picking: nearest projected B-rep edge polyline that
+                // is actually VISIBLE (the pick pixel at the closest point
+                // shows one of the edge's own faces).
+                PickRect pr = pickRectAtCursor();
                 int hit = 0;
                 double best = 14.0 * gUiScale;  // px
                 for (const weft::EdgePolyline& e : app.brepEdges) {
+                    if (e.edgeId < 1 ||
+                        size_t(e.edgeId) > app.analysis.edges.size()) {
+                        continue;
+                    }
+                    const auto& adj =
+                        app.analysis.edges[e.edgeId - 1].faceIds;
                     for (size_t i = 0; i + 1 < e.points.size(); ++i) {
                         float pa[3] = {0, 0, -1}, pb[3] = {0, 0, -1};
                         projectPoint(mvp, e.points[i], fbw, fbh, pa);
@@ -3116,12 +3367,17 @@ int main(int argc, char** argv) {
                                                     (float(my) - pa[1]) * ey) /
                                                        len2,
                                                    0.0f, 1.0f);
-                        double d = std::hypot(double(mx) - (pa[0] + t * ex),
-                                              double(my) - (pa[1] + t * ey));
-                        if (d < best) {
-                            best = d;
-                            hit = e.edgeId;
+                        double px = pa[0] + t * ex, py = pa[1] + t * ey;
+                        double d = std::hypot(double(mx) - px,
+                                              double(my) - py);
+                        if (d >= best) continue;
+                        int atPx = pr.at(px, py);
+                        if (atPx <= 0 || std::find(adj.begin(), adj.end(),
+                                                   atPx) == adj.end()) {
+                            continue;
                         }
+                        best = d;
+                        hit = e.edgeId;
                     }
                 }
                 if (!shift) app.selEdges.clear();
@@ -3147,6 +3403,14 @@ int main(int argc, char** argv) {
                         }
                         app.activeFace = hit;
                         app.openFacePopup = true;
+                    }
+                } else if (app.selectMode == SelectMode::Object) {
+                    // Click selects the whole body; shift extends.
+                    if (hit > 0) {
+                        selectSolidOf(app, hit, shift);
+                    } else if (!shift) {
+                        app.selFaces.clear();
+                        app.activeFace = 0;
                     }
                 } else if (shift) {
                     if (hit > 0) {
@@ -3202,14 +3466,25 @@ int main(int argc, char** argv) {
         if (app.hasModel && app.mode == Mode::Idle && !io.WantCaptureMouse &&
             !lmb && !rmb &&
             (std::abs(mx - hoverX) > 1 || std::abs(my - hoverY) > 1)) {
-            if (app.selectMode == SelectMode::Face) {
+            if (app.selectMode == SelectMode::Face ||
+                app.selectMode == SelectMode::Object) {
                 glViewport(0, 0, fbw, fbh);
                 app.hoverFace = pickFace(app, flatProg, mvp, int(mx),
                                          int(my), fbw, fbh);
-            } else if (app.selectMode == SelectMode::Vert) {
-                app.hoverVert = pickMeshVert(app, mvp, mx, my, fbw, fbh);
-            } else if (app.selectMode == SelectMode::MeshEdge) {
-                app.hoverMeshEdge = pickMeshEdge(app, mvp, mx, my, fbw, fbh);
+            } else if (app.selectMode == SelectMode::Vert ||
+                       app.selectMode == SelectMode::MeshEdge) {
+                const double r = 16.0 * gUiScale;
+                PickRect pr =
+                    readPickRect(app, flatProg, mvp, int(mx - r),
+                                 int(my - r), int(mx + r), int(my + r),
+                                 fbw, fbh);
+                if (app.selectMode == SelectMode::Vert) {
+                    app.hoverVert =
+                        pickMeshVert(app, mvp, mx, my, fbw, fbh, pr);
+                } else {
+                    app.hoverMeshEdge =
+                        pickMeshEdge(app, mvp, mx, my, fbw, fbh, pr);
+                }
             }
             hoverX = mx;
             hoverY = my;
@@ -3236,8 +3511,8 @@ int main(int argc, char** argv) {
                 const char* hint;
             };
             static const PieItem kModes[] = {
-                {"vert", "1"},        {"edge", "2"},   {"face", "3"},
-                {"feature edge", "4"}, {"element", "5"},
+                {"vert", "1"},         {"edge", "2"},    {"face", "3"},
+                {"feature edge", "4"}, {"element", "5"}, {"object", "6"},
             };
             static const PieItem kTools[] = {
                 {"loop cut", "R"}, {"bridge", "J"},   {"grab", "G"},
@@ -3245,7 +3520,7 @@ int main(int argc, char** argv) {
                 {"frame", "F"},    {"wire", "W"},
             };
             const PieItem* items = app.pieKind == 0 ? kModes : kTools;
-            const int n = app.pieKind == 0 ? 5 : 8;
+            const int n = app.pieKind == 0 ? 6 : 8;
             const float cx = app.pieCenter[0], cy = app.pieCenter[1];
             const float radius = 92.0f * gUiScale;
             float dx = float(mx) - cx, dy = float(my) - cy;
@@ -3293,16 +3568,26 @@ int main(int argc, char** argv) {
                                 : IM_COL32(220, 224, 232, 255),
                             text);
             }
+            // Commit paths: click, or releasing the held key over a
+            // sector. Releasing with nothing hovered keeps the pie open
+            // (that was a tap).
+            bool commit = clicked;
+            if (app.pieHold &&
+                ImGui::IsKeyReleased(app.pieKind == 0 ? ImGuiKey_Tab
+                                                      : ImGuiKey_Q)) {
+                app.pieHold = false;
+                if (hover >= 0) commit = true;
+            }
             if (rClicked) {
                 app.pieKind = -1;
-            } else if (clicked) {
+            } else if (commit) {
                 int kind = app.pieKind;
                 app.pieKind = -1;
                 if (hover >= 0 && kind == 0) {
                     static const SelectMode kOrder[] = {
                         SelectMode::Vert, SelectMode::MeshEdge,
                         SelectMode::Poly, SelectMode::Edge,
-                        SelectMode::Face};
+                        SelectMode::Face, SelectMode::Object};
                     setSelectMode(app, kOrder[hover]);
                 } else if (hover >= 0) {
                     switch (hover) {
@@ -3465,7 +3750,9 @@ int main(int argc, char** argv) {
             glDrawArrays(GL_LINES, 0, app.brep.count);
             glLineWidth(1.0f);
         }
-        if (app.hasModel && app.showVerts && app.verts.count) {
+        if (app.hasModel &&
+            (app.showVerts || app.selectMode == SelectMode::Vert) &&
+            app.verts.count) {
             glDisable(GL_DEPTH_TEST);
             glPointSize(5.0f * gUiScale);
             glUniform1f(uMix, 1.0f);
