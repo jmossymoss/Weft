@@ -429,6 +429,10 @@ struct App {
 
     // Keyboard-centric editing state.
     Mode mode = Mode::Idle;
+    // Pie menus (Blender-style): Tab = select modes, Q = tools. Opened at
+    // the cursor; the sector under the mouse commits on click.
+    int pieKind = -1;  // -1 closed, 0 = modes, 1 = tools
+    float pieCenter[2] = {0, 0};
     weft::ManualOp hoverOp;    // loop-cut candidate under the cursor
     bool hoverValid = false;
 
@@ -981,23 +985,73 @@ static void markDirty(App& app) {
     app.mutatedThisFrame = true;
 }
 
-// The density field the modal keys / wheel drive, chosen by what kind of
-// face is active (radial for revolved faces, grid for planar...).
-static int* primaryDensity(App& app, weft::FaceMeshSettings& s, bool secondary) {
+// Kind-aware density nudge: EVERY mesher answers the wheel / [ ] with the
+// field that actually drives its density — counts for structured grids,
+// boundary totals for plate-web/quad-fill/minimal, deviation scaling for
+// the freeform triangulators. Returns the HUD line describing the change.
+static std::string adjustFaceDensityOne(App& app, weft::FaceMeshSettings& s,
+                                        bool secondary, int steps) {
     weft::MesherKind kind = weft::MesherKind::RevolutionGrid;
     if (app.activeFace > 0) {
         auto it = app.report.faceMesher.find(app.activeFace);
         if (it != app.report.faceMesher.end()) kind = it->second;
     }
+    char hud[64] = "";
+    auto count = [&](int& v, int lo, const char* name) {
+        v = std::max(lo, v + steps);
+        s.adaptive = false;  // explicit count = manual
+        std::snprintf(hud, sizeof hud, "%s: %d", name, v);
+    };
+    // Pinned totals coexist with adaptive density — don't clear it.
+    auto total = [&](int& v, const char* name) {
+        if (v <= 0) v = 16;  // 0 = auto; seed a sensible total first
+        v = std::max(4, v + steps);
+        std::snprintf(hud, sizeof hud, "%s: %d", name, v);
+    };
+    // Deviation-style knobs: wheel up = denser = smaller tolerance.
+    auto scale = [&](double& v, double lo, double hi, const char* name) {
+        v = std::clamp(v * std::pow(0.82, double(steps)), lo, hi);
+        std::snprintf(hud, sizeof hud, "%s: %.4g", name, v);
+    };
+    using MK = weft::MesherKind;
     switch (kind) {
-        case weft::MesherKind::RevolutionGrid:
-        case weft::MesherKind::DiskCap:
-            return secondary ? &s.axial : &s.radial;
-        case weft::MesherKind::RingJunction:
-            return secondary ? &s.junctionRings : &s.gridU;
-        default:
-            return secondary ? &s.gridV : &s.gridU;
+        case MK::RevolutionGrid:
+        case MK::DiskCap:
+            if (secondary) count(s.axial, 1, "axial");
+            else count(s.radial, 3, "radial");
+            break;
+        case MK::RingJunction:
+            if (secondary) count(s.junctionRings, 1, "junction rings");
+            else count(s.gridU, 1, "grid u");
+            break;
+        case MK::AnnulusRing:
+            count(s.radial, 3, "loop verts");
+            break;
+        case MK::PlateWeb:
+            if (secondary) count(s.junctionRings, 1, "collar rings");
+            else total(s.boundary, "boundary verts");
+            break;
+        case MK::QuadFill:
+            if (secondary) scale(s.chordTolerance, 5e-4, 100.0, "deviation");
+            else total(s.boundary, "boundary verts");
+            break;
+        case MK::MinimalNGon:
+            total(s.boundary, "boundary verts");
+            break;
+        case MK::QuadDominant:
+        case MK::Fallback:
+            if (secondary) {
+                scale(s.angleToleranceDeg, 1.0, 60.0, "angle");
+            } else {
+                scale(s.chordTolerance, 5e-4, 100.0, "deviation");
+            }
+            break;
+        default:  // PlanarGrid, CoonsGrid
+            if (secondary) count(s.gridV, 1, "grid v");
+            else count(s.gridU, 1, "grid u");
+            break;
     }
+    return hud;
 }
 
 // Apply an edit to every selected face, auto-creating overrides — clicking
@@ -1026,6 +1080,98 @@ static void editSelected(App& app, F&& fn) {
 // Read-only view of the active selection's current settings.
 static const weft::FaceMeshSettings& activeSettings(const App& app) {
     return app.recipe.settings.forFace(app.activeFace);
+}
+
+// Density nudge over the whole selection + HUD readout.
+static void adjustFaceDensity(App& app, bool secondary, int steps) {
+    std::string hud;
+    editSelected(app, [&](weft::FaceMeshSettings& s) {
+        hud = adjustFaceDensityOne(app, s, secondary, steps);
+    });
+    if (!hud.empty()) {
+        std::snprintf(app.hudText, sizeof app.hudText, "%s", hud.c_str());
+        app.hudUntil = glfwGetTime() + 0.9;
+    }
+}
+
+// Shared verbs (key handlers + pie menus call the same code).
+static void setSelectMode(App& app, SelectMode next) {
+    if (next == app.selectMode) return;
+    app.selectMode = next;
+    app.selFaces.clear();
+    app.selEdges.clear();
+    app.selPolys.clear();
+    app.selVerts.clear();
+    app.selMeshEdges.clear();
+    app.activeFace = 0;
+    app.hoverFace = 0;
+    app.hoverVert = -1;
+    app.hoverMeshEdge = UINT64_MAX;
+    rebuildBuffers(app);
+    app.status = next == SelectMode::Vert       ? "vert mode"
+                 : next == SelectMode::MeshEdge ? "edge mode"
+                 : next == SelectMode::Poly     ? "face mode"
+                 : next == SelectMode::Edge     ? "feature edge mode"
+                                                : "element mode";
+}
+
+static void deleteSelection(App& app) {
+    if (app.selectMode == SelectMode::Poly && !app.selPolys.empty()) {
+        // Polygon surgery: recorded ops anchored to the poly's world
+        // centroid, replayed by nearest-centroid match.
+        for (size_t p : app.selPolys) {
+            if (p >= app.mesh.polygons.size()) continue;
+            double c[3] = {0, 0, 0};
+            for (uint32_t v : app.mesh.polygons[p]) {
+                c[0] += app.mesh.vertices[v][0];
+                c[1] += app.mesh.vertices[v][1];
+                c[2] += app.mesh.vertices[v][2];
+            }
+            double k = double(app.mesh.polygons[p].size());
+            weft::ManualOp op;
+            op.kind = weft::ManualOp::Kind::DeletePoly;
+            op.u = c[0] / k;
+            op.v = c[1] / k;
+            op.t = c[2] / k;
+            app.recipe.ops.push_back(op);
+        }
+        app.selPolys.clear();
+        markDirty(app);
+        app.status = "polygon(s) deleted (ctrl+Z undoes, F/J refills)";
+    } else if (!app.selFaces.empty()) {
+        editSelected(app,
+                     [](weft::FaceMeshSettings& s) { s.exclude = true; });
+        app.status = "face(s) deleted (ctrl+Z undoes, J bridges rims)";
+    }
+}
+
+static void hideSelection(App& app, bool showAll) {
+    if (showAll) {
+        app.hiddenFaces.clear();
+        rebuildBuffers(app);
+        app.status = "all faces shown";
+    } else if (!app.selFaces.empty()) {
+        for (int fid : app.selFaces) app.hiddenFaces.insert(fid);
+        app.selFaces.clear();
+        app.activeFace = 0;
+        rebuildBuffers(app);
+        app.status = "face(s) hidden (shift+H shows all)";
+    }
+}
+
+static void toggleBridgeMode(App& app) {
+    app.mode = app.mode == Mode::Bridge ? Mode::Idle : Mode::Bridge;
+    app.bridgeFirstEdge = 0;
+    app.hoverLoop = -1;
+    if (app.mode == Mode::Bridge && app.bLoops.empty()) {
+        app.status = "bridge: no open boundaries (delete a face first)";
+    }
+}
+
+static void toggleLoopCutMode(App& app) {
+    app.mode = app.mode == Mode::LoopCut ? Mode::Idle : Mode::LoopCut;
+    app.hoverValid = false;
+    app.slideOp = -1;
 }
 
 // Adjust a per-edge division pin for every selected edge (edge mode).
@@ -1834,6 +1980,7 @@ static void drawOverlay(App& app) {
                      ImGuiWindowFlags_NoNav);
     ImGui::TextDisabled(
         "1 verts   2 edges   3 faces   4 feature edges   5 elements\n"
+        "Tab mode pie   Q tools pie\n"
         "shift+click multi-select   ctrl+Z undo\n"
         "shift+wheel density   ctrl+wheel 2nd axis   ctrl+shift+wheel loops\n"
         "[ ] nudge counts\n"
@@ -2504,18 +2651,7 @@ int main(int argc, char** argv) {
                     app.hudUntil = glfwGetTime() + 0.9;
                 } else if (app.hasModel && (shift || ctrl) &&
                            (!app.selFaces.empty())) {
-                    bool secondary = ctrl;
-                    editSelected(app, [&](weft::FaceMeshSettings& s) {
-                        int* v = primaryDensity(app, s, secondary);
-                        *v = std::max(1, *v + steps);
-                        s.adaptive = false;  // explicit count = manual
-                    });
-                    weft::FaceMeshSettings cur =
-                        app.recipe.settings.forFace(app.activeFace);
-                    std::snprintf(app.hudText, sizeof app.hudText, "%s: %d",
-                                  secondary ? "secondary" : "primary",
-                                  *primaryDensity(app, cur, secondary));
-                    app.hudUntil = glfwGetTime() + 0.9;
+                    adjustFaceDensity(app, /*secondary=*/ctrl, steps);
                 } else {
                     app.cam.dist *= std::pow(0.92f, gScroll);
                     app.cam.dist = std::clamp(app.cam.dist, 0.5f, 10000.0f);
@@ -2555,9 +2691,7 @@ int main(int argc, char** argv) {
                 }
             }
             if (ImGui::IsKeyPressed(ImGuiKey_R, false)) {
-                app.mode = app.mode == Mode::LoopCut ? Mode::Idle : Mode::LoopCut;
-                app.hoverValid = false;
-                app.slideOp = -1;
+                toggleLoopCutMode(app);
             }
             if (ImGui::IsKeyPressed(ImGuiKey_J, false)) {
                 if (app.selectMode == SelectMode::Edge &&
@@ -2575,18 +2709,13 @@ int main(int argc, char** argv) {
                                        "boundaries - X deletes faces)"
                                      : "bridge committed (ctrl+Z undoes)";
                 } else {
-                    app.mode =
-                        app.mode == Mode::Bridge ? Mode::Idle : Mode::Bridge;
-                    app.bridgeFirstEdge = 0;
-                    app.hoverLoop = -1;
-                    if (app.mode == Mode::Bridge && app.bLoops.empty()) {
-                        app.status =
-                            "bridge: no open boundaries (delete a face first)";
-                    }
+                    toggleBridgeMode(app);
                 }
             }
             if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-                if (app.mode == Mode::Grab) {
+                if (app.pieKind >= 0) {
+                    app.pieKind = -1;
+                } else if (app.mode == Mode::Grab) {
                     // Cancel: drop the nudge op and restore the mesh.
                     if (app.grabOp >= 0 &&
                         app.grabOp < int(app.recipe.ops.size())) {
@@ -2611,46 +2740,36 @@ int main(int argc, char** argv) {
                 }
             }
             // Selection modes on 1-5: verts, mesh edges, mesh faces,
-            // feature edges (B-rep), elements (B-rep faces). Switching
-            // clears the other modes' selections so stale highlights
-            // never linger. Counts are adjusted with the wheel and [ ] —
-            // digits never type values (that UI confused more than it
-            // helped).
-            auto setSelectMode = [&](SelectMode next) {
-                if (next == app.selectMode) return;
-                app.selectMode = next;
-                app.selFaces.clear();
-                app.selEdges.clear();
-                app.selPolys.clear();
-                app.selVerts.clear();
-                app.selMeshEdges.clear();
-                app.activeFace = 0;
-                app.hoverFace = 0;
-                app.hoverVert = -1;
-                app.hoverMeshEdge = UINT64_MAX;
-                rebuildBuffers(app);
-                app.status = next == SelectMode::Vert     ? "vert mode"
-                             : next == SelectMode::MeshEdge ? "edge mode"
-                             : next == SelectMode::Poly     ? "face mode"
-                             : next == SelectMode::Edge
-                                 ? "feature edge mode"
-                                 : "element mode";
-            };
+            // feature edges (B-rep), elements (B-rep faces). Counts are
+            // adjusted with the wheel and [ ] — digits never type values.
             if (!io.KeyCtrl) {
                 if (ImGui::IsKeyPressed(ImGuiKey_1, false)) {
-                    setSelectMode(SelectMode::Vert);
+                    setSelectMode(app, SelectMode::Vert);
                 }
                 if (ImGui::IsKeyPressed(ImGuiKey_2, false)) {
-                    setSelectMode(SelectMode::MeshEdge);
+                    setSelectMode(app, SelectMode::MeshEdge);
                 }
                 if (ImGui::IsKeyPressed(ImGuiKey_3, false)) {
-                    setSelectMode(SelectMode::Poly);
+                    setSelectMode(app, SelectMode::Poly);
                 }
                 if (ImGui::IsKeyPressed(ImGuiKey_4, false)) {
-                    setSelectMode(SelectMode::Edge);
+                    setSelectMode(app, SelectMode::Edge);
                 }
                 if (ImGui::IsKeyPressed(ImGuiKey_5, false)) {
-                    setSelectMode(SelectMode::Face);
+                    setSelectMode(app, SelectMode::Face);
+                }
+            }
+            // Pie menus at the cursor: Tab = select modes, Q = tools.
+            if (app.hasModel &&
+                (ImGui::IsKeyPressed(ImGuiKey_Tab, false) ||
+                 ImGui::IsKeyPressed(ImGuiKey_Q, false))) {
+                int want = ImGui::IsKeyPressed(ImGuiKey_Tab, false) ? 0 : 1;
+                if (app.pieKind == want) {
+                    app.pieKind = -1;
+                } else {
+                    app.pieKind = want;
+                    app.pieCenter[0] = float(mx);
+                    app.pieCenter[1] = float(my);
                 }
             }
             bool dec = ImGui::IsKeyPressed(ImGuiKey_LeftBracket);
@@ -2692,11 +2811,7 @@ int main(int argc, char** argv) {
                 } else if (app.selectMode == SelectMode::Edge) {
                     adjustSelectedEdges(app, 0, delta);
                 } else {
-                    editSelected(app, [&](weft::FaceMeshSettings& s) {
-                        int* v = primaryDensity(app, s, shift);
-                        *v = std::max(1, *v + delta);
-                        s.adaptive = false;  // explicit count = manual
-                    });
+                    adjustFaceDensity(app, /*secondary=*/shift, delta);
                 }
             }
             if (ImGui::IsKeyPressed(ImGuiKey_C, false) && app.hasModel) {
@@ -2719,50 +2834,10 @@ int main(int argc, char** argv) {
                              [&](weft::FaceMeshSettings& s) { s.minimal = next; });
             }
             if (ImGui::IsKeyPressed(ImGuiKey_X, false) && app.hasModel) {
-                if (app.selectMode == SelectMode::Poly &&
-                    !app.selPolys.empty()) {
-                    // Polygon surgery: recorded ops anchored to the poly's
-                    // world centroid, replayed by nearest-centroid match.
-                    for (size_t p : app.selPolys) {
-                        if (p >= app.mesh.polygons.size()) continue;
-                        double c[3] = {0, 0, 0};
-                        for (uint32_t v : app.mesh.polygons[p]) {
-                            c[0] += app.mesh.vertices[v][0];
-                            c[1] += app.mesh.vertices[v][1];
-                            c[2] += app.mesh.vertices[v][2];
-                        }
-                        double k = double(app.mesh.polygons[p].size());
-                        weft::ManualOp op;
-                        op.kind = weft::ManualOp::Kind::DeletePoly;
-                        op.u = c[0] / k;
-                        op.v = c[1] / k;
-                        op.t = c[2] / k;
-                        app.recipe.ops.push_back(op);
-                    }
-                    app.selPolys.clear();
-                    markDirty(app);
-                    app.status =
-                        "polygon(s) deleted (ctrl+Z undoes, F/J refills)";
-                } else if (!app.selFaces.empty()) {
-                    editSelected(app, [](weft::FaceMeshSettings& s) {
-                        s.exclude = true;
-                    });
-                    app.status =
-                        "face(s) deleted (ctrl+Z undoes, J bridges rims)";
-                }
+                deleteSelection(app);
             }
             if (ImGui::IsKeyPressed(ImGuiKey_H, false) && app.hasModel) {
-                if (shift) {
-                    app.hiddenFaces.clear();
-                    rebuildBuffers(app);
-                    app.status = "all faces shown";
-                } else if (!app.selFaces.empty()) {
-                    for (int fid : app.selFaces) app.hiddenFaces.insert(fid);
-                    app.selFaces.clear();
-                    app.activeFace = 0;
-                    rebuildBuffers(app);
-                    app.status = "face(s) hidden (shift+H shows all)";
-                }
+                hideSelection(app, shift);
             }
             if (ImGui::IsKeyPressed(ImGuiKey_W, false)) app.showWire = !app.showWire;
             if (ImGui::IsKeyPressed(ImGuiKey_B, false) &&
@@ -2983,7 +3058,8 @@ int main(int argc, char** argv) {
             if (!hits.empty()) app.activeFace = *hits.begin();
             else if (!io.KeyShift) app.activeFace = 0;
             rebuildBuffers(app);
-        } else if ((clicked || rClicked) && app.hasModel) {
+        } else if ((clicked || rClicked) && app.hasModel &&
+                   app.pieKind < 0) {
             bool shift = io.KeyShift;
             if (app.selectMode == SelectMode::Vert && clicked) {
                 int64_t hit = pickMeshVert(app, mvp, mx, my, fbw, fbh);
@@ -3151,6 +3227,100 @@ int main(int argc, char** argv) {
             ImGui::GetForegroundDrawList()->AddRect(
                 {float(downX), float(downY)}, {float(mx), float(my)},
                 IM_COL32(255, 200, 80, 200), 0.0f, 0, 1.5f);
+        }
+        // Pie menus: sectors around the opening point, nearest-direction
+        // hover, click commits, esc/right-click cancels.
+        if (app.pieKind >= 0) {
+            struct PieItem {
+                const char* label;
+                const char* hint;
+            };
+            static const PieItem kModes[] = {
+                {"vert", "1"},        {"edge", "2"},   {"face", "3"},
+                {"feature edge", "4"}, {"element", "5"},
+            };
+            static const PieItem kTools[] = {
+                {"loop cut", "R"}, {"bridge", "J"},   {"grab", "G"},
+                {"delete", "X"},   {"hide", "H"},     {"show all", "sh+H"},
+                {"frame", "F"},    {"wire", "W"},
+            };
+            const PieItem* items = app.pieKind == 0 ? kModes : kTools;
+            const int n = app.pieKind == 0 ? 5 : 8;
+            const float cx = app.pieCenter[0], cy = app.pieCenter[1];
+            const float radius = 92.0f * gUiScale;
+            float dx = float(mx) - cx, dy = float(my) - cy;
+            int hover = -1;
+            if (std::hypot(dx, dy) > 18.0f * gUiScale) {
+                float ang = std::atan2(dy, dx);
+                float bestDot = -2.0f;
+                for (int i = 0; i < n; ++i) {
+                    float ia = float(-M_PI / 2 + i * 2.0 * M_PI / n);
+                    float d = std::cos(ia) * std::cos(ang) +
+                              std::sin(ia) * std::sin(ang);
+                    if (d > bestDot) {
+                        bestDot = d;
+                        hover = i;
+                    }
+                }
+            }
+            ImDrawList* dl = ImGui::GetForegroundDrawList();
+            dl->AddCircleFilled({cx, cy}, 5.0f * gUiScale,
+                                IM_COL32(255, 196, 64, 255));
+            if (hover >= 0) {
+                dl->AddLine({cx, cy}, {float(mx), float(my)},
+                            IM_COL32(255, 196, 64, 140), 2.0f * gUiScale);
+            }
+            for (int i = 0; i < n; ++i) {
+                float ia = float(-M_PI / 2 + i * 2.0 * M_PI / n);
+                ImVec2 at{cx + std::cos(ia) * radius,
+                          cy + std::sin(ia) * radius};
+                char text[48];
+                std::snprintf(text, sizeof text, "%s  %s", items[i].label,
+                              items[i].hint);
+                ImVec2 sz = ImGui::CalcTextSize(text);
+                ImVec2 pad{8.0f * gUiScale, 5.0f * gUiScale};
+                ImVec2 a{at.x - sz.x / 2 - pad.x, at.y - sz.y / 2 - pad.y};
+                ImVec2 b{at.x + sz.x / 2 + pad.x, at.y + sz.y / 2 + pad.y};
+                bool hot = i == hover;
+                dl->AddRectFilled(a, b,
+                                  hot ? IM_COL32(240, 158, 46, 255)
+                                      : IM_COL32(28, 30, 36, 235),
+                                  6.0f * gUiScale);
+                dl->AddRect(a, b, IM_COL32(255, 196, 64, hot ? 255 : 90),
+                            6.0f * gUiScale, 0, 1.0f);
+                dl->AddText({at.x - sz.x / 2, at.y - sz.y / 2},
+                            hot ? IM_COL32(20, 20, 20, 255)
+                                : IM_COL32(220, 224, 232, 255),
+                            text);
+            }
+            if (rClicked) {
+                app.pieKind = -1;
+            } else if (clicked) {
+                int kind = app.pieKind;
+                app.pieKind = -1;
+                if (hover >= 0 && kind == 0) {
+                    static const SelectMode kOrder[] = {
+                        SelectMode::Vert, SelectMode::MeshEdge,
+                        SelectMode::Poly, SelectMode::Edge,
+                        SelectMode::Face};
+                    setSelectMode(app, kOrder[hover]);
+                } else if (hover >= 0) {
+                    switch (hover) {
+                        case 0: toggleLoopCutMode(app); break;
+                        case 1: toggleBridgeMode(app); break;
+                        case 2:
+                            if (app.mode == Mode::Idle) {
+                                startVertexGrab(app, mvp, cx, cy, fbw, fbh);
+                            }
+                            break;
+                        case 3: deleteSelection(app); break;
+                        case 4: hideSelection(app, false); break;
+                        case 5: hideSelection(app, true); break;
+                        case 6: frameModel(app); break;
+                        case 7: app.showWire = !app.showWire; break;
+                    }
+                }
+            }
         }
         // Vert / mesh-edge mode overlays: screen-space markers for the
         // hover candidate and the selection (under the UI panels).
