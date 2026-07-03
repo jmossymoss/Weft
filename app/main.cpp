@@ -376,7 +376,7 @@ static Vec3 mouseRay(const Camera& cam, double mx, double my, int fbw,
 }
 
 enum class Mode { Idle, LoopCut, Bridge, Grab };
-enum class SelectMode { Face, Edge };
+enum class SelectMode { Face, Edge, Poly };
 
 struct App {
     // Document.
@@ -399,10 +399,16 @@ struct App {
     SelectMode selectMode = SelectMode::Face;
     std::set<int> selFaces;
     std::set<int> selEdges;
+    // Polygon mode: indices into mesh.polygons (cleared on regenerate —
+    // indices are only meaningful for the current mesh). Selects ANY
+    // polygon, including bridge/fill strips that carry no B-rep face.
+    std::set<size_t> selPolys;
     int activeFace = 0;
     int hoverFace = 0;  // pre-click feedback (face mode, idle)
     // Contiguous fill-buffer runs per face, for tint-only highlight draws.
     std::vector<std::array<int, 3>> fillSegs;  // {fid, firstVert, count}
+    // Per-polygon fill-buffer run {firstVert, count} ({-1,0} if hidden).
+    std::vector<std::array<int, 2>> polyFillRange;
     bool dirty = false;  // regenerate this frame
     std::set<int> hiddenFaces;
     bool openFacePopup = false;  // context popup requested at the cursor
@@ -522,10 +528,12 @@ static void rebuildBuffers(App& app) {
 
     static const weft::FaceInfo kBridgeInfo{};  // bridge strips: faceId 0
     app.fillSegs.clear();
+    app.polyFillRange.assign(m.polygons.size(), {-1, 0});
     for (size_t i = 0; i < m.polygons.size(); ++i) {
         int fid = m.polygonFaceId[i];
         if (fid > 0 && app.hiddenFaces.count(fid)) continue;
         int segStart = int(fill.size() / 6);
+        app.polyFillRange[i] = {segStart, 0};
         if (!app.fillSegs.empty() && app.fillSegs.back()[0] == fid &&
             app.fillSegs.back()[1] + app.fillSegs.back()[2] == segStart) {
             // extended below
@@ -554,6 +562,7 @@ static void rebuildBuffers(App& app) {
             push(wire, m.vertices[poly[(k + 1) % poly.size()]], wc);
         }
         app.fillSegs.back()[2] = int(fill.size() / 6) - app.fillSegs.back()[1];
+        app.polyFillRange[i][1] = int(fill.size() / 6) - app.polyFillRange[i][0];
     }
     app.fill.upload(fill);
     app.pick.upload(pick);
@@ -579,6 +588,18 @@ static void rebuildBuffers(App& app) {
     std::vector<float> brep;
     for (const weft::EdgePolyline& e : app.brepEdges) {
         const weft::EdgeInfo& info = app.analysis.edges[e.edgeId - 1];
+        // Hidden objects hide their feature edges too: skip edges whose
+        // owner faces are all hidden.
+        if (!info.faceIds.empty()) {
+            bool allHidden = true;
+            for (int fid : info.faceIds) {
+                if (!app.hiddenFaces.count(fid)) {
+                    allHidden = false;
+                    break;
+                }
+            }
+            if (allHidden) continue;
+        }
         std::array<float, 3> c{0.55f, 0.55f, 0.55f};  // boundary/seam
         switch (info.convexity) {
             case weft::EdgeConvexity::Convex: c = {0.95f, 0.62f, 0.18f}; break;
@@ -615,6 +636,7 @@ static void regenerate(App& app) {
         weft::applyOps(mesh, app.model, app.recipe.ops);
         app.mesh = std::move(mesh);
         app.report = std::move(report);
+        app.selPolys.clear();  // polygon indices died with the old mesh
     } catch (const std::exception& e) {
         logLine("regenerate: FAILED: %s", e.what());
         app.status = std::string("regenerate failed (ctrl+Z): ") + e.what();
@@ -1272,6 +1294,53 @@ static int nearestBrepEdge(App& app, const Mat4& mvp, double mx, double my,
     return hit;
 }
 
+// Polygon picking (poly select mode): the front-most polygon whose screen
+// projection contains the cursor. Runs over the raw polygons — bridge and
+// fill strips (no B-rep face) are selectable like any other.
+static int pickPolygon(App& app, const Mat4& mvp, double mx, double my,
+                       int fbw, int fbh) {
+    const weft::PolyMesh& m = app.mesh;
+    int best = -1;
+    double bestDepth = 1e30;
+    std::vector<std::array<float, 3>> proj;
+    for (size_t p = 0; p < m.polygons.size(); ++p) {
+        int fid = m.polygonFaceId[p];
+        if (fid > 0 && app.hiddenFaces.count(fid)) continue;
+        const auto& poly = m.polygons[p];
+        proj.assign(poly.size(), {0, 0, -1});
+        bool behind = false;
+        for (size_t i = 0; i < poly.size(); ++i) {
+            projectPoint(mvp, m.vertices[poly[i]], fbw, fbh,
+                         proj[i].data());
+            if (proj[i][2] <= 0) { behind = true; break; }
+        }
+        if (behind) continue;
+        auto inTri = [&](const std::array<float, 3>& a,
+                         const std::array<float, 3>& b,
+                         const std::array<float, 3>& c) {
+            auto cross = [&](const std::array<float, 3>& o,
+                             const std::array<float, 3>& q) {
+                return (q[0] - o[0]) * (float(my) - o[1]) -
+                       (q[1] - o[1]) * (float(mx) - o[0]);
+            };
+            float d1 = cross(a, b), d2 = cross(b, c), d3 = cross(c, a);
+            bool neg = d1 < 0 || d2 < 0 || d3 < 0;
+            bool pos = d1 > 0 || d2 > 0 || d3 > 0;
+            return !(neg && pos);
+        };
+        for (size_t k = 1; k + 1 < poly.size(); ++k) {
+            if (!inTri(proj[0], proj[k], proj[k + 1])) continue;
+            double depth = (proj[0][2] + proj[k][2] + proj[k + 1][2]) / 3;
+            if (depth < bestDepth) {
+                bestDepth = depth;
+                best = int(p);
+            }
+            break;
+        }
+    }
+    return best;
+}
+
 // Vertex grab (G): pick the interior vertex nearest the cursor and start a
 // NudgeVertex op. Only face-anchored vertices qualify — border vertices
 // belong to shared B-rep edges and are owned by density + conformity.
@@ -1464,6 +1533,12 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
                 ch = true;
             }
         }
+        if (!all && k == MK::PlateWeb) {
+            // Concentric collar rings around each hole ("all" shows this
+            // under the grid section already).
+            ch |= ImGui::DragInt("junction rings", &s.junctionRings, 0.2f,
+                                 1, 32);
+        }
     }
     if (grid) {
         if (all) ImGui::TextDisabled("planar / parametric grids");
@@ -1580,11 +1655,21 @@ static void drawOverlay(App& app) {
         ImGui::TextColored({0.6f, 0.8f, 1.0f, 1.0f}, "EDGE MODE");
         ImGui::SameLine();
         if (app.selEdges.empty()) {
-            ImGui::TextDisabled("click edges (shift extends) - tab: faces");
+            ImGui::TextDisabled("click edges (shift extends) - tab cycles");
         } else {
-            ImGui::TextDisabled("%zu edge(s) - wheel/[ ]/number pins verts"
-                                " - J bridges 2",
+            ImGui::TextDisabled("%zu edge(s) - wheel/[ ]/number sets loop"
+                                " total - J bridges - F fills",
                                 app.selEdges.size());
+        }
+    } else if (app.selectMode == SelectMode::Poly) {
+        ImGui::TextColored({0.85f, 0.7f, 1.0f, 1.0f}, "POLY MODE");
+        ImGui::SameLine();
+        if (app.selPolys.empty()) {
+            ImGui::TextDisabled(
+                "click polygons (bridge strips too) - X deletes - tab cycles");
+        } else {
+            ImGui::TextDisabled("%zu polygon(s) - X deletes",
+                                app.selPolys.size());
         }
     } else if (!app.selFaces.empty()) {
         if (app.selFaces.size() == 1) {
@@ -1632,7 +1717,8 @@ static void drawOverlay(App& app) {
                      ImGuiWindowFlags_NoFocusOnAppearing |
                      ImGuiWindowFlags_NoNav);
     ImGui::TextDisabled(
-        "tab face/edge mode   shift+click multi-select   ctrl+Z undo\n"
+        "tab cycles select mode (ctrl+1/2/3: face/edge/poly)\n"
+        "shift+click multi-select   ctrl+Z undo\n"
         "shift+wheel density   ctrl+wheel 2nd axis   ctrl+shift+wheel loops\n"
         "12<enter> divisions   [ ] nudge\n"
         "X delete face   H hide (shift+H show all)   R loop cut   J bridge\n"
@@ -2333,6 +2419,20 @@ int main(int argc, char** argv) {
                     app.recipe.ops.push_back(op);
                     markDirty(app);
                     app.status = "boundary filled (ctrl+Z undoes)";
+                } else if (app.selectMode == SelectMode::Edge &&
+                           !app.selEdges.empty() && !app.bLoops.empty()) {
+                    // Fill from edge mode: cap the open loop nearest each
+                    // selected edge (filling an already-closed loop is a
+                    // harmless no-op on replay).
+                    for (int eid : app.selEdges) {
+                        weft::ManualOp op;
+                        op.kind = weft::ManualOp::Kind::FillLoop;
+                        op.edgeA = eid;
+                        app.recipe.ops.push_back(op);
+                    }
+                    markDirty(app);
+                    app.status = "boundary filled near selected edge(s) "
+                                 "(ctrl+Z undoes)";
                 } else {
                     frameModel(app);
                 }
@@ -2391,15 +2491,42 @@ int main(int argc, char** argv) {
                     rebuildBuffers(app);
                 }
             }
-            if (ImGui::IsKeyPressed(ImGuiKey_Tab, false)) {
-                app.selectMode = app.selectMode == SelectMode::Face
-                                     ? SelectMode::Edge
-                                     : SelectMode::Face;
-                app.status = app.selectMode == SelectMode::Edge
+            // Selection modes: 1 B-rep faces, 2 edges, 3 mesh polygons
+            // (Tab cycles). Switching clears the other modes' selections
+            // so stale highlights never linger.
+            auto setSelectMode = [&](SelectMode next) {
+                if (next == app.selectMode) return;
+                app.selectMode = next;
+                app.selFaces.clear();
+                app.selEdges.clear();
+                app.selPolys.clear();
+                app.activeFace = 0;
+                app.hoverFace = 0;
+                rebuildBuffers(app);
+                app.status = next == SelectMode::Face ? "face select mode"
+                             : next == SelectMode::Edge
                                  ? "edge select mode"
-                                 : "face select mode";
+                                 : "polygon select mode";
+            };
+            if (ImGui::IsKeyPressed(ImGuiKey_Tab, false)) {
+                setSelectMode(app.selectMode == SelectMode::Face
+                                  ? SelectMode::Edge
+                              : app.selectMode == SelectMode::Edge
+                                  ? SelectMode::Poly
+                                  : SelectMode::Face);
             }
-            for (int d = 0; d <= 9; ++d) {
+            if (io.KeyCtrl) {  // ctrl+1/2/3 jump (bare digits type density)
+                if (ImGui::IsKeyPressed(ImGuiKey_1, false)) {
+                    setSelectMode(SelectMode::Face);
+                }
+                if (ImGui::IsKeyPressed(ImGuiKey_2, false)) {
+                    setSelectMode(SelectMode::Edge);
+                }
+                if (ImGui::IsKeyPressed(ImGuiKey_3, false)) {
+                    setSelectMode(SelectMode::Poly);
+                }
+            }
+            for (int d = 0; d <= 9 && !io.KeyCtrl; ++d) {
                 if (ImGui::IsKeyPressed(ImGuiKey(ImGuiKey_0 + d), false) ||
                     ImGui::IsKeyPressed(ImGuiKey(ImGuiKey_Keypad0 + d), false)) {
                     if (app.numberEntry.size() < 4) {
@@ -2484,11 +2611,38 @@ int main(int argc, char** argv) {
                 editSelected(app,
                              [&](weft::FaceMeshSettings& s) { s.minimal = next; });
             }
-            if (ImGui::IsKeyPressed(ImGuiKey_X, false) && app.hasModel &&
-                !app.selFaces.empty()) {
-                editSelected(app,
-                             [](weft::FaceMeshSettings& s) { s.exclude = true; });
-                app.status = "face(s) deleted (ctrl+Z undoes, J bridges rims)";
+            if (ImGui::IsKeyPressed(ImGuiKey_X, false) && app.hasModel) {
+                if (app.selectMode == SelectMode::Poly &&
+                    !app.selPolys.empty()) {
+                    // Polygon surgery: recorded ops anchored to the poly's
+                    // world centroid, replayed by nearest-centroid match.
+                    for (size_t p : app.selPolys) {
+                        if (p >= app.mesh.polygons.size()) continue;
+                        double c[3] = {0, 0, 0};
+                        for (uint32_t v : app.mesh.polygons[p]) {
+                            c[0] += app.mesh.vertices[v][0];
+                            c[1] += app.mesh.vertices[v][1];
+                            c[2] += app.mesh.vertices[v][2];
+                        }
+                        double k = double(app.mesh.polygons[p].size());
+                        weft::ManualOp op;
+                        op.kind = weft::ManualOp::Kind::DeletePoly;
+                        op.u = c[0] / k;
+                        op.v = c[1] / k;
+                        op.t = c[2] / k;
+                        app.recipe.ops.push_back(op);
+                    }
+                    app.selPolys.clear();
+                    markDirty(app);
+                    app.status =
+                        "polygon(s) deleted (ctrl+Z undoes, F/J refills)";
+                } else if (!app.selFaces.empty()) {
+                    editSelected(app, [](weft::FaceMeshSettings& s) {
+                        s.exclude = true;
+                    });
+                    app.status =
+                        "face(s) deleted (ctrl+Z undoes, J bridges rims)";
+                }
             }
             if (ImGui::IsKeyPressed(ImGuiKey_H, false) && app.hasModel) {
                 if (shift) {
@@ -2714,7 +2868,23 @@ int main(int argc, char** argv) {
             rebuildBuffers(app);
         } else if ((clicked || rClicked) && app.hasModel) {
             bool shift = io.KeyShift;
-            if (app.selectMode == SelectMode::Edge && clicked) {
+            if (app.selectMode == SelectMode::Poly) {
+                // Polygon picking: front-most poly under the cursor (works
+                // on bridge/fill strips too). Right-click does nothing —
+                // the context popup is face-scoped.
+                if (clicked) {
+                    int hit = pickPolygon(app, mvp, mx, my, fbw, fbh);
+                    if (!shift) app.selPolys.clear();
+                    if (hit >= 0) {
+                        size_t h = size_t(hit);
+                        if (shift && app.selPolys.count(h)) {
+                            app.selPolys.erase(h);
+                        } else {
+                            app.selPolys.insert(h);
+                        }
+                    }
+                }
+            } else if (app.selectMode == SelectMode::Edge && clicked) {
                 // Edge picking: nearest projected B-rep edge polyline.
                 int hit = 0;
                 double best = 14.0 * gUiScale;  // px
@@ -2881,6 +3051,26 @@ int main(int argc, char** argv) {
                 for (const auto& seg : app.fillSegs) {
                     if (seg[0] == app.hoverFace) {
                         glDrawArrays(GL_TRIANGLES, seg[1], seg[2]);
+                    }
+                }
+                glUniform1f(glGetUniformLocation(flatProg, "uMix"), 0.0f);
+                glDepthFunc(GL_LESS);
+            }
+            // Polygon-mode selection: tint the selected polys' runs.
+            if (app.selectMode == SelectMode::Poly && !app.selPolys.empty()) {
+                glDepthFunc(GL_LEQUAL);
+                glUseProgram(flatProg);
+                glUniformMatrix4fv(glGetUniformLocation(flatProg, "uMVP"), 1,
+                                   GL_FALSE, mvp.m);
+                glUniform1f(glGetUniformLocation(flatProg, "uMix"), 0.65f);
+                float sl[3] = {0.98f, 0.80f, 0.25f};
+                glUniform3fv(glGetUniformLocation(flatProg, "uColor"), 1, sl);
+                glBindVertexArray(app.fill.vao);
+                for (size_t p : app.selPolys) {
+                    if (p >= app.polyFillRange.size()) continue;
+                    const auto& r = app.polyFillRange[p];
+                    if (r[0] >= 0 && r[1] > 0) {
+                        glDrawArrays(GL_TRIANGLES, r[0], r[1]);
                     }
                 }
                 glUniform1f(glGetUniformLocation(flatProg, "uMix"), 0.0f);

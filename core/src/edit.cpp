@@ -557,6 +557,31 @@ int fillLoop(PolyMesh& mesh, const Model& model, const ManualOp& op) {
     return 1;
 }
 
+int deletePoly(PolyMesh& mesh, const ManualOp& op) {
+    if (mesh.polygons.empty()) return 0;
+    size_t best = 0;
+    double bestD = 1e300;
+    for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+        double cx = 0, cy = 0, cz = 0;
+        for (uint32_t v : mesh.polygons[p]) {
+            cx += mesh.vertices[v][0];
+            cy += mesh.vertices[v][1];
+            cz += mesh.vertices[v][2];
+        }
+        double k = double(mesh.polygons[p].size());
+        double d = (cx / k - op.u) * (cx / k - op.u) +
+                   (cy / k - op.v) * (cy / k - op.v) +
+                   (cz / k - op.t) * (cz / k - op.t);
+        if (d < bestD) {
+            bestD = d;
+            best = p;
+        }
+    }
+    mesh.polygons.erase(mesh.polygons.begin() + best);
+    mesh.polygonFaceId.erase(mesh.polygonFaceId.begin() + best);
+    return 1;
+}
+
 int nudgeVertex(PolyMesh& mesh, const Model& model, const ManualOp& op) {
     if (op.faceId < 1 || op.faceId > model.faceCount()) return 0;
     // The source is found in anchor space, not 3D: it's stable under the
@@ -591,6 +616,7 @@ void applyOps(PolyMesh& mesh, const Model& model,
                 nudgeVertex(mesh, model, op);
                 break;
             case ManualOp::Kind::FillLoop: fillLoop(mesh, model, op); break;
+            case ManualOp::Kind::DeletePoly: deletePoly(mesh, op); break;
         }
     }
 }

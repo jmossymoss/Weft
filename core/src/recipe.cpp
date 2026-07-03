@@ -84,6 +84,10 @@ void saveRecipe(const Recipe& recipe, const std::string& path) {
                 << " " << op.u2 << " " << op.v2 << "\n";
         } else if (op.kind == ManualOp::Kind::FillLoop) {
             out << "op fill " << op.edgeA << "\n";
+        } else if (op.kind == ManualOp::Kind::DeletePoly) {
+            // (u,v,t) hold the world-space centroid of the polygon.
+            out << "op delpoly " << op.u << " " << op.v << " " << op.t
+                << "\n";
         } else {
             out << "op loop " << op.faceId << " " << op.u << " " << op.v
                 << " " << op.t << "\n";
@@ -148,6 +152,12 @@ Recipe loadRecipe(const std::string& path) {
                     op.kind = ManualOp::Kind::FillLoop;
                     ss >> op.edgeA;
                     if (!ss) throw std::runtime_error("malformed op fill");
+                } else if (opKind == "delpoly") {
+                    op.kind = ManualOp::Kind::DeletePoly;
+                    ss >> op.u >> op.v >> op.t;
+                    if (!ss) {
+                        throw std::runtime_error("malformed op delpoly");
+                    }
                 } else {
                     throw std::runtime_error("unknown op: " + opKind);
                 }

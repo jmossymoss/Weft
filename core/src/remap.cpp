@@ -177,6 +177,8 @@ Recipe remapRecipe(const Recipe& recipe, const Model& oldModel,
                 continue;
             }
             op.edgeA = a;
+        } else if (op.kind == ManualOp::Kind::DeletePoly) {
+            // World-space anchor: no B-rep reference to remap.
         } else {  // LoopInsert / NudgeVertex anchor to a face
             int n = faceFor(op.faceId);
             if (!n) {
