@@ -1367,9 +1367,21 @@ bool meshMinimalPlanar(const TopoDS_Face& face, const Model& model,
 bool planQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                   const Model& model, FacePlan& plan) {
     // Any trimmed surface patch works — the grid lives in UV and maps
-    // through the surface — except closed ones (the seam would need a
-    // wrapped grid; revolution grids own those).
-    if (surf.IsUClosed() || surf.IsVClosed()) return false;
+    // through the surface. Only faces that wrap a FULL period need the
+    // seam-aware revolution grids; a small patch trimmed from a closed
+    // surface (fillet corners, wedges on cylinders) is a plain chart.
+    {
+        Handle(Geom_Surface) S = BRep_Tool::Surface(face);
+        if (S.IsNull()) return false;
+        double umin, umax, vmin, vmax;
+        BRepTools::UVBounds(face, umin, umax, vmin, vmax);
+        if (S->IsUPeriodic() && umax - umin >= 0.999 * S->UPeriod()) {
+            return false;
+        }
+        if (S->IsVPeriodic() && vmax - vmin >= 0.999 * S->VPeriod()) {
+            return false;
+        }
+    }
     FacePlan probe;
     if (!collectPlanarLoops(face, surf, model, probe,
                             /*requirePlane=*/false)) {
