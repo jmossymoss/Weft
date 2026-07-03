@@ -2084,6 +2084,19 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     if (s.quadDominant && planQuadFill(face, surf, model, plan)) return plan;
 
     plan.kind = MesherKind::Fallback;
+    // Quad-dominant decimation moves border verts by up to the chord
+    // tolerance; on a face with features SMALLER than that it wraps flaps
+    // over the neighbours (folds the weld then has to amputate). Such
+    // faces triangulate plainly instead.
+    if (s.quadDominant) {
+        for (int eid : info.edgeIds) {
+            const double len = analysis.edges[eid - 1].length;
+            if (len > 1e-12 && len < 3.0 * s.chordTolerance) {
+                plan.forceFallbackQuads = 0;
+                break;
+            }
+        }
+    }
     return plan;
 }
 
@@ -3241,6 +3254,12 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
             }
 
             // Snap every mover to the nearest target (position + param).
+            struct SnapPick {
+                uint32_t v;
+                const EdgeParamPoint* best;
+                double dist;
+            };
+            std::vector<SnapPick> picks;
             for (auto& [v, t] : movers) {
                 const EdgeParamPoint* best = &targets[0];
                 for (const EdgeParamPoint& cand : targets) {
@@ -3254,8 +3273,18 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                         fid, eid, v, paramGap(best->param, t), maxGap);
                     continue;
                 }
-                mesh.vertices[v] = mesh.vertices[best->vert];
-                t = best->param;
+                const auto& q = mesh.vertices[best->vert];
+                picks.push_back(
+                    {v, best,
+                     moverOrig.at(v).Distance(gp_Pnt(q[0], q[1], q[2]))});
+            }
+            // (Injective snapping — one mover per target — was tried for
+            // decimated borders and reverted: their zip against analytic
+            // chains RELIES on many-to-one collapse; forcing uniqueness
+            // exploded opens 10x across the sweep.)
+            for (const SnapPick& s : picks) {
+                mesh.vertices[s.v] = mesh.vertices[s.best->vert];
+                movers[s.v] = s.best->param;
             }
 
             // Insert targets skipped between consecutive border movers so
