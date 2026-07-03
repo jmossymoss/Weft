@@ -622,21 +622,40 @@ void meshAnnulusRing(const TopoDS_Face& face, const Model& model, int faceId,
                      MeshBuilder& out) {
     // A ring = the wire's edges chained in order, each sampled at its own
     // solved count (endpoints shared with the next edge, so a loop of K
-    // edges at counts c_k has sum(c_k) vertices).
+    // edges at counts c_k has sum(c_k) vertices). The wire is walked ON
+    // THE FACE: the model's stored edge orientation can differ per edge,
+    // and sampling with it zigzags multi-edge loops into folded rings.
     auto sampleRing = [&](const std::vector<int>& loop) {
         std::vector<gp_Pnt> pts;
-        for (int eid : loop) {
-            const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
-            int n = eid < int(solvedEdge.size()) ? solvedEdge[eid] : 0;
-            if (n < 1) n = std::max(3, radialDefault) / int(loop.size());
-            n = std::max(1, n);
-            BRepAdaptor_Curve c(edge);
-            double f = c.FirstParameter(), l = c.LastParameter();
-            const bool rev = edge.Orientation() == TopAbs_REVERSED;
-            for (int i = 0; i < n; ++i) {  // skip the shared endpoint
-                double t = rev ? 1.0 - double(i) / n : double(i) / n;
-                pts.push_back(c.Value(f + (l - f) * t));
+        for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+            const TopoDS_Wire wire = TopoDS::Wire(wx.Current());
+            bool mine = false;
+            for (BRepTools_WireExplorer we(wire, face); we.More();
+                 we.Next()) {
+                if (model.edges.FindIndex(we.Current()) == loop[0]) {
+                    mine = true;
+                    break;
+                }
             }
+            if (!mine) continue;
+            for (BRepTools_WireExplorer we(wire, face); we.More();
+                 we.Next()) {
+                const TopoDS_Edge edge = we.Current();
+                int eid = model.edges.FindIndex(edge);
+                int n = eid >= 1 && eid < int(solvedEdge.size())
+                            ? solvedEdge[eid]
+                            : 0;
+                if (n < 1) n = std::max(3, radialDefault) / int(loop.size());
+                n = std::max(1, n);
+                BRepAdaptor_Curve c(edge);
+                double f = c.FirstParameter(), l = c.LastParameter();
+                const bool rev = edge.Orientation() == TopAbs_REVERSED;
+                for (int i = 0; i < n; ++i) {  // endpoint owned by next edge
+                    double t = rev ? 1.0 - double(i) / n : double(i) / n;
+                    pts.push_back(c.Value(f + (l - f) * t));
+                }
+            }
+            break;
         }
         return pts;
     };
@@ -3036,6 +3055,7 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                  (targets.size() == movers.size() && fid < nfid))) {
                 continue;
             }
+
             std::sort(targets.begin(), targets.end(),
                       [](const EdgeParamPoint& a, const EdgeParamPoint& b) {
                           return a.param < b.param;
