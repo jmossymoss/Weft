@@ -2033,20 +2033,26 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     if (surf.GetType() == GeomAbs_Plane &&
         parametricGridFits(face, surf, std::max(1, s.gridU),
                            std::max(1, s.gridV))) {
-        plan.kind = MesherKind::PlanarGrid;
-        if (info.isFillet) {
-            plan.isFillet = true;
-            // The blend arc runs along u for a cylinder strip and along the
-            // minor circle (v) for a toroidal corner patch.
-            plan.acrossIsU = surf.GetType() == GeomAbs_Cylinder;
-        }
-        // Only a plain 2u+2v rectangle ties its grid to its edges; anything
-        // else meshes with its own settings, unconstrained.
+        // Only a plain 2u+2v rectangle ties its grid to its edges. On auto
+        // anything else must NOT grid: an unconstrained grid's coarse
+        // border (two verts a side at 1x1) can never zip against a denser
+        // neighbour — conform merges verts but cannot split edges. A
+        // rectangle whose side is split into collinear edges (T-junction)
+        // falls through to the fallback, whose shared-edge nodes come from
+        // the model-wide triangulation and match the neighbour exactly.
         collectIsoEdges(face, model, info.edgeIds, plan);
-        if (plan.uEdges.size() != 2 || plan.vEdges.size() != 2) {
-            plan.constrains = false;
+        if (plan.uEdges.size() == 2 && plan.vEdges.size() == 2) {
+            plan.kind = MesherKind::PlanarGrid;
+            if (info.isFillet) {
+                plan.isFillet = true;
+                // The blend arc runs along u for a cylinder strip and along
+                // the minor circle (v) for a toroidal corner patch.
+                plan.acrossIsU = surf.GetType() == GeomAbs_Cylinder;
+            }
+            return plan;
         }
-        return plan;
+        plan.uEdges.clear();
+        plan.vEdges.clear();
     }
 
     // Four-sided freeform/trimmed faces get a structured Coons grid; the
@@ -3646,6 +3652,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         BRepBndLib::Add(model.shape, bb);
         const double microTol = 1e-4 * std::sqrt(bb.SquareExtent());
         int microEdges = 0;
+        // Reach: capture radius a fused group needs so that mesh verts
+        // SAMPLED ALONG a collapsed micro-edge (a fallback neighbour puts
+        // interior nodes on it) snap to the representative too.
+        std::vector<double> reach(vmap.Extent() + 1, 0.0);
         for (TopExp_Explorer ex(model.shape, TopAbs_EDGE); ex.More();
              ex.Next()) {
             const TopoDS_Edge e = TopoDS::Edge(ex.Current());
@@ -3656,8 +3666,16 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 continue;
             }
             BRepAdaptor_Curve c(e);
-            if (GCPnts_AbscissaPoint::Length(c) >= microTol) continue;
-            root[find(vmap.FindIndex(v1))] = find(vmap.FindIndex(v2));
+            const double len = GCPnts_AbscissaPoint::Length(c);
+            if (len >= microTol) continue;
+            const int a = find(vmap.FindIndex(v1));
+            const int b = find(vmap.FindIndex(v2));
+            if (a != b) {
+                root[a] = b;
+                reach[b] += reach[a] + len;
+            } else {
+                reach[b] += len;
+            }
             ++microEdges;
         }
 
@@ -3671,10 +3689,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         std::vector<Corner> corners;
         for (int i = 1; i <= vmap.Extent(); ++i) {
             const TopoDS_Vertex v = TopoDS::Vertex(vmap(i));
-            const TopoDS_Vertex r = TopoDS::Vertex(vmap(find(i)));
-            corners.push_back({BRep_Tool::Pnt(v),
-                               std::max(1e-7, 2.0 * BRep_Tool::Tolerance(v)),
-                               BRep_Tool::Pnt(r)});
+            const int r = find(i);
+            corners.push_back(
+                {BRep_Tool::Pnt(v),
+                 std::max({1e-7, 2.0 * BRep_Tool::Tolerance(v),
+                           1.05 * reach[r]}),
+                 BRep_Tool::Pnt(TopoDS::Vertex(vmap(r)))});
         }
         size_t snapped = 0;
         for (auto& mv : mesh.vertices) {
