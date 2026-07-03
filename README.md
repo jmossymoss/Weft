@@ -90,7 +90,15 @@ Headless C++ core + CLI covering the plan's Phases 0–3 essentials:
   - `C` — cap n-gon/fan · `T` — allow tris (quad-dominant toggle) ·
     `M` — minimal n-gon
   - `W` wire · `B` feature edges · `F` frame · `esc` cancel/deselect
-- Save/load the session recipe from the panel
+  - `G` — grab: the interior vertex under the cursor slides constrained
+    to its CAD surface (exact re-projection); click commits, `esc` cancels
+- Save/load the session recipe from the panel (`ctrl+S`; `<model>.recipe`
+  auto-loads next to the source)
+- **Blender live link**: tick "live link (Blender)" and every edit
+  mirrors the mesh to a watched OBJ; install `blender/weft_link.py` in
+  Blender and hit "Start watching" (sidebar > Weft) — the `Weft` object
+  updates in place, materials and modifiers intact, with CAD face ids in
+  the `weft_face` face attribute
 
 Uses system `libglfw3-dev libgl1-mesa-dev libimgui-dev libstb-dev` when
 present; otherwise CMake fetches and builds GLFW/ImGui from source (the
@@ -98,9 +106,8 @@ normal path on Windows), so the app builds everywhere OpenGL exists.
 `weft_app --fixture boss --screenshot out.png` renders headlessly (e.g.
 under `xvfb-run`) for CI/visual checks.
 
-The in-viewport editing verbs (loop cut on hover, vertex slide) and the
-Blender bridge are the next layers; the core is headless-first by design
-(plan §2.1).
+The core stays headless-first by design (plan §2.1); the app and the
+Blender bridge are layers over the same recipe pipeline.
 
 ## Build
 

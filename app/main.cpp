@@ -436,6 +436,12 @@ struct App {
     int hoverLoop = -1;
     int bridgeFirstEdge = 0;  // first clicked loop's edge id (0 = none yet)
 
+    // Blender live link: every regenerate mirrors the mesh to this OBJ
+    // (atomic tmp+rename); blender/weft_link.py watches it and reimports,
+    // keeping CAD face ids as the "weft_face" face attribute.
+    bool liveLink = false;
+    std::string livePath;  // <data dir>/weft_live.obj, set at startup
+
     // Display / viewport preferences.
     int shadingMode = 0;  // 0 shaded+wire, 1 shaded, 2 wireframe, 3 flat+wire
     bool showFill = true;
@@ -671,6 +677,19 @@ static void regenerate(App& app) {
     app.dirty = false;
     logLine("regenerate: done (%zu verts, %zu polys)",
             app.mesh.vertexCount(), app.mesh.polygonCount());
+
+    // Blender live link: mirror every result to the watched OBJ. Written
+    // to a temp file and renamed into place, so the addon's mtime poll
+    // never reads a half-written export.
+    if (app.liveLink && !app.livePath.empty()) {
+        try {
+            std::string tmp = app.livePath + ".tmp";
+            weft::writeObj(app.mesh, tmp);
+            std::filesystem::rename(tmp, app.livePath);
+        } catch (const std::exception& e) {
+            app.status = std::string("live link write failed: ") + e.what();
+        }
+    }
 }
 
 // Frame the selection if there is one, else the whole model (F).
@@ -1580,6 +1599,27 @@ static void drawUi(App& app) {
                                  sizeof app.pathBuf);
         ImGui::SameLine();
         if (ImGui::Button("Load")) loadModel(app, app.pathBuf);
+        if (app.hasModel) {
+            // Live link: mirror every regenerate into the watched OBJ that
+            // the bundled Blender addon (blender/weft_link.py) reimports.
+            if (ImGui::Checkbox("live link (Blender)", &app.liveLink) &&
+                app.liveLink) {
+                app.dirty = true;  // push the current mesh out right away
+                                   // (not a recipe mutation: no undo entry)
+                app.status = "live link on - install blender/weft_link.py "
+                             "and enable watching";
+            }
+            if (app.liveLink) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("(?)");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("writes %s on every change;\n"
+                                      "the addon polls it and swaps the "
+                                      "'Weft' object's mesh in place",
+                                      app.livePath.c_str());
+                }
+            }
+        }
         if (app.hasModel && ImGui::Button("Export OBJ...", {-1, 0})) {
             // Default name: the source file with .obj — one group per
             // B-rep face, so CAD face IDs survive into Blender.
@@ -1965,6 +2005,7 @@ int main(int argc, char** argv) {
     GLuint flatProg = makeProgram(kFlatVS, kFlatFS);
 
     App app;
+    app.livePath = gDataDir + "/weft_live.obj";
     if (!startModel.empty()) loadModel(app, startModel);
     else loadFixture(app, startFixture);
     app.cam.yaw = startYaw;
