@@ -39,7 +39,12 @@ struct PolyMesh {
 void weldVertices(PolyMesh& mesh, double tolerance);
 
 // Write Wavefront OBJ. Polygons are grouped per B-rep face
-// ("g face_<id>") so CAD face IDs survive into the DCC.
-void writeObj(const PolyMesh& mesh, const std::string& path);
+// ("g face_<id>") so CAD face IDs survive into the DCC. When the source
+// model's object structure is passed (face ids per solid), each solid
+// becomes its own "o object_<n>" block, so importers — including the
+// bundled Blender addon — keep separate CAD bodies as separate meshes
+// instead of merging everything into one.
+void writeObj(const PolyMesh& mesh, const std::string& path,
+              const std::vector<std::vector<int>>* solidFaces = nullptr);
 
 }  // namespace weft

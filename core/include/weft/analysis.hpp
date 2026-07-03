@@ -51,6 +51,7 @@ struct EdgeInfo {
     int id = 0;
     EdgeConvexity convexity = EdgeConvexity::Boundary;
     double dihedralDeg = 0.0;  // angle between face normals at edge midpoint
+    double length = 0.0;       // arc length (multi-edge loop distribution)
     std::vector<int> faceIds;
 };
 

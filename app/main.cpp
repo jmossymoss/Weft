@@ -696,7 +696,7 @@ static void regenerate(App& app) {
     if (app.liveLink && !app.livePath.empty()) {
         try {
             std::string tmp = app.livePath + ".tmp";
-            weft::writeObj(app.mesh, tmp);
+            weft::writeObj(app.mesh, tmp, &app.analysis.solidFaces);
             std::filesystem::rename(tmp, app.livePath);
         } catch (const std::exception& e) {
             app.status = std::string("live link write failed: ") + e.what();
@@ -993,21 +993,63 @@ static const weft::FaceMeshSettings& activeSettings(const App& app) {
 }
 
 // Adjust a per-edge division pin for every selected edge (edge mode).
-static void adjustSelectedEdges(App& app, int typedValue, int delta) {
+// Multi-edge density edit: the selection is treated as ONE chain/loop —
+// a circle split into arcs by seams behaves like the closed loop it is.
+// The typed value (or the nudged total) is the COMBINED vertex count,
+// distributed across the selected edges proportionally to arc length.
+// Returns the resulting total for the HUD.
+static int adjustSelectedEdges(App& app, int typedValue, int delta) {
+    if (app.selEdges.empty()) return 0;
+    const int count = int(app.selEdges.size());
+    auto currentOf = [&](int eid) {
+        auto pin = app.recipe.settings.perEdge.find(eid);
+        if (pin != app.recipe.settings.perEdge.end()) return pin->second;
+        auto it = app.report.edgeDivisions.find(eid);
+        return it != app.report.edgeDivisions.end() ? it->second : 8;
+    };
+    int total = 0;
+    double lengthSum = 0;
+    std::vector<std::pair<int, double>> edges;  // eid, length
     for (int eid : app.selEdges) {
-        int cur = typedValue;
-        if (typedValue <= 0) {
-            auto pin = app.recipe.settings.perEdge.find(eid);
-            if (pin != app.recipe.settings.perEdge.end()) cur = pin->second;
-            else {
-                auto it = app.report.edgeDivisions.find(eid);
-                cur = it != app.report.edgeDivisions.end() ? it->second : 8;
-            }
-            cur += delta;
-        }
-        app.recipe.settings.perEdge[eid] = std::max(1, cur);
+        total += currentOf(eid);
+        double len = eid >= 1 && eid <= int(app.analysis.edges.size())
+                         ? app.analysis.edges[eid - 1].length
+                         : 0.0;
+        if (len <= 0) len = 1.0;
+        edges.push_back({eid, len});
+        lengthSum += len;
     }
-    if (!app.selEdges.empty()) markDirty(app);
+    int target = typedValue > 0 ? typedValue : total + delta;
+    target = std::max(count, target);  // at least one span per edge
+
+    // Largest-remainder split: shares sum EXACTLY to the target.
+    std::vector<int> share(edges.size(), 1);
+    std::vector<std::pair<double, size_t>> remainder;
+    int assigned = 0;
+    for (size_t i = 0; i < edges.size(); ++i) {
+        double exact = target * edges[i].second / lengthSum;
+        share[i] = std::max(1, int(exact));
+        assigned += share[i];
+        remainder.push_back({exact - int(exact), i});
+    }
+    std::sort(remainder.rbegin(), remainder.rend());
+    for (size_t k = 0; assigned < target; ++k) {
+        ++share[remainder[k % remainder.size()].second];
+        ++assigned;
+    }
+    for (size_t k = 0; assigned > target; ++k) {
+        size_t i = remainder[remainder.size() - 1 - (k % remainder.size())]
+                       .second;
+        if (share[i] > 1) {
+            --share[i];
+            --assigned;
+        }
+    }
+    for (size_t i = 0; i < edges.size(); ++i) {
+        app.recipe.settings.perEdge[edges[i].first] = share[i];
+    }
+    markDirty(app);
+    return target;
 }
 
 static void projectPoint(const Mat4& mvp, const std::array<double, 3>& p,
@@ -1197,6 +1239,37 @@ static void updateBridgeHover(App& app, const Mat4& mvp, double mx, double my,
         }
     }
     if (!lines.empty()) app.preview.upload(lines);
+}
+
+// Nearest projected B-rep edge to the cursor (same picking as edge-select
+// mode). The bridge tool records THIS edge, not the loop's canonical one,
+// so two picks on the same boundary loop can name its two sides.
+static int nearestBrepEdge(App& app, const Mat4& mvp, double mx, double my,
+                           int fbw, int fbh, double maxPx) {
+    int hit = 0;
+    double best = maxPx;
+    for (const weft::EdgePolyline& e : app.brepEdges) {
+        for (size_t i = 0; i + 1 < e.points.size(); ++i) {
+            float pa[3] = {0, 0, -1}, pb[3] = {0, 0, -1};
+            projectPoint(mvp, e.points[i], fbw, fbh, pa);
+            projectPoint(mvp, e.points[i + 1], fbw, fbh, pb);
+            if (pa[2] <= 0 || pb[2] <= 0) continue;
+            float ex = pb[0] - pa[0], ey = pb[1] - pa[1];
+            float len2 = ex * ex + ey * ey;
+            float t = len2 < 1e-6f
+                          ? 0.0f
+                          : std::clamp(((float(mx) - pa[0]) * ex +
+                                        (float(my) - pa[1]) * ey) / len2,
+                                       0.0f, 1.0f);
+            double d = std::hypot(double(mx) - (pa[0] + t * ex),
+                                  double(my) - (pa[1] + t * ey));
+            if (d < best) {
+                best = d;
+                hit = e.edgeId;
+            }
+        }
+    }
+    return hit;
 }
 
 // Vertex grab (G): pick the interior vertex nearest the cursor and start a
@@ -1488,9 +1561,10 @@ static void drawOverlay(App& app) {
         ImGui::TextColored({1.0f, 0.85f, 0.25f, 1.0f}, "BRIDGE");
         ImGui::SameLine();
         ImGui::TextDisabled(app.bridgeFirstEdge
-                                ? "pick the second loop - esc restarts"
-                                : "pick two loops - [ ] twists last bridge"
-                                  " - J/esc exits");
+                                ? "pick the second side - esc restarts"
+                                : "pick two loops (or two sides of one) - "
+                                  "F fills hovered - [ ] twists - J/esc "
+                                  "exits");
         if (app.hoverLoop >= 0) {
             ImGui::Text("loop: edge #%d, %zu verts",
                         app.bLoopEdge[app.hoverLoop],
@@ -1724,7 +1798,7 @@ static void drawUi(App& app) {
             std::string out = saveFileDialog((base + ".obj").c_str());
             if (!out.empty()) {
                 try {
-                    weft::writeObj(app.mesh, out);
+                    weft::writeObj(app.mesh, out, &app.analysis.solidFaces);
                     app.status = "exported " + out;
                     logLine("export: %s (%zu verts, %zu polys)", out.c_str(),
                             app.mesh.vertexCount(), app.mesh.polygonCount());
@@ -2208,11 +2282,12 @@ int main(int argc, char** argv) {
                 if (app.hasModel && (shift || ctrl) &&
                     app.selectMode == SelectMode::Edge &&
                     !app.selEdges.empty()) {
-                    adjustSelectedEdges(app, 0, steps);
-                    int eid = *app.selEdges.begin();
+                    int total = adjustSelectedEdges(app, 0, steps);
                     std::snprintf(app.hudText, sizeof app.hudText,
-                                  "edge verts: %d",
-                                  app.recipe.settings.perEdge[eid]);
+                                  app.selEdges.size() > 1
+                                      ? "loop verts: %d (%zu edges)"
+                                      : "edge verts: %d",
+                                  total, app.selEdges.size());
                     app.hudUntil = glfwGetTime() + 0.9;
                 } else if (app.hasModel && ctrl && shift &&
                            !app.selFaces.empty()) {
@@ -2248,7 +2323,20 @@ int main(int argc, char** argv) {
         // Keyboard-centric editing (plan §6: modal verbs, typed precision).
         if (!io.WantCaptureKeyboard) {
             bool shift = io.KeyShift;
-            if (ImGui::IsKeyPressed(ImGuiKey_F, false)) frameModel(app);
+            if (ImGui::IsKeyPressed(ImGuiKey_F, false)) {
+                if (app.mode == Mode::Bridge && app.hoverLoop >= 0) {
+                    // Fill tool: cap the hovered open boundary with one
+                    // n-gon (recorded, replayable, remappable).
+                    weft::ManualOp op;
+                    op.kind = weft::ManualOp::Kind::FillLoop;
+                    op.edgeA = app.bLoopEdge[app.hoverLoop];
+                    app.recipe.ops.push_back(op);
+                    markDirty(app);
+                    app.status = "boundary filled (ctrl+Z undoes)";
+                } else {
+                    frameModel(app);
+                }
+            }
             if (ImGui::IsKeyPressed(ImGuiKey_R, false)) {
                 app.mode = app.mode == Mode::LoopCut ? Mode::Idle : Mode::LoopCut;
                 app.hoverValid = false;
@@ -2593,10 +2681,16 @@ int main(int argc, char** argv) {
         } else if (app.mode == Mode::Bridge && !io.WantCaptureMouse) {
             updateBridgeHover(app, mvp, mx, my, fbw, fbh);
             if (clicked && app.hoverLoop >= 0) {
-                int eid = app.bLoopEdge[app.hoverLoop];
+                // The edge under the CURSOR, not the loop's canonical one:
+                // two picks on the same loop then name its two sides, and
+                // the core splits the loop between them.
+                int eid = nearestBrepEdge(app, mvp, mx, my, fbw, fbh,
+                                          30.0 * gUiScale);
+                if (eid == 0) eid = app.bLoopEdge[app.hoverLoop];
                 if (app.bridgeFirstEdge == 0) {
                     app.bridgeFirstEdge = eid;
-                    app.status = "bridge: pick the second boundary loop";
+                    app.status = "bridge: pick the second loop or the "
+                                 "other side of this one";
                 } else if (eid != app.bridgeFirstEdge) {
                     weft::ManualOp op;
                     op.kind = weft::ManualOp::Kind::Bridge;

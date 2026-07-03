@@ -339,9 +339,108 @@ double vdist(const PolyMesh& m, uint32_t a, uint32_t b) {
 
 }  // namespace
 
+namespace {
+
+// Both bridge picks landed on ONE boundary loop — a deleted band whose two
+// rims connect (through a shared corner, or a strip with open ends). Split
+// the loop into a rail hugging each picked curve, zipper the rails, and
+// close the two left-over spans (the band's ends) as n-gon caps.
+int bridgeWithinLoop(PolyMesh& mesh, const std::vector<uint32_t>& L,
+                     const std::vector<gp_Pnt>& samplesA,
+                     const std::vector<gp_Pnt>& samplesB) {
+    const int n = int(L.size());
+    auto distTo = [&](uint32_t v, const std::vector<gp_Pnt>& s) {
+        gp_Pnt p(mesh.vertices[v][0], mesh.vertices[v][1],
+                 mesh.vertices[v][2]);
+        double best = 1e300;
+        for (const gp_Pnt& q : s) best = std::min(best, p.Distance(q));
+        return best;
+    };
+    std::vector<char> nearA(n);
+    for (int i = 0; i < n; ++i) {
+        nearA[i] = distTo(L[i], samplesA) < distTo(L[i], samplesB);
+    }
+    // Longest contiguous cyclic run on each side = the two rails; whatever
+    // sits between them (corner arcs, noise) belongs to the end caps.
+    auto longestRun = [&](char want, int& start, int& len) {
+        start = -1;
+        len = 0;
+        for (int s = 0; s < n; ++s) {
+            if (nearA[s] != want || nearA[(s + n - 1) % n] == want) continue;
+            int l = 0;
+            while (l < n && nearA[(s + l) % n] == want) ++l;
+            if (l > len) {
+                len = l;
+                start = s;
+            }
+        }
+        if (start < 0 && nearA[0] == want) {  // the whole loop is one side
+            start = 0;
+            len = n;
+        }
+    };
+    int sa, la, sb, lb;
+    longestRun(1, sa, la);
+    longestRun(0, sb, lb);
+    if (sa < 0 || sb < 0 || la < 2 || lb < 2 || la >= n || lb >= n) return 0;
+
+    auto at = [&](int k) { return L[((k % n) + n) % n]; };
+    std::vector<uint32_t> ra, rb;
+    for (int k = 0; k < la; ++k) ra.push_back(at(sa + k));
+    for (int k = 0; k < lb; ++k) rb.push_back(at(sb + k));
+    const int N = int(ra.size()) - 1;  // rail edge counts
+    const int M = int(rb.size()) - 1;
+
+    int added = 0;
+    auto emit = [&](std::vector<uint32_t> poly) {
+        mesh.polygons.push_back(std::move(poly));
+        mesh.polygonFaceId.push_back(0);
+        ++added;
+    };
+
+    // Zipper: ra walks forward in loop order, rb walks BACKWARD from its
+    // far end (the two rails counter-rotate along the band). Every rail
+    // edge is traversed in loop order inside its polygon, cancelling the
+    // open boundary edge it covers.
+    auto vd = [&](uint32_t a, uint32_t b) { return vdist(mesh, a, b); };
+    int i = 0, t = 0;
+    while (i < N || t < M) {
+        uint32_t bq = rb[M - t];
+        bool stepA;
+        if (i >= N) stepA = false;
+        else if (t >= M) stepA = true;
+        else stepA = vd(ra[i + 1], bq) <= vd(ra[i], rb[M - t - 1]);
+        if (stepA) {
+            emit({ra[i], ra[i + 1], bq});
+            ++i;
+        } else {
+            emit({ra[i], rb[M - t - 1], bq});
+            ++t;
+        }
+    }
+
+    // End caps: the loop spans between the rails, closed by the zipper's
+    // first/last rails. Emitted in loop order, so every remaining open
+    // edge cancels and the strip is watertight.
+    auto cap = [&](int from, int to) {  // loop indices, inclusive walk
+        std::vector<uint32_t> poly;
+        for (int k = from; ; ++k) {
+            poly.push_back(at(k));
+            if (((k % n) + n) % n == ((to % n) + n) % n) break;
+            if (int(poly.size()) > n) return;  // safety
+        }
+        if (poly.size() >= 3) emit(std::move(poly));
+    };
+    cap(sa + la - 1, sb);           // ra end -> gap -> rb start
+    cap(sb + lb - 1, sa);           // rb end -> gap -> ra start
+    return added;
+}
+
+}  // namespace
+
 int bridgeLoops(PolyMesh& mesh, const Model& model, const ManualOp& op) {
     std::vector<std::vector<uint32_t>> loops = boundaryLoops(mesh);
-    if (loops.size() < 2) return 0;
+    if (loops.empty()) return 0;
 
     auto nearestLoop = [&](int edgeId, int excludeIdx) -> int {
         std::vector<gp_Pnt> samples = sampleEdgeCurve(model, edgeId, 32);
@@ -359,8 +458,15 @@ int bridgeLoops(PolyMesh& mesh, const Model& model, const ManualOp& op) {
         return best;
     };
     int ia = nearestLoop(op.edgeA, -1);
-    int ib = nearestLoop(op.edgeB, ia);
-    if (ia < 0 || ib < 0 || ia == ib) return 0;
+    int ib = nearestLoop(op.edgeB, -1);
+    if (ia < 0 || ib < 0) return 0;
+    if (ia == ib) {
+        // One loop, two sides: split it between the picked edges.
+        if (op.edgeA == op.edgeB) return 0;
+        return bridgeWithinLoop(mesh, loops[ia],
+                                sampleEdgeCurve(model, op.edgeA, 32),
+                                sampleEdgeCurve(model, op.edgeB, 32));
+    }
 
     // boundaryLoops stores each loop REVERSED relative to its polygons'
     // windings, so a bridge polygon must traverse loop edges in loop order
@@ -428,6 +534,29 @@ int bridgeLoops(PolyMesh& mesh, const Model& model, const ManualOp& op) {
     return added;
 }
 
+int fillLoop(PolyMesh& mesh, const Model& model, const ManualOp& op) {
+    std::vector<std::vector<uint32_t>> loops = boundaryLoops(mesh);
+    if (loops.empty()) return 0;
+    std::vector<gp_Pnt> samples = sampleEdgeCurve(model, op.edgeA, 32);
+    if (samples.empty()) return 0;
+    int best = -1;
+    double bestDist = 1e300;
+    for (int i = 0; i < int(loops.size()); ++i) {
+        double d = loopToEdgeDistance(mesh, loops[i], samples);
+        if (d < bestDist) {
+            bestDist = d;
+            best = i;
+        }
+    }
+    if (best < 0) return 0;
+    // The loop in loop order traverses every open edge once in the
+    // direction that cancels it — one watertight n-gon cap. The engine
+    // (or a later minimal pass) triangulates it however it likes.
+    mesh.polygons.push_back(loops[best]);
+    mesh.polygonFaceId.push_back(0);
+    return 1;
+}
+
 int nudgeVertex(PolyMesh& mesh, const Model& model, const ManualOp& op) {
     if (op.faceId < 1 || op.faceId > model.faceCount()) return 0;
     // The source is found in anchor space, not 3D: it's stable under the
@@ -461,6 +590,7 @@ void applyOps(PolyMesh& mesh, const Model& model,
             case ManualOp::Kind::NudgeVertex:
                 nudgeVertex(mesh, model, op);
                 break;
+            case ManualOp::Kind::FillLoop: fillLoop(mesh, model, op); break;
         }
     }
 }
