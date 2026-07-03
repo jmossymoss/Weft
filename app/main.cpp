@@ -358,7 +358,23 @@ struct Camera {
     }
 };
 
-enum class Mode { Idle, LoopCut, Bridge };
+// World-space ray through a screen pixel (must match matPerspective's
+// 42-degree vertical fov and matLookAt's z-up view used for the mvp).
+static Vec3 mouseRay(const Camera& cam, double mx, double my, int fbw,
+                     int fbh) {
+    Vec3 eye = cam.eye();
+    Vec3 f = norm(sub(cam.target, eye));
+    Vec3 s = norm(cross(f, {0, 0, 1}));
+    Vec3 u = cross(s, f);
+    float th = std::tan(42.0f * float(M_PI) / 360.0f);
+    float aspect = fbh > 0 ? float(fbw) / fbh : 1.6f;
+    float px = (2.0f * float(mx) / std::max(1, fbw) - 1.0f) * th * aspect;
+    float py = (1.0f - 2.0f * float(my) / std::max(1, fbh)) * th;
+    return norm({f.x + s.x * px + u.x * py, f.y + s.y * px + u.y * py,
+                 f.z + s.z * px + u.z * py});
+}
+
+enum class Mode { Idle, LoopCut, Bridge, Grab };
 enum class SelectMode { Face, Edge };
 
 struct App {
@@ -401,6 +417,17 @@ struct App {
     std::string numberEntry;   // typed digits, Enter applies to density
     weft::ManualOp hoverOp;    // loop-cut candidate under the cursor
     bool hoverValid = false;
+
+    // Direct manipulation. Loop slide: dragging right after a cut keeps
+    // re-parameterizing its t along the split edge (screen projection).
+    int slideOp = -1;  // index into recipe.ops, -1 = not sliding
+    float slideA[2] = {0, 0}, slideB[2] = {0, 0};  // split edge on screen
+    bool slideFlipped = false;  // hover chose the mirrored ordering
+    // Vertex grab (G): the nudge op being dragged; the drag plane faces
+    // the camera through the vertex's start position, and every hit
+    // re-projects exactly onto the CAD face (snapToFace).
+    int grabOp = -1;
+    std::array<double, 3> grabStart{};
 
     // Bridge tool: open boundary loops of the current mesh, each mapped to
     // its nearest B-rep edge (the stable id recorded in the op).
@@ -983,12 +1010,25 @@ static void updateLoopCutHover(App& app, const Mat4& mvp, double mx, double my,
     weft::ManualOp flipped = op;
     flipped.t = 1.0 - op.t;
     std::vector<float> linesFlipped = previewSegments(flipped, &distFlipped);
+    bool usedFlipped = false;
     if (!linesFlipped.empty() &&
         (lines.empty() || distFlipped + 1.0 < dist)) {
         op = flipped;
         lines = std::move(linesFlipped);
+        usedFlipped = true;
     }
     if (lines.empty()) return;
+
+    // Remember the split edge on screen: a press-drag right after the cut
+    // slides t by re-projecting the cursor onto this segment.
+    float pa[3] = {0, 0, -1}, pb[3] = {0, 0, -1};
+    projectPoint(mvp, m.vertices[bestA], fbw, fbh, pa);
+    projectPoint(mvp, m.vertices[bestB], fbw, fbh, pb);
+    app.slideA[0] = pa[0];
+    app.slideA[1] = pa[1];
+    app.slideB[0] = pb[0];
+    app.slideB[1] = pb[1];
+    app.slideFlipped = usedFlipped;
 
     app.preview.upload(lines);
     app.hoverOp = op;
@@ -1053,6 +1093,46 @@ static void updateBridgeHover(App& app, const Mat4& mvp, double mx, double my,
         }
     }
     if (!lines.empty()) app.preview.upload(lines);
+}
+
+// Vertex grab (G): pick the interior vertex nearest the cursor and start a
+// NudgeVertex op. Only face-anchored vertices qualify — border vertices
+// belong to shared B-rep edges and are owned by density + conformity.
+static void startVertexGrab(App& app, const Mat4& mvp, double mx, double my,
+                            int fbw, int fbh) {
+    const weft::PolyMesh& m = app.mesh;
+    double best = 30.0 * gUiScale;  // px
+    size_t bestV = m.vertexCount();
+    for (size_t v = 0; v < m.vertexCount(); ++v) {
+        const weft::Anchor& a = m.anchors[v];
+        if (a.faceId == 0 || app.hiddenFaces.count(a.faceId)) continue;
+        float s[3] = {0, 0, -1};
+        projectPoint(mvp, m.vertices[v], fbw, fbh, s);
+        if (s[2] <= 0) continue;
+        double d = std::hypot(s[0] - mx, s[1] - my);
+        if (d < best) {
+            best = d;
+            bestV = v;
+        }
+    }
+    if (bestV == m.vertexCount()) {
+        app.status = "grab: no interior vertex under the cursor (border "
+                     "verts are density-driven)";
+        return;
+    }
+    const weft::Anchor& a = m.anchors[bestV];
+    weft::ManualOp op;
+    op.kind = weft::ManualOp::Kind::NudgeVertex;
+    op.faceId = a.faceId;
+    op.u = a.u;
+    op.v = a.v;
+    op.u2 = a.u;
+    op.v2 = a.v;
+    app.recipe.ops.push_back(op);
+    app.grabOp = int(app.recipe.ops.size()) - 1;
+    app.grabStart = m.vertices[bestV];
+    app.mode = Mode::Grab;
+    app.status = "grab: drag on the surface - click commits, esc cancels";
 }
 
 // ---------------------------------------------------------------------------
@@ -1293,7 +1373,13 @@ static void drawOverlay(App& app) {
     if (app.mode == Mode::LoopCut) {
         ImGui::TextColored({1.0f, 0.85f, 0.25f, 1.0f}, "LOOP CUT");
         ImGui::SameLine();
-        ImGui::TextDisabled("hover an edge - click commits - R/esc exits");
+        ImGui::TextDisabled(
+            "hover an edge - press cuts, drag slides - R/esc exits");
+    } else if (app.mode == Mode::Grab) {
+        ImGui::TextColored({1.0f, 0.85f, 0.25f, 1.0f}, "GRAB");
+        ImGui::SameLine();
+        ImGui::TextDisabled(
+            "vertex slides on its CAD face - click commits, esc cancels");
     } else if (app.mode == Mode::Bridge) {
         ImGui::TextColored({1.0f, 0.85f, 0.25f, 1.0f}, "BRIDGE");
         ImGui::SameLine();
@@ -1372,7 +1458,8 @@ static void drawOverlay(App& app) {
         "shift+wheel density   ctrl+wheel 2nd axis   ctrl+shift+wheel loops\n"
         "12<enter> divisions   [ ] nudge\n"
         "X delete face   H hide (shift+H show all)   R loop cut   J bridge\n"
-        "C cap   T tris   M minimal   W wire   B edges   F focus   esc");
+        "G grab vertex   C cap   T tris   M minimal   W wire   B edges\n"
+        "F focus   esc");
     ImGui::End();
 }
 
@@ -2032,6 +2119,7 @@ int main(int argc, char** argv) {
             if (ImGui::IsKeyPressed(ImGuiKey_R, false)) {
                 app.mode = app.mode == Mode::LoopCut ? Mode::Idle : Mode::LoopCut;
                 app.hoverValid = false;
+                app.slideOp = -1;
             }
             if (ImGui::IsKeyPressed(ImGuiKey_J, false)) {
                 if (app.selectMode == SelectMode::Edge &&
@@ -2060,7 +2148,18 @@ int main(int argc, char** argv) {
                 }
             }
             if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-                if (app.mode == Mode::Bridge && app.bridgeFirstEdge) {
+                if (app.mode == Mode::Grab) {
+                    // Cancel: drop the nudge op and restore the mesh.
+                    if (app.grabOp >= 0 &&
+                        app.grabOp < int(app.recipe.ops.size())) {
+                        app.recipe.ops.erase(app.recipe.ops.begin() +
+                                             app.grabOp);
+                    }
+                    app.grabOp = -1;
+                    app.mode = Mode::Idle;
+                    markDirty(app);
+                    app.status = "grab cancelled";
+                } else if (app.mode == Mode::Bridge && app.bridgeFirstEdge) {
                     app.bridgeFirstEdge = 0;
                 } else if (app.mode != Mode::Idle) app.mode = Mode::Idle;
                 else if (!app.numberEntry.empty()) app.numberEntry.clear();
@@ -2212,7 +2311,8 @@ int main(int argc, char** argv) {
         bool lmb = !io.WantCaptureMouse &&
                    glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) ==
                        GLFW_PRESS;
-        if (lmb && !prevLmb) { downX = mx; downY = my; }
+        bool lmbPressed = lmb && !prevLmb;
+        if (lmbPressed) { downX = mx; downY = my; }
         bool clicked = prevLmb && !lmb && std::abs(mx - downX) < 4 &&
                        std::abs(my - downY) < 4;
         // Box select: an LMB drag in idle face mode rubber-bands.
@@ -2240,14 +2340,96 @@ int main(int argc, char** argv) {
         Mat4 view = matLookAt(app.cam.eye(), app.cam.target, {0, 0, 1});
         Mat4 mvp = matMul(proj, view);
 
-        // Loop-cut hover preview follows the cursor; click commits the op
-        // into the recipe (regeneration replays it — fully non-destructive).
+        // Vertex grab starts from idle: G picks the interior vertex under
+        // the cursor and drags it constrained to its CAD surface.
+        if (app.hasModel && app.mode == Mode::Idle &&
+            !io.WantCaptureKeyboard && !io.WantCaptureMouse &&
+            ImGui::IsKeyPressed(ImGuiKey_G, false)) {
+            startVertexGrab(app, mvp, mx, my, fbw, fbh);
+        }
+
+        // Loop-cut hover preview follows the cursor; pressing commits the
+        // op into the recipe and dragging before release slides its t along
+        // the strip (regeneration replays it — fully non-destructive).
         if (app.mode == Mode::LoopCut && !io.WantCaptureMouse) {
-            updateLoopCutHover(app, mvp, mx, my, fbw, fbh);
-            if (clicked && app.hoverValid) {
-                app.recipe.ops.push_back(app.hoverOp);
-                markDirty(app);
-                app.status = "loop cut committed (ctrl+z undoes)";
+            if (app.slideOp >= 0) {
+                if (!lmb) {
+                    app.slideOp = -1;
+                    app.status = "loop cut committed (ctrl+z undoes)";
+                } else if (app.slideOp < int(app.recipe.ops.size())) {
+                    float ex = app.slideB[0] - app.slideA[0];
+                    float ey = app.slideB[1] - app.slideA[1];
+                    float len2 = ex * ex + ey * ey;
+                    if (len2 > 1e-6f) {
+                        float t = ((float(mx) - app.slideA[0]) * ex +
+                                   (float(my) - app.slideA[1]) * ey) /
+                                  len2;
+                        double nt = std::clamp(double(t), 0.05, 0.95);
+                        if (app.slideFlipped) nt = 1.0 - nt;
+                        weft::ManualOp& op = app.recipe.ops[app.slideOp];
+                        if (std::abs(nt - op.t) > 1e-4) {
+                            op.t = nt;
+                            markDirty(app);
+                        }
+                        std::snprintf(app.hudText, sizeof app.hudText,
+                                      "loop slide: %.2f", op.t);
+                        app.hudUntil = glfwGetTime() + 0.5;
+                    }
+                }
+            } else {
+                updateLoopCutHover(app, mvp, mx, my, fbw, fbh);
+                if (lmbPressed && app.hoverValid) {
+                    app.recipe.ops.push_back(app.hoverOp);
+                    app.slideOp = int(app.recipe.ops.size()) - 1;
+                    markDirty(app);
+                    app.status = "loop cut: drag slides, release commits";
+                }
+            }
+        } else if (app.mode == Mode::Grab && app.hasModel) {
+            if (app.grabOp >= 0 && app.grabOp < int(app.recipe.ops.size())) {
+                // Drag plane: camera-facing through the grab point; the
+                // hit re-projects exactly onto the vertex's CAD face.
+                weft::ManualOp& op = app.recipe.ops[app.grabOp];
+                Vec3 eye = app.cam.eye();
+                Vec3 dir = mouseRay(app.cam, mx, my, fbw, fbh);
+                Vec3 f = norm(sub(app.cam.target, eye));
+                float relDot = (float(app.grabStart[0]) - eye.x) * f.x +
+                               (float(app.grabStart[1]) - eye.y) * f.y +
+                               (float(app.grabStart[2]) - eye.z) * f.z;
+                float denom = dir.x * f.x + dir.y * f.y + dir.z * f.z;
+                if (std::abs(denom) > 1e-6f) {
+                    float tt = relDot / denom;
+                    std::array<double, 3> p = {double(eye.x + dir.x * tt),
+                                               double(eye.y + dir.y * tt),
+                                               double(eye.z + dir.z * tt)};
+                    try {
+                        weft::Anchor a =
+                            weft::snapToFace(app.model, op.faceId, p);
+                        if (std::abs(a.u - op.u2) > 1e-12 ||
+                            std::abs(a.v - op.v2) > 1e-12) {
+                            op.u2 = a.u;
+                            op.v2 = a.v;
+                            markDirty(app);
+                        }
+                    } catch (const std::exception&) {
+                        // Projection can fail while the cursor is far off
+                        // the surface; keep the last good position.
+                    }
+                }
+                if (clicked) {
+                    app.mode = Mode::Idle;
+                    app.grabOp = -1;
+                    app.status = "vertex nudged (ctrl+z undoes)";
+                } else if (rClicked) {
+                    app.recipe.ops.erase(app.recipe.ops.begin() + app.grabOp);
+                    app.grabOp = -1;
+                    app.mode = Mode::Idle;
+                    markDirty(app);
+                    app.status = "grab cancelled";
+                }
+            } else {
+                app.mode = Mode::Idle;
+                app.grabOp = -1;
             }
         } else if (app.mode == Mode::Bridge && !io.WantCaptureMouse) {
             updateBridgeHover(app, mvp, mx, my, fbw, fbh);
