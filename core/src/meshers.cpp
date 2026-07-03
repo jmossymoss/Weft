@@ -345,9 +345,17 @@ struct CoonsPatch {
     std::array<Handle(Geom2d_Curve), 4> pc;
     std::array<double, 4> first{}, last{};
     std::array<bool, 4> rev{};
+    // Three-sided faces: side 3 collapses to the corner shared by sides
+    // 0 and 2 — the grid gains a pole there (fan row), like a revolution
+    // apex, and the other three sides keep full quad flow.
+    bool collapsedLast = false;
 
     // Point along side i at t in [0,1], walking the wire direction.
     gp_Pnt2d side(int i, double t) const {
+        if (collapsedLast && i == 3) {
+            double t0 = rev[0] ? last[0] : first[0];
+            return pc[0]->Value(t0);
+        }
         double tt = rev[i] ? 1.0 - t : t;
         return pc[i]->Value(first[i] + tt * (last[i] - first[i]));
     }
@@ -392,8 +400,19 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
         patch.rev[n] = edge.Orientation() == TopAbs_REVERSED;
         ++n;
     }
-    if (n != 4) return false;
-    for (int i = 0; i < 4; ++i) {
+    if (n == 3) {
+        // Triangular patch: the missing fourth side collapses to the
+        // corner where side 2 ends and side 0 begins.
+        patch.collapsedLast = true;
+        patch.edgeIds[3] = patch.edgeIds[2];
+        patch.pc[3] = patch.pc[2];
+        patch.first[3] = patch.last[3] = 0.0;
+        patch.rev[3] = false;
+    } else if (n != 4) {
+        return false;
+    }
+    const int sides = patch.collapsedLast ? 3 : 4;
+    for (int i = 0; i < sides; ++i) {
         if (patch.edgeIds[i] < 1) return false;
     }
     // Head-to-tail continuity in UV (a seam on a periodic surface breaks
@@ -401,9 +420,10 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
     double umin, umax, vmin, vmax;
     BRepTools::UVBounds(face, umin, umax, vmin, vmax);
     const double span = std::max(umax - umin, vmax - vmin);
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < sides; ++i) {
         gp_Pnt2d a = patch.side(i, 1.0);
         gp_Pnt2d b = patch.side((i + 1) % 4, 0.0);
+        if (patch.collapsedLast && i == 2) b = patch.side(0, 0.0);
         if (a.Distance(b) > 1e-4 * span) return false;
     }
     // Interior probes must land inside the face.
@@ -437,6 +457,12 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
         c3d[i].Initialize(TopoDS::Edge(model.edges(patch.edgeIds[i])));
     }
     auto sidePnt = [&](int i, double t) {
+        if (patch.collapsedLast && i == 3) {
+            // Triangular patch: the whole side is the sides-0/2 corner.
+            double f0 = patch.rev[0] ? c3d[0].LastParameter()
+                                     : c3d[0].FirstParameter();
+            return c3d[0].Value(f0);
+        }
         double tt = patch.rev[i] ? 1.0 - t : t;
         double f = c3d[i].FirstParameter(), l = c3d[i].LastParameter();
         return c3d[i].Value(f + tt * (l - f));
