@@ -63,6 +63,19 @@ struct FaceMeshSettings {
     // deviation measured relative to face size instead of absolute.
     double minSize = 0.0;
     bool relativeDeviation = false;
+    // Plate-web / quad-fill boundary control: total vertex count around
+    // the face's OUTER loop, distributed across its edges by arc length
+    // and pinned (drives the neighbouring walls' shared edges too).
+    // 0 = automatic (radial share / adaptive curvature).
+    int boundary = 0;
+    // Curvature-adaptive density: analytic meshers derive each border
+    // edge's count from the chord/angle tolerances (tangential-deflection
+    // sampling), so a big housing gets more segments than a bolt hole
+    // instead of both taking one flat radial value. The manual counts act
+    // as floors; per-edge pins and manual per-face overrides still win.
+    // Off by default in the core (recipes/tests keep exact counts) — the
+    // app turns it on for new sessions.
+    bool adaptive = false;
 };
 
 struct GenerationSettings {

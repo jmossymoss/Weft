@@ -16,6 +16,7 @@
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepTools.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <gp_Ax2.hxx>
@@ -931,6 +932,96 @@ void testAutoGates() {
     CHECK(isWatertight(minimal));
 }
 
+// Adaptive density: with `adaptive` set, an edge's count comes from its
+// curvature under the chord/angle tolerances — a big cylinder solves with
+// more radial segments than a small one, straight edges stay at their
+// floors, and explicit per-edge pins still win over everything.
+void testAdaptiveDensity() {
+    std::printf("-- adaptive density --\n");
+    auto radialOf = [&](double radius, int* outCount) {
+        TopoDS_Shape cyl =
+            BRepPrimAPI_MakeCylinder(
+                gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)), radius, 8.0)
+                .Shape();
+        std::string path = tmpPath("weft_test_adaptive.step");
+        weft::writeStep(cyl, path);
+        weft::Model model = weft::loadStep(path);
+        weft::Analysis a = weft::analyze(model);
+        weft::GenerationSettings gs;
+        gs.defaults.adaptive = true;
+        weft::GenerationReport report;
+        weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
+        CHECK(isWatertight(mesh));
+        int side = 0;
+        for (const auto& f : a.faces) {
+            if (f.type == weft::SurfaceType::Cylinder) side = f.id;
+        }
+        auto rims = report.faceRims.find(side);
+        CHECK(rims != report.faceRims.end());
+        *outCount = report.edgeDivisions.at(rims->second[0]);
+        return model;
+    };
+    int small = 0, large = 0;
+    radialOf(4.0, &small);
+    weft::Model largeModel = radialOf(60.0, &large);
+    CHECK(small >= 6);       // closed-ring floor holds
+    CHECK(large > small);    // curvature drives the count up with size
+    CHECK(large <= 256);     // ...within the cap
+
+    // A per-edge pin still beats the adaptive proposal.
+    weft::Analysis a = weft::analyze(largeModel);
+    weft::GenerationSettings gs;
+    gs.defaults.adaptive = true;
+    weft::GenerationReport rep;
+    weft::generate(largeModel, a, gs, &rep);
+    int rim = 0;
+    for (const auto& [fid, rims] : rep.faceRims) rim = rims[0];
+    CHECK(rim > 0);
+    gs.perEdge[rim] = 14;
+    weft::GenerationReport pinnedRep;
+    weft::PolyMesh pinned = weft::generate(largeModel, a, gs, &pinnedRep);
+    CHECK_EQ(pinnedRep.edgeDivisions.at(rim), 14);
+    CHECK(isWatertight(pinned));
+
+    // Plate boundary control: the two-bore plate's outer loop takes a
+    // pinned TOTAL, distributed by edge length, and the walls follow.
+    TopoDS_Shape plate = BRepPrimAPI_MakeBox(60.0, 30.0, 5.0).Shape();
+    for (double x : {18.0, 42.0}) {
+        TopoDS_Shape bore =
+            BRepPrimAPI_MakeCylinder(
+                gp_Ax2(gp_Pnt(x, 15.0, -1.0), gp_Dir(0, 0, 1)), 5.0, 7.0)
+                .Shape();
+        plate = BRepAlgoAPI_Cut(plate, bore).Shape();
+    }
+    std::string platePath = tmpPath("weft_test_boundary.step");
+    weft::writeStep(plate, platePath);
+    weft::Model plateModel = weft::loadStep(platePath);
+    weft::Analysis plateA = weft::analyze(plateModel);
+    weft::GenerationSettings pgs;
+    pgs.defaults.radial = 12;
+    weft::GenerationReport prep;
+    weft::generate(plateModel, plateA, pgs, &prep);
+    int plateFace = 0;
+    for (const auto& [fid, kind] : prep.faceMesher) {
+        if (kind == weft::MesherKind::PlateWeb) plateFace = fid;
+    }
+    CHECK(plateFace > 0);
+    pgs.perFace[plateFace] = pgs.defaults;
+    pgs.perFace[plateFace].boundary = 24;
+    weft::GenerationReport boundedRep;
+    weft::PolyMesh bounded =
+        weft::generate(plateModel, plateA, pgs, &boundedRep);
+    int outerSum = 0;
+    TopoDS_Wire outerWire =
+        BRepTools::OuterWire(TopoDS::Face(plateModel.faces(plateFace)));
+    for (TopExp_Explorer ex(outerWire, TopAbs_EDGE); ex.More(); ex.Next()) {
+        int eid = plateModel.edges.FindIndex(ex.Current());
+        outerSum += boundedRep.edgeDivisions.at(eid);
+    }
+    CHECK_EQ(outerSum, 24);
+    CHECK(isWatertight(bounded));
+}
+
 // Polygon surgery + collar rings: DeletePoly removes exactly one polygon
 // (replayable via its world centroid), and plate-web's junction rings
 // multiply the concentric quad collars around each hole.
@@ -1333,6 +1424,7 @@ int main() {
     RUN(testNudgeVertex);
     RUN(testRecipeRemap);
     RUN(testAutoGates);
+    RUN(testAdaptiveDensity);
     RUN(testQuadFill);
     RUN(testDeletePolyAndCollarRings);
     RUN(testSameLoopBridgeAndFill);
