@@ -9,10 +9,13 @@
 #include "weft/meshers.hpp"
 #include "weft/model.hpp"
 #include "weft/recipe.hpp"
+#include "weft/remap.hpp"
 
+#include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
+#include <TopoDS.hxx>
 #include <gp_Ax2.hxx>
 
 #include <cstdio>
@@ -862,6 +865,101 @@ void testPlateWeb() {
     CHECK(pinned.countQuads() > mesh.countQuads());
 }
 
+// Recipe remapping: a re-export after upstream CAD edits renumbers faces
+// and edges; remapRecipe must follow the features geometrically so the
+// user's overrides land on the same bore, not the same file index.
+void testRecipeRemap() {
+    std::printf("-- recipe remap --\n");
+    auto makePlate = [&](bool extraBore) {
+        TopoDS_Shape plate = BRepPrimAPI_MakeBox(60.0, 30.0, 5.0).Shape();
+        if (extraBore) {  // cut FIRST so downstream face ids all shift
+            TopoDS_Shape mid =
+                BRepPrimAPI_MakeCylinder(
+                    gp_Ax2(gp_Pnt(30.0, 15.0, -1.0), gp_Dir(0, 0, 1)), 3.0,
+                    7.0)
+                    .Shape();
+            plate = BRepAlgoAPI_Cut(plate, mid).Shape();
+        }
+        for (double x : {18.0, 42.0}) {
+            TopoDS_Shape bore =
+                BRepPrimAPI_MakeCylinder(
+                    gp_Ax2(gp_Pnt(x, 15.0, -1.0), gp_Dir(0, 0, 1)), 5.0,
+                    7.0)
+                    .Shape();
+            plate = BRepAlgoAPI_Cut(plate, bore).Shape();
+        }
+        return plate;
+    };
+    std::string pathA = tmpPath("weft_test_remap_a.step");
+    std::string pathB = tmpPath("weft_test_remap_b.step");
+    weft::writeStep(makePlate(false), pathA);
+    weft::writeStep(makePlate(true), pathB);
+    weft::Model modelA = weft::loadStep(pathA);
+    weft::Model modelB = weft::loadStep(pathB);
+    weft::Analysis aA = weft::analyze(modelA);
+    weft::Analysis aB = weft::analyze(modelB);
+
+    // The bore wall at x=18 in A, found geometrically (radius 5, and its
+    // rims' vertices sit around x=18).
+    auto boreAt = [&](const weft::Model& m, const weft::Analysis& a,
+                      double x) {
+        for (const auto& f : a.faces) {
+            if (f.type != weft::SurfaceType::Cylinder) continue;
+            if (std::abs(f.radius - 5.0) > 1e-6) continue;
+            BRepAdaptor_Surface s(TopoDS::Face(m.faces(f.id)));
+            gp_Pnt p = s.Value(
+                (s.FirstUParameter() + s.LastUParameter()) / 2,
+                (s.FirstVParameter() + s.LastVParameter()) / 2);
+            double cx = p.X();  // wall point; centre is within radius
+            if (std::abs(cx - x) < 5.5) return f.id;
+        }
+        return 0;
+    };
+    int boreA = boreAt(modelA, aA, 18.0);
+    CHECK(boreA > 0);
+
+    weft::Recipe recipe;
+    recipe.settings.perFace[boreA] = recipe.settings.defaults;
+    recipe.settings.perFace[boreA].radial = 20;
+    int rimA = aA.faces[boreA - 1].edgeIds[0];
+    recipe.settings.perEdge[rimA] = 20;
+    weft::ManualOp op;
+    op.kind = weft::ManualOp::Kind::NudgeVertex;
+    op.faceId = boreA;
+    recipe.ops.push_back(op);
+
+    // Identity: remapping onto the same model keeps every id.
+    weft::RemapReport idRep;
+    weft::Recipe same =
+        weft::remapRecipe(recipe, modelA, aA, modelA, aA, &idRep);
+    CHECK_EQ(idRep.faceMap.at(boreA), boreA);
+    CHECK_EQ(same.settings.perFace.count(boreA), 1);
+    CHECK_EQ(idRep.facesDropped + idRep.edgesDropped + idRep.opsDropped, 0);
+
+    // Real edit: the extra bore shifts ids in B; the override must follow
+    // the geometry to B's x=18 bore.
+    weft::RemapReport rep;
+    weft::Recipe moved =
+        weft::remapRecipe(recipe, modelA, aA, modelB, aB, &rep);
+    int boreB = boreAt(modelB, aB, 18.0);
+    CHECK(boreB > 0);
+    CHECK_EQ(rep.faceMap.at(boreA), boreB);
+    CHECK_EQ(moved.settings.perFace.count(boreB), 1);
+    CHECK_EQ(moved.settings.perFace.at(boreB).radial, 20);
+    CHECK_EQ(moved.settings.perEdge.size(), 1);
+    CHECK_EQ(moved.ops.size(), 1);
+    CHECK_EQ(moved.ops[0].faceId, boreB);
+    CHECK_EQ(rep.facesDropped + rep.edgesDropped + rep.opsDropped, 0);
+
+    // The remapped recipe generates cleanly on the new model, with the
+    // followed override driving its bore.
+    weft::GenerationReport gen;
+    weft::PolyMesh mesh =
+        weft::generate(modelB, aB, moved.settings, &gen);
+    CHECK(isWatertight(mesh));
+    CHECK(gen.faceMesher.at(boreB) == weft::MesherKind::RevolutionGrid);
+}
+
 // Vertex nudges anchor to the B-rep (face id + surface params), so they
 // stay exactly on the CAD surface and re-apply identically after any
 // regeneration — the app's G-grab records exactly this op.
@@ -991,6 +1089,7 @@ int main() {
     RUN(testUnlinkedRims);
     RUN(testPlateWeb);
     RUN(testNudgeVertex);
+    RUN(testRecipeRemap);
     RUN(testGenerationCache);
     if (failures) {
         std::printf("\n%d FAILURE(S)\n", failures);

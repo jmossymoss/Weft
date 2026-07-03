@@ -10,6 +10,7 @@ add_library(weft_core
   src/meshers.cpp
   src/edit.cpp
   src/recipe.cpp
+  src/remap.cpp
   src/viz.cpp
   src/fixture.cpp
 )

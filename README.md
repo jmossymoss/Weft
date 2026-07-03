@@ -99,6 +99,12 @@ Headless C++ core + CLI covering the plan's Phases 0–3 essentials:
   Blender and hit "Start watching" (sidebar > Weft) — the `Weft` object
   updates in place, materials and modifiers intact, with CAD face ids in
   the `weft_face` face attribute
+- **STEP hot-reload**: Weft watches the loaded `.stp`; re-export from
+  the CAD app (Plasticity et al.) over the same file and Weft re-imports
+  it, **remapping the recipe geometrically** — overrides, pins, and
+  manual ops follow their faces by surface type + area + centroid even
+  when the re-export renumbers ids. With live link on, the full loop is:
+  edit CAD → re-export → Blender updates with your topology
 
 Uses system `libglfw3-dev libgl1-mesa-dev libimgui-dev libstb-dev` when
 present; otherwise CMake fetches and builds GLFW/ImGui from source (the
