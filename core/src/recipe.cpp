@@ -82,6 +82,8 @@ void saveRecipe(const Recipe& recipe, const std::string& path) {
         } else if (op.kind == ManualOp::Kind::NudgeVertex) {
             out << "op nudge " << op.faceId << " " << op.u << " " << op.v
                 << " " << op.u2 << " " << op.v2 << "\n";
+        } else if (op.kind == ManualOp::Kind::FillLoop) {
+            out << "op fill " << op.edgeA << "\n";
         } else {
             out << "op loop " << op.faceId << " " << op.u << " " << op.v
                 << " " << op.t << "\n";
@@ -142,6 +144,10 @@ Recipe loadRecipe(const std::string& path) {
                     op.kind = ManualOp::Kind::NudgeVertex;
                     ss >> op.faceId >> op.u >> op.v >> op.u2 >> op.v2;
                     if (!ss) throw std::runtime_error("malformed op nudge");
+                } else if (opKind == "fill") {
+                    op.kind = ManualOp::Kind::FillLoop;
+                    ss >> op.edgeA;
+                    if (!ss) throw std::runtime_error("malformed op fill");
                 } else {
                     throw std::runtime_error("unknown op: " + opKind);
                 }

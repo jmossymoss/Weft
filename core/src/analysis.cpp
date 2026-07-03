@@ -1,7 +1,9 @@
 #include "weft/analysis.hpp"
 
+#include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepGProp_Face.hxx>
+#include <GCPnts_AbscissaPoint.hxx>
 #include <BRep_Tool.hxx>
 #include <Geom2d_Curve.hxx>
 #include <Geom_Curve.hxx>
@@ -158,6 +160,13 @@ Analysis analyze(const Model& model) {
         const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
         EdgeInfo& info = a.edges[eid - 1];
         info.id = eid;
+        if (!BRep_Tool::Degenerated(edge)) {
+            double f, l;
+            if (!BRep_Tool::Curve(edge, f, l).IsNull()) {
+                BRepAdaptor_Curve c(edge);
+                info.length = GCPnts_AbscissaPoint::Length(c);
+            }
+        }
 
         const TopTools_ListOfShape& owners = model.edgeToFaces.FindFromKey(edge);
         for (const TopoDS_Shape& s : owners) {

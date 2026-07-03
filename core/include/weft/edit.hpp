@@ -23,6 +23,9 @@ struct ManualOp {
                       // (faceId,u,v) to the surface point (u2,v2) — a
                       // vertex tweak that stays exactly on the CAD face
                       // and survives re-tessellation
+        FillLoop,     // close the open boundary loop nearest to the B-rep
+                      // edge edgeA with a single n-gon (the minimal cap
+                      // for a deleted face's border)
     };
     Kind kind = Kind::LoopInsert;
     int faceId = 0;
@@ -67,9 +70,15 @@ int nudgeVertex(PolyMesh& mesh, const Model& model, const ManualOp& op);
 
 // Bridge the two open boundary loops nearest to op.edgeA / op.edgeB (see
 // ManualOp::Kind::Bridge). Vertex counts per boundary come from the density
-// solver (pin them per-edge to choose quads vs triangles). Returns the
-// number of polygons added (0 = loops not found / same loop).
+// solver (pin them per-edge to choose quads vs triangles). When both edges
+// land on the SAME loop (a deleted band whose rims connect), the loop is
+// split into a rail along each picked edge and zippered across, with the
+// left-over spans closed as n-gon caps. Returns polygons added (0 = fail).
 int bridgeLoops(PolyMesh& mesh, const Model& model, const ManualOp& op);
+
+// Close the open boundary loop nearest to op.edgeA with one n-gon — the
+// fill tool for borders left by deleted faces. Returns 1 or 0.
+int fillLoop(PolyMesh& mesh, const Model& model, const ManualOp& op);
 
 // An open boundary loop of the mesh: ordered vertex ring where each edge is
 // used by exactly one polygon. Exposed for interactive tools (hover/pick).

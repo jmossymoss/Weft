@@ -7,8 +7,10 @@
 #include <IMeshTools_Parameters.hxx>
 #include <Extrema_ExtPC.hxx>
 #include <GCPnts_AbscissaPoint.hxx>
+#include <BRepGProp.hxx>
 #include <BRepTools.hxx>
 #include <BRepTools_WireExplorer.hxx>
+#include <GProp_GProps.hxx>
 #include <BRep_Tool.hxx>
 #include <ElCLib.hxx>
 #include <ElSLib.hxx>
@@ -472,14 +474,24 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
     return true;
 }
 
-// A face bounded by exactly two closed single-edge loops — the flat ring
-// between two revolution rims. Meshes as one zippered band: equal loop
-// counts give pure quads, unequal a clean taper. Its borders sample the
-// 3D edge curves, and the conformity pass then snaps them onto whatever
-// the neighbours generated (phase-exact welds).
-bool planAnnulus(const TopoDS_Face& face, const Model& model, FacePlan& plan) {
+// A face bounded by exactly two closed loops — the flat ring between two
+// revolution rims. Meshes as one zippered band: equal loop counts give
+// pure quads, unequal a clean taper. Its borders sample the 3D edge
+// curves, and the conformity pass then snaps them onto whatever the
+// neighbours generated (phase-exact welds).
+//
+// `requireRing` (the automatic path) gates on actual ring geometry: the
+// two loops must be roughly concentric and of comparable size. "Two wires"
+// alone also matches a big plate with one small slot, and zippering a tiny
+// loop against a huge boundary makes a fan mess — those faces belong to
+// the fallback/plate meshers unless the user forces the band.
+double wireElongation(const TopoDS_Wire& wire);  // defined with plate-web
+
+bool planAnnulus(const TopoDS_Face& face, const Model& model, FacePlan& plan,
+                 bool requireRing) {
     int wires = 0;
     std::array<std::vector<int>, 2> loop;
+    std::array<TopoDS_Wire, 2> wire2;
     TopoDS_Wire outer = BRepTools::OuterWire(face);
     int outerIdx = -1;
     for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
@@ -497,9 +509,28 @@ bool planAnnulus(const TopoDS_Face& face, const Model& model, FacePlan& plan) {
         }
         if (loop[wires].empty() || loop[wires].size() > 8) return false;
         if (!outer.IsNull() && wire.IsSame(outer)) outerIdx = wires;
+        wire2[wires] = wire;
         ++wires;
     }
     if (wires != 2) return false;
+    if (requireRing) {
+        GProp_GProps a, b;
+        BRepGProp::LinearProperties(wire2[0], a);
+        BRepGProp::LinearProperties(wire2[1], b);
+        double pa = a.Mass(), pb = b.Mass();
+        if (pa < 1e-12 || pb < 1e-12) return false;
+        double ratio = std::min(pa, pb) / std::max(pa, pb);
+        // Concentric within a third of the bigger loop's equivalent
+        // radius, neither loop dwarfing the other, and both loops round
+        // (a centered slot in a long plate is concentric — not a ring).
+        double eqRadius = std::max(pa, pb) / (2.0 * M_PI);
+        double apart = a.CentreOfMass().Distance(b.CentreOfMass());
+        if (ratio < 0.25 || apart > 0.35 * eqRadius) return false;
+        if (wireElongation(wire2[0]) > 2.2 ||
+            wireElongation(wire2[1]) > 2.2) {
+            return false;
+        }
+    }
     if (outerIdx == 1) std::swap(loop[0], loop[1]);
     plan.kind = MesherKind::AnnulusRing;
     plan.uEdges = loop[0];
@@ -618,8 +649,11 @@ void meshAnnulusRing(const TopoDS_Face& face, const Model& model, int faceId,
 // the bolt-hole plate. Each hole gets a quad collar, the rest is an
 // ear-clipped triangle web — every boundary vertex sits on its B-rep edge
 // curve at the solved count, so all neighbours weld watertight.
-bool planPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
-                  const Model& model, FacePlan& plan) {
+// Collect a planar face's wires as per-edge loop chains, outer wire first.
+// Shared by the plate-web planner and the generalized minimal-ngon.
+bool collectPlanarLoops(const TopoDS_Face& face,
+                        const BRepAdaptor_Surface& surf, const Model& model,
+                        FacePlan& plan) {
     if (surf.GetType() != GeomAbs_Plane) return false;
     TopoDS_Wire outer = BRepTools::OuterWire(face);
     if (outer.IsNull()) return false;
@@ -640,21 +674,90 @@ bool planPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
             if (eid < 1) return false;
             loop.push_back(eid);
         }
-        if (loop.empty() || loop.size() > 16) return false;
+        if (loop.empty() || loop.size() > 24) return false;
         if (wire.IsSame(outer)) outerIdx = wires;
         loops.push_back(std::move(loop));
         ++wires;
     }
-    if (wires < 2 || outerIdx < 0) return false;
+    if (wires < 1 || outerIdx < 0) return false;
     if (outerIdx != 0) std::swap(loops[0], loops[outerIdx]);
-    plan.kind = MesherKind::PlateWeb;
     plan.loops = std::move(loops);
     // Flattened list for reporting/conformity; densities stay per-edge
-    // (solveDensity never unites a plate's edges with each other).
+    // (solveDensity never unites these loops' edges with each other).
+    plan.uEdges.clear();
     for (const auto& loop : plan.loops) {
         plan.uEdges.insert(plan.uEdges.end(), loop.begin(), loop.end());
     }
     plan.constrains = true;
+    return true;
+}
+
+// How slot-shaped a hole wire is: max/min distance from the wire's sample
+// centroid. A circle is ~1; a 4:1 slot is ~4.
+double wireElongation(const TopoDS_Wire& wire) {
+    std::vector<gp_Pnt> pts;
+    for (TopExp_Explorer ex(wire, TopAbs_EDGE); ex.More(); ex.Next()) {
+        const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+        double f, l;
+        Handle(Geom_Curve) c = BRep_Tool::Curve(edge, f, l);
+        if (c.IsNull()) continue;
+        for (int i = 0; i < 8; ++i) {
+            pts.push_back(c->Value(f + (l - f) * (i + 0.5) / 8.0));
+        }
+    }
+    if (pts.size() < 4) return 1.0;
+    gp_XYZ c(0, 0, 0);
+    for (const gp_Pnt& p : pts) c += p.XYZ();
+    c /= double(pts.size());
+    double rMin = 1e300, rMax = 0;
+    for (const gp_Pnt& p : pts) {
+        double r = p.XYZ().Subtracted(c).Modulus();
+        rMin = std::min(rMin, r);
+        rMax = std::max(rMax, r);
+    }
+    return rMin > 1e-12 ? rMax / rMin : 1e300;
+}
+
+bool planPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
+                  const Model& model, FacePlan& plan,
+                  bool requireRoundHoles) {
+    // Probe locally: a rejected plan must not leak loop state into the
+    // caller's plan (the auto chain keeps trying other meshers with it).
+    FacePlan probe;
+    if (!collectPlanarLoops(face, surf, model, probe)) return false;
+    if (probe.loops.size() < 2) return false;
+    if (requireRoundHoles) {
+        // The automatic path only takes plates whose holes are compact
+        // (bolt circles and the like) — the radial collar is built for
+        // those. Slots and keyways read badly under a collar+fan web, so
+        // they stay with the fallback unless the user forces plate-web.
+        TopoDS_Wire outer = BRepTools::OuterWire(face);
+        for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+            const TopoDS_Wire wire = TopoDS::Wire(wx.Current());
+            if (wire.IsSame(outer)) continue;
+            if (wireElongation(wire) > 2.2) return false;
+        }
+    }
+    plan.loops = std::move(probe.loops);
+    plan.uEdges = std::move(probe.uEdges);
+    plan.constrains = true;
+    plan.kind = MesherKind::PlateWeb;
+    return true;
+}
+
+// Generalized minimal n-gon (game topology, plan §1/§4.1): ANY planar face
+// can go minimal. A single-wire face becomes one boundary n-gon on the
+// exact solved border; a holed face becomes a hole-bridged ear-clip web
+// with ZERO interior vertices — the flattest topology that still welds.
+bool planMinimalPlanar(const TopoDS_Face& face,
+                       const BRepAdaptor_Surface& surf, const Model& model,
+                       FacePlan& plan) {
+    FacePlan probe;
+    if (!collectPlanarLoops(face, surf, model, probe)) return false;
+    plan.loops = std::move(probe.loops);
+    plan.uEdges = std::move(probe.uEdges);
+    plan.constrains = true;
+    plan.kind = MesherKind::MinimalNGon;
     return true;
 }
 
@@ -842,23 +945,35 @@ void triangulateWeb(std::vector<WebPoint> outer,
     earClip(std::move(outer), faceId, flip, out);
 }
 
-bool meshPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
-                  const Model& model, int faceId,
-                  const std::vector<int>& solvedEdge, int radialDefault,
-                  MeshBuilder& out) {
-    // Sample every wire as one chained ring: each edge at its own solved
-    // count, positions on the 3D edge curve (weld-exact), UV from the
-    // pcurve (the plate's isometric chart).
-    struct Ring {
-        std::vector<gp_Pnt2d> uv;
-        std::vector<gp_Pnt> p;
-        bool isOuter = false;
-    };
+// A planar face's wire sampled as one chained ring: each edge at its own
+// solved count, positions on the 3D edge curve (weld-exact), UV from the
+// pcurve (the plate's isometric chart).
+struct PlanarRing {
+    std::vector<gp_Pnt2d> uv;
+    std::vector<gp_Pnt> p;
+    bool isOuter = false;
+};
+
+double planarRingArea(const PlanarRing& r) {
+    double a = 0;
+    for (size_t i = 0; i < r.uv.size(); ++i) {
+        const gp_Pnt2d& p = r.uv[i];
+        const gp_Pnt2d& q = r.uv[(i + 1) % r.uv.size()];
+        a += p.X() * q.Y() - q.X() * p.Y();
+    }
+    return a / 2;
+}
+
+// Sample every wire, then normalize the winding in UV: outer CCW, holes
+// CW — triangulation then emits CCW in UV, and one global flip against
+// the face orientation fixes 3D winding.
+bool samplePlanarRings(const TopoDS_Face& face, const Model& model,
+                       const std::vector<int>& solvedEdge, int radialDefault,
+                       std::vector<PlanarRing>& rings) {
     TopoDS_Wire outerWire = BRepTools::OuterWire(face);
-    std::vector<Ring> rings;
     for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
         const TopoDS_Wire wire = TopoDS::Wire(wx.Current());
-        Ring ring;
+        PlanarRing ring;
         ring.isOuter = wire.IsSame(outerWire);
         int wireEdges = 0;
         for (BRepTools_WireExplorer we(wire, face); we.More(); we.Next()) {
@@ -889,27 +1004,26 @@ bool meshPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         if (ring.uv.size() < 3) return false;
         rings.push_back(std::move(ring));
     }
-    if (rings.size() < 2) return false;
-
-    // Normalize winding in UV: outer CCW, holes CW (triangles then come
-    // out CCW in UV; one global flip against the face normal at the end).
-    auto ringArea = [](const Ring& r) {
-        double a = 0;
-        for (size_t i = 0; i < r.uv.size(); ++i) {
-            const gp_Pnt2d& p = r.uv[i];
-            const gp_Pnt2d& q = r.uv[(i + 1) % r.uv.size()];
-            a += p.X() * q.Y() - q.X() * p.Y();
-        }
-        return a / 2;
-    };
-    for (Ring& r : rings) {
-        double a = ringArea(r);
+    for (PlanarRing& r : rings) {
+        double a = planarRingArea(r);
         if (std::abs(a) < 1e-14) return false;
         if (r.isOuter != (a > 0)) {
             std::reverse(r.uv.begin(), r.uv.end());
             std::reverse(r.p.begin(), r.p.end());
         }
     }
+    return true;
+}
+
+bool meshPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
+                  const Model& model, int faceId,
+                  const std::vector<int>& solvedEdge, int radialDefault,
+                  MeshBuilder& out) {
+    std::vector<PlanarRing> rings;
+    if (!samplePlanarRings(face, model, solvedEdge, radialDefault, rings)) {
+        return false;
+    }
+    if (rings.size() < 2) return false;
 
     // Boundary vertices (anchorless: they live on shared B-rep edges).
     std::vector<std::vector<uint32_t>> ringVerts(rings.size());
@@ -928,7 +1042,7 @@ bool meshPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     // (the true-face classifier costs ~1ms per probe on plates this size).
     auto insideDomain = [&](const gp_Pnt2d& p) {
         int crossings = 0;
-        for (const Ring& r : rings) {
+        for (const PlanarRing& r : rings) {
             for (size_t i = 0; i < r.uv.size(); ++i) {
                 const gp_Pnt2d& a = r.uv[i];
                 const gp_Pnt2d& b = r.uv[(i + 1) % r.uv.size()];
@@ -957,7 +1071,7 @@ bool meshPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     std::vector<std::vector<WebPoint>> webHoles;
     for (size_t r = 0; r < rings.size(); ++r) {
         if (r == outerIdx) continue;
-        const Ring& hole = rings[r];
+        const PlanarRing& hole = rings[r];
         const size_t n = hole.uv.size();
         gp_XY centroid(0, 0);
         double perimeter = 0;
@@ -997,7 +1111,7 @@ bool meshPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
             if (ok) {
                 // The collar must stay a sane ring: same orientation as
                 // the hole and strictly larger.
-                double holeA = ringArea(hole);
+                double holeA = planarRingArea(hole);
                 double collarA = 0;
                 for (size_t i = 0; i < n; ++i) {
                     const gp_Pnt2d& p = collar[i];
@@ -1031,6 +1145,43 @@ bool meshPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         webHoles.push_back(std::move(boundary));
     }
 
+    triangulateWeb(std::move(webOuter), std::move(webHoles), faceId, flip,
+                   out);
+    return true;
+}
+
+// Generalized minimal n-gon: the flattest topology a planar face can
+// carry. One wire -> a single boundary n-gon on the exact solved border;
+// holes -> the hole-bridged ear-clip web with zero interior vertices.
+bool meshMinimalPlanar(const TopoDS_Face& face, const Model& model,
+                       int faceId, const std::vector<int>& solvedEdge,
+                       int radialDefault, MeshBuilder& out) {
+    std::vector<PlanarRing> rings;
+    if (!samplePlanarRings(face, model, solvedEdge, radialDefault, rings)) {
+        return false;
+    }
+    if (rings.empty()) return false;
+    const bool flip = face.Orientation() == TopAbs_REVERSED;
+
+    if (rings.size() == 1) {
+        std::vector<uint32_t> poly;
+        for (const gp_Pnt& p : rings[0].p) poly.push_back(out.addVertex(p, {}));
+        if (poly.size() < 3) return false;
+        out.addPolygon(std::move(poly), faceId, flip);  // UV-CCW already
+        return true;
+    }
+
+    std::vector<WebPoint> webOuter;
+    std::vector<std::vector<WebPoint>> webHoles;
+    for (const PlanarRing& r : rings) {
+        std::vector<WebPoint> ring;
+        for (size_t i = 0; i < r.uv.size(); ++i) {
+            ring.push_back({r.uv[i], out.addVertex(r.p[i], {})});
+        }
+        if (r.isOuter) webOuter = std::move(ring);
+        else webHoles.push_back(std::move(ring));
+    }
+    if (webOuter.size() < 3) return false;
     triangulateWeb(std::move(webOuter), std::move(webHoles), faceId, flip,
                    out);
     return true;
@@ -1104,19 +1255,20 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 if (planRingJunction(face, model, plan)) return plan;
                 break;
             case MesherKind::PlanarGrid:
-            case MesherKind::MinimalNGon:
                 if (parametricGridFits(face, surf, std::max(1, s.gridU),
                                        std::max(1, s.gridV))) {
                     plan.kind = want;
                     collectIsoEdges(face, model, info.edgeIds, plan);
                     if (plan.uEdges.size() != 2 || plan.vEdges.size() != 2) {
                         plan.constrains = false;
-                        if (want == MesherKind::MinimalNGon) {
-                            plan.kind = MesherKind::PlanarGrid;
-                        }
                     }
                     return plan;
                 }
+                break;
+            case MesherKind::MinimalNGon:
+                // Any planar face can go minimal: single wire -> one exact
+                // boundary n-gon, holes -> bridged web, zero interior verts.
+                if (planMinimalPlanar(face, surf, model, plan)) return plan;
                 break;
             case MesherKind::CoonsGrid: {
                 CoonsPatch patch;
@@ -1130,10 +1282,16 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 break;
             }
             case MesherKind::AnnulusRing:
-                if (planAnnulus(face, model, plan)) return plan;
+                // Forced: no ring-shape gate — the user asked for the band.
+                if (planAnnulus(face, model, plan, /*requireRing=*/false)) {
+                    return plan;
+                }
                 break;
             case MesherKind::PlateWeb:
-                if (planPlateWeb(face, surf, model, plan)) return plan;
+                if (planPlateWeb(face, surf, model, plan,
+                                 /*requireRoundHoles=*/false)) {
+                    return plan;
+                }
                 break;
             case MesherKind::QuadDominant:
                 plan.kind = MesherKind::Fallback;
@@ -1162,20 +1320,24 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         return plan;
     }
 
+    // Game-topology minimal (the per-face/default flag): any flat face
+    // collapses to its boundary — one n-gon, or a hole-bridged flat web.
+    if (s.minimal && planMinimalPlanar(face, surf, model, plan)) return plan;
+
     if (planRingJunction(face, model, plan)) return plan;
 
-    if (planAnnulus(face, model, plan)) return plan;
+    // Auto picks stay conservative: the annulus band only for actual
+    // concentric rings, the plate web only for compact (bolt-style) holes.
+    // Everything else keeps the fallback unless the user forces a mesher.
+    if (planAnnulus(face, model, plan, /*requireRing=*/true)) return plan;
 
-    if (planPlateWeb(face, surf, model, plan)) return plan;
+    if (planPlateWeb(face, surf, model, plan, /*requireRoundHoles=*/true)) {
+        return plan;
+    }
 
     if (parametricGridFits(face, surf, std::max(1, s.gridU),
                            std::max(1, s.gridV))) {
         plan.kind = MesherKind::PlanarGrid;
-        // Flat panels collapse to one boundary n-gon on request; the border
-        // still carries the density-matched vertices, so neighbours weld.
-        if (s.minimal && surf.GetType() == GeomAbs_Plane) {
-            plan.kind = MesherKind::MinimalNGon;
-        }
         if (info.isFillet) {
             plan.isFillet = true;
             // The blend arc runs along u for a cylinder strip and along the
@@ -1187,11 +1349,6 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         collectIsoEdges(face, model, info.edgeIds, plan);
         if (plan.uEdges.size() != 2 || plan.vEdges.size() != 2) {
             plan.constrains = false;
-        }
-        // The n-gon's ring is a rectangle perimeter walk; without the 2u+2v
-        // structure there is nothing reliable to walk.
-        if (plan.kind == MesherKind::MinimalNGon && !plan.constrains) {
-            plan.kind = MesherKind::PlanarGrid;
         }
         return plan;
     }
@@ -1271,9 +1428,10 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
 
     for (const auto& [fid, plan] : plans) {
         if (!plan.constrains) continue;
-        // Plate webs never tie their edges together: each hole/border edge
-        // solves on its own (the bore through a hole drives that hole).
-        if (plan.kind == MesherKind::PlateWeb) continue;
+        // Loop-based plans (plate webs, minimal planar) never tie their
+        // edges together: each hole/border edge solves on its own (the
+        // bore through a hole drives that hole).
+        if (!plan.loops.empty()) continue;
         if (plan.linkRims) sol.groups.unite(plan.uEdges);
         sol.groups.unite(plan.vEdges);
     }
@@ -1299,7 +1457,25 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
         if (!plan.constrains) continue;
         const FaceMeshSettings& s = settings.forFace(fid);
         const bool overridden = settings.perFace.count(fid) > 0;
-        if (plan.kind == MesherKind::PlanarGrid ||
+        if (!plan.loops.empty()) {
+            // Every border edge proposes independently. Plate webs share
+            // the radial default out per loop (a one-edge hole circle gets
+            // all of it; a bore's larger proposal still wins). Minimal
+            // planar proposes the floor — flattest possible — and lets
+            // the neighbours drive any edge that needs more.
+            for (const auto& loop : plan.loops) {
+                // Minimal proposes the floor — it must never PIN a shared
+                // edge down over a neighbour's real density, even when the
+                // face is an explicit override.
+                bool minimal = plan.kind == MesherKind::MinimalNGon;
+                int per = minimal ? 1
+                                  : std::max(1, std::max(3, s.radial) /
+                                                    int(loop.size()));
+                for (int eid : loop) {
+                    propose({eid}, per, overridden && !minimal);
+                }
+            }
+        } else if (plan.kind == MesherKind::PlanarGrid ||
             plan.kind == MesherKind::CoonsGrid ||
             plan.kind == MesherKind::MinimalNGon ||
             plan.kind == MesherKind::RingJunction) {
@@ -1876,7 +2052,8 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
     auto isFreeform = [&](int fid) {
         MesherKind k = plans.at(fid).kind;
         return (k == MesherKind::Fallback || k == MesherKind::QuadDominant ||
-                k == MesherKind::AnnulusRing || k == MesherKind::PlateWeb) &&
+                k == MesherKind::AnnulusRing ||
+                !plans.at(fid).loops.empty()) &&
                !settings.forFace(fid).exclude;
     };
     auto isAnalytic = [&](int fid) {
@@ -2221,8 +2398,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             s.minimal ? 1 : 0, s.exclude ? 1 : 0, s.minSize,
             s.relativeDeviation ? 1 : 0);
         cacheKey[fid] = key;
-        if (plan.kind == MesherKind::AnnulusRing ||
-            plan.kind == MesherKind::PlateWeb) {
+        if (plan.kind == MesherKind::AnnulusRing || !plan.loops.empty()) {
             for (int eid : plan.uEdges) {
                 cacheKey[fid] += "u" + std::to_string(solvedEdge[eid]);
             }
@@ -2307,7 +2483,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 break;
             }
             case MesherKind::MinimalNGon:
-                meshMinimalNGon(face, surf, fid, nu, nv, out);
+                if (!plan.loops.empty()) {
+                    if (!meshMinimalPlanar(face, model, fid, solvedEdge,
+                                           s.radial, out)) {
+                        meshFallback(face, surf, fid, s, out);
+                    }
+                } else {
+                    meshMinimalNGon(face, surf, fid, nu, nv, out);
+                }
                 break;
             case MesherKind::RingJunction:
                 meshRingJunction(face, surf, plan.circ, fid, nu, nv,

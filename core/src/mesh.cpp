@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <map>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -112,21 +113,38 @@ void weldVertices(PolyMesh& mesh, double tolerance) {
     mesh.polygonFaceId = std::move(polyFace);
 }
 
-void writeObj(const PolyMesh& mesh, const std::string& path) {
+void writeObj(const PolyMesh& mesh, const std::string& path,
+              const std::vector<std::vector<int>>* solidFaces) {
     FILE* f = std::fopen(path.c_str(), "w");
     if (!f) throw std::runtime_error("cannot open for writing: " + path);
 
-    std::fprintf(f, "# weft phase-0 export\n");
+    std::fprintf(f, "# weft export\n");
     for (const auto& v : mesh.vertices) {
         std::fprintf(f, "v %.9g %.9g %.9g\n", v[0], v[1], v[2]);
     }
 
+    // Object structure: FaceId -> solid index, so each CAD body writes as
+    // its own "o" block and importers keep bodies as separate meshes.
+    std::map<int, int> faceSolid;
+    if (solidFaces) {
+        for (size_t si = 0; si < solidFaces->size(); ++si) {
+            for (int fid : (*solidFaces)[si]) faceSolid[fid] = int(si);
+        }
+    }
+
     // Group polygons by source B-rep face so CAD face IDs survive into the
-    // DCC. Polygons of a face are contiguous by construction.
-    int currentGroup = -1;
-    for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+    // DCC. Polygons of a face are contiguous by construction; emitting in
+    // solid order keeps each object's polygons contiguous too.
+    int currentObject = -1, currentGroup = -1;
+    auto writeFacePolys = [&](size_t p) {
         if (mesh.polygonFaceId[p] != currentGroup) {
             currentGroup = mesh.polygonFaceId[p];
+            auto so = faceSolid.find(currentGroup);
+            int object = so == faceSolid.end() ? 0 : so->second;
+            if (solidFaces && object != currentObject) {
+                currentObject = object;
+                std::fprintf(f, "o object_%d\n", currentObject + 1);
+            }
             std::fprintf(f, "g face_%d\n", currentGroup);
         }
         std::fprintf(f, "f");
@@ -134,6 +152,22 @@ void writeObj(const PolyMesh& mesh, const std::string& path) {
             std::fprintf(f, " %u", idx + 1);
         }
         std::fprintf(f, "\n");
+    };
+    if (solidFaces && !faceSolid.empty()) {
+        // Emit polygons ordered by (solid, face): stable per-object blocks.
+        std::vector<size_t> order(mesh.polygons.size());
+        for (size_t p = 0; p < order.size(); ++p) order[p] = p;
+        std::stable_sort(order.begin(), order.end(),
+                         [&](size_t a, size_t b) {
+                             auto sa = faceSolid.find(mesh.polygonFaceId[a]);
+                             auto sb = faceSolid.find(mesh.polygonFaceId[b]);
+                             int ia = sa == faceSolid.end() ? 0 : sa->second;
+                             int ib = sb == faceSolid.end() ? 0 : sb->second;
+                             return ia < ib;
+                         });
+        for (size_t p : order) writeFacePolys(p);
+    } else {
+        for (size_t p = 0; p < mesh.polygons.size(); ++p) writeFacePolys(p);
     }
     std::fclose(f);
 }

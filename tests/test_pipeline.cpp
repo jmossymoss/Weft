@@ -11,10 +11,12 @@
 #include "weft/recipe.hpp"
 #include "weft/remap.hpp"
 
+#include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
+#include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <gp_Ax2.hxx>
 
@@ -357,15 +359,17 @@ void testMinimalNGon() {
     }
     CHECK(isWatertight(mesh));
 
-    // All-minimal box: 6 n-gons, still watertight — the game-topology
-    // "flat panel needs no interior" case taken to its extreme.
+    // All-minimal box: with nothing else driving the edges, every border
+    // solves to 1 and the box collapses to its 6 corner quads — the
+    // game-topology "flat panel needs no interior" case at its extreme.
     weft::GenerationSettings gsAll;
     gsAll.defaults.gridU = 3;
     gsAll.defaults.gridV = 3;
     gsAll.defaults.minimal = true;
     weft::PolyMesh minimalMesh = weft::generate(model, a, gsAll);
-    CHECK_EQ(minimalMesh.countNgons(), 6);
-    CHECK_EQ(minimalMesh.countQuads(), 0);
+    CHECK_EQ(minimalMesh.countNgons(), 0);
+    CHECK_EQ(minimalMesh.countQuads(), 6);
+    CHECK_EQ(minimalMesh.vertexCount(), 8);
     CHECK(isWatertight(minimalMesh));
 }
 
@@ -865,6 +869,137 @@ void testPlateWeb() {
     CHECK(pinned.countQuads() > mesh.countQuads());
 }
 
+// Auto-mesher gates: a plate with a slot has "two wires" but is NOT an
+// annulus and its hole is NOT collar material — on auto it must stay with
+// the fallback, while forcing plate-web or minimal-ngon still builds.
+void testAutoGates() {
+    std::printf("-- auto-mesher gates (slotted plate) --\n");
+    TopoDS_Shape plate = BRepPrimAPI_MakeBox(80.0, 30.0, 5.0).Shape();
+    TopoDS_Shape slot =
+        BRepPrimAPI_MakeBox(gp_Ax2(gp_Pnt(25.0, 12.0, -1.0), gp_Dir(0, 0, 1)),
+                            30.0, 6.0, 7.0)
+            .Shape();
+    plate = BRepAlgoAPI_Cut(plate, slot).Shape();
+    std::string stepPath = tmpPath("weft_test_slot.step");
+    weft::writeStep(plate, stepPath);
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis a = weft::analyze(model);
+
+    // The two slotted plate faces: planar, two wires each.
+    std::vector<int> plateFaces;
+    for (const auto& f : a.faces) {
+        if (f.type != weft::SurfaceType::Plane) continue;
+        int wires = 0;
+        for (TopExp_Explorer wx(model.faces(f.id), TopAbs_WIRE); wx.More();
+             wx.Next()) {
+            ++wires;
+        }
+        if (wires == 2) plateFaces.push_back(f.id);
+    }
+    CHECK_EQ(plateFaces.size(), 2);
+
+    weft::GenerationSettings gs;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
+    for (int fid : plateFaces) {
+        weft::MesherKind k = report.faceMesher.at(fid);
+        CHECK(k != weft::MesherKind::AnnulusRing);  // not a ring
+        CHECK(k != weft::MesherKind::PlateWeb);     // hole isn't round
+    }
+    CHECK(isWatertight(mesh));
+
+    // Forcing still builds: plate-web and minimal-ngon on the same faces.
+    weft::GenerationSettings gsForce;
+    gsForce.perFace[plateFaces[0]] = gsForce.defaults;
+    gsForce.perFace[plateFaces[0]].forceMesher =
+        1 + int(weft::MesherKind::PlateWeb);
+    weft::GenerationReport repForce;
+    weft::PolyMesh forced = weft::generate(model, a, gsForce, &repForce);
+    CHECK(repForce.faceMesher.at(plateFaces[0]) ==
+          weft::MesherKind::PlateWeb);
+    CHECK(isWatertight(forced));
+
+    // Minimal everywhere: both plate faces become flat hole-bridged webs
+    // with zero interior vertices, and the solid still welds.
+    weft::GenerationSettings gsMin;
+    gsMin.defaults.minimal = true;
+    weft::GenerationReport repMin;
+    weft::PolyMesh minimal = weft::generate(model, a, gsMin, &repMin);
+    for (int fid : plateFaces) {
+        CHECK(repMin.faceMesher.at(fid) == weft::MesherKind::MinimalNGon);
+    }
+    CHECK(isWatertight(minimal));
+}
+
+// Same-loop bridge + fill: deleting a face leaves ONE boundary loop; the
+// bridge must split it between the two picked edges (a band whose rims
+// merged), and the fill tool must cap it with a single n-gon.
+void testSameLoopBridgeAndFill() {
+    std::printf("-- same-loop bridge + fill --\n");
+    std::string stepPath = tmpPath("weft_test_fill.step");
+    weft::writeStep(weft::makeFixture("box"), stepPath);
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis a = weft::analyze(model);
+
+    weft::GenerationSettings gs;
+    gs.defaults.gridU = 3;
+    gs.defaults.gridV = 3;
+    gs.perFace[1] = gs.defaults;
+    gs.perFace[1].exclude = true;  // one open 12-vertex boundary loop
+
+    // Two opposite edges of the deleted face (max midpoint distance).
+    const auto& edgeIds = a.faces[0].edgeIds;
+    auto midOf = [&](int eid) {
+        BRepAdaptor_Curve c(TopoDS::Edge(model.edges(eid)));
+        return c.Value((c.FirstParameter() + c.LastParameter()) / 2);
+    };
+    int eA = 0, eB = 0;
+    double far2 = -1;
+    for (size_t i = 0; i < edgeIds.size(); ++i) {
+        for (size_t j = i + 1; j < edgeIds.size(); ++j) {
+            double d = midOf(edgeIds[i]).Distance(midOf(edgeIds[j]));
+            if (d > far2) {
+                far2 = d;
+                eA = edgeIds[i];
+                eB = edgeIds[j];
+            }
+        }
+    }
+    CHECK(eA > 0 && eB > 0 && eA != eB);
+
+    weft::PolyMesh open = weft::generate(model, a, gs);
+    CHECK(!isWatertight(open));  // the hole is real
+
+    weft::ManualOp bridge;
+    bridge.kind = weft::ManualOp::Kind::Bridge;
+    bridge.edgeA = eA;
+    bridge.edgeB = eB;
+    weft::PolyMesh bridged = open;
+    CHECK(weft::bridgeLoops(bridged, model, bridge) > 0);
+    CHECK(isWatertight(bridged));
+
+    // Fill: one n-gon closes the same hole.
+    weft::ManualOp fill;
+    fill.kind = weft::ManualOp::Kind::FillLoop;
+    fill.edgeA = eA;
+    weft::PolyMesh filled = open;
+    size_t before = filled.polygonCount();
+    CHECK_EQ(weft::fillLoop(filled, model, fill), 1);
+    CHECK_EQ(filled.polygonCount(), before + 1);
+    CHECK(isWatertight(filled));
+
+    // The fill op persists through a recipe round trip.
+    weft::Recipe recipe;
+    recipe.settings = gs;
+    recipe.ops.push_back(fill);
+    std::string recipePath = tmpPath("weft_test_fill.recipe");
+    weft::saveRecipe(recipe, recipePath);
+    weft::Recipe loaded = weft::loadRecipe(recipePath);
+    CHECK_EQ(loaded.ops.size(), 1);
+    CHECK(loaded.ops[0].kind == weft::ManualOp::Kind::FillLoop);
+    CHECK_EQ(loaded.ops[0].edgeA, eA);
+}
+
 // Recipe remapping: a re-export after upstream CAD edits renumbers faces
 // and edges; remapRecipe must follow the features geometrically so the
 // user's overrides land on the same bore, not the same file index.
@@ -1090,6 +1225,8 @@ int main() {
     RUN(testPlateWeb);
     RUN(testNudgeVertex);
     RUN(testRecipeRemap);
+    RUN(testAutoGates);
+    RUN(testSameLoopBridgeAndFill);
     RUN(testGenerationCache);
     if (failures) {
         std::printf("\n%d FAILURE(S)\n", failures);

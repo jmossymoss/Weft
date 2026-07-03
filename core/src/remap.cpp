@@ -170,6 +170,13 @@ Recipe remapRecipe(const Recipe& recipe, const Model& oldModel,
             }
             op.edgeA = a;
             op.edgeB = b;
+        } else if (op.kind == ManualOp::Kind::FillLoop) {
+            int a = edgeFor(op.edgeA);
+            if (!a) {
+                ++opsDropped;
+                continue;
+            }
+            op.edgeA = a;
         } else {  // LoopInsert / NudgeVertex anchor to a face
             int n = faceFor(op.faceId);
             if (!n) {

@@ -39,37 +39,62 @@ def default_live_path():
 
 
 def parse_obj(path):
-    """Weft's exporter writes plain v/f lines with 'g face_N' groups."""
-    verts, faces, face_ids = [], [], []
+    """Weft's exporter: plain v/f lines, 'g face_N' groups, and one
+    'o object_N' block per CAD body (so bodies stay separate objects).
+    Returns a list of (name, verts, faces, face_ids) per object, with
+    vertex indices remapped to each object's own vertex list."""
+    all_verts = []
+    objects = []  # (name, [(global face tuple, gid), ...])
+    current = ["Weft", []]
     gid = 0
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
             if line.startswith("v "):
                 parts = line.split()
-                verts.append((float(parts[1]), float(parts[2]),
-                              float(parts[3])))
+                all_verts.append((float(parts[1]), float(parts[2]),
+                                  float(parts[3])))
             elif line.startswith("f "):
                 idx = tuple(int(tok.split("/")[0]) - 1
                             for tok in line.split()[1:])
-                faces.append(idx)
-                face_ids.append(gid)
+                current[1].append((idx, gid))
             elif line.startswith("g "):
                 name = line.split(None, 1)[1].strip()
                 tail = name.rsplit("_", 1)[-1]
                 gid = int(tail) if tail.isdigit() else 0
-    return verts, faces, face_ids
+            elif line.startswith("o "):
+                if current[1]:
+                    objects.append(current)
+                current = ["Weft " + line.split(None, 1)[1].strip(), []]
+    if current[1]:
+        objects.append(current)
+
+    result = []
+    for name, polys in objects:
+        remap = {}
+        verts, faces, face_ids = [], [], []
+        for idx, g in polys:
+            mapped = []
+            for i in idx:
+                if i not in remap:
+                    remap[i] = len(verts)
+                    verts.append(all_verts[i])
+                mapped.append(remap[i])
+            faces.append(tuple(mapped))
+            face_ids.append(g)
+        result.append((name, verts, faces, face_ids))
+    return result
 
 
-def apply_mesh(verts, faces, face_ids):
-    mesh = bpy.data.meshes.new("WeftMesh")
+def apply_object(name, verts, faces, face_ids):
+    mesh = bpy.data.meshes.new(name + " Mesh")
     mesh.from_pydata(verts, [], faces)
     mesh.update()
     attr = mesh.attributes.new("weft_face", "INT", "FACE")
     attr.data.foreach_set("value", face_ids)
 
-    obj = bpy.data.objects.get("Weft")
+    obj = bpy.data.objects.get(name)
     if obj is None or obj.type != "MESH":
-        obj = bpy.data.objects.new("Weft", mesh)
+        obj = bpy.data.objects.new(name, mesh)
         bpy.context.scene.collection.objects.link(obj)
         return obj
     old = obj.data
@@ -79,6 +104,23 @@ def apply_mesh(verts, faces, face_ids):
     if old.users == 0:
         bpy.data.meshes.remove(old)
     return obj
+
+
+def apply_objects(parsed):
+    seen = set()
+    for name, verts, faces, face_ids in parsed:
+        apply_object(name, verts, faces, face_ids)
+        seen.add(name)
+    # Bodies deleted upstream disappear here too (only 'Weft ...' objects
+    # this addon created are considered).
+    for obj in list(bpy.data.objects):
+        if obj.type != "MESH" or obj.name in seen:
+            continue
+        if obj.name == "Weft" or obj.name.startswith("Weft object_"):
+            data = obj.data
+            bpy.data.objects.remove(obj)
+            if data is not None and data.users == 0:
+                bpy.data.meshes.remove(data)
 
 
 _state = {"mtime": 0.0}
@@ -94,14 +136,14 @@ def _poll():
     except OSError:
         return props.interval
     if mtime != _state["mtime"]:
-        obj = bpy.data.objects.get("Weft")
-        if obj is not None and obj.mode != "OBJECT":
-            return props.interval  # don't swap under an edit-mode session
+        for obj in bpy.data.objects:
+            if obj.type == "MESH" and obj.name.startswith("Weft") and \
+                    obj.mode != "OBJECT":
+                return props.interval  # don't swap under edit mode
         try:
             # Weft renames the finished file into place, so a new mtime is
             # always a complete export.
-            verts, faces, face_ids = parse_obj(path)
-            apply_mesh(verts, faces, face_ids)
+            apply_objects(parse_obj(path))
             _state["mtime"] = mtime
         except Exception as exc:  # keep the timer alive on a bad read
             print("weft live link:", exc)
