@@ -3082,11 +3082,9 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
             }
             const double slack = edgeLen / 16.0;
 
-            // Exact distance/parameter on the curve for a mesh vertex.
-            auto project = [&](uint32_t v, double tol,
-                               double* paramOut) -> bool {
-                gp_Pnt p(mesh.vertices[v][0], mesh.vertices[v][1],
-                         mesh.vertices[v][2]);
+            // Exact distance/parameter on the curve for a point.
+            auto projectPnt = [&](const gp_Pnt& p, double tol,
+                                  double* paramOut) -> bool {
                 double quick = 1e300;
                 for (const gp_Pnt& c : coarse) {
                     quick = std::min(quick, p.SquareDistance(c));
@@ -3115,6 +3113,13 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                 *paramOut = bestT;
                 return true;
             };
+            auto project = [&](uint32_t v, double tol,
+                               double* paramOut) -> bool {
+                return projectPnt(gp_Pnt(mesh.vertices[v][0],
+                                         mesh.vertices[v][1],
+                                         mesh.vertices[v][2]),
+                                  tol, paramOut);
+            };
 
             // The authoritative chain: the analytic side's verts on this
             // edge, or — for a pinned resample — fresh uniform samples on
@@ -3133,9 +3138,15 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                                    : 0.0) *
                     1.2);
             std::map<uint32_t, double> movers;  // vert -> snapped param
+            std::map<uint32_t, gp_Pnt> moverOrig;  // pre-snap positions
             for (uint32_t v : borderVerts) {
                 double t;
-                if (project(v, tolMoverPre, &t)) movers[v] = t;
+                if (project(v, tolMoverPre, &t)) {
+                    movers[v] = t;
+                    moverOrig.emplace(v, gp_Pnt(mesh.vertices[v][0],
+                                                mesh.vertices[v][1],
+                                                mesh.vertices[v][2]));
+                }
             }
             if (movers.empty()) continue;
 
@@ -3222,6 +3233,36 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                     bool forward = closed
                         ? std::fmod(pw - pu + period, period) <= period * 0.5
                         : pw > pu;
+                    const double span = closed
+                        ? std::fmod((forward ? pw - pu : pu - pw) + period,
+                                    period)
+                        : std::abs(pw - pu);
+                    // The segment must actually LIE on this edge inside
+                    // (pu,pw): a border segment of a DIFFERENT edge can
+                    // still have both endpoints on this curve — the two
+                    // ends of a nearly-closed arc are joined by its tiny
+                    // closing edge — and inserting the chain there wraps
+                    // the whole arc into that polygon a second time.
+                    // Verify with the segment's PRE-SNAP midpoint: it must
+                    // project onto the curve well inside the span.
+                    {
+                        const gp_Pnt& a = moverOrig.at(u);
+                        const gp_Pnt& b = moverOrig.at(w);
+                        gp_Pnt mid((a.X() + b.X()) / 2, (a.Y() + b.Y()) / 2,
+                                   (a.Z() + b.Z()) / 2);
+                        double tm;
+                        if (!projectPnt(mid,
+                                        std::max(tolMoverPre,
+                                                 0.3 * a.Distance(b)),
+                                        &tm)) {
+                            continue;
+                        }
+                        double relm = closed
+                            ? std::fmod((forward ? tm - pu : pu - tm) +
+                                            period, period)
+                            : (forward ? tm - pu : pu - tm);
+                        if (relm < 0.1 * span || relm > 0.9 * span) continue;
+                    }
                     std::vector<const EdgeParamPoint*> between;
                     for (const EdgeParamPoint& cand : targets) {
                         double rel = closed
@@ -3229,10 +3270,6 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                                                  : pu - cand.param) + period,
                                         period)
                             : (forward ? cand.param - pu : pu - cand.param);
-                        double span = closed
-                            ? std::fmod((forward ? pw - pu : pu - pw) + period,
-                                        period)
-                            : std::abs(pw - pu);
                         if (rel > 1e-12 && rel < span - 1e-12) {
                             between.push_back(&cand);
                         }
