@@ -2,6 +2,8 @@
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
 #include <BRepClass_FaceClassifier.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <IMeshTools_Parameters.hxx>
@@ -336,6 +338,19 @@ bool parametricGridFits(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
     // do; closed revolutions are handled by RevolutionGrid instead.
     if (surf.IsUPeriodic() && umax - umin > surf.UPeriod() - 1e-9) return false;
     if (surf.IsVPeriodic() && vmax - vmin > surf.VPeriod() - 1e-9) return false;
+
+    // The grid meshes the UV bounding box, so the face must actually FILL
+    // its box. Node/center classification alone is far too sparse at low
+    // counts (a 1x1 grid probes 5 points) and lets a near-rectangle with
+    // small notches through — the grid then overlaps the notch faces. For
+    // a plane u/v are arc length, so bbox area is exact: compare it to the
+    // true face area.
+    if (surf.GetType() == GeomAbs_Plane) {
+        GProp_GProps props;
+        BRepGProp::SurfaceProperties(face, props);
+        const double rect = (umax - umin) * (vmax - vmin);
+        if (rect <= 0 || props.Mass() < 0.999 * rect) return false;
+    }
 
     const double du = (umax - umin) / nu;
     const double dv = (vmax - vmin) / nv;
@@ -3612,27 +3627,69 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     // corner from its own edge, so corners never welded. Snap any mesh
     // vertex within a B-rep vertex's tolerance onto its exact point.
     {
-        std::vector<std::pair<gp_Pnt, double>> corners;
         TopTools_IndexedMapOfShape vmap;
         TopExp::MapShapes(model.shape, TopAbs_VERTEX, vmap);
+
+        // Micro-edge collapse: CAD booleans leave hairline edges (a few
+        // microns on mm-scale parts) whose two vertices are distinct, so
+        // sliver faces and unmatchable seams survive every weld. Union
+        // the endpoints of any edge shorter than 1e-4 of the model
+        // diagonal — sliver polygons then degenerate away in the weld and
+        // the flanking faces zip directly.
+        std::vector<int> root(vmap.Extent() + 1);
+        std::iota(root.begin(), root.end(), 0);
+        auto find = [&](int i) {
+            while (root[i] != i) i = root[i] = root[root[i]];
+            return i;
+        };
+        Bnd_Box bb;
+        BRepBndLib::Add(model.shape, bb);
+        const double microTol = 1e-4 * std::sqrt(bb.SquareExtent());
+        int microEdges = 0;
+        for (TopExp_Explorer ex(model.shape, TopAbs_EDGE); ex.More();
+             ex.Next()) {
+            const TopoDS_Edge e = TopoDS::Edge(ex.Current());
+            TopoDS_Vertex v1, v2;
+            TopExp::Vertices(e, v1, v2);
+            if (v1.IsNull() || v2.IsNull() || v1.IsSame(v2)) continue;
+            if (BRep_Tool::Pnt(v1).Distance(BRep_Tool::Pnt(v2)) >= microTol) {
+                continue;
+            }
+            BRepAdaptor_Curve c(e);
+            if (GCPnts_AbscissaPoint::Length(c) >= microTol) continue;
+            root[find(vmap.FindIndex(v1))] = find(vmap.FindIndex(v2));
+            ++microEdges;
+        }
+
+        // Snap-test against each vertex's own point/tolerance, but send
+        // the mesh vertex to its GROUP representative's point.
+        struct Corner {
+            gp_Pnt at;      // where mesh verts of this B-rep vertex land
+            double tol;     // capture radius around this vertex
+            gp_Pnt target;  // canonical point (group representative)
+        };
+        std::vector<Corner> corners;
         for (int i = 1; i <= vmap.Extent(); ++i) {
             const TopoDS_Vertex v = TopoDS::Vertex(vmap(i));
-            corners.push_back(
-                {BRep_Tool::Pnt(v),
-                 std::max(1e-7, 2.0 * BRep_Tool::Tolerance(v))});
+            const TopoDS_Vertex r = TopoDS::Vertex(vmap(find(i)));
+            corners.push_back({BRep_Tool::Pnt(v),
+                               std::max(1e-7, 2.0 * BRep_Tool::Tolerance(v)),
+                               BRep_Tool::Pnt(r)});
         }
         size_t snapped = 0;
         for (auto& mv : mesh.vertices) {
             gp_Pnt p(mv[0], mv[1], mv[2]);
-            for (const auto& [q, tol] : corners) {
-                if (p.SquareDistance(q) < tol * tol) {
-                    mv = {q.X(), q.Y(), q.Z()};
+            for (const auto& c : corners) {
+                if (p.SquareDistance(c.at) < c.tol * c.tol) {
+                    mv = {c.target.X(), c.target.Y(), c.target.Z()};
                     ++snapped;
                     break;
                 }
             }
         }
-        dbg("generate: %zu corner verts canonicalized", snapped);
+        dbg("generate: %zu corner verts canonicalized, %d micro edges "
+            "collapsed",
+            snapped, microEdges);
     }
 
     // Solid-scoped weld: contacting bodies in a multi-body file have
