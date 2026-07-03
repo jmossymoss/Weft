@@ -701,6 +701,17 @@ void testBridge() {
     CHECK(isWatertight(closed));
     CHECK_EQ(closed.countQuads(), 12);
 
+    // V spans: the same bridge with 3 rows across emits 3x the quads and
+    // stays watertight.
+    {
+        weft::ManualOp spanned = bridge;
+        spanned.spans = 3;
+        weft::PolyMesh multi = open;
+        CHECK(weft::bridgeLoops(multi, model, spanned) > 0);
+        CHECK(isWatertight(multi));
+        CHECK_EQ(multi.countQuads(), 12 * 3);
+    }
+
     // Unequal rim counts: pin one rim to 18. The strip triangulates
     // (12 + 18 edges -> 30 triangles) and still closes watertight.
     gs.perEdge[rims[1]] = 18;

@@ -83,7 +83,7 @@ void saveRecipe(const Recipe& recipe, const std::string& path) {
     for (const ManualOp& op : recipe.ops) {
         if (op.kind == ManualOp::Kind::Bridge) {
             out << "op bridge " << op.edgeA << " " << op.edgeB << " "
-                << op.twist << "\n";
+                << op.twist << " " << op.spans << "\n";
         } else if (op.kind == ManualOp::Kind::NudgeVertex) {
             out << "op nudge " << op.faceId << " " << op.u << " " << op.v
                 << " " << op.u2 << " " << op.v2 << "\n";
@@ -149,6 +149,7 @@ Recipe loadRecipe(const std::string& path) {
                     ss >> op.edgeA >> op.edgeB;
                     if (!ss) throw std::runtime_error("malformed op bridge");
                     if (!(ss >> op.twist)) op.twist = 0;  // older recipes
+                    if (!(ss >> op.spans)) op.spans = 1;
                 } else if (opKind == "nudge") {
                     op.kind = ManualOp::Kind::NudgeVertex;
                     ss >> op.faceId >> op.u >> op.v >> op.u2 >> op.v2;

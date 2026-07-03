@@ -44,6 +44,9 @@ struct ManualOp {
     // automatic alignment can land a step off on symmetric loops, which
     // reads as a spiral. [ ] adjusts this on the last bridge in the app.
     int twist = 0;
+    // Bridge: rows ACROSS the strip (V spans). Equal-count bridges emit
+    // spans x N quads; zipper/same-loop bridges ignore it.
+    int spans = 1;
 };
 
 // Snap a point onto a B-rep face: exact re-projection, not shrinkwrap.
