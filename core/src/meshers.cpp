@@ -2325,10 +2325,10 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
 // vertices evaluate exactly like the quad band's, so caps still weld.
 void meshRevolutionTaper(const TopoDS_Face& face,
                          const BRepAdaptor_Surface& surf, int faceId, int nA,
-                         int nB, double uPhase, MeshBuilder& out) {
+                         int nB, double phaseV0, double phaseV1,
+                         MeshBuilder& out) {
     nA = std::max(3, nA);
     nB = std::max(3, nB);
-    const double u0 = uPhase;
     const double uRange = surf.LastUParameter() - surf.FirstUParameter();
     const double v0 = surf.FirstVParameter();
     const double v1 = surf.LastVParameter();
@@ -2336,11 +2336,11 @@ void meshRevolutionTaper(const TopoDS_Face& face,
 
     std::vector<uint32_t> A(nA), B(nB);
     for (int i = 0; i < nA; ++i) {
-        double u = u0 + uRange * i / nA;
+        double u = phaseV0 + uRange * i / nA;
         A[i] = out.addVertex(surf.Value(u, v0), {faceId, u, v0});
     }
     for (int j = 0; j < nB; ++j) {
-        double u = u0 + uRange * j / nB;
+        double u = phaseV1 + uRange * j / nB;
         B[j] = out.addVertex(surf.Value(u, v1), {faceId, u, v1});
     }
     int ia = 0, ib = 0;
@@ -2368,8 +2368,10 @@ void meshRevolutionTaper(const TopoDS_Face& face,
 // (each surface's own u origin can be rotated arbitrarily — torus vs
 // cylinder — which used to leave every shared rim vertex slightly off).
 double revolutionUPhase(const BRepAdaptor_Surface& surf,
-                        const Model& model, int rimEdgeId) {
+                        const Model& model, int rimEdgeId,
+                        bool* atLastV = nullptr) {
     const double u0 = surf.FirstUParameter();
+    if (atLastV) *atLastV = false;
     if (rimEdgeId < 1 || rimEdgeId > model.edgeCount()) return u0;
     const TopoDS_Edge edge = TopoDS::Edge(model.edges(rimEdgeId));
     if (BRep_Tool::Degenerated(edge)) return u0;
@@ -2387,8 +2389,10 @@ double revolutionUPhase(const BRepAdaptor_Surface& surf,
         dLast = std::min(dLast,
                          p0.Distance(surf.Value(u, surf.LastVParameter())));
     }
-    const double v = dFirst <= dLast ? surf.FirstVParameter()
-                                     : surf.LastVParameter();
+    const bool last = dFirst > dLast;
+    if (atLastV) *atLastV = last;
+    const double v =
+        last ? surf.LastVParameter() : surf.FirstVParameter();
     // Coarse scan + a few bisection refinements onto the edge start.
     double best = u0, bestD = 1e300;
     const int kCoarse = 64;
@@ -2409,33 +2413,128 @@ double revolutionUPhase(const BRepAdaptor_Surface& surf,
 }
 
 void meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
-                        int faceId, int nu, int nv, double uPhase,
-                        MeshBuilder& out) {
+                        const Model& model, const std::vector<int>& rimEdges,
+                        const std::vector<int>& solvedEdge, int faceId,
+                        int nu, int nv, MeshBuilder& out) {
     nu = std::max(3, nu);
     nv = std::max(1, nv);
-    const double u0 = uPhase;
     const double v0 = surf.FirstVParameter();
-    const double du = (surf.LastUParameter() - surf.FirstUParameter()) / nu;
+    const double v1 = surf.LastVParameter();
+    const double vspan = std::max(1e-12, v1 - v0);
+    const double period = surf.LastUParameter() - surf.FirstUParameter();
     const bool vWrap = surf.IsVClosed();
-    const double dv = (surf.LastVParameter() - v0) / nv;
+    const double dv = (v1 - v0) / nv;
     const int rows = vWrap ? nv : nv + 1;
     const bool flip = face.Orientation() == TopAbs_REVERSED;
 
-    std::vector<std::vector<uint32_t>> ring(rows);
-    for (int j = 0; j < rows; ++j) {
-        double v = v0 + j * dv;
-        std::vector<gp_Pnt> pts(nu);
-        bool degenerate = true;
-        for (int i = 0; i < nu; ++i) {
-            pts[i] = surf.Value(u0 + i * du, v);
-            if (i > 0 && pts[i].Distance(pts[0]) > 1e-9) degenerate = false;
+    // Rim rows sample the rim EDGE CURVES (like every chain mesher), so
+    // multi-arc rims keep their joint vertices and neighbours weld
+    // bit-identically; interior rows interpolate each column's u between
+    // the two rims (wrap-shortest), twisting gently if the rims' origins
+    // differ. Falls back to plain uniform rings when there are no usable
+    // rims (full tori) or the two rims disagree in count.
+    struct RimPt {
+        double u;
+        gp_Pnt p;
+    };
+    std::vector<RimPt> rim[2];
+    for (int eid : rimEdges) {
+        if (eid < 1 || eid > model.edgeCount()) continue;
+        const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+        if (BRep_Tool::Degenerated(edge)) continue;
+        double f2, l2, f3, l3;
+        Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(edge, face, f2, l2);
+        Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, f3, l3);
+        if (pc.IsNull() || c3.IsNull()) continue;
+        gp_Pnt2d mid = pc->Value((f2 + l2) / 2);
+        int side = std::abs(mid.Y() - v0) < std::abs(mid.Y() - v1) ? 0 : 1;
+        int n = eid < int(solvedEdge.size()) ? solvedEdge[eid] : 0;
+        if (n < 1) n = nu;
+        for (int i = 0; i < n; ++i) {
+            double t = double(i) / n;
+            gp_Pnt2d uv = pc->Value(f2 + (l2 - f2) * t);
+            gp_Pnt p = c3->Value(f3 + (l3 - f3) * t);
+            double u = uv.X();
+            u -= period * std::floor((u - surf.FirstUParameter()) / period);
+            rim[side].push_back({u, p});
         }
-        if (degenerate) {
-            ring[j].assign(nu, out.addVertex(pts[0], {faceId, u0, v}));
-        } else {
-            ring[j].resize(nu);
+    }
+    for (int k = 0; k < 2; ++k) {
+        std::sort(rim[k].begin(), rim[k].end(),
+                  [](const RimPt& a, const RimPt& b) { return a.u < b.u; });
+    }
+
+    std::vector<std::vector<uint32_t>> ring(rows);
+    const bool chained = !vWrap && int(rim[0].size()) == nu &&
+                         (rim[1].empty() || int(rim[1].size()) == nu);
+    if (chained) {
+        // Column u at each rim (missing rim mirrors the other).
+        const std::vector<RimPt>& A = rim[0];
+        const std::vector<RimPt>& B = rim[1].empty() ? rim[0] : rim[1];
+        // Rotational alignment of B to A (wrap-shortest total delta).
+        int bestOff = 0;
+        double bestSum = 1e300;
+        for (int off = 0; off < nu; ++off) {
+            double sum = 0;
             for (int i = 0; i < nu; ++i) {
-                ring[j][i] = out.addVertex(pts[i], {faceId, u0 + i * du, v});
+                double d = B[(i + off) % nu].u - A[i].u;
+                d -= period * std::round(d / period);
+                sum += d * d;
+            }
+            if (sum < bestSum) {
+                bestSum = sum;
+                bestOff = off;
+            }
+        }
+        for (int j = 0; j < rows; ++j) {
+            double v = v0 + j * dv;
+            double w = (v - v0) / vspan;
+            std::vector<gp_Pnt> pts(nu);
+            std::vector<double> us(nu);
+            for (int i = 0; i < nu; ++i) {
+                double uA = A[i].u;
+                double dU = B[(i + bestOff) % nu].u - uA;
+                dU -= period * std::round(dU / period);
+                us[i] = uA + dU * w;
+                if (j == 0) pts[i] = A[i].p;  // exact curve points
+                else if (j == nv && !rim[1].empty())
+                    pts[i] = B[(i + bestOff) % nu].p;
+                else pts[i] = surf.Value(us[i], v);
+            }
+            bool degenerate = true;
+            for (int i = 1; i < nu && degenerate; ++i) {
+                degenerate = pts[i].Distance(pts[0]) <= 1e-9;
+            }
+            if (degenerate) {
+                ring[j].assign(nu, out.addVertex(pts[0], {faceId, us[0], v}));
+            } else {
+                ring[j].resize(nu);
+                for (int i = 0; i < nu; ++i) {
+                    ring[j][i] = out.addVertex(pts[i], {faceId, us[i], v});
+                }
+            }
+        }
+    } else {
+        const double du = period / nu;
+        const double u0 = surf.FirstUParameter();
+        for (int j = 0; j < rows; ++j) {
+            double v = v0 + j * dv;
+            std::vector<gp_Pnt> pts(nu);
+            bool degenerate = true;
+            for (int i = 0; i < nu; ++i) {
+                pts[i] = surf.Value(u0 + i * du, v);
+                if (i > 0 && pts[i].Distance(pts[0]) > 1e-9) {
+                    degenerate = false;
+                }
+            }
+            if (degenerate) {
+                ring[j].assign(nu, out.addVertex(pts[0], {faceId, u0, v}));
+            } else {
+                ring[j].resize(nu);
+                for (int i = 0; i < nu; ++i) {
+                    ring[j][i] =
+                        out.addVertex(pts[i], {faceId, u0 + i * du, v});
+                }
             }
         }
     }
@@ -3276,10 +3375,21 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         MeshBuilder out(parts[fid]);
         const int nu = counts[fid][0], nv = counts[fid][1];
 
-        auto revPhase = [&]() {
-            return plan.uEdges.empty()
-                       ? surf.FirstUParameter()
-                       : revolutionUPhase(surf, model, plan.uEdges[0]);
+        // Both rims' phases, each mapped to its own v end; a band with
+        // one rim (or none) uses the same phase at both ends.
+        auto revPhases = [&]() -> std::pair<double, double> {
+            double p0 = surf.FirstUParameter(), p1 = p0;
+            bool have0 = false, have1 = false;
+            for (size_t k = 0; k < plan.uEdges.size() && k < 2; ++k) {
+                bool atV1 = false;
+                double ph =
+                    revolutionUPhase(surf, model, plan.uEdges[k], &atV1);
+                if (atV1 && !have1) { p1 = ph; have1 = true; }
+                else if (!atV1 && !have0) { p0 = ph; have0 = true; }
+            }
+            if (have0 && !have1) p1 = p0;
+            if (have1 && !have0) p0 = p1;
+            return {p0, p1};
         };
         switch (plan.kind) {
             case MesherKind::RevolutionGrid:
@@ -3305,11 +3415,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                               surf.LastVParameter())));
                     }
                     if (d1 < d0) std::swap(nA, nB);
-                    meshRevolutionTaper(face, surf, fid, nA, nB,
-                                        revPhase(), out);
+                    auto [p0, p1] = revPhases();
+                    meshRevolutionTaper(face, surf, fid, nA, nB, p0, p1,
+                                        out);
                 } else {
-                    meshRevolutionGrid(face, surf, fid, nu, nv, revPhase(),
-                                       out);
+                    meshRevolutionGrid(face, surf, model, plan.uEdges,
+                                       solvedEdge, fid, nu, nv, out);
                 }
                 break;
             case MesherKind::DiskCap:
