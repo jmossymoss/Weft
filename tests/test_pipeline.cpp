@@ -11,6 +11,7 @@
 #include "weft/recipe.hpp"
 
 #include <BRepAlgoAPI_Cut.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <gp_Ax2.hxx>
 
@@ -811,6 +812,56 @@ void testUnlinkedRims() {
     CHECK_EQ(tapered.countNgons(), 2);
 }
 
+// A bolt-hole plate (box minus two bores): its top/bottom faces carry three
+// wires each, beyond what ring-junction or annulus handle, so the plate-web
+// mesher takes them — a quad collar around every hole plus an ear-clipped
+// web, with all borders on the B-rep curves so the solid stays watertight.
+void testPlateWeb() {
+    std::printf("-- plate web --\n");
+    TopoDS_Shape plate = BRepPrimAPI_MakeBox(60.0, 30.0, 5.0).Shape();
+    for (double x : {18.0, 42.0}) {
+        TopoDS_Shape bore =
+            BRepPrimAPI_MakeCylinder(
+                gp_Ax2(gp_Pnt(x, 15.0, -1.0), gp_Dir(0, 0, 1)), 5.0, 7.0)
+                .Shape();
+        plate = BRepAlgoAPI_Cut(plate, bore).Shape();
+    }
+    std::string stepPath = tmpPath("weft_test_plate.step");
+    weft::writeStep(plate, stepPath);
+
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis a = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.radial = 12;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
+
+    int plateWebs = 0, revolutions = 0;
+    for (const auto& [fid, kind] : report.faceMesher) {
+        if (kind == weft::MesherKind::PlateWeb) ++plateWebs;
+        if (kind == weft::MesherKind::RevolutionGrid) ++revolutions;
+    }
+    CHECK_EQ(plateWebs, 2);    // top + bottom of the plate
+    CHECK(revolutions >= 2);   // the two bore walls
+    // Each plate face collars both holes: 2 faces x 2 holes x 12 quads,
+    // plus the bore walls (12 each) and whatever the box sides add.
+    CHECK(mesh.countQuads() >= 2 * 2 * 12 + 2 * 12);
+    CHECK(isWatertight(mesh));
+
+    // The bore drives its hole: pin one bore's radial higher and the plate
+    // collars must follow it, staying watertight.
+    for (const auto& f : a.faces) {
+        if (f.type == weft::SurfaceType::Cylinder) {
+            gs.perFace[f.id] = gs.defaults;
+            gs.perFace[f.id].radial = 20;
+            break;
+        }
+    }
+    weft::PolyMesh pinned = weft::generate(model, a, gs);
+    CHECK(isWatertight(pinned));
+    CHECK(pinned.countQuads() > mesh.countQuads());
+}
+
 // The generation cache must be invisible: cached regenerates match fresh
 // ones exactly, including after a single face's settings change.
 void testGenerationCache() {
@@ -874,6 +925,7 @@ int main() {
     RUN(testBridge);
     RUN(testFreeformBorderConformity);
     RUN(testUnlinkedRims);
+    RUN(testPlateWeb);
     RUN(testGenerationCache);
     if (failures) {
         std::printf("\n%d FAILURE(S)\n", failures);
