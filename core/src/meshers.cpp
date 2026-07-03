@@ -3727,7 +3727,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     // exports), far above the weld tolerance — every face computes its
     // corner from its own edge, so corners never welded. Snap any mesh
     // vertex within a B-rep vertex's tolerance onto its exact point.
-    {
+    auto finish = [&](PolyMesh& mesh) {
         TopTools_IndexedMapOfShape vmap;
         TopExp::MapShapes(model.shape, TopAbs_VERTEX, vmap);
 
@@ -3806,44 +3806,112 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         dbg("generate: %zu corner verts canonicalized, %d micro edges "
             "collapsed",
             snapped, microEdges);
-    }
 
-    // Solid-scoped weld: contacting bodies in a multi-body file have
-    // coincident skins with opposing windings — a global weld fuses them
-    // into non-manifold shared edges (every directed edge used twice).
-    // Group vertices by owning solid so only same-body seams merge.
-    std::vector<int> weldGroup;
-    {
-        std::vector<int> faceSolid(faceN + 1, 0);
-        int solidId = 0;
-        auto assign = [&](const TopoDS_Shape& obj) {
-            ++solidId;
-            for (TopExp_Explorer fx(obj, TopAbs_FACE); fx.More(); fx.Next()) {
-                int fid = model.faces.FindIndex(fx.Current());
-                if (fid > 0 && faceSolid[fid] == 0) faceSolid[fid] = solidId;
+        // Solid-scoped weld: contacting bodies in a multi-body file have
+        // coincident skins with opposing windings — a global weld fuses
+        // them into non-manifold shared edges (every directed edge used
+        // twice). Group vertices by owning solid so only same-body seams
+        // merge.
+        std::vector<int> weldGroup;
+        {
+            std::vector<int> faceSolid(faceN + 1, 0);
+            int solidId = 0;
+            auto assign = [&](const TopoDS_Shape& obj) {
+                ++solidId;
+                for (TopExp_Explorer fx(obj, TopAbs_FACE); fx.More();
+                     fx.Next()) {
+                    int fid = model.faces.FindIndex(fx.Current());
+                    if (fid > 0 && faceSolid[fid] == 0) {
+                        faceSolid[fid] = solidId;
+                    }
+                }
+            };
+            for (TopExp_Explorer sx(model.shape, TopAbs_SOLID); sx.More();
+                 sx.Next()) {
+                assign(sx.Current());
             }
-        };
-        for (TopExp_Explorer sx(model.shape, TopAbs_SOLID); sx.More();
-             sx.Next()) {
-            assign(sx.Current());
-        }
-        for (TopExp_Explorer sx(model.shape, TopAbs_SHELL, TopAbs_SOLID);
-             sx.More(); sx.Next()) {
-            assign(sx.Current());
-        }
-        if (solidId > 1) {
-            weldGroup.assign(mesh.vertices.size(), 0);
-            for (int fid = 1; fid <= faceN; ++fid) {
-                for (size_t v = range[fid][0]; v < range[fid][1]; ++v) {
-                    weldGroup[v] = faceSolid[fid];
+            for (TopExp_Explorer sx(model.shape, TopAbs_SHELL, TopAbs_SOLID);
+                 sx.More(); sx.Next()) {
+                assign(sx.Current());
+            }
+            if (solidId > 1) {
+                weldGroup.assign(mesh.vertices.size(), 0);
+                for (int fid = 1; fid <= faceN; ++fid) {
+                    for (size_t v = range[fid][0]; v < range[fid][1]; ++v) {
+                        weldGroup[v] = faceSolid[fid];
+                    }
                 }
             }
         }
-    }
 
-    dbg("generate: welding%s", weldGroup.empty() ? "" : " (per solid)");
-    weldVertices(mesh, settings.weldTolerance,
-                 weldGroup.empty() ? nullptr : &weldGroup);
+        dbg("generate: welding%s", weldGroup.empty() ? "" : " (per solid)");
+        weldVertices(mesh, settings.weldTolerance,
+                     weldGroup.empty() ? nullptr : &weldGroup);
+    };
+
+    finish(mesh);
+
+    // Fold cleanup: a directed edge traversed twice WITHIN one face means
+    // conform or decimation wrapped a flap of polygons over its
+    // neighbours. The flap is the smaller overlapping polygon — drop it;
+    // the tiny open it leaves beats a non-manifold fold.
+    {
+        std::map<std::pair<uint32_t, uint32_t>, std::vector<size_t>> dir;
+        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+            const auto& poly = mesh.polygons[p];
+            for (size_t i = 0; i < poly.size(); ++i) {
+                dir[{poly[i], poly[(i + 1) % poly.size()]}].push_back(p);
+            }
+        }
+        auto polyArea = [&](size_t p) {
+            const auto& poly = mesh.polygons[p];
+            double nx = 0, ny = 0, nz = 0;
+            for (size_t i = 0; i < poly.size(); ++i) {
+                const auto& a = mesh.vertices[poly[i]];
+                const auto& b = mesh.vertices[poly[(i + 1) % poly.size()]];
+                nx += a[1] * b[2] - a[2] * b[1];
+                ny += a[2] * b[0] - a[0] * b[2];
+                nz += a[0] * b[1] - a[1] * b[0];
+            }
+            return 0.5 * std::sqrt(nx * nx + ny * ny + nz * nz);
+        };
+        std::set<size_t> drop;
+        for (const auto& [e, ps] : dir) {
+            if (ps.size() < 2) continue;
+            bool sameFace = true;
+            for (size_t p : ps) {
+                sameFace &= mesh.polygonFaceId[p] ==
+                            mesh.polygonFaceId[ps[0]];
+            }
+            if (!sameFace) continue;  // cross-face dup: not a local flap
+            size_t keep = ps[0];
+            double best = -1.0;
+            for (size_t p : ps) {
+                double a = polyArea(p);
+                if (a > best) {
+                    best = a;
+                    keep = p;
+                }
+            }
+            for (size_t p : ps) {
+                if (p != keep) drop.insert(p);
+            }
+        }
+        if (!drop.empty()) {
+            std::vector<std::vector<uint32_t>> polys;
+            std::vector<int> polyFace;
+            polys.reserve(mesh.polygons.size() - drop.size());
+            polyFace.reserve(polys.capacity());
+            for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+                if (drop.count(p)) continue;
+                polys.push_back(std::move(mesh.polygons[p]));
+                polyFace.push_back(mesh.polygonFaceId[p]);
+            }
+            mesh.polygons = std::move(polys);
+            mesh.polygonFaceId = std::move(polyFace);
+            dbg("generate: %zu folded polygons dropped", drop.size());
+        }
+    }
     dbg("generate: done (%zu verts, %zu polys)", mesh.vertexCount(),
         mesh.polygonCount());
     return mesh;
