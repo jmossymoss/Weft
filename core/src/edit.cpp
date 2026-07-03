@@ -428,12 +428,39 @@ int bridgeLoops(PolyMesh& mesh, const Model& model, const ManualOp& op) {
     return added;
 }
 
+int nudgeVertex(PolyMesh& mesh, const Model& model, const ManualOp& op) {
+    if (op.faceId < 1 || op.faceId > model.faceCount()) return 0;
+    // The source is found in anchor space, not 3D: it's stable under the
+    // very nudges being replayed (an earlier op moving a vertex must not
+    // steal a later op's target).
+    size_t best = mesh.vertexCount();
+    double bestD = 1e300;
+    for (size_t v = 0; v < mesh.vertexCount(); ++v) {
+        const Anchor& a = mesh.anchors[v];
+        if (a.faceId != op.faceId) continue;
+        double d = (a.u - op.u) * (a.u - op.u) + (a.v - op.v) * (a.v - op.v);
+        if (d < bestD) {
+            bestD = d;
+            best = v;
+        }
+    }
+    if (best == mesh.vertexCount()) return 0;
+    Handle(Geom_Surface) surf = surfaceOf(model, op.faceId);
+    gp_Pnt p = surf->Value(op.u2, op.v2);
+    mesh.vertices[best] = {p.X(), p.Y(), p.Z()};
+    mesh.anchors[best] = {op.faceId, op.u2, op.v2};
+    return 1;
+}
+
 void applyOps(PolyMesh& mesh, const Model& model,
               const std::vector<ManualOp>& ops) {
     for (const ManualOp& op : ops) {
         switch (op.kind) {
             case ManualOp::Kind::LoopInsert: insertLoop(mesh, model, op); break;
             case ManualOp::Kind::Bridge: bridgeLoops(mesh, model, op); break;
+            case ManualOp::Kind::NudgeVertex:
+                nudgeVertex(mesh, model, op);
+                break;
         }
     }
 }

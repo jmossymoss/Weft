@@ -19,12 +19,18 @@ struct ManualOp {
                      // counts give a pure quad ring, unequal counts a
                      // triangulated zipper. Boundaries appear when faces
                      // are excluded from output (FaceMeshSettings.exclude).
+        NudgeVertex,  // slide the interior vertex anchored nearest to
+                      // (faceId,u,v) to the surface point (u2,v2) — a
+                      // vertex tweak that stays exactly on the CAD face
+                      // and survives re-tessellation
     };
     Kind kind = Kind::LoopInsert;
     int faceId = 0;
     double u = 0.0;
     double v = 0.0;
     double t = 0.5;
+    double u2 = 0.0;  // NudgeVertex: target surface parameters
+    double v2 = 0.0;
     int edgeA = 0;  // Bridge: stable B-rep edge ids the two loops hug
     int edgeB = 0;
     // Bridge: rotate the rail pairing by N steps around loop B — the
@@ -51,6 +57,13 @@ void moveVertex(PolyMesh& mesh, const Model& model, size_t vertIdx,
 // interpolation on-face and re-projection across face borders.
 // Returns the number of quads the loop crossed (0 = no suitable edge).
 int insertLoop(PolyMesh& mesh, const Model& model, const ManualOp& op);
+
+// Slide the interior vertex whose anchor is nearest to op's (faceId,u,v)
+// to the exact surface point at (u2,v2), updating its anchor. Border
+// vertices carry no face anchor (they belong to shared B-rep edges), so
+// they can't be nudged — density and conformity own them.
+// Returns 1 if a vertex moved, 0 if none was found.
+int nudgeVertex(PolyMesh& mesh, const Model& model, const ManualOp& op);
 
 // Bridge the two open boundary loops nearest to op.edgeA / op.edgeB (see
 // ManualOp::Kind::Bridge). Vertex counts per boundary come from the density

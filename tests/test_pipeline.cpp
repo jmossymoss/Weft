@@ -862,6 +862,70 @@ void testPlateWeb() {
     CHECK(pinned.countQuads() > mesh.countQuads());
 }
 
+// Vertex nudges anchor to the B-rep (face id + surface params), so they
+// stay exactly on the CAD surface and re-apply identically after any
+// regeneration — the app's G-grab records exactly this op.
+void testNudgeVertex() {
+    std::printf("-- nudge vertex --\n");
+    std::string stepPath = tmpPath("weft_test_nudge.step");
+    weft::writeStep(weft::makeFixture("cylinder"), stepPath);
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis a = weft::analyze(model);
+
+    int side = 0;
+    for (const auto& f : a.faces) {
+        if (f.type == weft::SurfaceType::Cylinder) side = f.id;
+    }
+    weft::GenerationSettings gs;
+    gs.defaults.radial = 12;
+    gs.defaults.axial = 2;
+    weft::PolyMesh mesh = weft::generate(model, a, gs);
+
+    size_t src = mesh.vertexCount();
+    for (size_t v = 0; v < mesh.vertexCount(); ++v) {
+        if (mesh.anchors[v].faceId == side) { src = v; break; }
+    }
+    CHECK(src < mesh.vertexCount());
+    std::array<double, 3> before = mesh.vertices[src];
+
+    weft::ManualOp op;
+    op.kind = weft::ManualOp::Kind::NudgeVertex;
+    op.faceId = side;
+    op.u = mesh.anchors[src].u;
+    op.v = mesh.anchors[src].v;
+    op.u2 = op.u + 0.25;  // rotate around the axis: stays on the wall
+    op.v2 = op.v;
+    CHECK_EQ(weft::nudgeVertex(mesh, model, op), 1);
+
+    auto radiusOf = [](const std::array<double, 3>& p) {
+        return std::sqrt(p[0] * p[0] + p[1] * p[1]);
+    };
+    CHECK(std::abs(radiusOf(mesh.vertices[src]) - 10.0) < 1e-9);  // on-face
+    double moved = std::hypot(mesh.vertices[src][0] - before[0],
+                              mesh.vertices[src][1] - before[1]);
+    CHECK(moved > 1.0);
+    CHECK(isWatertight(mesh));  // connectivity untouched
+
+    // Replay determinism: applyOps on a fresh generate lands the same
+    // vertex at the same place.
+    weft::PolyMesh fresh = weft::generate(model, a, gs);
+    weft::applyOps(fresh, model, {op});
+    CHECK(std::abs(fresh.vertices[src][0] - mesh.vertices[src][0]) < 1e-12);
+    CHECK(std::abs(fresh.vertices[src][1] - mesh.vertices[src][1]) < 1e-12);
+
+    // Recipe round-trip keeps the op.
+    weft::Recipe recipe;
+    recipe.settings = gs;
+    recipe.ops.push_back(op);
+    std::string recipePath = tmpPath("weft_test_nudge.recipe");
+    weft::saveRecipe(recipe, recipePath);
+    weft::Recipe loaded = weft::loadRecipe(recipePath);
+    CHECK_EQ(loaded.ops.size(), 1);
+    CHECK(loaded.ops[0].kind == weft::ManualOp::Kind::NudgeVertex);
+    CHECK(std::abs(loaded.ops[0].u2 - op.u2) < 1e-15);
+    CHECK(std::abs(loaded.ops[0].v2 - op.v2) < 1e-15);
+}
+
 // The generation cache must be invisible: cached regenerates match fresh
 // ones exactly, including after a single face's settings change.
 void testGenerationCache() {
@@ -926,6 +990,7 @@ int main() {
     RUN(testFreeformBorderConformity);
     RUN(testUnlinkedRims);
     RUN(testPlateWeb);
+    RUN(testNudgeVertex);
     RUN(testGenerationCache);
     if (failures) {
         std::printf("\n%d FAILURE(S)\n", failures);
