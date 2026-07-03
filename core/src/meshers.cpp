@@ -606,12 +606,36 @@ void meshAnnulusRing(const TopoDS_Face& face, const Model& model, int faceId,
 }
 
 FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
-                  const GenerationSettings& settings) {
+                  const GenerationSettings& settings,
+                  GenerationCache* cache) {
     const TopoDS_Face face = TopoDS::Face(model.faces(fid));
     const FaceMeshSettings& s = settings.forFace(fid);
     const FaceInfo& info = analysis.faces[fid - 1];
     BRepAdaptor_Surface surf(face);
     FacePlan plan;
+
+    // Geometry-only probe results memoize in the cache (the classifier
+    // calls dominate planning cost and never change for a model).
+    auto revCovers = [&] {
+        if (cache) {
+            auto it = cache->revolutionCovers.find(fid);
+            if (it != cache->revolutionCovers.end()) return it->second;
+        }
+        bool v = revolutionCovers(face);
+        if (cache) cache->revolutionCovers[fid] = v;
+        return v;
+    };
+    auto coonsOk = [&](CoonsPatch& patch) {
+        // Patch construction is cheap; a memoized NEGATIVE skips it (and
+        // the probes); a positive still rebuilds the (cheap) patch data.
+        if (cache) {
+            auto it = cache->coonsValid.find(fid);
+            if (it != cache->coonsValid.end() && !it->second) return false;
+        }
+        bool v = makeCoonsPatch(face, model, patch);
+        if (cache) cache->coonsValid[fid] = v;
+        return v;
+    };
 
     auto finishRevolution = [&]() {
         plan.kind = MesherKind::RevolutionGrid;
@@ -665,7 +689,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 break;
             case MesherKind::CoonsGrid: {
                 CoonsPatch patch;
-                if (makeCoonsPatch(face, model, patch)) {
+                if (coonsOk(patch)) {
                     plan.kind = MesherKind::CoonsGrid;
                     plan.uEdges = {patch.edgeIds[0], patch.edgeIds[2]};
                     plan.vEdges = {patch.edgeIds[1], patch.edgeIds[3]};
@@ -690,7 +714,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         return plan;
     }
 
-    if (isClosedRevolution(surf) && revolutionCovers(face)) {
+    if (isClosedRevolution(surf) && revCovers()) {
         finishRevolution();
         return plan;
     }
@@ -741,7 +765,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // is shorter in 3D.
     {
         CoonsPatch patch;
-        if (makeCoonsPatch(face, model, patch)) {
+        if (coonsOk(patch)) {
             plan.kind = MesherKind::CoonsGrid;
             plan.uEdges = {patch.edgeIds[0], patch.edgeIds[2]};
             plan.vEdges = {patch.edgeIds[1], patch.edgeIds[3]};
@@ -1478,11 +1502,26 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
             double edgeLen = GCPnts_AbscissaPoint::Length(curve);
             (void)lenTool;
 
+            // Coarse polyline of the edge: candidates farther from it
+            // than the tolerance (plus the sampling slack) can't project
+            // onto the curve, so the expensive Extrema never runs for the
+            // bulk of a neighbour's vertices.
+            std::array<gp_Pnt, 33> coarse;
+            for (int i = 0; i < 33; ++i) {
+                coarse[i] = curve.Value(f + (l - f) * i / 32.0);
+            }
+            const double slack = edgeLen / 16.0;
+
             // Exact distance/parameter on the curve for a mesh vertex.
             auto project = [&](uint32_t v, double tol,
                                double* paramOut) -> bool {
                 gp_Pnt p(mesh.vertices[v][0], mesh.vertices[v][1],
                          mesh.vertices[v][2]);
+                double quick = 1e300;
+                for (const gp_Pnt& c : coarse) {
+                    quick = std::min(quick, p.SquareDistance(c));
+                }
+                if (quick > (tol + slack) * (tol + slack)) return false;
                 double bestD = p.Distance(curve.Value(f));
                 double bestT = f;
                 double dl = p.Distance(curve.Value(l));
@@ -1635,13 +1674,14 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
 }  // namespace
 
 PolyMesh generate(const Model& model, const Analysis& analysis,
-                  const GenerationSettings& settings, GenerationReport* report) {
+                  const GenerationSettings& settings, GenerationReport* report,
+                  GenerationCache* cache) {
     dbg("generate: begin (%d faces, %d edges, parallel=%d, conform=%d)",
         model.faceCount(), model.edgeCount(), settings.parallelMeshing ? 1 : 0,
         settings.conformBorders ? 1 : 0);
     std::map<int, FacePlan> plans;
     for (int fid = 1; fid <= model.faceCount(); ++fid) {
-        FacePlan plan = planFace(fid, model, analysis, settings);
+        FacePlan plan = planFace(fid, model, analysis, settings, cache);
         if (settings.forFace(fid).exclude) {
             // Deleted faces neither mesh nor constrain their neighbours'
             // densities — their borders become free boundary loops.
@@ -1705,9 +1745,44 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         }
     }
 
+    // Cache keys: everything that shapes a face's part. A hit skips the
+    // (expensive) meshing entirely and reuses the stored part.
+    std::vector<std::string> cacheKey(faceN + 1);
+    std::vector<bool> cached(faceN + 1, false);
+    for (int fid = 1; fid <= faceN; ++fid) {
+        const FaceMeshSettings& s = settings.forFace(fid);
+        const FacePlan& plan = plans.at(fid);
+        char key[320];
+        std::snprintf(
+            key, sizeof key,
+            "k%d c%d f%d a%d l%d q%d|%d,%d,%d|r%d x%d u%d v%d cap%d ch%.6g "
+            "an%.6g fl%d fh%.6g jr%d qd%d mn%d ex%d ms%.6g rd%d",
+            int(plan.kind), plan.constrains ? 1 : 0, plan.isFillet ? 1 : 0,
+            plan.acrossIsU ? 1 : 0, plan.linkRims ? 1 : 0,
+            plan.forceFallbackQuads, counts[fid][0], counts[fid][1],
+            counts[fid][2], s.radial, s.axial, s.gridU, s.gridV, int(s.cap),
+            s.chordTolerance, s.angleToleranceDeg, s.filletLoops,
+            s.filletHold, s.junctionRings, s.quadDominant ? 1 : 0,
+            s.minimal ? 1 : 0, s.exclude ? 1 : 0, s.minSize,
+            s.relativeDeviation ? 1 : 0);
+        cacheKey[fid] = key;
+    }
+
     // Mesh every face into its own part, in parallel, then merge in face
     // order so the output is deterministic (identical to the serial order).
     std::vector<PolyMesh> parts(faceN + 1);
+    int cacheHits = 0;
+    if (cache) {
+        for (int fid = 1; fid <= faceN; ++fid) {
+            auto it = cache->faces.find(fid);
+            if (it != cache->faces.end() &&
+                it->second.first == cacheKey[fid]) {
+                parts[fid] = it->second.second;  // copy: merge mutates
+                cached[fid] = true;
+                ++cacheHits;
+            }
+        }
+    }
     auto meshFace = [&](int fid) {
         const FaceMeshSettings& s = settings.forFace(fid);
         if (s.exclude) return;
@@ -1793,9 +1868,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     unsigned threads = std::min<unsigned>(
         std::max(1u, std::thread::hardware_concurrency()), unsigned(faceN));
     if (!settings.parallelMeshing) threads = 1;
-    dbg("generate: meshing on %u thread(s)", threads);
+    dbg("generate: meshing on %u thread(s), %d cached", threads, cacheHits);
+    auto meshFaceCached = [&](int fid) {
+        if (!cached[fid]) meshFace(fid);
+    };
     if (threads <= 1) {
-        for (int fid = 1; fid <= faceN; ++fid) meshFace(fid);
+        for (int fid = 1; fid <= faceN; ++fid) meshFaceCached(fid);
     } else {
         std::atomic<int> nextFace{1};
         std::exception_ptr firstError;
@@ -1806,7 +1884,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 try {
                     for (int fid = nextFace.fetch_add(1); fid <= faceN;
                          fid = nextFace.fetch_add(1)) {
-                        meshFace(fid);
+                        meshFaceCached(fid);
                     }
                 } catch (...) {
                     std::lock_guard<std::mutex> lock(errorMutex);
@@ -1816,6 +1894,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         }
         for (std::thread& th : pool) th.join();
         if (firstError) std::rethrow_exception(firstError);
+    }
+
+    if (cache) {
+        for (int fid = 1; fid <= faceN; ++fid) {
+            if (!cached[fid]) {
+                cache->faces[fid] = {cacheKey[fid], parts[fid]};
+            }
+        }
     }
 
     PolyMesh mesh;
