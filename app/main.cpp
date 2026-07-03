@@ -1734,7 +1734,7 @@ static void drawOverlay(App& app) {
                      ImGuiWindowFlags_NoFocusOnAppearing |
                      ImGuiWindowFlags_NoNav);
     ImGui::TextDisabled(
-        "tab cycles select mode (ctrl+1/2/3: face/edge/poly)\n"
+        "1/2/3 select mode (face/edge/poly)   0-prefix typed counts\n"
         "shift+click multi-select   ctrl+Z undo\n"
         "shift+wheel density   ctrl+wheel 2nd axis   ctrl+shift+wheel loops\n"
         "12<enter> divisions   [ ] nudge\n"
@@ -2526,14 +2526,10 @@ int main(int argc, char** argv) {
                                  ? "edge select mode"
                                  : "polygon select mode";
             };
-            if (ImGui::IsKeyPressed(ImGuiKey_Tab, false)) {
-                setSelectMode(app.selectMode == SelectMode::Face
-                                  ? SelectMode::Edge
-                              : app.selectMode == SelectMode::Edge
-                                  ? SelectMode::Poly
-                                  : SelectMode::Face);
-            }
-            if (io.KeyCtrl) {  // ctrl+1/2/3 jump (bare digits type density)
+            // 1/2/3: B-rep faces / edges / polygons (Blender-style).
+            // A typed count that starts with 1-3 takes a leading zero
+            // ("016<enter>"); 0 and 4-9 start entry directly.
+            if (app.numberEntry.empty() && !io.KeyCtrl) {
                 if (ImGui::IsKeyPressed(ImGuiKey_1, false)) {
                     setSelectMode(SelectMode::Face);
                 }
@@ -2545,6 +2541,7 @@ int main(int argc, char** argv) {
                 }
             }
             for (int d = 0; d <= 9 && !io.KeyCtrl; ++d) {
+                if (app.numberEntry.empty() && d >= 1 && d <= 3) continue;
                 if (ImGui::IsKeyPressed(ImGuiKey(ImGuiKey_0 + d), false) ||
                     ImGui::IsKeyPressed(ImGuiKey(ImGuiKey_Keypad0 + d), false)) {
                     if (app.numberEntry.size() < 4) {
@@ -2687,21 +2684,18 @@ int main(int argc, char** argv) {
                 }
             }
             if (ImGui::IsKeyPressed(ImGuiKey_W, false)) app.showWire = !app.showWire;
-            if (ImGui::IsKeyPressed(ImGuiKey_B, false)) {
-                if (app.selectMode == SelectMode::Edge &&
-                    app.selEdges.size() == 2 && app.hasModel) {
-                    auto it = app.selEdges.begin();
-                    weft::ManualOp op;
-                    op.kind = weft::ManualOp::Kind::Bridge;
-                    op.edgeA = *it++;
-                    op.edgeB = *it;
-                    app.recipe.ops.push_back(op);
-                    markDirty(app);
-                    app.status = "bridged ([ ] twist, shift+[ ] spans, "
-                                 "ctrl+Z undoes)";
-                } else {
-                    app.showBrepEdges = !app.showBrepEdges;
-                }
+            if (ImGui::IsKeyPressed(ImGuiKey_B, false) &&
+                app.selectMode == SelectMode::Edge &&
+                app.selEdges.size() == 2 && app.hasModel) {
+                auto it = app.selEdges.begin();
+                weft::ManualOp op;
+                op.kind = weft::ManualOp::Kind::Bridge;
+                op.edgeA = *it++;
+                op.edgeB = *it;
+                app.recipe.ops.push_back(op);
+                markDirty(app);
+                app.status = "bridged ([ ] twist, shift+[ ] spans, "
+                             "ctrl+Z undoes)";
             }
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false) &&
                 app.hasModel && !app.recipePath.empty()) {
