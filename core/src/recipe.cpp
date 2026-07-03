@@ -77,7 +77,8 @@ void saveRecipe(const Recipe& recipe, const std::string& path) {
     out.precision(17);
     for (const ManualOp& op : recipe.ops) {
         if (op.kind == ManualOp::Kind::Bridge) {
-            out << "op bridge " << op.edgeA << " " << op.edgeB << "\n";
+            out << "op bridge " << op.edgeA << " " << op.edgeB << " "
+                << op.twist << "\n";
         } else {
             out << "op loop " << op.faceId << " " << op.u << " " << op.v
                 << " " << op.t << "\n";
@@ -133,6 +134,7 @@ Recipe loadRecipe(const std::string& path) {
                     op.kind = ManualOp::Kind::Bridge;
                     ss >> op.edgeA >> op.edgeB;
                     if (!ss) throw std::runtime_error("malformed op bridge");
+                    if (!(ss >> op.twist)) op.twist = 0;  // older recipes
                 } else {
                     throw std::runtime_error("unknown op: " + opKind);
                 }

@@ -385,6 +385,7 @@ int bridgeLoops(PolyMesh& mesh, const Model& model, const ManualOp& op) {
             bestOff = off;
         }
     }
+    bestOff = wrapB(bestOff + op.twist);  // user-adjustable rotation
 
     int added = 0;
     auto emit = [&](std::vector<uint32_t> poly) {

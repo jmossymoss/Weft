@@ -1308,9 +1308,18 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                     if (f2 != fid) nfid = f2;
                 }
             }
-            if (nfid < 1 || !isAnalytic(nfid)) continue;
-            dbg("conform: face %d edge %d (analytic neighbour %d)", fid, eid,
-                nfid);
+            const bool analyticNb = nfid >= 1 && isAnalytic(nfid);
+            // A pinned edge with no analytic driver (both sides freeform,
+            // or the neighbour deleted) resamples this border to exactly
+            // the pinned count with vertices ON the curve — count control
+            // that keeps the curvature.
+            auto pinIt = settings.perEdge.find(eid);
+            const bool pinnedResample =
+                !analyticNb && pinIt != settings.perEdge.end() &&
+                pinIt->second >= 2;
+            if (!analyticNb && !pinnedResample) continue;
+            dbg("conform: face %d edge %d (%s)", fid, eid,
+                analyticNb ? "analytic neighbour" : "pinned resample");
 
             BRepAdaptor_Curve curve(edge);
             const double f = curve.FirstParameter(), l = curve.LastParameter();
@@ -1349,18 +1358,32 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                 return true;
             };
 
-            // The analytic side's verts on this edge: the authoritative
-            // chain. Coons verts evaluate through the pcurve, which is
-            // only guaranteed to agree with the 3D curve to the edge
-            // tolerance, so include it.
+            // The authoritative chain: the analytic side's verts on this
+            // edge, or — for a pinned resample — fresh uniform samples on
+            // the curve itself. Coons verts evaluate through the pcurve,
+            // which only agrees with the 3D curve to the edge tolerance,
+            // so include it.
             const double tolTarget =
                 std::max(1e-6 * (1.0 + edgeLen),
                          10.0 * BRep_Tool::Tolerance(edge));
             std::vector<EdgeParamPoint> targets;
-            for (size_t v = range[nfid][0]; v < range[nfid][1]; ++v) {
-                double t;
-                if (project(uint32_t(v), tolTarget, &t)) {
-                    targets.push_back({uint32_t(v), t});
+            if (analyticNb) {
+                for (size_t v = range[nfid][0]; v < range[nfid][1]; ++v) {
+                    double t;
+                    if (project(uint32_t(v), tolTarget, &t)) {
+                        targets.push_back({uint32_t(v), t});
+                    }
+                }
+            } else {
+                const int n = pinIt->second;
+                const int count = closed ? n : n + 1;
+                for (int i = 0; i < count; ++i) {
+                    double t = f + (l - f) * i / double(n);
+                    gp_Pnt q = curve.Value(t);
+                    uint32_t nv = uint32_t(mesh.vertices.size());
+                    mesh.vertices.push_back({q.X(), q.Y(), q.Z()});
+                    mesh.anchors.push_back({});
+                    targets.push_back({nv, t});
                 }
             }
             if (targets.size() < 2) continue;
