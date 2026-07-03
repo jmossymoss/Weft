@@ -7,6 +7,8 @@
 #include <IMeshTools_Parameters.hxx>
 #include <Extrema_ExtPC.hxx>
 #include <GCPnts_AbscissaPoint.hxx>
+#include <GCPnts_TangentialDeflection.hxx>
+#include <Standard_Failure.hxx>
 #include <BRepGProp.hxx>
 #include <BRepTools.hxx>
 #include <BRepTools_WireExplorer.hxx>
@@ -40,6 +42,7 @@
 #include <numeric>
 #include <set>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 namespace weft {
@@ -1822,26 +1825,107 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
             if (!pIns) pit->second = std::max(pit->second, count);
         }
     };
+    // Curvature-adaptive proposals: an edge's count comes from tangential-
+    // deflection sampling of its curve under the proposing face's chord +
+    // angle tolerances — big arcs get more segments than small ones,
+    // straight edges get 1. Memoized per (edge, tolerances) for this solve.
+    std::map<std::tuple<int, long long, long long>, int> adCache;
+    auto adaptiveCount = [&](int eid, const FaceMeshSettings& s) {
+        auto key = std::make_tuple(eid, (long long)(s.chordTolerance * 1e9),
+                                   (long long)(s.angleToleranceDeg * 1e6));
+        auto it = adCache.find(key);
+        if (it != adCache.end()) return it->second;
+        int n = 1;
+        const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+        if (!BRep_Tool::Degenerated(edge)) {
+            double f, l;
+            if (!BRep_Tool::Curve(edge, f, l).IsNull()) {
+                BRepAdaptor_Curve c(edge);
+                double ang =
+                    std::max(1.0, s.angleToleranceDeg) * M_PI / 180.0;
+                double chord = std::max(1e-9, s.chordTolerance);
+                try {
+                    GCPnts_TangentialDeflection td(c, ang, chord, 2);
+                    n = std::clamp(td.NbPoints() - 1, 1, 256);
+                } catch (const Standard_Failure&) {
+                }
+                // Closed edges (full circles) keep a sane ring floor.
+                if (c.Value(c.FirstParameter())
+                        .Distance(c.Value(c.LastParameter())) < 1e-9) {
+                    n = std::max(n, 6);
+                }
+            }
+        }
+        adCache[key] = n;
+        return n;
+    };
+    // Propose `flat` onto a set, or — adaptive — each edge's own
+    // curvature count with `floorA` as the minimum.
+    auto proposeSet = [&](const std::vector<int>& edges, int flat,
+                          int floorA, bool adaptive,
+                          const FaceMeshSettings& s, bool overridden) {
+        if (!adaptive) {
+            propose(edges, flat, overridden);
+            return;
+        }
+        for (int eid : edges) {
+            propose({eid}, std::max(floorA, adaptiveCount(eid, s)),
+                    overridden);
+        }
+    };
+
     for (const auto& [fid, plan] : plans) {
         if (!plan.constrains) continue;
         const FaceMeshSettings& s = settings.forFace(fid);
         const bool overridden = settings.perFace.count(fid) > 0;
         if (!plan.loops.empty()) {
-            // Every border edge proposes independently. Plate webs share
-            // the radial default out per loop (a one-edge hole circle gets
-            // all of it; a bore's larger proposal still wins). Minimal
-            // planar proposes the floor — flattest possible — and lets
-            // the neighbours drive any edge that needs more.
-            for (const auto& loop : plan.loops) {
-                // Minimal proposes the floor — it must never PIN a shared
-                // edge down over a neighbour's real density, even when the
-                // face is an explicit override.
+            // Explicit boundary control: a TOTAL vertex count around the
+            // outer loop, distributed across its edges by arc length and
+            // pinned — it drives the neighbouring walls' shared edges too.
+            const bool boundarySet = s.boundary > 0 && !plan.loops[0].empty();
+            if (boundarySet) {
+                const std::vector<int>& outer = plan.loops[0];
+                std::vector<double> lens(outer.size(), 1.0);
+                double sum = 0;
+                for (size_t i = 0; i < outer.size(); ++i) {
+                    BRepAdaptor_Curve c(
+                        TopoDS::Edge(model.edges(outer[i])));
+                    lens[i] = std::max(1e-12,
+                                       GCPnts_AbscissaPoint::Length(c));
+                    sum += lens[i];
+                }
+                int total = std::max(int(outer.size()), s.boundary);
+                int assigned = 0;
+                for (size_t i = 0; i < outer.size(); ++i) {
+                    int share =
+                        i + 1 == outer.size()
+                            ? std::max(1, total - assigned)
+                            : std::max(1,
+                                       int(std::floor(total * lens[i] / sum +
+                                                      0.5)));
+                    assigned += share;
+                    propose({outer[i]}, share, /*overridden=*/true);
+                }
+            }
+            // Every other border edge proposes independently. Plate webs
+            // share the radial default out per loop (a one-edge hole
+            // circle gets all of it; a bore's larger proposal still wins).
+            // Minimal planar proposes the floor — flattest possible — and
+            // lets the neighbours drive any edge that needs more; it must
+            // never PIN a shared edge down, even as an explicit override.
+            for (size_t li = boundarySet ? 1 : 0; li < plan.loops.size();
+                 ++li) {
+                const auto& loop = plan.loops[li];
                 bool minimal = plan.kind == MesherKind::MinimalNGon;
                 int per = minimal ? 1
                                   : std::max(1, std::max(3, s.radial) /
                                                     int(loop.size()));
                 for (int eid : loop) {
-                    propose({eid}, per, overridden && !minimal);
+                    if (minimal) {
+                        propose({eid}, 1, false);
+                    } else {
+                        proposeSet({eid}, per, 1, s.adaptive, s, overridden);
+                    }
                 }
             }
         } else if (plan.kind == MesherKind::PlanarGrid ||
@@ -1852,32 +1936,35 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                                      ? s.filletLoops : s.gridU);
             int nv = std::max(1, plan.isFillet && !plan.acrossIsU
                                      ? s.filletLoops : s.gridV);
-            propose(plan.uEdges, nu, overridden);
-            propose(plan.vEdges, nv, overridden);
+            // Support loops across a blend stay a deliberate choice; the
+            // other directions adapt to their edges' curvature.
+            bool adU = s.adaptive && !(plan.isFillet && plan.acrossIsU);
+            bool adV = s.adaptive && !(plan.isFillet && !plan.acrossIsU);
+            proposeSet(plan.uEdges, nu, nu, adU, s, overridden);
+            proposeSet(plan.vEdges, nv, nv, adV, s, overridden);
         } else if (plan.kind == MesherKind::AnnulusRing) {
             // Both loops are rings; they solve independently (their own
-            // neighbours usually drive them) at the radial default.
-            propose(plan.uEdges, std::max(3, s.radial), overridden);
-            propose(plan.vEdges, std::max(3, s.radial), overridden);
-        } else if (plan.kind == MesherKind::PlateWeb) {
-            // Every border edge proposes independently: a one-edge hole
-            // circle gets the full radial default, multi-edge loops share
-            // it out; a neighbouring bore's larger proposal still wins.
-            for (const auto& loop : plan.loops) {
-                int per = std::max(1, std::max(3, s.radial) /
-                                          int(loop.size()));
-                for (int eid : loop) propose({eid}, per, overridden);
-            }
+            // neighbours usually drive them).
+            proposeSet(plan.uEdges, std::max(3, s.radial), 3, s.adaptive, s,
+                       overridden);
+            proposeSet(plan.vEdges, std::max(3, s.radial), 3, s.adaptive, s,
+                       overridden);
         } else {  // revolution sides and disk caps subdivide rings radially
             if (!plan.linkRims && plan.uEdges.size() == 2) {
                 // Unlinked rims: each ring solves on its own (pin per-edge
                 // or via the rim fields to make them differ).
-                propose({plan.uEdges[0]}, std::max(3, s.radial), overridden);
-                propose({plan.uEdges[1]}, std::max(3, s.radial), overridden);
+                proposeSet({plan.uEdges[0]}, std::max(3, s.radial), 3,
+                           s.adaptive, s, overridden);
+                proposeSet({plan.uEdges[1]}, std::max(3, s.radial), 3,
+                           s.adaptive, s, overridden);
             } else {
-                propose(plan.uEdges, std::max(3, s.radial), overridden);
+                proposeSet(plan.uEdges, std::max(3, s.radial), 3, s.adaptive,
+                           s, overridden);
             }
-            propose(plan.vEdges, std::max(1, s.axial), overridden);
+            // Explicit axial acts as the floor along the axis; profile
+            // curvature (a vase wall) adds what it needs.
+            proposeSet(plan.vEdges, std::max(1, s.axial),
+                       std::max(1, s.axial), s.adaptive, s, overridden);
         }
     }
     for (const auto& [root, count] : facePinned) sol.groupCount[root] = count;

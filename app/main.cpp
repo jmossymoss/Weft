@@ -775,6 +775,9 @@ static void loadModel(App& app, const std::string& path) {
         app.undoStack.clear();
         app.genCache.clear();
         app.recipe = {};
+        // New sessions solve curvature adaptively (deviation/angle drive
+        // each edge's count); saved recipes bring their own flag back.
+        app.recipe.settings.defaults.adaptive = true;
         regenerate(app);
         frameModel(app);
         app.status = path + ": " + std::to_string(app.model.faceCount()) +
@@ -1499,7 +1502,11 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
     const bool freeform = all || k == MK::QuadDominant || k == MK::Fallback;
     bool ch = false;
 
-    if (freeform) {
+    // Curvature-adaptive density: deviation/angle size every curved edge;
+    // the manual counts below become floors. Nudging a count via the
+    // wheel/typed digits flips the face back to manual.
+    ch |= ImGui::Checkbox("adaptive density (curvature)", &s.adaptive);
+    if (freeform || s.adaptive) {
         if (all) ImGui::TextDisabled("freeform / imported surfaces");
         float dev = float(s.chordTolerance);
         if (ImGui::DragFloat("deviation", &dev, 0.01f, 0.0005f, 100.0f,
@@ -1512,6 +1519,8 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
             s.angleToleranceDeg = ang;
             ch = true;
         }
+    }
+    if (freeform) {
         ch |= ImGui::Checkbox("quad-dominant fallback", &s.quadDominant);
         float ms = float(s.minSize);
         if (ImGui::DragFloat("min size", &ms, 0.01f, 0.0f, 100.0f, "%.3f")) {
@@ -1538,6 +1547,13 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
             // under the grid section already).
             ch |= ImGui::DragInt("junction rings", &s.junctionRings, 0.2f,
                                  1, 32);
+        }
+        if (!all && (k == MK::PlateWeb || k == MK::QuadFill ||
+                     k == MK::MinimalNGon)) {
+            // Total verts around the outer loop, length-distributed and
+            // pinned (drives the neighbouring walls' shared edges).
+            ch |= ImGui::DragInt("boundary verts (0=auto)", &s.boundary,
+                                 0.2f, 0, 512);
         }
     }
     if (grid) {
@@ -2392,6 +2408,7 @@ int main(int argc, char** argv) {
                     editSelected(app, [&](weft::FaceMeshSettings& s) {
                         int* v = primaryDensity(app, s, secondary);
                         *v = std::max(1, *v + steps);
+                        s.adaptive = false;  // explicit count = manual
                     });
                     weft::FaceMeshSettings cur =
                         app.recipe.settings.forFace(app.activeFace);
@@ -2552,6 +2569,7 @@ int main(int argc, char** argv) {
                 } else {
                     editSelected(app, [&](weft::FaceMeshSettings& s) {
                         *primaryDensity(app, s, shift) = std::max(1, value);
+                        s.adaptive = false;  // explicit count = manual
                     });
                 }
                 app.numberEntry.clear();
@@ -2589,6 +2607,7 @@ int main(int argc, char** argv) {
                     editSelected(app, [&](weft::FaceMeshSettings& s) {
                         int* v = primaryDensity(app, s, shift);
                         *v = std::max(1, *v + delta);
+                        s.adaptive = false;  // explicit count = manual
                     });
                 }
             }
