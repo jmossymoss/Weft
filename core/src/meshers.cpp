@@ -424,7 +424,9 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
         gp_Pnt2d a = patch.side(i, 1.0);
         gp_Pnt2d b = patch.side((i + 1) % 4, 0.0);
         if (patch.collapsedLast && i == 2) b = patch.side(0, 0.0);
-        if (a.Distance(b) > 1e-4 * span) return false;
+        // Tolerance noise on exported pcurves reaches ~1e-3 of the span;
+        // an actual seam jump is on the order of the span itself.
+        if (a.Distance(b) > 0.02 * span) return false;
     }
     // Interior probes must land inside the face.
     const double tol = BRep_Tool::Tolerance(face);
