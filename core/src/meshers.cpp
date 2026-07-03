@@ -657,8 +657,8 @@ void meshAnnulusRing(const TopoDS_Face& face, const Model& model, int faceId,
 // Shared by the plate-web planner and the generalized minimal-ngon.
 bool collectPlanarLoops(const TopoDS_Face& face,
                         const BRepAdaptor_Surface& surf, const Model& model,
-                        FacePlan& plan) {
-    if (surf.GetType() != GeomAbs_Plane) return false;
+                        FacePlan& plan, bool requirePlane = true) {
+    if (requirePlane && surf.GetType() != GeomAbs_Plane) return false;
     TopoDS_Wire outer = BRepTools::OuterWire(face);
     if (outer.IsNull()) return false;
     std::vector<std::vector<int>> loops;
@@ -1043,7 +1043,7 @@ bool samplePlanarRings(const TopoDS_Face& face, const Model& model,
 bool meshPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                   const Model& model, int faceId,
                   const std::vector<int>& solvedEdge, int radialDefault,
-                  int collarRings, MeshBuilder& out) {
+                  int collarRings, bool squareCollar, MeshBuilder& out) {
     std::vector<PlanarRing> rings;
     if (!samplePlanarRings(face, model, solvedEdge, radialDefault, rings)) {
         return false;
@@ -1138,12 +1138,41 @@ bool meshPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                 std::vector<gp_Pnt2d> collar(n);
                 bool ok = true;
                 double off = dStep * ring;
+                // Square borders: the ring lies on the hole's expanded
+                // bounding rectangle, each vertex placed where its ray
+                // from the centroid meets the rectangle.
+                double bx0 = 1e300, bx1 = -1e300, by0 = 1e300,
+                       by1 = -1e300;
+                if (squareCollar) {
+                    for (const gp_Pnt2d& p : hole.uv) {
+                        bx0 = std::min(bx0, p.X());
+                        bx1 = std::max(bx1, p.X());
+                        by0 = std::min(by0, p.Y());
+                        by1 = std::max(by1, p.Y());
+                    }
+                    bx0 -= off; bx1 += off;
+                    by0 -= off; by1 += off;
+                }
                 for (size_t i = 0; i < n && ok; ++i) {
                     gp_XY dir = hole.uv[i].XY() - centroid;
                     double len = dir.Modulus();
                     if (len < 1e-12) { ok = false; break; }
-                    collar[i] =
-                        gp_Pnt2d(hole.uv[i].XY() + dir * (off / len));
+                    if (squareCollar) {
+                        double t = 1e300;
+                        if (dir.X() > 1e-12)
+                            t = std::min(t, (bx1 - centroid.X()) / dir.X());
+                        if (dir.X() < -1e-12)
+                            t = std::min(t, (bx0 - centroid.X()) / dir.X());
+                        if (dir.Y() > 1e-12)
+                            t = std::min(t, (by1 - centroid.Y()) / dir.Y());
+                        if (dir.Y() < -1e-12)
+                            t = std::min(t, (by0 - centroid.Y()) / dir.Y());
+                        if (t > 1e200) { ok = false; break; }
+                        collar[i] = gp_Pnt2d(centroid + dir * t);
+                    } else {
+                        collar[i] =
+                            gp_Pnt2d(hole.uv[i].XY() + dir * (off / len));
+                    }
                     if (!insideDomain(collar[i])) ok = false;
                 }
                 if (ok) {
@@ -1229,8 +1258,15 @@ bool meshMinimalPlanar(const TopoDS_Face& face, const Model& model,
 
 bool planQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                   const Model& model, FacePlan& plan) {
+    // Any trimmed surface patch works — the grid lives in UV and maps
+    // through the surface — except closed ones (the seam would need a
+    // wrapped grid; revolution grids own those).
+    if (surf.IsUClosed() || surf.IsVClosed()) return false;
     FacePlan probe;
-    if (!collectPlanarLoops(face, surf, model, probe)) return false;
+    if (!collectPlanarLoops(face, surf, model, probe,
+                            /*requirePlane=*/false)) {
+        return false;
+    }
     plan.loops = std::move(probe.loops);
     plan.uEdges = std::move(probe.uEdges);
     plan.constrains = true;
@@ -1276,11 +1312,31 @@ bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     std::sort(lens.begin(), lens.end());
     // Slightly finer than the border spacing: the rim web needs a cell of
     // clearance, so a coarser grid would waste most of the face on rim.
-    double h = std::max(0.55 * lens[lens.size() / 2], minSize);
-    if (h < 1e-9) return false;
+    // NOTE lens are UV distances; on a curved surface the metric differs
+    // per direction, so the cell size splits into hu/hv using the surface
+    // derivatives at the patch centre (a curved patch's UV chart can be
+    // arbitrarily anisotropic — a cylinder's u is an angle).
+    double h3 = std::max(0.55 * lens[lens.size() / 2], minSize);
+    if (h3 < 1e-12) return false;
+    double su = 1.0, sv = 1.0;
+    {
+        gp_Pnt sp;
+        gp_Vec du, dv;
+        surf.D1((umin + umax) / 2, (vmin + vmax) / 2, sp, du, dv);
+        su = std::max(1e-9, du.Magnitude());
+        sv = std::max(1e-9, dv.Magnitude());
+    }
+    // lens were measured in UV; estimate the 3D border spacing and derive
+    // per-direction UV cell sizes from it.
+    const double uvToWorld = (su + sv) / 2;
+    double hWorld = h3 * uvToWorld;
+    double hu = hWorld / su, hv = hWorld / sv;
     // Cap the grid size; a tiny median segment on a huge plate would
     // otherwise explode the cell count.
-    while ((umax - umin) / h * ((vmax - vmin) / h) > 20000.0) h *= 1.5;
+    while ((umax - umin) / hu * ((vmax - vmin) / hv) > 20000.0) {
+        hu *= 1.5;
+        hv *= 1.5;
+    }
 
     auto insideDomain = [&](const gp_Pnt2d& p) {
         int crossings = 0;
@@ -1293,31 +1349,32 @@ bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         return (crossings & 1) != 0;
     };
 
-    const int nx = std::max(1, int((umax - umin) / h));
-    const int ny = std::max(1, int((vmax - vmin) / h));
+    const int nx = std::max(1, int((umax - umin) / hu));
+    const int ny = std::max(1, int((vmax - vmin) / hv));
     // Center the grid in the bbox so border cells get equal clearance on
     // both sides instead of sitting flush against one edge.
-    const double u0 = umin + 0.5 * ((umax - umin) - nx * h);
-    const double v0 = vmin + 0.5 * ((vmax - vmin) - ny * h);
+    const double u0 = umin + 0.5 * ((umax - umin) - nx * hu);
+    const double v0 = vmin + 0.5 * ((vmax - vmin) - ny * hv);
     auto cornerUV = [&](int i, int j) {
-        return gp_Pnt2d(u0 + i * h, v0 + j * h);
+        return gp_Pnt2d(u0 + i * hu, v0 + j * hv);
     };
 
     // Bin boundary segments by grid row so the per-cell clearance test
     // only looks at nearby geometry.
     std::vector<std::vector<int>> rowSegs(ny + 1);
     for (int si = 0; si < int(segs.size()); ++si) {
-        double y0 = std::min(segs[si].a.Y(), segs[si].b.Y()) - h;
-        double y1 = std::max(segs[si].a.Y(), segs[si].b.Y()) + h;
-        int j0 = std::max(0, int(std::floor((y0 - v0) / h)));
-        int j1 = std::min(ny, int(std::floor((y1 - v0) / h)) + 1);
+        double y0 = std::min(segs[si].a.Y(), segs[si].b.Y()) - hv;
+        double y1 = std::max(segs[si].a.Y(), segs[si].b.Y()) + hv;
+        int j0 = std::max(0, int(std::floor((y0 - v0) / hv)));
+        int j1 = std::min(ny, int(std::floor((y1 - v0) / hv)) + 1);
         for (int j = j0; j <= j1; ++j) rowSegs[j].push_back(si);
     }
 
     // A cell is kept when its four corners are inside the domain and no
     // boundary segment comes near its (slightly inflated) box — the rim
     // web needs breathing room to stay well-shaped.
-    const double margin = 0.30 * h;
+    const double marginU = 0.30 * hu;
+    const double marginV = 0.30 * hv;
     std::vector<char> keep(size_t(nx) * ny, 0);
     auto keepAt = [&](int i, int j) -> char& {
         return keep[size_t(j) * nx + i];
@@ -1329,8 +1386,8 @@ bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                 ok = insideDomain(cornerUV(i + (c & 1), j + (c >> 1)));
             }
             if (!ok) continue;
-            double x0 = u0 + i * h - margin, x1 = x0 + h + 2 * margin;
-            double y0 = v0 + j * h - margin, y1 = y0 + h + 2 * margin;
+            double x0 = u0 + i * hu - marginU, x1 = x0 + hu + 2 * marginU;
+            double y0 = v0 + j * hv - marginV, y1 = y0 + hv + 2 * marginV;
             for (int si : rowSegs[j]) {
                 const Seg& s = segs[si];
                 // Conservative: reject when the segment's box overlaps the
@@ -1503,8 +1560,8 @@ bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         double side = area > 0 ? 1.0 : -1.0;  // interior is left of CCW
         gp_Pnt2d probe(m.X() - side * dir.Y() * 0.25,
                        m.Y() + side * dir.X() * 0.25);
-        int pi = int(std::floor((probe.X() - u0) / h));
-        int pj = int(std::floor((probe.Y() - v0) / h));
+        int pi = int(std::floor((probe.X() - u0) / hu));
+        int pj = int(std::floor((probe.Y() - v0) / hv));
         if (kept(pi, pj)) {
             // Island: a hole of whichever region contains it.
             if (area > 0) {
@@ -2923,7 +2980,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         std::snprintf(
             key, sizeof key,
             "k%d c%d f%d a%d l%d q%d|%d,%d,%d|r%d x%d u%d v%d cap%d ch%.6g "
-            "an%.6g fl%d fh%.6g jr%d qd%d mn%d ex%d ms%.6g rd%d",
+            "an%.6g fl%d fh%.6g jr%d qd%d mn%d ex%d ms%.6g rd%d sq%d",
             int(plan.kind), plan.constrains ? 1 : 0, plan.isFillet ? 1 : 0,
             plan.acrossIsU ? 1 : 0, plan.linkRims ? 1 : 0,
             plan.forceFallbackQuads, counts[fid][0], counts[fid][1],
@@ -2931,7 +2988,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             s.chordTolerance, s.angleToleranceDeg, s.filletLoops,
             s.filletHold, s.junctionRings, s.quadDominant ? 1 : 0,
             s.minimal ? 1 : 0, s.exclude ? 1 : 0, s.minSize,
-            s.relativeDeviation ? 1 : 0);
+            s.relativeDeviation ? 1 : 0, s.squareCollar ? 1 : 0);
         cacheKey[fid] = key;
         if (plan.kind == MesherKind::AnnulusRing || !plan.loops.empty()) {
             for (int eid : plan.uEdges) {
@@ -3044,7 +3101,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 break;
             case MesherKind::PlateWeb:
                 if (!meshPlateWeb(face, surf, model, fid, solvedEdge,
-                                  s.radial, s.junctionRings, out)) {
+                                  s.radial, s.junctionRings, s.squareCollar,
+                                  out)) {
                     meshFallback(face, surf, fid, s, out);
                 }
                 break;
