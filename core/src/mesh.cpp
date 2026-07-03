@@ -44,7 +44,8 @@ struct CellKeyHash {
 
 }  // namespace
 
-void weldVertices(PolyMesh& mesh, double tolerance) {
+void weldVertices(PolyMesh& mesh, double tolerance,
+                  const std::vector<int>* group) {
     if (tolerance <= 0 || mesh.vertices.empty()) return;
 
     // Spatial hash with a true distance test over the 27 neighbouring
@@ -54,8 +55,10 @@ void weldVertices(PolyMesh& mesh, double tolerance) {
     std::vector<uint32_t> remap(mesh.vertices.size());
     std::vector<std::array<double, 3>> kept;
     std::vector<Anchor> keptAnchors;
+    std::vector<size_t> keptSource;  // kept index -> first source vertex
     kept.reserve(mesh.vertices.size());
     keptAnchors.reserve(mesh.vertices.size());
+    keptSource.reserve(mesh.vertices.size());
     const double tol2 = tolerance * tolerance;
 
     for (size_t i = 0; i < mesh.vertices.size(); ++i) {
@@ -70,6 +73,10 @@ void weldVertices(PolyMesh& mesh, double tolerance) {
                     auto it = cells.find({cx + dx, cy + dy, cz + dz});
                     if (it == cells.end()) continue;
                     for (uint32_t k : it->second) {
+                        if (group && (*group)[keptSource[k]] !=
+                                         (*group)[i]) {
+                            continue;  // different solids never fuse
+                        }
                         const auto& q = kept[k];
                         double ddx = q[0] - v[0], ddy = q[1] - v[1],
                                ddz = q[2] - v[2];
@@ -86,6 +93,7 @@ void weldVertices(PolyMesh& mesh, double tolerance) {
             kept.push_back(v);
             keptAnchors.push_back(i < mesh.anchors.size() ? mesh.anchors[i]
                                                           : Anchor{});
+            keptSource.push_back(i);
             cells[{cx, cy, cz}].push_back(match);
         }
         remap[i] = match;
