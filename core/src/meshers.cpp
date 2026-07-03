@@ -822,9 +822,22 @@ void earClip(std::vector<WebPoint> poly, int faceId, bool flip,
         return webCross(a, b, p) > eps && webCross(b, c, p) > eps &&
                webCross(c, a, p) > eps;
     };
+    // Shape quality: normalized so an equilateral triangle scores 1 and
+    // slivers approach 0. Clipping the BEST valid ear each round (instead
+    // of the first found) keeps fans from piling onto one vertex.
+    auto quality = [](const gp_Pnt2d& a, const gp_Pnt2d& b,
+                      const gp_Pnt2d& c) {
+        double area = std::abs((b.X() - a.X()) * (c.Y() - a.Y()) -
+                               (c.X() - a.X()) * (b.Y() - a.Y())) / 2;
+        double s = a.SquareDistance(b) + b.SquareDistance(c) +
+                   c.SquareDistance(a);
+        return s > 1e-300 ? 4.0 * std::sqrt(3.0) * area / s : 0.0;
+    };
     size_t guard = 3 * n * n + 16;
     while (idx.size() > 3 && guard-- > 0) {
         bool clipped = false;
+        size_t bestK = idx.size();
+        double bestQ = -1.0;
         for (size_t k = 0; k < idx.size(); ++k) {
             size_t ip = idx[(k + idx.size() - 1) % idx.size()];
             size_t ic = idx[k];
@@ -832,6 +845,8 @@ void earClip(std::vector<WebPoint> poly, int faceId, bool flip,
             const gp_Pnt2d &a = poly[ip].uv, &b = poly[ic].uv,
                            &c = poly[in].uv;
             if (webCross(a, b, c) <= eps) continue;  // reflex or collinear
+            double q = quality(a, b, c);
+            if (q <= bestQ) continue;  // can't beat the current best
             bool blocked = false;
             for (size_t other : idx) {
                 if (other == ip || other == ic || other == in) continue;
@@ -847,11 +862,17 @@ void earClip(std::vector<WebPoint> poly, int faceId, bool flip,
                 }
             }
             if (blocked) continue;
+            bestK = k;
+            bestQ = q;
+        }
+        if (bestK < idx.size()) {
+            size_t ip = idx[(bestK + idx.size() - 1) % idx.size()];
+            size_t ic = idx[bestK];
+            size_t in = idx[(bestK + 1) % idx.size()];
             out.addPolygon({poly[ip].vert, poly[ic].vert, poly[in].vert},
                            faceId, flip);
-            idx.erase(idx.begin() + k);
+            idx.erase(idx.begin() + bestK);
             clipped = true;
-            break;
         }
         if (!clipped) {
             // Numerical dead end (should not happen on sane plates): close
@@ -1019,7 +1040,7 @@ bool samplePlanarRings(const TopoDS_Face& face, const Model& model,
 bool meshPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                   const Model& model, int faceId,
                   const std::vector<int>& solvedEdge, int radialDefault,
-                  MeshBuilder& out) {
+                  int collarRings, MeshBuilder& out) {
     std::vector<PlanarRing> rings;
     if (!samplePlanarRings(face, model, solvedEdge, radialDefault, rings)) {
         return false;
@@ -1092,56 +1113,71 @@ bool meshPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                 }
             }
         }
-        d = std::min(d, 0.35 * clearance);
+        // Several concentric rings ("junction rings") share the clearance
+        // budget: an even radial fan around the hole instead of one thin
+        // band + a long web reach.
+        const int wantRings = std::max(1, collarRings);
+        double dStep =
+            std::min(d, 0.35 * clearance / double(wantRings));
 
         std::vector<WebPoint> boundary;  // what the web sees for this hole
         for (size_t i = 0; i < n; ++i) {
             boundary.push_back({hole.uv[i], ringVerts[r][i]});
         }
-        bool collared = false;
-        while (d > 1e-9 * (1.0 + perimeter) && !collared) {
-            std::vector<gp_Pnt2d> collar(n);
-            bool ok = true;
-            for (size_t i = 0; i < n && ok; ++i) {
-                gp_XY dir = hole.uv[i].XY() - centroid;
-                double len = dir.Modulus();
-                if (len < 1e-12) { ok = false; break; }
-                collar[i] = gp_Pnt2d(hole.uv[i].XY() + dir * (d / len));
-                if (!insideDomain(collar[i])) ok = false;
-            }
-            if (ok) {
-                // The collar must stay a sane ring: same orientation as
-                // the hole and strictly larger.
-                double holeA = planarRingArea(hole);
-                double collarA = 0;
-                for (size_t i = 0; i < n; ++i) {
-                    const gp_Pnt2d& p = collar[i];
-                    const gp_Pnt2d& q = collar[(i + 1) % n];
-                    collarA += p.X() * q.Y() - q.X() * p.Y();
+        const double holeA = planarRingArea(hole);
+        while (dStep > 1e-9 * (1.0 + perimeter)) {
+            // Grow ring by ring; stop at the first one that leaves the
+            // face or degenerates (keeping what fit so far).
+            std::vector<WebPoint> prev = boundary;
+            double prevAbsA = std::abs(holeA);
+            int built = 0;
+            for (int ring = 1; ring <= wantRings; ++ring) {
+                std::vector<gp_Pnt2d> collar(n);
+                bool ok = true;
+                double off = dStep * ring;
+                for (size_t i = 0; i < n && ok; ++i) {
+                    gp_XY dir = hole.uv[i].XY() - centroid;
+                    double len = dir.Modulus();
+                    if (len < 1e-12) { ok = false; break; }
+                    collar[i] =
+                        gp_Pnt2d(hole.uv[i].XY() + dir * (off / len));
+                    if (!insideDomain(collar[i])) ok = false;
                 }
-                collarA /= 2;
-                ok = (collarA < 0) == (holeA < 0) &&
-                     std::abs(collarA) > std::abs(holeA);
+                if (ok) {
+                    // Same orientation as the hole and strictly growing.
+                    double collarA = 0;
+                    for (size_t i = 0; i < n; ++i) {
+                        const gp_Pnt2d& p = collar[i];
+                        const gp_Pnt2d& q = collar[(i + 1) % n];
+                        collarA += p.X() * q.Y() - q.X() * p.Y();
+                    }
+                    collarA /= 2;
+                    ok = (collarA < 0) == (holeA < 0) &&
+                         std::abs(collarA) > prevAbsA;
+                    if (ok) prevAbsA = std::abs(collarA);
+                }
+                if (!ok) break;
+                std::vector<WebPoint> collarPts(n);
+                for (size_t i = 0; i < n; ++i) {
+                    gp_Pnt cp = surf.Value(collar[i].X(), collar[i].Y());
+                    collarPts[i] = {collar[i],
+                                    out.addVertex(cp, {faceId, collar[i].X(),
+                                                       collar[i].Y()})};
+                }
+                for (size_t i = 0; i < n; ++i) {
+                    size_t j = (i + 1) % n;
+                    out.addPolygon({prev[i].vert, prev[j].vert,
+                                    collarPts[j].vert, collarPts[i].vert},
+                                   faceId, flip);
+                }
+                prev = std::move(collarPts);
+                ++built;
             }
-            if (!ok) {
-                d /= 2;  // pull the collar in and retry, or give up
-                continue;
+            if (built > 0) {
+                boundary = std::move(prev);
+                break;
             }
-            std::vector<WebPoint> collarPts(n);
-            for (size_t i = 0; i < n; ++i) {
-                gp_Pnt cp = surf.Value(collar[i].X(), collar[i].Y());
-                collarPts[i] = {collar[i],
-                                out.addVertex(cp, {faceId, collar[i].X(),
-                                                   collar[i].Y()})};
-            }
-            for (size_t i = 0; i < n; ++i) {
-                size_t j = (i + 1) % n;
-                out.addPolygon({ringVerts[r][i], ringVerts[r][j],
-                                collarPts[j].vert, collarPts[i].vert},
-                               faceId, flip);
-            }
-            boundary = std::move(collarPts);
-            collared = true;
+            dStep /= 2;  // even the first ring didn't fit: pull in, retry
         }
         webHoles.push_back(std::move(boundary));
     }
@@ -2835,7 +2871,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 break;
             case MesherKind::PlateWeb:
                 if (!meshPlateWeb(face, surf, model, fid, solvedEdge,
-                                  s.radial, out)) {
+                                  s.radial, s.junctionRings, out)) {
                     meshFallback(face, surf, fid, s, out);
                 }
                 break;

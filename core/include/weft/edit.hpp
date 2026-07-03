@@ -26,6 +26,10 @@ struct ManualOp {
         FillLoop,     // close the open boundary loop nearest to the B-rep
                       // edge edgeA with a single n-gon (the minimal cap
                       // for a deleted face's border)
+        DeletePoly,   // remove the single mesh polygon whose centroid is
+                      // nearest to the WORLD point stored in (u,v,t) —
+                      // polygon-mode surgery; its border becomes an open
+                      // loop for bridging/filling
     };
     Kind kind = Kind::LoopInsert;
     int faceId = 0;
@@ -79,6 +83,10 @@ int bridgeLoops(PolyMesh& mesh, const Model& model, const ManualOp& op);
 // Close the open boundary loop nearest to op.edgeA with one n-gon — the
 // fill tool for borders left by deleted faces. Returns 1 or 0.
 int fillLoop(PolyMesh& mesh, const Model& model, const ManualOp& op);
+
+// Remove the polygon whose centroid is nearest to the world point in the
+// op's (u,v,t). Returns 1 or 0 (empty mesh).
+int deletePoly(PolyMesh& mesh, const ManualOp& op);
 
 // An open boundary loop of the mesh: ordered vertex ring where each edge is
 // used by exactly one polygon. Exposed for interactive tools (hover/pick).

@@ -931,6 +931,75 @@ void testAutoGates() {
     CHECK(isWatertight(minimal));
 }
 
+// Polygon surgery + collar rings: DeletePoly removes exactly one polygon
+// (replayable via its world centroid), and plate-web's junction rings
+// multiply the concentric quad collars around each hole.
+void testDeletePolyAndCollarRings() {
+    std::printf("-- delete poly + collar rings --\n");
+    std::string stepPath = tmpPath("weft_test_delpoly.step");
+    weft::writeStep(weft::makeFixture("box"), stepPath);
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis a = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.gridU = 3;
+    gs.defaults.gridV = 3;
+    weft::PolyMesh mesh = weft::generate(model, a, gs);
+    size_t before = mesh.polygonCount();
+
+    weft::ManualOp op;
+    op.kind = weft::ManualOp::Kind::DeletePoly;
+    for (uint32_t v : mesh.polygons[0]) {  // centroid of polygon 0
+        op.u += mesh.vertices[v][0] / mesh.polygons[0].size();
+        op.v += mesh.vertices[v][1] / mesh.polygons[0].size();
+        op.t += mesh.vertices[v][2] / mesh.polygons[0].size();
+    }
+    CHECK_EQ(weft::deletePoly(mesh, op), 1);
+    CHECK_EQ(mesh.polygonCount(), before - 1);
+    CHECK(!isWatertight(mesh));  // one open ring where the poly was
+
+    // ...which the fill op can then cap again.
+    weft::ManualOp fill;
+    fill.kind = weft::ManualOp::Kind::FillLoop;
+    fill.edgeA = a.faces[0].edgeIds[0];
+    CHECK_EQ(weft::fillLoop(mesh, model, fill), 1);
+    CHECK(isWatertight(mesh));
+
+    // Recipe round trip for the delete op.
+    weft::Recipe recipe;
+    recipe.ops.push_back(op);
+    std::string recipePath = tmpPath("weft_test_delpoly.recipe");
+    weft::saveRecipe(recipe, recipePath);
+    weft::Recipe loaded = weft::loadRecipe(recipePath);
+    CHECK_EQ(loaded.ops.size(), 1);
+    CHECK(loaded.ops[0].kind == weft::ManualOp::Kind::DeletePoly);
+    CHECK(std::abs(loaded.ops[0].u - op.u) < 1e-12);
+
+    // Collar rings: the two-bore plate with 3 junction rings grows two
+    // extra quad rings per hole per plate face over the single-ring run.
+    TopoDS_Shape plate = BRepPrimAPI_MakeBox(60.0, 30.0, 5.0).Shape();
+    for (double x : {18.0, 42.0}) {
+        TopoDS_Shape bore =
+            BRepPrimAPI_MakeCylinder(
+                gp_Ax2(gp_Pnt(x, 15.0, -1.0), gp_Dir(0, 0, 1)), 5.0, 7.0)
+                .Shape();
+        plate = BRepAlgoAPI_Cut(plate, bore).Shape();
+    }
+    std::string platePath = tmpPath("weft_test_rings.step");
+    weft::writeStep(plate, platePath);
+    weft::Model plateModel = weft::loadStep(platePath);
+    weft::Analysis plateA = weft::analyze(plateModel);
+    weft::GenerationSettings one;
+    one.defaults.radial = 12;
+    weft::PolyMesh oneRing = weft::generate(plateModel, plateA, one);
+    weft::GenerationSettings three = one;
+    three.defaults.junctionRings = 3;
+    weft::PolyMesh threeRings = weft::generate(plateModel, plateA, three);
+    CHECK(isWatertight(oneRing));
+    CHECK(isWatertight(threeRings));
+    // 2 faces x 2 holes x 2 extra rings x 12 quads
+    CHECK_EQ(threeRings.countQuads(), oneRing.countQuads() + 2 * 2 * 2 * 12);
+}
+
 // Quad-fill: a slotted plate with quad-dominant set gets an interior quad
 // grid joined to the exact boundary by a rim web — mostly quads, fully
 // watertight, instead of the fan triangulations of triangulate-and-pair.
@@ -1265,6 +1334,7 @@ int main() {
     RUN(testRecipeRemap);
     RUN(testAutoGates);
     RUN(testQuadFill);
+    RUN(testDeletePolyAndCollarRings);
     RUN(testSameLoopBridgeAndFill);
     RUN(testGenerationCache);
     if (failures) {
