@@ -95,6 +95,10 @@ void saveRecipe(const Recipe& recipe, const std::string& path) {
             // (u,v,t) hold the world-space centroid of the polygon.
             out << "op delpoly " << op.u << " " << op.v << " " << op.t
                 << "\n";
+        } else if (op.kind == ManualOp::Kind::DissolveLoop) {
+            // (u,v,t) hold the world-space midpoint of the seed edge.
+            out << "op dissolve " << op.u << " " << op.v << " " << op.t
+                << "\n";
         } else {
             out << "op loop " << op.faceId << " " << op.u << " " << op.v
                 << " " << op.t << "\n";
@@ -165,6 +169,12 @@ Recipe loadRecipe(const std::string& path) {
                     ss >> op.u >> op.v >> op.t;
                     if (!ss) {
                         throw std::runtime_error("malformed op delpoly");
+                    }
+                } else if (opKind == "dissolve") {
+                    op.kind = ManualOp::Kind::DissolveLoop;
+                    ss >> op.u >> op.v >> op.t;
+                    if (!ss) {
+                        throw std::runtime_error("malformed op dissolve");
                     }
                 } else {
                     throw std::runtime_error("unknown op: " + opKind);

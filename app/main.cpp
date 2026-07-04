@@ -1365,11 +1365,29 @@ static void updateLoopCutHover(App& app, const Mat4& mvp, double mx, double my,
     if (bestA == bestB) return;
 
     const weft::Anchor& aa = m.anchors[bestA];
-    const weft::Anchor& ab = m.anchors[bestB];
     weft::ManualOp op;
     op.faceId = aa.faceId;
-    op.u = 0.5 * (aa.u + ab.u);
-    op.v = 0.5 * (aa.v + ab.v);
+    // Anchor the op at the hovered edge's TRUE midpoint (projected onto
+    // the face). Averaging the two endpoint anchors instead wraps to the
+    // far side on periodic surfaces (a cylinder's u seam), and the replay
+    // then seeds from some other edge with mixed orientation — the
+    // hovered edge is the orientation the cut must cross.
+    {
+        const auto& pa = m.vertices[bestA];
+        const auto& pb = m.vertices[bestB];
+        std::array<double, 3> mid = {0.5 * (pa[0] + pb[0]),
+                                     0.5 * (pa[1] + pb[1]),
+                                     0.5 * (pa[2] + pb[2])};
+        try {
+            weft::Anchor snapped = weft::snapToFace(app.model, aa.faceId, mid);
+            op.u = snapped.u;
+            op.v = snapped.v;
+        } catch (...) {
+            const weft::Anchor& ab = m.anchors[bestB];
+            op.u = 0.5 * (aa.u + ab.u);
+            op.v = 0.5 * (aa.v + ab.v);
+        }
+    }
     op.t = bestT;
 
     // Probe on a copy; if the split lands on the far side of the edge from
@@ -2967,7 +2985,37 @@ int main(int argc, char** argv) {
                              [&](weft::FaceMeshSettings& s) { s.minimal = next; });
             }
             if (ImGui::IsKeyPressed(ImGuiKey_X, false) && app.hasModel) {
-                deleteSelection(app);
+                if (io.KeyCtrl && app.selectMode == SelectMode::MeshEdge &&
+                    !app.selMeshEdges.empty()) {
+                    // ctrl+X: dissolve the selected loops, faces survive.
+                    // One recorded op per connected loop.
+                    std::set<uint64_t> left = app.selMeshEdges;
+                    int nLoops = 0;
+                    while (!left.empty()) {
+                        uint64_t e = *left.begin();
+                        uint32_t a = uint32_t(e >> 32);
+                        uint32_t b = uint32_t(e & 0xffffffffu);
+                        for (const auto& [u, w] :
+                             weft::walkEdgeLoop(app.mesh, a, b)) {
+                            left.erase(meshEdgeKey(u, w));
+                        }
+                        const auto& A = app.mesh.vertices[a];
+                        const auto& B = app.mesh.vertices[b];
+                        weft::ManualOp op;
+                        op.kind = weft::ManualOp::Kind::DissolveLoop;
+                        op.u = 0.5 * (A[0] + B[0]);
+                        op.v = 0.5 * (A[1] + B[1]);
+                        op.t = 0.5 * (A[2] + B[2]);
+                        app.recipe.ops.push_back(op);
+                        ++nLoops;
+                    }
+                    app.selMeshEdges.clear();
+                    markDirty(app);
+                    app.status = std::to_string(nLoops) +
+                                 " loop(s) dissolved (ctrl+Z undoes)";
+                } else if (!io.KeyCtrl) {
+                    deleteSelection(app);
+                }
             }
             // H / ctrl+H hide the selection, alt+H / shift+H show all.
             if (ImGui::IsKeyPressed(ImGuiKey_H, false) && app.hasModel) {
@@ -3322,7 +3370,18 @@ int main(int argc, char** argv) {
                 uint64_t hit = pickMeshEdge(app, mvp, mx, my, fbw, fbh, pr);
                 if (!shift) app.selMeshEdges.clear();
                 if (hit != UINT64_MAX) {
-                    if (shift && app.selMeshEdges.count(hit)) {
+                    if (io.KeyAlt) {
+                        // Blender-style: alt+click selects the edge LOOP.
+                        auto loop = weft::walkEdgeLoop(
+                            app.mesh, uint32_t(hit >> 32),
+                            uint32_t(hit & 0xffffffffu));
+                        for (const auto& [a, b] : loop) {
+                            app.selMeshEdges.insert(meshEdgeKey(a, b));
+                        }
+                        app.status = "loop selected (" +
+                                     std::to_string(loop.size()) +
+                                     " edges) - ctrl+X dissolves";
+                    } else if (shift && app.selMeshEdges.count(hit)) {
                         app.selMeshEdges.erase(hit);
                     } else {
                         app.selMeshEdges.insert(hit);

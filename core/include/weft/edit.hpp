@@ -30,6 +30,11 @@ struct ManualOp {
                       // nearest to the WORLD point stored in (u,v,t) —
                       // polygon-mode surgery; its border becomes an open
                       // loop for bridging/filling
+        DissolveLoop,  // remove the edge LOOP through the mesh edge whose
+                       // midpoint is nearest to the WORLD point stored in
+                       // (u,v,t), merging the polygons across each loop
+                       // edge and dropping the loop's 2-valence verts —
+                       // the faces survive (Blender's ctrl+X)
     };
     Kind kind = Kind::LoopInsert;
     int faceId = 0;
@@ -74,6 +79,20 @@ int insertLoop(PolyMesh& mesh, const Model& model, const ManualOp& op);
 // they can't be nudged — density and conformity own them.
 // Returns 1 if a vertex moved, 0 if none was found.
 int nudgeVertex(PolyMesh& mesh, const Model& model, const ManualOp& op);
+
+// Walk the edge loop through (a,b): at each 4-valence vertex continue
+// with the edge that shares neither adjacent polygon (Blender's rule);
+// stops at boundaries, poles, or when it closes. Returns the loop as
+// vertex-pair segments including the seed.
+std::vector<std::pair<uint32_t, uint32_t>> walkEdgeLoop(const PolyMesh& mesh,
+                                                        uint32_t a,
+                                                        uint32_t b);
+
+// Dissolve the edge loop nearest the op's world point (u,v,t): merge the
+// two polygons across every loop edge and drop loop verts that end up
+// with only two remaining edges. Faces survive; only the loop vanishes.
+// Returns the number of edges dissolved (0 = nothing found).
+int dissolveLoop(PolyMesh& mesh, const Model& model, const ManualOp& op);
 
 // Bridge the two open boundary loops nearest to op.edgeA / op.edgeB (see
 // ManualOp::Kind::Bridge). Vertex counts per boundary come from the density

@@ -13,6 +13,8 @@
 #include <cstdint>
 #include <map>
 #include <stdexcept>
+#include <set>
+#include <algorithm>
 
 namespace weft {
 
@@ -634,6 +636,9 @@ void applyOps(PolyMesh& mesh, const Model& model,
     for (const ManualOp& op : ops) {
         switch (op.kind) {
             case ManualOp::Kind::LoopInsert: insertLoop(mesh, model, op); break;
+            case ManualOp::Kind::DissolveLoop:
+                dissolveLoop(mesh, model, op);
+                break;
             case ManualOp::Kind::Bridge: bridgeLoops(mesh, model, op); break;
             case ManualOp::Kind::NudgeVertex:
                 nudgeVertex(mesh, model, op);
@@ -642,6 +647,173 @@ void applyOps(PolyMesh& mesh, const Model& model,
             case ManualOp::Kind::DeletePoly: deletePoly(mesh, op); break;
         }
     }
+}
+
+std::vector<std::pair<uint32_t, uint32_t>> walkEdgeLoop(const PolyMesh& mesh,
+                                                        uint32_t a,
+                                                        uint32_t b) {
+    std::map<EdgeKey, std::vector<size_t>> edgePolys;
+    std::map<uint32_t, std::vector<uint32_t>> nbrs;
+    for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+        const auto& poly = mesh.polygons[p];
+        for (size_t i = 0; i < poly.size(); ++i) {
+            uint32_t u = poly[i], w = poly[(i + 1) % poly.size()];
+            edgePolys[keyOf(u, w)].push_back(p);
+            auto& nu = nbrs[u];
+            if (std::find(nu.begin(), nu.end(), w) == nu.end()) {
+                nu.push_back(w);
+            }
+            auto& nw = nbrs[w];
+            if (std::find(nw.begin(), nw.end(), u) == nw.end()) {
+                nw.push_back(u);
+            }
+        }
+    }
+    // Blender's rule: at each vertex the loop continues with the edge
+    // sharing NEITHER polygon of the incoming edge — unique exactly at
+    // interior 4-valence verts; anything else ends the loop.
+    auto next = [&](uint32_t from, uint32_t via) -> uint32_t {
+        std::set<uint32_t> banned;
+        for (size_t p : edgePolys[keyOf(from, via)]) {
+            for (uint32_t v : mesh.polygons[p]) banned.insert(v);
+        }
+        uint32_t out = UINT32_MAX;
+        int count = 0;
+        for (uint32_t nb : nbrs[via]) {
+            if (nb == from || banned.count(nb)) continue;
+            ++count;
+            out = nb;
+        }
+        return count == 1 ? out : UINT32_MAX;
+    };
+    std::vector<std::pair<uint32_t, uint32_t>> loop = {{a, b}};
+    std::set<EdgeKey> seen = {keyOf(a, b)};
+    for (int dir = 0; dir < 2; ++dir) {
+        uint32_t from = dir == 0 ? a : b, via = dir == 0 ? b : a;
+        while (true) {
+            uint32_t n = next(from, via);
+            if (n == UINT32_MAX || seen.count(keyOf(via, n))) break;
+            seen.insert(keyOf(via, n));
+            loop.push_back({via, n});
+            from = via;
+            via = n;
+        }
+    }
+    return loop;
+}
+
+int dissolveLoop(PolyMesh& mesh, const Model& model, const ManualOp& op) {
+    (void)model;
+    // Seed: the mesh edge whose midpoint is nearest the recorded point.
+    const std::array<double, 3> target = {op.u, op.v, op.t};
+    uint32_t sa = 0, sb = 0;
+    double best = 1e300;
+    for (const auto& poly : mesh.polygons) {
+        for (size_t i = 0; i < poly.size(); ++i) {
+            uint32_t u = poly[i], w = poly[(i + 1) % poly.size()];
+            const auto& A = mesh.vertices[u];
+            const auto& B = mesh.vertices[w];
+            double dx = 0.5 * (A[0] + B[0]) - target[0];
+            double dy = 0.5 * (A[1] + B[1]) - target[1];
+            double dz = 0.5 * (A[2] + B[2]) - target[2];
+            double d = dx * dx + dy * dy + dz * dz;
+            if (d < best) {
+                best = d;
+                sa = u;
+                sb = w;
+            }
+        }
+    }
+    if (sa == sb) return 0;
+    auto loop = walkEdgeLoop(mesh, sa, sb);
+
+    std::set<EdgeKey> loopEdges;
+    std::map<uint32_t, int> vertCut;  // loop vert -> dissolved edge count
+    for (const auto& [u, w] : loop) {
+        loopEdges.insert(keyOf(u, w));
+        ++vertCut[u];
+        ++vertCut[w];
+    }
+
+    // Merge the two polygons across each loop edge. Directed-edge lookup
+    // is rebuilt lazily since each merge invalidates it for its ring.
+    std::vector<std::vector<uint32_t>> polys(mesh.polygons.begin(),
+                                             mesh.polygons.end());
+    std::vector<int> polyFace(mesh.polygonFaceId.begin(),
+                              mesh.polygonFaceId.end());
+    std::vector<bool> dead(polys.size(), false);
+    int dissolved = 0;
+    for (const auto& [ea, eb] : loop) {
+        // Find the polygon traversing ea->eb and the one traversing
+        // eb->ea (live rings only).
+        auto findDirected = [&](uint32_t u, uint32_t w) -> long {
+            for (size_t p = 0; p < polys.size(); ++p) {
+                if (dead[p]) continue;
+                const auto& poly = polys[p];
+                for (size_t i = 0; i < poly.size(); ++i) {
+                    if (poly[i] == u &&
+                        poly[(i + 1) % poly.size()] == w) {
+                        return long(p);
+                    }
+                }
+            }
+            return -1;
+        };
+        long p1 = findDirected(ea, eb), p2 = findDirected(eb, ea);
+        if (p1 < 0 || p2 < 0 || p1 == p2) continue;
+        const auto& r1 = polys[p1];
+        const auto& r2 = polys[p2];
+        size_t i1 = 0, i2 = 0;
+        for (size_t i = 0; i < r1.size(); ++i) {
+            if (r1[i] == ea && r1[(i + 1) % r1.size()] == eb) i1 = i;
+        }
+        for (size_t i = 0; i < r2.size(); ++i) {
+            if (r2[i] == eb && r2[(i + 1) % r2.size()] == ea) i2 = i;
+        }
+        // merged = r1 starting after the edge (eb .. ea) + r2 starting
+        // after the reversed edge (ea .. eb), dropping the duplicated
+        // endpoints — the shared edge vanishes.
+        std::vector<uint32_t> merged;
+        merged.reserve(r1.size() + r2.size() - 2);
+        for (size_t k = 1; k < r1.size(); ++k) {
+            merged.push_back(r1[(i1 + k) % r1.size()]);
+        }
+        for (size_t k = 1; k < r2.size(); ++k) {
+            merged.push_back(r2[(i2 + k) % r2.size()]);
+        }
+        polys[p1] = std::move(merged);
+        dead[p2] = true;
+        ++dissolved;
+    }
+    if (!dissolved) return 0;
+
+    // Drop fully-dissolved loop verts (both their loop edges gone) from
+    // every ring: they're collinear rail points now, Blender-style.
+    std::set<uint32_t> drop;
+    for (const auto& [v, n] : vertCut) {
+        if (n >= 2) drop.insert(v);
+    }
+    std::vector<std::vector<uint32_t>> outPolys;
+    std::vector<int> outFace;
+    outPolys.reserve(polys.size());
+    for (size_t p = 0; p < polys.size(); ++p) {
+        if (dead[p]) continue;
+        std::vector<uint32_t> ring;
+        ring.reserve(polys[p].size());
+        for (uint32_t v : polys[p]) {
+            if (drop.count(v)) continue;
+            if (ring.empty() || ring.back() != v) ring.push_back(v);
+        }
+        while (ring.size() > 1 && ring.front() == ring.back()) {
+            ring.pop_back();
+        }
+        if (ring.size() < 3) continue;
+        outPolys.push_back(std::move(ring));
+        outFace.push_back(polyFace[p]);
+    }
+    mesh.polygons = std::move(outPolys);
+    mesh.polygonFaceId = std::move(outFace);
+    return dissolved;
 }
 
 }  // namespace weft
