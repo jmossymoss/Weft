@@ -55,6 +55,10 @@ void usage() {
         "    --hold F          cluster fillet loops toward the creases, 0..0.95\n"
         "    --rings N         concentric quad loops around holes/bosses in\n"
         "                      planar faces (default 2)\n"
+        "    --flat-quads      full quad grids on flat faces (default: flat\n"
+        "                      panels emit boundary n-gons / stay paired —\n"
+        "                      quad flow is spent where geometry curves)\n"
+        "    --triangulate     fan-triangulate everything on export\n"
         "    --lods F1,F2,...  emit one export per density factor (e.g.\n"
         "                      1,0.5,0.25), suffixed _lod0.., from ONE setup;\n"
         "                      manual ops replay into every tier\n"
@@ -145,6 +149,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     std::string recipeOut;
     bool validate = validateOnly;
     bool noNormals = false;
+    bool triangulate = false;
     std::vector<double> lods;
     weft::Recipe recipe;
     weft::GenerationSettings& gs = recipe.settings;
@@ -166,6 +171,8 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         else if (a == "--rings") gs.defaults.junctionRings = std::stoi(next());
         else if (a == "--pure-tris") gs.defaults.quadDominant = false;
         else if (a == "--refine") gs.defaults.interiorRefine = true;
+        else if (a == "--triangulate") triangulate = true;
+        else if (a == "--flat-quads") gs.defaults.minimal = false;
         else if (a == "--lods") {
             std::string spec = next();
             size_t pos = 0;
@@ -260,6 +267,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
 
             weft::PolyMesh lod = weft::generate(model, analysis, scaled);
             weft::applyOps(lod, model, recipe.ops);
+            if (triangulate) weft::triangulateMesh(lod);
             size_t dot = output.rfind('.');
             std::string lodPath =
                 dot == std::string::npos
@@ -290,6 +298,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     weft::GenerationReport report;
     weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
     weft::applyOps(mesh, model, recipe.ops);
+    if (triangulate) weft::triangulateMesh(mesh);
     if (!output.empty()) {
         auto endsWith = [&](const char* suffix) {
             size_t n = std::strlen(suffix);

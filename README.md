@@ -78,6 +78,12 @@ Headless C++ core + CLI covering the plan's Phases 0–3 essentials:
   (`--rings N`) instead of triangle soup. The ring count is derived from
   the face's border and propagates through density matching to the
   boss/bore itself — a drilled plate comes out as 100% quads, watertight.
+- **Quad flow is spent only where geometry curves** (plan §1/§4.1): by
+  default flat panels emit boundary n-gons (or stay paired triangulation
+  when trimmed) while fillets, cylinders, and freeform surfaces get the
+  quad treatment — `--flat-quads` restores full grids, `--triangulate`
+  fan-triangulates everything on export (centroid fans on n-gons, no
+  slivers).
 - **Game-topology output is the point** (plan §1/§4.1): tris, quads, and
   n-gons are all first-class. Caps can be n-gons or triangle fans; poles
   and cone apexes are fans; trimmed faces can stay triangle-based
