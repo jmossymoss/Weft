@@ -918,6 +918,120 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
         }
     }
 
+    // Untangle folded interiors: transfinite blending of a strongly
+    // non-convex outline (a chevron plane, a chained strip drifting
+    // against its rail) can cross its own rungs. Pinned-border Laplace
+    // passes in UV pull interior points back inside the domain; a pass
+    // is kept only when it strictly reduces the number of inverted
+    // cells, so a wrapped periodic chart can never make things worse.
+    if (nu > 1 && nv > 1) {
+        auto countFlips = [&](const std::vector<BPt>& g) {
+            double total = 0, meanAbs = 0;
+            std::vector<double> areas;
+            areas.reserve(size_t(nu) * nv);
+            for (int j = 0; j < nv; ++j) {
+                for (int i = 0; i < nu; ++i) {
+                    const gp_Pnt2d& q00 = g[j * (nu + 1) + i].uv;
+                    const gp_Pnt2d& q10 = g[j * (nu + 1) + i + 1].uv;
+                    const gp_Pnt2d& q11 = g[(j + 1) * (nu + 1) + i + 1].uv;
+                    const gp_Pnt2d& q01 = g[(j + 1) * (nu + 1) + i].uv;
+                    double a2 =
+                        (q10.X() - q00.X()) * (q11.Y() - q00.Y()) -
+                        (q11.X() - q00.X()) * (q10.Y() - q00.Y()) +
+                        (q11.X() - q00.X()) * (q01.Y() - q00.Y()) -
+                        (q01.X() - q00.X()) * (q11.Y() - q00.Y());
+                    areas.push_back(a2);
+                    total += a2;
+                    meanAbs += std::abs(a2);
+                }
+            }
+            meanAbs /= double(std::max<size_t>(1, areas.size()));
+            int flips = 0;
+            for (double a2 : areas) {
+                if (a2 * total < 0 && std::abs(a2) > 1e-3 * meanAbs) {
+                    ++flips;
+                }
+            }
+            return flips;
+        };
+        int bestFlips = countFlips(gpts);
+        if (bestFlips > 0) {
+            // In-place Gauss-Seidel, alternating sweep direction: roughly
+            // twice Jacobi's convergence per pass, no directional bias.
+            // Two schemes, each accepted pass-by-pass only on improvement:
+            // plain Laplace handles extremely anisotropic charts (thin
+            // strips), the Winslow stencil handles non-convex outlines
+            // where a harmonic map itself must fold. Whatever survives is
+            // the best grid either scheme reached.
+            auto sweep = [&](std::vector<BPt>& sm, bool winslow, bool fwd) {
+                for (int jj = 1; jj < nv; ++jj) {
+                    const int j = fwd ? jj : nv - jj;
+                    for (int ii = 1; ii < nu; ++ii) {
+                        const int i = fwd ? ii : nu - ii;
+                        const gp_Pnt2d& le = sm[j * (nu + 1) + i - 1].uv;
+                        const gp_Pnt2d& ri = sm[j * (nu + 1) + i + 1].uv;
+                        const gp_Pnt2d& dn = sm[(j - 1) * (nu + 1) + i].uv;
+                        const gp_Pnt2d& up = sm[(j + 1) * (nu + 1) + i].uv;
+                        BPt& b = sm[j * (nu + 1) + i];
+                        if (!winslow) {
+                            b.uv = gp_Pnt2d(0.25 * (le.X() + ri.X() +
+                                                    dn.X() + up.X()),
+                                            0.25 * (le.Y() + ri.Y() +
+                                                    dn.Y() + up.Y()));
+                            b.p = surface->Value(b.uv.X(), b.uv.Y());
+                            continue;
+                        }
+                        const gp_Pnt2d& pp =
+                            sm[(j + 1) * (nu + 1) + i + 1].uv;
+                        const gp_Pnt2d& pm =
+                            sm[(j - 1) * (nu + 1) + i + 1].uv;
+                        const gp_Pnt2d& mp =
+                            sm[(j + 1) * (nu + 1) + i - 1].uv;
+                        const gp_Pnt2d& mm =
+                            sm[(j - 1) * (nu + 1) + i - 1].uv;
+                        const double xu = 0.5 * (ri.X() - le.X());
+                        const double yu = 0.5 * (ri.Y() - le.Y());
+                        const double xv = 0.5 * (up.X() - dn.X());
+                        const double yv = 0.5 * (up.Y() - dn.Y());
+                        const double al = xv * xv + yv * yv;
+                        const double be = xu * xv + yu * yv;
+                        const double ga = xu * xu + yu * yu;
+                        const double den = 2.0 * (al + ga);
+                        if (den < 1e-30) continue;
+                        b.uv = gp_Pnt2d(
+                            (al * (ri.X() + le.X()) +
+                             ga * (up.X() + dn.X()) -
+                             0.5 * be *
+                                 (pp.X() - mp.X() - pm.X() + mm.X())) /
+                                den,
+                            (al * (ri.Y() + le.Y()) +
+                             ga * (up.Y() + dn.Y()) -
+                             0.5 * be *
+                                 (pp.Y() - mp.Y() - pm.Y() + mm.Y())) /
+                                den);
+                        b.p = surface->Value(b.uv.X(), b.uv.Y());
+                    }
+                }
+            };
+            for (int scheme = 0; scheme < 2 && bestFlips > 0; ++scheme) {
+                std::vector<BPt> sm = gpts;  // start from the best so far
+                for (int pass = 0; pass < 40 && bestFlips > 0; ++pass) {
+                    sweep(sm, scheme == 1, (pass & 1) == 0);
+                    int flips = countFlips(sm);
+                    if (flips < bestFlips) {
+                        gpts = sm;
+                        bestFlips = flips;
+                    }
+                }
+            }
+            if (bestFlips > 0) {
+                dbg("coons: face %d still has %d inverted cell(s) after "
+                    "untangling",
+                    faceId, bestFlips);
+            }
+        }
+    }
+
     std::vector<uint32_t> grid((nu + 1) * (nv + 1));
     for (int j = 0; j <= nv; ++j) {
         for (int i = 0; i <= nu; ++i) {
