@@ -159,7 +159,15 @@ struct GenerationReport {
 // dragging one face's density re-meshes one face, not the model. The
 // merge/conform/weld stages still run (they're cheap next to meshing).
 struct GenerationCache {
-    std::map<int, std::pair<std::string, PolyMesh>> faces;  // fid -> key+part
+    struct CachedFace {
+        std::string key;
+        PolyMesh part;
+        // The planned mesher couldn't build and the part is a fallback
+        // triangulation — generate() must demote the plan (conform
+        // treats structured meshers as exact-border authorities).
+        bool fellBack = false;
+    };
+    std::map<int, CachedFace> faces;
     // Geometry-only memos (settings-independent, per model): results of
     // the point-classifier probes planning runs on every face.
     std::map<int, bool> revolutionCovers;

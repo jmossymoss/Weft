@@ -149,6 +149,10 @@ struct FacePlan {
     // Forced fallback flavour: -1 = follow settings, 0 = pure tris,
     // 1 = quad-dominant (used when the user forces a mesher).
     int forceFallbackQuads = -1;
+    // Chained Coons: edge ids per side (wire order) when any side is a
+    // chain of several edges. Opposite sides then match by SUM of their
+    // per-edge counts (solveDensity's chain pass) instead of union-find.
+    std::array<std::vector<int>, 4> coonsSides;
     // PlateWeb: every boundary wire's edge chain (loops[0] = outer wire).
     // Each edge solves independently — a bore drives its own hole loop.
     std::vector<std::vector<int>> loops;
@@ -420,12 +424,45 @@ struct CoonsPatch {
     bool stubRev = false;
     Handle(Geom2d_Curve) stubPc;
     double stubFirst = 0.0, stubLast = 0.0;
+    // Chained sides: a side may be SEVERAL wire edges whose joints are
+    // smooth (a band whose long rail is split by a T-junction). Pieces
+    // run in wire order; single-edge sides have one piece. The legacy
+    // arrays above always mirror piece 0 of each side.
+    struct SidePiece {
+        int edgeId = 0;
+        Handle(Geom2d_Curve) pc;
+        double f = 0.0, l = 0.0;
+        bool rev = false;
+        double len = 0.0;  // 3D curve length (chain parameterization)
+    };
+    std::array<std::vector<SidePiece>, 4> chain;
+    bool chained() const {
+        for (const auto& c : chain) {
+            if (c.size() > 1) return true;
+        }
+        return false;
+    }
 
     // Point along side i at t in [0,1], walking the wire direction.
+    // Chained sides map t across their pieces by 3D length share.
     gp_Pnt2d side(int i, double t) const {
         if (collapsedLast && i == 3 && !poleCurve) {
             double t0 = rev[0] ? last[0] : first[0];
             return pc[0]->Value(t0);
+        }
+        if (chain[i].size() > 1) {
+            double total = 0;
+            for (const auto& pc2 : chain[i]) total += pc2.len;
+            double want = t * total;
+            for (const auto& pce : chain[i]) {
+                if (want <= pce.len || &pce == &chain[i].back()) {
+                    double lt = pce.len > 0 ? want / pce.len : 0.0;
+                    lt = std::clamp(lt, 0.0, 1.0);
+                    double tt = pce.rev ? 1.0 - lt : lt;
+                    return pce.pc->Value(pce.f + tt * (pce.l - pce.f));
+                }
+                want -= pce.len;
+            }
         }
         double tt = rev[i] ? 1.0 - t : t;
         return pc[i]->Value(first[i] + tt * (last[i] - first[i]));
@@ -458,9 +495,23 @@ struct CoonsPatch {
 // edge becomes side 0 — it picks the corner the grid anchors to and, on
 // triangular patches, which corner the fan terminates in.
 bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
-                    CoonsPatch& patch, int rotate = 0) {
+                    CoonsPatch& patch, int rotate = 0,
+                    const char** why = nullptr) {
+    auto reject = [&](const char* r) {
+        if (why) *why = r;
+        return false;
+    };
     TopoDS_Wire outer = BRepTools::OuterWire(face);
-    if (outer.IsNull()) return false;
+    if (outer.IsNull()) return reject("no outer wire");
+    // A grid paves the whole outer boundary; a face with holes would get
+    // its holes quadded over (and the hole edges never sampled).
+    {
+        int wires = 0;
+        for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+            ++wires;
+        }
+        if (wires != 1) return reject("face has holes");
+    }
     struct WireEdge {
         TopoDS_Edge edge;
         bool degenerate;
@@ -468,12 +519,12 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
     };
     std::vector<WireEdge> all;
     for (BRepTools_WireExplorer wx(outer, face); wx.More(); wx.Next()) {
-        if (all.size() >= 5) return false;
+        if (all.size() >= 8) return reject("more than 8 edges");
         const TopoDS_Edge edge = wx.Current();
         double f, l;
         Handle(Geom2d_Curve) pcurve =
             BRep_Tool::CurveOnSurface(edge, face, f, l);
-        if (pcurve.IsNull()) return false;
+        if (pcurve.IsNull()) return reject("pcurve missing");
         const bool degen = BRep_Tool::Degenerated(edge);
         double len = 0.0;
         if (!degen) {
@@ -487,7 +538,7 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
     int gap = -1;
     for (size_t i = 0; i < all.size(); ++i) {
         if (all[i].degenerate) {
-            if (gap >= 0) return false;  // two poles: not a Coons patch
+            if (gap >= 0) return reject("two pole edges");
             gap = int(i);
         }
     }
@@ -498,11 +549,11 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
             perim += all[i].len;
             if (all[i].len < all[shortest].len) shortest = int(i);
         }
-        if (all[shortest].len >= 0.02 * perim) return false;
-        gap = shortest;
+        // No short stub: fall through to corner-angle chaining below.
+        if (all[shortest].len < 0.02 * perim) gap = shortest;
     }
     const int nReal = int(all.size()) - (gap >= 0 ? 1 : 0);
-    if (nReal < 3 || nReal > 4) return false;
+    if (nReal < 3) return reject("under 3 real edges");
 
     // Order the real sides starting AFTER the gap, so the gap sits
     // between side (nReal-1)'s end and side 0's start. Plain patches
@@ -513,9 +564,99 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
         int i = (start + k) % int(all.size());
         if (i != gap) order.push_back(i);
     }
-    if (gap < 0 && rotate > 0) {
-        std::rotate(order.begin(), order.begin() + (rotate % order.size()),
-                    order.end());
+
+    // More than four sides: group consecutive edges into FOUR sides at
+    // the sharpest wire corners (a curved band whose rail is split by a
+    // T-junction is still a four-sided patch). Turn angle at each joint
+    // comes from the 3D end tangents; the gap (pole/stub) is always a
+    // corner.
+    std::vector<size_t> sideStart;  // indices into `order` that begin sides
+    if (nReal > 4) {
+        auto tangentAt = [&](int src, bool atEnd) -> gp_Vec {
+            BRepAdaptor_Curve c(all[src].edge);
+            const bool rev = all[src].edge.Orientation() == TopAbs_REVERSED;
+            const double par = (atEnd != rev) ? c.LastParameter()
+                                              : c.FirstParameter();
+            gp_Pnt pp;
+            gp_Vec d;
+            c.D1(par, pp, d);
+            if (rev) d.Reverse();
+            return d;
+        };
+        // Joint k sits BEFORE order[k] (between order[k-1] and order[k]).
+        // With a gap (pole/stub) joint 0 is FORCED to be a corner; on a
+        // plain closed wire it gets its real turn like every other joint,
+        // or a smooth wire-start would steal a real corner's slot.
+        std::vector<double> turn(order.size(), M_PI);
+        for (size_t k = gap >= 0 ? 1 : 0; k < order.size(); ++k) {
+            int prev = order[(k + order.size() - 1) % order.size()];
+            gp_Vec a = tangentAt(prev, true);
+            gp_Vec b = tangentAt(order[k], false);
+            turn[k] = (a.Magnitude() > 1e-12 && b.Magnitude() > 1e-12)
+                          ? a.Angle(b)
+                          : 0.0;
+        }
+        std::vector<size_t> byTurn(order.size());
+        std::iota(byTurn.begin(), byTurn.end(), 0);
+        std::sort(byTurn.begin(), byTurn.end(),
+                  [&](size_t x, size_t y) { return turn[x] > turn[y]; });
+        // Need four clear corners; a fuzzy fourth means this isn't a
+        // four-sided patch.
+        if (turn[byTurn[3]] < 20.0 * M_PI / 180.0) return reject("no clear fourth corner");
+        sideStart = {byTurn[0], byTurn[1], byTurn[2], byTurn[3]};
+        std::sort(sideStart.begin(), sideStart.end());
+        if (gap >= 0 && sideStart[0] != 0) return reject("gap not at a corner");
+        // Rotate `order` so a corner is first, keeping the gap corner
+        // first when there is one.
+        if (gap < 0) {
+            size_t shift =
+                sideStart[size_t(rotate) % sideStart.size()] % order.size();
+            if (shift) {
+                std::rotate(order.begin(), order.begin() + shift,
+                            order.end());
+                for (size_t& v : sideStart) {
+                    v = (v + order.size() - shift) % order.size();
+                }
+                std::sort(sideStart.begin(), sideStart.end());
+            }
+        }
+    } else {
+        if (gap < 0 && rotate > 0) {
+            std::rotate(order.begin(),
+                        order.begin() + (rotate % order.size()),
+                        order.end());
+        }
+        for (size_t k = 0; k < std::min<size_t>(4, order.size()); ++k) {
+            sideStart.push_back(k);
+        }
+    }
+
+    auto pieceOf = [&](int src) {
+        CoonsPatch::SidePiece pce;
+        const TopoDS_Edge& edge = all[src].edge;
+        pce.pc = BRep_Tool::CurveOnSurface(edge, face, pce.f, pce.l);
+        pce.rev = edge.Orientation() == TopAbs_REVERSED;
+        pce.edgeId = model.edges.FindIndex(edge);
+        pce.len = all[src].len;
+        return pce;
+    };
+    // Fill the four sides (legacy arrays mirror each side's first piece).
+    const int nSides = nReal == 3 ? 3 : 4;
+    for (int sIdx = 0; sIdx < nSides; ++sIdx) {
+        size_t from = sideStart[sIdx];
+        size_t to = sIdx + 1 < int(sideStart.size())
+                        ? sideStart[sIdx + 1]
+                        : order.size();
+        for (size_t k = from; k < to; ++k) {
+            patch.chain[sIdx].push_back(pieceOf(order[k]));
+            if (patch.chain[sIdx].front().edgeId < 1) return reject("side has invalid edge");
+        }
+        const auto& p0 = patch.chain[sIdx].front();
+        patch.pc[sIdx] = p0.pc;
+        patch.first[sIdx] = p0.f;
+        patch.last[sIdx] = p0.l;
+        patch.rev[sIdx] = p0.rev;
+        patch.edgeIds[sIdx] = p0.edgeId;
     }
     auto fill = [&](int slot, int src) {
         const TopoDS_Edge& edge = all[src].edge;
@@ -526,7 +667,6 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
         patch.rev[slot] = edge.Orientation() == TopAbs_REVERSED;
         patch.edgeIds[slot] = model.edges.FindIndex(edge);
     };
-    for (int k = 0; k < nReal; ++k) fill(k, order[k]);
     if (nReal == 3) {
         patch.collapsedLast = true;
         if (gap >= 0) {
@@ -549,11 +689,11 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
         patch.stubPc = BRep_Tool::CurveOnSurface(stub, face,
                                                  patch.stubFirst,
                                                  patch.stubLast);
-        if (patch.stubEdgeId < 1) return false;
+        if (patch.stubEdgeId < 1) return reject("stub edge unknown");
     }
     const int sides = patch.collapsedLast && !patch.poleCurve ? 3 : 4;
     for (int i = 0; i < sides; ++i) {
-        if (patch.edgeIds[i] < 1) return false;
+        if (patch.edgeIds[i] < 1) return reject("side edge unknown");
     }
     // Head-to-tail continuity in UV (a seam on a periodic surface breaks
     // the chain; such faces are not Coons candidates).
@@ -575,7 +715,7 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
             allow += patch.stubPc->Value(patch.stubFirst)
                          .Distance(patch.stubPc->Value(patch.stubLast));
         }
-        if (a.Distance(b) > allow) return false;
+        if (a.Distance(b) > allow) return reject("sides not head-to-tail in UV");
     }
     // Interior probes must land inside the face.
     const double tol = BRep_Tool::Tolerance(face);
@@ -584,14 +724,16 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
             gp_Pnt2d p = patch.uv(i / 4.0, j / 4.0);
             BRepClass_FaceClassifier cls(const_cast<TopoDS_Face&>(face), p,
                                          tol);
-            if (cls.State() == TopAbs_OUT) return false;
+            if (cls.State() == TopAbs_OUT) return reject("interior probe outside face");
         }
     }
     return true;
 }
 
-// Emit the Coons grid. uParams/vParams are the 0..1 splits (clustered for
-// fillet strips); vertices evaluate exactly on the surface.
+// Emit the Coons grid. Single-edge sides sample at uParams/vParams (the
+// 0..1 splits, clustered for fillet strips); CHAINED sides sample each
+// piece at its own solved count, so the border matches every neighbour
+// vertex-for-vertex and the grid gains a column at each T-junction.
 bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
                    const std::vector<double>& uParams,
                    const std::vector<double>& vParams, int rotate,
@@ -602,28 +744,105 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
 
     // Border vertices evaluate on the shared 3D edge curves, not through
     // this face's pcurve: both faces of an edge then produce bit-identical
-    // points and the weld is exact (pcurves only agree with the curve to
-    // the edge tolerance, which exceeds the weld tolerance).
-    std::array<BRepAdaptor_Curve, 4> c3d;
-    for (int i = 0; i < 4; ++i) {
-        c3d[i].Initialize(TopoDS::Edge(model.edges(patch.edgeIds[i])));
-    }
-    auto sidePnt = [&](int i, double t) {
-        if (patch.collapsedLast && i == 3) {
-            // Triangular patch: the whole side is the sides-0/2 corner.
-            double f0 = patch.rev[0] ? c3d[0].LastParameter()
-                                     : c3d[0].FirstParameter();
-            return c3d[0].Value(f0);
-        }
-        double tt = patch.rev[i] ? 1.0 - t : t;
-        double f = c3d[i].FirstParameter(), l = c3d[i].LastParameter();
-        return c3d[i].Value(f + tt * (l - f));
+    // points and the weld is exact.
+    struct BPt {
+        gp_Pnt p;
+        gp_Pnt2d uv;
     };
-    const int nu = int(uParams.size()) - 1;
-    const int nv = int(vParams.size()) - 1;
+    // One side sampled in wire direction. Single-piece sides honour the
+    // given 0..1 splits; chains take each piece at its solved count.
+    auto sampleSide = [&](int i,
+                          const std::vector<double>& params)
+        -> std::vector<BPt> {
+        std::vector<BPt> row;
+        const auto& ch = patch.chain[i];
+        if (ch.size() <= 1) {
+            BRepAdaptor_Curve c(TopoDS::Edge(model.edges(patch.edgeIds[i])));
+            const double f3 = c.FirstParameter(), l3 = c.LastParameter();
+            for (double t : params) {
+                double tt = patch.rev[i] ? 1.0 - t : t;
+                row.push_back(
+                    {c.Value(f3 + tt * (l3 - f3)),
+                     patch.pc[i]->Value(patch.first[i] +
+                                        tt * (patch.last[i] -
+                                              patch.first[i]))});
+            }
+            return row;
+        }
+        for (size_t k = 0; k < ch.size(); ++k) {
+            const auto& pce = ch[k];
+            int n = 1;
+            if (pce.edgeId > 0 && pce.edgeId < int(solvedEdge.size()) &&
+                solvedEdge[pce.edgeId] > 0) {
+                n = solvedEdge[pce.edgeId];
+            }
+            BRepAdaptor_Curve c(TopoDS::Edge(model.edges(pce.edgeId)));
+            const double f3 = c.FirstParameter(), l3 = c.LastParameter();
+            const int last = k + 1 == ch.size() ? n : n - 1;
+            for (int q = 0; q <= last; ++q) {
+                double t = double(q) / n;
+                double tt = pce.rev ? 1.0 - t : t;
+                row.push_back(
+                    {c.Value(f3 + tt * (l3 - f3)),
+                     pce.pc->Value(pce.f + tt * (pce.l - pce.f))});
+            }
+        }
+        return row;
+    };
+    auto uniformParams = [](int n) {
+        std::vector<double> ps(n + 1);
+        for (int i = 0; i <= n; ++i) ps[i] = double(i) / n;
+        return ps;
+    };
+
+    // Bottom = side0 (wire dir), Top = side2 reversed, Right = side1,
+    // Left = side3 reversed — so Bottom[i] pairs Top[i] and Left[j]
+    // pairs Right[j], with (0,0) at side0's start.
+    //
+    // On a CHAINED patch every single side samples at its own SOLVED
+    // count (its group never united with the opposite side); when the
+    // chain pass couldn't reconcile opposite totals (shared rails,
+    // cascades, user pins) the sizes differ and the face falls back
+    // visibly instead of breaking the seam. Plain patches keep the
+    // given (possibly clustered) splits.
+    auto solvedCount = [&](int eid) {
+        return eid > 0 && eid < int(solvedEdge.size()) && solvedEdge[eid] > 0
+                   ? solvedEdge[eid]
+                   : 1;
+    };
+    auto paramsFor = [&](int i,
+                         const std::vector<double>& plain)
+        -> std::vector<double> {
+        if (patch.chain[i].size() > 1) return {};  // chain: per-piece
+        if (patch.chained()) {
+            return uniformParams(solvedCount(patch.edgeIds[i]));
+        }
+        return plain;
+    };
+    std::vector<BPt> bottom = sampleSide(0, paramsFor(0, uParams));
+    std::vector<BPt> top = sampleSide(2, paramsFor(2, uParams));
+    std::reverse(top.begin(), top.end());
+    if (bottom.size() != top.size() || bottom.size() < 2) return false;
+    const int nu = int(bottom.size()) - 1;
+
+    std::vector<BPt> right = sampleSide(1, paramsFor(1, vParams));
+    std::vector<BPt> left;
+    if (patch.collapsedLast) {
+        // Pole: the whole left column is one point (fan rows).
+        left.assign(right.size(), {bottom.front().p,
+                                   patch.side(3, 0.5)});
+        for (size_t j = 0; j < left.size(); ++j) {
+            left[j].uv = patch.side(3, 1.0 - double(j) / (right.size() - 1));
+        }
+    } else {
+        left = sampleSide(3, paramsFor(3, vParams));
+        std::reverse(left.begin(), left.end());
+    }
+    if (right.size() != left.size() || right.size() < 2) return false;
+    const int nv = int(right.size()) - 1;
+
     // The (a,b) lattice follows the wire, whose UV handedness varies; the
-    // Jacobian sign says whether the grid is CCW in UV, and combined with
-    // the face orientation that decides the polygon winding.
+    // Jacobian sign decides the polygon winding.
     gp_Pnt2d c0 = patch.uv(0.5, 0.5);
     gp_Pnt2d ca = patch.uv(0.55, 0.5);
     gp_Pnt2d cb = patch.uv(0.5, 0.55);
@@ -631,69 +850,63 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
                        (ca.Y() - c0.Y()) * (cb.X() - c0.X());
     const bool flip = (face.Orientation() == TopAbs_REVERSED) != (jac < 0);
 
-    // Interior verts: Coons-blend the BORDER CURVE POINTS in 3D and
-    // project onto the surface. Blending in UV instead folds wherever a
-    // band's pcurves bend tighter than the band is wide (an S-shaped
-    // strip crosses itself mid-bend); the 3D blend follows the actual
-    // rails and the projection puts it back on the surface exactly.
+    // Blend weights follow the borders' normalized arc positions so
+    // clustered fillet rows stay clustered inside.
+    auto arcWeights = [](const std::vector<BPt>& row) {
+        std::vector<double> w(row.size(), 0.0);
+        for (size_t i = 1; i < row.size(); ++i) {
+            w[i] = w[i - 1] + row[i].p.Distance(row[i - 1].p);
+        }
+        double total = w.back() > 1e-12 ? w.back() : 1.0;
+        for (double& x : w) x /= total;
+        return w;
+    };
+    const std::vector<double> aw = arcWeights(bottom);
+    const std::vector<double> bw = arcWeights(right);
+
+    // Interior verts: discrete Coons blend of the border SAMPLES in 3D,
+    // projected onto the surface. Blending in UV folds wherever a band's
+    // pcurves bend tighter than the band is wide.
     GeomAPI_ProjectPointOnSurf proj;
     proj.Init(gp_Pnt(0, 0, 0), surface);
-    auto corner3 = [&](int i) {
-        switch (i) {
-            case 0: return sidePnt(0, 0.0);
-            case 1: return sidePnt(0, 1.0);
-            case 2: return sidePnt(1, 1.0);
-            default: return sidePnt(3, 0.0);
-        }
-    };
-    const gp_Pnt c00 = corner3(0), c10 = corner3(1), c11 = corner3(2),
-                 c01 = corner3(3);
+    const gp_Pnt c00 = bottom.front().p, c10 = bottom.back().p;
+    const gp_Pnt c11 = top.back().p, c01 = top.front().p;
     std::vector<uint32_t> grid((nu + 1) * (nv + 1));
     for (int j = 0; j <= nv; ++j) {
         for (int i = 0; i <= nu; ++i) {
-            gp_Pnt2d p = patch.uv(uParams[i], vParams[j]);
-            gp_Pnt pos;
-            if (j == 0) pos = sidePnt(0, uParams[i]);
-            else if (j == nv) pos = sidePnt(2, 1.0 - uParams[i]);
-            else if (i == nu) pos = sidePnt(1, vParams[j]);
-            else if (i == 0) pos = sidePnt(3, 1.0 - vParams[j]);
+            BPt bp;
+            if (j == 0) bp = bottom[i];
+            else if (j == nv) bp = top[i];
+            else if (i == 0) bp = left[j];
+            else if (i == nu) bp = right[j];
             else {
-                const double a = uParams[i], b = vParams[j];
-                gp_Pnt bo = sidePnt(0, a), to = sidePnt(2, 1.0 - a);
-                gp_Pnt le = sidePnt(3, 1.0 - b), ri = sidePnt(1, b);
-                gp_Pnt blend(
-                    (1 - b) * bo.X() + b * to.X() + (1 - a) * le.X() +
-                        a * ri.X() -
-                        ((1 - a) * (1 - b) * c00.X() + a * (1 - b) * c10.X() +
-                         a * b * c11.X() + (1 - a) * b * c01.X()),
-                    (1 - b) * bo.Y() + b * to.Y() + (1 - a) * le.Y() +
-                        a * ri.Y() -
-                        ((1 - a) * (1 - b) * c00.Y() + a * (1 - b) * c10.Y() +
-                         a * b * c11.Y() + (1 - a) * b * c01.Y()),
-                    (1 - b) * bo.Z() + b * to.Z() + (1 - a) * le.Z() +
-                        a * ri.Z() -
-                        ((1 - a) * (1 - b) * c00.Z() + a * (1 - b) * c10.Z() +
-                         a * b * c11.Z() + (1 - a) * b * c01.Z()));
-                pos = surface->Value(p.X(), p.Y());
-                proj.Perform(blend);
+                const double a = aw[i], b = bw[j];
+                gp_XYZ blend =
+                    bottom[i].p.XYZ() * (1 - b) + top[i].p.XYZ() * b +
+                    left[j].p.XYZ() * (1 - a) + right[j].p.XYZ() * a -
+                    (c00.XYZ() * ((1 - a) * (1 - b)) +
+                     c10.XYZ() * (a * (1 - b)) + c11.XYZ() * (a * b) +
+                     c01.XYZ() * ((1 - a) * b));
+                gp_Pnt2d seed = patch.uv(a, b);
+                bp.p = surface->Value(seed.X(), seed.Y());
+                bp.uv = seed;
+                proj.Perform(gp_Pnt(blend));
                 if (proj.IsDone() && proj.NbPoints() > 0) {
-                    pos = proj.NearestPoint();
+                    bp.p = proj.NearestPoint();
                     double pu, pv;
                     proj.LowerDistanceParameters(pu, pv);
-                    p.SetX(pu);
-                    p.SetY(pv);
+                    bp.uv.SetX(pu);
+                    bp.uv.SetY(pv);
                 }
             }
             grid[j * (nu + 1) + i] =
-                out.addVertex(pos, {faceId, p.X(), p.Y()});
+                out.addVertex(bp.p, {faceId, bp.uv.X(), bp.uv.Y()});
         }
     }
 
     // Corner stub: sample its 3D curve at the solved count and stitch the
     // samples into the (0,0) corner polygon — the chain put the stub
-    // between side 3's end and side 0's start, i.e. right there. The
-    // corner cell becomes an n-gon whose extra border segments cancel
-    // the stub neighbour's, keeping the seam watertight.
+    // between side 3's end and side 0's start, i.e. right there.
     std::vector<uint32_t> stubVerts;  // near end + interiors, wire order
     if (patch.stubEdgeId > 0) {
         int segs = patch.stubEdgeId < int(solvedEdge.size())
@@ -705,12 +918,11 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
             double tt = patch.stubRev ? 1.0 - double(k) / segs
                                       : double(k) / segs;
             gp_Pnt pos = sc.Value(f + (l - f) * tt);
-            gp_Pnt2d p = patch.stubPc->Value(
-                patch.stubFirst +
-                (patch.stubRev ? 1.0 - double(k) / segs
-                               : double(k) / segs) *
-                    (patch.stubLast - patch.stubFirst));
-            stubVerts.push_back(out.addVertex(pos, {faceId, p.X(), p.Y()}));
+            gp_Pnt2d p2 = patch.stubPc->Value(patch.stubFirst +
+                                              tt * (patch.stubLast -
+                                                    patch.stubFirst));
+            stubVerts.push_back(
+                out.addVertex(pos, {faceId, p2.X(), p2.Y()}));
         }
     }
 
@@ -721,8 +933,6 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
                                           grid[(j + 1) * (nu + 1) + i + 1],
                                           grid[(j + 1) * (nu + 1) + i]};
             if (i == 0 && j == 0 && !stubVerts.empty()) {
-                // Border runs ... -> (0,1) -> stub near end -> interiors
-                // -> (0,0) = stub far end; append after the (0,1) vert.
                 ring.insert(ring.end(), stubVerts.begin(), stubVerts.end());
             }
             out.addPolygon(std::move(ring), faceId, flip);
@@ -2133,7 +2343,9 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             auto it = cache->coonsValid.find(fid);
             if (it != cache->coonsValid.end() && !it->second) return false;
         }
-        bool v = makeCoonsPatch(face, model, patch, s.coonsRotate);
+        const char* why = nullptr;
+        bool v = makeCoonsPatch(face, model, patch, s.coonsRotate, &why);
+        if (!v && why) dbg("coons: face %d rejected: %s", fid, why);
         if (cache) cache->coonsValid[fid] = v;
         return v;
     };
@@ -2193,9 +2405,17 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 CoonsPatch patch;
                 if (coonsOk(patch)) {
                     plan.kind = MesherKind::CoonsGrid;
-                    plan.uEdges = {patch.edgeIds[0], patch.edgeIds[2]};
-                    plan.vEdges = {patch.edgeIds[1], patch.edgeIds[3]};
                     plan.constrains = true;
+                    if (patch.chained()) {
+                        for (int i = 0; i < 4; ++i) {
+                            for (const auto& pce : patch.chain[i]) {
+                                plan.coonsSides[i].push_back(pce.edgeId);
+                            }
+                        }
+                    } else {
+                        plan.uEdges = {patch.edgeIds[0], patch.edgeIds[2]};
+                        plan.vEdges = {patch.edgeIds[1], patch.edgeIds[3]};
+                    }
                     return plan;
                 }
                 break;
@@ -2295,9 +2515,17 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         CoonsPatch patch;
         if (coonsOk(patch)) {
             plan.kind = MesherKind::CoonsGrid;
-            plan.uEdges = {patch.edgeIds[0], patch.edgeIds[2]};
-            plan.vEdges = {patch.edgeIds[1], patch.edgeIds[3]};
             plan.constrains = true;
+            if (patch.chained()) {
+                for (int i = 0; i < 4; ++i) {
+                    for (const auto& pce : patch.chain[i]) {
+                        plan.coonsSides[i].push_back(pce.edgeId);
+                    }
+                }
+            } else {
+                plan.uEdges = {patch.edgeIds[0], patch.edgeIds[2]};
+                plan.vEdges = {patch.edgeIds[1], patch.edgeIds[3]};
+            }
             if (info.isFillet) {
                 plan.isFillet = true;
                 auto sideLen = [&](int i) {
@@ -2522,6 +2750,14 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
             bool adV = s.adaptive && !(plan.isFillet && !plan.acrossIsU);
             proposeSet(plan.uEdges, nu, nu, adU, s, overridden);
             proposeSet(plan.vEdges, nv, nv, adV, s, overridden);
+            // Chained Coons sides: every piece proposes on its own; the
+            // chain pass below reconciles opposite sides by sum.
+            for (int sd = 0; sd < 4; ++sd) {
+                for (int e : plan.coonsSides[sd]) {
+                    proposeSet({e}, sd % 2 == 0 ? nu : nv, 1,
+                               sd % 2 == 0 ? adU : adV, s, overridden);
+                }
+            }
         } else if (plan.kind == MesherKind::AnnulusRing) {
             // Both loops are rings; they solve independently (their own
             // neighbours usually drive them).
@@ -2559,6 +2795,64 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
         if (!inserted) it->second = std::max(it->second, count);
     }
     for (const auto& [root, count] : pinned) sol.groupCount[root] = count;
+
+    // Chained Coons: opposite sides must sample equal TOTALS. Chains
+    // share rails with other chains, so one-shot bumps go stale — grow
+    // the SMALLER side's last unpinned edge instead and iterate to a
+    // fixpoint (growth is monotone, so it terminates). Anything still
+    // unequal falls back at mesh time without breaking seams.
+    {
+        // Never grow edges that other PATTERN meshers depend on: a
+        // revolution band's radial count must stay the sum of its rim
+        // arcs, and ring junctions derive their circle from the plate.
+        std::set<int> protectedRoots;
+        for (const auto& [fid2, plan2] : plans) {
+            if (plan2.kind != MesherKind::RevolutionGrid &&
+                plan2.kind != MesherKind::DiskCap &&
+                plan2.kind != MesherKind::RingJunction) {
+                continue;
+            }
+            for (int e : plan2.uEdges) {
+                protectedRoots.insert(sol.groups.find(e));
+            }
+            if (plan2.circleEdgeId > 0) {
+                protectedRoots.insert(sol.groups.find(plan2.circleEdgeId));
+            }
+        }
+        auto sideSum = [&](const std::vector<int>& sd) {
+            int t = 0;
+            for (int e : sd) t += std::max(1, sol.countFor(e, 1));
+            return t;
+        };
+        auto grow = [&](const std::vector<int>& sd, int by) {
+            for (auto it = sd.rbegin(); it != sd.rend(); ++it) {
+                int root = sol.groups.find(*it);
+                if (pinned.count(root) || protectedRoots.count(root)) {
+                    continue;
+                }
+                sol.groupCount[root] =
+                    std::max(1, sol.countFor(*it, 1)) + by;
+                return true;
+            }
+            return false;
+        };
+        for (int round = 0; round < 8; ++round) {
+            bool changed = false;
+            for (auto& [fid, plan] : plans) {
+                if (plan.kind != MesherKind::CoonsGrid) continue;
+                for (int axis = 0; axis < 2; ++axis) {
+                    const auto& A = plan.coonsSides[axis];
+                    const auto& B = plan.coonsSides[axis + 2];
+                    if (A.empty() || B.empty()) continue;  // pole side
+                    int sa = sideSum(A), sb = sideSum(B);
+                    if (sa == sb) continue;
+                    changed |= sa < sb ? grow(A, sb - sa)
+                                       : grow(B, sa - sb);
+                }
+            }
+            if (!changed) break;
+        }
+    }
 
     // Ring junctions close the loop: the circle must take exactly one ring
     // vertex per boundary vertex, so its group count is DERIVED from the
@@ -3281,12 +3575,20 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                 double cf, cl;
                 if (BRep_Tool::Curve(edge, cf, cl).IsNull()) continue;
             }
+            // Contact edges in multi-body files carry 3+ faces; prefer an
+            // ANALYTIC neighbour (its borders sample this very curve) over
+            // whichever face happens to come last in the map — picking a
+            // wrong-solid neighbour finds zero targets and the seam stays
+            // open.
             int nfid = 0;
             if (model.edgeToFaces.Contains(ex.Current())) {
                 for (const TopoDS_Shape& s :
                      model.edgeToFaces.FindFromKey(ex.Current())) {
                     int f2 = model.faces.FindIndex(s);
-                    if (f2 != fid) nfid = f2;
+                    if (f2 == fid || f2 < 1) continue;
+                    if (nfid < 1 || (!isAnalytic(nfid) && isAnalytic(f2))) {
+                        nfid = f2;
+                    }
                 }
             }
             const bool analyticNb = nfid >= 1 && isAnalytic(nfid);
@@ -3681,6 +3983,16 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                plan.constrains ? solved(plan.vEdges, defV)
                                                : std::max(1, defV),
                                0};
+                // Chained Coons meshes from per-edge counts: fold them
+                // into the cache key so density edits regenerate.
+                int chainHash = 0;
+                for (int sd = 0; sd < 4; ++sd) {
+                    for (int e : plan.coonsSides[sd]) {
+                        chainHash = chainHash * 31 +
+                                    density.countFor(e, 1) * (sd + 1);
+                    }
+                }
+                if (chainHash) counts[fid][2] = chainHash;
                 break;
             }
             case MesherKind::MinimalNGon:
@@ -3732,13 +4044,18 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     // Mesh every face into its own part, in parallel, then merge in face
     // order so the output is deterministic (identical to the serial order).
     std::vector<PolyMesh> parts(faceN + 1);
+    // Faces whose planned mesher couldn't build: the part is a fallback
+    // triangulation, and the PLAN must follow (conform treats structured
+    // meshers as exact-border authorities — a fallback part isn't one).
+    std::vector<char> fellBack(faceN + 1, 0);
     int cacheHits = 0;
     if (cache) {
         for (int fid = 1; fid <= faceN; ++fid) {
             auto it = cache->faces.find(fid);
             if (it != cache->faces.end() &&
-                it->second.first == cacheKey[fid]) {
-                parts[fid] = it->second.second;  // copy: merge mutates
+                it->second.key == cacheKey[fid]) {
+                parts[fid] = it->second.part;  // copy: merge mutates
+                fellBack[fid] = it->second.fellBack ? 1 : 0;
                 cached[fid] = true;
                 ++cacheHits;
             }
@@ -3819,6 +4136,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 if (!meshCoonsGrid(face, model, fid, clusteredParams(nu, holdU),
                                    clusteredParams(nv, holdV), s.coonsRotate,
                                    solvedEdge, out)) {
+                    fellBack[fid] = 1;
                     meshFallback(face, surf, fid, s, out);
                 }
                 break;
@@ -3827,6 +4145,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 if (!plan.loops.empty()) {
                     if (!meshMinimalPlanar(face, model, fid, solvedEdge,
                                            s.radial, out)) {
+                        fellBack[fid] = 1;
                         meshFallback(face, surf, fid, s, out);
                     }
                 } else {
@@ -3845,12 +4164,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 if (!meshPlateWeb(face, surf, model, fid, solvedEdge,
                                   s.radial, s.junctionRings, s.squareCollar,
                                   out)) {
+                    fellBack[fid] = 1;
                     meshFallback(face, surf, fid, s, out);
                 }
                 break;
             case MesherKind::QuadFill:
                 if (!meshQuadFill(face, surf, model, fid, solvedEdge,
                                   s.radial, s.minSize, out)) {
+                    fellBack[fid] = 1;
                     meshFallback(face, surf, fid, s, out);
                 }
                 break;
@@ -3885,6 +4206,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 dbg("mesh face %d: self-check failed (%s), falling back",
                     fid, mesherKindName(plan.kind));
                 parts[fid] = PolyMesh();
+                fellBack[fid] = 1;
                 MeshBuilder retry(parts[fid]);
                 meshFallback(face, surf, fid, s, retry);
             }
@@ -3925,9 +4247,25 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     if (cache) {
         for (int fid = 1; fid <= faceN; ++fid) {
             if (!cached[fid]) {
-                cache->faces[fid] = {cacheKey[fid], parts[fid]};
+                cache->faces[fid] = {cacheKey[fid], parts[fid],
+                                     fellBack[fid] != 0};
             }
         }
+    }
+
+    // A part that fell back is a fallback for EVERY downstream stage:
+    // conform must treat its borders as freeform movers, not as an
+    // exact-border authority, and the report must tell the truth.
+    for (int fid = 1; fid <= faceN; ++fid) {
+        if (!fellBack[fid]) continue;
+        FacePlan& pl = plans.at(fid);
+        if (pl.kind == MesherKind::Fallback) continue;
+        dbg("mesh face %d: %s couldn't build, plan demoted to fallback",
+            fid, mesherKindName(pl.kind));
+        pl.kind = MesherKind::Fallback;
+        pl.constrains = false;
+        pl.coonsSides = {};
+        pl.loops.clear();
     }
 
     PolyMesh mesh;
