@@ -26,9 +26,9 @@ size_t PolyMesh::countNgons() const {
 namespace {
 
 struct CellKey {
-    int64_t x, y, z;
+    int64_t x, y, z, g;
     bool operator==(const CellKey& o) const {
-        return x == o.x && y == o.y && z == o.z;
+        return x == o.x && y == o.y && z == o.z && g == o.g;
     }
 };
 
@@ -37,13 +37,15 @@ struct CellKeyHash {
         size_t h = std::hash<int64_t>()(k.x);
         h = h * 31 + std::hash<int64_t>()(k.y);
         h = h * 31 + std::hash<int64_t>()(k.z);
+        h = h * 31 + std::hash<int64_t>()(k.g);
         return h;
     }
 };
 
 }  // namespace
 
-void weldVertices(PolyMesh& mesh, double tolerance) {
+void weldVertices(PolyMesh& mesh, double tolerance,
+                  const std::vector<int>* groups) {
     if (tolerance <= 0 || mesh.vertices.empty()) return;
 
     std::unordered_map<CellKey, uint32_t, CellKeyHash> firstInCell;
@@ -57,7 +59,8 @@ void weldVertices(PolyMesh& mesh, double tolerance) {
         const auto& v = mesh.vertices[i];
         CellKey key{static_cast<int64_t>(std::llround(v[0] / tolerance)),
                     static_cast<int64_t>(std::llround(v[1] / tolerance)),
-                    static_cast<int64_t>(std::llround(v[2] / tolerance))};
+                    static_cast<int64_t>(std::llround(v[2] / tolerance)),
+                    groups && i < groups->size() ? (*groups)[i] : 0};
         auto [it, inserted] =
             firstInCell.try_emplace(key, static_cast<uint32_t>(kept.size()));
         if (inserted) {
