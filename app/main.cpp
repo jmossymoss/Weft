@@ -6,6 +6,24 @@
 //
 //   weft_app [model.step] [--fixture demo] [--screenshot out.png]
 
+#ifdef _WIN32
+// Windows headers FIRST, with OCCT's strip-macros undone. OCCT >= 8.0's
+// CMake config injects NOGDI/NOMINMAX into every consumer; NOGDI makes
+// windows.h skip the GDI/user types (LOGFONT, NMHDR, DLGTEMPLATE) that
+// commdlg.h and prsht.h (the file-open dialog) require, which explodes
+// as C2146/C3646 inside the SDK headers. This app never touches OCCT's
+// visualization (the reason NOGDI exists), so restoring GDI is safe.
+#undef NOGDI
+#undef NOUSER
+#undef NOCTLMGR
+#undef NONLS
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <commdlg.h>
+#endif
+
 #include "weft/analysis.hpp"
 #include "weft/edit.hpp"
 #include "weft/fixture.hpp"
@@ -15,17 +33,6 @@
 #include "weft/recipe.hpp"
 #include "weft/validate.hpp"
 #include "weft/viz.hpp"
-
-#ifdef _WIN32
-// Full windows.h, deliberately NOT lean-and-mean: commdlg.h (file dialogs)
-// drags in prsht.h, which needs the dialog/notification types (NMHDR,
-// DLGPROC, LPCDLGTEMPLATE) that lean mode strips on recent SDKs.
-#ifndef NOMINMAX
-#define NOMINMAX  // may also arrive via the command line
-#endif
-#include <windows.h>
-#include <commdlg.h>
-#endif
 
 #include <GLFW/glfw3.h>
 #include "gl_compat.hpp"
