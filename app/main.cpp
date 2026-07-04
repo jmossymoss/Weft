@@ -1900,9 +1900,7 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
             ch |= ImGui::DragInt("junction rings", &s.junctionRings, 0.2f, 1,
                                  32);
         }
-        if (all || k == MK::PlanarGrid || k == MK::MinimalNGon) {
-            ch |= ImGui::Checkbox("minimal n-gon (flat panels)", &s.minimal);
-        }
+
         if (!all && k == MK::CoonsGrid) {
             // Which corner anchors the grid; on triangular patches this
             // moves the corner the fan terminates in.
@@ -1921,6 +1919,12 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
             s.filletHold = hold;
             ch = true;
         }
+    }
+    if (all || kind) {
+        // Flat geometry (plane OR flat bspline) collapses to one exact
+        // boundary n-gon, holes bridged in — available everywhere since
+        // any mesher's face can turn out flat.
+        ch |= ImGui::Checkbox("minimal n-gon (flat panels)", &s.minimal);
     }
     if (kind) {  // per-face contexts only
         // Manual mesher choice: auto picks per geometry; forcing one that

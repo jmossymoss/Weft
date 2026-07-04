@@ -927,10 +927,56 @@ void meshAnnulusRing(const TopoDS_Face& face, const Model& model, int faceId,
 // curve at the solved count, so all neighbours weld watertight.
 // Collect a planar face's wires as per-edge loop chains, outer wire first.
 // Shared by the plate-web planner and the generalized minimal-ngon.
+// Geometric flatness: CAD kernels routinely carry visually flat regions
+// as bsplines, and "minimal n-gon" is about the GEOMETRY being flat, not
+// the surface type. Sample a grid over the UV bounds and measure the
+// spread along the average normal.
+bool isGeometricallyFlat(const TopoDS_Face& face,
+                         const BRepAdaptor_Surface& surf) {
+    if (surf.GetType() == GeomAbs_Plane) return true;
+    double u0, u1, v0, v1;
+    BRepTools::UVBounds(face, u0, u1, v0, v1);
+    const int N = 5;
+    gp_XYZ c(0, 0, 0);
+    std::array<gp_Pnt, N * N> pts;
+    for (int j = 0; j < N; ++j) {
+        for (int i = 0; i < N; ++i) {
+            pts[j * N + i] = surf.Value(u0 + (u1 - u0) * i / (N - 1),
+                                        v0 + (v1 - v0) * j / (N - 1));
+            c += pts[j * N + i].XYZ();
+        }
+    }
+    c /= double(N * N);
+    // Newell-style normal over the sample grid diagonals.
+    gp_XYZ n(0, 0, 0);
+    for (int j = 0; j + 1 < N; ++j) {
+        for (int i = 0; i + 1 < N; ++i) {
+            gp_XYZ d1 = pts[(j + 1) * N + i + 1].XYZ() - pts[j * N + i].XYZ();
+            gp_XYZ d2 = pts[(j + 1) * N + i].XYZ() - pts[j * N + i + 1].XYZ();
+            n += d1.Crossed(d2);
+        }
+    }
+    if (n.Modulus() < 1e-12) return false;
+    n.Normalize();
+    double lo = 1e300, hi = -1e300, diag = 0;
+    for (const gp_Pnt& p : pts) {
+        double d = (p.XYZ() - c).Dot(n);
+        lo = std::min(lo, d);
+        hi = std::max(hi, d);
+        diag = std::max(diag, p.XYZ().Modulus());
+    }
+    for (const gp_Pnt& p : pts) {
+        for (const gp_Pnt& q : pts) {
+            diag = std::max(diag, p.Distance(q));
+        }
+    }
+    return hi - lo < std::max(1e-6, 1e-3 * diag);
+}
+
 bool collectPlanarLoops(const TopoDS_Face& face,
                         const BRepAdaptor_Surface& surf, const Model& model,
                         FacePlan& plan, bool requirePlane = true) {
-    if (requirePlane && surf.GetType() != GeomAbs_Plane) return false;
+    if (requirePlane && !isGeometricallyFlat(face, surf)) return false;
     TopoDS_Wire outer = BRepTools::OuterWire(face);
     if (outer.IsNull()) return false;
     std::vector<std::vector<int>> loops;
@@ -1169,9 +1215,12 @@ void earClip(std::vector<WebPoint> poly, int faceId, bool flip,
 
 // Merge hole rings into the outer ring via non-crossing bridges (doubled
 // bridge vertices), rightmost holes first, then ear-clip the result.
-void triangulateWeb(std::vector<WebPoint> outer,
-                    std::vector<std::vector<WebPoint>> holes, int faceId,
-                    bool flip, MeshBuilder& out) {
+// Merge every hole ring into the outer ring with non-crossing bridges
+// (doubled bridge verts share ids, so the bridge edges cancel pairwise
+// and the result stays watertight). Returns one simple "keyhole" ring.
+std::vector<WebPoint> mergeHolesIntoRing(
+    std::vector<WebPoint> outer, std::vector<std::vector<WebPoint>> holes,
+    int faceId, bool flip, MeshBuilder& out) {
     auto maxX = [](const std::vector<WebPoint>& ring) {
         size_t best = 0;
         for (size_t i = 1; i < ring.size(); ++i) {
@@ -1239,7 +1288,15 @@ void triangulateWeb(std::vector<WebPoint> outer,
         merged.insert(merged.end(), outer.begin() + bestP, outer.end());
         outer = std::move(merged);
     }
-    earClip(std::move(outer), faceId, flip, out);
+    return outer;
+}
+
+void triangulateWeb(std::vector<WebPoint> outer,
+                    std::vector<std::vector<WebPoint>> holes, int faceId,
+                    bool flip, MeshBuilder& out) {
+    earClip(mergeHolesIntoRing(std::move(outer), std::move(holes), faceId,
+                               flip, out),
+            faceId, flip, out);
 }
 
 // A planar face's wire sampled as one chained ring: each edge at its own
@@ -1605,8 +1662,16 @@ bool meshMinimalPlanar(const TopoDS_Face& face, const Model& model,
         else webHoles.push_back(std::move(ring));
     }
     if (webOuter.size() < 3) return false;
-    triangulateWeb(std::move(webOuter), std::move(webHoles), faceId, flip,
-                   out);
+    // Minimal means MINIMAL: holes bridge into the outer ring and the
+    // whole face is ONE keyhole n-gon — every boundary vertex retained,
+    // zero interior triangles (the doubled bridge edges cancel).
+    std::vector<WebPoint> ring = mergeHolesIntoRing(
+        std::move(webOuter), std::move(webHoles), faceId, flip, out);
+    std::vector<uint32_t> poly;
+    poly.reserve(ring.size());
+    for (const WebPoint& w : ring) poly.push_back(w.vert);
+    if (poly.size() < 3) return false;
+    out.addPolygon(std::move(poly), faceId, flip);
     return true;
 }
 
