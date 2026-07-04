@@ -17,8 +17,12 @@
 #include "weft/viz.hpp"
 
 #ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
+// Full windows.h, deliberately NOT lean-and-mean: commdlg.h (file dialogs)
+// drags in prsht.h, which needs the dialog/notification types (NMHDR,
+// DLGPROC, LPCDLGTEMPLATE) that lean mode strips on recent SDKs.
+#ifndef NOMINMAX
+#define NOMINMAX  // may also arrive via the command line
+#endif
 #include <windows.h>
 #include <commdlg.h>
 #endif
