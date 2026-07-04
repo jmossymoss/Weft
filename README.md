@@ -7,9 +7,40 @@ per-face controllable, regenerable at any density without losing manual work.
 
 Full plan and architecture: [docs/PLAN.md](docs/PLAN.md).
 
-## Status: Phase 2/3 — surface-constrained editing + feature recognition
+## Status: Phase 2/3 — surface-constrained editing + feature recognition,
+## watertight on real CAD
 
 Headless C++ core + CLI covering the plan's Phases 0–3 essentials:
+
+- **Watertight output on real CAD assemblies** (plan §7.1, first real
+  slice). The whole shape is triangulated once so every B-rep edge is
+  discretized once and neighbouring trimmed faces share border polylines;
+  edges where a parametric mesher (exact cylinder divisions, grids, ring
+  junctions) meets a triangulated face carry a *canonical polyline* — the
+  exact vertices the parametric side emitted — and the triangulated side's
+  border is surgically conformed to it, then Lawson-flipped back toward
+  Delaunay. Quad-subdivision midpoints on B-rep edges are evaluated on the
+  edge curve so both sides create bit-identical vertices. Parametric plans
+  whose boundary is not their exact iso-rectangle (split rims, slanted
+  trims, holes through cylinder walls) demote to conformal triangulation
+  instead of meshing over their trims. Separate solids weld independently,
+  so touching assembly parts never fuse into non-manifold shells.
+  Measured: the as1 STEP assemblies went from 10,884 / 4,748 open edges
+  to **zero**, with consistent winding.
+- **Bake-ready validation** (plan §4.2): `weft validate model.step` (or
+  `mesh --validate`) reports open edges, non-manifold edges, winding
+  consistency, degenerate/sliver polygons, and chord deviation measured
+  against the live B-rep. Exits non-zero when the mesh leaks — drop it
+  straight into CI.
+- **Exact CAD normals in the export**: every OBJ polygon corner carries
+  the true surface normal of its own B-rep face (`f v//n`). Corners of
+  polygons from different faces get each face's normal, so sharp edges
+  split and fillets shade smooth — no angle-threshold guessing, bake-ready
+  out of the box (`--no-normals` to skip).
+- **Curvature-adaptive default density**: default grid/fillet-loop counts
+  on curved strips are floored by the strip's angular span over the angle
+  tolerance, so a 180-degree bend never comes out as three flat quads.
+  Explicit per-face overrides still mean exactly what they say.
 
 - STEP import via OpenCASCADE (with shape healing) and stable face/edge IDs
 - B-rep analysis: surface classification (plane/cylinder/cone/sphere/torus/
@@ -118,6 +149,9 @@ ctest --test-dir build
 ```sh
 # Generate demo CAD (a cylinder and a box) as STEP
 build/cli/weft fixture demo.step --shape demo
+
+# Bake-ready checks on any STEP file (exit 1 if the mesh leaks)
+build/cli/weft validate demo.step
 
 # See what the B-rep contains
 build/cli/weft inspect demo.step
