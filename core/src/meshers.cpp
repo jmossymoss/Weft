@@ -4240,6 +4240,16 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 if (plan.forceFallbackQuads >= 0) {
                     fs.quadDominant = plan.forceFallbackQuads != 0;
                 }
+                // The global budget knob reaches triangulations too:
+                // deflection error scales with the SQUARE of linear
+                // density, angle linearly (already in the cache key).
+                const double dsc =
+                    std::clamp(settings.densityScale, 0.05, 20.0);
+                if (dsc != 1.0) {
+                    fs.chordTolerance /= dsc * dsc;
+                    fs.angleToleranceDeg =
+                        std::clamp(fs.angleToleranceDeg / dsc, 1.0, 60.0);
+                }
                 meshFallback(face, surf, fid, fs, out);
                 break;
             }

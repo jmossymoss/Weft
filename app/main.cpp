@@ -520,6 +520,11 @@ struct App {
     Buffer problems;
     int openEdgeCount = 0, multiEdgeCount = 0;
     bool showProblems = true;
+    // Quality heatmap: tint polys by worst corner angle vs the regular
+    // polygon's — pinches and slivers glow before they reach the DCC.
+    bool qualityView = false;
+    // Fit-to-budget: target polygon count for the density-scale solver.
+    int budgetTarget = 5000;
     // Export shaping for game engines.
     bool exportTriangulate = false;
     bool exportYUp = false;
@@ -554,6 +559,48 @@ static std::array<float, 3> faceColor(const weft::FaceInfo& f, bool selected) {
     return c;
 }
 
+// Worst corner angle of a polygon relative to its regular ideal: 1.0 is
+// perfectly regular, 0 collapses. Slivers and pinches score low.
+static double polyQuality(const weft::PolyMesh& m, size_t i) {
+    const auto& poly = m.polygons[i];
+    const size_t n = poly.size();
+    if (n < 3) return 0.0;
+    const double ideal = M_PI * (1.0 - 2.0 / double(n));
+    double worst = 1.0;
+    for (size_t k = 0; k < n; ++k) {
+        const auto& a = m.vertices[poly[(k + n - 1) % n]];
+        const auto& b = m.vertices[poly[k]];
+        const auto& c = m.vertices[poly[(k + 1) % n]];
+        double ux = a[0] - b[0], uy = a[1] - b[1], uz = a[2] - b[2];
+        double vx = c[0] - b[0], vy = c[1] - b[1], vz = c[2] - b[2];
+        double lu = std::sqrt(ux * ux + uy * uy + uz * uz);
+        double lv = std::sqrt(vx * vx + vy * vy + vz * vz);
+        if (lu < 1e-12 || lv < 1e-12) return 0.0;
+        double cosA = std::clamp(
+            (ux * vx + uy * vy + uz * vz) / (lu * lv), -1.0, 1.0);
+        worst = std::min(worst, std::acos(cosA) / ideal);
+    }
+    return std::clamp(worst, 0.0, 1.0);
+}
+
+static std::array<float, 3> heatColor(double q) {
+    // neutral green-grey (good) -> orange (mediocre) -> red (sliver)
+    const std::array<float, 3> good{0.55f, 0.68f, 0.55f};
+    const std::array<float, 3> mid{0.95f, 0.62f, 0.18f};
+    const std::array<float, 3> bad{0.92f, 0.18f, 0.14f};
+    auto lerp3 = [](const std::array<float, 3>& x,
+                    const std::array<float, 3>& y, float t) {
+        return std::array<float, 3>{x[0] + (y[0] - x[0]) * t,
+                                    x[1] + (y[1] - x[1]) * t,
+                                    x[2] + (y[2] - x[2]) * t};
+    };
+    if (q >= 0.55) {
+        return lerp3(mid, good,
+                     float(std::min(1.0, (q - 0.55) / 0.35)));
+    }
+    return lerp3(bad, mid, float(std::max(0.0, (q - 0.15) / 0.4)));
+}
+
 static void rebuildBuffers(App& app) {
     const weft::PolyMesh& m = app.mesh;
 
@@ -586,7 +633,9 @@ static void rebuildBuffers(App& app) {
         const weft::FaceInfo& info =
             fid > 0 ? app.analysis.faces[fid - 1] : kBridgeInfo;
         std::array<float, 3> col =
-            faceColor(info, fid > 0 && app.selFaces.count(fid) > 0);
+            app.qualityView
+                ? heatColor(polyQuality(m, i))
+                : faceColor(info, fid > 0 && app.selFaces.count(fid) > 0);
         std::array<float, 3> id{float(fid & 255) / 255.0f,
                                 float((fid >> 8) & 255) / 255.0f,
                                 170.0f / 255.0f};
@@ -2495,6 +2544,45 @@ static void drawUi(App& app) {
             app.recipe.settings.densityScale = ds;
             markDirty(app);
         }
+        // Fit-to-budget: secant search on the scale knob (poly count is
+        // roughly quadratic in linear density) until within 5%.
+        ImGui::SetNextItemWidth(110.0f * gUiScale);
+        ImGui::InputInt("target##budget", &app.budgetTarget, 0, 0);
+        ImGui::SameLine();
+        if (ImGui::Button("fit polys") && app.budgetTarget > 100) {
+            weft::Recipe preFit = app.recipe;
+            double target = double(app.budgetTarget);
+            for (int it = 0; it < 5; ++it) {
+                double P = double(app.mesh.polygonCount());
+                if (P < 1) break;
+                double err = std::abs(P - target) / target;
+                if (err < 0.05) break;
+                double next = app.recipe.settings.densityScale *
+                              std::sqrt(target / P);
+                next = std::clamp(next, 0.25, 4.0);
+                if (std::abs(next - app.recipe.settings.densityScale) <
+                    1e-3) {
+                    break;
+                }
+                app.recipe.settings.densityScale = next;
+                regenerate(app);
+            }
+            rebuildBuffers(app);
+            app.dirty = false;
+            app.undoStack.push_back(preFit);
+            app.redoStack.clear();
+            char buf[96];
+            std::snprintf(buf, sizeof buf,
+                          "fit: %zu polys at %.2fx (target %d)",
+                          app.mesh.polygonCount(),
+                          app.recipe.settings.densityScale,
+                          app.budgetTarget);
+            app.status = buf;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("solve density scale toward the target\n"
+                              "polygon count (a few regenerations)");
+        }
         ImGui::Separator();
         ImGui::TextDisabled("defaults (live)");
         if (settingsEditor(app.recipe.settings.defaults)) markDirty(app);
@@ -2621,6 +2709,13 @@ static void drawUi(App& app) {
         ImGui::Checkbox("feature edges", &app.showBrepEdges);
         ImGui::SameLine();
         ImGui::Checkbox("selection verts", &app.showVerts);
+        if (ImGui::Checkbox("quality heatmap", &app.qualityView)) {
+            rebuildBuffers(app);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("tint polys by worst corner angle:\n"
+                              "green ok, orange skewed, red sliver");
+        }
         ImGui::ColorEdit3("background", app.bgColor,
                           ImGuiColorEditFlags_NoInputs);
         ImGui::SameLine();
@@ -2708,6 +2803,7 @@ int main(int argc, char** argv) {
 
     std::string screenshotPath, startModel, startFixture = "demo";
     int startSelect = 0;
+    bool startQuality = false;
     float startYaw = 0.9f, startPitch = 0.5f;
     bool demoLoopCut = false;
     for (int i = 1; i < argc; ++i) {
@@ -2718,6 +2814,7 @@ int main(int argc, char** argv) {
         else if (a == "--yaw" && i + 1 < argc) startYaw = std::stof(argv[++i]);
         else if (a == "--pitch" && i + 1 < argc) startPitch = std::stof(argv[++i]);
         else if (a == "--loopcut") demoLoopCut = true;  // screenshot testing
+        else if (a == "--quality") startQuality = true;
         else startModel = a;
     }
 
@@ -2766,6 +2863,10 @@ int main(int argc, char** argv) {
     else loadFixture(app, startFixture);
     app.cam.yaw = startYaw;
     app.cam.pitch = startPitch;
+    if (startQuality) {
+        app.qualityView = true;
+        if (app.hasModel) rebuildBuffers(app);
+    }
     if (startSelect > 0 && startSelect <= app.model.faceCount()) {
         app.selFaces = {startSelect};
         app.activeFace = startSelect;
