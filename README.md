@@ -97,6 +97,9 @@ Headless C++ core + CLI covering the plan's Phases 0–3 essentials:
 - Vertex welding across B-rep face borders (watertight where divisions match)
 - OBJ export with one group per B-rep face, so CAD face IDs survive into
   Blender
+- Binary glTF export (`-o out.glb`): fan-triangulated, exact CAD normals,
+  and the source face ID on every vertex as the `_WEFT_FACE_ID` custom
+  attribute — drop the same asset into engines that speak glTF
 
 ## The app
 
