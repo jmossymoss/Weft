@@ -112,6 +112,7 @@ void testCylinder() {
 
     // Exact division control: 12 radial, 3 axial, n-gon caps.
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy dense-flat counts
     gs.defaults.radial = 12;
     gs.defaults.axial = 3;
     gs.defaults.cap = weft::CapStyle::NGon;
@@ -148,6 +149,7 @@ void testCylinder() {
         if (f.type == weft::SurfaceType::Cylinder) sideFaceId = f.id;
     }
     weft::GenerationSettings gsOverride;
+    gsOverride.defaults.minimal = false;  // legacy dense-flat counts
     gsOverride.defaults.radial = 12;
     gsOverride.defaults.axial = 3;
     weft::FaceMeshSettings side = gsOverride.defaults;
@@ -164,6 +166,7 @@ void testCylinder() {
     // Per-edge pin: force one circle edge to 20; the whole matched group
     // (side ring + both caps) must follow.
     weft::GenerationSettings gsEdge;
+    gsEdge.defaults.minimal = false;  // legacy dense-flat counts
     gsEdge.defaults.radial = 12;
     gsEdge.defaults.axial = 2;
     int circleEdgeId = 0;
@@ -212,6 +215,7 @@ void testBox() {
     }
 
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy dense-flat counts
     gs.defaults.gridU = 3;
     gs.defaults.gridV = 3;
     weft::GenerationReport report;
@@ -236,6 +240,7 @@ void testCone() {
     weft::Analysis a = weft::analyze(model);
 
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy dense-flat counts
     gs.defaults.radial = 12;
     gs.defaults.axial = 3;
     weft::GenerationReport report;
@@ -259,6 +264,7 @@ void testSphere() {
     weft::Analysis a = weft::analyze(model);
 
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy dense-flat counts
     gs.defaults.radial = 16;
     gs.defaults.axial = 6;
     weft::PolyMesh mesh = weft::generate(model, a, gs);
@@ -279,6 +285,7 @@ void testTorus() {
     weft::Analysis a = weft::analyze(model);
 
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy dense-flat counts
     gs.defaults.radial = 24;
     gs.defaults.axial = 8;
     weft::PolyMesh mesh = weft::generate(model, a, gs);
@@ -301,6 +308,7 @@ void testBoxDensityMatching() {
     // One face asks for a denser grid; the shared-edge groups must drag the
     // neighbouring faces along so the box stays watertight.
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy dense-flat counts
     gs.defaults.gridU = 3;
     gs.defaults.gridV = 3;
     weft::FaceMeshSettings dense = gs.defaults;
@@ -341,6 +349,7 @@ void testMinimalNGon() {
     weft::Analysis a = weft::analyze(model);
 
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy dense-flat counts
     gs.defaults.gridU = 3;
     gs.defaults.gridV = 3;
     weft::FaceMeshSettings flat = gs.defaults;
@@ -364,6 +373,7 @@ void testMinimalNGon() {
     // solves to 1 and the box collapses to its 6 corner quads — the
     // game-topology "flat panel needs no interior" case at its extreme.
     weft::GenerationSettings gsAll;
+    gsAll.defaults.minimal = false;  // legacy dense-flat counts
     gsAll.defaults.gridU = 3;
     gsAll.defaults.gridV = 3;
     gsAll.defaults.minimal = true;
@@ -387,6 +397,7 @@ void testSurfaceConstrainedEditing() {
     }
 
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy dense-flat counts
     gs.defaults.radial = 12;
     gs.defaults.axial = 2;
     weft::PolyMesh mesh = weft::generate(model, a, gs);
@@ -471,6 +482,7 @@ void testFillet() {
 
     // 5 support loops across the blend, density-matched 4 along its length.
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy dense-flat counts
     gs.defaults.gridU = 4;
     gs.defaults.gridV = 4;
     gs.defaults.filletLoops = 5;
@@ -583,6 +595,7 @@ void testBoss() {
     for (const auto& f : a.faces) CHECK(!f.isHole);
 
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy dense-flat counts
     gs.defaults.gridU = 3;
     gs.defaults.gridV = 3;
     gs.defaults.junctionRings = 2;
@@ -629,6 +642,7 @@ void testHolePlate() {
     CHECK_EQ(holes, 1);
 
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy dense-flat counts
     gs.defaults.gridU = 4;
     gs.defaults.gridV = 4;
     gs.defaults.axial = 2;
@@ -679,6 +693,7 @@ void testBridge() {
     CHECK_EQ(rims.size(), 2);
 
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy dense-flat counts
     gs.defaults.radial = 12;
     gs.perFace[sideFace] = gs.defaults;
     gs.perFace[sideFace].exclude = true;  // delete the wall
@@ -782,6 +797,7 @@ void testFreeformBorderConformity() {
     weft::Model model = weft::loadStep(stepPath);
     weft::Analysis a = weft::analyze(model);
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy dense-flat counts
     gs.defaults.radial = 24;
     gs.defaults.quadDominant = true;  // subdivision midpoints conform too
     weft::GenerationReport report;
@@ -815,6 +831,7 @@ void testUnlinkedRims() {
         if (f.type == weft::SurfaceType::Cylinder) side = f.id;
     }
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy dense-flat counts
     gs.defaults.radial = 12;
     gs.perFace[side] = gs.defaults;
     gs.perFace[side].linkRims = false;
@@ -853,6 +870,7 @@ void testPlateWeb() {
     weft::Model model = weft::loadStep(stepPath);
     weft::Analysis a = weft::analyze(model);
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy dense-flat counts
     gs.defaults.radial = 12;
     weft::GenerationReport report;
     weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
@@ -913,6 +931,7 @@ void testAutoGates() {
     CHECK_EQ(plateFaces.size(), 2);
 
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy dense-flat counts
     weft::GenerationReport report;
     weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
     for (int fid : plateFaces) {
@@ -924,6 +943,7 @@ void testAutoGates() {
 
     // Forcing still builds: plate-web and minimal-ngon on the same faces.
     weft::GenerationSettings gsForce;
+    gsForce.defaults.minimal = false;  // legacy dense-flat counts
     gsForce.perFace[plateFaces[0]] = gsForce.defaults;
     gsForce.perFace[plateFaces[0]].forceMesher =
         1 + int(weft::MesherKind::PlateWeb);
@@ -936,6 +956,7 @@ void testAutoGates() {
     // Minimal everywhere: both plate faces become flat hole-bridged webs
     // with zero interior vertices, and the solid still welds.
     weft::GenerationSettings gsMin;
+    gsMin.defaults.minimal = false;  // legacy dense-flat counts
     gsMin.defaults.minimal = true;
     weft::GenerationReport repMin;
     weft::PolyMesh minimal = weft::generate(model, a, gsMin, &repMin);
@@ -961,6 +982,7 @@ void testAdaptiveDensity() {
         weft::Model model = weft::loadStep(path);
         weft::Analysis a = weft::analyze(model);
         weft::GenerationSettings gs;
+        gs.defaults.minimal = false;  // legacy dense-flat counts
         gs.defaults.adaptive = true;
         weft::GenerationReport report;
         weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
@@ -984,6 +1006,7 @@ void testAdaptiveDensity() {
     // A per-edge pin still beats the adaptive proposal.
     weft::Analysis a = weft::analyze(largeModel);
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy dense-flat counts
     gs.defaults.adaptive = true;
     weft::GenerationReport rep;
     weft::generate(largeModel, a, gs, &rep);
@@ -1045,6 +1068,7 @@ void testDeletePolyAndCollarRings() {
     weft::Model model = weft::loadStep(stepPath);
     weft::Analysis a = weft::analyze(model);
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy dense-flat counts
     gs.defaults.gridU = 3;
     gs.defaults.gridV = 3;
     weft::PolyMesh mesh = weft::generate(model, a, gs);
@@ -1121,6 +1145,7 @@ void testQuadFill() {
     weft::Analysis a = weft::analyze(model);
 
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy dense-flat counts
     gs.defaults.quadDominant = true;
     weft::GenerationReport report;
     weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
@@ -1153,6 +1178,7 @@ void testSameLoopBridgeAndFill() {
     weft::Analysis a = weft::analyze(model);
 
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy dense-flat counts
     gs.defaults.gridU = 3;
     gs.defaults.gridV = 3;
     gs.perFace[1] = gs.defaults;
@@ -1321,6 +1347,7 @@ void testNudgeVertex() {
         if (f.type == weft::SurfaceType::Cylinder) side = f.id;
     }
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy dense-flat counts
     gs.defaults.radial = 12;
     gs.defaults.axial = 2;
     weft::PolyMesh mesh = weft::generate(model, a, gs);
@@ -1380,6 +1407,7 @@ void testGenerationCache() {
     weft::Analysis a = weft::analyze(model);
 
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy dense-flat counts
     gs.defaults.radial = 14;
     weft::GenerationCache cache;
     weft::PolyMesh first = weft::generate(model, a, gs, nullptr, &cache);

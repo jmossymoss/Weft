@@ -46,7 +46,11 @@ struct FaceMeshSettings {
     // interior grid. When set, a planar grid-safe face emits one boundary
     // n-gon instead — border vertices stay density-matched, so neighbours
     // still weld watertight, and the engine triangulates however it likes.
-    bool minimal = false;
+    // Default ON: quad flow is spent where geometry curves or deforms
+    // (fillets, cylinders, freeform); large flat faces ship as boundary
+    // n-gons / hole-bridged webs and can be triangulated at export.
+    // --flat-quads (CLI) or minimal=0 (recipe) restores dense flats.
+    bool minimal = true;
     // Exclude this face from the output entirely (delete it). Its borders
     // become open boundary loops, which a Bridge op can then reconnect —
     // e.g. drop a bore wall and bridge the two rims shut.

@@ -1,10 +1,10 @@
-Start testing: Jul 04 20:29 UTC
+Start testing: Jul 04 20:37 UTC
 ----------------------------------------------------------
 1/1 Testing: pipeline
 1/1 Test: pipeline
 Command: "/home/user/Weft/build-int/tests/weft_tests"
 Directory: /home/user/Weft/build-int/tests
-"pipeline" start time: Jul 04 20:29 UTC
+"pipeline" start time: Jul 04 20:37 UTC
 Output:
 ----------------------------------------------------------
 testCylinder                    -- cylinder --
@@ -310,11 +310,11 @@ ok
 
 all checks passed
 <end of output>
-Test time =   0.38 sec
+Test time =   0.40 sec
 ----------------------------------------------------------
 Test Passed.
-"pipeline" end time: Jul 04 20:29 UTC
+"pipeline" end time: Jul 04 20:37 UTC
 "pipeline" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-End testing: Jul 04 20:29 UTC
+End testing: Jul 04 20:37 UTC
