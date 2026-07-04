@@ -867,8 +867,10 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
         for (double& x : w) x /= total;
         return w;
     };
-    const std::vector<double> aw = arcWeights(bottom);
-    const std::vector<double> bw = arcWeights(right);
+    const std::vector<double> awB = arcWeights(bottom);
+    const std::vector<double> awT = arcWeights(top);
+    const std::vector<double> bwL = arcWeights(left);
+    const std::vector<double> bwR = arcWeights(right);
 
     // Interior verts: discrete Coons blend of the border SAMPLES in 3D,
     // projected onto the surface. Blending in UV folds wherever a band's
@@ -886,7 +888,14 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
             else if (i == 0) bp = left[j];
             else if (i == nu) bp = right[j];
             else {
-                const double a = aw[i], b = bw[j];
+                // Bilinearly blended weights: rows near the top follow the
+                // TOP border's spacing, not the bottom's. With a chained
+                // side whose spacing drifts a step against the opposite
+                // rail, single-border weights skew every interior rung the
+                // same way until the last row folds over (bowtie cells).
+                const double b0 = 0.5 * (bwL[j] + bwR[j]);
+                const double a = (1.0 - b0) * awB[i] + b0 * awT[i];
+                const double b = (1.0 - a) * bwL[j] + a * bwR[j];
                 gp_XYZ blend =
                     bottom[i].p.XYZ() * (1 - b) + top[i].p.XYZ() * b +
                     left[j].p.XYZ() * (1 - a) + right[j].p.XYZ() * a -
