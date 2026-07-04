@@ -53,7 +53,9 @@ void usage() {
         "    --yup / --scale F Y-up + unit scale (engine spaces)\n"
         "    --lods F1,F2,...  one export per density factor (_lod0..),\n"
         "                      manual ops replay into every tier\n"
-        "    --flat-quads      dense grids on flat faces too (default: flats\n"
+        "    --adaptive        curvature-driven border counts (the CAD profile;\n"
+        "                      big arcs get more segments, straights get 1)\n"
+"    --flat-quads      dense grids on flat faces too (default: flats\n"
         "                      are boundary n-gons/webs; quads go to curves)\n"
         "    --pure-tris       disable quad pairing on fallback-triangulated\n"
         "                      faces (default: quad-dominant)\n"
@@ -162,6 +164,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         else if (a == "--rings") gs.defaults.junctionRings = std::stoi(next());
         else if (a == "--pure-tris") gs.defaults.quadDominant = false;
         else if (a == "--flat-quads") gs.defaults.minimal = false;
+        else if (a == "--adaptive") gs.defaults.adaptive = true;
         else if (a == "--validate") validate = true;
         else if (a == "--no-normals") noNormals = true;
         else if (a == "--triangulate") objOpts.triangulate = true;
