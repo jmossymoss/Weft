@@ -19,6 +19,7 @@
 #include <ElCLib.hxx>
 #include <ElSLib.hxx>
 #include <Geom2d_Curve.hxx>
+#include <GeomAPI_ProjectPointOnSurf.hxx>
 #include <Geom_Circle.hxx>
 #include <Geom_Curve.hxx>
 #include <Poly_Triangulation.hxx>
@@ -630,6 +631,23 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
                        (ca.Y() - c0.Y()) * (cb.X() - c0.X());
     const bool flip = (face.Orientation() == TopAbs_REVERSED) != (jac < 0);
 
+    // Interior verts: Coons-blend the BORDER CURVE POINTS in 3D and
+    // project onto the surface. Blending in UV instead folds wherever a
+    // band's pcurves bend tighter than the band is wide (an S-shaped
+    // strip crosses itself mid-bend); the 3D blend follows the actual
+    // rails and the projection puts it back on the surface exactly.
+    GeomAPI_ProjectPointOnSurf proj;
+    proj.Init(gp_Pnt(0, 0, 0), surface);
+    auto corner3 = [&](int i) {
+        switch (i) {
+            case 0: return sidePnt(0, 0.0);
+            case 1: return sidePnt(0, 1.0);
+            case 2: return sidePnt(1, 1.0);
+            default: return sidePnt(3, 0.0);
+        }
+    };
+    const gp_Pnt c00 = corner3(0), c10 = corner3(1), c11 = corner3(2),
+                 c01 = corner3(3);
     std::vector<uint32_t> grid((nu + 1) * (nv + 1));
     for (int j = 0; j <= nv; ++j) {
         for (int i = 0; i <= nu; ++i) {
@@ -639,7 +657,33 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
             else if (j == nv) pos = sidePnt(2, 1.0 - uParams[i]);
             else if (i == nu) pos = sidePnt(1, vParams[j]);
             else if (i == 0) pos = sidePnt(3, 1.0 - vParams[j]);
-            else pos = surface->Value(p.X(), p.Y());
+            else {
+                const double a = uParams[i], b = vParams[j];
+                gp_Pnt bo = sidePnt(0, a), to = sidePnt(2, 1.0 - a);
+                gp_Pnt le = sidePnt(3, 1.0 - b), ri = sidePnt(1, b);
+                gp_Pnt blend(
+                    (1 - b) * bo.X() + b * to.X() + (1 - a) * le.X() +
+                        a * ri.X() -
+                        ((1 - a) * (1 - b) * c00.X() + a * (1 - b) * c10.X() +
+                         a * b * c11.X() + (1 - a) * b * c01.X()),
+                    (1 - b) * bo.Y() + b * to.Y() + (1 - a) * le.Y() +
+                        a * ri.Y() -
+                        ((1 - a) * (1 - b) * c00.Y() + a * (1 - b) * c10.Y() +
+                         a * b * c11.Y() + (1 - a) * b * c01.Y()),
+                    (1 - b) * bo.Z() + b * to.Z() + (1 - a) * le.Z() +
+                        a * ri.Z() -
+                        ((1 - a) * (1 - b) * c00.Z() + a * (1 - b) * c10.Z() +
+                         a * b * c11.Z() + (1 - a) * b * c01.Z()));
+                pos = surface->Value(p.X(), p.Y());
+                proj.Perform(blend);
+                if (proj.IsDone() && proj.NbPoints() > 0) {
+                    pos = proj.NearestPoint();
+                    double pu, pv;
+                    proj.LowerDistanceParameters(pu, pv);
+                    p.SetX(pu);
+                    p.SetY(pv);
+                }
+            }
             grid[j * (nu + 1) + i] =
                 out.addVertex(pos, {faceId, p.X(), p.Y()});
         }
