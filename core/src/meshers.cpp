@@ -819,6 +819,11 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
         }
         return plain;
     };
+    // (Tried and reverted: sampling a single side at the opposite
+    // chain's arc fractions to kill rung skew — every single edge is
+    // ALSO someone else's uniformly-sampled seam, and the sweep's opens
+    // exploded 50x. Border positions are a shared contract; rung
+    // alignment has to come from somewhere else.)
     std::vector<BPt> bottom = sampleSide(0, paramsFor(0, uParams));
     std::vector<BPt> top = sampleSide(2, paramsFor(2, uParams));
     std::reverse(top.begin(), top.end());
@@ -2522,6 +2527,16 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                         plan.coonsSides[i].push_back(pce.edgeId);
                     }
                 }
+                dbg("coons: face %d chained sides "
+                    "[%zu:%d..][%zu:%d..][%zu:%d..][%zu:%d..]",
+                    fid, patch.chain[0].size(),
+                    patch.chain[0].empty() ? 0 : patch.chain[0][0].edgeId,
+                    patch.chain[1].size(),
+                    patch.chain[1].empty() ? 0 : patch.chain[1][0].edgeId,
+                    patch.chain[2].size(),
+                    patch.chain[2].empty() ? 0 : patch.chain[2][0].edgeId,
+                    patch.chain[3].size(),
+                    patch.chain[3].empty() ? 0 : patch.chain[3][0].edgeId);
             } else {
                 plan.uEdges = {patch.edgeIds[0], patch.edgeIds[2]};
                 plan.vEdges = {patch.edgeIds[1], patch.edgeIds[3]};
@@ -3795,6 +3810,40 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                                       targets.front().param));
             }
 
+            // Equal counts: pair by RANK along the curve — a bijection.
+            // Nearest-by-param can send two drifted movers to one target
+            // and leave its neighbour unmatched, punching a hole in an
+            // otherwise perfectly matched seam.
+            if (movers.size() == targets.size() && targets.size() >= 2) {
+                std::vector<std::pair<double, uint32_t>> mv;
+                mv.reserve(movers.size());
+                for (const auto& [v, t] : movers) mv.push_back({t, v});
+                std::sort(mv.begin(), mv.end());
+                const int nRank = int(mv.size());
+                int bestShift = 0;
+                if (closed) {
+                    double bestCost = 1e300;
+                    for (int sft = 0; sft < nRank; ++sft) {
+                        double c = 0;
+                        for (int i = 0; i < nRank; ++i) {
+                            c += paramGap(targets[(i + sft) % nRank].param,
+                                          mv[i].first);
+                        }
+                        if (c < bestCost) {
+                            bestCost = c;
+                            bestShift = sft;
+                        }
+                    }
+                }
+                for (int i = 0; i < nRank; ++i) {
+                    const EdgeParamPoint& tgt =
+                        targets[(i + bestShift) % nRank];
+                    mesh.vertices[mv[i].second] = mesh.vertices[tgt.vert];
+                    movers[mv[i].second] = tgt.param;
+                }
+                continue;
+            }
+
             // Snap every mover to the nearest target (position + param).
             struct SnapPick {
                 uint32_t v;
@@ -3858,15 +3907,28 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                         ? std::fmod((forward ? pw - pu : pu - pw) + period,
                                     period)
                         : std::abs(pw - pu);
-                    // The segment must actually LIE on this edge inside
-                    // (pu,pw): a border segment of a DIFFERENT edge can
-                    // still have both endpoints on this curve — the two
-                    // ends of a nearly-closed arc are joined by its tiny
-                    // closing edge — and inserting the chain there wraps
-                    // the whole arc into that polygon a second time.
-                    // Verify with the segment's PRE-SNAP midpoint: it must
-                    // project onto the curve well inside the span.
-                    {
+                    std::vector<const EdgeParamPoint*> between;
+                    for (const EdgeParamPoint& cand : targets) {
+                        double rel = closed
+                            ? std::fmod((forward ? cand.param - pu
+                                                 : pu - cand.param) + period,
+                                        period)
+                            : (forward ? cand.param - pu : pu - cand.param);
+                        if (rel > 1e-12 && rel < span - 1e-12) {
+                            between.push_back(&cand);
+                        }
+                    }
+                    // A segment swallowing SEVERAL targets must actually
+                    // LIE on this edge inside (pu,pw): a border segment of
+                    // a DIFFERENT edge can still have both endpoints on
+                    // this curve — the two ends of a nearly-closed arc are
+                    // joined by its tiny closing edge — and inserting the
+                    // chain there wraps the whole arc into that polygon a
+                    // second time. Verified with the PRE-SNAP midpoint;
+                    // one-or-two-target insertions skip the check (short
+                    // spans put the midpoint near the boundary from sheer
+                    // projection noise and were being starved).
+                    if (between.size() >= 3) {
                         const gp_Pnt& a = moverOrig.at(u);
                         const gp_Pnt& b = moverOrig.at(w);
                         gp_Pnt mid((a.X() + b.X()) / 2, (a.Y() + b.Y()) / 2,
@@ -3890,17 +3952,6 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                                 "(midpoint rel %.3g of span %.4g)",
                                 fid, eid, u, w, relm / span, span);
                             continue;
-                        }
-                    }
-                    std::vector<const EdgeParamPoint*> between;
-                    for (const EdgeParamPoint& cand : targets) {
-                        double rel = closed
-                            ? std::fmod((forward ? cand.param - pu
-                                                 : pu - cand.param) + period,
-                                        period)
-                            : (forward ? cand.param - pu : pu - cand.param);
-                        if (rel > 1e-12 && rel < span - 1e-12) {
-                            between.push_back(&cand);
                         }
                     }
                     std::sort(between.begin(), between.end(),
