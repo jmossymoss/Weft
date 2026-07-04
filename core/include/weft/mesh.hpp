@@ -44,6 +44,11 @@ struct PolyMesh {
     size_t countNgons() const;
 };
 
+// Fan-triangulate every polygon in place (quads, n-gons). For export
+// targets that want pure triangles; n-gon fans assume convex rings,
+// which is what the meshers emit.
+void triangulateMesh(PolyMesh& mesh);
+
 // Merge vertices closer than `tolerance` and drop degenerate polygons.
 // When `groups` is given (parallel to vertices), only vertices in the same
 // group merge — used to keep separate solids of an assembly from fusing

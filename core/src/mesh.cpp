@@ -110,6 +110,45 @@ void weldVertices(PolyMesh& mesh, double tolerance,
     mesh.polygonPartId = std::move(polyPart);
 }
 
+void triangulateMesh(PolyMesh& mesh) {
+    std::vector<std::vector<uint32_t>> polys;
+    std::vector<int> polyFace, polyPart;
+    const bool hasParts = mesh.polygonPartId.size() == mesh.polygons.size();
+    polys.reserve(mesh.polygons.size() * 2);
+    for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+        const auto& poly = mesh.polygons[p];
+        auto emit = [&](std::vector<uint32_t> tri) {
+            polys.push_back(std::move(tri));
+            polyFace.push_back(mesh.polygonFaceId[p]);
+            if (hasParts) polyPart.push_back(mesh.polygonPartId[p]);
+        };
+        if (poly.size() <= 4) {
+            for (size_t i = 1; i + 1 < poly.size(); ++i) {
+                emit({poly[0], poly[i], poly[i + 1]});
+            }
+            continue;
+        }
+        // Boundary n-gons routinely have collinear runs along their
+        // sides; a corner fan would emit zero-area slivers there. Fan
+        // from the centroid instead (exact for the planar rings the
+        // meshers produce).
+        std::array<double, 3> c{0, 0, 0};
+        for (uint32_t idx : poly) {
+            for (int k = 0; k < 3; ++k) c[k] += mesh.vertices[idx][k];
+        }
+        for (int k = 0; k < 3; ++k) c[k] /= double(poly.size());
+        uint32_t center = static_cast<uint32_t>(mesh.vertices.size());
+        mesh.vertices.push_back(c);
+        mesh.anchors.push_back(Anchor{});
+        for (size_t i = 0; i < poly.size(); ++i) {
+            emit({poly[i], poly[(i + 1) % poly.size()], center});
+        }
+    }
+    mesh.polygons = std::move(polys);
+    mesh.polygonFaceId = std::move(polyFace);
+    mesh.polygonPartId = std::move(polyPart);
+}
+
 using detail::cadNormal;
 
 void writeObj(const PolyMesh& mesh, const std::string& path,

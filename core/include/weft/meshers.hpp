@@ -45,11 +45,14 @@ struct FaceMeshSettings {
     // over-refine faces whose borders carry a few tiny segments; needs a
     // smarter local target before it earns the default.
     bool interiorRefine = false;
-    // Game-topology minimalism (plan §1/§4.1): a flat face doesn't need an
-    // interior grid. When set, a planar grid-safe face emits one boundary
-    // n-gon instead — border vertices stay density-matched, so neighbours
-    // still weld watertight, and the engine triangulates however it likes.
-    bool minimal = false;
+    // Game-topology minimalism (plan §1/§4.1): flat faces don't need
+    // interior topology — quad flow only pays off where geometry curves
+    // or deforms (fillets, cylinders, freeform). Default: a planar
+    // grid-safe face emits one boundary n-gon (border stays density-
+    // matched, so neighbours weld watertight) and trimmed planar faces
+    // keep paired triangulation without midpoint subdivision. Set false
+    // to get full quad grids on flat faces again.
+    bool minimal = true;
 };
 
 struct GenerationSettings {

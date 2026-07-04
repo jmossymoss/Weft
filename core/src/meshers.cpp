@@ -390,9 +390,9 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     if (parametricGridFits(face, surf, std::max(1, s.gridU),
                            std::max(1, s.gridV))) {
         plan.kind = MesherKind::PlanarGrid;
-        // Flat panels collapse to one boundary n-gon on request; the border
+        // Flat panels collapse to one boundary n-gon by default; the border
         // still carries the density-matched vertices, so neighbours weld.
-        if (s.minimal && surf.GetType() == GeomAbs_Plane) {
+        if (s.minimal && surf.GetType() == GeomAbs_Plane && !info.isFillet) {
             plan.kind = MesherKind::MinimalNGon;
         }
         if (info.isFillet) {
@@ -1322,7 +1322,7 @@ void refineInterior(TriSoup& s, const std::vector<BoundaryChain>& chains,
 void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                   int faceId, const FaceMeshSettings& s, const Model& model,
                   const std::map<int, EdgePolyline>& canonical,
-                  MeshBuilder& out) {
+                  const std::set<int>& noSplitEdges, MeshBuilder& out) {
     TopLoc_Location loc;
     Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, loc);
     if (tri.IsNull()) {
@@ -1434,7 +1434,9 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
             int a = chain.nodes[i], b = chain.nodes[i + 1];
             auto key = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
             boundarySeg[key] = {chain.edgeId, chain.params[i],
-                                chain.params[i + 1], chain.fromParametric};
+                                chain.params[i + 1],
+                                chain.fromParametric ||
+                                    noSplitEdges.count(chain.edgeId) > 0};
         }
         if (chain.closedLoop && chain.nodes.size() >= 2) {
             // The wrap segment of a phase-shifted rim. Always authored by
@@ -1482,6 +1484,13 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         if (!chain.fromParametric) { pureParametricBorder = false; break; }
     }
     if (chains.empty()) pureParametricBorder = false;
+    // Flat trimmed faces don't earn midpoint subdivision either (minimal
+    // topology on planes); their boundary segments then never split, and
+    // curved neighbours are told not to split those edges via noSplitEdges
+    // so the border stays paired.
+    if (s.minimal && surf.GetType() == GeomAbs_Plane) {
+        pureParametricBorder = true;
+    }
 
     std::vector<std::vector<int>> paired;  // local rings, tris and quads
 
@@ -1953,6 +1962,21 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
 
     // Phase 2: triangulated faces, borders conformed to the canonical
     // polylines (both the parametric ones and the whole-shape ones).
+    // Faces that skip midpoint subdivision (flat-minimal planes, pure-tris
+    // overrides) pin their edges: subdividing neighbours must not split
+    // the shared segments, or the border T-junctions open.
+    std::set<int> noSplitEdges;
+    for (int fid = 1; fid <= model.faceCount(); ++fid) {
+        if (plans.at(fid).kind != MesherKind::Fallback) continue;
+        const FaceMeshSettings& s = settings.forFace(fid);
+        const bool subdivides =
+            s.quadDominant &&
+            !(s.minimal && BRepAdaptor_Surface(TopoDS::Face(model.faces(fid)))
+                                   .GetType() == GeomAbs_Plane);
+        if (subdivides) continue;
+        const FaceInfo& info = analysis.faces[fid - 1];
+        for (int eid : info.edgeIds) noSplitEdges.insert(eid);
+    }
     for (int fid = 1; fid <= model.faceCount(); ++fid) {
         const FacePlan& plan = plans.at(fid);
         if (plan.kind != MesherKind::Fallback) continue;
@@ -1961,7 +1985,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         BRepAdaptor_Surface surf(face);
         out.setGroup(weldGroup[fid]);
         out.setPart(partOfFace[fid]);
-        meshFallback(face, surf, fid, s, model, canonical, out);
+        meshFallback(face, surf, fid, s, model, canonical, noSplitEdges, out);
         if (report) {
             report->faceMesher[fid] = s.quadDominant ? MesherKind::QuadDominant
                                                      : MesherKind::Fallback;

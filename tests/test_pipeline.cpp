@@ -103,6 +103,7 @@ void testCylinder() {
 
     // Exact division control: 12 radial, 3 axial, n-gon caps.
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy grid counts
     gs.defaults.radial = 12;
     gs.defaults.axial = 3;
     gs.defaults.cap = weft::CapStyle::NGon;
@@ -139,6 +140,7 @@ void testCylinder() {
         if (f.type == weft::SurfaceType::Cylinder) sideFaceId = f.id;
     }
     weft::GenerationSettings gsOverride;
+    gsOverride.defaults.minimal = false;  // legacy grid counts
     gsOverride.defaults.radial = 12;
     gsOverride.defaults.axial = 3;
     weft::FaceMeshSettings side = gsOverride.defaults;
@@ -155,6 +157,7 @@ void testCylinder() {
     // Per-edge pin: force one circle edge to 20; the whole matched group
     // (side ring + both caps) must follow.
     weft::GenerationSettings gsEdge;
+    gsEdge.defaults.minimal = false;  // legacy grid counts
     gsEdge.defaults.radial = 12;
     gsEdge.defaults.axial = 2;
     int circleEdgeId = 0;
@@ -203,6 +206,7 @@ void testBox() {
     }
 
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy grid counts
     gs.defaults.gridU = 3;
     gs.defaults.gridV = 3;
     weft::GenerationReport report;
@@ -227,6 +231,7 @@ void testCone() {
     weft::Analysis a = weft::analyze(model);
 
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy grid counts
     gs.defaults.radial = 12;
     gs.defaults.axial = 3;
     weft::GenerationReport report;
@@ -250,6 +255,7 @@ void testSphere() {
     weft::Analysis a = weft::analyze(model);
 
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy grid counts
     gs.defaults.radial = 16;
     gs.defaults.axial = 6;
     weft::PolyMesh mesh = weft::generate(model, a, gs);
@@ -270,6 +276,7 @@ void testTorus() {
     weft::Analysis a = weft::analyze(model);
 
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy grid counts
     gs.defaults.radial = 24;
     gs.defaults.axial = 8;
     weft::PolyMesh mesh = weft::generate(model, a, gs);
@@ -292,6 +299,7 @@ void testBoxDensityMatching() {
     // One face asks for a denser grid; the shared-edge groups must drag the
     // neighbouring faces along so the box stays watertight.
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy grid counts
     gs.defaults.gridU = 3;
     gs.defaults.gridV = 3;
     weft::FaceMeshSettings dense = gs.defaults;
@@ -332,6 +340,7 @@ void testMinimalNGon() {
     weft::Analysis a = weft::analyze(model);
 
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy grid counts
     gs.defaults.gridU = 3;
     gs.defaults.gridV = 3;
     weft::FaceMeshSettings flat = gs.defaults;
@@ -354,6 +363,7 @@ void testMinimalNGon() {
     // All-minimal box: 6 n-gons, still watertight — the game-topology
     // "flat panel needs no interior" case taken to its extreme.
     weft::GenerationSettings gsAll;
+    gsAll.defaults.minimal = false;  // legacy grid counts
     gsAll.defaults.gridU = 3;
     gsAll.defaults.gridV = 3;
     gsAll.defaults.minimal = true;
@@ -376,6 +386,7 @@ void testSurfaceConstrainedEditing() {
     }
 
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy grid counts
     gs.defaults.radial = 12;
     gs.defaults.axial = 2;
     weft::PolyMesh mesh = weft::generate(model, a, gs);
@@ -460,6 +471,7 @@ void testFillet() {
 
     // 5 support loops across the blend, density-matched 4 along its length.
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy grid counts
     gs.defaults.gridU = 4;
     gs.defaults.gridV = 4;
     gs.defaults.filletLoops = 5;
@@ -583,6 +595,7 @@ void testBoss() {
     for (const auto& f : a.faces) CHECK(!f.isHole);
 
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy grid counts
     gs.defaults.gridU = 3;
     gs.defaults.gridV = 3;
     gs.defaults.junctionRings = 2;
@@ -629,6 +642,7 @@ void testHolePlate() {
     CHECK_EQ(holes, 1);
 
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy grid counts
     gs.defaults.gridU = 4;
     gs.defaults.gridV = 4;
     gs.defaults.axial = 2;
@@ -666,6 +680,7 @@ void testNotch() {
     weft::Analysis a = weft::analyze(model);
 
     weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // legacy grid counts
     gs.defaults.gridU = 3;
     gs.defaults.gridV = 3;
     weft::GenerationReport report;
@@ -722,6 +737,27 @@ void testParts() {
     CHECK_EQ(mesh.polygonPartId.size(), mesh.polygons.size());
     std::set<int> parts(mesh.polygonPartId.begin(), mesh.polygonPartId.end());
     CHECK_EQ(parts.size(), 2u);
+}
+
+// Default game-topology policy: flat panels are boundary n-gons, not
+// quad grids — a box is exactly 6 n-gons and still watertight.
+void testMinimalDefault() {
+    std::printf("-- minimal flat faces by default --\n");
+    std::string stepPath = tmpPath("weft_test_mindef.step");
+    weft::writeStep(weft::makeFixture("box"), stepPath);
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis a = weft::analyze(model);
+    weft::PolyMesh mesh = weft::generate(model, a, weft::GenerationSettings{});
+    CHECK_EQ(mesh.countNgons() + mesh.countQuads(), 6u);
+    CHECK_EQ(mesh.countTris(), 0u);
+    CHECK(isWatertight(mesh));
+
+    // Triangulate-on-export: pure tris, still watertight.
+    weft::triangulateMesh(mesh);
+    CHECK_EQ(mesh.countNgons(), 0u);
+    CHECK_EQ(mesh.countQuads(), 0u);
+    CHECK(mesh.countTris() > 0);
+    CHECK(isWatertight(mesh));
 }
 
 // Every fixture, meshed with defaults, must come out bake-ready: closed,
@@ -787,6 +823,7 @@ int main() {
     RUN(testHolePlate);
     RUN(testNotch);
     RUN(testParts);
+    RUN(testMinimalDefault);
     RUN(testAllFixturesValidate);
     if (failures) {
         std::printf("\n%d FAILURE(S)\n", failures);
