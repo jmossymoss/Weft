@@ -1,8 +1,20 @@
 #include "weft/mesh.hpp"
+#include "weft/model.hpp"
+
+#include <BRepAdaptor_Surface.hxx>
+#include <GeomAPI_ProjectPointOnSurf.hxx>
+#include <Geom_Surface.hxx>
+#include <BRep_Tool.hxx>
+#include <TopAbs_Orientation.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Face.hxx>
+#include <gp_Pnt.hxx>
+#include <gp_Vec.hxx>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <map>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -93,13 +105,114 @@ void weldVertices(PolyMesh& mesh, double tolerance,
     mesh.polygonFaceId = std::move(polyFace);
 }
 
-void writeObj(const PolyMesh& mesh, const std::string& path) {
+namespace {
+
+// Exact surface normal of `fid` at a mesh vertex: through the vertex's
+// anchor when it belongs to that face, otherwise by projecting the point
+// onto the face (border vertices keep the anchor of whichever face
+// emitted them first).
+bool cadNormal(const PolyMesh& mesh, const Model& model, uint32_t idx,
+               int fid, std::map<int, BRepAdaptor_Surface>& cache,
+               std::array<double, 3>& out) {
+    if (fid < 1 || fid > model.faceCount()) return false;
+    const TopoDS_Face face = TopoDS::Face(model.faces(fid));
+    auto it = cache.find(fid);
+    if (it == cache.end()) {
+        it = cache.emplace(fid, BRepAdaptor_Surface(face)).first;
+    }
+    BRepAdaptor_Surface& surf = it->second;
+
+    double u = 0, v = 0;
+    const Anchor& a = mesh.anchors[idx];
+    if (a.faceId == fid) {
+        u = a.u;
+        v = a.v;
+    } else {
+        Handle(Geom_Surface) hs = BRep_Tool::Surface(face);
+        if (hs.IsNull()) return false;
+        gp_Pnt p(mesh.vertices[idx][0], mesh.vertices[idx][1],
+                 mesh.vertices[idx][2]);
+        GeomAPI_ProjectPointOnSurf proj(p, hs);
+        if (proj.NbPoints() < 1) return false;
+        proj.LowerDistanceParameters(u, v);
+    }
+    gp_Pnt p;
+    gp_Vec du, dv;
+    surf.D1(u, v, p, du, dv);
+    gp_Vec n = du.Crossed(dv);
+    if (n.Magnitude() < 1e-14) return false;  // pole/apex: no unique normal
+    n.Normalize();
+    if (face.Orientation() == TopAbs_REVERSED) n.Reverse();
+    out = {n.X(), n.Y(), n.Z()};
+    return true;
+}
+
+}  // namespace
+
+void writeObj(const PolyMesh& mesh, const std::string& path,
+              const Model* model) {
     FILE* f = std::fopen(path.c_str(), "w");
     if (!f) throw std::runtime_error("cannot open for writing: " + path);
 
-    std::fprintf(f, "# weft phase-0 export\n");
+    std::fprintf(f, "# weft export\n");
     for (const auto& v : mesh.vertices) {
         std::fprintf(f, "v %.9g %.9g %.9g\n", v[0], v[1], v[2]);
+    }
+
+    // Exact CAD normals, one per used (vertex, face) pair. Corners whose
+    // normal can't be evaluated (poles, projection misses) reuse index 0's
+    // slot semantics by falling back to no-normal for the whole polygon.
+    std::map<std::pair<uint32_t, int>, int> normalIndex;
+    if (model) {
+        std::map<int, BRepAdaptor_Surface> cache;
+        std::vector<std::array<double, 3>> normals;
+        std::vector<std::vector<int>> polyNormals(mesh.polygons.size());
+        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+            const int fid = mesh.polygonFaceId[p];
+            std::vector<int>& ni = polyNormals[p];
+            ni.reserve(mesh.polygons[p].size());
+            for (uint32_t idx : mesh.polygons[p]) {
+                auto key = std::make_pair(idx, fid);
+                auto it = normalIndex.find(key);
+                if (it == normalIndex.end()) {
+                    std::array<double, 3> n;
+                    int slot = -1;
+                    if (cadNormal(mesh, *model, idx, fid, cache, n)) {
+                        normals.push_back(n);
+                        slot = static_cast<int>(normals.size());  // 1-based
+                    }
+                    it = normalIndex.emplace(key, slot).first;
+                }
+                ni.push_back(it->second);
+            }
+        }
+        for (const auto& n : normals) {
+            std::fprintf(f, "vn %.6g %.6g %.6g\n", n[0], n[1], n[2]);
+        }
+
+        int currentGroup = -1;
+        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+            if (mesh.polygonFaceId[p] != currentGroup) {
+                currentGroup = mesh.polygonFaceId[p];
+                std::fprintf(f, "g face_%d\n", currentGroup);
+            }
+            bool full = true;
+            for (int ni : polyNormals[p]) {
+                if (ni < 1) full = false;
+            }
+            std::fprintf(f, "f");
+            for (size_t c = 0; c < mesh.polygons[p].size(); ++c) {
+                if (full) {
+                    std::fprintf(f, " %u//%d", mesh.polygons[p][c] + 1,
+                                 polyNormals[p][c]);
+                } else {
+                    std::fprintf(f, " %u", mesh.polygons[p][c] + 1);
+                }
+            }
+            std::fprintf(f, "\n");
+        }
+        std::fclose(f);
+        return;
     }
 
     // Group polygons by source B-rep face so CAD face IDs survive into the

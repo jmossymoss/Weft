@@ -41,6 +41,10 @@ void usage() {
         "  weft mesh <in.step> -o <out.obj> [options]\n"
         "      generate topology and export OBJ (groups carry face IDs)\n"
         "    --validate        run the bake-ready checks after meshing\n"
+        "    --no-normals      skip exact CAD vertex normals in the OBJ\n"
+        "                      (default: every corner carries its face's\n"
+        "                      true surface normal — sharp edges split,\n"
+        "                      fillets shade smooth, ready for baking)\n"
         "    --radial N        divisions around cylinders/caps (default 16)\n"
         "    --axial N         divisions along cylinder axes  (default 4)\n"
         "    --grid NxM        planar/parametric grid divisions (default 4x4)\n"
@@ -133,6 +137,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     std::string output;
     std::string recipeOut;
     bool validate = validateOnly;
+    bool noNormals = false;
     weft::Recipe recipe;
     weft::GenerationSettings& gs = recipe.settings;
     std::vector<std::string> faceSpecs;
@@ -153,6 +158,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         else if (a == "--rings") gs.defaults.junctionRings = std::stoi(next());
         else if (a == "--pure-tris") gs.defaults.quadDominant = false;
         else if (a == "--validate") validate = true;
+        else if (a == "--no-normals") noNormals = true;
         else if (a == "--recipe") recipe = weft::loadRecipe(next());
         else if (a == "--save-recipe") recipeOut = next();
         else if (a == "--op-loop") {
@@ -214,7 +220,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
     weft::applyOps(mesh, model, recipe.ops);
     if (!output.empty()) {
-        weft::writeObj(mesh, output);
+        weft::writeObj(mesh, output, noNormals ? nullptr : &model);
         std::printf("%s -> %s\n", input.c_str(), output.c_str());
     } else {
         std::printf("%s\n", input.c_str());

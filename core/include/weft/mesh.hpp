@@ -44,6 +44,14 @@ void weldVertices(PolyMesh& mesh, double tolerance,
 
 // Write Wavefront OBJ. Polygons are grouped per B-rep face
 // ("g face_<id>") so CAD face IDs survive into the DCC.
-void writeObj(const PolyMesh& mesh, const std::string& path);
+//
+// With a Model, every polygon corner gets an exact CAD normal ("vn",
+// f v//n): the true surface normal of the polygon's OWN B-rep face at
+// that corner. Because corners of polygons from different faces carry
+// each face's normal, tangent joins (fillets) shade smooth and sharp
+// edges stay sharp — split normals for free, no angle heuristics.
+struct Model;  // model.hpp; kept out of this header to spare OCCT includes
+void writeObj(const PolyMesh& mesh, const std::string& path,
+              const Model* model = nullptr);
 
 }  // namespace weft
