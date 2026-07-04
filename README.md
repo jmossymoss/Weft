@@ -100,6 +100,13 @@ Headless C++ core + CLI covering the plan's Phases 0–3 essentials:
 - Binary glTF export (`-o out.glb`): fan-triangulated, exact CAD normals,
   and the source face ID on every vertex as the `_WEFT_FACE_ID` custom
   attribute — drop the same asset into engines that speak glTF
+- **Assemblies split into parts**: each body (face-adjacency component)
+  becomes its own OBJ object (`o part_N`) / glTF node, so a STEP assembly
+  arrives in Blender or an engine as parts, not one fused blob
+- **LOD tiers from one setup** (`--lods 1,0.5,0.25`): one control setup
+  emits a whole density chain — divisions scale, chord tolerance follows,
+  manual ops replay into every tier (they anchor to the CAD, not to mesh
+  vertices), and every tier stays watertight
 
 ## The app
 

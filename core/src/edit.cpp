@@ -218,6 +218,8 @@ int insertLoop(PolyMesh& mesh, const Model& model, const ManualOp& op) {
     // quads in two along their split pair.
     std::vector<std::vector<uint32_t>> polys;
     std::vector<int> polyFace;
+    std::vector<int> polyPart;
+    const bool hasParts = mesh.polygonPartId.size() == mesh.polygons.size();
     polys.reserve(mesh.polygons.size() + walk.crossed.size());
     for (size_t p = 0; p < mesh.polygons.size(); ++p) {
         const auto& poly = mesh.polygons[p];
@@ -233,6 +235,7 @@ int insertLoop(PolyMesh& mesh, const Model& model, const ManualOp& op) {
         if (crossedIt == walk.crossed.end()) {
             polys.push_back(std::move(ring));
             polyFace.push_back(mesh.polygonFaceId[p]);
+            if (hasParts) polyPart.push_back(mesh.polygonPartId[p]);
             continue;
         }
         uint32_t m1 = walk.splits[crossedIt->second.first];
@@ -255,9 +258,14 @@ int insertLoop(PolyMesh& mesh, const Model& model, const ManualOp& op) {
         polyFace.push_back(mesh.polygonFaceId[p]);
         polys.push_back(std::move(half2));
         polyFace.push_back(mesh.polygonFaceId[p]);
+        if (hasParts) {
+            polyPart.push_back(mesh.polygonPartId[p]);
+            polyPart.push_back(mesh.polygonPartId[p]);
+        }
     }
     mesh.polygons = std::move(polys);
     mesh.polygonFaceId = std::move(polyFace);
+    mesh.polygonPartId = std::move(polyPart);
     return static_cast<int>(walk.crossed.size());
 }
 

@@ -26,6 +26,11 @@ struct PolyMesh {
     std::vector<Anchor> anchors;                  // parallel to vertices
     std::vector<std::vector<uint32_t>> polygons;  // CCW indices, tri/quad/n-gon
     std::vector<int> polygonFaceId;               // B-rep FaceId per polygon
+    // Part id per polygon (1-based, dense): connected components of the
+    // B-rep face-adjacency graph — the assembly's individual bodies.
+    // Exporters split output by part so assemblies arrive as parts, not
+    // as one fused blob. Empty = single part.
+    std::vector<int> polygonPartId;
 
     size_t vertexCount() const { return vertices.size(); }
     size_t polygonCount() const { return polygons.size(); }

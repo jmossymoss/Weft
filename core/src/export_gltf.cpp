@@ -37,11 +37,26 @@ void pad4(std::vector<uint8_t>& buf, uint8_t filler) {
 
 void writeGlb(const PolyMesh& mesh, const std::string& path,
               const Model* model) {
+    // One glTF node+mesh per part, so assemblies import as bodies.
+    const bool hasParts = mesh.polygonPartId.size() == mesh.polygons.size();
+    std::map<int, std::vector<size_t>> polysOfPart;
+    for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+        polysOfPart[hasParts ? mesh.polygonPartId[p] : 1].push_back(p);
+    }
+
+    struct Part {
+        int id;
+        std::vector<SplitVertex> verts;
+        std::vector<uint32_t> indices;
+    };
+    std::vector<Part> parts;
+    std::map<int, BRepAdaptor_Surface> cache;
+
+    for (const auto& [partId, polyIdxs] : polysOfPart) {
     // Split vertices per (vertex, face) and fan-triangulate the polygons.
     std::map<std::pair<uint32_t, int>, uint32_t> splitOf;
     std::vector<SplitVertex> verts;
     std::vector<uint32_t> indices;
-    std::map<int, BRepAdaptor_Surface> cache;
 
     auto splitVertex = [&](uint32_t idx, int fid) {
         auto key = std::make_pair(idx, fid);
@@ -65,7 +80,7 @@ void writeGlb(const PolyMesh& mesh, const std::string& path,
         return slot;
     };
 
-    for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+    for (size_t p : polyIdxs) {
         const auto& poly = mesh.polygons[p];
         const int fid = mesh.polygonFaceId[p];
         if (poly.size() < 3) continue;
@@ -100,66 +115,114 @@ void writeGlb(const PolyMesh& mesh, const std::string& path,
             }
         }
     }
-    if (verts.empty()) throw std::runtime_error("writeGlb: empty mesh");
+    if (!verts.empty()) {
+        parts.push_back({partId, std::move(verts), std::move(indices)});
+    }
+    }  // per part
+    if (parts.empty()) throw std::runtime_error("writeGlb: empty mesh");
 
-    // Binary chunk: positions, normals, face ids, indices (each 4-aligned).
+    // Binary chunk: per part, positions / normals / face ids / indices,
+    // each block 4-aligned. One node + mesh + primitive per part.
     std::vector<uint8_t> bin;
-    float pmin[3] = {std::numeric_limits<float>::max(),
-                     std::numeric_limits<float>::max(),
-                     std::numeric_limits<float>::max()};
-    float pmax[3] = {-std::numeric_limits<float>::max(),
-                     -std::numeric_limits<float>::max(),
-                     -std::numeric_limits<float>::max()};
-    const size_t posOff = bin.size();
-    for (const SplitVertex& v : verts) {
-        float p3[3] = {v.px, v.py, v.pz};
-        for (int i = 0; i < 3; ++i) {
-            pmin[i] = std::min(pmin[i], p3[i]);
-            pmax[i] = std::max(pmax[i], p3[i]);
+    std::string views, accessors, meshes, nodes, roots;
+    char buf[512];
+    int acc = 0, view = 0;
+    for (size_t pi = 0; pi < parts.size(); ++pi) {
+        const Part& part = parts[pi];
+        float pmin[3] = {std::numeric_limits<float>::max(),
+                         std::numeric_limits<float>::max(),
+                         std::numeric_limits<float>::max()};
+        float pmax[3] = {-std::numeric_limits<float>::max(),
+                         -std::numeric_limits<float>::max(),
+                         -std::numeric_limits<float>::max()};
+        const size_t posOff = bin.size();
+        for (const SplitVertex& v : part.verts) {
+            float p3[3] = {v.px, v.py, v.pz};
+            for (int i = 0; i < 3; ++i) {
+                pmin[i] = std::min(pmin[i], p3[i]);
+                pmax[i] = std::max(pmax[i], p3[i]);
+            }
+            append(bin, p3, sizeof p3);
         }
-        append(bin, p3, sizeof p3);
-    }
-    const size_t normOff = bin.size();
-    for (const SplitVertex& v : verts) {
-        float n3[3] = {v.nx, v.ny, v.nz};
-        append(bin, n3, sizeof n3);
-    }
-    const size_t fidOff = bin.size();
-    for (const SplitVertex& v : verts) {
-        append(bin, &v.faceId, sizeof v.faceId);
-    }
-    const size_t idxOff = bin.size();
-    append(bin, indices.data(), indices.size() * sizeof(uint32_t));
-    pad4(bin, 0);
+        const size_t normOff = bin.size();
+        for (const SplitVertex& v : part.verts) {
+            float n3[3] = {v.nx, v.ny, v.nz};
+            append(bin, n3, sizeof n3);
+        }
+        const size_t fidOff = bin.size();
+        for (const SplitVertex& v : part.verts) {
+            append(bin, &v.faceId, sizeof v.faceId);
+        }
+        const size_t idxOff = bin.size();
+        append(bin, part.indices.data(), part.indices.size() * sizeof(uint32_t));
+        pad4(bin, 0);
 
-    char json[4096];
-    std::snprintf(json, sizeof json,
-        "{\"asset\":{\"version\":\"2.0\",\"generator\":\"weft\"},"
-        "\"scene\":0,\"scenes\":[{\"nodes\":[0]}],"
-        "\"nodes\":[{\"mesh\":0,\"name\":\"weft\"}],"
-        "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0,"
-        "\"NORMAL\":1,\"_WEFT_FACE_ID\":2},\"indices\":3,\"mode\":4}]}],"
-        "\"buffers\":[{\"byteLength\":%zu}],"
-        "\"bufferViews\":["
-        "{\"buffer\":0,\"byteOffset\":%zu,\"byteLength\":%zu,\"target\":34962},"
-        "{\"buffer\":0,\"byteOffset\":%zu,\"byteLength\":%zu,\"target\":34962},"
-        "{\"buffer\":0,\"byteOffset\":%zu,\"byteLength\":%zu,\"target\":34962},"
-        "{\"buffer\":0,\"byteOffset\":%zu,\"byteLength\":%zu,\"target\":34963}],"
-        "\"accessors\":["
-        "{\"bufferView\":0,\"componentType\":5126,\"count\":%zu,\"type\":\"VEC3\","
-        "\"min\":[%.9g,%.9g,%.9g],\"max\":[%.9g,%.9g,%.9g]},"
-        "{\"bufferView\":1,\"componentType\":5126,\"count\":%zu,\"type\":\"VEC3\"},"
-        "{\"bufferView\":2,\"componentType\":5126,\"count\":%zu,\"type\":\"SCALAR\"},"
-        "{\"bufferView\":3,\"componentType\":5125,\"count\":%zu,\"type\":\"SCALAR\"}]}",
-        bin.size(),
-        posOff, normOff - posOff,
-        normOff, fidOff - normOff,
-        fidOff, idxOff - fidOff,
-        idxOff, indices.size() * sizeof(uint32_t),
-        verts.size(), pmin[0], pmin[1], pmin[2], pmax[0], pmax[1], pmax[2],
-        verts.size(), verts.size(), indices.size());
+        auto addView = [&](size_t off, size_t len, int target) {
+            std::snprintf(buf, sizeof buf,
+                          "%s{\"buffer\":0,\"byteOffset\":%zu,"
+                          "\"byteLength\":%zu,\"target\":%d}",
+                          view ? "," : "", off, len, target);
+            views += buf;
+            return view++;
+        };
+        const int vPos = addView(posOff, normOff - posOff, 34962);
+        const int vNorm = addView(normOff, fidOff - normOff, 34962);
+        const int vFid = addView(fidOff, idxOff - fidOff, 34962);
+        const int vIdx =
+            addView(idxOff, part.indices.size() * sizeof(uint32_t), 34963);
 
-    std::vector<uint8_t> jsonChunk(json, json + std::strlen(json));
+        std::snprintf(buf, sizeof buf,
+                      "%s{\"bufferView\":%d,\"componentType\":5126,"
+                      "\"count\":%zu,\"type\":\"VEC3\","
+                      "\"min\":[%.9g,%.9g,%.9g],\"max\":[%.9g,%.9g,%.9g]}",
+                      acc ? "," : "", vPos, part.verts.size(), pmin[0], pmin[1],
+                      pmin[2], pmax[0], pmax[1], pmax[2]);
+        accessors += buf;
+        const int aPos = acc++;
+        std::snprintf(buf, sizeof buf,
+                      ",{\"bufferView\":%d,\"componentType\":5126,"
+                      "\"count\":%zu,\"type\":\"VEC3\"}",
+                      vNorm, part.verts.size());
+        accessors += buf;
+        const int aNorm = acc++;
+        std::snprintf(buf, sizeof buf,
+                      ",{\"bufferView\":%d,\"componentType\":5126,"
+                      "\"count\":%zu,\"type\":\"SCALAR\"}",
+                      vFid, part.verts.size());
+        accessors += buf;
+        const int aFid = acc++;
+        std::snprintf(buf, sizeof buf,
+                      ",{\"bufferView\":%d,\"componentType\":5125,"
+                      "\"count\":%zu,\"type\":\"SCALAR\"}",
+                      vIdx, part.indices.size());
+        accessors += buf;
+        const int aIdx = acc++;
+
+        std::snprintf(buf, sizeof buf,
+                      "%s{\"name\":\"part_%d\",\"primitives\":[{"
+                      "\"attributes\":{\"POSITION\":%d,\"NORMAL\":%d,"
+                      "\"_WEFT_FACE_ID\":%d},\"indices\":%d,\"mode\":4}]}",
+                      pi ? "," : "", part.id, aPos, aNorm, aFid, aIdx);
+        meshes += buf;
+        std::snprintf(buf, sizeof buf,
+                      "%s{\"mesh\":%zu,\"name\":\"part_%d\"}",
+                      pi ? "," : "", pi, part.id);
+        nodes += buf;
+        std::snprintf(buf, sizeof buf, "%s%zu", pi ? "," : "", pi);
+        roots += buf;
+    }
+
+    std::string json = "{\"asset\":{\"version\":\"2.0\","
+                       "\"generator\":\"weft\"},\"scene\":0,"
+                       "\"scenes\":[{\"nodes\":[" + roots + "]}],"
+                       "\"nodes\":[" + nodes + "],"
+                       "\"meshes\":[" + meshes + "],"
+                       "\"buffers\":[{\"byteLength\":" +
+                       std::to_string(bin.size()) + "}],"
+                       "\"bufferViews\":[" + views + "],"
+                       "\"accessors\":[" + accessors + "]}";
+
+    std::vector<uint8_t> jsonChunk(json.begin(), json.end());
     pad4(jsonChunk, ' ');
 
     FILE* f = std::fopen(path.c_str(), "wb");

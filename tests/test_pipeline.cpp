@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <map>
+#include <set>
 #include <string>
 
 static int failures = 0;
@@ -707,6 +708,22 @@ void testNotch() {
     CHECK(fine.polygonCount() > mesh.polygonCount());
 }
 
+// The demo fixture is a compound of two separate bodies (cylinder + box):
+// every polygon must carry a part id and both parts must be present, so
+// exporters can split assemblies into objects.
+void testParts() {
+    std::printf("-- parts (assembly bodies) --\n");
+    std::string stepPath = tmpPath("weft_test_parts.step");
+    weft::writeStep(weft::makeFixture("demo"), stepPath);
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis a = weft::analyze(model);
+    weft::PolyMesh mesh = weft::generate(model, a, weft::GenerationSettings{});
+
+    CHECK_EQ(mesh.polygonPartId.size(), mesh.polygons.size());
+    std::set<int> parts(mesh.polygonPartId.begin(), mesh.polygonPartId.end());
+    CHECK_EQ(parts.size(), 2u);
+}
+
 // Every fixture, meshed with defaults, must come out bake-ready: closed,
 // consistently wound, with no degenerate polygons.
 void testAllFixturesValidate() {
@@ -769,6 +786,7 @@ int main() {
     RUN(testBoss);
     RUN(testHolePlate);
     RUN(testNotch);
+    RUN(testParts);
     RUN(testAllFixturesValidate);
     if (failures) {
         std::printf("\n%d FAILURE(S)\n", failures);

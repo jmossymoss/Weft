@@ -88,6 +88,8 @@ void weldVertices(PolyMesh& mesh, double tolerance,
 
     std::vector<std::vector<uint32_t>> polys;
     std::vector<int> polyFace;
+    std::vector<int> polyPart;
+    const bool hasParts = mesh.polygonPartId.size() == mesh.polygons.size();
     for (size_t p = 0; p < mesh.polygons.size(); ++p) {
         std::vector<uint32_t> mapped;
         mapped.reserve(mesh.polygons[p].size());
@@ -101,9 +103,11 @@ void weldVertices(PolyMesh& mesh, double tolerance,
         if (mapped.size() < 3) continue;  // collapsed by the weld
         polys.push_back(std::move(mapped));
         polyFace.push_back(mesh.polygonFaceId[p]);
+        if (hasParts) polyPart.push_back(mesh.polygonPartId[p]);
     }
     mesh.polygons = std::move(polys);
     mesh.polygonFaceId = std::move(polyFace);
+    mesh.polygonPartId = std::move(polyPart);
 }
 
 using detail::cadNormal;
@@ -117,6 +121,26 @@ void writeObj(const PolyMesh& mesh, const std::string& path,
     for (const auto& v : mesh.vertices) {
         std::fprintf(f, "v %.9g %.9g %.9g\n", v[0], v[1], v[2]);
     }
+
+    // Emission order: by part, then by face — assemblies import as one
+    // object per body ("o part_N"), with per-face groups inside.
+    const bool hasParts = mesh.polygonPartId.size() == mesh.polygons.size();
+    std::vector<size_t> order(mesh.polygons.size());
+    for (size_t p = 0; p < order.size(); ++p) order[p] = p;
+    if (hasParts) {
+        std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+            return mesh.polygonPartId[a] < mesh.polygonPartId[b];
+        });
+    }
+    int currentPart = -1;
+    auto emitObjectHeaders = [&](size_t p) {
+        if (hasParts && mesh.polygonPartId[p] != currentPart) {
+            currentPart = mesh.polygonPartId[p];
+            std::fprintf(f, "o part_%d\n", currentPart);
+            return true;
+        }
+        return false;
+    };
 
     // Exact CAD normals, one per used (vertex, face) pair. Corners whose
     // normal can't be evaluated (poles, projection misses) reuse index 0's
@@ -150,7 +174,9 @@ void writeObj(const PolyMesh& mesh, const std::string& path,
         }
 
         int currentGroup = -1;
-        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+        for (size_t o = 0; o < order.size(); ++o) {
+            const size_t p = order[o];
+            if (emitObjectHeaders(p)) currentGroup = -1;
             if (mesh.polygonFaceId[p] != currentGroup) {
                 currentGroup = mesh.polygonFaceId[p];
                 std::fprintf(f, "g face_%d\n", currentGroup);
@@ -175,9 +201,11 @@ void writeObj(const PolyMesh& mesh, const std::string& path,
     }
 
     // Group polygons by source B-rep face so CAD face IDs survive into the
-    // DCC. Polygons of a face are contiguous by construction.
+    // DCC.
     int currentGroup = -1;
-    for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+    for (size_t o = 0; o < order.size(); ++o) {
+        const size_t p = order[o];
+        if (emitObjectHeaders(p)) currentGroup = -1;
         if (mesh.polygonFaceId[p] != currentGroup) {
             currentGroup = mesh.polygonFaceId[p];
             std::fprintf(f, "g face_%d\n", currentGroup);
