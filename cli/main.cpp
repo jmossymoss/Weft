@@ -25,7 +25,7 @@ void usage() {
         "\n"
         "usage:\n"
         "  weft fixture <out.step> [--shape cylinder|box|cone|sphere|torus|\n"
-        "                                    fillet|hole|demo|boss]\n"
+        "                                    fillet|hole|notch|demo|boss]\n"
         "      generate a test STEP file from OCCT primitives\n"
         "\n"
         "  weft inspect <in.step>\n"

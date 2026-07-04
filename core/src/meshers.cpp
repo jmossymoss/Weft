@@ -117,6 +117,12 @@ struct FacePlan {
     // grid divisions; `acrossIsU` says which parametric direction spans it.
     bool isFillet = false;
     bool acrossIsU = true;
+    // Angular span (degrees) of each parametric direction when the surface
+    // curves along it (cylinder/cone/sphere/torus strips), else 0. Floors
+    // the default grid density so a 180-degree bend never meshes as a
+    // handful of flat quads (curvature-adaptive default, plan §4.2).
+    double uSpanDeg = 0.0;
+    double vSpanDeg = 0.0;
     gp_Circ circ;          // DiskCap and RingJunction
     int circleEdgeId = 0;  // RingJunction: the hole's edge
 };
@@ -383,6 +389,24 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             // minor circle (v) for a toroidal corner patch.
             plan.acrossIsU = surf.GetType() == GeomAbs_Cylinder;
         }
+        {
+            double umin, umax, vmin, vmax;
+            BRepTools::UVBounds(face, umin, umax, vmin, vmax);
+            const double toDeg = 180.0 / M_PI;
+            switch (surf.GetType()) {
+                case GeomAbs_Cylinder:
+                case GeomAbs_Cone:
+                    plan.uSpanDeg = (umax - umin) * toDeg;
+                    break;
+                case GeomAbs_Sphere:
+                case GeomAbs_Torus:
+                    plan.uSpanDeg = (umax - umin) * toDeg;
+                    plan.vSpanDeg = (vmax - vmin) * toDeg;
+                    break;
+                default:
+                    break;
+            }
+        }
         // Only a plain 2u+2v rectangle ties its grid to its edges. A face
         // that passed the containment probe but whose boundary is NOT the
         // exact UV rectangle (split sides, slanted edges) would mesh its
@@ -483,6 +507,19 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                                      ? s.filletLoops : s.gridU);
             int nv = std::max(1, plan.isFillet && !plan.acrossIsU
                                      ? s.filletLoops : s.gridV);
+            // Defaults are generic; a 4-division grid says nothing about a
+            // 180-degree bend. Floor default densities by the direction's
+            // angular span so curved strips honour the angle tolerance.
+            // Explicit per-face overrides mean exactly what they say.
+            if (!overridden) {
+                const double tol = std::max(5.0, s.angleToleranceDeg);
+                if (plan.uSpanDeg > 0) {
+                    nu = std::max(nu, (int)std::ceil(plan.uSpanDeg / tol));
+                }
+                if (plan.vSpanDeg > 0) {
+                    nv = std::max(nv, (int)std::ceil(plan.vSpanDeg / tol));
+                }
+            }
             propose(plan.uEdges, nu, overridden);
             propose(plan.vEdges, nv, overridden);
         } else {  // revolution sides and disk caps subdivide rings radially

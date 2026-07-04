@@ -1,6 +1,10 @@
 #include "weft/validate.hpp"
 
 #include <BRepAdaptor_Surface.hxx>
+#include <BRep_Tool.hxx>
+#include <GeomAPI_ProjectPointOnSurf.hxx>
+#include <Geom_Surface.hxx>
+#include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
 #include <gp_Pnt.hxx>
@@ -96,27 +100,63 @@ ValidationReport validateMesh(const PolyMesh& mesh, const Model* model) {
     // the centroid of the corner UVs.
     if (model) {
         double sum = 0.0;
+        std::map<int, BRepAdaptor_Surface> surfCache;
         for (size_t p = 0; p < mesh.polygons.size(); ++p) {
             const auto& poly = mesh.polygons[p];
             const int fid = mesh.polygonFaceId[p];
             if (fid < 1 || fid > model->faceCount()) continue;
 
             double cu = 0, cv = 0, cx = 0, cy = 0, cz = 0;
+            double uLo = 1e300, uHi = -1e300, vLo = 1e300, vHi = -1e300;
             bool anchored = true;
             for (uint32_t idx : poly) {
                 const Anchor& a = mesh.anchors[idx];
                 if (a.faceId != fid) { anchored = false; break; }
                 cu += a.u;
                 cv += a.v;
+                uLo = std::min(uLo, a.u);
+                uHi = std::max(uHi, a.u);
+                vLo = std::min(vLo, a.v);
+                vHi = std::max(vHi, a.v);
                 cx += mesh.vertices[idx][0];
                 cy += mesh.vertices[idx][1];
                 cz += mesh.vertices[idx][2];
             }
             if (!anchored) continue;
             const double n = double(poly.size());
-            BRepAdaptor_Surface surf(TopoDS::Face(model->faces(fid)));
-            gp_Pnt onSurf = surf.Value(cu / n, cv / n);
-            double d = onSurf.Distance(gp_Pnt(cx / n, cy / n, cz / n));
+            const TopoDS_Face face = TopoDS::Face(model->faces(fid));
+            auto cacheIt = surfCache.find(fid);
+            if (cacheIt == surfCache.end()) {
+                cacheIt = surfCache.emplace(fid, BRepAdaptor_Surface(face)).first;
+            }
+            BRepAdaptor_Surface& surf = cacheIt->second;
+            // Polygons that wrap a periodic seam (a cylinder's closing
+            // quads run from u ~ 2*pi back to u = 0) would average their
+            // UVs across the whole period and report a bogus deviation.
+            if (surf.IsUPeriodic() && uHi - uLo > 0.5 * surf.UPeriod()) continue;
+            if (surf.IsVPeriodic() && vHi - vLo > 0.5 * surf.VPeriod()) continue;
+            gp_Pnt centroid(cx / n, cy / n, cz / n);
+            double d = surf.Value(cu / n, cv / n).Distance(centroid);
+            // The averaged-UV estimate misreads polygons touching poles or
+            // apexes (their collapsed vertex carries an arbitrary u). Sag
+            // beyond a tenth of the polygon's own radius is rare on real
+            // meshes, so above that measure the true distance instead —
+            // the estimate then only ever errs on the high side of truth.
+            double radius2 = 0.0;
+            for (uint32_t idx : poly) {
+                radius2 = std::max(radius2,
+                                   centroid.SquareDistance(at(mesh, idx)));
+            }
+            if (d * d > 0.01 * radius2 && d > 1e-12) {
+                TopLoc_Location loc;
+                Handle(Geom_Surface) hs = BRep_Tool::Surface(face);
+                if (!hs.IsNull()) {
+                    GeomAPI_ProjectPointOnSurf proj(centroid, hs);
+                    if (proj.NbPoints() > 0) {
+                        d = std::min(d, proj.LowerDistance());
+                    }
+                }
+            }
             r.maxDeviation = std::max(r.maxDeviation, d);
             sum += d;
             ++r.deviationSamples;

@@ -652,6 +652,89 @@ void testHolePlate() {
     CHECK_EQ(mesh.countQuads(), 2 * 3 * 16 + 16 * 2 + 4 * 16);
 }
 
+// The groove wall is an open-u cylinder strip meshed as a parametric grid;
+// the box ends are trimmed planes with arc borders that triangulate. The
+// shared arcs are where conformal boundary surgery must keep the solid
+// watertight while the parametric side keeps exact division control.
+void testNotch() {
+    std::printf("-- notch (parametric/triangulated borders) --\n");
+    std::string stepPath = tmpPath("weft_test_notch.step");
+    weft::writeStep(weft::makeFixture("notch"), stepPath);
+
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis a = weft::analyze(model);
+
+    weft::GenerationSettings gs;
+    gs.defaults.gridU = 3;
+    gs.defaults.gridV = 3;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
+
+    int grids = 0, triangulated = 0;
+    for (const auto& [fid, kind] : report.faceMesher) {
+        if (kind == weft::MesherKind::PlanarGrid) ++grids;
+        if (kind == weft::MesherKind::QuadDominant ||
+            kind == weft::MesherKind::Fallback) {
+            ++triangulated;
+        }
+    }
+    CHECK(grids >= 1);         // the groove wall (plus untouched box sides)
+    CHECK(triangulated >= 2);  // the two notched end faces
+
+    weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK_EQ(vr.openEdges, 0u);
+    CHECK_EQ(vr.nonManifoldEdges, 0u);
+    CHECK_EQ(vr.windingConflicts, 0u);
+    CHECK_EQ(vr.degeneratePolygons, 0u);
+
+    // Densify the groove: its neighbours must follow and stay watertight.
+    weft::GenerationSettings dense = gs;
+    for (const auto& [fid, kind] : report.faceMesher) {
+        if (kind != weft::MesherKind::PlanarGrid) continue;
+        const auto& info = a.faces[fid - 1];
+        if (info.type == weft::SurfaceType::Cylinder) {
+            weft::FaceMeshSettings s = dense.defaults;
+            s.gridU = 12;
+            s.gridV = 6;
+            dense.perFace[fid] = s;
+        }
+    }
+    CHECK(!dense.perFace.empty());
+    weft::PolyMesh fine = weft::generate(model, a, dense);
+    weft::ValidationReport vr2 = weft::validateMesh(fine, &model);
+    CHECK_EQ(vr2.openEdges, 0u);
+    CHECK_EQ(vr2.nonManifoldEdges, 0u);
+    CHECK(fine.polygonCount() > mesh.polygonCount());
+}
+
+// Every fixture, meshed with defaults, must come out bake-ready: closed,
+// consistently wound, with no degenerate polygons.
+void testAllFixturesValidate() {
+    std::printf("-- all fixtures validate --\n");
+    for (const char* name :
+         {"cylinder", "box", "cone", "sphere", "torus", "fillet", "hole",
+          "notch", "demo", "boss"}) {
+        std::string stepPath = tmpPath(std::string("weft_test_v_") + name +
+                                       ".step");
+        weft::writeStep(weft::makeFixture(name), stepPath);
+        weft::Model model = weft::loadStep(stepPath);
+        weft::Analysis a = weft::analyze(model);
+        weft::PolyMesh mesh = weft::generate(model, a, weft::GenerationSettings{});
+        weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+        if (!vr.clean()) {
+            std::printf("  %s: open=%zu nonmanifold=%zu winding=%zu degen=%zu\n",
+                        name, vr.openEdges, vr.nonManifoldEdges,
+                        vr.windingConflicts, vr.degeneratePolygons);
+        }
+        CHECK(vr.clean());
+        // Chord tolerance (0.1) bounds triangulated faces only; parametric
+        // grids honour exact division counts instead, so a 16x4 sphere or
+        // torus legitimately sags ~1 unit. Bound is loose but catches
+        // unit-scale blunders and centroid/UV mismatches.
+        CHECK(vr.maxDeviation <= 1.5);
+    }
+}
+
 }  // namespace
 
 // Announce each test and turn stray exceptions into a named failure
@@ -685,6 +768,8 @@ int main() {
     RUN(testRecipeRoundTrip);
     RUN(testBoss);
     RUN(testHolePlate);
+    RUN(testNotch);
+    RUN(testAllFixturesValidate);
     if (failures) {
         std::printf("\n%d FAILURE(S)\n", failures);
         return 1;
