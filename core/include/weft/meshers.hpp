@@ -177,10 +177,14 @@ struct GenerationCache {
     // the point-classifier probes planning runs on every face.
     std::map<int, bool> revolutionCovers;
     std::map<int, bool> coonsValid;
+    // Flat faces whose coons outline has a strong reflex bend (chevron
+    // plates): geometry-only, planning may prefer quad-fill for them.
+    std::map<int, bool> coonsReflex;
     void clear() {
         faces.clear();
         revolutionCovers.clear();
         coonsValid.clear();
+        coonsReflex.clear();
     }
 };
 
