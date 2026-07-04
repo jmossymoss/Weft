@@ -99,9 +99,7 @@ whole-shape triangulation now runs parallel — most of the time is OCCT).
    borders and sparse interiors pair at ~40% quads. Steiner-point
    insertion (UV grid seeded, Delaunay-flipped) before pairing would
    raise quad share substantially.
-4. **glTF (.glb) export** — engine-ready delivery next to OBJ: triangulate
-   n-gons, reuse the exact-normal machinery, carry face IDs as a custom
-   `_WEFT_FACE_ID` attribute. OBJ carries the full story today.
+4. ~~glTF (.glb) export~~ — done: `weft mesh -o out.glb`.
 5. **Per-solid OBJ objects** (`o part_N`) and normals in the app viewport
    (it currently shades flat from polygon normals).
 6. **App**: expose `validate` results as an overlay (open-edge highlighter
