@@ -46,6 +46,21 @@ Target = Plasticity's flaregun export: 9105 polys, 81% quads, 1.8% tris,
   construction. Result: SawGuide quads 3 opens → 0 (first fully
   watertight), all else identical.
 
+## Integrated from the parallel main line (2026-07-04)
+This branch became main again with the other campaign's deliverables
+ported on top: `weft validate` + `mesh --validate` (bake-ready checks,
+leakiest-face attribution), binary glTF export (`-o out.glb`, one node
+per body, `_WEFT_FACE_ID`), exact CAD normals in OBJ/glb (per-corner,
+sharp edges split), STEP body names on `o`/node blocks (transfer-map
+walk; Plasticity writes them; dedup suffixes), `--lods` density tiers,
+`--yup/--scale/--triangulate` kept from this line, OCCT 8.0 header-
+deprecation gating (weft::ShapeMap aliases), Windows fixes (NOGDI /U,
+TColStd includes moot via auto). Stability: parallel meshing pre-warms
+OCCT's lazy caches (UVBounds/Surface/Curve races segfaulted on an
+8k-face model), and solved counts clamp at 256 in countFor — an
+observed ~983k cascaded count OOM'd/crashed the Coons mesher. The
+clamp is a tourniquet: count decoupling (step 1 below) is the cure.
+
 ## Next steps, in order
 1. COUNT DECOUPLING: extend the absorber to multi-vertex gaps (complement
    path v→w1→…→wk→u along a shared B-rep edge), then let 9–16-edge chained

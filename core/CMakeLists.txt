@@ -11,6 +11,8 @@ add_library(weft_core
   src/edit.cpp
   src/recipe.cpp
   src/remap.cpp
+  src/validate.cpp
+  src/export_gltf.cpp
   src/viz.cpp
   src/fixture.cpp
 )
@@ -24,7 +26,8 @@ target_include_directories(weft_core
 if(TARGET TKDESTEP)
   set(WEFT_OCCT_STEP TKDESTEP)
 else()
-  set(WEFT_OCCT_STEP TKSTEP)
+  # StepRepr (entity names) lives in TKSTEPBase on pre-7.8 splits.
+  set(WEFT_OCCT_STEP TKSTEP TKSTEPBase)
 endif()
 
 target_link_libraries(weft_core PUBLIC
