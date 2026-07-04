@@ -85,4 +85,14 @@ target_link_libraries(weft_app PRIVATE
 
 if(WIN32)
   target_link_libraries(weft_app PRIVATE comdlg32)  # native open-file dialog
+  if(MSVC)
+    # OCCT's CMake package injects NOGDI (and friends) into every consumer
+    # via INTERFACE_COMPILE_DEFINITIONS. NOGDI makes windows.h drop the
+    # GDI/user types (LOGFONT, NMHDR, DLGTEMPLATE) that commdlg.h/prsht.h
+    # need for the file dialog, detonating as C2146/C3646 inside SDK
+    # headers. MSVC's /U undefines a /D regardless of order — kill them at
+    # the compiler level so no include order can resurrect the problem.
+    target_compile_options(weft_app PRIVATE
+      /UNOGDI /UNOUSER /UNOCTLMGR /UWIN32_LEAN_AND_MEAN)
+  endif()
 endif()
