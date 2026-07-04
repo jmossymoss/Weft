@@ -14,11 +14,7 @@
 #include <Poly_PolygonOnTriangulation.hxx>
 #include <Poly_Triangulation.hxx>
 #include <Precision.hxx>
-#include <TColStd_Array1OfInteger.hxx>
-#include <TColStd_Array1OfReal.hxx>
-#include <TColStd_HArray1OfReal.hxx>
 #include <TopExp_Explorer.hxx>
-#include <TopTools_ListOfShape.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
@@ -1386,13 +1382,12 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         for (const auto& polyOnTri : reps) {
             BoundaryChain chain;
             chain.edgeId = eid;
-            const TColStd_Array1OfInteger& nodes = polyOnTri->Nodes();
+            const auto& nodes = polyOnTri->Nodes();
             for (int i = nodes.Lower(); i <= nodes.Upper(); ++i) {
                 chain.nodes.push_back(nodes(i) - 1);
             }
             if (polyOnTri->HasParameters()) {
-                const TColStd_Array1OfReal& ps =
-                    polyOnTri->Parameters()->Array1();
+                const auto& ps = polyOnTri->Parameters()->Array1();
                 for (int i = ps.Lower(); i <= ps.Upper(); ++i) {
                     chain.params.push_back(ps(i));
                 }
@@ -1727,10 +1722,9 @@ std::vector<int> faceWeldGroups(const Model& model) {
         return x;
     };
     for (int eid = 1; eid <= model.edgeCount(); ++eid) {
-        const TopTools_ListOfShape& adj = model.edgeToFaces.FindFromIndex(eid);
         int first = 0;
-        for (TopTools_ListOfShape::Iterator it(adj); it.More(); it.Next()) {
-            int fid = model.faces.FindIndex(it.Value());
+        for (const TopoDS_Shape& sh : model.edgeToFaces.FindFromIndex(eid)) {
+            int fid = model.faces.FindIndex(sh);
             if (fid < 1) continue;
             if (!first) first = fid;
             else parent[find(fid)] = find(first);
@@ -1830,8 +1824,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     continue;
                 }
                 EdgePolyline poly;
-                const TColStd_Array1OfInteger& nodes = p->Nodes();
-                const TColStd_Array1OfReal& ps = p->Parameters()->Array1();
+                const auto& nodes = p->Nodes();
+                const auto& ps = p->Parameters()->Array1();
                 for (int i = nodes.Lower(); i <= nodes.Upper(); ++i) {
                     poly.pts.push_back(
                         tri->Node(nodes(i)).Transformed(loc.Transformation()));
@@ -1942,10 +1936,9 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         if (BRep_Tool::Degenerated(edge)) continue;
         int parametricFid = 0;
         bool hasFallback = false;
-        const TopTools_ListOfShape& adj =
-            model.edgeToFaces.FindFromKey(model.edges(eid));
-        for (TopTools_ListOfShape::Iterator it(adj); it.More(); it.Next()) {
-            int fid = model.faces.FindIndex(it.Value());
+        for (const TopoDS_Shape& sh :
+             model.edgeToFaces.FindFromKey(model.edges(eid))) {
+            int fid = model.faces.FindIndex(sh);
             if (fid < 1) continue;
             if (plans.at(fid).kind == MesherKind::Fallback) hasFallback = true;
             else if (!parametricFid) parametricFid = fid;
