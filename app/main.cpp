@@ -537,6 +537,7 @@ struct App {
 
     // GPU.
     Buffer fill, wire, brep, pick, preview, verts;
+    Buffer allVerts;  // every visible vert, drawn small+black in vert mode
     // Problem overlay: open edges (red) and non-manifold edges (magenta)
     // rebuilt after every regenerate — the trust meter for game export.
     Buffer problems;
@@ -711,6 +712,22 @@ static void rebuildBuffers(App& app) {
         }
     }
     app.verts.upload(verts);
+
+    // Every visible vertex, for vert mode: unselected verts read as small
+    // dark points (Blender-style); selection/hover markers draw on top.
+    std::vector<float> allV;
+    {
+        std::set<uint32_t> seen;
+        for (size_t i = 0; i < m.polygons.size(); ++i) {
+            int fid = m.polygonFaceId[i];
+            if (fid > 0 && app.hiddenFaces.count(fid)) continue;
+            for (uint32_t v : m.polygons[i]) {
+                if (!seen.insert(v).second) continue;
+                push(allV, m.vertices[v], {1, 1, 1});
+            }
+        }
+    }
+    app.allVerts.upload(allV);
 
     std::vector<float> brep;
     for (const weft::EdgePolyline& e : app.brepEdges) {
@@ -2876,7 +2893,7 @@ int main(int argc, char** argv) {
     logLine("weft_app start (built %s %s)", __DATE__, __TIME__);
 
     std::string screenshotPath, startModel, startFixture = "demo";
-    int startSelect = 0;
+    int startSelect = 0, startMode = 0;
     bool startQuality = false, startMatcap = false;
     float startYaw = 0.9f, startPitch = 0.5f;
     bool demoLoopCut = false;
@@ -2890,6 +2907,7 @@ int main(int argc, char** argv) {
         else if (a == "--loopcut") demoLoopCut = true;  // screenshot testing
         else if (a == "--quality") startQuality = true;
         else if (a == "--matcap") startMatcap = true;
+        else if (a == "--mode" && i + 1 < argc) startMode = std::stoi(argv[++i]);
         else startModel = a;
     }
 
@@ -2943,6 +2961,9 @@ int main(int argc, char** argv) {
         if (app.hasModel) rebuildBuffers(app);
     }
     if (startMatcap) app.shadingMode = 4;
+    if (startMode >= 1 && startMode <= 6) {
+        setSelectMode(app, SelectMode(startMode - 1));
+    }
     if (startSelect > 0 && startSelect <= app.model.faceCount()) {
         app.selFaces = {startSelect};
         app.activeFace = startSelect;
@@ -4189,6 +4210,19 @@ int main(int argc, char** argv) {
             glUniform1f(uMix, 0.0f);
             glLineWidth(1.0f);
             glEnable(GL_DEPTH_TEST);
+        }
+        if (app.hasModel && app.selectMode == SelectMode::Vert &&
+            app.allVerts.count) {
+            // The whole cage: small dark points, depth-tested so only
+            // front-facing verts show (the fill's polygon offset keeps
+            // them from z-fighting their own surface).
+            glPointSize(3.0f * gUiScale);
+            glUniform1f(uMix, 1.0f);
+            const float dark[3] = {0.03f, 0.03f, 0.04f};
+            glUniform3fv(uColor, 1, dark);
+            glBindVertexArray(app.allVerts.vao);
+            glDrawArrays(GL_POINTS, 0, app.allVerts.count);
+            glUniform1f(uMix, 0.0f);
         }
         if (app.hasModel &&
             (app.showVerts || app.selectMode == SelectMode::Vert) &&
