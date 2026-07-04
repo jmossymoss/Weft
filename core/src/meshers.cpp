@@ -4340,6 +4340,88 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
     }
 }
 
+// Seam union v1 (the n-gon absorber, plan #37): purely topological
+// T-junction healing. An OPEN directed edge (u,v) whose complement is a
+// two-step path v->w->u on the neighbouring face means the neighbour
+// sampled one extra vertex on the shared border; splicing w into (u,v)'s
+// polygon turns a quad into a 5-gon with one short edge — exactly how
+// Plasticity absorbs a denser neighbour — and the seam closes without
+// moving or collapsing anything. Requiring the exact complement path
+// (not curve proximity) makes sliver cross-talk impossible. Iterating
+// lets chains of absorbed verts close multi-vert gaps one layer at a
+// time. This pass is the contract that will let neighbouring faces
+// disagree on border counts (strips vs fillet rings).
+void unionSeams(PolyMesh& mesh, const Model& model, double weldTol) {
+    (void)model;
+    int total = 0;
+    for (int pass = 0; pass < 4; ++pass) {
+        std::map<std::pair<uint32_t, uint32_t>, size_t> polyOf;
+        std::map<std::pair<uint32_t, uint32_t>, int> count;
+        std::multimap<uint32_t, uint32_t> outOf;  // v -> w for edge (v,w)
+        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+            const auto& poly = mesh.polygons[p];
+            for (size_t i = 0; i < poly.size(); ++i) {
+                auto key = std::make_pair(poly[i],
+                                          poly[(i + 1) % poly.size()]);
+                polyOf[key] = p;
+                ++count[key];
+                outOf.emplace(key.first, key.second);
+            }
+        }
+        int spliced = 0;
+        for (const auto& [e, c] : count) {
+            if (c != 1 || count.count({e.second, e.first})) continue;
+            const auto [u, v] = e;
+            // complement path v -> w -> u on some neighbouring polygon
+            uint32_t hit = UINT32_MAX;
+            for (auto it = outOf.lower_bound(v);
+                 it != outOf.end() && it->first == v; ++it) {
+                const uint32_t w = it->second;
+                if (w == u || !count.count({w, u})) continue;
+                // w must lie ON the u-v segment (within weld slack), or
+                // this is a coincidental cycle, not a border T-junction.
+                const auto& U = mesh.vertices[u];
+                const auto& V = mesh.vertices[v];
+                const auto& W = mesh.vertices[w];
+                double ex = V[0] - U[0], ey = V[1] - U[1], ez = V[2] - U[2];
+                double px = W[0] - U[0], py = W[1] - U[1], pz = W[2] - U[2];
+                double ee = ex * ex + ey * ey + ez * ez;
+                if (ee < 1e-30) continue;
+                double t = (px * ex + py * ey + pz * ez) / ee;
+                if (t < -0.01 || t > 1.01) continue;
+                double dx = px - t * ex, dy = py - t * ey, dz = pz - t * ez;
+                double slack = std::max(weldTol * 2.0,
+                                        0.08 * std::sqrt(ee));
+                if (dx * dx + dy * dy + dz * dz > slack * slack) continue;
+                // Splicing adds (u,w) and (w,v): if either already
+                // exists the splice would CREATE a non-manifold edge —
+                // the absorber must only ever close seams, never open.
+                if (count.count({u, w}) || count.count({w, v})) continue;
+                hit = w;
+                break;
+            }
+            if (hit == UINT32_MAX) continue;
+            auto pit = polyOf.find(e);
+            if (pit == polyOf.end()) continue;
+            auto& poly = mesh.polygons[pit->second];
+            for (size_t i = 0; i < poly.size(); ++i) {
+                if (poly[i] == u && poly[(i + 1) % poly.size()] == v) {
+                    poly.insert(poly.begin() + i + 1, hit);
+                    // keep the guard's view current WITHIN this pass
+                    --count[{u, v}];
+                    ++count[{u, hit}];
+                    ++count[{hit, v}];
+                    ++spliced;
+                    break;
+                }
+            }
+        }
+        total += spliced;
+        if (!spliced) break;
+    }
+    if (total) dbg("seam union: absorbed %d vert(s) into n-gons", total);
+}
+
 }  // namespace
 
 PolyMesh generate(const Model& model, const Analysis& analysis,
@@ -4885,6 +4967,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     };
 
     finish(mesh);
+    if (settings.conformBorders) {
+        // Post-weld: borders share ids now, so an open edge with an exact
+        // complement path is a REAL T-junction, never a pre-weld ghost.
+        unionSeams(mesh, model, settings.weldTolerance);
+    }
 
     // Fold cleanup: a directed edge traversed twice WITHIN one face means
     // conform or decimation wrapped a flap of polygons over its
