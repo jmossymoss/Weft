@@ -13,6 +13,7 @@
 #include "weft/meshers.hpp"
 #include "weft/model.hpp"
 #include "weft/recipe.hpp"
+#include "weft/validate.hpp"
 #include "weft/viz.hpp"
 
 #ifdef _WIN32
@@ -275,9 +276,11 @@ struct App {
     bool showFill = true;
     bool showWire = true;
     bool showBrepEdges = true;
+    bool showLeaks = true;
 
     // GPU.
-    Buffer fill, wire, brep, pick, preview;
+    Buffer fill, wire, brep, pick, preview, leaks;
+    weft::ValidationReport vr;
     Camera cam;
 
     // UI buffers.
@@ -373,6 +376,24 @@ static void regenerate(App& app) {
                               &app.report);
     weft::applyOps(app.mesh, app.model, app.recipe.ops);
     rebuildBuffers(app);
+
+    // Bake-ready check on every regenerate; open edges become a red
+    // viewport overlay (the plan 4.2 diagnostic).
+    app.vr = weft::validateMesh(app.mesh);
+    std::vector<float> leakLines;
+    leakLines.reserve(app.vr.openEdgeList.size() * 12);
+    for (const auto& [a, b] : app.vr.openEdgeList) {
+        for (uint32_t idx : {a, b}) {
+            const auto& v = app.mesh.vertices[idx];
+            leakLines.push_back(float(v[0]));
+            leakLines.push_back(float(v[1]));
+            leakLines.push_back(float(v[2]));
+            leakLines.push_back(0.95f);
+            leakLines.push_back(0.15f);
+            leakLines.push_back(0.15f);
+        }
+    }
+    app.leaks.upload(leakLines);
     app.dirty = false;
 }
 
@@ -920,6 +941,20 @@ static void drawUi(App& app) {
                     app.mesh.polygonCount());
         ImGui::Text("%zu quads  %zu tris  %zu n-gons", app.mesh.countQuads(),
                     app.mesh.countTris(), app.mesh.countNgons());
+        if (app.vr.watertight()) {
+            ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.45f, 1.0f),
+                               "watertight");
+        } else {
+            ImGui::TextColored(ImVec4(0.95f, 0.30f, 0.25f, 1.0f),
+                               "LEAKS: %zu open, %zu non-manifold",
+                               app.vr.openEdges, app.vr.nonManifoldEdges);
+            if (!app.vr.leakyFaces.empty()) {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("worst")) {
+                    app.selectedFace = app.vr.leakyFaces.front().first;
+                }
+            }
+        }
         ImGui::Separator();
         ImGui::TextDisabled("defaults (live)");
         if (settingsEditor(app.recipe.settings.defaults)) app.dirty = true;
@@ -992,6 +1027,8 @@ static void drawUi(App& app) {
         ImGui::Checkbox("wire", &app.showWire);
         ImGui::SameLine();
         ImGui::Checkbox("feature edges", &app.showBrepEdges);
+        ImGui::SameLine();
+        ImGui::Checkbox("leaks", &app.showLeaks);
         ImGui::TextDisabled("orange convex / blue concave / green smooth");
         ImGui::TextDisabled("LMB select · MMB orbit · shift+MMB pan");
         ImGui::TextDisabled("ctrl+MMB zoom · alt+MMB axis view · wheel");
@@ -1306,6 +1343,14 @@ int main(int argc, char** argv) {
             glBindVertexArray(app.brep.vao);
             glDrawArrays(GL_LINES, 0, app.brep.count);
             glLineWidth(1.0f);
+        }
+        if (app.hasModel && app.showLeaks && app.leaks.count) {
+            glDisable(GL_DEPTH_TEST);
+            glLineWidth(3.0f);
+            glBindVertexArray(app.leaks.vao);
+            glDrawArrays(GL_LINES, 0, app.leaks.count);
+            glLineWidth(1.0f);
+            glEnable(GL_DEPTH_TEST);
         }
         if (app.mode == Mode::LoopCut && app.hoverValid && app.preview.count) {
             glDisable(GL_DEPTH_TEST);

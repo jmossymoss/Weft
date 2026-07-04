@@ -149,6 +149,9 @@ ValidationReport validateMesh(const PolyMesh& mesh, const Model* model) {
         }
     }
 
+    if (openList.size() <= 200000) r.openEdgeList = openList;
+    else r.openEdgeList.assign(openList.begin(), openList.begin() + 200000);
+
     r.leakyFaces.assign(openPerFace.begin(), openPerFace.end());
     r.leakyFaces.erase(std::remove_if(r.leakyFaces.begin(), r.leakyFaces.end(),
                                       [](const auto& e) { return e.second == 0; }),
