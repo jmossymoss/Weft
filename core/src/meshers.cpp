@@ -2,6 +2,8 @@
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBndLib.hxx>
 #include <Bnd_Box.hxx>
 #include <BRepClass_FaceClassifier.hxx>
@@ -497,7 +499,8 @@ struct CoonsPatch {
 // triangular patches, which corner the fan terminates in.
 bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
                     CoonsPatch& patch, int rotate = 0,
-                    const char** why = nullptr) {
+                    const char** why = nullptr,
+                    bool* reflexPlanar = nullptr) {
     auto reject = [&](const char* r) {
         if (why) *why = r;
         return false;
@@ -571,31 +574,54 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
     // T-junction is still a four-sided patch). Turn angle at each joint
     // comes from the 3D end tangents; the gap (pole/stub) is always a
     // corner.
+    // Tangents and SIGNED turns at wire joints. The sign comes from the
+    // oriented surface normal: positive = convex (interior < 180 deg),
+    // negative = reflex. A reflex corner breaks the whole four-sided
+    // abstraction — transfinite interpolation over such a domain must
+    // fold — so it rejects the patch instead of shipping folded cells.
+    auto tangentAt = [&](int src, bool atEnd) -> gp_Vec {
+        BRepAdaptor_Curve c(all[src].edge);
+        const bool rev = all[src].edge.Orientation() == TopAbs_REVERSED;
+        const double par = (atEnd != rev) ? c.LastParameter()
+                                          : c.FirstParameter();
+        gp_Pnt pp;
+        gp_Vec d;
+        c.D1(par, pp, d);
+        if (rev) d.Reverse();
+        return d;
+    };
+    BRepAdaptor_Surface signSurf(face);
+    auto signedTurnAt = [&](size_t k, const std::vector<int>& ord) {
+        int prev = ord[(k + ord.size() - 1) % ord.size()];
+        gp_Vec a = tangentAt(prev, true);
+        gp_Vec b = tangentAt(ord[k], false);
+        if (a.Magnitude() < 1e-12 || b.Magnitude() < 1e-12) return 0.0;
+        double f2, l2;
+        Handle(Geom2d_Curve) pc =
+            BRep_Tool::CurveOnSurface(all[ord[k]].edge, face, f2, l2);
+        if (pc.IsNull()) return double(a.Angle(b));
+        const bool rev = all[ord[k]].edge.Orientation() == TopAbs_REVERSED;
+        gp_Pnt2d uv = pc->Value(rev ? l2 : f2);
+        gp_Pnt sp;
+        gp_Vec du, dv;
+        signSurf.D1(uv.X(), uv.Y(), sp, du, dv);
+        gp_Vec n = du.Crossed(dv);
+        if (face.Orientation() == TopAbs_REVERSED) n.Reverse();
+        if (n.Magnitude() < 1e-12) return double(a.Angle(b));
+        return std::atan2(a.Crossed(b).Dot(n) / n.Magnitude(), a.Dot(b));
+    };
+
     std::vector<size_t> sideStart;  // indices into `order` that begin sides
     if (nReal > 4) {
-        auto tangentAt = [&](int src, bool atEnd) -> gp_Vec {
-            BRepAdaptor_Curve c(all[src].edge);
-            const bool rev = all[src].edge.Orientation() == TopAbs_REVERSED;
-            const double par = (atEnd != rev) ? c.LastParameter()
-                                              : c.FirstParameter();
-            gp_Pnt pp;
-            gp_Vec d;
-            c.D1(par, pp, d);
-            if (rev) d.Reverse();
-            return d;
-        };
         // Joint k sits BEFORE order[k] (between order[k-1] and order[k]).
         // With a gap (pole/stub) joint 0 is FORCED to be a corner; on a
         // plain closed wire it gets its real turn like every other joint,
         // or a smooth wire-start would steal a real corner's slot.
         std::vector<double> turn(order.size(), M_PI);
+        std::vector<double> signedT(order.size(), M_PI);
         for (size_t k = gap >= 0 ? 1 : 0; k < order.size(); ++k) {
-            int prev = order[(k + order.size() - 1) % order.size()];
-            gp_Vec a = tangentAt(prev, true);
-            gp_Vec b = tangentAt(order[k], false);
-            turn[k] = (a.Magnitude() > 1e-12 && b.Magnitude() > 1e-12)
-                          ? a.Angle(b)
-                          : 0.0;
+            signedT[k] = signedTurnAt(k, order);
+            turn[k] = std::abs(signedT[k]);
         }
         std::vector<size_t> byTurn(order.size());
         std::iota(byTurn.begin(), byTurn.end(), 0);
@@ -607,6 +633,25 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
         sideStart = {byTurn[0], byTurn[1], byTurn[2], byTurn[3]};
         std::sort(sideStart.begin(), sideStart.end());
         if (gap >= 0 && sideStart[0] != 0) return reject("gap not at a corner");
+        // Reflex screening is DETECTION only, and PLANAR only: the
+        // caller may prefer quad-fill for a flat chevron (transfinite
+        // interpolation over a reflex domain must fold), but the patch
+        // itself stays valid — in modes without a better planar mesher
+        // the untangler and the fold overlay handle the outcome.
+        if (reflexPlanar && signSurf.GetType() == GeomAbs_Plane) {
+            for (size_t k = 0; k < order.size(); ++k) {
+                if (gap >= 0 && k == 0) continue;  // forced gap corner
+                const bool isCorner = std::find(sideStart.begin(),
+                                                sideStart.end(),
+                                                k) != sideStart.end();
+                if (isCorner && signedT[k] < -45.0 * M_PI / 180.0) {
+                    *reflexPlanar = true;
+                }
+                if (!isCorner && signedT[k] < -60.0 * M_PI / 180.0) {
+                    *reflexPlanar = true;
+                }
+            }
+        }
         // Rotate `order` so a corner is first, keeping the gap corner
         // first when there is one.
         if (gap < 0) {
@@ -629,6 +674,17 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
         }
         for (size_t k = 0; k < std::min<size_t>(4, order.size()); ++k) {
             sideStart.push_back(k);
+        }
+        // Four plain sides: every joint is a corner, and a reflex one
+        // (a dart-shaped face) folds the grid just like the chained
+        // case. Detection only, planar only, same reasoning as above.
+        if (reflexPlanar && nReal == 4 &&
+            signSurf.GetType() == GeomAbs_Plane) {
+            for (size_t k = gap >= 0 ? 1 : 0; k < order.size(); ++k) {
+                if (signedTurnAt(k, order) < -45.0 * M_PI / 180.0) {
+                    *reflexPlanar = true;
+                }
+            }
         }
     }
 
@@ -1638,9 +1694,130 @@ std::vector<WebPoint> mergeHolesIntoRing(
     return outer;
 }
 
+// Web triangulation via a real CDT: build a Z=0 planar face whose wires
+// are the region's UV segments, let OCCT mesh it (a plane needs no
+// interior refinement and straight edges never split), and harvest the
+// triangles. Strict validation — every node must land exactly on an
+// input ring vertex and the triangulated area must match the region —
+// rejects anything suspicious back to the ear-clip path. Unlike ear
+// clipping of a keyhole-merged ring, a CDT cannot fold, so the dead-end
+// fan that used to sweep across complex plates is gone where this runs.
+bool delaunayWeb(const std::vector<WebPoint>& outer,
+                 const std::vector<std::vector<WebPoint>>& holes,
+                 int faceId, bool flip, MeshBuilder& out) {
+    if (outer.size() < 3) return false;
+    double span = 0, regionArea = loopSignedArea(outer);
+    if (regionArea <= 0) return false;  // outer must be CCW
+    for (const std::vector<WebPoint>& h : holes) {
+        if (h.size() < 3) return false;
+        double a = loopSignedArea(h);
+        if (a >= 0) return false;  // holes must be CW
+        regionArea += a;
+    }
+    if (regionArea <= 0) return false;
+    for (const WebPoint& p : outer) {
+        span = std::max({span, std::abs(p.uv.X()), std::abs(p.uv.Y())});
+    }
+    const double tol = 1e-9 * std::max(1.0, span);
+
+    // Ring vertex lookup by quantized UV. Ambiguous keys (two ring points
+    // sharing a position but not a vertex) cannot be mapped back safely.
+    std::map<std::pair<int64_t, int64_t>, uint32_t> vertByUv;
+    auto keyOf = [&](double x, double y) {
+        return std::make_pair(int64_t(std::llround(x / tol)),
+                              int64_t(std::llround(y / tol)));
+    };
+    auto addRing = [&](const std::vector<WebPoint>& ring) {
+        for (size_t i = 0; i < ring.size(); ++i) {
+            if (ring[i].uv.SquareDistance(
+                    ring[(i + 1) % ring.size()].uv) < tol * tol) {
+                return false;  // zero-length segment: MakePolygon drops it
+            }
+            auto [it, fresh] = vertByUv.try_emplace(
+                keyOf(ring[i].uv.X(), ring[i].uv.Y()), ring[i].vert);
+            if (!fresh && it->second != ring[i].vert) return false;
+        }
+        return true;
+    };
+    if (!addRing(outer)) return false;
+    for (const std::vector<WebPoint>& h : holes) {
+        if (!addRing(h)) return false;
+    }
+
+    try {
+        auto makeWire = [&](const std::vector<WebPoint>& ring,
+                            TopoDS_Wire& wire) {
+            BRepBuilderAPI_MakePolygon mp;
+            for (const WebPoint& p : ring) {
+                mp.Add(gp_Pnt(p.uv.X(), p.uv.Y(), 0.0));
+            }
+            mp.Close();
+            if (!mp.IsDone()) return false;
+            wire = mp.Wire();
+            return true;
+        };
+        TopoDS_Wire ow;
+        if (!makeWire(outer, ow)) return false;
+        BRepBuilderAPI_MakeFace mf(gp_Pln(), ow, true);
+        for (const std::vector<WebPoint>& h : holes) {
+            TopoDS_Wire hw;
+            if (!makeWire(h, hw)) return false;
+            mf.Add(hw);
+        }
+        if (!mf.IsDone()) return false;
+        TopoDS_Face f = mf.Face();
+        // Huge deflection: straight edges never split, and a plane never
+        // needs interior refinement, so the nodes are exactly our points.
+        IMeshTools_Parameters mp;
+        mp.Deflection = 1e9;
+        mp.Angle = 1.0;
+        mp.InParallel = false;
+        BRepMesh_IncrementalMesh mesher(f, mp);
+        TopLoc_Location loc;
+        Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(f, loc);
+        if (tri.IsNull()) return false;
+
+        std::vector<uint32_t> nodeVert(tri->NbNodes() + 1, UINT32_MAX);
+        for (int n = 1; n <= tri->NbNodes(); ++n) {
+            gp_Pnt p = tri->Node(n);
+            auto it = vertByUv.find(keyOf(p.X(), p.Y()));
+            if (it == vertByUv.end()) return false;  // Steiner/split node
+            nodeVert[n] = it->second;
+        }
+        // Collect with winding + coverage validation before emitting.
+        std::vector<std::array<uint32_t, 3>> tris;
+        auto nodeUv = [&](int n) {
+            gp_Pnt p = tri->Node(n);
+            return gp_Pnt2d(p.X(), p.Y());
+        };
+        double covered = 0;
+        for (int t = 1; t <= tri->NbTriangles(); ++t) {
+            int n1, n2, n3;
+            tri->Triangle(t).Get(n1, n2, n3);
+            double a2 = webCross(nodeUv(n1), nodeUv(n2), nodeUv(n3));
+            if (a2 < 0) {
+                std::swap(n2, n3);
+                a2 = -a2;
+            }
+            covered += a2 / 2;
+            tris.push_back({nodeVert[n1], nodeVert[n2], nodeVert[n3]});
+        }
+        if (std::abs(covered - regionArea) > 0.005 * regionArea) {
+            return false;  // covered a hole or leaked past the boundary
+        }
+        for (const auto& t : tris) {
+            out.addPolygon({t[0], t[1], t[2]}, faceId, flip);
+        }
+        return true;
+    } catch (const Standard_Failure&) {
+        return false;
+    }
+}
+
 void triangulateWeb(std::vector<WebPoint> outer,
                     std::vector<std::vector<WebPoint>> holes, int faceId,
                     bool flip, MeshBuilder& out) {
+    if (delaunayWeb(outer, holes, faceId, flip, out)) return;
     earClip(mergeHolesIntoRing(std::move(outer), std::move(holes), faceId,
                                flip, out),
             faceId, flip, out);
@@ -2507,6 +2684,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         if (cache) cache->revolutionCovers[fid] = v;
         return v;
     };
+    bool coonsReflex = false;  // flat outline with a strong reflex bend
     auto coonsOk = [&](CoonsPatch& patch) {
         // Patch construction is cheap; a memoized NEGATIVE skips it (and
         // the probes); a positive still rebuilds the (cheap) patch data.
@@ -2517,9 +2695,16 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             if (it != cache->coonsValid.end() && !it->second) return false;
         }
         const char* why = nullptr;
-        bool v = makeCoonsPatch(face, model, patch, s.coonsRotate, &why);
+        bool reflex = false;
+        bool v = makeCoonsPatch(face, model, patch, s.coonsRotate, &why,
+                                &reflex);
         if (!v && why) dbg("coons: face %d rejected: %s", fid, why);
-        if (cache) cache->coonsValid[fid] = v;
+        if (v && reflex) dbg("coons: face %d has a reflex flat outline", fid);
+        coonsReflex = v && reflex;
+        if (cache) {
+            cache->coonsValid[fid] = v;
+            cache->coonsReflex[fid] = coonsReflex;
+        }
         return v;
     };
 
@@ -2687,6 +2872,17 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     {
         CoonsPatch patch;
         if (coonsOk(patch)) {
+            // A flat chevron (reflex outline) folds under any transfinite
+            // grid. In quad-dominant mode quad-fill's grid + CDT rim is
+            // strictly better and samples the same solved counts. In
+            // defaults there is no denser-safe replacement — minimal
+            // n-gons starve shared rails against unconstrained fallback
+            // neighbours (measured: dup flaps on sliver strips) — so the
+            // patch proceeds and the untangler + fold overlay take over.
+            if (coonsReflex && s.quadDominant &&
+                planQuadFill(face, surf, model, plan)) {
+                return plan;
+            }
             plan.kind = MesherKind::CoonsGrid;
             plan.constrains = true;
             if (patch.chained()) {
