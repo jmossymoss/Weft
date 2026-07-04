@@ -61,6 +61,19 @@ OCCT's lazy caches (UVBounds/Surface/Curve races segfaulted on an
 observed ~983k cascaded count OOM'd/crashed the Coons mesher. The
 clamp is a tourniquet: count decoupling (step 1 below) is the cure.
 
+## Revolution inserts (landed)
+Full revolution bands with interior slot/hole wires (the flaregun barrel
+case) now stay revolution grids: edgesHugRimsOrInserts collects strictly
+interior closed wires, meshRevolutionInsert drops the covered cells and
+webs the staircase to the wires' exact border sampling (3D edge curves
+at solved counts — the wall faces' contract), multi-hole keyhole
+ear-clip per staircase loop. Fixture `slotted` reproduces it; watertight
+in defaults (guard falls back when a wire can't form a ring) and with
+explicit counts + adapt=1. KNOWN GAP: --adaptive with AUTO radial can
+leak at slot WALLS — the wall coons fails and demotes at mesh time,
+which breaks the border contract (the pre-existing demotion crack class,
+see doctrine). Plan-time routing for that case is part of step 1/2.
+
 ## Next steps, in order
 1. COUNT DECOUPLING: extend the absorber to multi-vertex gaps (complement
    path v→w1→…→wk→u along a shared B-rep edge), then let 9–16-edge chained

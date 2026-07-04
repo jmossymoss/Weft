@@ -134,6 +134,11 @@ private:
 // subdivision counts that strategy consumes, split by parametric direction.
 
 struct FacePlan {
+    // Interior closed trim wires on a full revolution band (slots, holes
+    // through the wall): the band still meshes as a revolution grid; the
+    // cells these wires cover are removed and webbed to the wire's exact
+    // border sampling afterwards.
+    std::vector<std::vector<int>> insertWires;
     MesherKind kind = MesherKind::Fallback;
     // Edges the mesher subdivides `radial`/`gridU` times (u-iso boundary
     // curves) and `axial`/`gridV` times respectively. Empty for Fallback.
@@ -199,6 +204,82 @@ bool edgesHugRims(const TopoDS_Face& face, const BRepAdaptor_Surface& surf) {
             if (vmax - vmin < 0.9 * vspan) return false;
         } else {
             return false;  // slanted/trimmed boundary
+        }
+    }
+    return true;
+}
+
+// Like edgesHugRims, but a wire living STRICTLY inside the band (a slot
+// or hole through the wall) is collected as an insert instead of
+// disqualifying the whole face.
+bool edgesHugRimsOrInserts(const TopoDS_Face& face,
+                           const BRepAdaptor_Surface& surf,
+                           const Model& model,
+                           std::vector<std::vector<int>>& wires) {
+    const double u0 = surf.FirstUParameter(), u1 = surf.LastUParameter();
+    const double v0 = surf.FirstVParameter(), v1 = surf.LastVParameter();
+    const double uspan = std::max(1e-12, u1 - u0);
+    const double vspan = std::max(1e-12, v1 - v0);
+    wires.clear();
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        double wu0 = 1e300, wu1 = -1e300, wv0 = 1e300, wv1 = -1e300;
+        std::vector<int> ids;
+        bool pcOk = true;
+        for (TopExp_Explorer ex(wx.Current(), TopAbs_EDGE); ex.More();
+             ex.Next()) {
+            const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+            if (BRep_Tool::Degenerated(edge)) continue;
+            double f, l;
+            Handle(Geom2d_Curve) pc =
+                BRep_Tool::CurveOnSurface(edge, face, f, l);
+            if (pc.IsNull()) { pcOk = false; break; }
+            for (int k = 0; k <= 8; ++k) {
+                gp_Pnt2d uv = pc->Value(f + (l - f) * k / 8.0);
+                wu0 = std::min(wu0, uv.X());
+                wu1 = std::max(wu1, uv.X());
+                wv0 = std::min(wv0, uv.Y());
+                wv1 = std::max(wv1, uv.Y());
+            }
+            int eid = model.edges.FindIndex(edge);
+            if (eid > 0) ids.push_back(eid);
+        }
+        if (!pcOk) return false;
+        if (ids.empty()) continue;
+        const bool interior = wu0 > u0 + 0.03 * uspan &&
+                              wu1 < u1 - 0.03 * uspan &&
+                              wv0 > v0 + 0.03 * vspan &&
+                              wv1 < v1 - 0.03 * vspan;
+        if (interior) {
+            wires.push_back(std::move(ids));
+            continue;
+        }
+        // Not interior: every edge of this wire must be a rim or seam.
+        for (TopExp_Explorer ex(wx.Current(), TopAbs_EDGE); ex.More();
+             ex.Next()) {
+            const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+            if (BRep_Tool::Degenerated(edge)) continue;
+            double f, l;
+            Handle(Geom2d_Curve) pc =
+                BRep_Tool::CurveOnSurface(edge, face, f, l);
+            double eu0 = 1e300, eu1 = -1e300, ev0 = 1e300, ev1 = -1e300;
+            for (int k = 0; k <= 4; ++k) {
+                gp_Pnt2d uv = pc->Value(f + (l - f) * k / 4.0);
+                eu0 = std::min(eu0, uv.X());
+                eu1 = std::max(eu1, uv.X());
+                ev0 = std::min(ev0, uv.Y());
+                ev1 = std::max(ev1, uv.Y());
+            }
+            if (ev1 - ev0 < 0.02 * vspan) {
+                double v = (ev0 + ev1) / 2;
+                if (std::min(std::abs(v - v0), std::abs(v - v1)) >
+                    0.05 * vspan) {
+                    return false;
+                }
+            } else if (eu1 - eu0 < 0.02 * uspan) {
+                if (ev1 - ev0 < 0.9 * vspan) return false;
+            } else {
+                return false;
+            }
         }
     }
     return true;
@@ -2807,10 +2888,13 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         return plan;
     }
 
-    if (isClosedRevolution(surf) && revCovers() &&
-        edgesHugRims(face, surf)) {
-        finishRevolution();
-        return plan;
+    if (isClosedRevolution(surf) && revCovers()) {
+        std::vector<std::vector<int>> inserts;
+        if (edgesHugRimsOrInserts(face, surf, model, inserts)) {
+            plan.insertWires = std::move(inserts);
+            finishRevolution();
+            return plan;
+        }
     }
 
     int capEdgeId = 0;
@@ -3516,6 +3600,309 @@ void meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
             out.addPolygon(std::move(quad), faceId, flip);
         }
     }
+}
+
+// A full revolution band with interior slot/hole wires: mesh the plain
+// grid, remove the cells the wires cover, and web the staircase to the
+// wires' exact border sampling (3D edge curves at solved counts — the
+// same contract the slot's wall faces sample, so the weld closes it).
+bool meshRevolutionInsert(const TopoDS_Face& face,
+                          const BRepAdaptor_Surface& surf, const Model& model,
+                          const FacePlan& plan,
+                          const std::vector<int>& solvedEdge, int faceId,
+                          int nu, int nv, MeshBuilder& out) {
+    // A wire whose solved counts can't even form a triangle would leave
+    // its hole open; refuse up front and let the face fall back whole.
+    for (const auto& wire : plan.insertWires) {
+        int total = 0;
+        for (int eid : wire) {
+            total += eid > 0 && eid < (int)solvedEdge.size() &&
+                             solvedEdge[eid] > 0
+                         ? solvedEdge[eid]
+                         : 8;
+        }
+        if (total < 3) return false;
+    }
+    PolyMesh grid;
+    {
+        MeshBuilder tmp(grid);
+        meshRevolutionGrid(face, surf, model, plan.uEdges, solvedEdge,
+                           faceId, nu, nv, tmp);
+    }
+    const double u0 = surf.FirstUParameter(), u1 = surf.LastUParameter();
+    const double v0 = surf.FirstVParameter(), v1 = surf.LastVParameter();
+    const double du = (u1 - u0) / std::max(3, nu);
+    const double dv = (v1 - v0) / std::max(1, nv);
+
+    // UV bbox per wire, grown by most of a cell so sliver cells go too.
+    struct Box { double u0, u1, v0, v1; };
+    std::vector<Box> boxes;
+    for (const auto& wire : plan.insertWires) {
+        Box b{1e300, -1e300, 1e300, -1e300};
+        for (int eid : wire) {
+            double f, l;
+            Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(
+                TopoDS::Edge(model.edges(eid)), face, f, l);
+            if (pc.IsNull()) continue;
+            for (int k = 0; k <= 16; ++k) {
+                gp_Pnt2d uv = pc->Value(f + (l - f) * k / 16.0);
+                b.u0 = std::min(b.u0, uv.X());
+                b.u1 = std::max(b.u1, uv.X());
+                b.v0 = std::min(b.v0, uv.Y());
+                b.v1 = std::max(b.v1, uv.Y());
+            }
+        }
+        b.u0 -= 0.6 * du; b.u1 += 0.6 * du;
+        b.v0 -= 0.6 * dv; b.v1 += 0.6 * dv;
+        boxes.push_back(b);
+    }
+
+    auto covered = [&](const std::vector<uint32_t>& poly) {
+        double cu = 0, cv = 0; int n = 0;
+        for (uint32_t idx : poly) {
+            const Anchor& a = grid.anchors[idx];
+            if (a.faceId != faceId) return false;
+            cu += a.u; cv += a.v; ++n;
+        }
+        if (!n) return false;
+        cu /= n; cv /= n;
+        for (const Box& b : boxes) {
+            if (cu >= b.u0 && cu <= b.u1 && cv >= b.v0 && cv <= b.v1) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    // Directed boundary edges before/after deletion; the difference is the
+    // staircase around the removed region.
+    auto directedBoundary = [](const PolyMesh& m, const std::vector<char>& keep) {
+        std::map<std::pair<uint32_t, uint32_t>, int> use;
+        for (size_t p = 0; p < m.polygons.size(); ++p) {
+            if (!keep[p]) continue;
+            const auto& poly = m.polygons[p];
+            for (size_t i = 0; i < poly.size(); ++i) {
+                uint32_t a = poly[i], b = poly[(i + 1) % poly.size()];
+                ++use[{std::min(a, b), std::max(a, b)}];
+            }
+        }
+        std::map<uint32_t, uint32_t> next;  // directed open edges a->b
+        for (size_t p = 0; p < m.polygons.size(); ++p) {
+            if (!keep[p]) continue;
+            const auto& poly = m.polygons[p];
+            for (size_t i = 0; i < poly.size(); ++i) {
+                uint32_t a = poly[i], b = poly[(i + 1) % poly.size()];
+                if (use[{std::min(a, b), std::max(a, b)}] == 1) next[a] = b;
+            }
+        }
+        return next;
+    };
+    std::vector<char> all(grid.polygons.size(), 1);
+    std::vector<char> keep(grid.polygons.size(), 1);
+    bool any = false;
+    for (size_t p = 0; p < grid.polygons.size(); ++p) {
+        if (covered(grid.polygons[p])) { keep[p] = 0; any = true; }
+    }
+    auto before = directedBoundary(grid, all);
+    auto after = directedBoundary(grid, keep);
+
+    // Copy the surviving grid into the real builder.
+    std::vector<uint32_t> remap(grid.vertices.size(), UINT32_MAX);
+    auto emitVert = [&](uint32_t i) {
+        if (remap[i] == UINT32_MAX) {
+            remap[i] = out.addVertex(gp_Pnt(grid.vertices[i][0],
+                                            grid.vertices[i][1],
+                                            grid.vertices[i][2]),
+                                     grid.anchors[i]);
+        }
+        return remap[i];
+    };
+    for (size_t p = 0; p < grid.polygons.size(); ++p) {
+        if (!keep[p]) continue;
+        std::vector<uint32_t> poly;
+        poly.reserve(grid.polygons[p].size());
+        for (uint32_t idx : grid.polygons[p]) poly.push_back(emitVert(idx));
+        out.addPolygon(std::move(poly), faceId, false);
+    }
+    if (!any) return true;
+
+    // New staircase loops = directed open edges present now, absent before.
+    std::map<uint32_t, uint32_t> stair;
+    for (const auto& [a, b] : after) {
+        auto it = before.find(a);
+        if (it == before.end() || it->second != b) stair[a] = b;
+    }
+
+    const double rScale =
+        std::max(1e-6, surf.Value((u0 + u1) / 2, (v0 + v1) / 2)
+                           .Distance(surf.Value((u0 + u1) / 2 + 1e-3,
+                                                (v0 + v1) / 2)) /
+                           1e-3);
+
+    // One web per insert wire: nearest staircase loop, keyhole ear-clip.
+    std::vector<char> stairUsed;
+    while (!stair.empty()) {
+        // Extract one closed staircase loop.
+        std::vector<uint32_t> loop;
+        uint32_t start = stair.begin()->first, cur = start;
+        do {
+            loop.push_back(cur);
+            auto it = stair.find(cur);
+            if (it == stair.end()) break;
+            uint32_t nxt = it->second;
+            stair.erase(it);
+            cur = nxt;
+        } while (cur != start && loop.size() < 100000);
+        if (loop.size() < 3) continue;
+
+        // Loop bbox in UV; every insert wire inside it gets bridged into
+        // this ring (nearby slots can merge into one staircase).
+        double lu0 = 1e300, lu1 = -1e300, lv0 = 1e300, lv1 = -1e300;
+        for (uint32_t idx : loop) {
+            lu0 = std::min(lu0, grid.anchors[idx].u);
+            lu1 = std::max(lu1, grid.anchors[idx].u);
+            lv0 = std::min(lv0, grid.anchors[idx].v);
+            lv1 = std::max(lv1, grid.anchors[idx].v);
+        }
+        std::vector<size_t> inLoop;
+        for (size_t w = 0; w < boxes.size(); ++w) {
+            double cu = (boxes[w].u0 + boxes[w].u1) / 2;
+            double cv = (boxes[w].v0 + boxes[w].v1) / 2;
+            if (cu >= lu0 && cu <= lu1 && cv >= lv0 && cv <= lv1) {
+                inLoop.push_back(w);
+            }
+        }
+        if (inLoop.empty()) continue;
+
+        // Working ring: reversed staircase (it bounds the remaining mesh)
+        // in synthetic planar coords + output vertex ids.
+        std::vector<std::array<double, 3>> ringPts;
+        std::vector<uint32_t> ringIds;
+        {
+            std::vector<uint32_t> outer(loop.rbegin(), loop.rend());
+            for (uint32_t idx : outer) {
+                ringPts.push_back({grid.anchors[idx].u * rScale,
+                                   grid.anchors[idx].v, 0.0});
+                ringIds.push_back(emitVert(idx));
+            }
+        }
+        auto ringArea = [&]() {
+            double a2 = 0;
+            for (size_t i = 0; i < ringPts.size(); ++i) {
+                const auto& p1 = ringPts[i];
+                const auto& p2 = ringPts[(i + 1) % ringPts.size()];
+                a2 += p1[0] * p2[1] - p2[0] * p1[1];
+            }
+            return a2;
+        };
+        const double outerSign = ringArea();
+
+        for (size_t w : inLoop) {
+            // Wire polyline: each edge sampled on its 3D curve at the
+            // solved count (the same contract its wall faces sample), uv
+            // through the pcurve; pieces chained by nearest endpoints.
+            struct WPt { gp_Pnt p; double u, v; };
+            std::vector<std::vector<WPt>> pieces;
+            for (int eid : plan.insertWires[w]) {
+                int n = eid > 0 && eid < (int)solvedEdge.size() &&
+                                solvedEdge[eid] > 0
+                            ? solvedEdge[eid]
+                            : 8;
+                const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+                double f, l;
+                Handle(Geom2d_Curve) pc =
+                    BRep_Tool::CurveOnSurface(edge, face, f, l);
+                if (pc.IsNull()) continue;
+                BRepAdaptor_Curve c(edge);
+                const double f3 = c.FirstParameter(), l3 = c.LastParameter();
+                std::vector<WPt> piece;
+                for (int k = 0; k <= n; ++k) {
+                    double t = double(k) / n;
+                    gp_Pnt2d uv = pc->Value(f + t * (l - f));
+                    piece.push_back(
+                        {c.Value(f3 + t * (l3 - f3)), uv.X(), uv.Y()});
+                }
+                pieces.push_back(std::move(piece));
+            }
+            if (pieces.empty()) continue;
+            std::vector<WPt> hole = pieces[0];
+            std::vector<char> used(pieces.size(), 0);
+            used[0] = 1;
+            for (size_t step = 1; step < pieces.size(); ++step) {
+                double bd = 1e300; size_t bi = 0; bool rev = false;
+                for (size_t k = 0; k < pieces.size(); ++k) {
+                    if (used[k]) continue;
+                    double dF = hole.back().p.Distance(pieces[k].front().p);
+                    double dB = hole.back().p.Distance(pieces[k].back().p);
+                    if (dF < bd) { bd = dF; bi = k; rev = false; }
+                    if (dB < bd) { bd = dB; bi = k; rev = true; }
+                }
+                used[bi] = 1;
+                std::vector<WPt> pc2 = pieces[bi];
+                if (rev) std::reverse(pc2.begin(), pc2.end());
+                hole.insert(hole.end(), pc2.begin() + 1, pc2.end());
+            }
+            if (hole.size() > 1 &&
+                hole.front().p.Distance(hole.back().p) < 1e-9) {
+                hole.pop_back();
+            }
+            if (hole.size() < 3) continue;
+
+            double aHole = 0;
+            for (size_t i = 0; i < hole.size(); ++i) {
+                const WPt& p1 = hole[i];
+                const WPt& p2 = hole[(i + 1) % hole.size()];
+                aHole += p1.u * rScale * p2.v - p2.u * rScale * p1.v;
+            }
+            std::vector<WPt> h = hole;
+            if (outerSign * aHole > 0) std::reverse(h.begin(), h.end());
+
+            // Splice this hole into the working ring at the nearest pair.
+            size_t bo = 0, bh = 0; double bd = 1e300;
+            for (size_t i = 0; i < ringPts.size(); ++i) {
+                for (size_t j = 0; j < h.size(); ++j) {
+                    double dx = ringPts[i][0] - h[j].u * rScale;
+                    double dy = ringPts[i][1] - h[j].v;
+                    double d = dx * dx + dy * dy;
+                    if (d < bd) { bd = d; bo = i; bh = j; }
+                }
+            }
+            std::vector<std::array<double, 3>> np;
+            std::vector<uint32_t> ni;
+            for (size_t i = 0; i <= bo; ++i) {
+                np.push_back(ringPts[i]);
+                ni.push_back(ringIds[i]);
+            }
+            std::vector<uint32_t> holeIds(h.size(), UINT32_MAX);
+            auto holeId = [&](size_t j) {
+                if (holeIds[j] == UINT32_MAX) {
+                    holeIds[j] = out.addVertex(
+                        h[j].p, Anchor{faceId, h[j].u, h[j].v});
+                }
+                return holeIds[j];
+            };
+            for (size_t j = 0; j <= h.size(); ++j) {
+                size_t k = (bh + j) % h.size();
+                np.push_back({h[k].u * rScale, h[k].v, 0.0});
+                ni.push_back(holeId(k));
+            }
+            for (size_t i = bo; i < ringPts.size(); ++i) {
+                np.push_back(ringPts[i]);
+                ni.push_back(ringIds[i]);
+            }
+            ringPts = std::move(np);
+            ringIds = std::move(ni);
+        }
+
+        std::vector<uint32_t> ringIdx(ringPts.size());
+        for (size_t i = 0; i < ringIdx.size(); ++i) ringIdx[i] = i;
+        for (const auto& t : triangulatePoly(ringPts, ringIdx)) {
+            uint32_t a = ringIds[t[0]], b = ringIds[t[1]],
+                     c = ringIds[t[2]];
+            if (a == b || b == c || a == c) continue;
+            out.addPolygon({a, b, c}, faceId, false);
+        }
+    }    return true;
 }
 
 // Outward normal of a planar face (accounts for face orientation).
@@ -4636,6 +5023,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     auto [p0, p1] = revPhases();
                     meshRevolutionTaper(face, surf, fid, nA, nB, p0, p1,
                                         out);
+                } else if (!plan.insertWires.empty()) {
+                    if (!meshRevolutionInsert(face, surf, model, plan,
+                                              solvedEdge, fid, nu, nv, out)) {
+                        fellBack[fid] = 1;
+                        meshFallback(face, surf, fid, s, out);
+                    }
                 } else {
                     meshRevolutionGrid(face, surf, model, plan.uEdges,
                                        solvedEdge, fid, nu, nv, out);

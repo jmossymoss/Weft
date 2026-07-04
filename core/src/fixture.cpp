@@ -68,6 +68,23 @@ TopoDS_Shape makeFixture(const std::string& name) {
         TopoDS_Shape drill = BRepPrimAPI_MakeCylinder(axis, 8.0, 12.0).Shape();
         return BRepAlgoAPI_Cut(plate, drill).Shape();
     }
+    if (name == "slotted") {
+        // Barrel case from the flaregun: a tube with a capsule slot milled
+        // through the wall. The outer cylinder stays closed in u but
+        // carries an interior trim — the mesher must keep cylinder
+        // topology and insert around the slot, not fall back to strips.
+        gp_Ax2 axis(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1));
+        TopoDS_Shape tube = BRepAlgoAPI_Cut(
+            BRepPrimAPI_MakeCylinder(axis, 12.0, 60.0).Shape(),
+            BRepPrimAPI_MakeCylinder(axis, 9.0, 60.0).Shape());
+        gp_Ax2 slotAx(gp_Pnt(0, -20.0, 20.0), gp_Dir(0, 1, 0));
+        TopoDS_Shape slot =
+            BRepPrimAPI_MakeCylinder(slotAx, 3.0, 40.0).Shape();
+        gp_Trsf up; up.SetTranslation(gp_Vec(0, 0, 20.0));
+        TopoDS_Shape slot2 = slot.Moved(up);
+        TopoDS_Shape cut = BRepAlgoAPI_Cut(tube, slot).Shape();
+        return BRepAlgoAPI_Cut(cut, slot2).Shape();
+    }
     if (name == "boss") {
         TopoDS_Shape base = BRepPrimAPI_MakeBox(40.0, 40.0, 10.0).Shape();
         gp_Ax2 axis(gp_Pnt(20.0, 20.0, 10.0), gp_Dir(0, 0, 1));
