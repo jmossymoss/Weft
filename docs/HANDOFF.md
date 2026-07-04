@@ -36,7 +36,7 @@ Never commit test models to the repo.
 | all 10 fixtures | 0 (analytic only) | 0, `clean()` | in CTest |
 | as1_pe_203 | 10,884 | **0** | winding consistent |
 | as1-oc-214 | 4,748 | **0** | winding consistent |
-| RC_Buggy front susp. | 320,316 (+3,495 non-manifold) | 10,128 (+2,387) | dirty CAD, see below |
+| RC_Buggy front susp. | 320,316 (+3,495 non-manifold) | 3,898 (+2,164) | dirty CAD, see below |
 
 Meshing the buggy takes ~45 s (was ~33 s at the old, broken counts; the
 whole-shape triangulation now runs parallel — most of the time is OCCT).
@@ -80,13 +80,18 @@ whole-shape triangulation now runs parallel — most of the time is OCCT).
 
 ## Known gaps / next steps (in priority order)
 
-1. **Buggy residuals** — 10k open edges + 2.4k non-manifold on the 15 MB
-   assembly. Suspected causes: closed edges whose curve parametrization
-   phase doesn't match the surface u-origin (canonical collection bails —
-   see `collectEmittedPolyline`'s closed-edge handling), faces whose
-   `PolygonOnTriangulation` is missing, and genuinely self-touching
-   solids. Diagnose with `weft validate` + a per-face open-edge breakdown
-   (worth adding to the report).
+1. **Buggy residuals** — 3,898 open edges + 2.2k non-manifold left on the
+   15 MB assembly (started at 320k). Fixed so far: closed-surface seam
+   polygons fetched by orientation (`PolygonOnClosedTriangulation`
+   dispatches on FORWARD/REVERSED), phase-shifted closed rims (canonical
+   loop mode collapses the triangulation's seam node), dirty-CAD-scaled
+   projection tolerances with per-cluster closest-point dedupe (narrow
+   strips otherwise capture the grid's second row), weld groups from
+   face-adjacency components. The rest is a long tail (≤16 open edges per
+   face across ~400 faces); `weft validate` prints the leakiest faces —
+   pick one, `WEFT`-debug it the same way (temporarily print its plan,
+   chains, and open-edge coordinates), fix the class, repeat. The 2 input
+   non-manifold B-rep edges are the source's.
 2. **Grid conformity to arbitrary trims** (plan §7.1 proper) — demoted
    faces currently triangulate. The next level is a boundary-conforming
    quad layout so an angle-trimmed cylinder keeps exact radial control.

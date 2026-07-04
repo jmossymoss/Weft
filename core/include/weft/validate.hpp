@@ -5,6 +5,8 @@
 
 #include <cstddef>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace weft {
 
@@ -27,6 +29,21 @@ struct ValidationReport {
     size_t deviationSamples = 0;
 
     double sliverAngleDeg = 5.0;
+
+    // B-rep faces ranked by how many open mesh edges their polygons own —
+    // the "where does it leak" list. (faceId, openEdgeCount), descending.
+    std::vector<std::pair<int, size_t>> leakyFaces;
+
+    // B-rep edges bordering fewer than two faces: the INPUT is an open
+    // shell there, so a matching share of open mesh edges is expected and
+    // not a meshing defect.
+    size_t inputBoundaryEdges = 0;
+    // Of openEdges: how many run along those input boundaries (expected)
+    // vs. anywhere else (real cracks between faces).
+    size_t openEdgesOnInputBoundary = 0;
+    // B-rep edges bordering three or more faces: the INPUT is non-manifold
+    // there, and the welded mesh necessarily is too.
+    size_t inputNonManifoldEdges = 0;
 
     bool watertight() const { return openEdges == 0 && nonManifoldEdges == 0; }
     bool clean() const {

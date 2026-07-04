@@ -14,7 +14,12 @@
 #include <Poly_PolygonOnTriangulation.hxx>
 #include <Poly_Triangulation.hxx>
 #include <Precision.hxx>
+#include <TColStd_Array1OfInteger.hxx>
+#include <TColStd_Array1OfReal.hxx>
+#include <TColStd_HArray1OfReal.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopTools_ListIteratorOfListOfShape.hxx>
+#include <TopTools_ListOfShape.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
@@ -29,6 +34,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <functional>
 #include <map>
 #include <numeric>
 #include <set>
@@ -839,6 +847,12 @@ struct EdgePolyline {
     // side must then keep these segments unsplit during quad subdivision
     // (the parametric side has no midpoints to meet).
     bool fromParametric = false;
+    // Closed edge whose canonical points don't include the curve's seam
+    // parameter (the parametric side's u-origin is phase-shifted from the
+    // curve origin): the polyline is an open run of interior points and
+    // the chain's own seam node must be collapsed away, closing the loop
+    // through the wrap segment between last and first canonical points.
+    bool closedLoop = false;
 };
 
 // Project emitted vertices of a parametric face onto one of its edges and
@@ -849,50 +863,91 @@ bool collectEmittedPolyline(const TopoDS_Edge& edge, MeshBuilder& out,
     double f = 0, l = 0;
     Handle(Geom_Curve) curve = BRep_Tool::Curve(edge, f, l);
     if (curve.IsNull()) return false;
-    const double tol =
-        std::max(BRep_Tool::Tolerance(edge), Precision::Confusion()) * 10.0;
+    const gp_Pnt pf = curve->Value(f);
+    const gp_Pnt pl = curve->Value(l);
+    const gp_Pnt pm = curve->Value(0.5 * (f + l));
+    // Real-world edges sit within their *edge tolerance* of the adjacent
+    // surfaces — that is what the tolerance means — and the parametric
+    // side's vertices are evaluated ON its surface. So the acceptance
+    // window must scale with the edge tolerance and the edge size, not
+    // with Precision::Confusion(); a Confusion-sized window silently
+    // rejects every emitted vertex on dirty CAD and leaves the crack in
+    // place. Interior vertices sit a full grid cell away, orders of
+    // magnitude beyond this window.
+    const double approxLen = pf.Distance(pm) + pm.Distance(pl);
+    const double tol = std::max({BRep_Tool::Tolerance(edge) * 10.0,
+                                 approxLen * 1e-4, 1e-6});
 
-    std::vector<std::pair<double, gp_Pnt>> hits;
+    const bool closed = pf.Distance(pl) <= tol;
+    struct Hit {
+        double param;
+        gp_Pnt pnt;
+        double dist;
+    };
+    std::vector<Hit> hits;
     for (size_t i = vBegin; i < vEnd; ++i) {
         gp_Pnt p = out.vertex(i);
+        // Endpoints explicitly: the projector reports true extrema only
+        // and can miss the curve ends entirely.
+        const double df = p.Distance(pf);
+        if (df <= tol) {
+            hits.push_back({f, p, df});
+            if (closed) hits.push_back({l, p, df});
+            continue;
+        }
+        const double dl = p.Distance(pl);
+        if (dl <= tol) {
+            hits.push_back({l, p, dl});
+            continue;
+        }
         GeomAPI_ProjectPointOnCurve proj(p, curve, f, l);
         if (proj.NbPoints() < 1 || proj.LowerDistance() > tol) continue;
-        hits.push_back({proj.LowerDistanceParameter(), p});
+        double t = proj.LowerDistanceParameter();
+        hits.push_back({std::min(std::max(t, f), l), p, proj.LowerDistance()});
     }
     if (hits.size() < 2) return false;
     std::sort(hits.begin(), hits.end(),
-              [](const auto& a, const auto& b) { return a.first < b.first; });
-    // Distinct positions only (the seam column of a closed grid projects
-    // twice onto the same rim parameter).
+              [](const Hit& a, const Hit& b) { return a.param < b.param; });
+    // One point per parameter cluster. Duplicates come from the seam
+    // column of a closed grid (same point twice — either survives) and,
+    // on narrow strips whose width is inside the dirty-CAD tolerance
+    // window, from the NEXT row of the grid projecting onto the edge —
+    // there the truly-on-curve vertex must win, so keep the closest.
     std::vector<std::pair<double, gp_Pnt>> unique;
-    for (const auto& h : hits) {
+    double bestDist = 0.0;
+    for (const Hit& h : hits) {
         if (!unique.empty() &&
-            (h.first - unique.back().first) < (l - f) * 1e-9) {
+            (h.param - unique.back().first) < (l - f) * 1e-3) {
+            if (h.dist < bestDist) {
+                unique.back() = {unique.back().first, h.pnt};
+                bestDist = h.dist;
+            }
             continue;
         }
-        unique.push_back(h);
+        unique.push_back({h.param, h.pnt});
+        bestDist = h.dist;
     }
 
     const double endTol = (l - f) * 1e-5;
-    const bool closed =
-        curve->Value(f).Distance(curve->Value(l)) <= Precision::Confusion() * 100;
+    const bool haveF = std::abs(unique.front().first - f) <= endTol;
+    const bool haveL = std::abs(unique.back().first - l) <= endTol;
     if (closed) {
-        // A closed rim: the chain must start at f and close back at l with
-        // the same point. Whichever end the seam point projected to, mirror
-        // it to the other.
-        if (std::abs(unique.front().first - f) <= endTol) {
+        // A closed rim: when the chain starts at f it must close back at l
+        // with the same point. Whichever end the seam point landed on,
+        // mirror it to the other. When the parametric side's u-origin is
+        // phase-shifted from the curve origin (neither end matches), keep
+        // the open run of interior points and let conformChain collapse
+        // the triangulation's own seam node — the loop then closes through
+        // the wrap segment between last and first canonical points.
+        if (haveF && !haveL) {
             unique.push_back({l, unique.front().second});
-        } else if (std::abs(unique.back().first - l) <= endTol) {
+        } else if (haveL && !haveF) {
             unique.insert(unique.begin(), {f, unique.back().second});
-        } else {
-            return false;  // phase mismatch between surface u and curve
-                           // parametrization; leave the boundary alone
+        } else if (!haveF && !haveL) {
+            poly.closedLoop = true;
         }
     } else {
-        if (std::abs(unique.front().first - f) > endTol ||
-            std::abs(unique.back().first - l) > endTol) {
-            return false;
-        }
+        if (!haveF || !haveL) return false;
     }
     if (unique.size() < 2) return false;
     poly.params.clear();
@@ -918,6 +973,10 @@ struct BoundaryChain {
     std::vector<int> nodes;      // soup node ids, ordered along the edge
     std::vector<double> params;  // ascending edge-curve parameters
     bool fromParametric = false;
+    // Conformed to a phase-shifted closed rim: the chain is the open run
+    // of canonical points and the boundary closes through the wrap
+    // segment (nodes.back() -> nodes.front()).
+    bool closedLoop = false;
 };
 
 // The single triangle owning a boundary segment (a,b), with the segment's
@@ -943,11 +1002,12 @@ int findBoundaryTriangle(const TriSoup& s, int a, int b, int& ia, int& ib) {
 void conformChain(TriSoup& s, BoundaryChain& chain, const EdgePolyline& target,
                   const Handle(Geom2d_Curve)& pcurve) {
     if (chain.nodes.size() < 2 || target.params.size() < 2) return;
+    const bool loop = target.closedLoop;
     const double range = std::max(1e-12, chain.params.back() - chain.params.front());
     const double epsP = range * 1e-5;
 
     // Fast path: same discretization — just adopt the canonical positions.
-    if (chain.nodes.size() == target.params.size()) {
+    if (!loop && chain.nodes.size() == target.params.size()) {
         bool same = true;
         for (size_t i = 0; i < chain.params.size(); ++i) {
             if (std::abs(chain.params[i] - target.params[i]) > epsP) {
@@ -964,13 +1024,19 @@ void conformChain(TriSoup& s, BoundaryChain& chain, const EdgePolyline& target,
         }
     }
 
-    s.pts[chain.nodes.front()] = target.pts.front();
-    s.pts[chain.nodes.back()] = target.pts.back();
     std::vector<bool> keep(chain.nodes.size(), false);
-    keep.front() = keep.back() = true;
+    if (!loop) {
+        // Open (or seam-aligned closed) edge: endpoints correspond.
+        s.pts[chain.nodes.front()] = target.pts.front();
+        s.pts[chain.nodes.back()] = target.pts.back();
+        keep.front() = keep.back() = true;
+    }
+    // Phase-shifted closed rim: every target point is interior; the
+    // chain's own seam node gets collapsed once the run is in place.
 
     // Insert (or claim) every interior canonical point.
-    for (size_t j = 1; j + 1 < target.params.size(); ++j) {
+    for (size_t j = loop ? 0 : 1;
+         j + (loop ? 0 : 1) < target.params.size(); ++j) {
         const double t = target.params[j];
         size_t k = 0;
         while (k + 1 < chain.params.size() && chain.params[k + 1] < t - epsP) ++k;
@@ -1030,6 +1096,32 @@ void conformChain(TriSoup& s, BoundaryChain& chain, const EdgePolyline& target,
         keep.erase(keep.begin() + k);
         if (into == left) { /* k now points at the next candidate */ }
     }
+
+    // Phase-shifted closed rim: retire the triangulation's seam node —
+    // the boundary then closes through the wrap segment between the last
+    // and first canonical points, exactly like the parametric side's own
+    // quads across its seam.
+    if (loop && chain.nodes.size() >= 4) {
+        const int seamA = chain.nodes.front();
+        const int seamB = chain.nodes.back();
+        const double toFirst = chain.params[1] - chain.params.front();
+        const double toLast = chain.params.back() -
+                              chain.params[chain.params.size() - 2];
+        const int live = toFirst <= toLast
+                             ? chain.nodes[1]
+                             : chain.nodes[chain.nodes.size() - 2];
+        for (auto& tr : s.tris) {
+            for (int& v : tr) {
+                if (v == seamA || v == seamB) v = live;
+            }
+        }
+        chain.nodes.erase(chain.nodes.begin());
+        chain.params.erase(chain.params.begin());
+        chain.nodes.pop_back();
+        chain.params.pop_back();
+        chain.closedLoop = true;
+    }
+
     // Drop triangles the collapses degenerated.
     s.tris.erase(std::remove_if(s.tris.begin(), s.tris.end(),
                                 [](const std::array<int, 3>& tr) {
@@ -1182,47 +1274,68 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         if (eid < 1 || !seenEdges.insert(eid).second) continue;
         if (BRep_Tool::Degenerated(edge)) continue;
 
-        Handle(Poly_PolygonOnTriangulation) polyOnTri =
-            BRep_Tool::PolygonOnTriangulation(edge, tri, loc);
-        if (polyOnTri.IsNull() || polyOnTri->NbNodes() < 2) continue;
-
-        BoundaryChain chain;
-        chain.edgeId = eid;
-        const TColStd_Array1OfInteger& nodes = polyOnTri->Nodes();
-        for (int i = nodes.Lower(); i <= nodes.Upper(); ++i) {
-            chain.nodes.push_back(nodes(i) - 1);
+        // A closed surface's seam edge appears twice in the face and its
+        // two polygons live in ONE PolygonOnClosedTriangulation
+        // representation, dispatched by edge orientation. Fetch both, or
+        // the second seam side gets subdivided as if it were interior and
+        // the seam cracks open (observed as exactly one open edge per
+        // seam segment, both sides).
+        std::vector<Handle(Poly_PolygonOnTriangulation)> reps;
+        Handle(Poly_PolygonOnTriangulation) p1 = BRep_Tool::PolygonOnTriangulation(
+            TopoDS::Edge(edge.Oriented(TopAbs_FORWARD)), tri, loc);
+        if (!p1.IsNull() && p1->NbNodes() >= 2) reps.push_back(p1);
+        if (BRep_Tool::IsClosed(edge, face)) {
+            Handle(Poly_PolygonOnTriangulation) p2 =
+                BRep_Tool::PolygonOnTriangulation(
+                    TopoDS::Edge(edge.Oriented(TopAbs_REVERSED)), tri, loc);
+            if (!p2.IsNull() && p2 != p1 && p2->NbNodes() >= 2) {
+                reps.push_back(p2);
+            }
         }
+        if (reps.empty()) continue;
+
         double f = 0, l = 0;
         Handle(Geom_Curve) curve = BRep_Tool::Curve(edge, f, l);
-        if (polyOnTri->HasParameters()) {
-            const TColStd_Array1OfReal& ps = polyOnTri->Parameters()->Array1();
-            for (int i = ps.Lower(); i <= ps.Upper(); ++i) {
-                chain.params.push_back(ps(i));
-            }
-        } else if (!curve.IsNull()) {
-            for (int n : chain.nodes) {
-                GeomAPI_ProjectPointOnCurve proj(soup.pts[n], curve, f, l);
-                chain.params.push_back(proj.NbPoints() ? proj.LowerDistanceParameter() : f);
-            }
-        } else {
-            continue;
-        }
-        if (chain.params.size() != chain.nodes.size()) continue;
-        if (chain.params.front() > chain.params.back()) {
-            std::reverse(chain.nodes.begin(), chain.nodes.end());
-            std::reverse(chain.params.begin(), chain.params.end());
-        }
         edgeCurve[eid] = curve;
 
-        auto canIt = canonical.find(eid);
-        if (canIt != canonical.end()) {
-            double pf = 0, pl = 0;
-            Handle(Geom2d_Curve) pcurve =
-                BRep_Tool::CurveOnSurface(edge, face, pf, pl);
-            conformChain(soup, chain, canIt->second, pcurve);
-            chain.fromParametric = canIt->second.fromParametric;
+        for (const auto& polyOnTri : reps) {
+            BoundaryChain chain;
+            chain.edgeId = eid;
+            const TColStd_Array1OfInteger& nodes = polyOnTri->Nodes();
+            for (int i = nodes.Lower(); i <= nodes.Upper(); ++i) {
+                chain.nodes.push_back(nodes(i) - 1);
+            }
+            if (polyOnTri->HasParameters()) {
+                const TColStd_Array1OfReal& ps =
+                    polyOnTri->Parameters()->Array1();
+                for (int i = ps.Lower(); i <= ps.Upper(); ++i) {
+                    chain.params.push_back(ps(i));
+                }
+            } else if (!curve.IsNull()) {
+                for (int n : chain.nodes) {
+                    GeomAPI_ProjectPointOnCurve proj(soup.pts[n], curve, f, l);
+                    chain.params.push_back(
+                        proj.NbPoints() ? proj.LowerDistanceParameter() : f);
+                }
+            } else {
+                continue;
+            }
+            if (chain.params.size() != chain.nodes.size()) continue;
+            if (chain.params.front() > chain.params.back()) {
+                std::reverse(chain.nodes.begin(), chain.nodes.end());
+                std::reverse(chain.params.begin(), chain.params.end());
+            }
+
+            auto canIt = canonical.find(eid);
+            if (canIt != canonical.end()) {
+                double pf = 0, pl = 0;
+                Handle(Geom2d_Curve) pcurve =
+                    BRep_Tool::CurveOnSurface(edge, face, pf, pl);
+                conformChain(soup, chain, canIt->second, pcurve);
+                chain.fromParametric = canIt->second.fromParametric;
+            }
+            chains.push_back(std::move(chain));
         }
-        chains.push_back(std::move(chain));
     }
 
     flipToDelaunay(soup);
@@ -1236,6 +1349,15 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
             auto key = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
             boundarySeg[key] = {chain.edgeId, chain.params[i],
                                 chain.params[i + 1], chain.fromParametric};
+        }
+        if (chain.closedLoop && chain.nodes.size() >= 2) {
+            // The wrap segment of a phase-shifted rim. Always authored by
+            // a parametric neighbour, so it is never split — the params
+            // are only bookkeeping.
+            int a = chain.nodes.back(), b = chain.nodes.front();
+            auto key = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
+            boundarySeg[key] = {chain.edgeId, chain.params.back(),
+                                chain.params.front(), true};
         }
     }
 
@@ -1496,32 +1618,31 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     }
 }
 
-// FaceId -> welding group. Each solid is its own group so touching parts
-// of an assembly never fuse into non-manifold contact surfaces; shells
-// outside solids get their own groups; leftover free faces share one.
+// FaceId -> welding group: connected components of the face-adjacency
+// graph (faces sharing a B-rep edge). Faces the topology joins must weld
+// — including across solids that share edges in dirty CAD — while parts
+// that merely TOUCH share no edges (loadStep does not sew) and stay in
+// separate groups, so contact surfaces never fuse into non-manifold
+// shells.
 std::vector<int> faceWeldGroups(const Model& model) {
-    std::vector<int> group(model.faceCount() + 1, 0);
-    int g = 0;
-    auto assign = [&](const TopoDS_Shape& container) {
-        bool any = false;
-        for (TopExp_Explorer fx(container, TopAbs_FACE); fx.More(); fx.Next()) {
-            int fid = model.faces.FindIndex(fx.Current());
-            if (fid > 0 && group[fid] == 0) {
-                if (!any) { ++g; any = true; }
-                group[fid] = g;
-            }
-        }
+    std::vector<int> parent(model.faceCount() + 1);
+    std::iota(parent.begin(), parent.end(), 0);
+    std::function<int(int)> find = [&](int x) {
+        while (parent[x] != x) x = parent[x] = parent[parent[x]];
+        return x;
     };
-    for (TopExp_Explorer sx(model.shape, TopAbs_SOLID); sx.More(); sx.Next()) {
-        assign(sx.Current());
+    for (int eid = 1; eid <= model.edgeCount(); ++eid) {
+        const TopTools_ListOfShape& adj = model.edgeToFaces.FindFromIndex(eid);
+        int first = 0;
+        for (TopTools_ListIteratorOfListOfShape it(adj); it.More(); it.Next()) {
+            int fid = model.faces.FindIndex(it.Value());
+            if (fid < 1) continue;
+            if (!first) first = fid;
+            else parent[find(fid)] = find(first);
+        }
     }
-    for (TopExp_Explorer sx(model.shape, TopAbs_SHELL); sx.More(); sx.Next()) {
-        assign(sx.Current());
-    }
-    ++g;
-    for (int fid = 1; fid <= model.faceCount(); ++fid) {
-        if (group[fid] == 0) group[fid] = g;
-    }
+    std::vector<int> group(model.faceCount() + 1, 0);
+    for (int fid = 1; fid <= model.faceCount(); ++fid) group[fid] = find(fid);
     return group;
 }
 
