@@ -515,7 +515,7 @@ struct App {
     std::string livePath;  // <data dir>/weft_live.obj, set at startup
 
     // Display / viewport preferences.
-    int shadingMode = 0;  // 0 shaded+wire, 1 shaded, 2 wireframe, 3 flat+wire
+    int lightStyle = 0;  // 0 studio-lit, 1 matcap, 2 flat colour
     bool showFill = true;
     bool showWire = true;
     bool showBrepEdges = true;
@@ -2418,6 +2418,154 @@ static void drawFacePopup(App& app) {
     ImGui::EndPopup();
 }
 
+// Blender-style viewport shading controls: a compact button row pinned to
+// the viewport's top-right corner (wire / solid / matcap / flat) plus a
+// popover with the full lighting, overlay, and background settings.
+static void drawShadingBar(App& app) {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    const float panelW = 330.0f * gUiScale;
+    ImGui::SetNextWindowPos({vp->WorkPos.x + vp->WorkSize.x - panelW -
+                                 10.0f * gUiScale,
+                             vp->WorkPos.y + 10.0f * gUiScale},
+                            ImGuiCond_Always, {1.0f, 0.0f});
+    ImGui::SetNextWindowBgAlpha(0.85f);
+    ImGui::Begin("##shadingbar", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoFocusOnAppearing);
+    auto modeBtn = [&](const char* label, bool active, const char* tip) {
+        if (active) {
+            ImGui::PushStyleColor(ImGuiCol_Button,
+                                  {0.94f, 0.62f, 0.18f, 1.0f});
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                                  {0.98f, 0.70f, 0.26f, 1.0f});
+            ImGui::PushStyleColor(ImGuiCol_Text,
+                                  {0.09f, 0.09f, 0.10f, 1.0f});
+        }
+        bool hit = ImGui::SmallButton(label);
+        if (active) ImGui::PopStyleColor(3);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+        ImGui::SameLine(0.0f, 3.0f * gUiScale);
+        return hit;
+    };
+    if (modeBtn("wire", !app.showFill, "wireframe only")) {
+        app.showFill = false;
+        app.showWire = true;
+    }
+    if (modeBtn("solid", app.showFill && app.lightStyle == 0,
+                "studio-lit solid")) {
+        app.showFill = true;
+        app.lightStyle = 0;
+    }
+    if (modeBtn("matcap", app.showFill && app.lightStyle == 1,
+                "matcap: shading follows the view, reads curvature")) {
+        app.showFill = true;
+        app.lightStyle = 1;
+    }
+    if (modeBtn("flat", app.showFill && app.lightStyle == 2,
+                "flat face colours")) {
+        app.showFill = true;
+        app.lightStyle = 2;
+    }
+    if (ImGui::SmallButton("v##shadepop")) {
+        ImGui::OpenPopup("viewport shading");
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("viewport shading");
+
+    if (ImGui::BeginPopup("viewport shading")) {
+        ImGui::TextDisabled("Viewport Shading");
+        ImGui::Separator();
+        ImGui::TextDisabled("lighting");
+        if (ImGui::RadioButton("studio", app.lightStyle == 0)) {
+            app.lightStyle = 0;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("matcap", app.lightStyle == 1)) {
+            app.lightStyle = 1;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("flat", app.lightStyle == 2)) {
+            app.lightStyle = 2;
+        }
+        if (app.lightStyle == 0) {
+            ImGui::SliderFloat("ambient", &app.lightAmbient, 0.0f, 1.0f);
+            ImGui::SliderFloat("diffuse", &app.lightDiffuse, 0.0f, 1.5f);
+            ImGui::SliderFloat("rim light", &app.lightRim, 0.0f, 0.5f);
+        } else if (app.lightStyle == 1) {
+            // Preview sphere of the procedural studio matcap.
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const float R = 30.0f * gUiScale;
+            ImVec2 p = ImGui::GetCursorScreenPos();
+            float w = ImGui::GetContentRegionAvail().x;
+            ImVec2 c{p.x + w * 0.5f, p.y + R + 6.0f * gUiScale};
+            dl->AddRectFilled({p.x, p.y},
+                              {p.x + w, p.y + 2 * R + 12.0f * gUiScale},
+                              IM_COL32(22, 23, 27, 255), 4.0f * gUiScale);
+            dl->AddCircleFilled(c, R, IM_COL32(56, 57, 62, 255), 48);
+            for (int i = 1; i <= 12; ++i) {
+                float t = i / 12.0f;
+                int g = int(150 * t * t);
+                dl->AddCircleFilled({c.x - 0.30f * R * t,
+                                     c.y - 0.40f * R * t},
+                                    R * (1.0f - 0.55f * t),
+                                    IM_COL32(56 + g, 57 + g, 60 + g, 26),
+                                    48);
+            }
+            dl->AddCircleFilled({c.x - 0.36f * R, c.y - 0.48f * R},
+                                R * 0.12f, IM_COL32(246, 246, 242, 220),
+                                24);
+            dl->AddCircle(c, R, IM_COL32(12, 12, 14, 255), 48,
+                          1.5f * gUiScale);
+            ImGui::Dummy({w, 2 * R + 14.0f * gUiScale});
+        }
+        ImGui::Separator();
+        ImGui::TextDisabled("overlays");
+        ImGui::Checkbox("wireframe", &app.showWire);
+        ImGui::SameLine();
+        ImGui::ColorEdit3("##wirecol", app.wireColor,
+                          ImGuiColorEditFlags_NoInputs);
+        ImGui::SameLine();
+        ImGui::Checkbox("feature edges", &app.showBrepEdges);
+        ImGui::Checkbox("selection verts", &app.showVerts);
+        ImGui::SameLine();
+        ImGui::ColorEdit3("##vertcol", app.vertColor,
+                          ImGuiColorEditFlags_NoInputs);
+        if (ImGui::Checkbox("quality heatmap", &app.qualityView)) {
+            rebuildBuffers(app);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("tint polys by worst corner angle:\n"
+                              "green ok, orange skewed, red sliver");
+        }
+        ImGui::SameLine();
+        ImGui::Checkbox("problems", &app.showProblems);
+        ImGui::Separator();
+        ImGui::TextDisabled("background");
+        ImGui::ColorEdit3("##bgcol", app.bgColor,
+                          ImGuiColorEditFlags_NoInputs);
+        ImGui::SameLine();
+        auto theme = [&](const char* name, float br, float bg2, float bb,
+                         float wr, float wg, float wb) {
+            if (ImGui::SmallButton(name)) {
+                app.bgColor[0] = br;
+                app.bgColor[1] = bg2;
+                app.bgColor[2] = bb;
+                app.wireColor[0] = wr;
+                app.wireColor[1] = wg;
+                app.wireColor[2] = wb;
+            }
+            ImGui::SameLine();
+        };
+        theme("dark", 0.117f, 0.125f, 0.145f, 0.10f, 0.11f, 0.13f);
+        theme("light", 0.86f, 0.87f, 0.89f, 0.28f, 0.29f, 0.32f);
+        theme("slate", 0.16f, 0.19f, 0.24f, 0.09f, 0.11f, 0.15f);
+        ImGui::NewLine();
+        ImGui::EndPopup();
+    }
+    ImGui::End();
+}
+
 static void drawUi(App& app) {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     const float width = 330.0f * gUiScale;
@@ -2432,6 +2580,7 @@ static void drawUi(App& app) {
     ImGui::SameLine();
     ImGui::TextDisabled("b-rep retopology");
     ImGui::Separator();
+    drawShadingBar(app);
 
     if (ImGui::CollapsingHeader("Model", ImGuiTreeNodeFlags_DefaultOpen)) {
         if (ImGui::Button("Open STEP...", {-1, 0})) {
@@ -2790,50 +2939,10 @@ static void drawUi(App& app) {
         ImGui::Text("%zu manual op(s) recorded", app.recipe.ops.size());
     }
 
-    if (ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen)) {
-        if (ImGui::Combo("shading", &app.shadingMode,
-                         "shaded + wire\0shaded\0wireframe\0"
-                         "flat + wire\0matcap + wire\0matcap\0")) {
-            app.showFill = app.shadingMode != 2;
-            app.showWire = app.shadingMode != 1 && app.shadingMode != 5;
-        }
-        ImGui::Checkbox("feature edges", &app.showBrepEdges);
-        ImGui::SameLine();
-        ImGui::Checkbox("selection verts", &app.showVerts);
-        if (ImGui::Checkbox("quality heatmap", &app.qualityView)) {
-            rebuildBuffers(app);
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("tint polys by worst corner angle:\n"
-                              "green ok, orange skewed, red sliver");
-        }
-        ImGui::ColorEdit3("background", app.bgColor,
-                          ImGuiColorEditFlags_NoInputs);
-        ImGui::SameLine();
-        ImGui::ColorEdit3("wireframe", app.wireColor,
-                          ImGuiColorEditFlags_NoInputs);
-        ImGui::SameLine();
-        ImGui::ColorEdit3("verts", app.vertColor,
-                          ImGuiColorEditFlags_NoInputs);
-        ImGui::TextDisabled("lighting (image-based HDRI planned)");
-        ImGui::SliderFloat("ambient", &app.lightAmbient, 0.0f, 1.0f);
-        ImGui::SliderFloat("diffuse", &app.lightDiffuse, 0.0f, 1.5f);
-        ImGui::SliderFloat("rim light", &app.lightRim, 0.0f, 0.5f);
-        ImGui::TextDisabled("theme:");
-        ImGui::SameLine();
-        auto theme = [&](const char* name, float br, float bg2, float bb,
-                         float wr, float wg, float wb) {
-            if (ImGui::SmallButton(name)) {
-                app.bgColor[0] = br; app.bgColor[1] = bg2; app.bgColor[2] = bb;
-                app.wireColor[0] = wr; app.wireColor[1] = wg;
-                app.wireColor[2] = wb;
-            }
-            ImGui::SameLine();
-        };
-        theme("dark", 0.117f, 0.125f, 0.145f, 0.10f, 0.11f, 0.13f);
-        theme("light", 0.86f, 0.87f, 0.89f, 0.28f, 0.29f, 0.32f);
-        theme("slate", 0.16f, 0.19f, 0.24f, 0.09f, 0.11f, 0.15f);
-        ImGui::NewLine();
+    if (ImGui::CollapsingHeader("Display")) {
+        // Shading and overlay settings live in the viewport shading
+        // popover (top-right of the viewport, Blender-style).
+        ImGui::TextDisabled("shading: use the viewport corner popover");
         ImGui::TextDisabled("orange convex / blue concave / green smooth");
         ImGui::TextDisabled("LMB select · MMB orbit · shift+MMB pan");
         ImGui::TextDisabled("ctrl+MMB zoom · alt+MMB axis view · wheel");
@@ -2960,7 +3069,7 @@ int main(int argc, char** argv) {
         app.qualityView = true;
         if (app.hasModel) rebuildBuffers(app);
     }
-    if (startMatcap) app.shadingMode = 4;
+    if (startMatcap) app.lightStyle = 1;
     if (startMode >= 1 && startMode <= 6) {
         setSelectMode(app, SelectMode(startMode - 1));
     }
@@ -4114,11 +4223,10 @@ int main(int argc, char** argv) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glEnable(GL_DEPTH_TEST);
 
-        const bool wantFill = app.showFill && app.shadingMode != 2;
-        const bool wantWire =
-            app.showWire && app.shadingMode != 1 && app.shadingMode != 5;
-        const bool flatFill = app.shadingMode == 3;
-        const bool matcapFill = app.shadingMode >= 4;
+        const bool wantFill = app.showFill;
+        const bool wantWire = app.showWire;
+        const bool flatFill = app.lightStyle == 2;
+        const bool matcapFill = app.lightStyle == 1;
         if (app.hasModel && wantFill && app.fill.count) {
             glEnable(GL_POLYGON_OFFSET_FILL);
             glPolygonOffset(1.0f, 1.0f);
