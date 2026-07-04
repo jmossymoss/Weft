@@ -11,6 +11,13 @@
 // (header guard), leaving commdlg.h without the dialog types it needs.
 // Full windows.h here wins the race and satisfies everyone.
 #ifdef _WIN32
+// OCCT >= 8.0's CMake config injects NOGDI/NOMINMAX into every consumer;
+// NOGDI strips the GDI/user types (LOGFONT, NMHDR, DLGTEMPLATE) that
+// commdlg.h/prsht.h (file dialogs) require. This TU never touches OCCT
+// visualization, so restoring GDI is safe.
+#undef NOGDI
+#undef NOUSER
+#undef NOCTLMGR
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif

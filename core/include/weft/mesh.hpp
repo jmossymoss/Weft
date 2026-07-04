@@ -55,10 +55,19 @@ std::vector<std::array<uint32_t, 3>> triangulatePoly(
 // (many pipelines want raw tris), yUp converts Z-up CAD space to Y-up
 // engine space, and scale converts units (0.01 turns mm into Unreal
 // cm... 0.001 into metres for Unity/Blender-metric).
+struct Model;  // model.hpp
+
 struct ObjExportOptions {
     bool triangulate = false;
     bool yUp = false;
     double scale = 1.0;
+    // Body names for the "o" blocks (parallel to solidFaces; empty entries
+    // fall back to object_<n>). Typically Model::solidNames.
+    const std::vector<std::string>* objectNames = nullptr;
+    // When set, every polygon corner carries the exact surface normal of
+    // its own B-rep face ("f v//n"): sharp edges split, fillets shade
+    // smooth — no angle-threshold guessing.
+    const Model* model = nullptr;
 };
 
 // Write Wavefront OBJ. Polygons are grouped per B-rep face

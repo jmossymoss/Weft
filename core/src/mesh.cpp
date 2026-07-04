@@ -1,4 +1,6 @@
 #include "weft/mesh.hpp"
+#include "weft/model.hpp"
+#include "normals.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -274,10 +276,65 @@ void writeObj(const PolyMesh& mesh, const std::string& path,
         }
     }
 
+    // Exact CAD normals: one per used (vertex, face) pair, evaluated on
+    // the B-rep. Corners of polygons from different faces carry each
+    // face's own normal, so sharp edges split and tangent joins shade
+    // smooth. Polygons with a pole/apex corner fall back to no-normal.
+    std::map<std::pair<uint32_t, int>, int> normalIndex;
+    std::map<int, BRepAdaptor_Surface> normalCache;
+    int normalCount = 0;
+    auto normalOf = [&](uint32_t idx, int fid) {
+        auto key = std::make_pair(idx, fid);
+        auto it = normalIndex.find(key);
+        if (it != normalIndex.end()) return it->second;
+        int slot = -1;
+        std::array<double, 3> n;
+        if (opts.model &&
+            detail::cadNormal(mesh, *opts.model, idx, fid, normalCache, n)) {
+            if (opts.yUp) {
+                double ny = n[2], nz = -n[1];
+                n[1] = ny;
+                n[2] = nz;
+            }
+            std::fprintf(f, "vn %.6g %.6g %.6g\n", n[0], n[1], n[2]);
+            slot = ++normalCount;  // 1-based OBJ index
+        }
+        normalIndex.emplace(key, slot);
+        return slot;
+    };
+
     // Group polygons by source B-rep face so CAD face IDs survive into the
     // DCC. Polygons of a face are contiguous by construction; emitting in
     // solid order keeps each object's polygons contiguous too.
     int currentObject = -1, currentGroup = -1;
+    auto objectLabel = [&](int object) {
+        std::string label = "object_" + std::to_string(object + 1);
+        if (opts.objectNames && object >= 0 &&
+            object < (int)opts.objectNames->size() &&
+            !(*opts.objectNames)[object].empty()) {
+            label = (*opts.objectNames)[object];
+            for (char& c : label) {
+                if (c <= ' ' || c == '#' || c == '/' || c == '\\') c = '_';
+            }
+        }
+        return label;
+    };
+    auto emitPoly = [&](const std::vector<uint32_t>& corners, int fid) {
+        bool full = opts.model != nullptr;
+        std::vector<int> slots(corners.size(), -1);
+        if (full) {
+            for (size_t i = 0; i < corners.size(); ++i) {
+                slots[i] = normalOf(corners[i], fid);
+                if (slots[i] < 1) full = false;
+            }
+        }
+        std::fprintf(f, "f");
+        for (size_t i = 0; i < corners.size(); ++i) {
+            if (full) std::fprintf(f, " %u//%d", corners[i] + 1, slots[i]);
+            else std::fprintf(f, " %u", corners[i] + 1);
+        }
+        std::fprintf(f, "\n");
+    };
     auto writeFacePolys = [&](size_t p) {
         if (mesh.polygonFaceId[p] != currentGroup) {
             currentGroup = mesh.polygonFaceId[p];
@@ -285,23 +342,19 @@ void writeObj(const PolyMesh& mesh, const std::string& path,
             int object = so == faceSolid.end() ? 0 : so->second;
             if (solidFaces && object != currentObject) {
                 currentObject = object;
-                std::fprintf(f, "o object_%d\n", currentObject + 1);
+                std::fprintf(f, "o %s\n", objectLabel(currentObject).c_str());
             }
             std::fprintf(f, "g face_%d\n", currentGroup);
         }
         const auto& poly = mesh.polygons[p];
+        const int fid = mesh.polygonFaceId[p];
         if (opts.triangulate && poly.size() > 3) {
             for (const auto& t : triangulatePoly(mesh.vertices, poly)) {
-                std::fprintf(f, "f %u %u %u\n", poly[t[0]] + 1,
-                             poly[t[1]] + 1, poly[t[2]] + 1);
+                emitPoly({poly[t[0]], poly[t[1]], poly[t[2]]}, fid);
             }
             return;
         }
-        std::fprintf(f, "f");
-        for (uint32_t idx : poly) {
-            std::fprintf(f, " %u", idx + 1);
-        }
-        std::fprintf(f, "\n");
+        emitPoly(poly, fid);
     };
     if (solidFaces && !faceSolid.empty()) {
         // Emit polygons ordered by (solid, face): stable per-object blocks.

@@ -11,7 +11,6 @@
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
-#include <TopTools_ListOfShape.hxx>
 #include <gp_Dir.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Pnt2d.hxx>
@@ -168,7 +167,7 @@ Analysis analyze(const Model& model) {
             }
         }
 
-        const TopTools_ListOfShape& owners = model.edgeToFaces.FindFromKey(edge);
+        const auto& owners = model.edgeToFaces.FindFromKey(edge);
         for (const TopoDS_Shape& s : owners) {
             int fid = model.faces.FindIndex(s);
             if (fid > 0 &&

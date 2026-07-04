@@ -8,7 +8,9 @@
 #include "weft/mesh.hpp"
 #include "weft/meshers.hpp"
 #include "weft/model.hpp"
+#include "weft/export_gltf.hpp"
 #include "weft/recipe.hpp"
+#include "weft/validate.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -31,7 +33,11 @@ void usage() {
         "      list B-rep faces (type, radius, neighbors) and edges\n"
         "      (convexity, dihedral angle)\n"
         "\n"
-        "  weft mesh <in.step> -o <out.obj> [options]\n"
+        "  weft validate <in.step> [mesh options]\n"
+        "      bake-ready checks: watertightness, winding, degenerates,\n"
+        "      chord deviation vs the live B-rep; exits 1 on leaks\n"
+        "\n"
+        "  weft mesh <in.step> -o <out.obj|out.glb> [options]\n"
         "      generate topology and export OBJ (groups carry face IDs)\n"
         "    --radial N        divisions around cylinders/caps (default 16)\n"
         "    --axial N         divisions along cylinder axes  (default 4)\n"
@@ -41,6 +47,12 @@ void usage() {
         "    --hold F          cluster fillet loops toward the creases, 0..0.95\n"
         "    --rings N         concentric quad loops around holes/bosses in\n"
         "                      planar faces (default 2)\n"
+        "    --validate        run bake-ready checks after meshing\n"
+        "    --no-normals      skip exact CAD vertex normals in exports\n"
+        "    --triangulate     ear-clip everything to triangles on export\n"
+        "    --yup / --scale F Y-up + unit scale (engine spaces)\n"
+        "    --lods F1,F2,...  one export per density factor (_lod0..),\n"
+        "                      manual ops replay into every tier\n"
         "    --pure-tris       disable quad pairing on fallback-triangulated\n"
         "                      faces (default: quad-dominant)\n"
         "    --chord T         fallback triangulation tolerance (default 0.1)\n"
@@ -119,11 +131,15 @@ int cmdInspect(const std::vector<std::string>& args) {
     return 0;
 }
 
-int cmdMesh(const std::vector<std::string>& args) {
+int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     if (args.empty()) { usage(); return 2; }
     std::string input = args[0];
     std::string output;
     std::string recipeOut;
+    bool validate = validateOnly;
+    bool noNormals = false;
+    std::vector<double> lods;
+    weft::ObjExportOptions objOpts;
     weft::Recipe recipe;
     weft::GenerationSettings& gs = recipe.settings;
     std::vector<std::string> faceSpecs;
@@ -143,6 +159,20 @@ int cmdMesh(const std::vector<std::string>& args) {
         else if (a == "--hold") gs.defaults.filletHold = std::stod(next());
         else if (a == "--rings") gs.defaults.junctionRings = std::stoi(next());
         else if (a == "--pure-tris") gs.defaults.quadDominant = false;
+        else if (a == "--validate") validate = true;
+        else if (a == "--no-normals") noNormals = true;
+        else if (a == "--triangulate") objOpts.triangulate = true;
+        else if (a == "--yup") objOpts.yUp = true;
+        else if (a == "--scale") objOpts.scale = std::stod(next());
+        else if (a == "--lods") {
+            std::string spec = next();
+            size_t pos = 0;
+            while (pos != std::string::npos) {
+                size_t comma = spec.find(',', pos);
+                lods.push_back(std::stod(spec.substr(pos, comma - pos)));
+                pos = comma == std::string::npos ? comma : comma + 1;
+            }
+        }
         else if (a == "--recipe") recipe = weft::loadRecipe(next());
         else if (a == "--save-recipe") recipeOut = next();
         else if (a == "--op-loop") {
@@ -189,7 +219,9 @@ int cmdMesh(const std::vector<std::string>& args) {
             throw std::runtime_error("unknown option: " + a);
         }
     }
-    if (output.empty()) throw std::runtime_error("missing -o <out.obj>");
+    if (output.empty() && !validateOnly) {
+        throw std::runtime_error("missing -o <out.obj>");
+    }
     for (const std::string& spec : faceSpecs) parseFaceOverride(gs, spec);
     if (!recipeOut.empty()) {
         weft::saveRecipe(recipe, recipeOut);
@@ -198,12 +230,71 @@ int cmdMesh(const std::vector<std::string>& args) {
 
     weft::Model model = weft::loadStep(input);
     weft::Analysis analysis = weft::analyze(model);
+    objOpts.objectNames = &model.solidNames;
+    if (!noNormals) objOpts.model = &model;
+    auto isGlb = [](const std::string& s2) {
+        return (s2.size() > 4 && s2.compare(s2.size() - 4, 4, ".glb") == 0) ||
+               (s2.size() > 5 && s2.compare(s2.size() - 5, 5, ".gltf") == 0);
+    };
+    auto exportMesh = [&](const weft::PolyMesh& m, const std::string& path) {
+        if (isGlb(path)) {
+            weft::writeGlb(m, path, noNormals ? nullptr : &model,
+                           &analysis.solidFaces);
+        } else {
+            weft::writeObj(m, path, &analysis.solidFaces, &objOpts);
+        }
+    };
+
+    // LOD tiers: one control setup, one export per density factor.
+    // Divisions scale with the factor, chord tolerance with 1/f^2, and
+    // manual ops replay into every tier (they anchor to the CAD).
+    if (!lods.empty() && !output.empty()) {
+        int rc = 0;
+        for (size_t li = 0; li < lods.size(); ++li) {
+            const double f = std::max(0.05, lods[li]);
+            weft::GenerationSettings scaled = gs;
+            auto scaleSet = [&](weft::FaceMeshSettings& fs) {
+                fs.radial = std::max(3, (int)std::lround(fs.radial * f));
+                fs.axial = std::max(1, (int)std::lround(fs.axial * f));
+                fs.gridU = std::max(1, (int)std::lround(fs.gridU * f));
+                fs.gridV = std::max(1, (int)std::lround(fs.gridV * f));
+                fs.filletLoops =
+                    std::max(1, (int)std::lround(fs.filletLoops * f));
+                fs.junctionRings =
+                    std::max(1, (int)std::lround(fs.junctionRings * f));
+                fs.chordTolerance /= f * f;
+            };
+            scaleSet(scaled.defaults);
+            for (auto& [fid, fs] : scaled.perFace) scaleSet(fs);
+            weft::PolyMesh lod = weft::generate(model, analysis, scaled);
+            weft::applyOps(lod, model, recipe.ops);
+            size_t dot = output.rfind('.');
+            std::string lodPath =
+                dot == std::string::npos
+                    ? output + "_lod" + std::to_string(li)
+                    : output.substr(0, dot) + "_lod" + std::to_string(li) +
+                          output.substr(dot);
+            exportMesh(lod, lodPath);
+            std::printf("  lod%zu (x%.3g): %s — %zu polygons\n", li, f,
+                        lodPath.c_str(), lod.polygonCount());
+            if (validate) {
+                weft::ValidationReport vr = weft::validateMesh(lod, &model);
+                std::printf("%s", weft::formatReport(vr).c_str());
+                if (!vr.watertight()) rc = 1;
+            }
+        }
+        return rc;
+    }
+
     weft::GenerationReport report;
     weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
     weft::applyOps(mesh, model, recipe.ops);
-    weft::writeObj(mesh, output);
-
-    std::printf("%s -> %s\n", input.c_str(), output.c_str());
+    if (!output.empty()) {
+        exportMesh(mesh, output);
+        std::printf("%s -> %s\n", input.c_str(), output.c_str());
+    } else {
+        std::printf("%s\n", input.c_str());
+    }
     std::printf("  %zu vertices, %zu polygons (%zu quads, %zu tris, %zu n-gons)\n",
                 mesh.vertexCount(), mesh.polygonCount(), mesh.countQuads(),
                 mesh.countTris(), mesh.countNgons());
@@ -213,8 +304,23 @@ int cmdMesh(const std::vector<std::string>& args) {
         for (uint8_t f : folded) nf += f;
         if (nf) std::printf("  %zu folded polygon(s)\n", nf);
     }
-    for (const auto& [fid, kind] : report.faceMesher) {
-        std::printf("  face #%-3d %s\n", fid, weft::mesherKindName(kind));
+    if (validate) {
+        weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+        std::printf("%s", weft::formatReport(vr).c_str());
+        if (!vr.watertight()) return 1;
+    }
+    if (report.faceMesher.size() <= 48) {
+        for (const auto& [fid, kind] : report.faceMesher) {
+            std::printf("  face #%-3d %s\n", fid, weft::mesherKindName(kind));
+        }
+    } else {
+        std::map<std::string, int> byKind;
+        for (const auto& [fid, kind] : report.faceMesher) {
+            ++byKind[weft::mesherKindName(kind)];
+        }
+        for (const auto& [name, count] : byKind) {
+            std::printf("  %6d x %s\n", count, name.c_str());
+        }
     }
     if (!report.edgeDivisions.empty()) {
         std::printf("  density-matched edges:");
@@ -236,6 +342,7 @@ int main(int argc, char** argv) {
         if (cmd == "fixture") return cmdFixture(args);
         if (cmd == "inspect") return cmdInspect(args);
         if (cmd == "mesh") return cmdMesh(args);
+        if (cmd == "validate") return cmdMesh(args, /*validateOnly=*/true);
         usage();
         return 2;
     } catch (const std::exception& e) {

@@ -1,0 +1,2 @@
+/usr/bin/ar qc libweft_core.a CMakeFiles/weft_core.dir/src/model.cpp.o CMakeFiles/weft_core.dir/src/analysis.cpp.o CMakeFiles/weft_core.dir/src/mesh.cpp.o CMakeFiles/weft_core.dir/src/meshers.cpp.o CMakeFiles/weft_core.dir/src/edit.cpp.o CMakeFiles/weft_core.dir/src/recipe.cpp.o CMakeFiles/weft_core.dir/src/remap.cpp.o CMakeFiles/weft_core.dir/src/validate.cpp.o CMakeFiles/weft_core.dir/src/export_gltf.cpp.o CMakeFiles/weft_core.dir/src/viz.cpp.o CMakeFiles/weft_core.dir/src/fixture.cpp.o
+/usr/bin/ranlib libweft_core.a

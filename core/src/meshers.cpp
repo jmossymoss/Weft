@@ -15,6 +15,7 @@
 #include <Standard_Failure.hxx>
 #include <BRepGProp.hxx>
 #include <BRepTools.hxx>
+#include <Bnd_Box2d.hxx>
 #include <BRepTools_WireExplorer.hxx>
 #include <GProp_GProps.hxx>
 #include <BRep_Tool.hxx>
@@ -2977,7 +2978,14 @@ struct DensitySolution {
     // Solved count for an edge, or `fallback` if it never got a proposal.
     int countFor(int edgeId, int fallback) {
         auto it = groupCount.find(groups.find(edgeId));
-        return it == groupCount.end() ? fallback : it->second;
+        // Hard sanity ceiling. Chained-rail/ring derivations can cascade
+        // counts across a large assembly (observed: a solved count of
+        // ~983k on an 8k-face model, which took the Coons mesher down
+        // with it). Clamping at the single read point every consumer
+        // shares keeps borders consistent on both sides of an edge.
+        // The real cure is count decoupling (handoff step 1).
+        int n = it == groupCount.end() ? fallback : it->second;
+        return std::min(n, 256);
     }
 };
 
@@ -4731,6 +4739,31 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     unsigned threads = std::min<unsigned>(
         std::max(1u, std::thread::hardware_concurrency()), unsigned(faceN));
     if (!settings.parallelMeshing) threads = 1;
+    if (threads > 1) {
+        // OCCT computes pcurves and UV bounds lazily and caches them on
+        // the SHARED TShape — workers racing through
+        // BRepTools::AddUVBounds / BRep_Tool::CurveOnSurface segfault on
+        // large assemblies (observed inside meshCoonsGrid on an 8k-face
+        // model). Warm every face's caches single-threaded first; the
+        // parallel pass then only reads.
+        for (int fid = 1; fid <= faceN; ++fid) {
+            if (cached[fid]) continue;
+            try {
+                Bnd_Box2d warm;
+                BRepTools::AddUVBounds(TopoDS::Face(model.faces(fid)), warm);
+                (void)BRep_Tool::Surface(TopoDS::Face(model.faces(fid)));
+            } catch (...) {
+                // A face too broken to bound fails later, visibly.
+            }
+        }
+        for (int eid = 1; eid <= model.edgeCount(); ++eid) {
+            try {
+                double f = 0, l = 0;
+                (void)BRep_Tool::Curve(TopoDS::Edge(model.edges(eid)), f, l);
+            } catch (...) {
+            }
+        }
+    }
     dbg("generate: meshing on %u thread(s), %d cached", threads, cacheHits);
     auto meshFaceCached = [&](int fid) {
         if (!cached[fid]) meshFace(fid);
@@ -4845,7 +4878,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     // corner from its own edge, so corners never welded. Snap any mesh
     // vertex within a B-rep vertex's tolerance onto its exact point.
     auto finish = [&](PolyMesh& mesh) {
-        TopTools_IndexedMapOfShape vmap;
+        weft::ShapeMap vmap;
         TopExp::MapShapes(model.shape, TopAbs_VERTEX, vmap);
 
         // Micro-edge collapse: CAD booleans leave hairline edges (a few
