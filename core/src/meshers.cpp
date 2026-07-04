@@ -1754,6 +1754,29 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         partOfFace[fid] = it->second;
     }
 
+    // Part names from the source's solids: a part inherits the STEP
+    // product name of the solid its faces belong to.
+    std::map<int, std::string> partNames;
+    std::set<std::string> usedNames;
+    for (int sid = 1; sid <= model.solids.Extent(); ++sid) {
+        const std::string& name = model.solidNames[sid - 1];
+        if (name.empty()) continue;
+        TopExp_Explorer fx(model.solids(sid), TopAbs_FACE);
+        if (!fx.More()) continue;
+        int fid = model.faces.FindIndex(fx.Current());
+        if (fid < 1) continue;
+        const int part = partOfFace[fid];
+        if (partNames.count(part)) continue;
+        // Same name on several bodies (very common: instanced parts):
+        // suffix so DCC importers don't merge them into one object.
+        std::string unique = name;
+        if (!usedNames.insert(unique).second) {
+            unique = name + "_" + std::to_string(part);
+            usedNames.insert(unique);
+        }
+        partNames.emplace(part, std::move(unique));
+    }
+
     // Triangulate the whole shape ONCE, so OCCT discretizes each B-rep edge
     // once and neighbouring trimmed faces share their border polylines.
     bool anyFallback = false;
@@ -1825,6 +1848,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     }
 
     PolyMesh mesh;
+    mesh.partNames = std::move(partNames);
     MeshBuilder out(mesh);
 
     // Phase 1: parametric meshers. Their emitted border vertices are the
