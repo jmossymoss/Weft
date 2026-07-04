@@ -34,6 +34,10 @@ struct ValidationReport {
     // the "where does it leak" list. (faceId, openEdgeCount), descending.
     std::vector<std::pair<int, size_t>> leakyFaces;
 
+    // The open mesh edges themselves (vertex index pairs), for viewport
+    // highlighting. Capped at 200k entries on pathological meshes.
+    std::vector<std::pair<uint32_t, uint32_t>> openEdgeList;
+
     // B-rep edges bordering fewer than two faces: the INPUT is an open
     // shell there, so a matching share of open mesh edges is expected and
     // not a meshing defect.
