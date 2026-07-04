@@ -2822,9 +2822,13 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         return plan;
     }
 
-    // Game-topology minimal (the per-face/default flag): any flat face
-    // collapses to its boundary — one n-gon, or a hole-bridged flat web.
-    if (s.minimal && planMinimalPlanar(face, surf, model, plan)) return plan;
+    // Game-topology minimal, explicit per-face override: the user asked
+    // for THIS face's boundary shape, so it wins even over the junction
+    // patterns below.
+    if (s.minimal && settings.perFace.count(fid) &&
+        planMinimalPlanar(face, surf, model, plan)) {
+        return plan;
+    }
 
     if (planRingJunction(face, model, plan)) return plan;
 
@@ -2836,6 +2840,11 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     if (planPlateWeb(face, surf, model, plan, /*requireRoundHoles=*/true)) {
         return plan;
     }
+
+    // Default game-topology minimal: flat faces the junction patterns
+    // didn't claim collapse to their boundary — one n-gon, or a
+    // hole-bridged flat web. Quad flow is spent where geometry curves.
+    if (s.minimal && planMinimalPlanar(face, surf, model, plan)) return plan;
 
     // Curved surfaces skip the parametric grid on auto: its border rows
     // sample the SURFACE uniformly, which never lands vertex-for-vertex on
