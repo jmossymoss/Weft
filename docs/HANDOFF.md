@@ -95,10 +95,18 @@ whole-shape triangulation now runs parallel — most of the time is OCCT).
 2. **Grid conformity to arbitrary trims** (plan §7.1 proper) — demoted
    faces currently triangulate. The next level is a boundary-conforming
    quad layout so an angle-trimmed cylinder keeps exact radial control.
-3. **Interior refinement for surgered faces** — faces with dense pinned
-   borders and sparse interiors pair at ~40% quads. Steiner-point
-   insertion (UV grid seeded, Delaunay-flipped) before pairing would
-   raise quad share substantially.
+3. **Interior refinement for surgered faces** — implemented as
+   `refineInterior` behind the EXPERIMENTAL `--refine` flag
+   (`FaceMeshSettings::interiorRefine`, off by default). It splits
+   interior edges longer than 1.6x the border's median spacing and
+   re-flips. Findings from turning it on globally: on dirty assemblies
+   it over-refines badly (as1 27x vertex blowup — faces whose borders
+   carry a few tiny segments drive the median down) and introduces a
+   handful of non-manifold/degenerate polygons (8 on as1; interaction
+   between split passes and flips not yet pinned down). Before it can
+   default on it needs (a) a LOCAL target length (nearest-border
+   spacing, not global median), (b) an absolute cap relative to face
+   size, and (c) the non-manifold repro debugged on as1 with --refine.
 4. ~~glTF (.glb) export~~ — done: `weft mesh -o out.glb`.
 5. **Per-solid OBJ objects** (`o part_N`) and normals in the app viewport
    (it currently shades flat from polygon normals).
