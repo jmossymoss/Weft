@@ -1001,7 +1001,7 @@ static void drawUi(App& app) {
     if (ImGui::CollapsingHeader("Dev fixtures")) {
         ImGui::TextDisabled("built-in test shapes");
         const char* fixtures[] = {"cylinder", "box",  "cone", "sphere",
-                                  "torus",    "fillet", "hole", "boss", "demo"};
+                                  "torus",    "fillet", "hole", "notch", "boss", "demo"};
         for (int i = 0; i < 9; ++i) {
             if (i % 3) ImGui::SameLine();
             if (ImGui::Button(fixtures[i], {96, 0})) {

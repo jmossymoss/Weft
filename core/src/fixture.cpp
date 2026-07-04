@@ -68,6 +68,17 @@ TopoDS_Shape makeFixture(const std::string& name) {
         TopoDS_Shape drill = BRepPrimAPI_MakeCylinder(axis, 8.0, 12.0).Shape();
         return BRepAlgoAPI_Cut(plate, drill).Shape();
     }
+    if (name == "notch") {
+        // Box with a cylindrical groove milled across the top: the groove
+        // wall is a partial (open-u) cylinder that meshes as a parametric
+        // grid, the box ends become trimmed planes with arc borders, and
+        // the top splits in two. The canonical stress test for parametric
+        // faces meeting conformal triangulation along shared edges.
+        TopoDS_Shape box = BRepPrimAPI_MakeBox(40.0, 30.0, 15.0).Shape();
+        gp_Ax2 axis(gp_Pnt(20.0, -5.0, 15.0), gp_Dir(0, 1, 0));
+        TopoDS_Shape mill = BRepPrimAPI_MakeCylinder(axis, 6.0, 40.0).Shape();
+        return BRepAlgoAPI_Cut(box, mill).Shape();
+    }
     if (name == "boss") {
         TopoDS_Shape base = BRepPrimAPI_MakeBox(40.0, 40.0, 10.0).Shape();
         gp_Ax2 axis(gp_Pnt(20.0, 20.0, 10.0), gp_Dir(0, 0, 1));
@@ -76,7 +87,7 @@ TopoDS_Shape makeFixture(const std::string& name) {
     }
     throw std::runtime_error(
         "unknown fixture: " + name +
-        " (expected cylinder|box|cone|sphere|torus|fillet|hole|demo|boss)");
+        " (expected cylinder|box|cone|sphere|torus|fillet|hole|notch|demo|boss)");
 }
 
 }  // namespace weft
