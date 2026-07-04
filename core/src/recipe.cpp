@@ -75,6 +75,9 @@ void saveRecipe(const Recipe& recipe, const std::string& path) {
     if (!out) throw std::runtime_error("cannot open for writing: " + path);
     out << "weft-recipe 1\n";
     out << "default " << settingsToString(recipe.settings.defaults) << "\n";
+    if (recipe.settings.densityScale != 1.0) {
+        out << "scale " << recipe.settings.densityScale << "\n";
+    }
     for (const auto& [fid, s] : recipe.settings.perFace) {
         out << "face " << fid << " " << settingsToString(s) << "\n";
     }
@@ -144,6 +147,9 @@ Recipe loadRecipe(const std::string& path) {
                 int eid, count;
                 ss >> eid >> count;
                 gs.perEdge[eid] = count;
+            } else if (kind == "scale") {
+                ss >> gs.densityScale;
+                if (!ss || gs.densityScale <= 0) gs.densityScale = 1.0;
             } else if (kind == "op") {
                 std::string opKind;
                 ss >> opKind;

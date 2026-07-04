@@ -42,6 +42,16 @@ struct PolyMesh {
 void weldVertices(PolyMesh& mesh, double tolerance,
                   const std::vector<int>* group = nullptr);
 
+// Game-engine export shaping: triangulate fans every quad/n-gon (many
+// pipelines want raw tris), yUp converts Z-up CAD space to Y-up engine
+// space, and scale converts units (0.01 turns mm into Unreal cm... 0.001
+// into metres for Unity/Blender-metric).
+struct ObjExportOptions {
+    bool triangulate = false;
+    bool yUp = false;
+    double scale = 1.0;
+};
+
 // Write Wavefront OBJ. Polygons are grouped per B-rep face
 // ("g face_<id>") so CAD face IDs survive into the DCC. When the source
 // model's object structure is passed (face ids per solid), each solid
@@ -49,6 +59,7 @@ void weldVertices(PolyMesh& mesh, double tolerance,
 // bundled Blender addon — keep separate CAD bodies as separate meshes
 // instead of merging everything into one.
 void writeObj(const PolyMesh& mesh, const std::string& path,
-              const std::vector<std::vector<int>>* solidFaces = nullptr);
+              const std::vector<std::vector<int>>* solidFaces = nullptr,
+              const ObjExportOptions* options = nullptr);
 
 }  // namespace weft

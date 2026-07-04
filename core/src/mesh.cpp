@@ -122,13 +122,25 @@ void weldVertices(PolyMesh& mesh, double tolerance,
 }
 
 void writeObj(const PolyMesh& mesh, const std::string& path,
-              const std::vector<std::vector<int>>* solidFaces) {
+              const std::vector<std::vector<int>>* solidFaces,
+              const ObjExportOptions* options) {
     FILE* f = std::fopen(path.c_str(), "w");
     if (!f) throw std::runtime_error("cannot open for writing: " + path);
 
+    const ObjExportOptions opts = options ? *options : ObjExportOptions{};
     std::fprintf(f, "# weft export\n");
     for (const auto& v : mesh.vertices) {
-        std::fprintf(f, "v %.9g %.9g %.9g\n", v[0], v[1], v[2]);
+        double x = v[0] * opts.scale;
+        double y = v[1] * opts.scale;
+        double z = v[2] * opts.scale;
+        if (opts.yUp) {
+            // Z-up CAD -> Y-up engine: X stays, old Z becomes Y, old Y
+            // flips into -Z (right-handed both sides).
+            double ny = z, nz = -y;
+            y = ny;
+            z = nz;
+        }
+        std::fprintf(f, "v %.9g %.9g %.9g\n", x, y, z);
     }
 
     // Object structure: FaceId -> solid index, so each CAD body writes as
@@ -155,8 +167,16 @@ void writeObj(const PolyMesh& mesh, const std::string& path,
             }
             std::fprintf(f, "g face_%d\n", currentGroup);
         }
+        const auto& poly = mesh.polygons[p];
+        if (opts.triangulate && poly.size() > 3) {
+            for (size_t k = 1; k + 1 < poly.size(); ++k) {
+                std::fprintf(f, "f %u %u %u\n", poly[0] + 1, poly[k] + 1,
+                             poly[k + 1] + 1);
+            }
+            return;
+        }
         std::fprintf(f, "f");
-        for (uint32_t idx : mesh.polygons[p]) {
+        for (uint32_t idx : poly) {
             std::fprintf(f, " %u", idx + 1);
         }
         std::fprintf(f, "\n");

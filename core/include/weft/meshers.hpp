@@ -92,6 +92,11 @@ struct GenerationSettings {
     // whole shared-edge group it belongs to (plan §5 per_edge_settings).
     std::map<int, int> perEdge;
     double weldTolerance = 1e-6;
+    // One knob for the whole model's budget: every density proposal
+    // (flat counts and curvature-adaptive ones) scales by this before
+    // the group solve. Explicit per-edge pins and boundary totals are
+    // the user's exact numbers and stay untouched.
+    double densityScale = 1.0;
     // Runtime/debug knobs (not persisted in recipes): turn off worker
     // threads or the freeform border-conformity pass to bisect problems.
     bool parallelMeshing = true;

@@ -205,6 +205,17 @@ static Mat4 matMul(const Mat4& a, const Mat4& b) {
     return r;
 }
 
+static Mat4 matOrtho(float halfH, float aspect, float zn, float zf) {
+    Mat4 m{};
+    const float halfW = halfH * aspect;
+    m.m[0] = 1.0f / halfW;
+    m.m[5] = 1.0f / halfH;
+    m.m[10] = -2.0f / (zf - zn);
+    m.m[14] = -(zf + zn) / (zf - zn);
+    m.m[15] = 1.0f;
+    return m;
+}
+
 static Mat4 matPerspective(float fovyDeg, float aspect, float zn, float zf) {
     float t = std::tan(fovyDeg * float(M_PI) / 360.0f);
     Mat4 r{};
@@ -428,6 +439,7 @@ struct App {
 
     // Undo: recipe snapshots, one per edit gesture (drags coalesce).
     std::vector<weft::Recipe> undoStack;
+    std::vector<weft::Recipe> redoStack;
     weft::Recipe preFrame;
     bool mutatedThisFrame = false;
     bool changedLastFrame = false;
@@ -503,6 +515,17 @@ struct App {
 
     // GPU.
     Buffer fill, wire, brep, pick, preview, verts;
+    // Problem overlay: open edges (red) and non-manifold edges (magenta)
+    // rebuilt after every regenerate — the trust meter for game export.
+    Buffer problems;
+    int openEdgeCount = 0, multiEdgeCount = 0;
+    bool showProblems = true;
+    // Export shaping for game engines.
+    bool exportTriangulate = false;
+    bool exportYUp = false;
+    float exportScale = 1.0f;
+    // Orthographic projection (numpad 5 toggles; 1/3/7 set views).
+    bool orthoView = false;
     Camera cam;
 
     // UI buffers.
@@ -636,6 +659,43 @@ static void rebuildBuffers(App& app) {
     app.brep.upload(brep);
 }
 
+// Scan the final mesh for open and non-manifold (multiply-used) directed
+// edges and rebuild the red/magenta overlay lines. This is the same test
+// the export pipeline cares about: zero of both = watertight.
+static void updateProblems(App& app) {
+    app.openEdgeCount = 0;
+    app.multiEdgeCount = 0;
+    std::map<std::pair<uint32_t, uint32_t>, int> dir;
+    for (const auto& poly : app.mesh.polygons) {
+        for (size_t i = 0; i < poly.size(); ++i) {
+            ++dir[{poly[i], poly[(i + 1) % poly.size()]}];
+        }
+    }
+    std::vector<float> lines;
+    auto pushEdge = [&](uint32_t a, uint32_t b, float r, float g,
+                        float bl) {
+        for (uint32_t v : {a, b}) {
+            lines.push_back(float(app.mesh.vertices[v][0]));
+            lines.push_back(float(app.mesh.vertices[v][1]));
+            lines.push_back(float(app.mesh.vertices[v][2]));
+            lines.push_back(r);
+            lines.push_back(g);
+            lines.push_back(bl);
+        }
+    };
+    for (const auto& [e, count] : dir) {
+        if (count > 1) {
+            pushEdge(e.first, e.second, 1.0f, 0.2f, 0.9f);  // magenta
+            app.multiEdgeCount += count - 1;
+        } else if (!dir.count({e.second, e.first})) {
+            pushEdge(e.first, e.second, 1.0f, 0.25f, 0.15f);  // red
+            ++app.openEdgeCount;
+        }
+    }
+    app.problems.upload(lines);
+    if (lines.empty()) app.problems.count = 0;
+}
+
 static void regenerate(App& app) {
     if (!app.hasModel) return;
     // Never let a geometry failure take the app down: keep the previous
@@ -684,6 +744,7 @@ static void regenerate(App& app) {
         return;
     }
     logLine("regenerate: ops applied, rebuilding buffers");
+    updateProblems(app);
 
     // Resample the B-rep edge overlay at the solved divisions so its
     // chords coincide with the mesh instead of ghosting past it. The edge
@@ -2131,7 +2192,8 @@ static void drawOverlay(App& app) {
         "[ ] nudge counts\n"
         "X delete   H/ctrl+H hide   alt+H show all   R loop cut   J bridge\n"
         "G grab vertex   C cap   T tris   M minimal   W wire   B edges\n"
-        "F focus   esc");
+        "numpad 1/3/7 views (ctrl flips)   numpad 5 ortho\n"
+        "ctrl+I invert   ctrl+shift+Z redo   F focus   esc");
     ImGui::End();
 }
 
@@ -2280,6 +2342,18 @@ static void drawUi(App& app) {
                 }
             }
         }
+        if (app.hasModel) {
+            ImGui::Checkbox("triangulate", &app.exportTriangulate);
+            ImGui::SameLine();
+            ImGui::Checkbox("Y up", &app.exportYUp);
+            ImGui::SetNextItemWidth(90.0f * gUiScale);
+            ImGui::DragFloat("unit scale", &app.exportScale, 0.001f, 0.0001f,
+                             1000.0f, "%.4g");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("0.001 = mm to metres (Unity/Blender)\n"
+                                  "0.1 = mm to cm (Unreal)");
+            }
+        }
         if (app.hasModel && ImGui::Button("Export OBJ...", {-1, 0})) {
             // Default name: the source file with .obj — one group per
             // B-rep face, so CAD face IDs survive into Blender.
@@ -2292,7 +2366,12 @@ static void drawUi(App& app) {
             std::string out = saveFileDialog((base + ".obj").c_str());
             if (!out.empty()) {
                 try {
-                    weft::writeObj(app.mesh, out, &app.analysis.solidFaces);
+                    weft::ObjExportOptions opts;
+                    opts.triangulate = app.exportTriangulate;
+                    opts.yUp = app.exportYUp;
+                    opts.scale = double(app.exportScale);
+                    weft::writeObj(app.mesh, out, &app.analysis.solidFaces,
+                                   &opts);
                     app.status = "exported " + out;
                     logLine("export: %s (%zu verts, %zu polys)", out.c_str(),
                             app.mesh.vertexCount(), app.mesh.polygonCount());
@@ -2392,12 +2471,29 @@ static void drawUi(App& app) {
                     app.mesh.polygonCount());
         ImGui::Text("%zu quads  %zu tris  %zu n-gons", app.mesh.countQuads(),
                     app.mesh.countTris(), app.mesh.countNgons());
+        if (app.openEdgeCount == 0 && app.multiEdgeCount == 0) {
+            ImGui::TextColored({0.4f, 0.9f, 0.45f, 1.0f}, "watertight");
+        } else {
+            ImGui::TextColored({1.0f, 0.45f, 0.3f, 1.0f},
+                               "%d open edge(s), %d non-manifold",
+                               app.openEdgeCount, app.multiEdgeCount);
+            ImGui::SameLine();
+            ImGui::Checkbox("show##problems", &app.showProblems);
+        }
         if (!app.bLoops.empty()) {
             ImGui::TextColored({1.0f, 0.6f, 0.3f, 1.0f},
                                "%zu open border loop(s)",
                                app.bLoops.size());
             ImGui::SameLine();
             ImGui::TextDisabled("(J bridges, deleted faces expected)");
+        }
+        ImGui::Separator();
+        // One knob for the whole budget: scales every density proposal.
+        float ds = float(app.recipe.settings.densityScale);
+        if (ImGui::SliderFloat("density scale", &ds, 0.25f, 4.0f, "%.2fx",
+                               ImGuiSliderFlags_Logarithmic)) {
+            app.recipe.settings.densityScale = ds;
+            markDirty(app);
         }
         ImGui::Separator();
         ImGui::TextDisabled("defaults (live)");
@@ -2924,6 +3020,56 @@ int main(int argc, char** argv) {
                     setSelectMode(app, SelectMode::Object);
                 }
             }
+            // Blender numpad views: 1 front, 3 right, 7 top (ctrl for
+            // the opposite), 5 toggles orthographic.
+            {
+                const float hp = 1.55f;
+                auto view = [&](float yaw, float pitch) {
+                    app.cam.yaw = yaw;
+                    app.cam.pitch = pitch;
+                };
+                if (ImGui::IsKeyPressed(ImGuiKey_Keypad1, false)) {
+                    view(io.KeyCtrl ? 1.5708f : -1.5708f, 0.0f);
+                }
+                if (ImGui::IsKeyPressed(ImGuiKey_Keypad3, false)) {
+                    view(io.KeyCtrl ? 3.1416f : 0.0f, 0.0f);
+                }
+                if (ImGui::IsKeyPressed(ImGuiKey_Keypad7, false)) {
+                    view(app.cam.yaw, io.KeyCtrl ? -hp : hp);
+                }
+                if (ImGui::IsKeyPressed(ImGuiKey_Keypad5, false)) {
+                    app.orthoView = !app.orthoView;
+                    app.status = app.orthoView ? "orthographic"
+                                               : "perspective";
+                }
+            }
+            // ctrl+I: invert the selection in element / face mode.
+            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_I, false) &&
+                app.hasModel) {
+                if (app.selectMode == SelectMode::Face ||
+                    app.selectMode == SelectMode::Object) {
+                    std::set<int> inv;
+                    for (int f = 1; f <= app.model.faceCount(); ++f) {
+                        if (!app.selFaces.count(f) &&
+                            !app.hiddenFaces.count(f)) {
+                            inv.insert(f);
+                        }
+                    }
+                    app.selFaces = std::move(inv);
+                    app.activeFace =
+                        app.selFaces.empty() ? 0 : *app.selFaces.begin();
+                    rebuildBuffers(app);
+                } else if (app.selectMode == SelectMode::Poly) {
+                    std::set<size_t> inv;
+                    for (size_t pp = 0; pp < app.mesh.polygons.size();
+                         ++pp) {
+                        int fid = app.mesh.polygonFaceId[pp];
+                        if (fid > 0 && app.hiddenFaces.count(fid)) continue;
+                        if (!app.selPolys.count(pp)) inv.insert(pp);
+                    }
+                    app.selPolys = std::move(inv);
+                }
+            }
             // Pie menus at the cursor: Tab = select modes, Q = tools.
             // Blender-style: HOLD the key and release over a sector to
             // commit; a quick tap leaves the pie open for a click.
@@ -3062,14 +3208,28 @@ int main(int argc, char** argv) {
                     app.status = std::string("save failed: ") + e.what();
                 }
             }
-            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
+            if (io.KeyCtrl && !shift &&
+                ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
                 if (!app.undoStack.empty()) {
+                    app.redoStack.push_back(app.recipe);
                     app.recipe = app.undoStack.back();
                     app.undoStack.pop_back();
                     app.dirty = true;  // not a mutation: no undo push
                     app.status = "undo";
                 } else {
                     app.status = "nothing to undo";
+                }
+            }
+            if (io.KeyCtrl && shift &&
+                ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
+                if (!app.redoStack.empty()) {
+                    app.undoStack.push_back(app.recipe);
+                    app.recipe = app.redoStack.back();
+                    app.redoStack.pop_back();
+                    app.dirty = true;
+                    app.status = "redo";
+                } else {
+                    app.status = "nothing to redo";
                 }
             }
         }
@@ -3125,8 +3285,15 @@ int main(int argc, char** argv) {
         if (app.mutatedThisFrame) logLine("frame: input handled, dirty");
         if (app.dirty) regenerate(app);
 
-        Mat4 proj = matPerspective(42.0f, fbh > 0 ? float(fbw) / fbh : 1.6f,
-                                   app.cam.dist * 0.01f, app.cam.dist * 40.0f);
+        const float vpAspect = fbh > 0 ? float(fbw) / fbh : 1.6f;
+        Mat4 proj =
+            app.orthoView
+                ? matOrtho(app.cam.dist * std::tan(21.0f * float(M_PI) /
+                                                   180.0f),
+                           vpAspect, app.cam.dist * 0.01f,
+                           app.cam.dist * 40.0f)
+                : matPerspective(42.0f, vpAspect, app.cam.dist * 0.01f,
+                                 app.cam.dist * 40.0f);
         Mat4 view = matLookAt(app.cam.eye(), app.cam.target, {0, 0, 1});
         Mat4 mvp = matMul(proj, view);
 
@@ -3830,6 +3997,18 @@ int main(int argc, char** argv) {
             glDrawArrays(GL_LINES, 0, app.brep.count);
             glLineWidth(1.0f);
         }
+        if (app.hasModel && app.showProblems && app.problems.count) {
+            // Open (red) / non-manifold (magenta) edges, drawn through
+            // the mesh so nothing hides a leak.
+            glDisable(GL_DEPTH_TEST);
+            glLineWidth(3.0f);
+            glUniform1f(uMix, 1.0f);
+            glBindVertexArray(app.problems.vao);
+            glDrawArrays(GL_LINES, 0, app.problems.count);
+            glUniform1f(uMix, 0.0f);
+            glLineWidth(1.0f);
+            glEnable(GL_DEPTH_TEST);
+        }
         if (app.hasModel &&
             (app.showVerts || app.selectMode == SelectMode::Vert) &&
             app.verts.count) {
@@ -3861,6 +4040,7 @@ int main(int argc, char** argv) {
             double now = glfwGetTime();
             if (app.mutatedThisFrame && !app.gestureActive) {
                 app.undoStack.push_back(app.preFrame);
+                app.redoStack.clear();  // a fresh edit forks history
                 if (app.undoStack.size() > 100) {
                     app.undoStack.erase(app.undoStack.begin());
                 }
