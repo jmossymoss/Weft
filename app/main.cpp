@@ -663,13 +663,25 @@ static void rebuildBuffers(App& app) {
                                 float((fid >> 8) & 255) / 255.0f,
                                 170.0f / 255.0f};
         const auto& poly = m.polygons[i];
-        for (size_t k = 1; k + 1 < poly.size(); ++k) {  // fan triangulation
-            push(fill, m.vertices[poly[0]], col);
-            push(fill, m.vertices[poly[k]], col);
-            push(fill, m.vertices[poly[k + 1]], col);
-            push(pick, m.vertices[poly[0]], id);
-            push(pick, m.vertices[poly[k]], id);
-            push(pick, m.vertices[poly[k + 1]], id);
+        if (poly.size() <= 4) {
+            for (size_t k = 1; k + 1 < poly.size(); ++k) {  // fan
+                push(fill, m.vertices[poly[0]], col);
+                push(fill, m.vertices[poly[k]], col);
+                push(fill, m.vertices[poly[k + 1]], col);
+                push(pick, m.vertices[poly[0]], id);
+                push(pick, m.vertices[poly[k]], id);
+                push(pick, m.vertices[poly[k + 1]], id);
+            }
+        } else {
+            // N-gons ear-clip: a fan across a concave or keyhole ring
+            // (minimal n-gon with bridged holes) would paint over the
+            // holes — the mesh is right, the fan isn't.
+            for (const auto& t : weft::triangulatePoly(m.vertices, poly)) {
+                for (int c = 0; c < 3; ++c) {
+                    push(fill, m.vertices[poly[t[c]]], col);
+                    push(pick, m.vertices[poly[t[c]]], id);
+                }
+            }
         }
         std::array<float, 3> wc{0.10f, 0.11f, 0.13f};
         for (size_t k = 0; k < poly.size(); ++k) {
@@ -1728,14 +1740,30 @@ static int pickPolygon(App& app, const Mat4& mvp, double mx, double my,
             bool pos = d1 > 0 || d2 > 0 || d3 > 0;
             return !(neg && pos);
         };
-        for (size_t k = 1; k + 1 < poly.size(); ++k) {
-            if (!inTri(proj[0], proj[k], proj[k + 1])) continue;
-            double depth = (proj[0][2] + proj[k][2] + proj[k + 1][2]) / 3;
-            if (depth < bestDepth) {
-                bestDepth = depth;
-                best = int(p);
+        if (poly.size() <= 4) {
+            for (size_t k = 1; k + 1 < poly.size(); ++k) {
+                if (!inTri(proj[0], proj[k], proj[k + 1])) continue;
+                double depth =
+                    (proj[0][2] + proj[k][2] + proj[k + 1][2]) / 3;
+                if (depth < bestDepth) {
+                    bestDepth = depth;
+                    best = int(p);
+                }
+                break;
             }
-            break;
+        } else {
+            // Keyhole n-gons: a fan containment test would hover-hit the
+            // holes; test the real tessellation instead.
+            for (const auto& t : weft::triangulatePoly(m.vertices, poly)) {
+                if (!inTri(proj[t[0]], proj[t[1]], proj[t[2]])) continue;
+                double depth =
+                    (proj[t[0]][2] + proj[t[1]][2] + proj[t[2]][2]) / 3;
+                if (depth < bestDepth) {
+                    bestDepth = depth;
+                    best = int(p);
+                }
+                break;
+            }
         }
     }
     return best;

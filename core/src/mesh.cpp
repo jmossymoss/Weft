@@ -121,6 +121,128 @@ void weldVertices(PolyMesh& mesh, double tolerance,
     mesh.polygonFaceId = std::move(polyFace);
 }
 
+std::vector<std::array<uint32_t, 3>> triangulatePoly(
+    const std::vector<std::array<double, 3>>& verts,
+    const std::vector<uint32_t>& poly) {
+    const size_t n = poly.size();
+    std::vector<std::array<uint32_t, 3>> tris;
+    if (n < 3) return tris;
+    auto fan = [&] {
+        for (size_t k = 1; k + 1 < n; ++k) {
+            tris.push_back({0, uint32_t(k), uint32_t(k + 1)});
+        }
+        return tris;
+    };
+    if (n == 3) return fan();
+
+    // Project onto the polygon's dominant plane (Newell normal basis).
+    double nx = 0, ny = 0, nz = 0;
+    for (size_t i = 0; i < n; ++i) {
+        const auto& a = verts[poly[i]];
+        const auto& b = verts[poly[(i + 1) % n]];
+        nx += (a[1] - b[1]) * (a[2] + b[2]);
+        ny += (a[2] - b[2]) * (a[0] + b[0]);
+        nz += (a[0] - b[0]) * (a[1] + b[1]);
+    }
+    const double nlen = std::sqrt(nx * nx + ny * ny + nz * nz);
+    if (nlen < 1e-30) return fan();  // degenerate: nothing better to do
+    nx /= nlen;
+    ny /= nlen;
+    nz /= nlen;
+    // u = normalize(a x n) for an axis a not parallel to n; v = n x u.
+    const double ax = std::abs(nx) < 0.9 ? 1.0 : 0.0;
+    const double ay = 1.0 - ax;
+    double ux = ay * nz, uy = -ax * nz, uz = ax * ny - ay * nx;
+    const double ulen = std::sqrt(ux * ux + uy * uy + uz * uz);
+    ux /= ulen;
+    uy /= ulen;
+    uz /= ulen;
+    const double vx = ny * uz - nz * uy;
+    const double vy = nz * ux - nx * uz;
+    const double vz = nx * uy - ny * ux;
+    std::vector<std::array<double, 2>> p2(n);
+    double span = 0;
+    for (size_t i = 0; i < n; ++i) {
+        const auto& p = verts[poly[i]];
+        p2[i] = {p[0] * ux + p[1] * uy + p[2] * uz,
+                 p[0] * vx + p[1] * vy + p[2] * vz};
+        span = std::max({span, std::abs(p2[i][0]), std::abs(p2[i][1])});
+    }
+    const double eps = 1e-12 * std::max(1.0, span * span);
+    auto cross = [&](size_t o, size_t a, size_t b) {
+        return (p2[a][0] - p2[o][0]) * (p2[b][1] - p2[o][1]) -
+               (p2[a][1] - p2[o][1]) * (p2[b][0] - p2[o][0]);
+    };
+    // Convex fast path (also catches every plain quad).
+    bool convex = true;
+    for (size_t i = 0; i < n && convex; ++i) {
+        convex = cross(i, (i + 1) % n, (i + 2) % n) > -eps;
+    }
+    if (convex) return fan();
+
+    // Ear clipping with keyhole support: coincident duplicates (bridge
+    // twins from hole merging) never block an ear, and the best-shaped
+    // valid ear clips each round so slivers don't pile onto one vertex.
+    auto d2 = [&](size_t a, size_t b) {
+        double dx = p2[a][0] - p2[b][0], dy = p2[a][1] - p2[b][1];
+        return dx * dx + dy * dy;
+    };
+    auto insideTri = [&](size_t a, size_t b, size_t c, size_t p) {
+        return cross(a, b, p) > eps && cross(b, c, p) > eps &&
+               cross(c, a, p) > eps;
+    };
+    std::vector<size_t> idx(n);
+    for (size_t i = 0; i < n; ++i) idx[i] = i;
+    size_t guard = 3 * n * n + 16;
+    while (idx.size() > 3 && guard-- > 0) {
+        size_t bestK = idx.size();
+        double bestQ = -1.0;
+        for (size_t k = 0; k < idx.size(); ++k) {
+            size_t ip = idx[(k + idx.size() - 1) % idx.size()];
+            size_t ic = idx[k];
+            size_t in = idx[(k + 1) % idx.size()];
+            double a2 = cross(ip, ic, in);
+            if (a2 <= eps) continue;  // reflex or collinear
+            double s = d2(ip, ic) + d2(ic, in) + d2(in, ip);
+            double q = s > 1e-300 ? a2 / s : 0.0;
+            if (q <= bestQ) continue;
+            bool blocked = false;
+            for (size_t other : idx) {
+                if (other == ip || other == ic || other == in) continue;
+                if (d2(other, ip) < eps || d2(other, ic) < eps ||
+                    d2(other, in) < eps) {
+                    continue;  // bridge twin
+                }
+                if (insideTri(ip, ic, in, other)) {
+                    blocked = true;
+                    break;
+                }
+            }
+            if (blocked) continue;
+            bestK = k;
+            bestQ = q;
+        }
+        if (bestK >= idx.size()) {
+            // Numerical dead end: fan the remainder to stay connected.
+            for (size_t k = 1; k + 1 < idx.size(); ++k) {
+                tris.push_back({uint32_t(idx[0]), uint32_t(idx[k]),
+                                uint32_t(idx[k + 1])});
+            }
+            return tris;
+        }
+        size_t ip = idx[(bestK + idx.size() - 1) % idx.size()];
+        size_t ic = idx[bestK];
+        size_t in = idx[(bestK + 1) % idx.size()];
+        tris.push_back({uint32_t(ip), uint32_t(ic), uint32_t(in)});
+        idx.erase(idx.begin() + bestK);
+    }
+    if (idx.size() == 3) {
+        tris.push_back(
+            {uint32_t(idx[0]), uint32_t(idx[1]), uint32_t(idx[2])});
+    }
+    return tris;
+}
+
 void writeObj(const PolyMesh& mesh, const std::string& path,
               const std::vector<std::vector<int>>* solidFaces,
               const ObjExportOptions* options) {
@@ -169,9 +291,9 @@ void writeObj(const PolyMesh& mesh, const std::string& path,
         }
         const auto& poly = mesh.polygons[p];
         if (opts.triangulate && poly.size() > 3) {
-            for (size_t k = 1; k + 1 < poly.size(); ++k) {
-                std::fprintf(f, "f %u %u %u\n", poly[0] + 1, poly[k] + 1,
-                             poly[k + 1] + 1);
+            for (const auto& t : triangulatePoly(mesh.vertices, poly)) {
+                std::fprintf(f, "f %u %u %u\n", poly[t[0]] + 1,
+                             poly[t[1]] + 1, poly[t[2]] + 1);
             }
             return;
         }

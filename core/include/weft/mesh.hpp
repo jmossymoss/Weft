@@ -42,10 +42,19 @@ struct PolyMesh {
 void weldVertices(PolyMesh& mesh, double tolerance,
                   const std::vector<int>* group = nullptr);
 
-// Game-engine export shaping: triangulate fans every quad/n-gon (many
-// pipelines want raw tris), yUp converts Z-up CAD space to Y-up engine
-// space, and scale converts units (0.01 turns mm into Unreal cm... 0.001
-// into metres for Unity/Blender-metric).
+// Tessellate one polygon for display or export: triples of LOCAL indices
+// into `poly`. Convex rings fan; concave and keyhole rings (minimal
+// n-gons carry hole loops bridged in with doubled vertices) ear-clip in
+// their dominant plane, so a bridged hole tessellates as a hole instead
+// of being fanned over.
+std::vector<std::array<uint32_t, 3>> triangulatePoly(
+    const std::vector<std::array<double, 3>>& verts,
+    const std::vector<uint32_t>& poly);
+
+// Game-engine export shaping: triangulate tessellates every quad/n-gon
+// (many pipelines want raw tris), yUp converts Z-up CAD space to Y-up
+// engine space, and scale converts units (0.01 turns mm into Unreal
+// cm... 0.001 into metres for Unity/Blender-metric).
 struct ObjExportOptions {
     bool triangulate = false;
     bool yUp = false;
