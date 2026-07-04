@@ -55,6 +55,9 @@ void usage() {
         "    --hold F          cluster fillet loops toward the creases, 0..0.95\n"
         "    --rings N         concentric quad loops around holes/bosses in\n"
         "                      planar faces (default 2)\n"
+        "    --lods F1,F2,...  emit one export per density factor (e.g.\n"
+        "                      1,0.5,0.25), suffixed _lod0.., from ONE setup;\n"
+        "                      manual ops replay into every tier\n"
         "    --refine          EXPERIMENTAL: refine triangulated interiors toward\n"
         "                      the border spacing before quad pairing\n"
         "    --pure-tris       disable quad pairing on fallback-triangulated\n"
@@ -142,6 +145,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     std::string recipeOut;
     bool validate = validateOnly;
     bool noNormals = false;
+    std::vector<double> lods;
     weft::Recipe recipe;
     weft::GenerationSettings& gs = recipe.settings;
     std::vector<std::string> faceSpecs;
@@ -162,6 +166,15 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         else if (a == "--rings") gs.defaults.junctionRings = std::stoi(next());
         else if (a == "--pure-tris") gs.defaults.quadDominant = false;
         else if (a == "--refine") gs.defaults.interiorRefine = true;
+        else if (a == "--lods") {
+            std::string spec = next();
+            size_t pos = 0;
+            while (pos != std::string::npos) {
+                size_t comma = spec.find(',', pos);
+                lods.push_back(std::stod(spec.substr(pos, comma - pos)));
+                pos = comma == std::string::npos ? comma : comma + 1;
+            }
+        }
         else if (a == "--validate") validate = true;
         else if (a == "--no-normals") noNormals = true;
         else if (a == "--recipe") recipe = weft::loadRecipe(next());
@@ -221,6 +234,59 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
 
     weft::Model model = weft::loadStep(input);
     weft::Analysis analysis = weft::analyze(model);
+
+    // LOD tiers: re-run the whole setup at scaled densities. Divisions
+    // scale linearly with the factor; the chord tolerance scales with
+    // 1/f^2 (sag grows with the square of the facet size). Manual ops
+    // are anchored to the CAD, so they replay into every tier.
+    if (!lods.empty() && !output.empty()) {
+        int rc = 0;
+        for (size_t li = 0; li < lods.size(); ++li) {
+            const double f = std::max(0.05, lods[li]);
+            weft::GenerationSettings scaled = gs;
+            auto scale = [&](weft::FaceMeshSettings& s) {
+                s.radial = std::max(3, (int)std::lround(s.radial * f));
+                s.axial = std::max(1, (int)std::lround(s.axial * f));
+                s.gridU = std::max(1, (int)std::lround(s.gridU * f));
+                s.gridV = std::max(1, (int)std::lround(s.gridV * f));
+                s.filletLoops = std::max(1, (int)std::lround(s.filletLoops * f));
+                s.junctionRings =
+                    std::max(1, (int)std::lround(s.junctionRings * f));
+                s.chordTolerance /= f * f;
+                s.angleToleranceDeg /= f;
+            };
+            scale(scaled.defaults);
+            for (auto& [fid, fs] : scaled.perFace) scale(fs);
+
+            weft::PolyMesh lod = weft::generate(model, analysis, scaled);
+            weft::applyOps(lod, model, recipe.ops);
+            size_t dot = output.rfind('.');
+            std::string lodPath =
+                dot == std::string::npos
+                    ? output + "_lod" + std::to_string(li)
+                    : output.substr(0, dot) + "_lod" + std::to_string(li) +
+                          output.substr(dot);
+            auto isGlb = [&](const std::string& s2) {
+                return s2.size() > 4 &&
+                       (s2.compare(s2.size() - 4, 4, ".glb") == 0 ||
+                        s2.compare(s2.size() - 5, 5, ".gltf") == 0);
+            };
+            if (isGlb(lodPath)) {
+                weft::writeGlb(lod, lodPath, noNormals ? nullptr : &model);
+            } else {
+                weft::writeObj(lod, lodPath, noNormals ? nullptr : &model);
+            }
+            std::printf("  lod%zu (x%.3g): %s — %zu polygons\n", li, f,
+                        lodPath.c_str(), lod.polygonCount());
+            if (validate) {
+                weft::ValidationReport vr = weft::validateMesh(lod, &model);
+                std::printf("%s", weft::formatReport(vr).c_str());
+                if (!vr.watertight()) rc = 1;
+            }
+        }
+        return rc;
+    }
+
     weft::GenerationReport report;
     weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
     weft::applyOps(mesh, model, recipe.ops);

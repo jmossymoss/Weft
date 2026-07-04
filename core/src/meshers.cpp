@@ -89,11 +89,15 @@ public:
         if (flip) std::reverse(indices.begin(), indices.end());
         mesh_.polygons.push_back(std::move(indices));
         mesh_.polygonFaceId.push_back(faceId);
+        mesh_.polygonPartId.push_back(currentPart_);
     }
 
     // Which solid the vertices being emitted belong to; welding never
     // merges across groups, so touching assembly parts stay separate.
     void setGroup(int g) { currentGroup_ = g; }
+    // Dense 1-based part id stamped on emitted polygons (exporters split
+    // assemblies by part).
+    void setPart(int p) { currentPart_ = p; }
     const std::vector<int>& groups() const { return groups_; }
 
     size_t vertexCount() const { return mesh_.vertices.size(); }
@@ -106,6 +110,7 @@ private:
     PolyMesh& mesh_;
     std::vector<int> groups_;
     int currentGroup_ = 0;
+    int currentPart_ = 1;
 };
 
 // ---------------------------------------------------------------------------
@@ -1739,6 +1744,15 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     DensitySolution density = solveDensity(model, plans, settings);
 
     const std::vector<int> weldGroup = faceWeldGroups(model);
+    // Dense 1-based part numbering from the adjacency components.
+    std::map<int, int> partOfGroup;
+    std::vector<int> partOfFace(weldGroup.size(), 1);
+    for (int fid = 1; fid < (int)weldGroup.size(); ++fid) {
+        auto [it, inserted] =
+            partOfGroup.try_emplace(weldGroup[fid],
+                                    (int)partOfGroup.size() + 1);
+        partOfFace[fid] = it->second;
+    }
 
     // Triangulate the whole shape ONCE, so OCCT discretizes each B-rep edge
     // once and neighbouring trimmed faces share their border polylines.
@@ -1823,6 +1837,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         if (plan.kind == MesherKind::Fallback) continue;
         BRepAdaptor_Surface surf(face);
         out.setGroup(weldGroup[fid]);
+        out.setPart(partOfFace[fid]);
         const size_t vBegin = out.vertexCount();
 
         auto solved = [&](const std::vector<int>& edges, int fallback) {
@@ -1921,6 +1936,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         const FaceMeshSettings& s = settings.forFace(fid);
         BRepAdaptor_Surface surf(face);
         out.setGroup(weldGroup[fid]);
+        out.setPart(partOfFace[fid]);
         meshFallback(face, surf, fid, s, model, canonical, out);
         if (report) {
             report->faceMesher[fid] = s.quadDominant ? MesherKind::QuadDominant

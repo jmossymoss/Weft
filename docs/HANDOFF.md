@@ -108,8 +108,10 @@ whole-shape triangulation now runs parallel — most of the time is OCCT).
    spacing, not global median), (b) an absolute cap relative to face
    size, and (c) the non-manifold repro debugged on as1 with --refine.
 4. ~~glTF (.glb) export~~ — done: `weft mesh -o out.glb`.
-5. **Per-solid OBJ objects** (`o part_N`) and normals in the app viewport
-   (it currently shades flat from polygon normals).
+5. ~~Per-part export~~ — done: OBJ `o part_N` objects and one glTF
+   node/mesh per part (face-adjacency components). LOD tiers done too
+   (`--lods`). Still open: real part NAMES from STEP product structure
+   (needs the XCAF reader), and app viewport normals.
 6. **App**: expose `validate` results as an overlay (open-edge highlighter
    is the plan §4.2 diagnostic); the panel already regenerates live.
 
