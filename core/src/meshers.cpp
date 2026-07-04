@@ -2622,9 +2622,13 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
     // resolve to the max proposal as before; several overrides sharing a
     // group still resolve by max among themselves.
     std::map<int, int> facePinned;
+    // Global budget knob: counts scale before the group solve (floors
+    // reapply after), so one slider re-budgets the whole model.
+    const double dScale = std::clamp(settings.densityScale, 0.05, 20.0);
     auto propose = [&](const std::vector<int>& edges, int count,
                        bool overridden) {
         if (edges.empty()) return;
+        count = std::max(1, int(std::lround(count * dScale)));
         int root = sol.groups.find(edges[0]);
         auto [it, inserted] = sol.groupCount.try_emplace(root, count);
         if (!inserted) it->second = std::max(it->second, count);
@@ -2677,7 +2681,10 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
             return;
         }
         for (int eid : edges) {
-            propose({eid}, std::max(floorA, adaptiveCount(eid, s)),
+            // Floor applies AFTER scaling (propose scales): a ring floor
+            // of 6 must survive a 0.5x budget.
+            propose({eid}, std::max(int(std::lround(floorA / dScale)),
+                                    adaptiveCount(eid, s)),
                     overridden);
         }
     };
@@ -4020,7 +4027,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         std::snprintf(
             key, sizeof key,
             "k%d c%d f%d a%d l%d q%d|%d,%d,%d|r%d x%d u%d v%d cap%d ch%.6g "
-            "an%.6g fl%d fh%.6g jr%d qd%d mn%d ex%d ms%.6g rd%d sq%d cr%d",
+            "an%.6g fl%d fh%.6g jr%d qd%d mn%d ex%d ms%.6g rd%d sq%d cr%d "
+            "ds%.4g",
             int(plan.kind), plan.constrains ? 1 : 0, plan.isFillet ? 1 : 0,
             plan.acrossIsU ? 1 : 0, plan.linkRims ? 1 : 0,
             plan.forceFallbackQuads, counts[fid][0], counts[fid][1],
@@ -4029,7 +4037,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             s.filletHold, s.junctionRings, s.quadDominant ? 1 : 0,
             s.minimal ? 1 : 0, s.exclude ? 1 : 0, s.minSize,
             s.relativeDeviation ? 1 : 0, s.squareCollar ? 1 : 0,
-            s.coonsRotate);
+            s.coonsRotate, settings.densityScale);
         cacheKey[fid] = key;
         if (plan.kind == MesherKind::AnnulusRing || !plan.loops.empty()) {
             for (int eid : plan.uEdges) {
