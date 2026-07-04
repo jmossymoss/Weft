@@ -55,6 +55,8 @@ void usage() {
         "    --hold F          cluster fillet loops toward the creases, 0..0.95\n"
         "    --rings N         concentric quad loops around holes/bosses in\n"
         "                      planar faces (default 2)\n"
+        "    --refine          EXPERIMENTAL: refine triangulated interiors toward\n"
+        "                      the border spacing before quad pairing\n"
         "    --pure-tris       disable quad pairing on fallback-triangulated\n"
         "                      faces (default: quad-dominant)\n"
         "    --chord T         fallback triangulation tolerance (default 0.1)\n"
@@ -159,6 +161,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         else if (a == "--hold") gs.defaults.filletHold = std::stod(next());
         else if (a == "--rings") gs.defaults.junctionRings = std::stoi(next());
         else if (a == "--pure-tris") gs.defaults.quadDominant = false;
+        else if (a == "--refine") gs.defaults.interiorRefine = true;
         else if (a == "--validate") validate = true;
         else if (a == "--no-normals") noNormals = true;
         else if (a == "--recipe") recipe = weft::loadRecipe(next());

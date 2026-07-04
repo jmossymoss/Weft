@@ -39,6 +39,12 @@ struct FaceMeshSettings {
     // triangles into quads where quality allows (guided by the surface's
     // parametric directions). Off = pure triangles.
     bool quadDominant = true;
+    // EXPERIMENTAL: split interior edges of triangulated faces toward the
+    // border's own spacing before pairing (uniform density instead of
+    // giant chord triangles). Off by default: on dirty assemblies it can
+    // over-refine faces whose borders carry a few tiny segments; needs a
+    // smarter local target before it earns the default.
+    bool interiorRefine = false;
     // Game-topology minimalism (plan §1/§4.1): a flat face doesn't need an
     // interior grid. When set, a planar grid-safe face emits one boundary
     // n-gon instead — border vertices stay density-matched, so neighbours

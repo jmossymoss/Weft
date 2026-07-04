@@ -18,7 +18,6 @@
 #include <TColStd_Array1OfReal.hxx>
 #include <TColStd_HArray1OfReal.hxx>
 #include <TopExp_Explorer.hxx>
-#include <TopTools_ListIteratorOfListOfShape.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
@@ -1228,6 +1227,87 @@ void flipToDelaunay(TriSoup& s) {
     }
 }
 
+// Interior Steiner refinement. Boundary surgery often leaves a face whose
+// border is dense (pinned to parametric neighbours) but whose interior is
+// the raw boundary-only CDT — long triangles spanning the face that the
+// quad pairing can't do anything with. Split interior edges much longer
+// than the boundary's own median spacing (midpoints evaluated ON the
+// surface through averaged UVs) and re-flip, until edge lengths are
+// commensurate. Boundary segments (single-owner) are never touched, so
+// conformity — and watertightness — is preserved by construction.
+void refineInterior(TriSoup& s, const std::vector<BoundaryChain>& chains,
+                    const BRepAdaptor_Surface& surf) {
+    if (!s.hasUV) return;
+    std::vector<double> blens;
+    for (const BoundaryChain& chain : chains) {
+        for (size_t i = 0; i + 1 < chain.nodes.size(); ++i) {
+            blens.push_back(
+                s.pts[chain.nodes[i]].Distance(s.pts[chain.nodes[i + 1]]));
+        }
+    }
+    if (blens.size() < 4) return;
+    std::nth_element(blens.begin(), blens.begin() + blens.size() / 2,
+                     blens.end());
+    const double h = blens[blens.size() / 2];
+    if (h <= 1e-12) return;
+    const double hi = 1.6 * h;
+    const size_t budget = s.pts.size() * 4 + 2048;
+
+    for (int pass = 0; pass < 8 && s.pts.size() < budget; ++pass) {
+        std::map<std::pair<int, int>, std::vector<int>> owners;
+        for (size_t t = 0; t < s.tris.size(); ++t) {
+            for (int i = 0; i < 3; ++i) {
+                int a = s.tris[t][i], b = s.tris[t][(i + 1) % 3];
+                owners[a < b ? std::make_pair(a, b) : std::make_pair(b, a)]
+                    .push_back(static_cast<int>(t));
+            }
+        }
+        bool split = false;
+        for (const auto& [seg, ts] : owners) {
+            if (ts.size() != 2) continue;  // boundary or non-manifold: skip
+            if (s.pts[seg.first].Distance(s.pts[seg.second]) <= hi) continue;
+            auto holds = [&](const std::array<int, 3>& tr) {
+                int have = 0;
+                for (int v : tr) {
+                    if (v == seg.first || v == seg.second) ++have;
+                }
+                return have == 2;
+            };
+            if (!holds(s.tris[ts[0]]) || !holds(s.tris[ts[1]])) {
+                continue;  // stale this pass
+            }
+
+            gp_Pnt2d uv(0.5 * (s.uvs[seg.first].X() + s.uvs[seg.second].X()),
+                        0.5 * (s.uvs[seg.first].Y() + s.uvs[seg.second].Y()));
+            const int m = static_cast<int>(s.pts.size());
+            s.pts.push_back(surf.Value(uv.X(), uv.Y()));
+            s.uvs.push_back(uv);
+
+            // By index, never by reference: the push_back inside can
+            // reallocate s.tris and dangle a second-triangle reference.
+            auto splitTri = [&](int tIdx) {
+                const std::array<int, 3> tr = s.tris[tIdx];
+                for (int i = 0; i < 3; ++i) {
+                    int a = tr[i], b = tr[(i + 1) % 3];
+                    if ((a == seg.first && b == seg.second) ||
+                        (a == seg.second && b == seg.first)) {
+                        int c = tr[(i + 2) % 3];
+                        s.tris[tIdx] = {a, m, c};
+                        s.tris.push_back({m, b, c});
+                        return;
+                    }
+                }
+            };
+            splitTri(ts[0]);
+            splitTri(ts[1]);
+            split = true;
+            if (s.pts.size() >= budget) break;
+        }
+        if (!split) break;
+        flipToDelaunay(s);
+    }
+}
+
 // Last resort for trimmed/freeform faces: chord-tolerance triangulation
 // (shared across the whole shape), boundary conformed to canonical edge
 // polylines, optionally paired into quads. Pairing is greedy over a
@@ -1339,6 +1419,7 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     }
 
     flipToDelaunay(soup);
+    if (s.quadDominant && s.interiorRefine) refineInterior(soup, chains, surf);
 
     // Segment lookup for the subdivision pass: which node pairs lie on a
     // B-rep edge, and whether they may be split.
@@ -1634,7 +1715,7 @@ std::vector<int> faceWeldGroups(const Model& model) {
     for (int eid = 1; eid <= model.edgeCount(); ++eid) {
         const TopTools_ListOfShape& adj = model.edgeToFaces.FindFromIndex(eid);
         int first = 0;
-        for (TopTools_ListIteratorOfListOfShape it(adj); it.More(); it.Next()) {
+        for (TopTools_ListOfShape::Iterator it(adj); it.More(); it.Next()) {
             int fid = model.faces.FindIndex(it.Value());
             if (fid < 1) continue;
             if (!first) first = fid;
@@ -1815,7 +1896,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         bool hasFallback = false;
         const TopTools_ListOfShape& adj =
             model.edgeToFaces.FindFromKey(model.edges(eid));
-        for (TopTools_ListIteratorOfListOfShape it(adj); it.More(); it.Next()) {
+        for (TopTools_ListOfShape::Iterator it(adj); it.More(); it.Next()) {
             int fid = model.faces.FindIndex(it.Value());
             if (fid < 1) continue;
             if (plans.at(fid).kind == MesherKind::Fallback) hasFallback = true;
