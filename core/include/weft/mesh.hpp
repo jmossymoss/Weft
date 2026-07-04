@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,9 @@ struct PolyMesh {
     // Exporters split output by part so assemblies arrive as parts, not
     // as one fused blob. Empty = single part.
     std::vector<int> polygonPartId;
+    // Part id -> STEP product name, when the source carried one; parts
+    // absent from the map export as "part_<id>".
+    std::map<int, std::string> partNames;
 
     size_t vertexCount() const { return vertices.size(); }
     size_t polygonCount() const { return polygons.size(); }

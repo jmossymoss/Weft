@@ -46,6 +46,7 @@ void writeGlb(const PolyMesh& mesh, const std::string& path,
 
     struct Part {
         int id;
+        std::string name;
         std::vector<SplitVertex> verts;
         std::vector<uint32_t> indices;
     };
@@ -116,7 +117,17 @@ void writeGlb(const PolyMesh& mesh, const std::string& path,
         }
     }
     if (!verts.empty()) {
-        parts.push_back({partId, std::move(verts), std::move(indices)});
+        std::string name = "part_" + std::to_string(partId);
+        auto nameIt = mesh.partNames.find(partId);
+        if (nameIt != mesh.partNames.end() && !nameIt->second.empty()) {
+            name.clear();
+            for (char c : nameIt->second) {  // JSON-safe subset
+                if (c >= ' ' && c != '"' && c != '\\') name += c;
+            }
+            if (name.empty()) name = "part_" + std::to_string(partId);
+        }
+        parts.push_back({partId, std::move(name), std::move(verts),
+                         std::move(indices)});
     }
     }  // per part
     if (parts.empty()) throw std::runtime_error("writeGlb: empty mesh");
@@ -199,14 +210,15 @@ void writeGlb(const PolyMesh& mesh, const std::string& path,
         const int aIdx = acc++;
 
         std::snprintf(buf, sizeof buf,
-                      "%s{\"name\":\"part_%d\",\"primitives\":[{"
+                      "%s{\"name\":\"%s\",\"primitives\":[{"
                       "\"attributes\":{\"POSITION\":%d,\"NORMAL\":%d,"
                       "\"_WEFT_FACE_ID\":%d},\"indices\":%d,\"mode\":4}]}",
-                      pi ? "," : "", part.id, aPos, aNorm, aFid, aIdx);
+                      pi ? "," : "", part.name.c_str(), aPos, aNorm, aFid,
+                      aIdx);
         meshes += buf;
         std::snprintf(buf, sizeof buf,
-                      "%s{\"mesh\":%zu,\"name\":\"part_%d\"}",
-                      pi ? "," : "", pi, part.id);
+                      "%s{\"mesh\":%zu,\"name\":\"%s\"}",
+                      pi ? "," : "", pi, part.name.c_str());
         nodes += buf;
         std::snprintf(buf, sizeof buf, "%s%zu", pi ? "," : "", pi);
         roots += buf;

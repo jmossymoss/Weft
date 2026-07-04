@@ -133,10 +133,21 @@ void writeObj(const PolyMesh& mesh, const std::string& path,
         });
     }
     int currentPart = -1;
+    auto partLabel = [&](int part) {
+        auto it = mesh.partNames.find(part);
+        std::string label =
+            it != mesh.partNames.end() && !it->second.empty()
+                ? it->second
+                : "part_" + std::to_string(part);
+        for (char& c : label) {
+            if (c <= ' ' || c == '#' || c == '/' || c == '\\') c = '_';
+        }
+        return label;
+    };
     auto emitObjectHeaders = [&](size_t p) {
         if (hasParts && mesh.polygonPartId[p] != currentPart) {
             currentPart = mesh.polygonPartId[p];
-            std::fprintf(f, "o part_%d\n", currentPart);
+            std::fprintf(f, "o %s\n", partLabel(currentPart).c_str());
             return true;
         }
         return false;

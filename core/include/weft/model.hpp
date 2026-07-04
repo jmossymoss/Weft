@@ -5,6 +5,7 @@
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 
 #include <string>
+#include <vector>
 
 namespace weft {
 
@@ -19,6 +20,12 @@ struct Model {
     TopTools_IndexedMapOfShape faces;   // FaceId -> TopoDS_Face
     TopTools_IndexedMapOfShape edges;   // EdgeId -> TopoDS_Edge
     TopTools_IndexedDataMapOfShapeListOfShape edgeToFaces;
+
+    // Bodies and their STEP product names (parallel; empty string when the
+    // source carried none). Names come from the representation items of
+    // the transfer session, so "bolt"/"nut" survive into the exports.
+    TopTools_IndexedMapOfShape solids;  // SolidId -> TopoDS_Solid
+    std::vector<std::string> solidNames;
 
     int faceCount() const { return faces.Extent(); }
     int edgeCount() const { return edges.Extent(); }
