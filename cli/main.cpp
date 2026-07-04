@@ -207,6 +207,12 @@ int cmdMesh(const std::vector<std::string>& args) {
     std::printf("  %zu vertices, %zu polygons (%zu quads, %zu tris, %zu n-gons)\n",
                 mesh.vertexCount(), mesh.polygonCount(), mesh.countQuads(),
                 mesh.countTris(), mesh.countNgons());
+    {
+        const auto folded = weft::foldedPolys(model, mesh);
+        size_t nf = 0;
+        for (uint8_t f : folded) nf += f;
+        if (nf) std::printf("  %zu folded polygon(s)\n", nf);
+    }
     for (const auto& [fid, kind] : report.faceMesher) {
         std::printf("  face #%-3d %s\n", fid, weft::mesherKindName(kind));
     }
