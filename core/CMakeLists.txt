@@ -4,6 +4,7 @@ add_library(weft_core
   src/mesh.cpp
   src/meshers.cpp
   src/edit.cpp
+  src/export_gltf.cpp
   src/recipe.cpp
   src/validate.cpp
   src/viz.cpp

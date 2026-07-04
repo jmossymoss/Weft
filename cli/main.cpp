@@ -8,6 +8,7 @@
 #include "weft/mesh.hpp"
 #include "weft/meshers.hpp"
 #include "weft/model.hpp"
+#include "weft/export_gltf.hpp"
 #include "weft/recipe.hpp"
 #include "weft/validate.hpp"
 
@@ -39,7 +40,8 @@ void usage() {
         "      deviation vs. the live B-rep. Exits 1 if the mesh leaks.\n"
         "\n"
         "  weft mesh <in.step> -o <out.obj> [options]\n"
-        "      generate topology and export OBJ (groups carry face IDs)\n"
+        "      generate topology and export by extension: .obj (groups carry\n"
+        "      face IDs) or .glb (binary glTF, _WEFT_FACE_ID attribute)\n"
         "    --validate        run the bake-ready checks after meshing\n"
         "    --no-normals      skip exact CAD vertex normals in the OBJ\n"
         "                      (default: every corner carries its face's\n"
@@ -220,7 +222,16 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
     weft::applyOps(mesh, model, recipe.ops);
     if (!output.empty()) {
-        weft::writeObj(mesh, output, noNormals ? nullptr : &model);
+        auto endsWith = [&](const char* suffix) {
+            size_t n = std::strlen(suffix);
+            return output.size() >= n &&
+                   output.compare(output.size() - n, n, suffix) == 0;
+        };
+        if (endsWith(".glb") || endsWith(".gltf")) {
+            weft::writeGlb(mesh, output, noNormals ? nullptr : &model);
+        } else {
+            weft::writeObj(mesh, output, noNormals ? nullptr : &model);
+        }
         std::printf("%s -> %s\n", input.c_str(), output.c_str());
     } else {
         std::printf("%s\n", input.c_str());
