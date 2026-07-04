@@ -7,10 +7,13 @@
 #include <BRep_Tool.hxx>
 #include <ElCLib.hxx>
 #include <ElSLib.hxx>
+#include <GeomAPI_ProjectPointOnCurve.hxx>
 #include <Geom2d_Curve.hxx>
 #include <Geom_Circle.hxx>
 #include <Geom_Curve.hxx>
+#include <Poly_PolygonOnTriangulation.hxx>
 #include <Poly_Triangulation.hxx>
+#include <Precision.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
@@ -25,7 +28,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <map>
 #include <numeric>
+#include <set>
+#include <unordered_map>
 #include <vector>
 
 namespace weft {
@@ -67,6 +74,7 @@ public:
     uint32_t addVertex(const gp_Pnt& p, const Anchor& anchor) {
         mesh_.vertices.push_back({p.X(), p.Y(), p.Z()});
         mesh_.anchors.push_back(anchor);
+        groups_.push_back(currentGroup_);
         return static_cast<uint32_t>(mesh_.vertices.size() - 1);
     }
 
@@ -76,8 +84,21 @@ public:
         mesh_.polygonFaceId.push_back(faceId);
     }
 
+    // Which solid the vertices being emitted belong to; welding never
+    // merges across groups, so touching assembly parts stay separate.
+    void setGroup(int g) { currentGroup_ = g; }
+    const std::vector<int>& groups() const { return groups_; }
+
+    size_t vertexCount() const { return mesh_.vertices.size(); }
+    gp_Pnt vertex(size_t i) const {
+        const auto& v = mesh_.vertices[i];
+        return gp_Pnt(v[0], v[1], v[2]);
+    }
+
 private:
     PolyMesh& mesh_;
+    std::vector<int> groups_;
+    int currentGroup_ = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -173,6 +194,60 @@ void collectIsoEdges(const TopoDS_Face& face, const Model& model,
     plan.constrains = true;
 }
 
+// Endpoints of an edge's pcurve on a face (plus its midpoint, so curved
+// pcurves can't fake a straight span).
+bool pcurveSpan(const TopoDS_Edge& edge, const TopoDS_Face& face,
+                gp_Pnt2d& a, gp_Pnt2d& b) {
+    double f = 0, l = 0;
+    Handle(Geom2d_Curve) pcurve = BRep_Tool::CurveOnSurface(edge, face, f, l);
+    if (pcurve.IsNull()) return false;
+    a = pcurve->Value(f);
+    b = pcurve->Value(l);
+    return true;
+}
+
+// A grid mesher's boundary contract: its u-edges must be the full bottom
+// and top of the face's UV rectangle and its v-edges the full left and
+// right. Anything short of that (split sides, partial rims, trims that
+// stop early) means the uniform grid would NOT land its border vertices
+// on the actual boundary — the face must fall back to conformal
+// triangulation instead of silently meshing over the mismatch.
+bool isoEdgesFormRectangle(const TopoDS_Face& face, const Model& model,
+                           const FacePlan& plan, bool uClosed) {
+    double umin, umax, vmin, vmax;
+    BRepTools::UVBounds(face, umin, umax, vmin, vmax);
+    const double uTol = std::max(1e-12, (umax - umin) * 1e-4);
+    const double vTol = std::max(1e-12, (vmax - vmin) * 1e-4);
+
+    bool haveVMin = false, haveVMax = false;
+    for (int eid : plan.uEdges) {
+        gp_Pnt2d a, b;
+        if (!pcurveSpan(TopoDS::Edge(model.edges(eid)), face, a, b)) return false;
+        double lo = std::min(a.X(), b.X()), hi = std::max(a.X(), b.X());
+        if (std::abs(lo - umin) > uTol || std::abs(hi - umax) > uTol) return false;
+        double v = 0.5 * (a.Y() + b.Y());
+        if (std::abs(v - vmin) <= vTol) haveVMin = true;
+        else if (std::abs(v - vmax) <= vTol) haveVMax = true;
+        else return false;
+    }
+    bool haveUMin = false, haveUMax = false;
+    for (int eid : plan.vEdges) {
+        gp_Pnt2d a, b;
+        if (!pcurveSpan(TopoDS::Edge(model.edges(eid)), face, a, b)) return false;
+        double lo = std::min(a.Y(), b.Y()), hi = std::max(a.Y(), b.Y());
+        if (std::abs(lo - vmin) > vTol || std::abs(hi - vmax) > vTol) return false;
+        double u = 0.5 * (a.X() + b.X());
+        if (std::abs(u - umin) <= uTol) haveUMin = true;
+        else if (std::abs(u - umax) <= uTol) haveUMax = true;
+        else return false;
+    }
+    if (uClosed) return true;  // revolutions: rims/seams may legitimately
+                               // be absent (poles, closed v); presence of a
+                               // partial rim was already rejected above
+    return haveVMin && haveVMax && haveUMin && haveUMax &&
+           plan.uEdges.size() == 2 && plan.vEdges.size() == 2;
+}
+
 // A planar face with a rectangular (2u+2v iso-edge) outer wire and exactly
 // one full-circle inner wire: the cylinder-to-plane junction case. Fills
 // plan.circ / circleEdgeId / uEdges / vEdges on success.
@@ -212,7 +287,8 @@ bool planRingJunction(const TopoDS_Face& face, const Model& model,
     }
     if (outerIds.size() != 4) return false;
     collectIsoEdges(face, model, outerIds, plan);
-    if (!plan.constrains || plan.uEdges.size() != 2 || plan.vEdges.size() != 2) {
+    if (!plan.constrains || plan.uEdges.size() != 2 || plan.vEdges.size() != 2 ||
+        !isoEdgesFormRectangle(face, model, plan, /*uClosed=*/false)) {
         plan.uEdges.clear();
         plan.vEdges.clear();
         plan.constrains = false;
@@ -270,6 +346,15 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     if (isClosedRevolution(surf)) {
         plan.kind = MesherKind::RevolutionGrid;
         collectIsoEdges(face, model, info.edgeIds, plan);
+        // A revolution face whose boundary is anything but full rims (and
+        // an optional seam) — a slanted trim, a hole through the wall, a
+        // split rim — cannot be covered by the uniform grid without meshing
+        // over its trims. Fall back to conformal triangulation.
+        if (!plan.constrains ||
+            !isoEdgesFormRectangle(face, model, plan, /*uClosed=*/true)) {
+            plan = FacePlan{};
+            plan.kind = MesherKind::Fallback;
+        }
         return plan;
     }
 
@@ -298,16 +383,19 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             // minor circle (v) for a toroidal corner patch.
             plan.acrossIsU = surf.GetType() == GeomAbs_Cylinder;
         }
-        // Only a plain 2u+2v rectangle ties its grid to its edges; anything
-        // else meshes with its own settings, unconstrained.
+        // Only a plain 2u+2v rectangle ties its grid to its edges. A face
+        // that passed the containment probe but whose boundary is NOT the
+        // exact UV rectangle (split sides, slanted edges) would mesh its
+        // bounding rectangle at private divisions and crack against every
+        // neighbour — demote it to conformal triangulation instead.
         collectIsoEdges(face, model, info.edgeIds, plan);
-        if (plan.uEdges.size() != 2 || plan.vEdges.size() != 2) {
+        if (plan.uEdges.size() != 2 || plan.vEdges.size() != 2 ||
+            !isoEdgesFormRectangle(face, model, plan, /*uClosed=*/false)) {
             plan.constrains = false;
         }
-        // The n-gon's ring is a rectangle perimeter walk; without the 2u+2v
-        // structure there is nothing reliable to walk.
-        if (plan.kind == MesherKind::MinimalNGon && !plan.constrains) {
-            plan.kind = MesherKind::PlanarGrid;
+        if (!plan.constrains) {
+            plan = FacePlan{};
+            plan.kind = MesherKind::Fallback;
         }
         return plan;
     }
@@ -694,46 +782,462 @@ double quadAngleCost(const std::array<gp_Pnt, 4>& q) {
     return cost;
 }
 
-// Last resort for trimmed/freeform faces: OCCT chord-tolerance
-// triangulation, optionally paired into quads. Pairing is greedy over a
+// ---------------------------------------------------------------------------
+// Conformal boundaries for triangulated faces (plan §7.1, first real slice).
+//
+// The whole shape is triangulated ONCE, so OCCT discretizes every B-rep
+// edge once and both adjacent triangulations share its polyline — trimmed
+// faces meet vertex-for-vertex out of the box. Edges that a parametric
+// mesher controls (a cylinder rim next to a trimmed plate) instead carry a
+// *canonical polyline* — the exact vertices the parametric side emitted —
+// and the triangulated side's boundary is surgically conformed to it:
+// canonical points are inserted (triangle splits), leftover triangulation
+// boundary points are collapsed into them. The result is watertight
+// without giving up exact division control.
+
+struct EdgePolyline {
+    std::vector<double> params;  // ascending along the edge curve
+    std::vector<gp_Pnt> pts;     // exact positions the neighbour emitted
+    // True when a parametric mesher authored this polyline: the fallback
+    // side must then keep these segments unsplit during quad subdivision
+    // (the parametric side has no midpoints to meet).
+    bool fromParametric = false;
+};
+
+// Project emitted vertices of a parametric face onto one of its edges and
+// order them along it. Returns false when the collection doesn't look like
+// a full chain (endpoints missing), in which case no surgery happens.
+bool collectEmittedPolyline(const TopoDS_Edge& edge, MeshBuilder& out,
+                            size_t vBegin, size_t vEnd, EdgePolyline& poly) {
+    double f = 0, l = 0;
+    Handle(Geom_Curve) curve = BRep_Tool::Curve(edge, f, l);
+    if (curve.IsNull()) return false;
+    const double tol =
+        std::max(BRep_Tool::Tolerance(edge), Precision::Confusion()) * 10.0;
+
+    std::vector<std::pair<double, gp_Pnt>> hits;
+    for (size_t i = vBegin; i < vEnd; ++i) {
+        gp_Pnt p = out.vertex(i);
+        GeomAPI_ProjectPointOnCurve proj(p, curve, f, l);
+        if (proj.NbPoints() < 1 || proj.LowerDistance() > tol) continue;
+        hits.push_back({proj.LowerDistanceParameter(), p});
+    }
+    if (hits.size() < 2) return false;
+    std::sort(hits.begin(), hits.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+    // Distinct positions only (the seam column of a closed grid projects
+    // twice onto the same rim parameter).
+    std::vector<std::pair<double, gp_Pnt>> unique;
+    for (const auto& h : hits) {
+        if (!unique.empty() &&
+            (h.first - unique.back().first) < (l - f) * 1e-9) {
+            continue;
+        }
+        unique.push_back(h);
+    }
+
+    const double endTol = (l - f) * 1e-5;
+    const bool closed =
+        curve->Value(f).Distance(curve->Value(l)) <= Precision::Confusion() * 100;
+    if (closed) {
+        // A closed rim: the chain must start at f and close back at l with
+        // the same point. Whichever end the seam point projected to, mirror
+        // it to the other.
+        if (std::abs(unique.front().first - f) <= endTol) {
+            unique.push_back({l, unique.front().second});
+        } else if (std::abs(unique.back().first - l) <= endTol) {
+            unique.insert(unique.begin(), {f, unique.back().second});
+        } else {
+            return false;  // phase mismatch between surface u and curve
+                           // parametrization; leave the boundary alone
+        }
+    } else {
+        if (std::abs(unique.front().first - f) > endTol ||
+            std::abs(unique.back().first - l) > endTol) {
+            return false;
+        }
+    }
+    if (unique.size() < 2) return false;
+    poly.params.clear();
+    poly.pts.clear();
+    for (const auto& [t, p] : unique) {
+        poly.params.push_back(t);
+        poly.pts.push_back(p);
+    }
+    poly.fromParametric = true;
+    return true;
+}
+
+// Local, mutable copy of a face triangulation.
+struct TriSoup {
+    std::vector<gp_Pnt> pts;
+    std::vector<gp_Pnt2d> uvs;
+    bool hasUV = false;
+    std::vector<std::array<int, 3>> tris;
+};
+
+struct BoundaryChain {
+    int edgeId = 0;
+    std::vector<int> nodes;      // soup node ids, ordered along the edge
+    std::vector<double> params;  // ascending edge-curve parameters
+    bool fromParametric = false;
+};
+
+// The single triangle owning a boundary segment (a,b), with the segment's
+// direction inside it. Returns -1 when not found.
+int findBoundaryTriangle(const TriSoup& s, int a, int b, int& ia, int& ib) {
+    for (size_t t = 0; t < s.tris.size(); ++t) {
+        const auto& tr = s.tris[t];
+        for (int i = 0; i < 3; ++i) {
+            int x = tr[i], y = tr[(i + 1) % 3];
+            if ((x == a && y == b) || (x == b && y == a)) {
+                ia = x;
+                ib = y;
+                return static_cast<int>(t);
+            }
+        }
+    }
+    return -1;
+}
+
+// Make `chain` reproduce `target` exactly: snap coincident points to the
+// canonical positions, split triangles to insert missing canonical points,
+// collapse leftover boundary points into their nearest canonical neighbour.
+void conformChain(TriSoup& s, BoundaryChain& chain, const EdgePolyline& target,
+                  const Handle(Geom2d_Curve)& pcurve) {
+    if (chain.nodes.size() < 2 || target.params.size() < 2) return;
+    const double range = std::max(1e-12, chain.params.back() - chain.params.front());
+    const double epsP = range * 1e-5;
+
+    // Fast path: same discretization — just adopt the canonical positions.
+    if (chain.nodes.size() == target.params.size()) {
+        bool same = true;
+        for (size_t i = 0; i < chain.params.size(); ++i) {
+            if (std::abs(chain.params[i] - target.params[i]) > epsP) {
+                same = false;
+                break;
+            }
+        }
+        if (same) {
+            for (size_t i = 0; i < chain.nodes.size(); ++i) {
+                s.pts[chain.nodes[i]] = target.pts[i];
+                chain.params[i] = target.params[i];
+            }
+            return;
+        }
+    }
+
+    s.pts[chain.nodes.front()] = target.pts.front();
+    s.pts[chain.nodes.back()] = target.pts.back();
+    std::vector<bool> keep(chain.nodes.size(), false);
+    keep.front() = keep.back() = true;
+
+    // Insert (or claim) every interior canonical point.
+    for (size_t j = 1; j + 1 < target.params.size(); ++j) {
+        const double t = target.params[j];
+        size_t k = 0;
+        while (k + 1 < chain.params.size() && chain.params[k + 1] < t - epsP) ++k;
+        if (k + 1 < chain.params.size() &&
+            std::abs(chain.params[k + 1] - t) <= epsP &&
+            k + 2 < chain.params.size() + 1) {
+            // Claim an existing boundary node.
+            size_t idx = k + 1;
+            if (idx + 1 < chain.nodes.size()) {  // interior only
+                s.pts[chain.nodes[idx]] = target.pts[j];
+                chain.params[idx] = t;
+                if (s.hasUV && !pcurve.IsNull()) {
+                    s.uvs[chain.nodes[idx]] = pcurve->Value(t);
+                }
+                keep[idx] = true;
+                continue;
+            }
+        }
+        // Split the bracketing segment's triangle.
+        int a = chain.nodes[k], b = chain.nodes[k + 1];
+        int ia = 0, ib = 0;
+        int tIdx = findBoundaryTriangle(s, a, b, ia, ib);
+        if (tIdx < 0) continue;  // torn triangulation; skip this point
+        int q = static_cast<int>(s.pts.size());
+        s.pts.push_back(target.pts[j]);
+        s.uvs.push_back(s.hasUV && !pcurve.IsNull() ? pcurve->Value(t)
+                                                    : gp_Pnt2d(0, 0));
+        std::array<int, 3> old = s.tris[tIdx];
+        int c = old[0] + old[1] + old[2] - ia - ib;
+        // Preserve winding: (ia, ib, c) -> (ia, q, c) + (q, ib, c).
+        s.tris[tIdx] = {ia, q, c};
+        s.tris.push_back({q, ib, c});
+        chain.nodes.insert(chain.nodes.begin() + k + 1, q);
+        chain.params.insert(chain.params.begin() + k + 1, t);
+        keep.insert(keep.begin() + k + 1, true);
+    }
+
+    // Collapse boundary nodes that aren't canonical into the nearest kept
+    // neighbour along the chain.
+    for (size_t k = 1; k + 1 < chain.nodes.size();) {
+        if (keep[k]) { ++k; continue; }
+        size_t left = k - 1;
+        size_t right = k + 1;
+        while (right + 1 < chain.nodes.size() && !keep[right]) ++right;
+        size_t into = (chain.params[k] - chain.params[left] <=
+                       chain.params[right] - chain.params[k])
+                          ? left
+                          : right;
+        int dead = chain.nodes[k], live = chain.nodes[into];
+        for (auto& tr : s.tris) {
+            for (int& v : tr) {
+                if (v == dead) v = live;
+            }
+        }
+        chain.nodes.erase(chain.nodes.begin() + k);
+        chain.params.erase(chain.params.begin() + k);
+        keep.erase(keep.begin() + k);
+        if (into == left) { /* k now points at the next candidate */ }
+    }
+    // Drop triangles the collapses degenerated.
+    s.tris.erase(std::remove_if(s.tris.begin(), s.tris.end(),
+                                [](const std::array<int, 3>& tr) {
+                                    return tr[0] == tr[1] || tr[1] == tr[2] ||
+                                           tr[0] == tr[2];
+                                }),
+                 s.tris.end());
+}
+
+struct SegInfo {
+    int edgeId = 0;
+    double t0 = 0, t1 = 0;  // edge-curve parameters of the segment ends
+    bool noSplit = false;   // parametric neighbour: leave the segment whole
+};
+
+double minAngle3d(const gp_Pnt& a, const gp_Pnt& b, const gp_Pnt& c) {
+    gp_Vec ab(a, b), bc(b, c), ca(c, a);
+    if (ab.Magnitude() < 1e-15 || bc.Magnitude() < 1e-15 ||
+        ca.Magnitude() < 1e-15) {
+        return 0.0;
+    }
+    double m = ab.Angle(ca.Reversed());
+    m = std::min(m, bc.Angle(ab.Reversed()));
+    m = std::min(m, ca.Angle(bc.Reversed()));
+    return m;
+}
+
+double cross2d(const gp_Pnt2d& o, const gp_Pnt2d& p, const gp_Pnt2d& q) {
+    return (p.X() - o.X()) * (q.Y() - o.Y()) -
+           (p.Y() - o.Y()) * (q.X() - o.X());
+}
+
+// Lawson-style edge flips toward better-shaped triangles. Boundary
+// conformity surgery splits whatever triangle happens to own each border
+// segment, which piles up sliver fans; flipping interior diagonals (where
+// the UV quad is convex and the 3D minimum angle improves) restores a
+// near-Delaunay interior that the quad pairing can work with. Boundary
+// segments have a single owner and are never candidates.
+void flipToDelaunay(TriSoup& s) {
+    if (!s.hasUV) return;
+    for (int pass = 0; pass < 10; ++pass) {
+        std::map<std::pair<int, int>, std::vector<int>> owners;
+        for (size_t t = 0; t < s.tris.size(); ++t) {
+            for (int i = 0; i < 3; ++i) {
+                int a = s.tris[t][i], b = s.tris[t][(i + 1) % 3];
+                owners[a < b ? std::make_pair(a, b) : std::make_pair(b, a)]
+                    .push_back(static_cast<int>(t));
+            }
+        }
+        bool flipped = false;
+        for (const auto& [seg, ts] : owners) {
+            if (ts.size() != 2) continue;
+            auto& T1 = s.tris[ts[0]];
+            auto& T2 = s.tris[ts[1]];
+            // Earlier flips this pass may have retired the segment from
+            // either triangle (the owners map is rebuilt per pass, not per
+            // flip) — both must still hold it.
+            auto holds = [&](const std::array<int, 3>& tr) {
+                int have = 0;
+                for (int v : tr) {
+                    if (v == seg.first || v == seg.second) ++have;
+                }
+                return have == 2;
+            };
+            if (!holds(T1) || !holds(T2)) continue;
+            // Orient: T1 traverses a->b, T2 traverses b->a.
+            int a = -1, b = -1;
+            for (int i = 0; i < 3; ++i) {
+                int x = T1[i], y = T1[(i + 1) % 3];
+                if ((x == seg.first && y == seg.second) ||
+                    (x == seg.second && y == seg.first)) {
+                    a = x;
+                    b = y;
+                    break;
+                }
+            }
+            if (a < 0) continue;
+            int c = T1[0] + T1[1] + T1[2] - a - b;
+            int d = T2[0] + T2[1] + T2[2] - a - b;
+            if (c == d || c == a || c == b || d == a || d == b) continue;
+
+            // The UV quad a-d-b-c must be strictly convex or the flip
+            // would fold the parametrization.
+            const gp_Pnt2d &ua = s.uvs[a], &ub = s.uvs[b], &uc = s.uvs[c],
+                           &ud = s.uvs[d];
+            double x1 = cross2d(ua, ud, ub), x2 = cross2d(ud, ub, uc),
+                   x3 = cross2d(ub, uc, ua), x4 = cross2d(uc, ua, ud);
+            if (!((x1 > 0 && x2 > 0 && x3 > 0 && x4 > 0) ||
+                  (x1 < 0 && x2 < 0 && x3 < 0 && x4 < 0))) {
+                continue;
+            }
+
+            double before = std::min(minAngle3d(s.pts[a], s.pts[b], s.pts[c]),
+                                     minAngle3d(s.pts[b], s.pts[a], s.pts[d]));
+            double after = std::min(minAngle3d(s.pts[a], s.pts[d], s.pts[c]),
+                                    minAngle3d(s.pts[d], s.pts[b], s.pts[c]));
+            if (after <= before + 1e-12) continue;
+
+            T1 = {a, d, c};
+            T2 = {d, b, c};
+            flipped = true;
+        }
+        if (!flipped) break;
+    }
+}
+
+// Last resort for trimmed/freeform faces: chord-tolerance triangulation
+// (shared across the whole shape), boundary conformed to canonical edge
+// polylines, optionally paired into quads. Pairing is greedy over a
 // quality score that prefers near-rectangular quads whose edges follow the
 // surface's parametric directions — the seed of the plan's guided quad
 // flow (§3.5); a real cross-field solver replaces the guidance later.
 void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
-                  int faceId, const FaceMeshSettings& s, MeshBuilder& out) {
-    BRepMesh_IncrementalMesh mesher(face, s.chordTolerance, Standard_False,
-                                    s.angleToleranceDeg * M_PI / 180.0);
+                  int faceId, const FaceMeshSettings& s, const Model& model,
+                  const std::map<int, EdgePolyline>& canonical,
+                  MeshBuilder& out) {
     TopLoc_Location loc;
     Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, loc);
-    if (tri.IsNull()) return;
-
-    const bool flip = face.Orientation() == TopAbs_REVERSED;
-    const bool hasUV = tri->HasUVNodes();
-    std::vector<uint32_t> verts(tri->NbNodes());
-    std::vector<gp_Pnt> pts(tri->NbNodes());
-    for (int i = 1; i <= tri->NbNodes(); ++i) {
-        Anchor a;
-        if (hasUV) {
-            gp_Pnt2d uv = tri->UVNode(i);
-            a = {faceId, uv.X(), uv.Y()};
-        }
-        pts[i - 1] = tri->Node(i).Transformed(loc.Transformation());
-        verts[i - 1] = out.addVertex(pts[i - 1], a);
+    if (tri.IsNull()) {
+        BRepMesh_IncrementalMesh mesher(face, s.chordTolerance, Standard_False,
+                                        s.angleToleranceDeg * M_PI / 180.0);
+        tri = BRep_Tool::Triangulation(face, loc);
+        if (tri.IsNull()) return;
     }
 
-    std::vector<std::array<int, 3>> tris(tri->NbTriangles());
+    const bool flip = face.Orientation() == TopAbs_REVERSED;
+
+    TriSoup soup;
+    soup.hasUV = tri->HasUVNodes();
+    soup.pts.resize(tri->NbNodes());
+    soup.uvs.resize(tri->NbNodes(), gp_Pnt2d(0, 0));
+    for (int i = 1; i <= tri->NbNodes(); ++i) {
+        soup.pts[i - 1] = tri->Node(i).Transformed(loc.Transformation());
+        if (soup.hasUV) soup.uvs[i - 1] = tri->UVNode(i);
+    }
+    soup.tris.resize(tri->NbTriangles());
     for (int i = 1; i <= tri->NbTriangles(); ++i) {
         int a, b, c;
         tri->Triangle(i).Get(a, b, c);
-        tris[i - 1] = {a - 1, b - 1, c - 1};
+        soup.tris[i - 1] = {a - 1, b - 1, c - 1};
     }
 
+    // Boundary chains per B-rep edge, conformed to canonical polylines.
+    std::vector<BoundaryChain> chains;
+    std::map<int, Handle(Geom_Curve)> edgeCurve;
+    std::set<int> seenEdges;
+    for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+        const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+        const int eid = model.edges.FindIndex(edge);
+        if (eid < 1 || !seenEdges.insert(eid).second) continue;
+        if (BRep_Tool::Degenerated(edge)) continue;
+
+        Handle(Poly_PolygonOnTriangulation) polyOnTri =
+            BRep_Tool::PolygonOnTriangulation(edge, tri, loc);
+        if (polyOnTri.IsNull() || polyOnTri->NbNodes() < 2) continue;
+
+        BoundaryChain chain;
+        chain.edgeId = eid;
+        const TColStd_Array1OfInteger& nodes = polyOnTri->Nodes();
+        for (int i = nodes.Lower(); i <= nodes.Upper(); ++i) {
+            chain.nodes.push_back(nodes(i) - 1);
+        }
+        double f = 0, l = 0;
+        Handle(Geom_Curve) curve = BRep_Tool::Curve(edge, f, l);
+        if (polyOnTri->HasParameters()) {
+            const TColStd_Array1OfReal& ps = polyOnTri->Parameters()->Array1();
+            for (int i = ps.Lower(); i <= ps.Upper(); ++i) {
+                chain.params.push_back(ps(i));
+            }
+        } else if (!curve.IsNull()) {
+            for (int n : chain.nodes) {
+                GeomAPI_ProjectPointOnCurve proj(soup.pts[n], curve, f, l);
+                chain.params.push_back(proj.NbPoints() ? proj.LowerDistanceParameter() : f);
+            }
+        } else {
+            continue;
+        }
+        if (chain.params.size() != chain.nodes.size()) continue;
+        if (chain.params.front() > chain.params.back()) {
+            std::reverse(chain.nodes.begin(), chain.nodes.end());
+            std::reverse(chain.params.begin(), chain.params.end());
+        }
+        edgeCurve[eid] = curve;
+
+        auto canIt = canonical.find(eid);
+        if (canIt != canonical.end()) {
+            double pf = 0, pl = 0;
+            Handle(Geom2d_Curve) pcurve =
+                BRep_Tool::CurveOnSurface(edge, face, pf, pl);
+            conformChain(soup, chain, canIt->second, pcurve);
+            chain.fromParametric = canIt->second.fromParametric;
+        }
+        chains.push_back(std::move(chain));
+    }
+
+    flipToDelaunay(soup);
+
+    // Segment lookup for the subdivision pass: which node pairs lie on a
+    // B-rep edge, and whether they may be split.
+    std::map<std::pair<int, int>, SegInfo> boundarySeg;
+    for (const BoundaryChain& chain : chains) {
+        for (size_t i = 0; i + 1 < chain.nodes.size(); ++i) {
+            int a = chain.nodes[i], b = chain.nodes[i + 1];
+            auto key = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
+            boundarySeg[key] = {chain.edgeId, chain.params[i],
+                                chain.params[i + 1], chain.fromParametric};
+        }
+    }
+
+    // Lazy node -> output vertex mapping (surgery may have orphaned nodes).
+    std::vector<int64_t> globalOf(soup.pts.size(), -1);
+    auto globalVert = [&](int n) {
+        if (globalOf[n] < 0) {
+            Anchor a = soup.hasUV
+                           ? Anchor{faceId, soup.uvs[n].X(), soup.uvs[n].Y()}
+                           : Anchor{};
+            globalOf[n] = out.addVertex(soup.pts[n], a);
+        }
+        return static_cast<uint32_t>(globalOf[n]);
+    };
+
     if (!s.quadDominant) {
-        for (const auto& t : tris) {
-            out.addPolygon({verts[t[0]], verts[t[1]], verts[t[2]]}, faceId, flip);
+        for (const auto& t : soup.tris) {
+            out.addPolygon({globalVert(t[0]), globalVert(t[1]), globalVert(t[2])},
+                           faceId, flip);
         }
         return;
     }
+
+    const std::vector<gp_Pnt>& pts = soup.pts;
+    const std::vector<std::array<int, 3>>& tris = soup.tris;
+    const bool hasUV = soup.hasUV;
+
+    // A face bounded entirely by parametric neighbours gets NO midpoint
+    // subdivision: none of its border segments may split, so subdividing
+    // would only turn the whole border ring into n-gon fans. Plain guided
+    // pairing gives cleaner cells, and the choice is safely per-face —
+    // any fallback-fallback border segment forces subdivision on BOTH
+    // sides (it is non-canonical for both), keeping midpoints paired.
+    bool pureParametricBorder = true;
+    for (const BoundaryChain& chain : chains) {
+        if (!chain.fromParametric) { pureParametricBorder = false; break; }
+    }
+    if (chains.empty()) pureParametricBorder = false;
+
     std::vector<std::vector<int>> paired;  // local rings, tris and quads
 
     // Candidate merges: two triangles sharing an edge form the quad
@@ -786,8 +1290,8 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         // Guidance: reward quads whose edges follow the parametric
         // directions at the quad center (trivial direction field).
         if (hasUV) {
-            gp_Pnt2d uv0 = tri->UVNode(ring[0] + 1);
-            gp_Pnt2d uv2 = tri->UVNode(ring[2] + 1);
+            gp_Pnt2d uv0 = soup.uvs[ring[0]];
+            gp_Pnt2d uv2 = soup.uvs[ring[2]];
             gp_Pnt p;
             gp_Vec du, dv;
             surf.D1(0.5 * (uv0.X() + uv2.X()), 0.5 * (uv0.Y() + uv2.Y()), p,
@@ -820,35 +1324,110 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         paired.push_back({tris[t][0], tris[t][1], tris[t][2]});
     }
 
+    if (pureParametricBorder) {
+        for (const auto& ring : paired) {
+            std::vector<uint32_t> poly;
+            poly.reserve(ring.size());
+            for (int v : ring) poly.push_back(globalVert(v));
+            out.addPolygon(std::move(poly), faceId, flip);
+        }
+        return;
+    }
+
     // One midpoint (Catmull-Clark-style) subdivision turns the paired mesh
-    // into pure quads: each tri becomes 3, each quad 4. New vertices are
-    // evaluated on the surface through averaged UVs, so they sit exactly on
-    // the B-rep, not on the chord.
+    // into (mostly) pure quads: each tri becomes 3, each quad 4. New
+    // vertices are evaluated on the surface through averaged UVs, so they
+    // sit exactly on the B-rep, not on the chord. Two boundary rules keep
+    // the borders watertight:
+    //  - segments on a B-rep edge take their midpoint ON the edge curve at
+    //    the parameter midpoint, so both adjacent faces create the exact
+    //    same vertex;
+    //  - segments a parametric mesher authored are never split (it has no
+    //    midpoints to meet); the touching cells become n-gons instead.
     auto emitVertex = [&](double u, double v, const gp_Pnt& fallbackPnt) {
         if (!hasUV) return out.addVertex(fallbackPnt, {});
         gp_Pnt p = surf.Value(u, v);
         return out.addVertex(p, {faceId, u, v});
     };
-    std::vector<gp_Pnt2d> uvs(pts.size());
-    if (hasUV) {
-        for (size_t i = 0; i < pts.size(); ++i) uvs[i] = tri->UVNode(i + 1);
-    }
+    const std::vector<gp_Pnt2d>& uvs = soup.uvs;
     std::map<std::pair<int, int>, uint32_t> midOf;
+    auto segKey = [](int a, int b) {
+        return a < b ? std::make_pair(a, b) : std::make_pair(b, a);
+    };
+    auto splittable = [&](int a, int b) {
+        auto it = boundarySeg.find(segKey(a, b));
+        return it == boundarySeg.end() || !it->second.noSplit;
+    };
     auto midpoint = [&](int a, int b) {
-        auto key = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
+        auto key = segKey(a, b);
         auto it = midOf.find(key);
         if (it != midOf.end()) return it->second;
-        gp_Pnt mid(0.5 * (pts[a].X() + pts[b].X()),
-                   0.5 * (pts[a].Y() + pts[b].Y()),
-                   0.5 * (pts[a].Z() + pts[b].Z()));
-        uint32_t idx = emitVertex(0.5 * (uvs[a].X() + uvs[b].X()),
-                                  0.5 * (uvs[a].Y() + uvs[b].Y()), mid);
+
+        uint32_t idx;
+        auto seg = boundarySeg.find(key);
+        Handle(Geom_Curve) curve;
+        if (seg != boundarySeg.end()) {
+            auto cIt = edgeCurve.find(seg->second.edgeId);
+            if (cIt != edgeCurve.end()) curve = cIt->second;
+        }
+        if (!curve.IsNull()) {
+            // Boundary midpoint: same edge curve, same parameter midpoint
+            // from both sides — bitwise-identical, so the weld closes it.
+            double tm = 0.5 * (seg->second.t0 + seg->second.t1);
+            gp_Pnt p = curve->Value(tm);
+            Anchor anchor = hasUV ? Anchor{faceId,
+                                           0.5 * (uvs[a].X() + uvs[b].X()),
+                                           0.5 * (uvs[a].Y() + uvs[b].Y())}
+                                  : Anchor{};
+            idx = out.addVertex(p, anchor);
+        } else {
+            gp_Pnt mid(0.5 * (pts[a].X() + pts[b].X()),
+                       0.5 * (pts[a].Y() + pts[b].Y()),
+                       0.5 * (pts[a].Z() + pts[b].Z()));
+            idx = emitVertex(0.5 * (uvs[a].X() + uvs[b].X()),
+                             0.5 * (uvs[a].Y() + uvs[b].Y()), mid);
+        }
         midOf[key] = idx;
         return idx;
     };
 
     for (const auto& ring : paired) {
         const int n = static_cast<int>(ring.size());
+        int splits = 0;
+        std::vector<bool> split(n);
+        for (int i = 0; i < n; ++i) {
+            split[i] = splittable(ring[i], ring[(i + 1) % n]);
+            if (split[i]) ++splits;
+        }
+
+        if (splits == 0) {  // wedged between parametric borders: emit as-is
+            std::vector<uint32_t> poly;
+            poly.reserve(n);
+            for (int v : ring) poly.push_back(globalVert(v));
+            out.addPolygon(std::move(poly), faceId, flip);
+            continue;
+        }
+        if (splits == 1) {
+            // A single midpoint can't meet a center vertex cleanly; split
+            // the cell toward the opposite corner instead.
+            int e = 0;
+            while (!split[e]) ++e;
+            uint32_t m = midpoint(ring[e], ring[(e + 1) % n]);
+            int far = (e + 1 + n / 2) % n;
+            std::vector<uint32_t> a{m};
+            for (int i = (e + 1) % n; i != far; i = (i + 1) % n) {
+                a.push_back(globalVert(ring[i]));
+            }
+            a.push_back(globalVert(ring[far]));
+            std::vector<uint32_t> b{m, globalVert(ring[far])};
+            for (int i = (far + 1) % n; i != (e + 1) % n; i = (i + 1) % n) {
+                b.push_back(globalVert(ring[i]));
+            }
+            if (a.size() >= 3) out.addPolygon(std::move(a), faceId, flip);
+            if (b.size() >= 3) out.addPolygon(std::move(b), faceId, flip);
+            continue;
+        }
+
         double cu = 0, cv = 0, cx = 0, cy = 0, cz = 0;
         for (int v : ring) {
             cu += uvs[v].X();
@@ -859,12 +1438,54 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         }
         uint32_t center =
             emitVertex(cu / n, cv / n, gp_Pnt(cx / n, cy / n, cz / n));
-        for (int i = 0; i < n; ++i) {
-            out.addPolygon({verts[ring[i]], midpoint(ring[i], ring[(i + 1) % n]),
-                            center, midpoint(ring[(i + n - 1) % n], ring[i])},
-                           faceId, flip);
+
+        // Walk the expanded ring from midpoint to midpoint; every arc plus
+        // the center is one cell (a quad when the arc holds one corner).
+        int start = 0;
+        while (!split[start]) ++start;  // splits >= 2 guarantees one
+        std::vector<uint32_t> cell{midpoint(ring[start], ring[(start + 1) % n])};
+        for (int step = 1; step <= n; ++step) {
+            int i = (start + step) % n;
+            cell.push_back(globalVert(ring[i]));
+            if (split[i]) {
+                uint32_t m = midpoint(ring[i], ring[(i + 1) % n]);
+                cell.push_back(m);
+                cell.push_back(center);
+                out.addPolygon(std::move(cell), faceId, flip);
+                cell = {m};
+            }
         }
+        // The loop closes exactly at the starting midpoint.
     }
+}
+
+// FaceId -> welding group. Each solid is its own group so touching parts
+// of an assembly never fuse into non-manifold contact surfaces; shells
+// outside solids get their own groups; leftover free faces share one.
+std::vector<int> faceWeldGroups(const Model& model) {
+    std::vector<int> group(model.faceCount() + 1, 0);
+    int g = 0;
+    auto assign = [&](const TopoDS_Shape& container) {
+        bool any = false;
+        for (TopExp_Explorer fx(container, TopAbs_FACE); fx.More(); fx.Next()) {
+            int fid = model.faces.FindIndex(fx.Current());
+            if (fid > 0 && group[fid] == 0) {
+                if (!any) { ++g; any = true; }
+                group[fid] = g;
+            }
+        }
+    };
+    for (TopExp_Explorer sx(model.shape, TopAbs_SOLID); sx.More(); sx.Next()) {
+        assign(sx.Current());
+    }
+    for (TopExp_Explorer sx(model.shape, TopAbs_SHELL); sx.More(); sx.Next()) {
+        assign(sx.Current());
+    }
+    ++g;
+    for (int fid = 1; fid <= model.faceCount(); ++fid) {
+        if (group[fid] == 0) group[fid] = g;
+    }
+    return group;
 }
 
 }  // namespace
@@ -878,13 +1499,92 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
 
     DensitySolution density = solveDensity(model, plans, settings);
 
+    const std::vector<int> weldGroup = faceWeldGroups(model);
+
+    // Triangulate the whole shape ONCE, so OCCT discretizes each B-rep edge
+    // once and neighbouring trimmed faces share their border polylines.
+    bool anyFallback = false;
+    for (const auto& [fid, plan] : plans) {
+        if (plan.kind == MesherKind::Fallback) anyFallback = true;
+    }
+    std::map<int, EdgePolyline> canonical;
+    if (anyFallback) {
+        const FaceMeshSettings& d = settings.defaults;
+        BRepTools::Clean(model.shape);  // stale caches would pin densities
+        BRepMesh_IncrementalMesh mesher(model.shape, d.chordTolerance,
+                                        Standard_False,
+                                        d.angleToleranceDeg * M_PI / 180.0,
+                                        Standard_True);
+
+        // Per-face chord/angle overrides re-triangulate just that face —
+        // capture its edges' shared polylines first, so the override face
+        // can be conformed back onto the borders its neighbours still use.
+        std::vector<int> overridden;
+        for (const auto& [fid, s] : settings.perFace) {
+            auto it = plans.find(fid);
+            if (it == plans.end() || it->second.kind != MesherKind::Fallback) {
+                continue;
+            }
+            if (s.chordTolerance == d.chordTolerance &&
+                s.angleToleranceDeg == d.angleToleranceDeg) {
+                continue;
+            }
+            overridden.push_back(fid);
+            const TopoDS_Face face = TopoDS::Face(model.faces(fid));
+            TopLoc_Location loc;
+            Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, loc);
+            if (tri.IsNull()) continue;
+            for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+                const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+                int eid = model.edges.FindIndex(edge);
+                if (eid < 1 || canonical.count(eid)) continue;
+                if (BRep_Tool::Degenerated(edge)) continue;
+                Handle(Poly_PolygonOnTriangulation) p =
+                    BRep_Tool::PolygonOnTriangulation(edge, tri, loc);
+                if (p.IsNull() || p->NbNodes() < 2 || !p->HasParameters()) {
+                    continue;
+                }
+                EdgePolyline poly;
+                const TColStd_Array1OfInteger& nodes = p->Nodes();
+                const TColStd_Array1OfReal& ps = p->Parameters()->Array1();
+                for (int i = nodes.Lower(); i <= nodes.Upper(); ++i) {
+                    poly.pts.push_back(
+                        tri->Node(nodes(i)).Transformed(loc.Transformation()));
+                }
+                for (int i = ps.Lower(); i <= ps.Upper(); ++i) {
+                    poly.params.push_back(ps(i));
+                }
+                if (poly.params.front() > poly.params.back()) {
+                    std::reverse(poly.params.begin(), poly.params.end());
+                    std::reverse(poly.pts.begin(), poly.pts.end());
+                }
+                canonical[eid] = std::move(poly);
+            }
+        }
+        for (int fid : overridden) {
+            const TopoDS_Face face = TopoDS::Face(model.faces(fid));
+            const FaceMeshSettings& s = settings.forFace(fid);
+            BRepTools::Clean(face);
+            BRepMesh_IncrementalMesh remesh(face, s.chordTolerance,
+                                            Standard_False,
+                                            s.angleToleranceDeg * M_PI / 180.0);
+        }
+    }
+
     PolyMesh mesh;
     MeshBuilder out(mesh);
+
+    // Phase 1: parametric meshers. Their emitted border vertices are the
+    // canonical polylines the triangulated faces must conform to.
+    std::map<int, std::pair<size_t, size_t>> emitted;  // fid -> vertex range
     for (int fid = 1; fid <= model.faceCount(); ++fid) {
         const TopoDS_Face face = TopoDS::Face(model.faces(fid));
         const FaceMeshSettings& s = settings.forFace(fid);
         const FacePlan& plan = plans.at(fid);
+        if (plan.kind == MesherKind::Fallback) continue;
         BRepAdaptor_Surface surf(face);
+        out.setGroup(weldGroup[fid]);
+        const size_t vBegin = out.vertexCount();
 
         auto solved = [&](const std::vector<int>& edges, int fallback) {
             return edges.empty() ? fallback
@@ -905,10 +1605,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                                            : s.gridU;
                 int defV = plan.isFillet && !plan.acrossIsU ? s.filletLoops
                                                             : s.gridV;
-                int nu = plan.constrains ? solved(plan.uEdges, defU)
-                                         : std::max(1, defU);
-                int nv = plan.constrains ? solved(plan.vEdges, defV)
-                                         : std::max(1, defV);
+                int nu = solved(plan.uEdges, defU);
+                int nv = solved(plan.vEdges, defV);
                 // Support loops hug the creases on fillet strips.
                 double holdU = plan.isFillet && plan.acrossIsU ? s.filletHold : 0;
                 double holdV = plan.isFillet && !plan.acrossIsU ? s.filletHold : 0;
@@ -928,15 +1626,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 break;
             case MesherKind::QuadDominant:
             case MesherKind::Fallback:
-                meshFallback(face, surf, fid, s, out);
-                break;
+                break;  // phase 2
         }
+        emitted[fid] = {vBegin, out.vertexCount()};
 
         if (report) {
-            report->faceMesher[fid] =
-                plan.kind == MesherKind::Fallback && s.quadDominant
-                    ? MesherKind::QuadDominant
-                    : plan.kind;
+            report->faceMesher[fid] = plan.kind;
             if (plan.constrains) {
                 for (int eid : plan.uEdges) {
                     report->edgeDivisions[eid] = density.countFor(eid, 0);
@@ -952,7 +1647,49 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         }
     }
 
-    weldVertices(mesh, settings.weldTolerance);
+    // Phase 1.5: canonical polylines for every edge where a parametric face
+    // meets a triangulated one — collected from what the parametric side
+    // actually emitted, so the conformed border welds exactly.
+    for (int eid = 1; eid <= model.edgeCount(); ++eid) {
+        const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+        if (BRep_Tool::Degenerated(edge)) continue;
+        int parametricFid = 0;
+        bool hasFallback = false;
+        const TopTools_ListOfShape& adj =
+            model.edgeToFaces.FindFromKey(model.edges(eid));
+        for (TopTools_ListIteratorOfListOfShape it(adj); it.More(); it.Next()) {
+            int fid = model.faces.FindIndex(it.Value());
+            if (fid < 1) continue;
+            if (plans.at(fid).kind == MesherKind::Fallback) hasFallback = true;
+            else if (!parametricFid) parametricFid = fid;
+        }
+        if (!hasFallback || !parametricFid) continue;
+        auto range = emitted.find(parametricFid);
+        if (range == emitted.end()) continue;
+        EdgePolyline poly;
+        if (collectEmittedPolyline(edge, out, range->second.first,
+                                   range->second.second, poly)) {
+            canonical[eid] = std::move(poly);  // wins over captured polylines
+        }
+    }
+
+    // Phase 2: triangulated faces, borders conformed to the canonical
+    // polylines (both the parametric ones and the whole-shape ones).
+    for (int fid = 1; fid <= model.faceCount(); ++fid) {
+        const FacePlan& plan = plans.at(fid);
+        if (plan.kind != MesherKind::Fallback) continue;
+        const TopoDS_Face face = TopoDS::Face(model.faces(fid));
+        const FaceMeshSettings& s = settings.forFace(fid);
+        BRepAdaptor_Surface surf(face);
+        out.setGroup(weldGroup[fid]);
+        meshFallback(face, surf, fid, s, model, canonical, out);
+        if (report) {
+            report->faceMesher[fid] = s.quadDominant ? MesherKind::QuadDominant
+                                                     : MesherKind::Fallback;
+        }
+    }
+
+    weldVertices(mesh, settings.weldTolerance, &out.groups());
     return mesh;
 }
 

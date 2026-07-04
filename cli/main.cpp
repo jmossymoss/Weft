@@ -9,6 +9,7 @@
 #include "weft/meshers.hpp"
 #include "weft/model.hpp"
 #include "weft/recipe.hpp"
+#include "weft/validate.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -31,8 +32,15 @@ void usage() {
         "      list B-rep faces (type, radius, neighbors) and edges\n"
         "      (convexity, dihedral angle)\n"
         "\n"
+        "  weft validate <in.step> [mesh options]\n"
+        "      generate topology with the same options as `mesh` and run\n"
+        "      bake-ready checks: watertightness (open/non-manifold edges),\n"
+        "      winding consistency, degenerate/sliver polygons, and chord\n"
+        "      deviation vs. the live B-rep. Exits 1 if the mesh leaks.\n"
+        "\n"
         "  weft mesh <in.step> -o <out.obj> [options]\n"
         "      generate topology and export OBJ (groups carry face IDs)\n"
+        "    --validate        run the bake-ready checks after meshing\n"
         "    --radial N        divisions around cylinders/caps (default 16)\n"
         "    --axial N         divisions along cylinder axes  (default 4)\n"
         "    --grid NxM        planar/parametric grid divisions (default 4x4)\n"
@@ -119,11 +127,12 @@ int cmdInspect(const std::vector<std::string>& args) {
     return 0;
 }
 
-int cmdMesh(const std::vector<std::string>& args) {
+int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     if (args.empty()) { usage(); return 2; }
     std::string input = args[0];
     std::string output;
     std::string recipeOut;
+    bool validate = validateOnly;
     weft::Recipe recipe;
     weft::GenerationSettings& gs = recipe.settings;
     std::vector<std::string> faceSpecs;
@@ -143,6 +152,7 @@ int cmdMesh(const std::vector<std::string>& args) {
         else if (a == "--hold") gs.defaults.filletHold = std::stod(next());
         else if (a == "--rings") gs.defaults.junctionRings = std::stoi(next());
         else if (a == "--pure-tris") gs.defaults.quadDominant = false;
+        else if (a == "--validate") validate = true;
         else if (a == "--recipe") recipe = weft::loadRecipe(next());
         else if (a == "--save-recipe") recipeOut = next();
         else if (a == "--op-loop") {
@@ -189,7 +199,9 @@ int cmdMesh(const std::vector<std::string>& args) {
             throw std::runtime_error("unknown option: " + a);
         }
     }
-    if (output.empty()) throw std::runtime_error("missing -o <out.obj>");
+    if (output.empty() && !validateOnly) {
+        throw std::runtime_error("missing -o <out.obj>");
+    }
     for (const std::string& spec : faceSpecs) parseFaceOverride(gs, spec);
     if (!recipeOut.empty()) {
         weft::saveRecipe(recipe, recipeOut);
@@ -201,21 +213,41 @@ int cmdMesh(const std::vector<std::string>& args) {
     weft::GenerationReport report;
     weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
     weft::applyOps(mesh, model, recipe.ops);
-    weft::writeObj(mesh, output);
-
-    std::printf("%s -> %s\n", input.c_str(), output.c_str());
+    if (!output.empty()) {
+        weft::writeObj(mesh, output);
+        std::printf("%s -> %s\n", input.c_str(), output.c_str());
+    } else {
+        std::printf("%s\n", input.c_str());
+    }
     std::printf("  %zu vertices, %zu polygons (%zu quads, %zu tris, %zu n-gons)\n",
                 mesh.vertexCount(), mesh.polygonCount(), mesh.countQuads(),
                 mesh.countTris(), mesh.countNgons());
-    for (const auto& [fid, kind] : report.faceMesher) {
-        std::printf("  face #%-3d %s\n", fid, weft::mesherKindName(kind));
+    if (validate) {
+        weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+        std::printf("%s", weft::formatReport(vr).c_str());
+        if (!vr.watertight()) return 1;
     }
-    if (!report.edgeDivisions.empty()) {
+    if (report.faceMesher.size() <= 48) {
+        for (const auto& [fid, kind] : report.faceMesher) {
+            std::printf("  face #%-3d %s\n", fid, weft::mesherKindName(kind));
+        }
+    } else {  // dense assemblies: per-strategy totals instead of a face list
+        std::map<std::string, int> byKind;
+        for (const auto& [fid, kind] : report.faceMesher) {
+            ++byKind[weft::mesherKindName(kind)];
+        }
+        for (const auto& [name, count] : byKind) {
+            std::printf("  %6d x %s\n", count, name.c_str());
+        }
+    }
+    if (!report.edgeDivisions.empty() && report.edgeDivisions.size() <= 64) {
         std::printf("  density-matched edges:");
         for (const auto& [eid, div] : report.edgeDivisions) {
             std::printf(" #%d=%d", eid, div);
         }
         std::printf("\n");
+    } else if (!report.edgeDivisions.empty()) {
+        std::printf("  density-matched edges: %zu\n", report.edgeDivisions.size());
     }
     return 0;
 }
@@ -230,6 +262,7 @@ int main(int argc, char** argv) {
         if (cmd == "fixture") return cmdFixture(args);
         if (cmd == "inspect") return cmdInspect(args);
         if (cmd == "mesh") return cmdMesh(args);
+        if (cmd == "validate") return cmdMesh(args, /*validateOnly=*/true);
         usage();
         return 2;
     } catch (const std::exception& e) {
