@@ -2021,8 +2021,8 @@ static void drawOverlay(App& app) {
         ImGui::TextDisabled(app.bridgeFirstEdge
                                 ? "pick the second side - esc restarts"
                                 : "pick two loops (or two sides of one) - "
-                                  "F fills hovered - [ ] twists - J/esc "
-                                  "exits");
+                                  "F fills hovered - [ ] twists (shift+"
+                                  "wheel flips side) - J/esc exits");
         if (app.hoverLoop >= 0) {
             ImGui::Text("loop: edge #%d, %zu verts",
                         app.bLoopEdge[app.hoverLoop],
@@ -2773,7 +2773,24 @@ int main(int argc, char** argv) {
                 // on the whole selection — Blender-style. Plain wheel zooms.
                 int steps = int(gScroll > 0 ? std::ceil(gScroll)
                                             : std::floor(gScroll));
-                if (app.hasModel && (shift || ctrl) &&
+                if (app.hasModel && shift && app.mode == Mode::Bridge &&
+                    !app.recipe.ops.empty()) {
+                    // shift+wheel while bridging: flip WHICH loop the
+                    // twist rotates (A or B) on the most recent bridge.
+                    for (auto op = app.recipe.ops.rbegin();
+                         op != app.recipe.ops.rend(); ++op) {
+                        if (op->kind != weft::ManualOp::Kind::Bridge) {
+                            continue;
+                        }
+                        op->twistSide = op->twistSide ? 0 : 1;
+                        std::snprintf(app.hudText, sizeof app.hudText,
+                                      "twist side: %s",
+                                      op->twistSide ? "A" : "B");
+                        app.hudUntil = glfwGetTime() + 0.9;
+                        markDirty(app);
+                        break;
+                    }
+                } else if (app.hasModel && (shift || ctrl) &&
                     app.selectMode == SelectMode::Edge &&
                     !app.selEdges.empty()) {
                     int total = adjustSelectedEdges(app, 0, steps);

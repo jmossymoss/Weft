@@ -474,7 +474,16 @@ int bridgeLoops(PolyMesh& mesh, const Model& model, const ManualOp& op) {
     // windings, so a bridge polygon must traverse loop edges in loop order
     // to cancel the open edge. The two rims counter-rotate geometrically,
     // which pairs A's forward walk with a DECREASING index walk on B.
-    const std::vector<uint32_t>& A = loops[ia];
+    std::vector<uint32_t> Arot = loops[ia];
+    // Twist rotates ONE side's whole loop by N steps: B by default, A
+    // when twistSide says so (which side rotates matters on tapered
+    // bridges — the extra segments land elsewhere).
+    if (op.twist && op.twistSide == 1 && Arot.size() > 1) {
+        int na = int(Arot.size());
+        int shift = ((op.twist % na) + na) % na;
+        std::rotate(Arot.begin(), Arot.begin() + shift, Arot.end());
+    }
+    const std::vector<uint32_t>& A = Arot;
     const std::vector<uint32_t>& B = loops[ib];
     const int n = int(A.size()), m = int(B.size());
     auto wrapB = [&](int k) { return ((k % m) + m) % m; };
@@ -493,7 +502,9 @@ int bridgeLoops(PolyMesh& mesh, const Model& model, const ManualOp& op) {
             bestOff = off;
         }
     }
-    bestOff = wrapB(bestOff + op.twist);  // user-adjustable rotation
+    if (op.twistSide == 0) {
+        bestOff = wrapB(bestOff + op.twist);  // whole-loop rotation on B
+    }
 
     int added = 0;
     auto emit = [&](std::vector<uint32_t> poly) {
