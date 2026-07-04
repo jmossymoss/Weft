@@ -43,6 +43,7 @@
 #include <atomic>
 #include <cstdarg>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <numeric>
 #include <set>
@@ -876,7 +877,7 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
     proj.Init(gp_Pnt(0, 0, 0), surface);
     const gp_Pnt c00 = bottom.front().p, c10 = bottom.back().p;
     const gp_Pnt c11 = top.back().p, c01 = top.front().p;
-    std::vector<uint32_t> grid((nu + 1) * (nv + 1));
+    std::vector<BPt> gpts((nu + 1) * (nv + 1));
     for (int j = 0; j <= nv; ++j) {
         for (int i = 0; i <= nu; ++i) {
             BPt bp;
@@ -904,6 +905,14 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
                     bp.uv.SetY(pv);
                 }
             }
+            gpts[j * (nu + 1) + i] = bp;
+        }
+    }
+
+    std::vector<uint32_t> grid((nu + 1) * (nv + 1));
+    for (int j = 0; j <= nv; ++j) {
+        for (int i = 0; i <= nu; ++i) {
+            const BPt& bp = gpts[j * (nu + 1) + i];
             grid[j * (nu + 1) + i] =
                 out.addVertex(bp.p, {faceId, bp.uv.X(), bp.uv.Y()});
         }
@@ -4586,6 +4595,60 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     dbg("generate: done (%zu verts, %zu polys)", mesh.vertexCount(),
         mesh.polygonCount());
     return mesh;
+}
+
+std::vector<uint8_t> foldedPolys(const Model& model, const PolyMesh& mesh) {
+    std::vector<uint8_t> folded(mesh.polygons.size(), 0);
+    // Surface adaptors are built lazily per face; polygons arrive grouped
+    // by face so in practice each face is built once.
+    int curFace = 0;
+    std::unique_ptr<BRepAdaptor_Surface> surf;
+    double orient = 1.0;
+    for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+        const int fid = mesh.polygonFaceId[p];
+        if (fid <= 0 || fid > model.faceCount()) continue;
+        const auto& poly = mesh.polygons[p];
+        // Newell normal: robust winding normal for any planar-ish polygon.
+        double nx = 0, ny = 0, nz = 0;
+        for (size_t i = 0; i < poly.size(); ++i) {
+            const auto& a = mesh.vertices[poly[i]];
+            const auto& b = mesh.vertices[poly[(i + 1) % poly.size()]];
+            nx += (a[1] - b[1]) * (a[2] + b[2]);
+            ny += (a[2] - b[2]) * (a[0] + b[0]);
+            nz += (a[0] - b[0]) * (a[1] + b[1]);
+        }
+        const double nlen = std::sqrt(nx * nx + ny * ny + nz * nz);
+        if (nlen < 1e-14) continue;  // degenerate: no winding to judge
+        if (fid != curFace) {
+            const TopoDS_Face& face = TopoDS::Face(model.faces(fid));
+            surf = std::make_unique<BRepAdaptor_Surface>(face);
+            orient = face.Orientation() == TopAbs_REVERSED ? -1.0 : 1.0;
+            curFace = fid;
+        }
+        // Every vertex with an anchor on this face votes: surface normal
+        // at ITS OWN uv against the polygon winding. Per-vertex sampling
+        // (not a uv average) keeps periodic surfaces honest — averaging
+        // across a cylinder's seam lands on the far side of the barrel.
+        int votes = 0;
+        for (uint32_t vi : poly) {
+            if (vi >= mesh.anchors.size()) continue;
+            const Anchor& an = mesh.anchors[vi];
+            if (an.faceId != fid) continue;
+            gp_Pnt sp;
+            gp_Vec du, dv;
+            surf->D1(an.u, an.v, sp, du, dv);
+            gp_Vec sn = du.Crossed(dv);
+            const double slen = sn.Magnitude();
+            if (slen < 1e-14) continue;  // pole: normal undefined there
+            const double dot =
+                orient * (sn.X() * nx + sn.Y() * ny + sn.Z() * nz) /
+                (slen * nlen);
+            if (dot > 0.1) ++votes;
+            else if (dot < -0.1) --votes;
+        }
+        if (votes < 0) folded[p] = 1;
+    }
+    return folded;
 }
 
 }  // namespace weft

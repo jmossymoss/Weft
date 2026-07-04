@@ -168,6 +168,7 @@ static void installCrashHandler() {
     X(PFNGLGETUNIFORMLOCATIONPROC, glGetUniformLocation)    \
     X(PFNGLUNIFORMMATRIX4FVPROC, glUniformMatrix4fv)        \
     X(PFNGLUNIFORM1FPROC, glUniform1f)                     \
+    X(PFNGLUNIFORM1IPROC, glUniform1i)                     \
     X(PFNGLUNIFORM3FVPROC, glUniform3fv)                   \
     X(PFNGLGENVERTEXARRAYSPROC, glGenVertexArrays)          \
     X(PFNGLBINDVERTEXARRAYPROC, glBindVertexArray)          \
@@ -304,8 +305,29 @@ out vec4 frag;
 uniform float uAmbient;
 uniform float uDiffuse;
 uniform float uRim;
+uniform int uMode;  // 0 = studio lighting, 1 = procedural matcap
 void main() {
     vec3 n = normalize(cross(dFdx(vPosVS), dFdy(vPosVS)));
+    if (uMode == 1) {
+        // Procedural studio matcap: shading depends only on the view-space
+        // normal, so surface flow, dents and folds read the same from any
+        // camera angle. Key + fill lobes, a rim, and two specular hits.
+        vec3 nn = n.z < 0.0 ? -n : n;
+        float key  = clamp(dot(nn, normalize(vec3(-0.45, 0.55, 0.70))), 0.0, 1.0);
+        float fil  = clamp(dot(nn, normalize(vec3( 0.65,-0.20, 0.74))), 0.0, 1.0);
+        float rimL = pow(1.0 - clamp(nn.z, 0.0, 1.0), 2.5);
+        vec3 col = vec3(0.20, 0.205, 0.22)
+                 + vec3(0.60, 0.58, 0.55) * pow(key, 1.4)
+                 + vec3(0.17, 0.18, 0.21) * pow(fil, 2.0)
+                 + vec3(0.14, 0.15, 0.18) * rimL
+                 + vec3(0.80) * pow(key, 24.0)
+                 + vec3(0.22) * pow(fil, 18.0);
+        // Keep selection / heatmap tints readable through the matcap
+        // without letting face-type colours swallow the studio shading.
+        vec3 tint = mix(vec3(1.0), clamp(vColor * 1.55, 0.0, 1.5), 0.28);
+        frag = vec4(col * tint, 1.0);
+        return;
+    }
     vec3 l = normalize(-vPosVS);
     float diff = abs(dot(n, l));
     float rim = pow(1.0 - diff, 2.0) * uRim;
@@ -519,6 +541,7 @@ struct App {
     // rebuilt after every regenerate — the trust meter for game export.
     Buffer problems;
     int openEdgeCount = 0, multiEdgeCount = 0;
+    int foldedPolyCount = 0;
     bool showProblems = true;
     // Quality heatmap: tint polys by worst corner angle vs the regular
     // polygon's — pinches and slivers glow before they reach the DCC.
@@ -710,10 +733,14 @@ static void rebuildBuffers(App& app) {
 
 // Scan the final mesh for open and non-manifold (multiply-used) directed
 // edges and rebuild the red/magenta overlay lines. This is the same test
-// the export pipeline cares about: zero of both = watertight.
+// the export pipeline cares about: zero of both = watertight. Folded
+// cells (winding against the surface normal) get orange outlines: they
+// keep the mesh manifold — a region doubled back over its neighbour pairs
+// every directed edge — so the edge scan alone would never show them.
 static void updateProblems(App& app) {
     app.openEdgeCount = 0;
     app.multiEdgeCount = 0;
+    app.foldedPolyCount = 0;
     std::map<std::pair<uint32_t, uint32_t>, int> dir;
     for (const auto& poly : app.mesh.polygons) {
         for (size_t i = 0; i < poly.size(); ++i) {
@@ -739,6 +766,17 @@ static void updateProblems(App& app) {
         } else if (!dir.count({e.second, e.first})) {
             pushEdge(e.first, e.second, 1.0f, 0.25f, 0.15f);  // red
             ++app.openEdgeCount;
+        }
+    }
+    const std::vector<uint8_t> folded =
+        weft::foldedPolys(app.model, app.mesh);
+    for (size_t p = 0; p < folded.size(); ++p) {
+        if (!folded[p]) continue;
+        ++app.foldedPolyCount;
+        const auto& poly = app.mesh.polygons[p];
+        for (size_t i = 0; i < poly.size(); ++i) {
+            pushEdge(poly[i], poly[(i + 1) % poly.size()], 1.0f, 0.65f,
+                     0.1f);  // orange
         }
     }
     app.problems.upload(lines);
@@ -2529,6 +2567,14 @@ static void drawUi(App& app) {
             ImGui::SameLine();
             ImGui::Checkbox("show##problems", &app.showProblems);
         }
+        if (app.foldedPolyCount > 0) {
+            ImGui::TextColored({1.0f, 0.65f, 0.15f, 1.0f},
+                               "%d folded cell(s)", app.foldedPolyCount);
+            if (app.openEdgeCount == 0 && app.multiEdgeCount == 0) {
+                ImGui::SameLine();
+                ImGui::Checkbox("show##problems", &app.showProblems);
+            }
+        }
         if (!app.bLoops.empty()) {
             ImGui::TextColored({1.0f, 0.6f, 0.3f, 1.0f},
                                "%zu open border loop(s)",
@@ -2702,9 +2748,9 @@ static void drawUi(App& app) {
     if (ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen)) {
         if (ImGui::Combo("shading", &app.shadingMode,
                          "shaded + wire\0shaded\0wireframe\0"
-                         "flat + wire\0")) {
+                         "flat + wire\0matcap + wire\0matcap\0")) {
             app.showFill = app.shadingMode != 2;
-            app.showWire = app.shadingMode != 1;
+            app.showWire = app.shadingMode != 1 && app.shadingMode != 5;
         }
         ImGui::Checkbox("feature edges", &app.showBrepEdges);
         ImGui::SameLine();
@@ -2803,7 +2849,7 @@ int main(int argc, char** argv) {
 
     std::string screenshotPath, startModel, startFixture = "demo";
     int startSelect = 0;
-    bool startQuality = false;
+    bool startQuality = false, startMatcap = false;
     float startYaw = 0.9f, startPitch = 0.5f;
     bool demoLoopCut = false;
     for (int i = 1; i < argc; ++i) {
@@ -2815,6 +2861,7 @@ int main(int argc, char** argv) {
         else if (a == "--pitch" && i + 1 < argc) startPitch = std::stof(argv[++i]);
         else if (a == "--loopcut") demoLoopCut = true;  // screenshot testing
         else if (a == "--quality") startQuality = true;
+        else if (a == "--matcap") startMatcap = true;
         else startModel = a;
     }
 
@@ -2867,6 +2914,7 @@ int main(int argc, char** argv) {
         app.qualityView = true;
         if (app.hasModel) rebuildBuffers(app);
     }
+    if (startMatcap) app.shadingMode = 4;
     if (startSelect > 0 && startSelect <= app.model.faceCount()) {
         app.selFaces = {startSelect};
         app.activeFace = startSelect;
@@ -4018,8 +4066,10 @@ int main(int argc, char** argv) {
         glEnable(GL_DEPTH_TEST);
 
         const bool wantFill = app.showFill && app.shadingMode != 2;
-        const bool wantWire = app.showWire && app.shadingMode != 1;
+        const bool wantWire =
+            app.showWire && app.shadingMode != 1 && app.shadingMode != 5;
         const bool flatFill = app.shadingMode == 3;
+        const bool matcapFill = app.shadingMode >= 4;
         if (app.hasModel && wantFill && app.fill.count) {
             glEnable(GL_POLYGON_OFFSET_FILL);
             glPolygonOffset(1.0f, 1.0f);
@@ -4037,6 +4087,8 @@ int main(int argc, char** argv) {
                 glUniform1f(glGetUniformLocation(prog, "uDiffuse"),
                             app.lightDiffuse);
                 glUniform1f(glGetUniformLocation(prog, "uRim"), app.lightRim);
+                glUniform1i(glGetUniformLocation(prog, "uMode"),
+                            matcapFill ? 1 : 0);
             }
             glBindVertexArray(app.fill.vao);
             glDrawArrays(GL_TRIANGLES, 0, app.fill.count);

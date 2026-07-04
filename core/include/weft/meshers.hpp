@@ -205,4 +205,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                   GenerationReport* report = nullptr,
                   GenerationCache* cache = nullptr);
 
+// Per-cell fold detector: flags polygons whose winding opposes the B-rep
+// surface normal at their own anchors. Grid cells that overlap a
+// neighbour (skewed chained bands, collapsed borders) flip exactly there,
+// so the app can paint them as problems. One byte per polygon: 1 = folded.
+// Polygons without surface anchors (manual ops, plain fallback) are never
+// flagged.
+std::vector<uint8_t> foldedPolys(const Model& model, const PolyMesh& mesh);
+
 }  // namespace weft
