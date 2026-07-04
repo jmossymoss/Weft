@@ -1946,7 +1946,11 @@ bool planQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
 // (CW): rotational alignment by total rail length, then a greedy walk that
 // advances whichever side makes the shorter diagonal. Equal counts give a
 // pure quad ring; the rim of a quad-fill face reads as flow, not ear soup.
-void zipperRings(const std::vector<WebPoint>& outer,
+// The zip is validated before anything is emitted: when the two rings are
+// not actually a band (a long thin outline against a small localized
+// frontier loop), the greedy walk fans across the void and folds — every
+// candidate cell's UV winding must agree, or the caller ear-clips instead.
+bool zipperRings(const std::vector<WebPoint>& outer,
                  const std::vector<WebPoint>& hole, int faceId, bool flip,
                  MeshBuilder& out) {
     const int n = int(outer.size());
@@ -1969,33 +1973,63 @@ void zipperRings(const std::vector<WebPoint>& outer,
             bestOff = off;
         }
     }
+    std::vector<std::array<const WebPoint*, 4>> cells;  // [3] null = tri
     if (n == m) {  // pure quad ring
         for (int i = 0; i < n; ++i) {
             int j = (bestOff + i) % m;
-            out.addPolygon({outer[i].vert, outer[(i + 1) % n].vert,
-                            ring[(j + 1) % m].vert, ring[j].vert},
+            cells.push_back({&outer[i], &outer[(i + 1) % n],
+                             &ring[(j + 1) % m], &ring[j]});
+        }
+    } else {
+        int ia = 0, ib = 0;
+        while (ia < n || ib < m) {
+            const WebPoint& a = outer[ia % n];
+            const WebPoint& a1 = outer[(ia + 1) % n];
+            const WebPoint& b = ring[(bestOff + ib) % m];
+            const WebPoint& b1 = ring[(bestOff + ib + 1) % m];
+            bool stepA;
+            if (ia >= n) stepA = false;
+            else if (ib >= m) stepA = true;
+            else stepA = d2(a1, b) <= d2(a, b1);
+            if (stepA) {
+                cells.push_back({&a, &a1, &b, nullptr});
+                ++ia;
+            } else {
+                cells.push_back({&a, &b1, &b, nullptr});
+                ++ib;
+            }
+        }
+    }
+    double total = 0;
+    std::vector<double> areas;
+    areas.reserve(cells.size());
+    double meanAbs = 0;
+    for (const auto& c : cells) {
+        const int k = c[3] ? 4 : 3;
+        double a = 0;
+        for (int i = 0; i < k; ++i) {
+            const gp_Pnt2d& p = c[i]->uv;
+            const gp_Pnt2d& q = c[(i + 1) % k]->uv;
+            a += p.X() * q.Y() - q.X() * p.Y();
+        }
+        areas.push_back(a);
+        total += a;
+        meanAbs += std::abs(a);
+    }
+    meanAbs /= double(std::max<size_t>(1, areas.size()));
+    for (double a : areas) {
+        if (a * total < 0 && std::abs(a) > 1e-3 * meanAbs) return false;
+    }
+    for (const auto& c : cells) {
+        if (c[3]) {
+            out.addPolygon({c[0]->vert, c[1]->vert, c[2]->vert, c[3]->vert},
                            faceId, flip);
-        }
-        return;
-    }
-    int ia = 0, ib = 0;
-    while (ia < n || ib < m) {
-        const WebPoint& a = outer[ia % n];
-        const WebPoint& a1 = outer[(ia + 1) % n];
-        const WebPoint& b = ring[(bestOff + ib) % m];
-        const WebPoint& b1 = ring[(bestOff + ib + 1) % m];
-        bool stepA;
-        if (ia >= n) stepA = false;
-        else if (ib >= m) stepA = true;
-        else stepA = d2(a1, b) <= d2(a, b1);
-        if (stepA) {
-            out.addPolygon({a.vert, a1.vert, b.vert}, faceId, flip);
-            ++ia;
         } else {
-            out.addPolygon({a.vert, b1.vert, b.vert}, faceId, flip);
-            ++ib;
+            out.addPolygon({c[0]->vert, c[1]->vert, c[2]->vert}, faceId,
+                           flip);
         }
     }
+    return true;
 }
 
 bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
@@ -2326,10 +2360,12 @@ bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         // A simple band (one boundary ring around one frontier ring, or a
         // frontier pocket around one hole ring) zippers into flowing
         // quads/tris; anything more complex keeps the ear-clipped web.
+        bool zipped = false;
         if (r.holes.size() == 1 && r.outer.size() >= 3 &&
             r.holes[0].size() >= 3) {
-            zipperRings(r.outer, r.holes[0], faceId, flip, out);
-        } else {
+            zipped = zipperRings(r.outer, r.holes[0], faceId, flip, out);
+        }
+        if (!zipped) {
             triangulateWeb(std::move(r.outer), std::move(r.holes), faceId,
                            flip, out);
         }
