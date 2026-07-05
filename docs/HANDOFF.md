@@ -372,6 +372,26 @@ minimal admissions. Residual watch item: micro edges are still
 exempt from the border contract check (unexercised now, but scale
 the tolerance rather than exempt when it next bites).
 
+## Twist + app round (latest)
+1. PHASE ANCHOR (829c32a): closed circular edges sample from a world-
+   anchored angle -> coaxial rings share column angles, grooved-shaft
+   flats stop twisting. Guards: only circles whose seam vertex is free
+   (revolve seams ignored; tangent-bore junction vertices pin). The
+   contract check expects the phase; modelVertexEdges caches vertex
+   adjacency per model (mutex, bounded).
+2. APP (e096777): smoothing-angle vertex normals (Display toggle +
+   angle, --smooth for screenshots); hover-scroll editing (no
+   selection: shift/ctrl/ctrl+shift wheel edit the hovered face's
+   override, empty space edits globals); knob-to-parts hover highlight
+   (defaults controls tint the faces they drive); Model auto-collapse,
+   Advanced groups Recipe/Debug/Dev fixtures.
+QUEUE: mohne last nm edge — face 204 (one-closed-edge cylinder patch,
+coons rejects "under 3 real edges" -> OCCT fallback) overlaps face 2's
+insert web at (-26.4,-29.4,8.9)-(-26.8,-29.4,10.5); a one-loop-on-
+curved-chart mesher (ring + web on surface) or floor-with-uv-rings
+would fix it. Weldment residual folds: #4(2) deep-saddle loft cells,
+#72/#311 singles.
+
 ## Next steps, in order
 1. COUNT DECOUPLING: extend the absorber to multi-vertex gaps (complement
    path v→w1→…→wk→u along a shared B-rep edge), then let 9–16-edge chained
