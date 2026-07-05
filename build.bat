@@ -233,6 +233,45 @@ if defined OCCTPATHS (
         "foreach ($d in $add) { $t = $d.TrimEnd('\'); if ($t -and ($parts -notcontains $t)) { $new = ($new.TrimEnd(';') + ';' + $t) } };" ^
         "if ($new -ne $cur) { [Environment]::SetEnvironmentVariable('Path',$new,'User'); Write-Output '  user PATH updated' } else { Write-Output '  already on PATH' }" 2>>"%LOG%"
 )
+REM Verify the DLL closure BEFORE running anything: dump the direct
+REM imports of the exes and every deployed TK dll (VS ships dumpbin),
+REM and name any import that is neither in the bin dir, nor a Windows
+REM system DLL, nor findable on PATH. A missing one is exactly the
+REM 0xc0000135 ctest failure -- but with the DLL's name visible.
+set "DUMPBIN="
+for /f "delims=" %%f in ('dir /s /b "!VS_PATH!\dumpbin.exe" 2^>nul ^| findstr /i "Hostx64\\x64"') do (
+    if not defined DUMPBIN set "DUMPBIN=%%f"
+)
+if defined DUMPBIN (
+    echo   Verifying every imported DLL resolves...
+    set "MISSING=;"
+    for %%e in ("%BINDIR%\weft.exe" "%BINDIR%\weft_tests.exe" "%BINDIR%\weft_app.exe" "%BINDIR%\TK*.dll") do (
+        if exist "%%~e" (
+            for /f %%i in ('"!DUMPBIN!" /nologo /dependents "%%~e" 2^>nul') do (
+                if /i "%%~xi"==".dll" (
+                    if not exist "%BINDIR%\%%i" if not exist "%SystemRoot%\System32\%%i" (
+                        where "%%i" >nul 2>&1 || (
+                            if "!MISSING:;%%i;=!"=="!MISSING!" set "MISSING=!MISSING!%%i;"
+                        )
+                    )
+                )
+            )
+        )
+    )
+    if not "!MISSING!"==";" (
+        echo.
+        echo   *** MISSING RUNTIME DLL^(s^): !MISSING:~1,-1!
+        echo   *** OCCT imports these but they were not found in the OCCT
+        echo   *** folder, its 3rdparty siblings, or on PATH. Find them:
+        echo   ***     dir /s /b C:\!MISSING:~1,-1! ^(per name^)
+        echo   *** then copy them into build\bin\Release or add their
+        echo   *** folder to PATH and re-run.
+        echo MISSING DLLS:!MISSING:~1! >> "%LOG%"
+        echo.
+    ) else (
+        echo   All imports resolve.
+    )
+)
 ctest --test-dir build -C Release --output-on-failure
 if %errorLevel% neq 0 (
     echo   Some tests failed ^(build itself succeeded^).

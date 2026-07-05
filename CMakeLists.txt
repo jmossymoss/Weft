@@ -47,7 +47,13 @@ if(WIN32)
       endif()
       # Entries may be wrapped in generator expressions; fish the path out.
       string(REGEX MATCH "[A-Za-z]:[^<>;$]*\\.lib" _lib "${_d}")
-      if(NOT _lib OR NOT EXISTS "${_lib}")
+      if(NOT _lib)
+        continue()
+      endif()
+      if(NOT EXISTS "${_lib}")
+        # OCCT was built against this lib but it is gone from that path
+        # (relocated install). Say so: its dll must be found by hand.
+        list(APPEND _weft_3p_missing "${_lib}")
         continue()
       endif()
       get_filename_component(_dir "${_lib}" DIRECTORY)
@@ -63,6 +69,12 @@ if(WIN32)
   else()
     message(STATUS "OCCT third-party runtimes: none resolved from the link "
                    "interface (OCCT built without them, or relocated)")
+  endif()
+  if(_weft_3p_missing)
+    list(REMOVE_DUPLICATES _weft_3p_missing)
+    message(WARNING "OCCT's link interface records third-party libs at "
+                    "paths that no longer exist -- their DLLs must be "
+                    "located manually: ${_weft_3p_missing}")
   endif()
 endif()
 
