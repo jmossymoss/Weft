@@ -8,7 +8,14 @@
 #include <BRepAdaptor_Surface.hxx>
 #include <ShapeFix_Shape.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
+#include <Interface_InterfaceModel.hxx>
+#include <StepBasic_Product.hxx>
+#include <StepBasic_ProductDefinition.hxx>
+#include <StepBasic_ProductDefinitionFormation.hxx>
+#include <StepRepr_ProductDefinitionShape.hxx>
+#include <StepRepr_Representation.hxx>
 #include <StepRepr_RepresentationItem.hxx>
+#include <StepShape_ShapeDefinitionRepresentation.hxx>
 #include <TCollection_HAsciiString.hxx>
 #include <TransferBRep.hxx>
 #include <Transfer_TransientProcess.hxx>
@@ -17,6 +24,7 @@
 #include <TopAbs_ShapeEnum.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopoDS_Iterator.hxx>
 #include <TopoDS.hxx>
 
 #include <cstdio>
@@ -69,6 +77,48 @@ static std::map<const void*, std::string> shapeNames(
         TopoDS_Shape sh = TransferBRep::ShapeResult(tp, tp->Mapped(i));
         if (sh.IsNull()) continue;
         names.try_emplace(sh.TShape().get(), item->Name()->ToCString());
+    }
+    // Most CAD packages leave the representation items anonymous and put
+    // the real part names on PRODUCT entities. Walk every shape
+    // definition: PRODUCT -> formation -> product definition ->
+    // property -> SHAPE_DEFINITION_REPRESENTATION -> representation
+    // items -> transferred shapes. Representation-item names (Plasticity
+    // writes those) keep priority via try_emplace above.
+    Handle(Interface_InterfaceModel) im = reader.WS()->Model();
+    if (im.IsNull()) return names;
+    for (int e = 1; e <= im->NbEntities(); ++e) {
+        Handle(StepShape_ShapeDefinitionRepresentation) sdr =
+            Handle(StepShape_ShapeDefinitionRepresentation)::DownCast(
+                im->Value(e));
+        if (sdr.IsNull() || sdr->UsedRepresentation().IsNull()) continue;
+        Handle(StepRepr_ProductDefinitionShape) pds =
+            Handle(StepRepr_ProductDefinitionShape)::DownCast(
+                sdr->Definition().PropertyDefinition());
+        if (pds.IsNull()) continue;
+        Handle(StepBasic_ProductDefinition) pd =
+            pds->Definition().ProductDefinition();
+        if (pd.IsNull() || pd->Formation().IsNull() ||
+            pd->Formation()->OfProduct().IsNull()) {
+            continue;
+        }
+        Handle(TCollection_HAsciiString) pname =
+            pd->Formation()->OfProduct()->Name();
+        if (pname.IsNull() || pname->Length() == 0) continue;
+        const Handle(StepRepr_Representation)& rep =
+            sdr->UsedRepresentation();
+        for (int k = 1; k <= rep->NbItems(); ++k) {
+            if (rep->ItemsValue(k).IsNull()) continue;
+            TopoDS_Shape sh = TransferBRep::ShapeResult(
+                tp, rep->ItemsValue(k));
+            if (sh.IsNull()) continue;
+            names.try_emplace(sh.TShape().get(), pname->ToCString());
+            // Located instances re-root the TShape one level down
+            // (a solid inside the mapped result) — name those too.
+            for (TopoDS_Iterator it(sh); it.More(); it.Next()) {
+                names.try_emplace(it.Value().TShape().get(),
+                                  pname->ToCString());
+            }
+        }
     }
     return names;
 }

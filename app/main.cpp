@@ -1411,6 +1411,8 @@ static void exportObjTo(App& app, const std::string& out) {
         opts.triangulate = app.exportTriangulate;
         opts.yUp = app.exportYUp;
         opts.scale = double(app.exportScale);
+        // CAD part names ride through to the export's o-blocks.
+        opts.objectNames = &app.model.solidNames;
         weft::writeObj(app.mesh, out, &app.analysis.solidFaces, &opts);
         app.status = "exported " + out;
         logLine("export: %s (%zu verts, %zu polys)", out.c_str(),
@@ -3053,9 +3055,19 @@ static void drawUi(App& app) {
                 rebuildBuffers(app);
             }
             ImGui::SameLine();
-            char objLabel[64];
-            std::snprintf(objLabel, sizeof objLabel, "object %zu (%zu faces)",
-                          si + 1, fids.size());
+            // CAD part names carry all the way through: the outliner
+            // shows what the source software called the body.
+            char objLabel[96];
+            const std::string nm = si < app.model.solidNames.size()
+                                       ? app.model.solidNames[si]
+                                       : std::string();
+            if (!nm.empty()) {
+                std::snprintf(objLabel, sizeof objLabel, "%s (%zu faces)",
+                              nm.c_str(), fids.size());
+            } else {
+                std::snprintf(objLabel, sizeof objLabel,
+                              "object %zu (%zu faces)", si + 1, fids.size());
+            }
             bool open = ImGui::TreeNodeEx(
                 objLabel, ImGuiTreeNodeFlags_OpenOnArrow |
                               ImGuiTreeNodeFlags_SpanAvailWidth);
