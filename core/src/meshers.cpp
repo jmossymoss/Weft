@@ -4202,6 +4202,10 @@ private:
 struct DensitySolution {
     EdgeGroups groups;
     std::map<int, int> groupCount;  // root edge -> solved divisions
+    // Groups whose count the user set BY NAME (per-face override or
+    // per-edge pin): floors and rim raises must not touch them —
+    // 16 radial segments means exactly 16.
+    std::set<int> pinnedRoots;
 
     explicit DensitySolution(int edgeCount) : groups(edgeCount) {}
 
@@ -4299,7 +4303,25 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
     auto propose = [&](const std::vector<int>& edges, int count,
                        bool overridden) {
         if (edges.empty()) return;
-        count = std::max(1, int(std::lround(count * dScale)));
+        // Explicit counts stay EXACT — the budget knob never rescales a
+        // number the user typed. Straight lines don't scale either:
+        // extra spans along a ruling buy no fidelity (a cylinder's
+        // axial count is the user's choice, not the budget's).
+        bool curved = false;
+        for (int e : edges) {
+            double cf, cl;
+            Handle(Geom_Curve) cc =
+                BRep_Tool::Curve(TopoDS::Edge(model.edges(e)), cf, cl);
+            if (cc.IsNull()) continue;
+            GeomAdaptor_Curve gcc(cc, cf, cl);
+            if (gcc.GetType() != GeomAbs_Line) {
+                curved = true;
+                break;
+            }
+        }
+        if (!overridden && curved) {
+            count = std::max(1, int(std::lround(count * dScale)));
+        }
         int root = sol.groups.find(edges[0]);
         auto [it, inserted] = sol.groupCount.try_emplace(root, count);
         if (!inserted) it->second = std::max(it->second, count);
@@ -4481,7 +4503,10 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                        std::max(1, s.axial), s.adaptive, s, overridden);
         }
     }
-    for (const auto& [root, count] : facePinned) sol.groupCount[root] = count;
+    for (const auto& [root, count] : facePinned) {
+        sol.groupCount[root] = count;
+        sol.pinnedRoots.insert(root);
+    }
 
     // Explicit per-edge overrides pin their whole group (max if several),
     // winning over both defaults and per-face overrides.
@@ -4494,6 +4519,7 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
     }
     for (const auto& [root, count] : pinned) {
         sol.groupCount[root] = std::max(1, count);  // a pin of 0 is a leak
+        sol.pinnedRoots.insert(root);
     }
 
     // Chained Coons: opposite sides must sample equal TOTALS. Chains
@@ -6511,8 +6537,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         // quarter-pipes flattening into the SAME plane strip and weld-
         // fusing non-manifold. One segment per ~60 degrees of turn is
         // the least that keeps distinct geometry distinct; explicit
-        // per-edge pins still win.
+        // counts (per-edge pins AND per-face overrides) win outright —
+        // 16 radial segments means exactly 16.
         if (settings.perEdge.count(eid)) continue;
+        if (density.pinnedRoots.count(density.groups.find(eid))) continue;
         const TopoDS_Edge E = TopoDS::Edge(model.edges(eid));
         if (BRep_Tool::Degenerated(E)) continue;
         double f, l;
@@ -6566,6 +6594,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 // strip instead.
                 const auto& small = tLo < tHi ? lo : hi;
                 if (small.size() != 1) continue;
+                // A user-pinned ring never gets raised behind their
+                // back — the mismatch stays visible (strip or floor).
+                if (density.pinnedRoots.count(
+                        density.groups.find(small[0]))) {
+                    continue;
+                }
                 const long deficit = std::labs(tHi - tLo);
                 raiseGroup(small[0], solvedEdge[small[0]] + int(deficit));
                 changed = true;

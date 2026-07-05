@@ -2474,11 +2474,20 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
     }
     if (revolved) {
         if (all) ImGui::TextDisabled("revolved surfaces");
-        ch |= ImGui::DragInt("radial", &s.radial, 0.2f, 3, 256);
+        // Typing a count IS choosing manual density for this face —
+        // same rule as the wheel — otherwise the number displays while
+        // adaptive keeps driving and they never match.
+        if (ImGui::DragInt("radial", &s.radial, 0.2f, 3, 256)) {
+            ch = true;
+            if (kind) s.adaptive = false;
+        }
         hover({int(MK::RevolutionGrid), int(MK::DiskCap),
                int(MK::AnnulusRing), int(MK::PlateWeb), int(MK::QuadFill)});
         if (all || k == MK::RevolutionGrid) {
-            ch |= ImGui::DragInt("axial", &s.axial, 0.2f, 1, 256);
+            if (ImGui::DragInt("axial", &s.axial, 0.2f, 1, 256)) {
+                ch = true;
+                if (kind) s.adaptive = false;
+            }
             hover({int(MK::RevolutionGrid)});
         }
         if (all || k == MK::DiskCap) {
@@ -2506,10 +2515,16 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
     }
     if (grid) {
         if (all) ImGui::TextDisabled("planar / parametric grids");
-        ch |= ImGui::DragInt("grid u", &s.gridU, 0.2f, 1, 256);
+        if (ImGui::DragInt("grid u", &s.gridU, 0.2f, 1, 256)) {
+            ch = true;
+            if (kind) s.adaptive = false;
+        }
         hover({int(MK::PlanarGrid), int(MK::CoonsGrid),
                int(MK::RingJunction)});
-        ch |= ImGui::DragInt("grid v", &s.gridV, 0.2f, 1, 256);
+        if (ImGui::DragInt("grid v", &s.gridV, 0.2f, 1, 256)) {
+            ch = true;
+            if (kind) s.adaptive = false;
+        }
         hover({int(MK::PlanarGrid), int(MK::CoonsGrid),
                int(MK::RingJunction)});
         if (all || k == MK::RingJunction) {
