@@ -3463,6 +3463,12 @@ static void drawUi(App& app) {
     }
 
     if (ImGui::CollapsingHeader("Display")) {
+        // The viewport display toggles live here too (the shading
+        // popover keeps its copies for quick access).
+        ImGui::Checkbox("wireframe", &app.showWire);
+        ImGui::SameLine();
+        ImGui::Checkbox("feature edges", &app.showBrepEdges);
+        ImGui::Checkbox("show folded cells", &app.showProblems);
         if (ImGui::Checkbox("smooth shading", &app.smoothShade)) {
             rebuildBuffers(app);
         }

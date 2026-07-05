@@ -4734,24 +4734,22 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
         gp_Pnt p;
     };
     std::vector<RimPt> rim[2];
-    // Face-local edge orientations: sampling must honour them (like
-    // every other border sampler) so multi-edge rims with mixed curve
-    // senses keep each arc joint exactly once.
-    std::map<int, bool> revOf;
-    for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
-        int e = model.edges.FindIndex(ex.Current());
-        if (e >= 1) {
-            revOf[e] = ex.Current().Orientation() == TopAbs_REVERSED;
-        }
-    }
-    for (int eid : rimEdges) {
-        if (eid < 1 || eid > model.edgeCount()) continue;
-        const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
-        if (BRep_Tool::Degenerated(edge)) continue;
+    // Rim rows are built in WIRE CHAIN ORDER, not sorted by u: a
+    // countersunk bore's rim is arcs joined by short v-steps, and a
+    // u-sort interleaves the step samples between arc samples — the
+    // emitted row zigzags and consecutive border samples lose their
+    // direct polygon edge (contract violation, observed on 1797609in
+    // face 37). Walking the wire keeps every chain adjacent by
+    // construction; only the overall circular direction is normalized.
+    const std::set<int> rimSet(rimEdges.begin(), rimEdges.end());
+    std::set<int> rimSeen;
+    auto sampleRimEdge = [&](const TopoDS_Edge& edge, int eid) {
         double f2, l2, f3, l3;
-        Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(edge, face, f2, l2);
+        Handle(Geom2d_Curve) pc =
+            BRep_Tool::CurveOnSurface(edge, face, f2, l2);
         Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, f3, l3);
-        if (pc.IsNull() || c3.IsNull()) continue;
+        if (pc.IsNull() || c3.IsNull()) return;
+        rimSeen.insert(eid);
         gp_Pnt2d mid = pc->Value((f2 + l2) / 2);
         // Chain membership beats nearest-end: a deep saddle rim wanders
         // past the band middle but still belongs to its chain.
@@ -4766,7 +4764,7 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
         }
         int n = eid < int(solvedEdge.size()) ? solvedEdge[eid] : 0;
         if (n < 1) n = nu;
-        const bool rev = revOf.count(eid) && revOf[eid];
+        const bool rev = edge.Orientation() == TopAbs_REVERSED;
         const double ph = closedEdgePhase(edge, model);
         for (int i = 0; i < n; ++i) {
             double t = phasedT(i, n, ph, rev);
@@ -4776,10 +4774,42 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
             u -= period * std::floor((u - surf.FirstUParameter()) / period);
             rim[side].push_back({u, uv.Y(), p});
         }
+    };
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        for (BRepTools_WireExplorer we(TopoDS::Wire(wx.Current()), face);
+             we.More(); we.Next()) {
+            const TopoDS_Edge edge = we.Current();
+            if (BRep_Tool::Degenerated(edge)) continue;
+            const int eid = model.edges.FindIndex(edge);
+            if (eid < 1 || !rimSet.count(eid) || rimSeen.count(eid)) {
+                continue;
+            }
+            if (BRep_Tool::IsClosed(edge, face)) continue;  // seam
+            sampleRimEdge(edge, eid);
+        }
     }
+    // Sloppy wires make BRepTools_WireExplorer drop edges silently —
+    // append any rim edge it missed (order degrades locally, borders
+    // stay complete).
+    for (int eid : rimEdges) {
+        if (eid < 1 || eid > model.edgeCount() || rimSeen.count(eid)) {
+            continue;
+        }
+        const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+        if (BRep_Tool::Degenerated(edge)) continue;
+        sampleRimEdge(edge, eid);
+    }
+    // Normalize both rims to the same circular direction (ascending u
+    // overall) without disturbing chain adjacency.
     for (int k = 0; k < 2; ++k) {
-        std::sort(rim[k].begin(), rim[k].end(),
-                  [](const RimPt& a, const RimPt& b) { return a.u < b.u; });
+        if (rim[k].size() < 2) continue;
+        double turn = 0;
+        for (size_t i = 0; i + 1 < rim[k].size(); ++i) {
+            double d = rim[k][i + 1].u - rim[k][i].u;
+            d -= period * std::round(d / period);
+            turn += d;
+        }
+        if (turn < 0) std::reverse(rim[k].begin(), rim[k].end());
     }
 
     // The rim samples OWN the border contract — they are what the
