@@ -5,7 +5,9 @@
 #include <STEPControl_Reader.hxx>
 #include <STEPControl_Writer.hxx>
 #include <BRepBuilderAPI_Sewing.hxx>
+#include <BRepAdaptor_Surface.hxx>
 #include <ShapeFix_Shape.hxx>
+#include <ShapeUpgrade_UnifySameDomain.hxx>
 #include <StepRepr_RepresentationItem.hxx>
 #include <TCollection_HAsciiString.hxx>
 #include <TransferBRep.hxx>
@@ -117,6 +119,46 @@ Model loadStep(const std::string& path) {
     ShapeFix_Shape fixer(shape);
     fixer.Perform();
     shape = fixer.Shape();
+
+    // STEP kernels split closed revolves into half-faces, so a bore
+    // arrives as two half-cylinders with seam lines and split rim arcs.
+    // Unify faces that lie on one revolved surface back into a single
+    // periodic face (and tangent same-curve edge chains into single
+    // edges — the rim halves become one closed circle) so holes and
+    // bosses solve as single revolution rings. Planar and freeform
+    // faces are kept as authored: only revolved geometry is healed.
+    {
+        ShapeUpgrade_UnifySameDomain unify(shape, /*UnifyEdges*/ true,
+                                           /*UnifyFaces*/ true,
+                                           /*ConcatBSplines*/ false);
+        for (TopExp_Explorer fx(shape, TopAbs_FACE); fx.More(); fx.Next()) {
+            BRepAdaptor_Surface s(TopoDS::Face(fx.Current()), false);
+            switch (s.GetType()) {
+                case GeomAbs_Cylinder:
+                case GeomAbs_Cone:
+                case GeomAbs_Sphere:
+                case GeomAbs_Torus:
+                case GeomAbs_SurfaceOfRevolution:
+                    break;
+                default:
+                    unify.KeepShape(fx.Current());
+            }
+        }
+        unify.Build();
+        if (!unify.Shape().IsNull()) shape = unify.Shape();
+    }
+    // Second, unscoped edge pass: tangent same-curve chains merge into
+    // single edges everywhere (the kept planar faces blocked arc merges
+    // along their wires in the scoped pass above, leaving one rim of a
+    // band as a full circle and the other as two halves — a structural
+    // count mismatch). Feature circles come out as ONE closed edge.
+    {
+        ShapeUpgrade_UnifySameDomain unify(shape, /*UnifyEdges*/ true,
+                                           /*UnifyFaces*/ false,
+                                           /*ConcatBSplines*/ true);
+        unify.Build();
+        if (!unify.Shape().IsNull()) shape = unify.Shape();
+    }
 
     Model m = indexShape(shape);
     // ...then pair them with the healed solids by traversal order, which

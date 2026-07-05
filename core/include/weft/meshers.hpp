@@ -175,10 +175,11 @@ struct GenerationCache {
     struct CachedFace {
         std::string key;
         PolyMesh part;
-        // The planned mesher couldn't build and the part is a fallback
-        // triangulation — generate() must demote the plan (conform
-        // treats structured meshers as exact-border authorities).
-        bool fellBack = false;
+        // The planned mesher couldn't build: 1 = raw OCCT fallback
+        // (borders freeform, conform must move them), 2 = contract
+        // floor (borders exact at solved counts — conform must leave
+        // them alone). 0 = the planned mesher built.
+        char fellBack = 0;
     };
     std::map<int, CachedFace> faces;
     // Geometry-only memos (settings-independent, per model): results of
