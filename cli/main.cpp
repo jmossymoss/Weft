@@ -15,6 +15,8 @@
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
+#include <algorithm>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -329,8 +331,25 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     {
         const auto folded = weft::foldedPolys(model, mesh);
         size_t nf = 0;
-        for (uint8_t f : folded) nf += f;
-        if (nf) std::printf("  %zu folded polygon(s)\n", nf);
+        std::map<int, int> perFace;
+        for (size_t p = 0; p < folded.size(); ++p) {
+            if (!folded[p]) continue;
+            ++nf;
+            if (p < mesh.polygonFaceId.size()) {
+                ++perFace[mesh.polygonFaceId[p]];
+            }
+        }
+        if (nf) {
+            std::printf("  %zu folded polygon(s); worst faces:", nf);
+            std::vector<std::pair<int, int>> top(perFace.begin(),
+                                                 perFace.end());
+            std::sort(top.begin(), top.end(),
+                      [](auto& a, auto& b) { return a.second > b.second; });
+            for (size_t i = 0; i < top.size() && i < 6; ++i) {
+                std::printf(" #%d(%d)", top[i].first, top[i].second);
+            }
+            std::printf("\n");
+        }
     }
     if (validate) {
         weft::ValidationReport vr = weft::validateMesh(mesh, &model);
