@@ -605,7 +605,7 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
     };
     std::vector<WireEdge> all;
     for (BRepTools_WireExplorer wx(outer, face); wx.More(); wx.Next()) {
-        if (all.size() >= 8) return reject("more than 8 edges");
+        if (all.size() >= 16) return reject("more than 16 edges");
         const TopoDS_Edge edge = wx.Current();
         double f, l;
         Handle(Geom2d_Curve) pcurve =
@@ -966,6 +966,32 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
     std::vector<BPt> bottom = sampleSide(0, paramsFor(0, uParams));
     std::vector<BPt> top = sampleSide(2, paramsFor(2, uParams));
     std::reverse(top.begin(), top.end());
+
+    // Decoupled rails: opposite totals may disagree now that the solver
+    // no longer grows chains into equality. The deficit rail resamples by
+    // arc fraction along its own boundary (points stay ON the border
+    // curves through the pcurves); its NATURAL border vertices belong to
+    // the neighbours, and the post-weld seam absorber splices them into
+    // these lattice quads as small-edge n-gons.
+    auto resample = [&](int i, size_t n, bool reversed) {
+        Handle(Geom_Surface) S = BRep_Tool::Surface(face);
+        std::vector<BPt> row(n);
+        for (size_t k = 0; k < n; ++k) {
+            double t = double(k) / double(n - 1);
+            if (reversed) t = 1.0 - t;
+            gp_Pnt2d uv = patch.side(i, t);
+            row[k] = {S->Value(uv.X(), uv.Y()), uv};
+        }
+        return row;
+    };
+    if (bottom.size() != top.size() && bottom.size() >= 2 &&
+        top.size() >= 2) {
+        if (bottom.size() < top.size()) {
+            bottom = resample(0, top.size(), false);
+        } else {
+            top = resample(2, bottom.size(), true);
+        }
+    }
     if (bottom.size() != top.size() || bottom.size() < 2) return false;
     const int nu = int(bottom.size()) - 1;
 
@@ -981,6 +1007,22 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
     } else {
         left = sampleSide(3, paramsFor(3, vParams));
         std::reverse(left.begin(), left.end());
+    }
+    if (right.size() != left.size() && right.size() >= 2 &&
+        left.size() >= 2 && !patch.collapsedLast) {
+        if (right.size() < left.size()) {
+            right = resample(1, left.size(), false);
+        } else {
+            left = resample(3, right.size(), true);
+        }
+    }
+    if (patch.collapsedLast && left.size() != right.size()) {
+        left.assign(right.size(), left.empty() ? BPt{bottom.front().p,
+                                                     patch.side(3, 0.5)}
+                                               : left.front());
+        for (size_t j = 0; j < left.size(); ++j) {
+            left[j].uv = patch.side(3, 1.0 - double(j) / (right.size() - 1));
+        }
     }
     if (right.size() != left.size() || right.size() < 2) return false;
     const int nv = int(right.size()) - 1;
@@ -3323,22 +3365,17 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
             }
             return false;
         };
-        for (int round = 0; round < 8; ++round) {
-            bool changed = false;
-            for (auto& [fid, plan] : plans) {
-                if (plan.kind != MesherKind::CoonsGrid) continue;
-                for (int axis = 0; axis < 2; ++axis) {
-                    const auto& A = plan.coonsSides[axis];
-                    const auto& B = plan.coonsSides[axis + 2];
-                    if (A.empty() || B.empty()) continue;  // pole side
-                    int sa = sideSum(A), sb = sideSum(B);
-                    if (sa == sb) continue;
-                    changed |= sa < sb ? grow(A, sb - sa)
-                                       : grow(B, sa - sb);
-                }
-            }
-            if (!changed) break;
-        }
+        // COUNT DECOUPLING (handoff step 1): the old fixpoint grew the
+        // lighter side of every chained coons patch until opposite totals
+        // matched, which cascaded counts across shared rails (measured:
+        // 37,808-poly defaults on one model, and a ~983k solved count on
+        // a dirty assembly). Chained sides now keep their natural counts;
+        // meshCoonsGrid arc-length-resamples the deficit rail for its
+        // lattice and the post-weld seam absorber splices the neighbours'
+        // extra border vertices in as small-edge n-gons — the way the
+        // reference CAD export absorbs count mismatches.
+        (void)sideSum;
+        (void)grow;
     }
 
     // Ring junctions close the loop: the circle must take exactly one ring
@@ -4776,46 +4813,92 @@ void unionSeams(PolyMesh& mesh, const Model& model, double weldTol) {
         for (const auto& [e, c] : count) {
             if (c != 1 || count.count({e.second, e.first})) continue;
             const auto [u, v] = e;
-            // complement path v -> w -> u on some neighbouring polygon
-            uint32_t hit = UINT32_MAX;
-            for (auto it = outOf.lower_bound(v);
-                 it != outOf.end() && it->first == v; ++it) {
-                const uint32_t w = it->second;
-                if (w == u || !count.count({w, u})) continue;
-                // w must lie ON the u-v segment (within weld slack), or
-                // this is a coincidental cycle, not a border T-junction.
-                const auto& U = mesh.vertices[u];
-                const auto& V = mesh.vertices[v];
+            const auto& U = mesh.vertices[u];
+            const auto& V = mesh.vertices[v];
+            double ex = V[0] - U[0], ey = V[1] - U[1], ez = V[2] - U[2];
+            double ee = ex * ex + ey * ey + ez * ez;
+            if (ee < 1e-30) continue;
+            const double slack = std::max(weldTol * 2.0,
+                                          0.08 * std::sqrt(ee));
+            // On-segment test with the running parameter, so the walk
+            // below can insist on monotonic progress from v back to u.
+            auto onSegment = [&](uint32_t w, double tMax, double& tOut) {
                 const auto& W = mesh.vertices[w];
-                double ex = V[0] - U[0], ey = V[1] - U[1], ez = V[2] - U[2];
                 double px = W[0] - U[0], py = W[1] - U[1], pz = W[2] - U[2];
-                double ee = ex * ex + ey * ey + ez * ez;
-                if (ee < 1e-30) continue;
                 double t = (px * ex + py * ey + pz * ez) / ee;
-                if (t < -0.01 || t > 1.01) continue;
+                if (t < -0.01 || t > tMax + 1e-9) return false;
                 double dx = px - t * ex, dy = py - t * ey, dz = pz - t * ez;
-                double slack = std::max(weldTol * 2.0,
-                                        0.08 * std::sqrt(ee));
-                if (dx * dx + dy * dy + dz * dz > slack * slack) continue;
-                // Splicing adds (u,w) and (w,v): if either already
-                // exists the splice would CREATE a non-manifold edge —
-                // the absorber must only ever close seams, never open.
-                if (count.count({u, w}) || count.count({w, v})) continue;
-                hit = w;
-                break;
+                if (dx * dx + dy * dy + dz * dz > slack * slack) {
+                    return false;
+                }
+                tOut = t;
+                return true;
+            };
+            // Complement path v -> w1 -> ... -> wk -> u on the denser
+            // neighbour (multi-vertex gaps, handoff step 1): walk open
+            // edges from v, each step landing ON the u-v segment with
+            // strictly decreasing t, until an edge into u exists.
+            std::vector<uint32_t> path;
+            uint32_t cur = v;
+            double tCur = 1.0;
+            bool closed = false;
+            for (int step = 0; step < 8 && !closed; ++step) {
+                uint32_t nxt = UINT32_MAX;
+                double tNxt = 0;
+                bool ambiguous = false;
+                for (auto it = outOf.lower_bound(cur);
+                     it != outOf.end() && it->first == cur; ++it) {
+                    const uint32_t w = it->second;
+                    if (w == u && !path.empty()) {
+                        if (count.count({w, u})) {}
+                        // direct closure candidate handled below
+                    }
+                    if (w == u) {
+                        if (!path.empty()) { nxt = u; tNxt = 0; }
+                        continue;
+                    }
+                    double t;
+                    if (!onSegment(w, tCur - 1e-9, t)) continue;
+                    if (nxt != UINT32_MAX && nxt != u) {
+                        ambiguous = true;  // two candidates: bail, safety
+                        break;
+                    }
+                    if (nxt == UINT32_MAX || nxt == u) { nxt = w; tNxt = t; }
+                }
+                if (ambiguous || nxt == UINT32_MAX) break;
+                if (nxt == u) { closed = true; break; }
+                path.push_back(nxt);
+                cur = nxt;
+                tCur = tNxt;
+                if (count.count({cur, u})) { closed = true; break; }
             }
-            if (hit == UINT32_MAX) continue;
+            if (!closed || path.empty()) continue;
+            // Splices add (u, p_k), reversed interiors, and (p_1, v):
+            // none may already exist or the splice would open a
+            // non-manifold edge instead of closing a seam.
+            bool clash = count.count({u, path.back()}) ||
+                         count.count({path.front(), v});
+            for (size_t i = 0; i + 1 < path.size() && !clash; ++i) {
+                clash = count.count({path[i + 1], path[i]}) > 0;
+            }
+            if (clash) continue;
             auto pit = polyOf.find(e);
             if (pit == polyOf.end()) continue;
             auto& poly = mesh.polygons[pit->second];
             for (size_t i = 0; i < poly.size(); ++i) {
                 if (poly[i] == u && poly[(i + 1) % poly.size()] == v) {
-                    poly.insert(poly.begin() + i + 1, hit);
-                    // keep the guard's view current WITHIN this pass
+                    // Ring runs u -> v; the complement ran v -> ... -> u,
+                    // so insert the path REVERSED between them.
+                    std::vector<uint32_t> rev(path.rbegin(), path.rend());
+                    poly.insert(poly.begin() + i + 1, rev.begin(),
+                                rev.end());
                     --count[{u, v}];
-                    ++count[{u, hit}];
-                    ++count[{hit, v}];
-                    ++spliced;
+                    ++count[{u, rev.front()}];
+                    for (size_t k = 0; k + 1 < rev.size(); ++k) {
+                        ++count[{rev[k], rev[k + 1]}];
+                    }
+                    ++count[{rev.back(), v}];
+                    spliced += int(rev.size());
                     break;
                 }
             }

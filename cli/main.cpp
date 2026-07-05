@@ -53,6 +53,9 @@ void usage() {
         "    --yup / --scale F Y-up + unit scale (engine spaces)\n"
         "    --lods F1,F2,...  one export per density factor (_lod0..),\n"
         "                      manual ops replay into every tier\n"
+        "    --profile cad     the CAD n-gon profile: minimal flats + adaptive\n"
+        "                      curvature counts + natural strips ('dense'\n"
+        "                      restores grid flats)\n"
         "    --adaptive        curvature-driven border counts (the CAD profile;\n"
         "                      big arcs get more segments, straights get 1)\n"
 "    --flat-quads      dense grids on flat faces too (default: flats\n"
@@ -165,6 +168,18 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         else if (a == "--pure-tris") gs.defaults.quadDominant = false;
         else if (a == "--flat-quads") gs.defaults.minimal = false;
         else if (a == "--adaptive") gs.defaults.adaptive = true;
+        else if (a == "--profile") {
+            std::string prof = next();
+            if (prof == "cad") {
+                // Handoff step 3: minimal (default) + adaptive + strips.
+                gs.defaults.minimal = true;
+                gs.defaults.adaptive = true;
+            } else if (prof == "dense") {
+                gs.defaults.minimal = false;
+            } else {
+                throw std::runtime_error("unknown profile: " + prof);
+            }
+        }
         else if (a == "--validate") validate = true;
         else if (a == "--no-normals") noNormals = true;
         else if (a == "--triangulate") objOpts.triangulate = true;
