@@ -392,6 +392,37 @@ curved-chart mesher (ring + web on surface) or floor-with-uv-rings
 would fix it. Weldment residual folds: #4(2) deep-saddle loft cells,
 #72/#311 singles.
 
+## Exact-counts round + the notched-band gap (latest)
+LANDED: "16 radial segments means exactly 16" — four silent rewrites
+of typed numbers removed: (1) densityScale no longer rescales
+overridden proposals; (2) nor STRAIGHT-line groups (cylinder axial
+stays the user's number under the budget slider); (3) the curvature
+floor skips face-pinned groups (DensitySolution.pinnedRoots, filled
+from facePinned + perEdge pins); (4) the rim-sum raise skips pinned
+rings (mismatch stays visible via strip/floor instead of silently
+raising the user's count). App: typing radial/axial/grid u/v in a
+per-face context flips that face's adaptive OFF (same rule as the
+wheel) so the typed number is always the live number. Verified:
+cylinder --face 1:radial=16 --density 2 -> exactly 16 wall quads;
+default cylinder at 2x -> 32 radial x 1 axial.
+
+OPEN (user priority): flaregun face 81 class — a cylinder band with a
+SLOT CUT THROUGH A RIM (notch open to the border). Not u-coverable:
+revolution rejects (notch walls plunge >30% of vspan in the loft
+bins), coons rejects (seam walked twice / >16 edges), so it lands on
+fallback-tri fans. User explicitly wants the two-step design:
+revolution grid as the BASIS, cut regions handled after — i.e. extend
+meshRevolutionInsert to RIM-OPEN notches: (a) plan: classify a
+contiguous u-range where a rim chain plunges as plan.notch
+{u0,u1,vBottom,chain edges}; (b) mesh: place a vRow at the notch
+bottom, delete grid cells inside the notch box, web the OPEN
+staircase to the notch chain sampled at solved counts (the web loop
+closes over the deleted rim segment, so the rim row must stop at the
+notch mouth). Repro fixture to add: solid cylinder minus a box
+channel cut from the top rim to mid-height ("notched"). All the
+validation machinery (contract check, fold check, floor) already
+guards the attempt.
+
 ## Next steps, in order
 1. COUNT DECOUPLING: extend the absorber to multi-vertex gaps (complement
    path v→w1→…→wk→u along a shared B-rep edge), then let 9–16-edge chained
