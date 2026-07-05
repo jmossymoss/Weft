@@ -5749,6 +5749,26 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     std::vector<int> solvedEdge(model.edgeCount() + 1, 0);
     for (int eid = 1; eid <= model.edgeCount(); ++eid) {
         solvedEdge[eid] = density.countFor(eid, 0);
+        // Curvature floor, every mode: a curved edge solved below its
+        // turn angle collapses to chords — observed as two bracket-bend
+        // quarter-pipes flattening into the SAME plane strip and weld-
+        // fusing non-manifold. One segment per ~60 degrees of turn is
+        // the least that keeps distinct geometry distinct; explicit
+        // per-edge pins still win.
+        if (settings.perEdge.count(eid)) continue;
+        const TopoDS_Edge E = TopoDS::Edge(model.edges(eid));
+        if (BRep_Tool::Degenerated(E)) continue;
+        double f, l;
+        Handle(Geom_Curve) c3 = BRep_Tool::Curve(E, f, l);
+        if (c3.IsNull()) continue;
+        GeomAdaptor_Curve gc(c3, f, l);
+        if (gc.GetType() == GeomAbs_Line) continue;
+        try {
+            GCPnts_TangentialDeflection td(gc, M_PI / 3.0, 1e6, 2);
+            const int floorN = std::clamp(td.NbPoints() - 1, 1, 32);
+            if (solvedEdge[eid] < floorN) solvedEdge[eid] = floorN;
+        } catch (const Standard_Failure&) {
+        }
     }
     dbg("generate: density solved");
 
