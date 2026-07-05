@@ -125,6 +125,8 @@ public:
         mesh_.polygonFaceId.push_back(faceId);
     }
 
+    const PolyMesh& mesh() const { return mesh_; }
+
 private:
     PolyMesh& mesh_;
 };
@@ -1063,7 +1065,13 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
 
     // Interior verts: discrete Coons blend of the border SAMPLES in 3D,
     // projected onto the surface. Blending in UV folds wherever a band's
-    // pcurves bend tighter than the band is wide.
+    // pcurves bend tighter than the band is wide — EXCEPT on developable
+    // charts (cylinders, cones), where the UV blend IS the ruling and
+    // the 3D blend+projection is what wobbles (crumpled fillet bands).
+    const GeomAbs_SurfaceType chartType =
+        BRepAdaptor_Surface(face).GetType();
+    const bool ruledChart = chartType == GeomAbs_Cylinder ||
+                            chartType == GeomAbs_Cone;
     GeomAPI_ProjectPointOnSurf proj;
     proj.Init(gp_Pnt(0, 0, 0), surface);
     const gp_Pnt c00 = bottom.front().p, c10 = bottom.back().p;
@@ -1094,13 +1102,15 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
                 gp_Pnt2d seed = patch.uv(a, b);
                 bp.p = surface->Value(seed.X(), seed.Y());
                 bp.uv = seed;
-                proj.Perform(gp_Pnt(blend));
-                if (proj.IsDone() && proj.NbPoints() > 0) {
-                    bp.p = proj.NearestPoint();
-                    double pu, pv;
-                    proj.LowerDistanceParameters(pu, pv);
-                    bp.uv.SetX(pu);
-                    bp.uv.SetY(pv);
+                if (!ruledChart) {
+                    proj.Perform(gp_Pnt(blend));
+                    if (proj.IsDone() && proj.NbPoints() > 0) {
+                        bp.p = proj.NearestPoint();
+                        double pu, pv;
+                        proj.LowerDistanceParameters(pu, pv);
+                        bp.uv.SetX(pu);
+                        bp.uv.SetY(pv);
+                    }
                 }
             }
             gpts[j * (nu + 1) + i] = bp;
@@ -1286,8 +1296,19 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
         }
         return ids;
     };
-    auto bridgeIdx = [](int k, int m, int n) {
-        return int(std::llround(double(k) * double(n) / double(m)));
+    auto arcFractions = [&](const std::vector<uint32_t>& ids) {
+        // Normalized cumulative arc of an emitted vertex sequence.
+        std::vector<double> arc(ids.size(), 0.0);
+        for (size_t k = 1; k < ids.size(); ++k) {
+            const auto& A = out.mesh().vertices[ids[k - 1]];
+            const auto& B = out.mesh().vertices[ids[k]];
+            arc[k] = arc[k - 1] + std::sqrt((B[0] - A[0]) * (B[0] - A[0]) +
+                                            (B[1] - A[1]) * (B[1] - A[1]) +
+                                            (B[2] - A[2]) * (B[2] - A[2]));
+        }
+        const double total = arc.back() > 1e-12 ? arc.back() : 1.0;
+        for (double& x : arc) x /= total;
+        return arc;
     };
     // stubTail (with skipFirst / cornerAfter) reattaches the corner stub
     // when the cell that used to carry it was replaced by a strip.
@@ -1299,19 +1320,41 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
         const int nHigh = int(high.size()) - 1;
         if (nLow < 1 || nHigh < 1) return;
         const bool lowSparse = nLow <= nHigh;
-        const int m = lowSparse ? nLow : nHigh;
-        const int n = lowSparse ? nHigh : nLow;
+        const std::vector<uint32_t>& S = lowSparse ? low : high;
+        const std::vector<uint32_t>& D = lowSparse ? high : low;
+        // Chained rails are piecewise-nonuniform: map by ARC fraction,
+        // not index, or the bridge crosses arc positions into long
+        // diagonal slivers (the zig-zag band).
+        const std::vector<double> sArc = arcFractions(S);
+        const std::vector<double> dArc = arcFractions(D);
+        const int m = int(S.size()) - 1;
+        const int n = int(D.size()) - 1;
+        std::vector<int> mp(m + 1);
+        mp[0] = 0;
+        mp[m] = n;
+        for (int k = 1; k < m; ++k) {
+            int j = mp[k - 1];
+            while (j + 1 < n && std::abs(dArc[j + 1] - sArc[k]) <=
+                                    std::abs(dArc[j] - sArc[k])) {
+                ++j;
+            }
+            mp[k] = j;
+        }
         for (int k = 0; k < m; ++k) {
-            const int a = bridgeIdx(k, m, n);
-            const int b = bridgeIdx(k + 1, m, n);
+            const int a = mp[k];
+            const int b = mp[k + 1];
             std::vector<uint32_t> ring;
             if (lowSparse) {
-                ring = {low[k], low[k + 1]};
-                for (int t = b; t >= a; --t) ring.push_back(high[t]);
+                ring = {S[k], S[k + 1]};
+                for (int t = b; t >= a; --t) ring.push_back(D[t]);
             } else {
-                for (int t = a; t <= b; ++t) ring.push_back(low[t]);
-                ring.push_back(high[k + 1]);
-                ring.push_back(high[k]);
+                for (int t = a; t <= b; ++t) ring.push_back(D[t]);
+                ring.push_back(S[k + 1]);
+                ring.push_back(S[k]);
+            }
+            ring.erase(std::unique(ring.begin(), ring.end()), ring.end());
+            if (ring.size() > 1 && ring.front() == ring.back()) {
+                ring.pop_back();
             }
             if (k == 0 && stubTail && !stubTail->empty()) {
                 ring.insert(ring.end(),
@@ -1319,6 +1362,7 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
                             stubTail->end());
                 if (cornerAfter != UINT32_MAX) ring.push_back(cornerAfter);
             }
+            if (ring.size() < 3) continue;
             out.addPolygon(std::move(ring), faceId, flip);
         }
     };
@@ -1399,7 +1443,7 @@ bool planAnnulus(const TopoDS_Face& face, const Model& model, FacePlan& plan,
             }
             loop[wires].push_back(eid);
         }
-        if (loop[wires].empty() || loop[wires].size() > 8) return false;
+        if (loop[wires].empty() || loop[wires].size() > 24) return false;
         if (!outer.IsNull() && wire.IsSame(outer)) outerIdx = wires;
         wire2[wires] = wire;
         ++wires;
@@ -1765,10 +1809,10 @@ bool webSegmentsCross(const gp_Pnt2d& a, const gp_Pnt2d& b, const gp_Pnt2d& c,
 // Ear clipping over a CCW polygon (may contain coincident bridge vertex
 // pairs from hole merging — they share `vert`, so the doubled bridge edges
 // cancel and the result stays watertight).
-void earClip(std::vector<WebPoint> poly, int faceId, bool flip,
+bool earClip(std::vector<WebPoint> poly, int faceId, bool flip,
              MeshBuilder& out) {
     const size_t n = poly.size();
-    if (n < 3) return;
+    if (n < 3) return false;
     // Scale-free epsilon for convexity/containment decisions.
     double span = 0;
     for (const WebPoint& p : poly) {
@@ -1836,14 +1880,11 @@ void earClip(std::vector<WebPoint> poly, int faceId, bool flip,
             clipped = true;
         }
         if (!clipped) {
-            // Numerical dead end (should not happen on sane plates): close
-            // the rest as a fan so the face at least stays connected.
-            for (size_t k = 1; k + 1 < idx.size(); ++k) {
-                out.addPolygon({poly[idx[0]].vert, poly[idx[k]].vert,
-                                poly[idx[k + 1]].vert},
-                               faceId, flip);
-            }
-            return;
+            // Numerical dead end: the old fan-close swept folded
+            // triangles across hole regions. Fail honestly — the caller
+            // demotes the face and the contract floor (or OCCT) takes
+            // over with the borders intact.
+            return false;
         }
     }
     if (idx.size() == 3) {
@@ -1851,6 +1892,7 @@ void earClip(std::vector<WebPoint> poly, int faceId, bool flip,
                         poly[idx[2]].vert},
                        faceId, flip);
     }
+    return true;
 }
 
 // Merge hole rings into the outer ring via non-crossing bridges (doubled
@@ -1907,14 +1949,10 @@ std::vector<WebPoint> mergeHolesIntoRing(
             bestP = p;
         }
         if (bestP == outer.size()) {
-            // No visible vertex (pathological): mesh the hole ring away as
-            // its own fan so we don't lose the boundary vertices entirely.
-            for (size_t k = 1; k + 1 < hole.size(); ++k) {
-                out.addPolygon(
-                    {hole[0].vert, hole[k + 1].vert, hole[k].vert}, faceId,
-                    flip);
-            }
-            continue;
+            // No visible vertex (pathological): the old fan sealed the
+            // hole with a membrane, silently covering a real opening.
+            // Return empty so the caller fails the face instead.
+            return {};
         }
         // Splice: ...P, M, M+1, ..., M-1, M, P, ... — P and M appear twice
         // sharing their vertex ids, so the bridge edges cancel pairwise.
@@ -2051,13 +2089,14 @@ bool delaunayWeb(const std::vector<WebPoint>& outer,
     }
 }
 
-void triangulateWeb(std::vector<WebPoint> outer,
+bool triangulateWeb(std::vector<WebPoint> outer,
                     std::vector<std::vector<WebPoint>> holes, int faceId,
                     bool flip, MeshBuilder& out) {
-    if (delaunayWeb(outer, holes, faceId, flip, out)) return;
-    earClip(mergeHolesIntoRing(std::move(outer), std::move(holes), faceId,
-                               flip, out),
-            faceId, flip, out);
+    if (delaunayWeb(outer, holes, faceId, flip, out)) return true;
+    std::vector<WebPoint> ring = mergeHolesIntoRing(
+        std::move(outer), std::move(holes), faceId, flip, out);
+    if (ring.size() < 3) return false;
+    return earClip(std::move(ring), faceId, flip, out);
 }
 
 // A planar face's wire sampled as one chained ring: each edge at its own
@@ -2386,9 +2425,8 @@ bool meshPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         webHoles.push_back(std::move(boundary));
     }
 
-    triangulateWeb(std::move(webOuter), std::move(webHoles), faceId, flip,
-                   out);
-    return true;
+    return triangulateWeb(std::move(webOuter), std::move(webHoles), faceId,
+                          flip, out);
 }
 
 // Generalized minimal n-gon: the flattest topology a planar face can
@@ -2448,6 +2486,7 @@ bool meshContractFallback(const TopoDS_Face& face, const Model& model,
                           int radialDefault, MeshBuilder& out) {
     std::vector<PlanarRing> rings;
     if (!samplePlanarRings(face, model, solvedEdge, radialDefault, rings)) {
+        dbg("contract floor %d: ring sampling failed", faceId);
         return false;
     }
     if (rings.empty()) return false;
@@ -2484,8 +2523,8 @@ bool meshContractFallback(const TopoDS_Face& face, const Model& model,
         else holes.push_back(std::move(ring));
     }
     if (outer.size() < 3) return false;
-    triangulateWeb(std::move(outer), std::move(holes), faceId, flip, out);
-    return true;
+    return triangulateWeb(std::move(outer), std::move(holes), faceId, flip,
+                          out);
 }
 
 bool planQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
@@ -2799,9 +2838,8 @@ bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     if (faceOuter.size() < 3) return false;
 
     if (!anyCell) {  // no room for a grid: plain web over the whole face
-        triangulateWeb(std::move(faceOuter), std::move(faceHoles), faceId,
-                       flip, out);
-        return true;
+        return triangulateWeb(std::move(faceOuter), std::move(faceHoles),
+                              faceId, flip, out);
     }
 
     // Frontier: kept-region boundary edges, traced into closed loops on
@@ -2945,9 +2983,10 @@ bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
             r.holes[0].size() >= 3) {
             zipped = zipperRings(r.outer, r.holes[0], faceId, flip, out);
         }
-        if (!zipped) {
-            triangulateWeb(std::move(r.outer), std::move(r.holes), faceId,
-                           flip, out);
+        if (!zipped &&
+            !triangulateWeb(std::move(r.outer), std::move(r.holes), faceId,
+                            flip, out)) {
+            return false;
         }
     }
     return true;
@@ -4695,50 +4734,16 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         paired.push_back({tris[t][0], tris[t][1], tris[t][2]});
     }
 
-    // One midpoint (Catmull-Clark-style) subdivision turns the paired mesh
-    // into pure quads: each tri becomes 3, each quad 4. New vertices are
-    // evaluated on the surface through averaged UVs, so they sit exactly on
-    // the B-rep, not on the chord.
-    auto emitVertex = [&](double u, double v, const gp_Pnt& fallbackPnt) {
-        if (!hasUV) return out.addVertex(fallbackPnt, {});
-        gp_Pnt p = surf.Value(u, v);
-        return out.addVertex(p, {faceId, u, v});
-    };
-    std::vector<gp_Pnt2d> uvs(pts.size());
-    if (hasUV) {
-        for (size_t i = 0; i < pts.size(); ++i) uvs[i] = tri->UVNode(i + 1);
-    }
-    std::map<std::pair<int, int>, uint32_t> midOf;
-    auto midpoint = [&](int a, int b) {
-        auto key = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
-        auto it = midOf.find(key);
-        if (it != midOf.end()) return it->second;
-        gp_Pnt mid(0.5 * (pts[a].X() + pts[b].X()),
-                   0.5 * (pts[a].Y() + pts[b].Y()),
-                   0.5 * (pts[a].Z() + pts[b].Z()));
-        uint32_t idx = emitVertex(0.5 * (uvs[a].X() + uvs[b].X()),
-                                  0.5 * (uvs[a].Y() + uvs[b].Y()), mid);
-        midOf[key] = idx;
-        return idx;
-    };
-
+    // Emit the paired mesh AS IS: quads where two triangles merged,
+    // triangles where nothing paired. The old midpoint subdivision
+    // ("pure quads") quadrupled density and salted every border with
+    // midpoint vertices no neighbour has — un-triangulating is the
+    // whole job here, not adding edges.
     for (const auto& ring : paired) {
-        const int n = static_cast<int>(ring.size());
-        double cu = 0, cv = 0, cx = 0, cy = 0, cz = 0;
-        for (int v : ring) {
-            cu += uvs[v].X();
-            cv += uvs[v].Y();
-            cx += pts[v].X();
-            cy += pts[v].Y();
-            cz += pts[v].Z();
-        }
-        uint32_t center =
-            emitVertex(cu / n, cv / n, gp_Pnt(cx / n, cy / n, cz / n));
-        for (int i = 0; i < n; ++i) {
-            out.addPolygon({verts[ring[i]], midpoint(ring[i], ring[(i + 1) % n]),
-                            center, midpoint(ring[(i + n - 1) % n], ring[i])},
-                           faceId, flip);
-        }
+        std::vector<uint32_t> poly;
+        poly.reserve(ring.size());
+        for (int v : ring) poly.push_back(verts[v]);
+        out.addPolygon(std::move(poly), faceId, flip);
     }
 }
 
@@ -5492,12 +5497,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                    llround(P[2] / q)}]
                 .push_back(vi);
         }
-        auto nearVert = [&](const gp_Pnt& p) -> int64_t {
+        // ALL vertices coinciding with a sample: pre-weld parts hold
+        // duplicate corner ids (one per side/strip), and the polygon
+        // edge may hang off any of them.
+        auto nearVerts = [&](const gp_Pnt& p) {
+            std::vector<uint32_t> hits;
             const long long cx = llround(p.X() / q),
                             cy = llround(p.Y() / q),
                             cz = llround(p.Z() / q);
-            double best = q * q;
-            int64_t bi = -1;
             for (long long dx = -1; dx <= 1; ++dx) {
                 for (long long dy = -1; dy <= 1; ++dy) {
                     for (long long dz = -1; dz <= 1; ++dz) {
@@ -5508,17 +5515,15 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             const double ddx = P[0] - p.X();
                             const double ddy = P[1] - p.Y();
                             const double ddz = P[2] - p.Z();
-                            const double d =
-                                ddx * ddx + ddy * ddy + ddz * ddz;
-                            if (d < best) {
-                                best = d;
-                                bi = vi;
+                            if (ddx * ddx + ddy * ddy + ddz * ddz <
+                                q * q) {
+                                hits.push_back(vi);
                             }
                         }
                     }
                 }
             }
-            return bi;
+            return hits;
         };
         std::set<uint64_t> partEdges;
         for (const auto& poly : part.polygons) {
@@ -5548,17 +5553,31 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 c3->Value(f).Distance(c3->Value(l)) < 4.0 * q) {
                 continue;  // micro edge: below weld resolution
             }
-            int64_t prev = nearVert(c3->Value(f));
+            std::vector<uint32_t> prev = nearVerts(c3->Value(f));
             for (int i = 1; i <= n; ++i) {
-                const int64_t cur =
-                    nearVert(c3->Value(f + (l - f) * i / n));
-                if (prev < 0 || cur < 0 || prev == cur ||
-                    !partEdges.count(
-                        (uint64_t(std::min(prev, cur)) << 32) |
-                        std::max(prev, cur))) {
+                std::vector<uint32_t> cur =
+                    nearVerts(c3->Value(f + (l - f) * i / n));
+                bool linked = false;
+                for (uint32_t a : prev) {
+                    for (uint32_t b : cur) {
+                        if (a != b &&
+                            partEdges.count(
+                                (uint64_t(std::min(a, b)) << 32) |
+                                std::max(a, b))) {
+                            linked = true;
+                            break;
+                        }
+                    }
+                    if (linked) break;
+                }
+                if (!linked) {
+                    dbg("contract check %d: edge %d sample %d/%d: %s", fid,
+                        eid, i, n,
+                        prev.empty() || cur.empty() ? "no vertex"
+                                                    : "no edge");
                     return eid;
                 }
-                prev = cur;
+                prev = std::move(cur);
             }
         }
         return 0;
