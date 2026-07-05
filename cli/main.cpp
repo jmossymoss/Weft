@@ -187,6 +187,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
             }
         }
         else if (a == "--validate") validate = true;
+        else if (a == "--debug") weft::setGenerateDebugLog(stderr);
         else if (a == "--no-normals") noNormals = true;
         else if (a == "--triangulate") objOpts.triangulate = true;
         else if (a == "--yup") objOpts.yUp = true;

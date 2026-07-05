@@ -98,6 +98,40 @@ Flaregun board still needs the user's machine (probe27, both modes,
 quad% targets). Absorber knobs if it regresses: walk depth (8),
 on-segment slack (8%), pass count (4).
 
+## The contract architecture (2026-07-05 — the load-bearing invariant)
+THE BORDER CONTRACT: every vertex on a shared B-rep edge comes from
+sampling that edge's 3D curve at exactly solvedEdge[eid] uniform
+curve-parameter steps, honouring face-local edge orientation. Every
+mesher follows it; nothing else may emit a border. Enforcement now has
+three layers (all in core/src/meshers.cpp):
+1. meshContractFallback — the demotion floor: wires sampled at solved
+   counts, holes keyhole-bridged in UV (anisotropy normalized),
+   triangulateWeb region fill. Exact borders by construction; any face
+   with pcurves can land here and never leak.
+2. borderContractViolation — a postcondition run on every planned
+   mesher's part: each border edge's solved samples must appear as
+   polygon edges or the face demotes through demote() (contract floor
+   first, verified; raw OCCT triangulation only when even the floor is
+   unavailable). All demotion sites route through demote().
+3. Meshers that can genuinely need mismatched counts absorb them
+   INSIDE the face: coons transition strips (natural rail bridged to
+   the first interior line, quads + 5-gons), revolution closed strips
+   (exact rim ring bridged to the uniform interior ring), insert bands
+   (grid rows placed exactly at each slot band's v-extents so the
+   staircase closes by construction, everything validated before
+   emission).
+Fixed this round (all were silent leaks): adaptive nv=1 insert bands
+deleting rim-to-rim (the 168-open slotted case, `--profile cad` on the
+15MB assembly was 130k opens), insert webs skipped when staircase
+chains failed to close, insert-wire iso edges contaminating rim rows,
+rim sampling ignoring face-local orientation, annulus emitting nothing
+on thin rings, seam edges walked twice by planAnnulus, per-edge pins of
+0, torus --axial 1 emitting nothing, absorber chord test dropping
+curved seams (now 25% sagitta allowance + detour bound, walk 24,
+passes 8). CLI gained --density F (global budget dial, composes with
+--lods). Gates: ALL fixtures watertight in defaults/--adaptive/
+--profile cad at densities 0.2–5; both as1 assemblies watertight.
+
 ## Next steps, in order
 1. COUNT DECOUPLING: extend the absorber to multi-vertex gaps (complement
    path v→w1→…→wk→u along a shared B-rep edge), then let 9–16-edge chained
