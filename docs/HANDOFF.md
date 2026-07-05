@@ -74,6 +74,22 @@ leak at slot WALLS — the wall coons fails and demotes at mesh time,
 which breaks the border contract (the pre-existing demotion crack class,
 see doctrine). Plan-time routing for that case is part of step 1/2.
 
+## Count decoupling round 1 (landed — VERIFY ON THE BOARD)
+Step 1 is implemented: the solver's chained-coons fixpoint (grow lighter
+side until totals match) is gone; mismatched rails arc-fraction-resample
+the deficit side inside meshCoonsGrid (points stay on the border curves
+via pcurve+surface); unionSeams extended to MULTI-VERTEX complement
+paths (walk up to 8 open edges v->w1..wk->u, monotonic on-segment t,
+bail on ambiguity, all non-manifold guards kept); coons cap raised
+8 -> 16. Profile flag: `--profile cad` = minimal + adaptive. Local
+gates: all tests green, every fixture + both as1 assemblies watertight;
+the 15 MB dirty assembly collapses 2.62M -> 153k polys (cascade dead),
+non-manifold 493 -> 303, opens 9,068 -> 11,007 (decoupled seams the
+absorber misses yet). NOT yet run against the 8-model flaregun board —
+that gate (probe27, both modes, quad% targets) must run on the user's
+machine before this is called done. Absorber tuning knobs if the board
+regresses: walk depth (8), on-segment slack (8%), pass count (4).
+
 ## Next steps, in order
 1. COUNT DECOUPLING: extend the absorber to multi-vertex gaps (complement
    path v→w1→…→wk→u along a shared B-rep edge), then let 9–16-edge chained
