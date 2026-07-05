@@ -89,6 +89,24 @@ TopoDS_Shape makeFixture(const std::string& name) {
         TopoDS_Shape cut = BRepAlgoAPI_Cut(tube, slot).Shape();
         return BRepAlgoAPI_Cut(cut, slot2).Shape();
     }
+    if (name == "notched") {
+        // The flaregun face-81 class: a tube whose wall carries a channel
+        // cut clean THROUGH the top rim (the notch opens to the border).
+        // The outer cylinder stays u-closed below the notch; its top rim
+        // is arcs + two wall drops + a notch floor. Revolution grid must
+        // stay the basis with the notch handled as a rim-open cutout -
+        // not a fallback-tri fan.
+        gp_Ax2 axis(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1));
+        TopoDS_Shape tube = BRepAlgoAPI_Cut(
+            BRepPrimAPI_MakeCylinder(axis, 12.0, 40.0).Shape(),
+            BRepPrimAPI_MakeCylinder(axis, 9.0, 40.0).Shape());
+        // Channel: a box from mid-height out through the rim and wall.
+        TopoDS_Shape channel =
+            BRepPrimAPI_MakeBox(gp_Pnt(-4.0, 0.0, 22.0),
+                                gp_Pnt(4.0, 20.0, 44.0))
+                .Shape();
+        return BRepAlgoAPI_Cut(tube, channel).Shape();
+    }
     if (name == "bossfillet") {
         // The HDD class: a round boss whose top rim is blended — the
         // fillet ring is a full 360-degree torus band and must mesh as
