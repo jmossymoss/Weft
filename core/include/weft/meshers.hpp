@@ -144,6 +144,10 @@ enum class MesherKind {
                      // B-rep boundary by a thin triangulated rim — clean
                      // quad flow on plates instead of fan triangulations.
                      // Auto when quad-dominant is set; always forcible.
+    RailLadder,      // two-tip band (crescent/lune/tangent strip — the
+                     // outline has exactly two sharp corners): the two
+                     // rails pair by arc fraction and ladder into quads
+                     // with grouped 5-gons; the tips collapse naturally.
 };
 
 const char* mesherKindName(MesherKind k);

@@ -103,6 +103,7 @@ const char* mesherKindName(MesherKind k) {
         case MesherKind::AnnulusRing: return "annulus-ring";
         case MesherKind::PlateWeb: return "plate-web";
         case MesherKind::QuadFill: return "quad-fill";
+        case MesherKind::RailLadder: return "rail-ladder";
     }
     return "fallback-tri";
 }
@@ -2801,6 +2802,156 @@ bool meshMinimalPlanar(const TopoDS_Face& face, const Model& model,
     return true;
 }
 
+// A band with exactly two sharp tips: crescents, lunes, tangent strips
+// (a drill grazing a wall). Coons needs four corners and the webs fan
+// these; the ladder pairs the two rails by arc fraction directly —
+// quads rung by rung, grouped 5-gons absorbing count differences, the
+// tips collapsing to triangles by construction.
+bool planRailLadder(const TopoDS_Face& face, const Model& model,
+                    FacePlan& plan) {
+    int wires = 0;
+    std::vector<TopoDS_Edge> order;
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        if (++wires > 1) return false;
+        for (BRepTools_WireExplorer we(TopoDS::Wire(wx.Current()), face);
+             we.More(); we.Next()) {
+            const TopoDS_Edge e = we.Current();
+            if (BRep_Tool::Degenerated(e)) continue;
+            double f, l;
+            if (BRep_Tool::Curve(e, f, l).IsNull()) return false;
+            if (model.edges.FindIndex(e) < 1) return false;
+            order.push_back(e);
+        }
+    }
+    if (wires != 1 || order.size() < 2 || order.size() > 64) return false;
+    auto wireTangent = [&](const TopoDS_Edge& e, bool atWireEnd) {
+        BRepAdaptor_Curve c(e);
+        const bool rev = e.Orientation() == TopAbs_REVERSED;
+        const double t = (atWireEnd != rev) ? c.LastParameter()
+                                            : c.FirstParameter();
+        gp_Pnt p;
+        gp_Vec d;
+        c.D1(t, p, d);
+        if (rev) d.Reverse();
+        return d;
+    };
+    int sharp = 0;
+    for (size_t i = 0; i < order.size(); ++i) {
+        gp_Vec a = wireTangent(order[i], true);
+        gp_Vec b = wireTangent(order[(i + 1) % order.size()], false);
+        if (a.Magnitude() < 1e-12 || b.Magnitude() < 1e-12) return false;
+        if (a.Angle(b) > M_PI / 4.0) ++sharp;
+    }
+    if (sharp != 2) return false;
+    plan.kind = MesherKind::RailLadder;
+    plan.constrains = true;
+    for (const TopoDS_Edge& e : order) {
+        plan.uEdges.push_back(model.edges.FindIndex(e));
+    }
+    return true;
+}
+
+bool meshRailLadder(const TopoDS_Face& face, const Model& model, int faceId,
+                    const std::vector<int>& solvedEdge, int radialDefault,
+                    MeshBuilder& out) {
+    std::vector<PlanarRing> rings;
+    if (!samplePlanarRings(face, model, solvedEdge, radialDefault, rings)) {
+        return false;
+    }
+    if (rings.size() != 1) return false;
+    const std::vector<gp_Pnt>& P = rings[0].p;
+    const size_t N = P.size();
+    if (N < 4) return false;
+    // The two sharpest turns of the sampled outline are the tips.
+    auto turn = [&](size_t i) {
+        const gp_Pnt& a = P[(i + N - 1) % N];
+        const gp_Pnt& b = P[i];
+        const gp_Pnt& c = P[(i + 1) % N];
+        gp_Vec u(a, b), v(b, c);
+        if (u.Magnitude() < 1e-12 || v.Magnitude() < 1e-12) return 0.0;
+        return u.Angle(v);
+    };
+    size_t t1 = 0, t2 = 0;
+    double a1 = -1.0, a2 = -1.0;
+    for (size_t i = 0; i < N; ++i) {
+        const double a = turn(i);
+        if (a > a1) {
+            a2 = a1;
+            t2 = t1;
+            a1 = a;
+            t1 = i;
+        } else if (a > a2) {
+            a2 = a;
+            t2 = i;
+        }
+    }
+    if (t1 == t2 || a2 < M_PI / 6.0) return false;  // no second tip
+    const size_t lo = std::min(t1, t2), hi = std::max(t1, t2);
+    std::vector<uint32_t> ids(N);
+    for (size_t i = 0; i < N; ++i) ids[i] = out.addVertex(P[i], {});
+    std::vector<uint32_t> A, B;
+    std::vector<gp_Pnt> Ap, Bp;
+    for (size_t i = lo;; i = (i + 1) % N) {
+        A.push_back(ids[i]);
+        Ap.push_back(P[i]);
+        if (i == hi) break;
+    }
+    for (size_t i = hi;; i = (i + 1) % N) {
+        B.push_back(ids[i]);
+        Bp.push_back(P[i]);
+        if (i == lo) break;
+    }
+    std::reverse(B.begin(), B.end());
+    std::reverse(Bp.begin(), Bp.end());
+    if (A.size() < 2 || B.size() < 2) return false;
+    auto arcs = [](const std::vector<gp_Pnt>& pts) {
+        std::vector<double> f(pts.size(), 0.0);
+        for (size_t i = 1; i < pts.size(); ++i) {
+            f[i] = f[i - 1] + pts[i].Distance(pts[i - 1]);
+        }
+        const double t = f.back() > 1e-12 ? f.back() : 1.0;
+        for (double& x : f) x /= t;
+        return f;
+    };
+    const bool aSparse = A.size() <= B.size();
+    const std::vector<uint32_t>& S = aSparse ? A : B;
+    const std::vector<uint32_t>& D = aSparse ? B : A;
+    const std::vector<double> sf = arcs(aSparse ? Ap : Bp);
+    const std::vector<double> df = arcs(aSparse ? Bp : Ap);
+    const int m = int(S.size()) - 1;
+    const int n = int(D.size()) - 1;
+    std::vector<int> mp(m + 1);
+    mp[0] = 0;
+    mp[m] = n;
+    for (int k = 1; k < m; ++k) {
+        int j = mp[k - 1];
+        while (j + 1 < n &&
+               std::abs(df[j + 1] - sf[k]) <= std::abs(df[j] - sf[k])) {
+            ++j;
+        }
+        mp[k] = j;
+    }
+    const bool flip = face.Orientation() == TopAbs_REVERSED;
+    for (int k = 0; k < m; ++k) {
+        std::vector<uint32_t> ring2;
+        if (aSparse) {
+            ring2 = {S[k], S[k + 1]};
+            for (int t = mp[k + 1]; t >= mp[k]; --t) ring2.push_back(D[t]);
+        } else {
+            for (int t = mp[k]; t <= mp[k + 1]; ++t) ring2.push_back(D[t]);
+            ring2.push_back(S[k + 1]);
+            ring2.push_back(S[k]);
+        }
+        ring2.erase(std::unique(ring2.begin(), ring2.end()), ring2.end());
+        if (ring2.size() > 1 && ring2.front() == ring2.back()) {
+            ring2.pop_back();
+        }
+        if (ring2.size() < 3) continue;
+        out.addPolygon(std::move(ring2), faceId, flip);
+    }
+    return true;
+}
+
 // The demotion floor for ANY face with pcurves: every wire sampled at
 // the solved counts (the border contract, same formula every mesher
 // uses), holes bridged in UV, the region web-triangulated. Interior
@@ -3603,6 +3754,11 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             return plan;
         }
     }
+
+    // Two-tip bands (crescents, lunes, tangent strips): coons wants four
+    // corners and the webs fan these — the rail ladder pairs the two
+    // rails directly.
+    if (planRailLadder(face, model, plan)) return plan;
 
     // Flat faces with quad-dominant set get the structured grid + rim
     // fill instead of OCCT triangulation + pairing.
@@ -5855,7 +6011,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             s.relativeDeviation ? 1 : 0, s.squareCollar ? 1 : 0,
             s.coonsRotate, settings.densityScale);
         cacheKey[fid] = key;
-        if (plan.kind == MesherKind::AnnulusRing || !plan.loops.empty()) {
+        if (plan.kind == MesherKind::AnnulusRing ||
+            plan.kind == MesherKind::RailLadder || !plan.loops.empty()) {
             for (int eid : plan.uEdges) {
                 cacheKey[fid] += "u" + std::to_string(solvedEdge[eid]);
             }
@@ -6202,8 +6359,27 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     demote(fid, face, surf, s, "quad fill failed");
                 }
                 break;
+            case MesherKind::RailLadder:
+                if (!meshRailLadder(face, model, fid, solvedEdge, s.radial,
+                                    out)) {
+                    demote(fid, face, surf, s, "rail ladder failed");
+                }
+                break;
             case MesherKind::QuadDominant:
             case MesherKind::Fallback: {
+                // The contract floor first: exact borders by
+                // construction, so planned-fallback faces weld seamlessly
+                // instead of relying on the conform pass to reconcile
+                // OCCT's own discretization (observed: 23 opens on the
+                // weldment where conform couldn't). Raw OCCT remains for
+                // faces the floor cannot express.
+                if (meshContractFallback(face, model, fid, solvedEdge,
+                                         s.radial, out) &&
+                    borderContractViolation(fid, parts[fid]) == 0) {
+                    break;
+                }
+                parts[fid] = PolyMesh();
+                MeshBuilder retryFb(parts[fid]);
                 FaceMeshSettings fs = s;
                 if (plan.forceFallbackQuads >= 0) {
                     fs.quadDominant = plan.forceFallbackQuads != 0;
@@ -6218,7 +6394,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     fs.angleToleranceDeg =
                         std::clamp(fs.angleToleranceDeg / dsc, 1.0, 60.0);
                 }
-                meshFallback(face, surf, fid, fs, out);
+                meshFallback(face, surf, fid, fs, retryFb);
                 break;
             }
         }
