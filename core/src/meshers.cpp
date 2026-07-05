@@ -5084,7 +5084,7 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
 void unionSeams(PolyMesh& mesh, const Model& model, double weldTol) {
     (void)model;
     int total = 0;
-    for (int pass = 0; pass < 4; ++pass) {
+    for (int pass = 0; pass < 8; ++pass) {
         std::map<std::pair<uint32_t, uint32_t>, size_t> polyOf;
         std::map<std::pair<uint32_t, uint32_t>, int> count;
         std::multimap<uint32_t, uint32_t> outOf;  // v -> w for edge (v,w)
@@ -5107,10 +5107,16 @@ void unionSeams(PolyMesh& mesh, const Model& model, double weldTol) {
             double ex = V[0] - U[0], ey = V[1] - U[1], ez = V[2] - U[2];
             double ee = ex * ex + ey * ey + ez * ez;
             if (ee < 1e-30) continue;
-            const double slack = std::max(weldTol * 2.0,
-                                          0.08 * std::sqrt(ee));
-            // On-segment test with the running parameter, so the walk
-            // below can insist on monotonic progress from v back to u.
+            // Curvature-tolerant on-segment test: the complement path of
+            // an open edge on a CURVED border (cylinder rim, fillet rail)
+            // lies on the arc, not the chord — its sagitta reaches 21% of
+            // the chord at a 90-degree span, so an 8% chord slack silently
+            // dropped every curved seam. Allow 25% perpendicular drift
+            // plus an ellipse detour bound (|uw|+|wv| vs |uv|); the walk's
+            // monotone parameter and the exact topological closure at u
+            // remain the real gatekeepers.
+            const double chord = std::sqrt(ee);
+            const double slack = std::max(weldTol * 2.0, 0.25 * chord);
             auto onSegment = [&](uint32_t w, double tMax, double& tOut) {
                 const auto& W = mesh.vertices[w];
                 double px = W[0] - U[0], py = W[1] - U[1], pz = W[2] - U[2];
@@ -5120,6 +5126,12 @@ void unionSeams(PolyMesh& mesh, const Model& model, double weldTol) {
                 if (dx * dx + dy * dy + dz * dz > slack * slack) {
                     return false;
                 }
+                const double dU = std::sqrt(px * px + py * py + pz * pz);
+                const double dV = std::sqrt(
+                    (W[0] - V[0]) * (W[0] - V[0]) +
+                    (W[1] - V[1]) * (W[1] - V[1]) +
+                    (W[2] - V[2]) * (W[2] - V[2]));
+                if (dU + dV > 1.35 * chord + 2.0 * weldTol) return false;
                 tOut = t;
                 return true;
             };
@@ -5131,7 +5143,7 @@ void unionSeams(PolyMesh& mesh, const Model& model, double weldTol) {
             uint32_t cur = v;
             double tCur = 1.0;
             bool closed = false;
-            for (int step = 0; step < 8 && !closed; ++step) {
+            for (int step = 0; step < 24 && !closed; ++step) {
                 uint32_t nxt = UINT32_MAX;
                 double tNxt = 0;
                 bool ambiguous = false;
