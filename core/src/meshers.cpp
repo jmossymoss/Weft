@@ -1,5 +1,8 @@
 #include "weft/meshers.hpp"
 
+#include <functional>
+#include <sstream>
+
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
@@ -147,6 +150,11 @@ struct FacePlan {
     // curves) and `axial`/`gridV` times respectively. Empty for Fallback.
     std::vector<int> uEdges;
     std::vector<int> vEdges;
+    // Revolution rims split by band side (v-low / v-high). When a rim is
+    // several edges (a T-junction interrupts the circle), the two rims
+    // carry a SUM constraint — equal totals — not per-edge equality.
+    std::vector<int> rimLow;
+    std::vector<int> rimHigh;
     // Whether this plan's edge lists participate in density matching.
     bool constrains = false;
     // Fillet strips get support loops across the blend instead of plain
@@ -212,6 +220,100 @@ bool edgesHugRims(const TopoDS_Face& face, const BRepAdaptor_Surface& surf) {
     return true;
 }
 
+// Partition a closed band's border edges (seams, poles and insert wires
+// excluded) into the two rim chains by CONNECTIVITY — a deep pipe-saddle
+// weld curve wanders past the band's v middle, so nearest-end tests
+// misfile its edges; what actually defines a chain is that its edges
+// share vertices. Chains are then named low/high by mean v. Returns
+// false when the borders don't form 1 or 2 chains.
+bool rimChains(const TopoDS_Face& face, const Model& model,
+               const std::set<int>& insertIds, std::vector<int>& low,
+               std::vector<int>& high) {
+    low.clear();
+    high.clear();
+    std::map<const void*, int> vertGroup;  // vertex TShape -> chain id
+    std::map<int, int> edgeGroup;
+    std::map<int, double> edgeMeanV;
+    std::vector<int> parent;  // tiny union-find over chain ids
+    std::function<int(int)> findG = [&](int g) {
+        while (parent[g] != g) g = parent[g] = parent[parent[g]];
+        return g;
+    };
+    for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+        const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+        if (BRep_Tool::Degenerated(edge)) continue;
+        if (BRep_Tool::IsClosed(edge, face)) continue;  // seam
+        const int eid = model.edges.FindIndex(edge);
+        if (eid < 1 || insertIds.count(eid)) continue;
+        if (edgeGroup.count(eid)) continue;  // second traversal
+        double f, l;
+        Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(edge, face, f, l);
+        if (pc.IsNull()) return false;
+        double sum = 0;
+        for (int k = 0; k <= 8; ++k) {
+            sum += pc->Value(f + (l - f) * k / 8.0).Y();
+        }
+        edgeMeanV[eid] = sum / 9.0;
+        TopoDS_Vertex va, vb;
+        TopExp::Vertices(edge, va, vb);
+        int g = -1;
+        for (const TopoDS_Vertex& v : {va, vb}) {
+            if (v.IsNull()) continue;
+            auto it = vertGroup.find(v.TShape().get());
+            if (it == vertGroup.end()) continue;
+            const int vg = findG(it->second);
+            if (g < 0) {
+                g = vg;
+            } else if (g != vg) {
+                parent[vg] = g;  // edge joins two chains
+            }
+        }
+        if (g < 0) {
+            g = int(parent.size());
+            parent.push_back(g);
+        }
+        edgeGroup[eid] = g;
+        for (const TopoDS_Vertex& v : {va, vb}) {
+            if (!v.IsNull()) vertGroup[v.TShape().get()] = g;
+        }
+    }
+    // No rim edges at all (full sphere: poles + seam only; full torus:
+    // nothing) is a valid band — both chains stay empty.
+    if (edgeGroup.empty()) return true;
+    std::map<int, std::pair<double, int>> chains;  // root -> (sumV, n)
+    for (const auto& [eid, g] : edgeGroup) {
+        auto& c = chains[findG(g)];
+        c.first += edgeMeanV[eid];
+        c.second += 1;
+    }
+    if (chains.size() > 2) return false;
+    int lowRoot = -1;
+    double lowMean = 1e300;
+    for (const auto& [root, c] : chains) {
+        const double mean = c.first / c.second;
+        if (mean < lowMean) {
+            lowMean = mean;
+            lowRoot = root;
+        }
+    }
+    if (chains.size() == 1) {
+        // A single rim (cone to an apex, sphere cap): it keeps the side
+        // its v actually sits on so the grid doesn't build upside down.
+        BRepAdaptor_Surface sf(face);
+        const double sv0 = sf.FirstVParameter();
+        const double sv1 = sf.LastVParameter();
+        auto& dst = std::abs(lowMean - sv0) <= std::abs(lowMean - sv1)
+                        ? low
+                        : high;
+        for (const auto& [eid, g] : edgeGroup) dst.push_back(eid);
+        return true;
+    }
+    for (const auto& [eid, g] : edgeGroup) {
+        (findG(g) == lowRoot ? low : high).push_back(eid);
+    }
+    return true;
+}
+
 // Like edgesHugRims, but a wire living STRICTLY inside the band (a slot
 // or hole through the wall) is collected as an insert instead of
 // disqualifying the whole face.
@@ -224,6 +326,7 @@ bool edgesHugRimsOrInserts(const TopoDS_Face& face,
     const double uspan = std::max(1e-12, u1 - u0);
     const double vspan = std::max(1e-12, v1 - v0);
     wires.clear();
+    std::vector<std::array<double, 4>> insertBox;
     for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
         double wu0 = 1e300, wu1 = -1e300, wv0 = 1e300, wv1 = -1e300;
         std::vector<int> ids;
@@ -254,36 +357,91 @@ bool edgesHugRimsOrInserts(const TopoDS_Face& face,
                               wv1 < v1 - 0.03 * vspan;
         if (interior) {
             wires.push_back(std::move(ids));
+            insertBox.push_back({wu0, wu1, wv0, wv1});
             continue;
         }
-        // Not interior: every edge of this wire must be a rim or seam.
-        for (TopExp_Explorer ex(wx.Current(), TopAbs_EDGE); ex.More();
-             ex.Next()) {
-            const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
-            if (BRep_Tool::Degenerated(edge)) continue;
+        // Not interior: the wire's edges are rims (flat or WAVY — a
+        // pipe-saddle weld curve winds around u while its v oscillates)
+        // and seams. Loftability of the rim chains is checked
+        // collectively below.
+    }
+    // Wavy-rim loftability: bucket every border sample by u and demand
+    // clear v separation between the two rim CHAINS in every bucket.
+    // (Flat rims pass trivially; crossing or interleaved chains reject.)
+    std::set<int> insertIds;
+    for (const auto& w : wires) insertIds.insert(w.begin(), w.end());
+    std::vector<int> lowChain, highChain;
+    if (!rimChains(face, model, insertIds, lowChain, highChain)) {
+        return false;
+    }
+    // Pure bands (full sphere/torus) have no rim chains to vet.
+    if (lowChain.empty() && highChain.empty()) return true;
+    constexpr int kBins = 64;
+    double loMax[kBins], hiMin[kBins], loMin[kBins], hiMax[kBins];
+    for (int i = 0; i < kBins; ++i) {
+        loMax[i] = -1e300;
+        hiMin[i] = 1e300;
+        loMin[i] = 1e300;
+        hiMax[i] = -1e300;
+    }
+    for (int pass = 0; pass < 2; ++pass) {
+        for (int eid : pass == 0 ? lowChain : highChain) {
+            const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
             double f, l;
             Handle(Geom2d_Curve) pc =
                 BRep_Tool::CurveOnSurface(edge, face, f, l);
-            double eu0 = 1e300, eu1 = -1e300, ev0 = 1e300, ev1 = -1e300;
-            for (int k = 0; k <= 4; ++k) {
-                gp_Pnt2d uv = pc->Value(f + (l - f) * k / 4.0);
-                eu0 = std::min(eu0, uv.X());
-                eu1 = std::max(eu1, uv.X());
-                ev0 = std::min(ev0, uv.Y());
-                ev1 = std::max(ev1, uv.Y());
-            }
-            if (ev1 - ev0 < 0.02 * vspan) {
-                double v = (ev0 + ev1) / 2;
-                if (std::min(std::abs(v - v0), std::abs(v - v1)) >
-                    0.05 * vspan) {
-                    return false;
+            if (pc.IsNull()) return false;
+            for (int k = 0; k <= 16; ++k) {
+                gp_Pnt2d uv = pc->Value(f + (l - f) * k / 16.0);
+                double uu = uv.X() - u0;
+                uu -= uspan * std::floor(uu / uspan);
+                int bin =
+                    std::clamp(int(uu / uspan * kBins), 0, kBins - 1);
+                if (pass == 0) {
+                    loMax[bin] = std::max(loMax[bin], uv.Y());
+                    loMin[bin] = std::min(loMin[bin], uv.Y());
+                } else {
+                    hiMin[bin] = std::min(hiMin[bin], uv.Y());
+                    hiMax[bin] = std::max(hiMax[bin], uv.Y());
                 }
-            } else if (eu1 - eu0 < 0.02 * uspan) {
-                if (ev1 - ev0 < 0.9 * vspan) return false;
-            } else {
-                return false;
             }
         }
+    }
+    for (int i = 0; i < kBins; ++i) {
+        if (loMax[i] > -1e300 && hiMin[i] < 1e300 && loMax[i] >= hiMin[i]) {
+            return false;
+        }
+        // Loftable rims are FUNCTIONS of u: a chain that doubles back
+        // (gear teeth, deep slots cut into a rim) stacks several v's
+        // over one u and cannot drive a lofted row. Short jogs (weld
+        // steps) stay well under the limit.
+        if (loMax[i] > -1e300 && loMax[i] - loMin[i] > 0.3 * vspan) {
+            return false;
+        }
+        if (hiMax[i] > -1e300 && hiMax[i] - hiMin[i] > 0.3 * vspan) {
+            return false;
+        }
+    }
+    // Between-chain coverage: the loft region must actually belong to
+    // the face — a band with a large un-modeled cutout (not an insert
+    // wire) cannot loft. Insert-wire boxes are skipped: their cells are
+    // removed and webbed after the grid.
+    const double tolF = BRep_Tool::Tolerance(face);
+    for (int i = 0; i < kBins; i += 4) {
+        if (loMax[i] <= -1e300 || hiMin[i] >= 1e300) continue;
+        const double uu = u0 + (i + 0.5) * uspan / kBins;
+        const double vv = 0.5 * (loMax[i] + hiMin[i]);
+        bool inInsert = false;
+        for (const auto& b : insertBox) {
+            if (uu >= b[0] && uu <= b[1] && vv >= b[2] && vv <= b[3]) {
+                inInsert = true;
+                break;
+            }
+        }
+        if (inInsert) continue;
+        BRepClass_FaceClassifier cls(const_cast<TopoDS_Face&>(face),
+                                     gp_Pnt2d(uu, vv), tolF);
+        if (cls.State() == TopAbs_OUT) return false;
     }
     return true;
 }
@@ -363,7 +521,33 @@ void collectIsoEdges(const TopoDS_Face& face, const Model& model,
                 // Revolution bands tolerate non-iso edges (pocket cuts,
                 // forced full bands): the rims still constrain. Grids
                 // need the full 2u+2v structure and bail instead.
-                if (skipNonIso) continue;
+                if (skipNonIso) {
+                    // A bore exiting through a slanted or curved wall has
+                    // a WAVY rim: near-constant v but not iso. It still
+                    // owns the border row — the grid must sample its
+                    // curve, not a uniform ring, or the contract breaks.
+                    double f, l;
+                    Handle(Geom2d_Curve) pc =
+                        BRep_Tool::CurveOnSurface(edge, face, f, l);
+                    if (!pc.IsNull()) {
+                        double lo = 1e300, hi = -1e300;
+                        for (int k = 0; k <= 8; ++k) {
+                            double y = pc->Value(f + (l - f) * k / 8.0).Y();
+                            lo = std::min(lo, y);
+                            hi = std::max(hi, y);
+                        }
+                        // Wavy rims (pipe-saddle weld curves) wander in
+                        // v; the loftability gate in edgesHugRims-
+                        // OrInserts already vetted separation, so any
+                        // border edge short of a full-band crossing is
+                        // a rim chain member here.
+                        if (hi - lo < 0.8 * vRange) {
+                            plan.uEdges.push_back(eid);
+                            break;
+                        }
+                    }
+                    continue;
+                }
                 plan.constrains = false;
                 return;
         }
@@ -3535,6 +3719,26 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         }
         collectIsoEdges(face, model, rimCandidates, plan,
                         /*skipNonIso=*/true);
+        // Rim membership by CONNECTIVITY (shared with the loftability
+        // gate): wavy chains misfile under nearest-end tests. The
+        // chains replace whatever iso classification put in uEdges;
+        // they also drive the density SUM constraint (multi-edge rims
+        // must total the opposite rim, not copy its per-edge count).
+        {
+            std::set<int> insertIds;
+            for (const auto& w : plan.insertWires) {
+                insertIds.insert(w.begin(), w.end());
+            }
+            if (rimChains(face, model, insertIds, plan.rimLow,
+                          plan.rimHigh)) {
+                plan.uEdges = plan.rimLow;
+                plan.uEdges.insert(plan.uEdges.end(), plan.rimHigh.begin(),
+                                   plan.rimHigh.end());
+            } else {
+                plan.rimLow.clear();
+                plan.rimHigh.clear();
+            }
+        }
         if (plan.uEdges.empty()) plan.constrains = false;
         if (!s.linkRims && plan.uEdges.size() == 2) plan.linkRims = false;
     };
@@ -3629,7 +3833,11 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         return plan;
     }
 
-    if (isClosedRevolution(surf) && revCovers()) {
+    // revCovers is NOT required: a pipe-saddle band legitimately fails
+    // fixed-v coverage — edgesHugRimsOrInserts checks between-chain
+    // coverage itself, so wavy-rim bands loft instead of falling to a
+    // coons patch (which degenerates on a full-period chart).
+    if (isClosedRevolution(surf)) {
         std::vector<std::vector<int>> inserts;
         if (edgesHugRimsOrInserts(face, surf, model, inserts)) {
             plan.insertWires = std::move(inserts);
@@ -3839,7 +4047,14 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
         // edges together: each hole/border edge solves on its own (the
         // bore through a hole drives that hole).
         if (!plan.loops.empty()) continue;
-        if (plan.linkRims) sol.groups.unite(plan.uEdges);
+        // Rims made of several edges (a T-junction interrupts one side's
+        // circle) must match the opposite rim in TOTAL, not per edge —
+        // uniting them would hand every arc the full circle's count and
+        // double that rim. Their totals equalize after the solve.
+        if (plan.linkRims &&
+            plan.rimLow.size() <= 1 && plan.rimHigh.size() <= 1) {
+            sol.groups.unite(plan.uEdges);
+        }
         sol.groups.unite(plan.vEdges);
     }
 
@@ -4271,11 +4486,17 @@ double revolutionUPhase(const BRepAdaptor_Surface& surf,
     return best;
 }
 
-void meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
+// Returns false when the two rims carry irreconcilably different totals
+// (multi-edge chains on both sides that the density sum constraint could
+// not equalize): the closed transition strip that would bridge them
+// degenerates into folded lunes on thin bands, so the face takes the
+// contract floor instead.
+bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                         const Model& model, const std::vector<int>& rimEdges,
                         const std::vector<int>& solvedEdge, int faceId,
                         int nu, int nv, MeshBuilder& out,
-                        const std::vector<double>* vRowsOpt = nullptr) {
+                        const std::vector<double>* vRowsOpt = nullptr,
+                        const std::vector<int>* rimLowOpt = nullptr) {
     nu = std::max(3, nu);
     nv = std::max(1, nv);
     const double v0 = surf.FirstVParameter();
@@ -4321,6 +4542,7 @@ void meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
     // rims (full tori) or the two rims disagree in count.
     struct RimPt {
         double u;
+        double v;
         gp_Pnt p;
     };
     std::vector<RimPt> rim[2];
@@ -4343,7 +4565,17 @@ void meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
         Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, f3, l3);
         if (pc.IsNull() || c3.IsNull()) continue;
         gp_Pnt2d mid = pc->Value((f2 + l2) / 2);
-        int side = std::abs(mid.Y() - v0) < std::abs(mid.Y() - v1) ? 0 : 1;
+        // Chain membership beats nearest-end: a deep saddle rim wanders
+        // past the band middle but still belongs to its chain.
+        int side;
+        if (rimLowOpt) {
+            side = std::find(rimLowOpt->begin(), rimLowOpt->end(), eid) !=
+                           rimLowOpt->end()
+                       ? 0
+                       : 1;
+        } else {
+            side = std::abs(mid.Y() - v0) < std::abs(mid.Y() - v1) ? 0 : 1;
+        }
         int n = eid < int(solvedEdge.size()) ? solvedEdge[eid] : 0;
         if (n < 1) n = nu;
         const bool rev = revOf.count(eid) && revOf[eid];
@@ -4354,7 +4586,7 @@ void meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
             gp_Pnt p = c3->Value(f3 + (l3 - f3) * t);
             double u = uv.X();
             u -= period * std::floor((u - surf.FirstUParameter()) / period);
-            rim[side].push_back({u, p});
+            rim[side].push_back({u, uv.Y(), p});
         }
     }
     for (int k = 0; k < 2; ++k) {
@@ -4381,6 +4613,11 @@ void meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
     }
     dbg("revgrid face %d: nu=%d nv=%d rims=%d/%d wrap=%d rimEdges=%zu",
         faceId, nu, nv, nRim0, nRim1, vWrap ? 1 : 0, rimEdges.size());
+    if (rim0ok && rim1ok && nRim0 != nRim1) {
+        dbg("revgrid face %d: rim totals %d/%d irreconcilable", faceId,
+            nRim0, nRim1);
+        return false;
+    }
 
     std::vector<std::vector<uint32_t>> ring(rows);
     const bool chained = !vWrap && int(rim[0].size()) == nu &&
@@ -4389,6 +4626,14 @@ void meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
         // Column u at each rim (missing rim mirrors the other).
         const std::vector<RimPt>& A = rim[0];
         const std::vector<RimPt>& B = rim[1].empty() ? rim[0] : rim[1];
+        // When the far rim is missing (cone apex, pole), the loft's far
+        // v is the band bound, not a mirror of the near rim's v.
+        const bool mirrorB = rim[1].empty();
+        double vFarMean = 0;
+        for (const RimPt& r : A) vFarMean += r.v;
+        vFarMean /= std::max<size_t>(1, A.size());
+        const double vFar =
+            std::abs(vFarMean - v0) <= std::abs(vFarMean - v1) ? v1 : v0;
         // Rotational alignment of B to A (wrap-shortest total delta).
         int bestOff = 0;
         double bestSum = 1e300;
@@ -4408,27 +4653,38 @@ void meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
             double v = rowV(j);
             double w = (v - v0) / vspan;
             std::vector<gp_Pnt> pts(nu);
-            std::vector<double> us(nu);
+            std::vector<double> us(nu), vs(nu);
             for (int i = 0; i < nu; ++i) {
                 double uA = A[i].u;
                 double dU = B[(i + bestOff) % nu].u - uA;
                 dU -= period * std::round(dU / period);
                 us[i] = uA + dU * w;
+                // Loft v per column: WAVY rims (pipe-saddle weld
+                // curves) carry their own v at each sample, and the
+                // interior rows must follow them or the fixed-v rings
+                // cross the rims. Flat rims reduce to the old uniform
+                // spacing exactly. Explicit vRows (insert bands) keep
+                // absolute positions — inserts only plan on flat rims.
+                const double vB =
+                    mirrorB ? vFar : B[(i + bestOff) % nu].v;
+                vs[i] = vRows ? v : A[i].v + (vB - A[i].v) * w;
                 if (j == 0) pts[i] = A[i].p;  // exact curve points
                 else if (j == nv && !rim[1].empty())
                     pts[i] = B[(i + bestOff) % nu].p;
-                else pts[i] = surf.Value(us[i], v);
+                else pts[i] = surf.Value(us[i], vs[i]);
             }
             bool degenerate = true;
             for (int i = 1; i < nu && degenerate; ++i) {
                 degenerate = pts[i].Distance(pts[0]) <= 1e-9;
             }
             if (degenerate) {
-                ring[j].assign(nu, out.addVertex(pts[0], {faceId, us[0], v}));
+                ring[j].assign(nu,
+                               out.addVertex(pts[0], {faceId, us[0], vs[0]}));
             } else {
                 ring[j].resize(nu);
                 for (int i = 0; i < nu; ++i) {
-                    ring[j][i] = out.addVertex(pts[i], {faceId, us[i], v});
+                    ring[j][i] =
+                        out.addVertex(pts[i], {faceId, us[i], vs[i]});
                 }
             }
         }
@@ -4578,6 +4834,7 @@ void meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
             }
         }
     }
+    return true;
 }
 
 // A full revolution band with interior slot/hole wires: mesh the plain
@@ -4661,8 +4918,12 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
     PolyMesh grid;
     {
         MeshBuilder tmp(grid);
-        meshRevolutionGrid(face, surf, model, plan.uEdges, solvedEdge,
-                           faceId, nu, int(vRows.size()) - 1, tmp, &vRows);
+        if (!meshRevolutionGrid(
+                face, surf, model, plan.uEdges, solvedEdge, faceId, nu,
+                int(vRows.size()) - 1, tmp, &vRows,
+                plan.rimLow.empty() ? nullptr : &plan.rimLow)) {
+            return false;
+        }
     }
 
     const double period = u1 - u0;
@@ -5349,7 +5610,8 @@ struct EdgeParamPoint {
 void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                             const std::map<int, FacePlan>& plans,
                             const GenerationSettings& settings,
-                            const std::vector<std::array<size_t, 2>>& range) {
+                            const std::vector<std::array<size_t, 2>>& range,
+                            const std::vector<char>& fellBack) {
     // Conforming across BODIES splices the other solid's vertex ids into
     // this face's polygons — contact faces then fuse into non-manifold
     // sandwiches. Neighbours must share the owning solid.
@@ -5374,6 +5636,9 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
         }
     }
     auto isFreeform = [&](int fid) {
+        // A verified contract floor (fellBack == 2) has EXACT borders —
+        // moving them tears its web triangles open.
+        if (fid < int(fellBack.size()) && fellBack[fid] == 2) return false;
         MesherKind k = plans.at(fid).kind;
         return (k == MesherKind::Fallback || k == MesherKind::QuadDominant ||
                 k == MesherKind::AnnulusRing ||
@@ -5993,6 +6258,64 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         } catch (const Standard_Failure&) {
         }
     }
+    // Revolution rim SUM constraint: when a T-junction splits one rim of
+    // a closed band into k edges while the other stays a full circle,
+    // the totals must agree or the band needs a transition strip — and
+    // on thin fillet tubes those strip cells degenerate into folded
+    // lunes. Raise the lighter rim (through its whole density group, so
+    // stacked bands and cones follow) until the totals meet. Raises are
+    // monotone and capped, so the fixpoint terminates.
+    {
+        auto raiseGroup = [&](int eid, int target) {
+            target = std::min(target, 256);
+            const int root = density.groups.find(eid);
+            for (int e = 1; e <= model.edgeCount(); ++e) {
+                if (density.groups.find(e) == root &&
+                    solvedEdge[e] < target) {
+                    solvedEdge[e] = target;
+                }
+            }
+        };
+        for (int pass = 0; pass < 16; ++pass) {
+            bool changed = false;
+            for (const auto& [fid, plan] : plans) {
+                if (plan.kind != MesherKind::RevolutionGrid) continue;
+                const auto& lo = plan.rimLow;
+                const auto& hi = plan.rimHigh;
+                if (lo.empty() || hi.empty()) continue;
+                if (lo.size() == 1 && hi.size() == 1) continue;
+                long tLo = 0, tHi = 0;
+                for (int e : lo) tLo += solvedEdge[e];
+                for (int e : hi) tHi += solvedEdge[e];
+                if (tLo == tHi) continue;
+                // Only a lone closed rim gets raised to the arcs'
+                // total. Spreading a deficit across a multi-edge chain
+                // pumps shared chain edges back and forth between the
+                // faces that share them (both pipe walls carry the
+                // same saddle edges) and never converges to sane
+                // counts — an unresolved mismatch takes the transition
+                // strip instead.
+                const auto& small = tLo < tHi ? lo : hi;
+                if (small.size() != 1) continue;
+                const long deficit = std::labs(tHi - tLo);
+                raiseGroup(small[0], solvedEdge[small[0]] + int(deficit));
+                changed = true;
+                dbg("density: face %d rim totals %ld/%ld equalized", fid,
+                    tLo, tHi);
+            }
+            if (!changed) break;
+        }
+    }
+    if (const char* dumpE = getenv("WEFT_EDGE_DEBUG")) {
+        std::stringstream ss(dumpE);
+        std::string tok;
+        while (std::getline(ss, tok, ',')) {
+            const int e = atoi(tok.c_str());
+            if (e >= 1 && e <= model.edgeCount()) {
+                dbg("solvedEdge[%d] = %d", e, solvedEdge[e]);
+            }
+        }
+    }
     dbg("generate: density solved");
 
     // Resolve every face's division counts up front (union-find lookups
@@ -6004,8 +6327,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         const FaceMeshSettings& s = settings.forFace(fid);
         const FacePlan& plan = plans.at(fid);
         auto solved = [&](const std::vector<int>& edges, int fallback) {
-            return edges.empty() ? fallback
-                                 : density.countFor(edges[0], fallback);
+            if (edges.empty()) return fallback;
+            // Combine countFor (group counts, pins, per-face defaults
+            // for unproposed edges like seams) with solvedEdge (which
+            // additionally carries the curvature floor and the rim-
+            // total raises the group solve doesn't see).
+            return std::max(solvedEdge[edges[0]],
+                            density.countFor(edges[0], fallback));
         };
         switch (plan.kind) {
             case MesherKind::RevolutionGrid:
@@ -6013,7 +6341,9 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 int nuA = solved(plan.uEdges, s.radial);
                 int nuB = nuA;
                 if (!plan.linkRims && plan.uEdges.size() == 2) {
-                    nuB = density.countFor(plan.uEdges[1], s.radial);
+                    nuB = std::max(
+                        solvedEdge[plan.uEdges[1]],
+                        density.countFor(plan.uEdges[1], s.radial));
                 }
                 counts[fid] = {nuA, solved(plan.vEdges, s.axial), nuB};
                 break;
@@ -6127,7 +6457,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             if (it != cache->faces.end() &&
                 it->second.key == cacheKey[fid]) {
                 parts[fid] = it->second.part;  // copy: merge mutates
-                fellBack[fid] = it->second.fellBack ? 1 : 0;
+                fellBack[fid] = it->second.fellBack;
                 cached[fid] = true;
                 ++cacheHits;
             }
@@ -6290,6 +6620,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             const int floorBad =
                 built ? borderContractViolation(fid, parts[fid]) : -1;
             if (built && floorBad == 0) {
+                // Verified floor: borders are exact at the solved
+                // counts, so conform must treat them as authority,
+                // not as freeform movers to kidnap.
+                fellBack[fid] = 2;
                 dbg("mesh face %d: %s -> contract floor", fid, why);
                 return;
             }
@@ -6367,8 +6701,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     meshRevolutionTaper(face, surf, fid, nA, nB, p0, p1,
                                         out);
                 } else {
-                    meshRevolutionGrid(face, surf, model, plan.uEdges,
-                                       solvedEdge, fid, nu, nv, out);
+                    meshRevolutionGrid(
+                        face, surf, model, plan.uEdges, solvedEdge, fid, nu,
+                        nv, out, nullptr,
+                        plan.rimLow.empty() ? nullptr : &plan.rimLow);
                 }
                 break;
             case MesherKind::DiskCap:
@@ -6443,6 +6779,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 if (meshContractFallback(face, model, fid, solvedEdge,
                                          s.radial, out) &&
                     borderContractViolation(fid, parts[fid]) == 0) {
+                    fellBack[fid] = 2;  // exact borders: conform authority
                     break;
                 }
                 parts[fid] = PolyMesh();
@@ -6532,10 +6869,41 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     }
                     cen /= double(poly.size());
                     if (nw.Modulus() < 1e-16) continue;
-                    proj.Perform(gp_Pnt(cen));
-                    if (!proj.IsDone() || proj.NbPoints() < 1) continue;
-                    double pu, pv;
-                    proj.LowerDistanceParameters(pu, pv);
+                    // Prefer the polygon's own UV provenance: projecting
+                    // the 3D centroid is ambiguous on thin tubes (a
+                    // fillet torus with a small minor radius — a coarse
+                    // cell's centroid sags past the tube centre and
+                    // projects onto the FAR side, flipping the reference
+                    // normal and flagging perfectly good cells).
+                    double pu = 0, pv = 0;
+                    int anchored = 0;
+                    double u0ref = 0;
+                    const double uPeriod =
+                        surf.IsUPeriodic() ? surf.UPeriod() : 0.0;
+                    for (uint32_t vi : poly) {
+                        const Anchor& an = part.anchors[vi];
+                        if (an.faceId != fid) continue;
+                        double au = an.u;
+                        if (anchored == 0) {
+                            u0ref = au;
+                        } else if (uPeriod > 0) {
+                            // Unwrap seam-adjacent u onto the first
+                            // vertex's branch.
+                            au -= uPeriod *
+                                  std::round((au - u0ref) / uPeriod);
+                        }
+                        pu += au;
+                        pv += an.v;
+                        ++anchored;
+                    }
+                    if (anchored == int(poly.size())) {
+                        pu /= anchored;
+                        pv /= anchored;
+                    } else {
+                        proj.Perform(gp_Pnt(cen));
+                        if (!proj.IsDone() || proj.NbPoints() < 1) continue;
+                        proj.LowerDistanceParameters(pu, pv);
+                    }
                     gp_Pnt sp;
                     gp_Vec du, dv;
                     S->D1(pu, pv, sp, du, dv);
@@ -6615,7 +6983,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         for (int fid = 1; fid <= faceN; ++fid) {
             if (!cached[fid]) {
                 cache->faces[fid] = {cacheKey[fid], parts[fid],
-                                     fellBack[fid] != 0};
+                                     fellBack[fid]};
             }
         }
     }
@@ -6624,7 +6992,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     // conform must treat its borders as freeform movers, not as an
     // exact-border authority, and the report must tell the truth.
     for (int fid = 1; fid <= faceN; ++fid) {
-        if (!fellBack[fid]) continue;
+        // Contract-floor parts (fellBack == 2) keep their plan: their
+        // borders are exact at the solved counts, so they remain
+        // conform AUTHORITIES — demoting them to Fallback would let
+        // the conform pass kidnap verified border vertices and tear
+        // web triangles open.
+        if (fellBack[fid] != 1) continue;
         FacePlan& pl = plans.at(fid);
         if (pl.kind == MesherKind::Fallback) continue;
         dbg("mesh face %d: %s couldn't build, plan demoted to fallback",
@@ -6657,7 +7030,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     dbg("generate: merged (%zu verts, %zu polys)", mesh.vertexCount(),
         mesh.polygonCount());
     if (settings.conformBorders) {
-        conformFallbackBorders(mesh, model, plans, settings, range);
+        conformFallbackBorders(mesh, model, plans, settings, range,
+                               fellBack);
         dbg("generate: borders conformed");
     }
 

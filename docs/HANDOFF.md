@@ -309,6 +309,68 @@ pre-existing). Prior round (adfb61e) already unites co-circular arc
 groups so half-bores share one density group; together the two fixes
 make holes read as single revolution rings.
 
+## Revolve-unify round (bores become ONE face + wavy-rim lofts)
+User: "still solving holes as halfs / faces 124+118 should be a single
+closed circle / feature edges should resolve as one circle". Landed:
+1. model.cpp: ShapeUpgrade_UnifySameDomain after ShapeFix — pass 1
+   merges faces on the same PERIODIC surface (KeepShape on everything
+   else), pass 2 unscoped edge-unify (ConcatBSplines) so co-circular
+   rim arcs merge into single closed circles. iso: 164->143 faces,
+   410->347 edges; bores are single periodic faces, rims single
+   circles (visually verified).
+2. rimChains(): rim membership by CONNECTIVITY (union-find over shared
+   vertices of non-seam/non-insert border edges, chains named by mean
+   v; single chain keeps its own side). Nearest-end tests misfile deep
+   saddles. Used by the loft gate, finishRevolution (fills
+   plan.rimLow/rimHigh, replaces uEdges), and meshRevolutionGrid
+   (rimLowOpt param).
+3. Wavy-rim loftability gate inside edgesHugRimsOrInserts (replaces
+   revCovers in the auto path): 64 u-bins, low chain must stay below
+   high chain per bin, each chain must be a FUNCTION of u (per-bin
+   v-spread < 30% — rejects gear teeth/unterlaf), between-chain
+   classifier coverage (skips insert boxes).
+4. meshRevolutionGrid v-LOFT: RimPt carries v; chained rows lerp v per
+   column between the rims' own v (missing rim -> band bound vFar).
+   Pipe saddles (weldment faces 2/4/253) mesh as single lofted rings.
+5. Density rim-SUM constraint (after curvature floor): closed band
+   rims equalize by TOTAL, not per edge. linkRims unite now only for
+   1-edge-vs-1-edge rims; a lone closed rim is raised THROUGH its
+   group to the opposite chain's sum. Never spread a deficit across a
+   multi-edge chain (shared saddle edges pump forever). Irreconcilable
+   multi-multi rims: meshRevolutionGrid returns false -> contract
+   floor (lune strips on thin fillet tori fold; floor is honest).
+6. TRI-STATE fellBack (audit backlog item, LANDED): 2 = verified
+   contract floor -> plan NOT demoted, conform treats it as authority
+   (isFreeform false). Boolean fellBack let conform kidnap verified
+   floor borders and tear web triangles open (nasty_cheese leaked 10
+   opens through demoted bores). Cache stores the char.
+7. counts[] resolution: max(solvedEdge, countFor) — solvedEdge carries
+   floors and rim raises the group solve can't see (disk caps went
+   stale-count and violated); countFor keeps seam fallbacks (sphere
+   axial default).
+8. Fold check reads polygon anchor UVs (period-unwrapped mean) instead
+   of projecting the 3D centroid — on a 0.4mm-minor fillet torus the
+   centroid projects onto the FAR side of the tube and false-flags.
+   (The weldment tori strips were REAL folds though: lune-shaped
+   cells; fixed by 5/6.)
+BOARD (cad profile): 2827056 folds 3->0 CLEAN; iso 737 polys clean,
+bores light single rings; mohne folds 9->4 (nm 1 unchanged);
+weldment folds 22->3; unterlaf/nasty back to baseline after the
+function-of-u + tri-state fixes; angle1 69q/12n; as1 pair + all 11
+fixtures x 3 modes green. WEFT_EDGE_DEBUG=ids env dumps solvedEdge.
+
+KNOWN ISSUE (weldment micro-corner, 19 opens / 5 nm, faces 2/4/71/72
+at the small pipe-end): faces 71/72 are curved 3-edge cylinder
+slivers (r=34, ~0.8x0.74) that STILL plan minimal-ngon even though a
+standalone isGeometricallyFlat replication measures dev/diag=2.2e-3 >
+the 1e-3 gate (UNEXPLAINED — find what actually admits them; probe:
+scratchpad/probe_flat.cpp). Their n-gon borders + face 2/4 chain
+borders disagree on edges 9/10/25/26 (conform: 11 movers vs 7 targets
+on edge 9) — micro edges are EXEMPT from the border contract check,
+so nothing demotes them. Fix directions: find the real admission
+path; contract-check micro edges (scale the tolerance, don't exempt);
+loops-plans with solved-count borders shouldn't be conform movers.
+
 ## Next steps, in order
 1. COUNT DECOUPLING: extend the absorber to multi-vertex gaps (complement
    path v→w1→…→wk→u along a shared B-rep edge), then let 9–16-edge chained
