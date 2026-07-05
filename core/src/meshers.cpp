@@ -6434,6 +6434,58 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 demote(fid, face, surf, s, "border contract failed");
             }
         }
+        // Fold postcondition: a part whose polygons largely oppose the
+        // CAD normal has folded over itself (warped sliver patches:
+        // nasty_cheese faces 46/321 carried 116 inverted cells EACH and
+        // still passed every topological check). The floor's UV
+        // triangulation cannot fold, so demote visibly. Bounded to
+        // small parts — projection per polygon is not free.
+        if (!fellBack[fid] && plan.kind != MesherKind::Fallback &&
+            plan.kind != MesherKind::QuadDominant &&
+            parts[fid].polygons.size() >= 8 &&
+            parts[fid].polygons.size() <= 2000) {
+            Handle(Geom_Surface) S = BRep_Tool::Surface(face);
+            if (!S.IsNull()) {
+                GeomAPI_ProjectPointOnSurf proj;
+                proj.Init(gp_Pnt(0, 0, 0), S);
+                const bool rev = face.Orientation() == TopAbs_REVERSED;
+                int inverted = 0, tested = 0;
+                const PolyMesh& part = parts[fid];
+                for (const auto& poly : part.polygons) {
+                    if (poly.size() < 3) continue;
+                    gp_XYZ nw(0, 0, 0), cen(0, 0, 0);
+                    for (size_t i = 0; i < poly.size(); ++i) {
+                        const auto& a = part.vertices[poly[i]];
+                        const auto& b =
+                            part.vertices[poly[(i + 1) % poly.size()]];
+                        nw += gp_XYZ(a[1] * b[2] - a[2] * b[1],
+                                     a[2] * b[0] - a[0] * b[2],
+                                     a[0] * b[1] - a[1] * b[0]);
+                        cen += gp_XYZ(a[0], a[1], a[2]);
+                    }
+                    cen /= double(poly.size());
+                    if (nw.Modulus() < 1e-16) continue;
+                    proj.Perform(gp_Pnt(cen));
+                    if (!proj.IsDone() || proj.NbPoints() < 1) continue;
+                    double pu, pv;
+                    proj.LowerDistanceParameters(pu, pv);
+                    gp_Pnt sp;
+                    gp_Vec du, dv;
+                    S->D1(pu, pv, sp, du, dv);
+                    gp_Vec n = du.Crossed(dv);
+                    if (n.Magnitude() < 1e-16) continue;
+                    if (rev) n.Reverse();
+                    ++tested;
+                    if (gp_Vec(nw).Dot(n) < 0) ++inverted;
+                }
+                if (tested >= 8 && inverted * 4 > tested) {
+                    dbg("mesh face %d: fold check failed (%d/%d inverted, "
+                        "%s)",
+                        fid, inverted, tested, mesherKindName(plan.kind));
+                    demote(fid, face, surf, s, "fold check failed");
+                }
+            }
+        }
     };
 
     unsigned threads = std::min<unsigned>(
