@@ -3753,6 +3753,21 @@ void meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
         (!vWrap && vRowsOpt && vRowsOpt->size() >= 2) ? vRowsOpt : nullptr;
     if (vRows) nv = int(vRows->size()) - 1;
     if (vWrap) nv = std::max(3, nv);  // a wrapped ring of <3 rows is flat
+    // Pole-to-pole band (full sphere / both-ends-closed revolve): both
+    // end rows collapse to a point, so nv==1 would emit zero polygons.
+    // The added interior ring is face-private (poles are degenerate
+    // edges, the seam is internal), so no border sampling changes.
+    if (!vWrap && !vRows && nv < 2) {
+        auto rowDegenerate = [&](double v) {
+            const gp_Pnt p0 = surf.Value(surf.FirstUParameter(), v);
+            for (int i = 1; i < 8; ++i) {
+                double u = surf.FirstUParameter() + period * i / 8.0;
+                if (surf.Value(u, v).Distance(p0) > 1e-9) return false;
+            }
+            return true;
+        };
+        if (rowDegenerate(v0) && rowDegenerate(v1)) nv = 2;
+    }
     const double dv = (v1 - v0) / nv;
     const int rows = vWrap ? nv : nv + 1;
     auto rowV = [&](int j) {
@@ -4037,6 +4052,10 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
                           const FacePlan& plan,
                           const std::vector<int>& solvedEdge, int faceId,
                           int nu, int nv, MeshBuilder& out) {
+    // Row alignment (rows exactly at each band's v-extents) is what
+    // makes the staircase close; a v-closed surface ignores explicit
+    // rows, so refuse and let the face take the contract floor.
+    if (surf.IsVClosed()) return false;
     // A wire whose solved counts can't even form a triangle would leave
     // its hole open; refuse up front and let the face fall back whole.
     for (const auto& wire : plan.insertWires) {
@@ -4109,15 +4128,26 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
                            faceId, nu, int(vRows.size()) - 1, tmp, &vRows);
     }
 
+    const double period = u1 - u0;
     auto covered = [&](const std::vector<uint32_t>& poly) {
-        double cu = 0, cv = 0; int n = 0;
+        double cu = 0, cv = 0, u0ref = 0; int n = 0;
         for (uint32_t idx : poly) {
             const Anchor& a = grid.anchors[idx];
             if (a.faceId != faceId) return false;
-            cu += a.u; cv += a.v; ++n;
+            double u = a.u;
+            if (!n) {
+                u0ref = u;
+            } else {
+                // Seam cells mix u0 and u0+period anchors; unwrap
+                // against the first corner or the center lands
+                // mid-period and the wrong cells are deleted.
+                u -= period * std::round((u - u0ref) / period);
+            }
+            cu += u; cv += a.v; ++n;
         }
         if (!n) return false;
         cu /= n; cv /= n;
+        cu -= period * std::floor((cu - u0) / period);
         for (const Box& b : boxes) {
             if (cu >= b.u0 && cu <= b.u1 && cv >= b.v0 && cv <= b.v1) {
                 return true;
@@ -5475,6 +5505,30 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 cacheKey[fid] += "v" + std::to_string(solvedEdge[eid]);
             }
         }
+        // Every solved count the part consumes must key the cache, or a
+        // density edit on a slot border / chained side / corner stub
+        // reuses a stale part against a re-meshed neighbour.
+        for (const auto& wire : plan.insertWires) {
+            for (int eid : wire) {
+                cacheKey[fid] += "w" + std::to_string(solvedEdge[eid]);
+            }
+        }
+        for (int side = 0; side < 4; ++side) {
+            for (int eid : plan.coonsSides[side]) {
+                cacheKey[fid] += "c" + std::to_string(solvedEdge[eid]);
+            }
+        }
+        if (plan.kind == MesherKind::CoonsGrid) {
+            // The corner stub edge is discovered at mesh time (it is in
+            // no plan list); key every border edge's count instead.
+            for (TopExp_Explorer ex(model.faces(fid), TopAbs_EDGE);
+                 ex.More(); ex.Next()) {
+                int eid = model.edges.FindIndex(ex.Current());
+                if (eid >= 1 && eid < int(solvedEdge.size())) {
+                    cacheKey[fid] += "e" + std::to_string(solvedEdge[eid]);
+                }
+            }
+        }
     }
 
     // Mesh every face into its own part, in parallel, then merge in face
@@ -5653,7 +5707,17 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         };
         switch (plan.kind) {
             case MesherKind::RevolutionGrid:
-                if (!plan.linkRims && counts[fid][2] > 0 &&
+                if (!plan.insertWires.empty()) {
+                    // Before the taper branch: a taper never cuts the
+                    // slots out, so insert bands go first regardless of
+                    // rim linkage.
+                    if (!meshRevolutionInsert(face, surf, model, plan,
+                                              solvedEdge, fid, nu, nv,
+                                              out)) {
+                        demote(fid, face, surf, s,
+                               "revolution insert failed");
+                    }
+                } else if (!plan.linkRims && counts[fid][2] > 0 &&
                     counts[fid][2] != nu && !surf.IsVClosed()) {
                     // counts[0] belongs to uEdges[0]; find which v-end that
                     // rim sits at so the taper's rings land on their caps.
@@ -5678,12 +5742,6 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     auto [p0, p1] = revPhases();
                     meshRevolutionTaper(face, surf, fid, nA, nB, p0, p1,
                                         out);
-                } else if (!plan.insertWires.empty()) {
-                    if (!meshRevolutionInsert(face, surf, model, plan,
-                                              solvedEdge, fid, nu, nv, out)) {
-                        demote(fid, face, surf, s,
-                               "revolution insert failed");
-                    }
                 } else {
                     meshRevolutionGrid(face, surf, model, plan.uEdges,
                                        solvedEdge, fid, nu, nv, out);
