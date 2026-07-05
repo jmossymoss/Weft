@@ -1191,6 +1191,117 @@ static std::string saveFileDialog(const char* defaultName) {
 #endif
 }
 
+// Built-in fallback file browser: an ImGui modal used whenever no
+// native dialog exists (Linux without zenity/kdialog). Zero external
+// dependencies, so Open/Export work on every system out of the box.
+struct FileBrowser {
+    bool open = false;
+    bool saveMode = false;
+    std::string dir;
+    char nameBuf[512] = "";
+    std::string picked;  // consumed by the panel code once non-empty
+    std::vector<std::string> dirs, files;
+
+    void start(bool save, const char* defaultName) {
+        open = true;
+        saveMode = save;
+        std::snprintf(nameBuf, sizeof nameBuf, "%s",
+                      defaultName ? defaultName : "");
+        if (dir.empty()) dir = homeDir();
+        refresh();
+    }
+    static std::string homeDir() {
+        const char* h = std::getenv("HOME");
+#ifdef _WIN32
+        if (!h || !*h) h = std::getenv("USERPROFILE");
+#endif
+        return h && *h ? h : ".";
+    }
+    void refresh() {
+        dirs.clear();
+        files.clear();
+        std::error_code ec;
+        for (const auto& e :
+             std::filesystem::directory_iterator(dir, ec)) {
+            std::string n = e.path().filename().string();
+            if (n.empty() || n[0] == '.') continue;
+            std::error_code ec2;
+            if (e.is_directory(ec2)) {
+                dirs.push_back(n);
+                continue;
+            }
+            std::string low = n;
+            for (char& c : low) c = char(std::tolower((unsigned char)c));
+            const bool stepish =
+                low.size() > 4 && (low.rfind(".step") == low.size() - 5 ||
+                                   low.rfind(".stp") == low.size() - 4);
+            if (saveMode || stepish) files.push_back(n);
+        }
+        std::sort(dirs.begin(), dirs.end());
+        std::sort(files.begin(), files.end());
+    }
+    void draw() {
+        const char* title = saveMode ? "Export##fb" : "Open STEP##fb";
+        if (open && !ImGui::IsPopupOpen(title)) ImGui::OpenPopup(title);
+        ImGui::SetNextWindowSize({560, 440}, ImGuiCond_Appearing);
+        if (!ImGui::BeginPopupModal(title, &open)) return;
+        ImGui::TextWrapped("%s", dir.c_str());
+        if (ImGui::SmallButton("up")) {
+            std::filesystem::path p(dir);
+            if (p.has_parent_path() && p.parent_path() != p) {
+                dir = p.parent_path().string();
+                refresh();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("home")) {
+            dir = homeDir();
+            refresh();
+        }
+        const float foot = 2.2f * ImGui::GetFrameHeightWithSpacing();
+        if (ImGui::BeginChild("##fbList", {0, -foot}, true)) {
+            for (size_t i = 0; i < dirs.size(); ++i) {
+                if (ImGui::Selectable((dirs[i] + "/").c_str())) {
+                    dir = (std::filesystem::path(dir) / dirs[i]).string();
+                    refresh();
+                    break;
+                }
+            }
+            for (const std::string& f : files) {
+                if (ImGui::Selectable(f.c_str())) {
+                    if (saveMode) {
+                        std::snprintf(nameBuf, sizeof nameBuf, "%s",
+                                      f.c_str());
+                    } else {
+                        picked =
+                            (std::filesystem::path(dir) / f).string();
+                        open = false;
+                        ImGui::CloseCurrentPopup();
+                    }
+                }
+            }
+        }
+        ImGui::EndChild();
+        if (saveMode) {
+            ImGui::SetNextItemWidth(-110);
+            ImGui::InputText("##fbName", nameBuf, sizeof nameBuf);
+            ImGui::SameLine();
+            if (ImGui::Button("Save", {-1, 0}) && nameBuf[0]) {
+                picked = (std::filesystem::path(dir) / nameBuf).string();
+                open = false;
+                ImGui::CloseCurrentPopup();
+            }
+        } else {
+            ImGui::TextDisabled("pick a .step / .stp file");
+        }
+        ImGui::EndPopup();
+    }
+};
+static FileBrowser gBrowser;
+#ifdef _WIN32
+static const bool gNoDialogTool = false;  // comdlg32 always exists
+#endif
+
 static std::string tempDir() {
     for (const char* var : {"TMPDIR", "TMP", "TEMP"}) {
         if (const char* d = std::getenv(var); d && *d) return d;
@@ -1202,6 +1313,21 @@ static std::string tempDir() {
 #else
     return gDataDir.empty() ? "." : gDataDir;
 #endif
+}
+
+static void exportObjTo(App& app, const std::string& out) {
+    try {
+        weft::ObjExportOptions opts;
+        opts.triangulate = app.exportTriangulate;
+        opts.yUp = app.exportYUp;
+        opts.scale = double(app.exportScale);
+        weft::writeObj(app.mesh, out, &app.analysis.solidFaces, &opts);
+        app.status = "exported " + out;
+        logLine("export: %s (%zu verts, %zu polys)", out.c_str(),
+                app.mesh.vertexCount(), app.mesh.polygonCount());
+    } catch (const std::exception& e) {
+        app.status = std::string("export failed: ") + e.what();
+    }
 }
 
 static void loadFixture(App& app, const std::string& name) {
@@ -2633,13 +2759,17 @@ static void drawUi(App& app) {
                               p.c_str());
                 loadModel(app, p);
             }
-#ifndef _WIN32
             else if (gNoDialogTool) {
-                app.status =
-                    "no zenity/kdialog on this system — type a path "
-                    "below and press Load (or: sudo apt install zenity)";
+                gBrowser.start(false, nullptr);
             }
-#endif
+        }
+        // Built-in browser results (native-dialog-less systems).
+        gBrowser.draw();
+        if (!gBrowser.picked.empty() && !gBrowser.saveMode) {
+            std::string p = std::move(gBrowser.picked);
+            gBrowser.picked.clear();
+            std::snprintf(app.pathBuf, sizeof app.pathBuf, "%s", p.c_str());
+            loadModel(app, p);
         }
         ImGui::InputTextWithHint("##path", "or type a path...", app.pathBuf,
                                  sizeof app.pathBuf);
@@ -2696,20 +2826,15 @@ static void drawUi(App& app) {
             if (base.empty()) base = "weft";
             std::string out = saveFileDialog((base + ".obj").c_str());
             if (!out.empty()) {
-                try {
-                    weft::ObjExportOptions opts;
-                    opts.triangulate = app.exportTriangulate;
-                    opts.yUp = app.exportYUp;
-                    opts.scale = double(app.exportScale);
-                    weft::writeObj(app.mesh, out, &app.analysis.solidFaces,
-                                   &opts);
-                    app.status = "exported " + out;
-                    logLine("export: %s (%zu verts, %zu polys)", out.c_str(),
-                            app.mesh.vertexCount(), app.mesh.polygonCount());
-                } catch (const std::exception& e) {
-                    app.status = std::string("export failed: ") + e.what();
-                }
+                exportObjTo(app, out);
+            } else if (gNoDialogTool) {
+                gBrowser.start(true, (base + ".obj").c_str());
             }
+        }
+        if (!gBrowser.picked.empty() && gBrowser.saveMode) {
+            std::string out = std::move(gBrowser.picked);
+            gBrowser.picked.clear();
+            exportObjTo(app, out);
         }
         ImGui::TextWrapped("%s", app.status.c_str());
     }
