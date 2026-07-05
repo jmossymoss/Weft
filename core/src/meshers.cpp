@@ -461,6 +461,112 @@ bool isClosedRevolution(const BRepAdaptor_Surface& surf) {
     return surf.IsUClosed();
 }
 
+// --- Closed-ring phase anchor ----------------------------------------------
+// A full-circle edge has no natural sample start: its curve origin sits
+// wherever the CAD kernel left it, so two coaxial rings sampled at
+// "t = i/n" land at slightly different angles and the flat faces joining
+// grooved cylinder segments TWIST. Anchor every closed circle's first
+// sample to a fixed world direction projected into its plane — coaxial
+// rings then share column angles by construction. Open arcs are
+// endpoint-pinned and need no anchor.
+double ringAnchorAngle(const gp_Circ& circ) {
+    const gp_Dir d = circ.Axis().Direction();
+    // Irrational-ish mix dodges symmetric ties with model axes.
+    gp_XYZ g(0.7548776662466927, 0.5698402909980532, 0.3247179572447461);
+    gp_XYZ pr = g - d.XYZ() * g.Dot(d.XYZ());
+    if (pr.SquareModulus() < 1e-18) {
+        pr = gp_XYZ(1, 0, 0) - d.XYZ() * d.X();
+    }
+    const double x = pr.Dot(circ.Position().XDirection().XYZ());
+    const double y = pr.Dot(circ.Position().YDirection().XYZ());
+    double a = std::atan2(y, x);
+    if (a < 0) a += 2.0 * M_PI;
+    return a;
+}
+
+// Lazy vertex->edges adjacency per model (read-only after build; the
+// mutex covers concurrent meshing threads).
+const TopTools_IndexedDataMapOfShapeListOfShape& modelVertexEdges(
+    const Model& model) {
+    static std::mutex mx;
+    static std::map<const void*,
+                    std::unique_ptr<TopTools_IndexedDataMapOfShapeListOfShape>>
+        cache;
+    std::lock_guard<std::mutex> lock(mx);
+    const void* key = model.shape.TShape().get();
+    if (!cache.count(key) && cache.size() > 8) {
+        // Bounded: drop other models' maps (session apps reload often).
+        for (auto it = cache.begin(); it != cache.end();) {
+            it = it->first != key ? cache.erase(it) : std::next(it);
+        }
+    }
+    auto& slot = cache[key];
+    if (!slot) {
+        slot = std::make_unique<TopTools_IndexedDataMapOfShapeListOfShape>();
+        TopExp::MapShapesAndAncestors(model.shape, TopAbs_VERTEX,
+                                      TopAbs_EDGE, *slot);
+    }
+    return *slot;
+}
+
+// Sample-phase fraction for an edge: >0 only for closed CIRCULAR edges
+// whose seam vertex is FREE — shared with nothing but revolve seam
+// edges. A vertex shared with a real border edge (a bore tangent to the
+// plate outline: valence-10 junctions exist) is a hard constraint the
+// phased sampling would skip, and the conform pass then kidnaps the
+// outline corner onto the shifted ring. Part of the border contract —
+// every border sampler applies it identically.
+double closedEdgePhase(const TopoDS_Edge& edge, const Model& model) {
+    double f, l;
+    Handle(Geom_Curve) c = BRep_Tool::Curve(edge, f, l);
+    if (c.IsNull()) return 0.0;
+    if (l - f < 2.0 * M_PI - 1e-9) return 0.0;
+    if (c->Value(f).Distance(c->Value(l)) > 1e-9) return 0.0;
+    GeomAdaptor_Curve gc(c, f, l);
+    if (gc.GetType() != GeomAbs_Circle) return 0.0;
+    const auto& v2e = modelVertexEdges(model);
+    TopoDS_Vertex va, vb;
+    TopExp::Vertices(edge, va, vb);
+    for (const TopoDS_Vertex& v : {va, vb}) {
+        if (v.IsNull()) continue;
+        const int idx = v2e.FindIndex(v);
+        if (!idx) continue;
+        for (const TopoDS_Shape& s : v2e.FindFromIndex(idx)) {
+            const TopoDS_Edge e2 = TopoDS::Edge(s);
+            if (e2.IsSame(edge)) continue;
+            if (BRep_Tool::Degenerated(e2)) continue;
+            // Revolve seams are mesh-internal (the ring wraps through
+            // them); anything else pins the vertex.
+            const int eid2 = model.edges.FindIndex(e2);
+            bool seam = false;
+            if (eid2 >= 1 && model.edgeToFaces.Contains(e2)) {
+                const TopTools_ListOfShape& fl =
+                    model.edgeToFaces.FindFromKey(e2);
+                if (fl.Extent() == 1) {
+                    seam = BRep_Tool::IsClosed(
+                        e2, TopoDS::Face(fl.First()));
+                }
+            }
+            if (!seam) return 0.0;
+        }
+    }
+    double ph = (ringAnchorAngle(gc.Circle()) - f) / (l - f);
+    ph -= std::floor(ph);
+    return ph;
+}
+
+// Phased sample parameter for step i of n. A reversed traversal must
+// enumerate the SAME positions in the opposite order — with a phase,
+// "1 - t" would produce a different sample set, so the index flips
+// instead. Falls back to the plain formula when unphased.
+inline double phasedT(int i, int n, double ph, bool rev) {
+    if (ph <= 0.0) return rev ? 1.0 - double(i) / n : double(i) / n;
+    const int idx = rev ? (n - i % n) % n : i % n;
+    double t = ph + double(idx) / n;
+    t -= std::floor(t);
+    return t;
+}
+
 // A planar face bounded by exactly one full-circle edge (a cylinder cap).
 bool boundingCircle(const TopoDS_Face& face, gp_Circ& circOut, int& edgeIdOut,
                     const Model& model) {
@@ -1733,8 +1839,9 @@ bool meshAnnulusRing(const TopoDS_Face& face, const Model& model, int faceId,
                 BRepAdaptor_Curve c(edge);
                 double f = c.FirstParameter(), l = c.LastParameter();
                 const bool rev = edge.Orientation() == TopAbs_REVERSED;
+                const double ph = closedEdgePhase(edge, model);
                 for (int i = 0; i < n; ++i) {  // endpoint owned by next edge
-                    double t = rev ? 1.0 - double(i) / n : double(i) / n;
+                    double t = phasedT(i, n, ph, rev);
                     pts.push_back(c.Value(f + (l - f) * t));
                 }
             }
@@ -2444,9 +2551,10 @@ bool samplePlanarRings(const TopoDS_Face& face, const Model& model,
                     BRep_Tool::CurveOnSurface(edge, face, f2, l2);
                 if (c3.IsNull() || c2.IsNull()) return false;
                 const bool rev = edge.Orientation() == TopAbs_REVERSED;
+                const double ph = closedEdgePhase(edge, model);
                 Piece pc;
                 for (int i = 0; i <= n; ++i) {
-                    double t = rev ? 1.0 - double(i) / n : double(i) / n;
+                    double t = phasedT(i, n, ph, rev);
                     pc.uv.push_back(c2->Value(f2 + (l2 - f2) * t));
                     pc.p.push_back(c3->Value(f3 + (l3 - f3) * t));
                 }
@@ -2512,8 +2620,9 @@ bool samplePlanarRings(const TopoDS_Face& face, const Model& model,
                 BRep_Tool::CurveOnSurface(edge, face, f2, l2);
             if (c3.IsNull() || c2.IsNull()) return false;
             const bool rev = edge.Orientation() == TopAbs_REVERSED;
+            const double ph = closedEdgePhase(edge, model);
             for (int i = 0; i < n; ++i) {  // endpoint owned by the next edge
-                double t = rev ? 1.0 - double(i) / n : double(i) / n;
+                double t = phasedT(i, n, ph, rev);
                 ring.uv.push_back(c2->Value(f2 + (l2 - f2) * t));
                 ring.p.push_back(c3->Value(f3 + (l3 - f3) * t));
             }
@@ -4466,7 +4575,11 @@ double revolutionUPhase(const BRepAdaptor_Surface& surf,
     double f, l;
     if (BRep_Tool::Curve(edge, f, l).IsNull()) return u0;
     BRepAdaptor_Curve c(edge);
-    const gp_Pnt p0 = c.Value(c.FirstParameter());
+    // The taper's ring must start where the PHASED first border sample
+    // sits, not at the curve origin.
+    const gp_Pnt p0 = c.Value(
+        c.FirstParameter() + (c.LastParameter() - c.FirstParameter()) *
+                                 closedEdgePhase(edge, model));
     const double range = surf.LastUParameter() - u0;
     // Which v end the rim lives at.
     double dFirst = 1e300, dLast = 1e300;
@@ -4593,9 +4706,9 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
         int n = eid < int(solvedEdge.size()) ? solvedEdge[eid] : 0;
         if (n < 1) n = nu;
         const bool rev = revOf.count(eid) && revOf[eid];
+        const double ph = closedEdgePhase(edge, model);
         for (int i = 0; i < n; ++i) {
-            double t = double(i) / n;
-            if (rev) t = 1.0 - t;
+            double t = phasedT(i, n, ph, rev);
             gp_Pnt2d uv = pc->Value(f2 + (l2 - f2) * t);
             gp_Pnt p = c3->Value(f3 + (l3 - f3) * t);
             double u = uv.X();
@@ -5138,9 +5251,10 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
                 if (pc.IsNull()) continue;
                 BRepAdaptor_Curve c(edge);
                 const double f3 = c.FirstParameter(), l3 = c.LastParameter();
+                const double ph = closedEdgePhase(edge, model);
                 std::vector<WPt> piece;
                 for (int k = 0; k <= n; ++k) {
-                    double t = double(k) / n;
+                    double t = phasedT(k, n, ph, false);
                     gp_Pnt2d uv = pc->Value(f + t * (l - f));
                     piece.push_back(
                         {c.Value(f3 + t * (l3 - f3)), uv.X(), uv.Y()});
@@ -5259,7 +5373,7 @@ gp_Vec planarFaceNormal(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
 
 void meshDiskCap(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                  const gp_Circ& circ, int faceId, int n, CapStyle cap,
-                 MeshBuilder& out) {
+                 MeshBuilder& out, double startAngle = 0.0) {
     n = std::max(3, n);
     const gp_Pln pln = surf.Plane();
     auto planeAnchor = [&](const gp_Pnt& p) {
@@ -5267,13 +5381,14 @@ void meshDiskCap(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         ElSLib::Parameters(pln, p, a.u, a.v);
         return a;
     };
-    // Ring points come from the circle's own parametrization so they land on
-    // the same positions as an adjacent revolution side sharing this circle;
-    // the weld pass then stitches the two faces watertight.
+    // Ring points come from the circle's own parametrization so they land
+    // on the same positions as an adjacent revolution side sharing this
+    // circle (startAngle carries the phase anchor when the border edge is
+    // phased); the weld pass then stitches the two faces watertight.
     std::vector<uint32_t> ring(n);
     std::vector<gp_Pnt> pts(n);
     for (int i = 0; i < n; ++i) {
-        pts[i] = ElCLib::Value(i * 2.0 * M_PI / n, circ);
+        pts[i] = ElCLib::Value(startAngle + i * 2.0 * M_PI / n, circ);
         ring[i] = out.addVertex(pts[i], planeAnchor(pts[i]));
     }
 
@@ -5328,7 +5443,7 @@ void meshParametricGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
 // and border vertices sit on the same grid nodes as the neighbouring faces.
 void meshRingJunction(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                       const gp_Circ& circ, int faceId, int nu, int nv,
-                      int loops, MeshBuilder& out) {
+                      int loops, MeshBuilder& out, double startAngle = 0.0) {
     const int n = 2 * (nu + nv);
     loops = std::max(1, loops);
 
@@ -5346,7 +5461,9 @@ void meshRingJunction(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     for (int j = nv; j > 0; --j) border.push_back(surf.Value(umin, vmin + j * dv));
 
     std::vector<gp_Pnt> ring(n);
-    for (int k = 0; k < n; ++k) ring[k] = ElCLib::Value(k * 2.0 * M_PI / n, circ);
+    for (int k = 0; k < n; ++k) {
+        ring[k] = ElCLib::Value(startAngle + k * 2.0 * M_PI / n, circ);
+    }
 
     // Pair border and ring vertices by angle around the circle center: make
     // the border loop run the same way as the circle parametrization, then
@@ -6576,11 +6693,15 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 }
                 return hits;
             };
-            std::vector<uint32_t> prev = nearVertsEnd(c3->Value(f));
+            const double ph = closedEdgePhase(E, model);
+            auto sampleAt = [&](int i) {
+                return c3->Value(f + (l - f) * phasedT(i, n, ph, false));
+            };
+            std::vector<uint32_t> prev = nearVertsEnd(sampleAt(0));
             for (int i = 1; i <= n; ++i) {
-                std::vector<uint32_t> cur =
-                    i == n ? nearVertsEnd(c3->Value(l))
-                           : nearVerts(c3->Value(f + (l - f) * i / n));
+                std::vector<uint32_t> cur = i == n
+                                                ? nearVertsEnd(sampleAt(n))
+                                                : nearVerts(sampleAt(i));
                 bool linked = false;
                 for (uint32_t a : prev) {
                     for (uint32_t b : cur) {
@@ -6595,9 +6716,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     if (linked) break;
                 }
                 if (!linked) {
-                    const gp_Pnt sp = i == n
-                                          ? c3->Value(l)
-                                          : c3->Value(f + (l - f) * i / n);
+                    const gp_Pnt sp = sampleAt(i);
                     double bn = 1e300;
                     for (uint32_t vi = 0; vi < part.vertices.size(); ++vi) {
                         const auto& P = part.vertices[vi];
@@ -6721,9 +6840,17 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         plan.rimLow.empty() ? nullptr : &plan.rimLow);
                 }
                 break;
-            case MesherKind::DiskCap:
-                meshDiskCap(face, surf, plan.circ, fid, nu, s.cap, out);
+            case MesherKind::DiskCap: {
+                double a0 = 0.0;
+                if (!plan.uEdges.empty() &&
+                    closedEdgePhase(
+                        TopoDS::Edge(model.edges(plan.uEdges[0])), model) >
+                        0.0) {
+                    a0 = ringAnchorAngle(plan.circ);
+                }
+                meshDiskCap(face, surf, plan.circ, fid, nu, s.cap, out, a0);
                 break;
+            }
             case MesherKind::PlanarGrid: {
                 // Support loops hug the creases on fillet strips.
                 double holdU = plan.isFillet && plan.acrossIsU ? s.filletHold : 0;
@@ -6752,10 +6879,18 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     meshMinimalNGon(face, surf, fid, nu, nv, out);
                 }
                 break;
-            case MesherKind::RingJunction:
+            case MesherKind::RingJunction: {
+                double a0 = 0.0;
+                if (plan.circleEdgeId > 0 &&
+                    closedEdgePhase(
+                        TopoDS::Edge(model.edges(plan.circleEdgeId)),
+                        model) > 0.0) {
+                    a0 = ringAnchorAngle(plan.circ);
+                }
                 meshRingJunction(face, surf, plan.circ, fid, nu, nv,
-                                 s.junctionRings, out);
+                                 s.junctionRings, out, a0);
                 break;
+            }
             case MesherKind::AnnulusRing:
                 if (!meshAnnulusRing(face, model, fid, plan.uEdges,
                                      plan.vEdges, solvedEdge, s.radial,
