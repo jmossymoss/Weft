@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include "weft/analysis.hpp"
 #include "weft/mesh.hpp"
 #include "weft/model.hpp"
@@ -105,6 +106,9 @@ struct GenerationSettings {
     // threads or the freeform border-conformity pass to bisect problems.
     bool parallelMeshing = true;
     bool conformBorders = true;
+    // Live progress for UIs: incremented once per meshed face when set
+    // (non-owning; the pointee must outlive the generate call).
+    std::atomic<int>* progressFaces = nullptr;
 
     const FaceMeshSettings& forFace(int faceId) const {
         auto it = perFace.find(faceId);
