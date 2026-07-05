@@ -2423,6 +2423,58 @@ bool meshMinimalPlanar(const TopoDS_Face& face, const Model& model,
     return true;
 }
 
+// The demotion floor for ANY face with pcurves: every wire sampled at
+// the solved counts (the border contract, same formula every mesher
+// uses), holes bridged in UV, the region web-triangulated. Interior
+// quality is modest, but the borders are exact by construction — a
+// face that lands here cannot leak. The OCCT triangulation fallback
+// remains only for faces this cannot express (null curves, degenerate
+// UV rings).
+bool meshContractFallback(const TopoDS_Face& face, const Model& model,
+                          int faceId, const std::vector<int>& solvedEdge,
+                          int radialDefault, MeshBuilder& out) {
+    std::vector<PlanarRing> rings;
+    if (!samplePlanarRings(face, model, solvedEdge, radialDefault, rings)) {
+        return false;
+    }
+    if (rings.empty()) return false;
+    const bool flip = face.Orientation() == TopAbs_REVERSED;
+    // Curved UV charts are anisotropic (u in radians, v in model units):
+    // scale u by the local relative stretch so the triangulator sees
+    // true shapes. Positive scale keeps the normalized windings.
+    double uScale = 1.0;
+    try {
+        BRepAdaptor_Surface surf(face);
+        const double um =
+            (surf.FirstUParameter() + surf.LastUParameter()) / 2;
+        const double vm =
+            (surf.FirstVParameter() + surf.LastVParameter()) / 2;
+        const double su = std::max(
+            1e-9,
+            surf.Value(um, vm).Distance(surf.Value(um + 1e-3, vm)) / 1e-3);
+        const double sv = std::max(
+            1e-9,
+            surf.Value(um, vm).Distance(surf.Value(um, vm + 1e-3)) / 1e-3);
+        uScale = su / sv;
+    } catch (const Standard_Failure&) {
+    }
+    std::vector<WebPoint> outer;
+    std::vector<std::vector<WebPoint>> holes;
+    for (PlanarRing& r : rings) {
+        std::vector<WebPoint> ring;
+        for (size_t i = 0; i < r.uv.size(); ++i) {
+            ring.push_back(
+                {gp_Pnt2d(r.uv[i].X() * uScale, r.uv[i].Y()),
+                 out.addVertex(r.p[i], {})});
+        }
+        if (r.isOuter) outer = std::move(ring);
+        else holes.push_back(std::move(ring));
+    }
+    if (outer.size() < 3) return false;
+    triangulateWeb(std::move(outer), std::move(holes), faceId, flip, out);
+    return true;
+}
+
 bool planQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                   const Model& model, FacePlan& plan) {
     // Any trimmed surface patch works — the grid lives in UV and maps
@@ -4069,14 +4121,19 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
         }
     }
 
-    // Everything validated — safe to emit. Copy the surviving grid.
+    // Topology validated. Build the whole result LOCALLY first — the
+    // webs can still fail (ear-clip on a degenerate keyhole ring), and
+    // a partially emitted face is a guaranteed leak. `out` receives the
+    // part only after every web proved complete.
+    PolyMesh webbedMesh;
+    MeshBuilder wb(webbedMesh);
     std::vector<uint32_t> remap(grid.vertices.size(), UINT32_MAX);
     auto emitVert = [&](uint32_t i) {
         if (remap[i] == UINT32_MAX) {
-            remap[i] = out.addVertex(gp_Pnt(grid.vertices[i][0],
-                                            grid.vertices[i][1],
-                                            grid.vertices[i][2]),
-                                     grid.anchors[i]);
+            remap[i] = wb.addVertex(gp_Pnt(grid.vertices[i][0],
+                                           grid.vertices[i][1],
+                                           grid.vertices[i][2]),
+                                    grid.anchors[i]);
         }
         return remap[i];
     };
@@ -4085,7 +4142,7 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
         std::vector<uint32_t> poly;
         poly.reserve(grid.polygons[p].size());
         for (uint32_t idx : grid.polygons[p]) poly.push_back(emitVert(idx));
-        out.addPolygon(std::move(poly), faceId, false);
+        wb.addPolygon(std::move(poly), faceId, false);
     }
 
     const double rScale =
@@ -4202,7 +4259,7 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
             std::vector<uint32_t> holeIds(h.size(), UINT32_MAX);
             auto holeId = [&](size_t j) {
                 if (holeIds[j] == UINT32_MAX) {
-                    holeIds[j] = out.addVertex(
+                    holeIds[j] = wb.addVertex(
                         h[j].p, Anchor{faceId, h[j].u, h[j].v});
                 }
                 return holeIds[j];
@@ -4222,13 +4279,35 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
 
         std::vector<uint32_t> ringIdx(ringPts.size());
         for (size_t i = 0; i < ringIdx.size(); ++i) ringIdx[i] = i;
+        size_t emitted = 0;
         for (const auto& t : triangulatePoly(ringPts, ringIdx)) {
             uint32_t a = ringIds[t[0]], b = ringIds[t[1]],
                      c = ringIds[t[2]];
             if (a == b || b == c || a == c) continue;
-            out.addPolygon({a, b, c}, faceId, false);
+            wb.addPolygon({a, b, c}, faceId, false);
+            ++emitted;
         }
-    }    return true;
+        // A complete ear-clip of a keyhole ring yields exactly V-2
+        // triangles (bridge duplicates included). Anything less means
+        // the web has an internal hole — fail the face un-emitted.
+        if (emitted + 2 < ringPts.size()) return false;
+    }
+
+    // Every web complete: splat the local result into the real builder.
+    std::vector<uint32_t> outMap(webbedMesh.vertices.size());
+    for (uint32_t i = 0; i < webbedMesh.vertices.size(); ++i) {
+        outMap[i] = out.addVertex(gp_Pnt(webbedMesh.vertices[i][0],
+                                         webbedMesh.vertices[i][1],
+                                         webbedMesh.vertices[i][2]),
+                                  webbedMesh.anchors[i]);
+    }
+    for (const auto& poly : webbedMesh.polygons) {
+        std::vector<uint32_t> mapped;
+        mapped.reserve(poly.size());
+        for (uint32_t idx : poly) mapped.push_back(outMap[idx]);
+        out.addPolygon(std::move(mapped), faceId, false);
+    }
+    return true;
 }
 
 // Outward normal of a planar face (accounts for face orientation).
@@ -5354,6 +5433,120 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             }
         }
     }
+    // Border-contract oracle: does this part contain every border edge
+    // of the face at its solved sampling (each consecutive pair of
+    // 3D-curve samples present as a polygon edge)? Returns the first
+    // offending edge id, 0 when clean. Seams (edges appearing twice in
+    // the face's wires), degenerate and micro edges are exempt.
+    auto borderContractViolation = [&](int fid,
+                                       const PolyMesh& part) -> int {
+        const TopoDS_Face F = TopoDS::Face(model.faces(fid));
+        const double q = std::max(1e-9, settings.weldTolerance);
+        std::map<std::tuple<long long, long long, long long>,
+                 std::vector<uint32_t>>
+            cells;
+        for (uint32_t vi = 0; vi < part.vertices.size(); ++vi) {
+            const auto& P = part.vertices[vi];
+            cells[{llround(P[0] / q), llround(P[1] / q),
+                   llround(P[2] / q)}]
+                .push_back(vi);
+        }
+        auto nearVert = [&](const gp_Pnt& p) -> int64_t {
+            const long long cx = llround(p.X() / q),
+                            cy = llround(p.Y() / q),
+                            cz = llround(p.Z() / q);
+            double best = q * q;
+            int64_t bi = -1;
+            for (long long dx = -1; dx <= 1; ++dx) {
+                for (long long dy = -1; dy <= 1; ++dy) {
+                    for (long long dz = -1; dz <= 1; ++dz) {
+                        auto it = cells.find({cx + dx, cy + dy, cz + dz});
+                        if (it == cells.end()) continue;
+                        for (uint32_t vi : it->second) {
+                            const auto& P = part.vertices[vi];
+                            const double ddx = P[0] - p.X();
+                            const double ddy = P[1] - p.Y();
+                            const double ddz = P[2] - p.Z();
+                            const double d =
+                                ddx * ddx + ddy * ddy + ddz * ddz;
+                            if (d < best) {
+                                best = d;
+                                bi = vi;
+                            }
+                        }
+                    }
+                }
+            }
+            return bi;
+        };
+        std::set<uint64_t> partEdges;
+        for (const auto& poly : part.polygons) {
+            for (size_t i = 0; i < poly.size(); ++i) {
+                const uint32_t a = poly[i];
+                const uint32_t b = poly[(i + 1) % poly.size()];
+                partEdges.insert((uint64_t(std::min(a, b)) << 32) |
+                                 std::max(a, b));
+            }
+        }
+        std::map<int, int> occur;  // seams appear twice in the wires
+        for (TopExp_Explorer ex(F, TopAbs_EDGE); ex.More(); ex.Next()) {
+            int eid = model.edges.FindIndex(ex.Current());
+            if (eid >= 1) ++occur[eid];
+        }
+        for (const auto& [eid, cnt] : occur) {
+            if (cnt != 1) continue;  // seam: internal to this face
+            const TopoDS_Edge E = TopoDS::Edge(model.edges(eid));
+            if (BRep_Tool::Degenerated(E)) continue;
+            const int n = eid < int(solvedEdge.size()) ? solvedEdge[eid]
+                                                       : 0;
+            if (n < 1) continue;
+            double f, l;
+            Handle(Geom_Curve) c3 = BRep_Tool::Curve(E, f, l);
+            if (c3.IsNull()) continue;
+            if (n == 1 &&
+                c3->Value(f).Distance(c3->Value(l)) < 4.0 * q) {
+                continue;  // micro edge: below weld resolution
+            }
+            int64_t prev = nearVert(c3->Value(f));
+            for (int i = 1; i <= n; ++i) {
+                const int64_t cur =
+                    nearVert(c3->Value(f + (l - f) * i / n));
+                if (prev < 0 || cur < 0 || prev == cur ||
+                    !partEdges.count(
+                        (uint64_t(std::min(prev, cur)) << 32) |
+                        std::max(prev, cur))) {
+                    return eid;
+                }
+                prev = cur;
+            }
+        }
+        return 0;
+    };
+
+    // One demotion path for every mesher failure: the contract floor
+    // first (exact borders, cannot leak), verified; the raw OCCT
+    // triangulation only when even that is unavailable.
+    auto demote = [&](int fid, const TopoDS_Face& face,
+                      const BRepAdaptor_Surface& surf,
+                      const FaceMeshSettings& s, const char* why) {
+        parts[fid] = PolyMesh();
+        fellBack[fid] = 1;
+        {
+            MeshBuilder retry(parts[fid]);
+            if (meshContractFallback(face, model, fid, solvedEdge,
+                                     s.radial, retry) &&
+                borderContractViolation(fid, parts[fid]) == 0) {
+                dbg("mesh face %d: %s -> contract floor", fid, why);
+                return;
+            }
+        }
+        parts[fid] = PolyMesh();
+        MeshBuilder retry(parts[fid]);
+        meshFallback(face, surf, fid, s, retry);
+        dbg("mesh face %d: %s -> OCCT fallback (no contract floor)", fid,
+            why);
+    };
+
     auto meshFace = [&](int fid) {
         const FaceMeshSettings& s = settings.forFace(fid);
         if (s.exclude) return;
@@ -5410,10 +5603,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 } else if (!plan.insertWires.empty()) {
                     if (!meshRevolutionInsert(face, surf, model, plan,
                                               solvedEdge, fid, nu, nv, out)) {
-                        dbg("mesh face %d: revolution insert failed, "
-                            "falling back", fid);
-                        fellBack[fid] = 1;
-                        meshFallback(face, surf, fid, s, out);
+                        demote(fid, face, surf, s,
+                               "revolution insert failed");
                     }
                 } else {
                     meshRevolutionGrid(face, surf, model, plan.uEdges,
@@ -5437,9 +5628,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 if (!meshCoonsGrid(face, model, fid, clusteredParams(nu, holdU),
                                    clusteredParams(nv, holdV), s.coonsRotate,
                                    solvedEdge, out)) {
-                    dbg("mesh face %d: coons failed, falling back", fid);
-                    fellBack[fid] = 1;
-                    meshFallback(face, surf, fid, s, out);
+                    demote(fid, face, surf, s, "coons failed");
                 }
                 break;
             }
@@ -5447,8 +5636,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 if (!plan.loops.empty()) {
                     if (!meshMinimalPlanar(face, model, fid, solvedEdge,
                                            s.radial, out)) {
-                        fellBack[fid] = 1;
-                        meshFallback(face, surf, fid, s, out);
+                        demote(fid, face, surf, s, "minimal planar failed");
                     }
                 } else {
                     meshMinimalNGon(face, surf, fid, nu, nv, out);
@@ -5466,15 +5654,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 if (!meshPlateWeb(face, surf, model, fid, solvedEdge,
                                   s.radial, s.junctionRings, s.squareCollar,
                                   out)) {
-                    fellBack[fid] = 1;
-                    meshFallback(face, surf, fid, s, out);
+                    demote(fid, face, surf, s, "plate web failed");
                 }
                 break;
             case MesherKind::QuadFill:
                 if (!meshQuadFill(face, surf, model, fid, solvedEdge,
                                   s.radial, s.minSize, out)) {
-                    fellBack[fid] = 1;
-                    meshFallback(face, surf, fid, s, out);
+                    demote(fid, face, surf, s, "quad fill failed");
                 }
                 break;
             case MesherKind::QuadDominant:
@@ -5515,12 +5701,22 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 if (!sane) break;
             }
             if (!sane) {
-                dbg("mesh face %d: self-check failed (%s), falling back",
-                    fid, mesherKindName(plan.kind));
-                parts[fid] = PolyMesh();
-                fellBack[fid] = 1;
-                MeshBuilder retry(parts[fid]);
-                meshFallback(face, surf, fid, s, retry);
+                demote(fid, face, surf, s, "self-check failed");
+            }
+        }
+        // Border-contract postcondition: any face that cannot prove its
+        // borders at the solved sampling demotes to the contract floor
+        // VISIBLY — a silent contract break is a guaranteed open seam
+        // after the weld. Fallback parts are exempt (they are the
+        // floor's floor), as are deliberate clustered fillet holds.
+        if (!fellBack[fid] && plan.kind != MesherKind::Fallback &&
+            plan.kind != MesherKind::QuadDominant &&
+            !(plan.isFillet && s.filletHold > 0.0)) {
+            const int bad = borderContractViolation(fid, parts[fid]);
+            if (bad) {
+                dbg("mesh face %d: border contract failed on edge %d (%s)",
+                    fid, bad, mesherKindName(plan.kind));
+                demote(fid, face, surf, s, "border contract failed");
             }
         }
     };
