@@ -1115,8 +1115,36 @@ static void reloadModel(App& app) {
     }
 }
 
-// Native "open file" dialog: comdlg32 on Windows, zenity on Linux (falls
-// back to the text field in the panel when neither is available).
+#ifndef _WIN32
+// Whether the last dialog attempt found NO dialog tool at all — the
+// panel then tells the user to type a path instead of doing nothing.
+static bool gNoDialogTool = false;
+static std::string runDialog(const char* zenityCmd, const char* kdialogCmd) {
+    gNoDialogTool = false;
+    for (const char* cmd : {zenityCmd, kdialogCmd}) {
+        FILE* p = popen(cmd, "r");
+        if (!p) continue;
+        char buf[1024] = "";
+        std::string r;
+        if (fgets(buf, sizeof buf, p)) {
+            r = buf;
+            while (!r.empty() && (r.back() == '\n' || r.back() == '\r')) {
+                r.pop_back();
+            }
+        }
+        // 0 = picked, 1 = cancelled; 127/126 = tool missing, try next.
+        const int rc = pclose(p);
+        const int code = WIFEXITED(rc) ? WEXITSTATUS(rc) : 127;
+        if (code == 0 && !r.empty()) return r;
+        if (code <= 1) return "";  // real dialog, user cancelled
+    }
+    gNoDialogTool = true;
+    return "";
+}
+#endif
+
+// Native "open file" dialog: comdlg32 on Windows, zenity/kdialog on
+// Linux (the panel's text field is the fallback when neither exists).
 static std::string openFileDialog() {
 #ifdef _WIN32
     char file[1024] = "";
@@ -1130,21 +1158,11 @@ static std::string openFileDialog() {
     if (GetOpenFileNameA(&ofn)) return file;
     return "";
 #else
-    FILE* p = popen(
+    return runDialog(
         "zenity --file-selection --title='Open STEP' "
         "--file-filter='STEP | *.step *.stp *.STEP *.STP' 2>/dev/null",
-        "r");
-    if (!p) return "";
-    char buf[1024] = "";
-    std::string r;
-    if (fgets(buf, sizeof buf, p)) {
-        r = buf;
-        while (!r.empty() && (r.back() == '\n' || r.back() == '\r')) {
-            r.pop_back();
-        }
-    }
-    pclose(p);
-    return r;
+        "kdialog --getopenfilename . "
+        "'STEP files (*.step *.stp *.STEP *.STP)' 2>/dev/null");
 #endif
 }
 
@@ -1163,21 +1181,13 @@ static std::string saveFileDialog(const char* defaultName) {
     if (GetSaveFileNameA(&ofn)) return file;
     return "";
 #else
-    std::string cmd =
-        "zenity --file-selection --save --title='Export OBJ' "
-        "--filename='" + std::string(defaultName) + "' 2>/dev/null";
-    FILE* p = popen(cmd.c_str(), "r");
-    if (!p) return "";
-    char buf[1024] = "";
-    std::string r;
-    if (fgets(buf, sizeof buf, p)) {
-        r = buf;
-        while (!r.empty() && (r.back() == '\n' || r.back() == '\r')) {
-            r.pop_back();
-        }
-    }
-    pclose(p);
-    return r;
+    return runDialog(
+        ("zenity --file-selection --save --title='Export OBJ' "
+         "--filename='" + std::string(defaultName) + "' 2>/dev/null")
+            .c_str(),
+        ("kdialog --getsavefilename '" + std::string(defaultName) +
+         "' 2>/dev/null")
+            .c_str());
 #endif
 }
 
@@ -1185,7 +1195,13 @@ static std::string tempDir() {
     for (const char* var : {"TMPDIR", "TMP", "TEMP"}) {
         if (const char* d = std::getenv(var); d && *d) return d;
     }
-    return ".";
+#ifndef _WIN32
+    // Linux desktops rarely set TMPDIR; "." is often read-only (app
+    // launched from a file manager). /tmp is the convention.
+    return "/tmp";
+#else
+    return gDataDir.empty() ? "." : gDataDir;
+#endif
 }
 
 static void loadFixture(App& app, const std::string& name) {
@@ -2617,6 +2633,13 @@ static void drawUi(App& app) {
                               p.c_str());
                 loadModel(app, p);
             }
+#ifndef _WIN32
+            else if (gNoDialogTool) {
+                app.status =
+                    "no zenity/kdialog on this system — type a path "
+                    "below and press Load (or: sudo apt install zenity)";
+            }
+#endif
         }
         ImGui::InputTextWithHint("##path", "or type a path...", app.pathBuf,
                                  sizeof app.pathBuf);
