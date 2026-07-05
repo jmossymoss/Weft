@@ -279,6 +279,19 @@ EXACTLY-2-sharp-corner outlines; extending to notched bands (2 tips +
 smooth notches) and 4-corner elongated fold-prone strips is the next
 quality lever, along with fillet-loop rows inside ladder rungs.
 
+## Fold-postcondition round (latest)
+LANDED (3a00abc): per-part fold vote (Newell vs projected CAD normal,
+>25% inverted of >=8 tested -> demote to floor; bounded to <=2000-poly
+parts). nasty_cheese 243 -> 10 folds (watertight); unterlaf 3209 ->
+1323 tris via rerouting; all fixtures + as1 green everywhere.
+RESIDUALS on the examples board (cad profile): weldment 7 scattered
+opens (2 nm edges in the INPUT B-rep — verify input dirt with the app
+isolate next session); mohne ONE non-manifold edge (new, marginal —
+attribute it: probably an absorber splice or strip corner; 0 opens);
+2827056 3 folds, unterlaf 12, weldment 22, nasty_cheese 10 (all small
+warped patches below the demotion threshold). Everything else clean:
+bracket 31t, angle1 0t, as1_pe 0t, iso 136t/98% quads, 4pinplug.
+
 ## Next steps, in order
 1. COUNT DECOUPLING: extend the absorber to multi-vertex gaps (complement
    path v→w1→…→wk→u along a shared B-rep edge), then let 9–16-edge chained
