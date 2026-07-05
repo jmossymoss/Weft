@@ -3191,6 +3191,12 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         return plan;
     }
 
+    // Minimal n-gon owns EVERY flat face it can express when the mode is
+    // on (the topology policy: big flats are n-gons, quads go to curves;
+    // triangulation is an export option). The junction patterns below
+    // only see flat faces when minimal is off or can't build the face.
+    if (s.minimal && planMinimalPlanar(face, surf, model, plan)) return plan;
+
     if (planRingJunction(face, model, plan)) return plan;
 
     // Auto picks stay conservative: the annulus band only for actual
@@ -3201,11 +3207,6 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     if (planPlateWeb(face, surf, model, plan, /*requireRoundHoles=*/true)) {
         return plan;
     }
-
-    // Default game-topology minimal: flat faces the junction patterns
-    // didn't claim collapse to their boundary — one n-gon, or a
-    // hole-bridged flat web. Quad flow is spent where geometry curves.
-    if (s.minimal && planMinimalPlanar(face, surf, model, plan)) return plan;
 
     // Curved surfaces skip the parametric grid on auto: its border rows
     // sample the SURFACE uniformly, which never lands vertex-for-vertex on

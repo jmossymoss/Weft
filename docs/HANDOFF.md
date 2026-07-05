@@ -172,6 +172,19 @@ quad-fill collar containment is vertex-only (can fold across thin
 features of another loop). Full details: the workflow result JSON in
 the session task file (14 confirmed / 22 refuted).
 
+## Bracket reproducer (user upload, 2026-07-05)
+User-supplied STEP bracket exposed the routing gap: with minimal ON,
+the auto chain tried RingJunction/Annulus/PlateWeb BEFORE default
+minimal, so the main plate meshed as an ear-clip triangle web. Fixed:
+minimal now owns every flat face it can express (junction patterns
+only see flats when minimal is off or fails); pattern tests opt out
+via defaults.minimal=false. Bracket: 2318 -> 1685 polys, tris 1137 ->
+788, plate faces are keyhole n-gons. REMAINING on this model: faces
+5/8/37 still PLAN fallback-tri (flats planMinimalPlanar refused —
+diagnose the gate), face 16 is minimal-ngon yet emits 143 tris
+(investigate which path), 4 folded polys, 11 degenerate. The model
+lives in the user's uploads only — never commit it.
+
 ## Next steps, in order
 1. COUNT DECOUPLING: extend the absorber to multi-vertex gaps (complement
    path v→w1→…→wk→u along a shared B-rep edge), then let 9–16-edge chained
