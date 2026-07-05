@@ -199,16 +199,39 @@ REM the .lib paths recorded in OCCT's link interface -- this pass is
 REM belt and braces for layouts CMake can't see.
 set "TPROOTS="!OCCT_DIR!""
 for /d %%p in ("!OCCT_DIR!\..\3rdparty*") do set "TPROOTS=!TPROOTS! "%%~fp""
+set "TPDIRS=;"
 for %%d in (tbb jemalloc freetype FreeImage openvr zlib
             avcodec avformat avutil swscale swresample) do (
     for %%r in (!TPROOTS!) do (
         for /f "delims=" %%f in ('dir /s /b "%%~r\%%d*.dll" 2^>nul') do (
             xcopy "%%f" "%BINDIR%" /D /Y >nul
+            if "!TPDIRS:%%~dpf;=!"=="!TPDIRS!" set "TPDIRS=!TPDIRS!%%~dpf;"
         )
     )
 )
 for /f %%c in ('dir /b "%BINDIR%\*.dll" 2^>nul ^| find /c ".dll"') do (
     echo   %%c runtime DLL^(s^) in place
+)
+
+REM Also put the OCCT runtime folders on the user PATH: the copy above
+REM covers build\bin\Release, but a PATH entry covers exes run from
+REM anywhere and any DLL the copy list missed. User scope -- no admin,
+REM no setx (setx truncates PATH at 1024 chars). Current session gets
+REM it immediately; other terminals after a restart.
+set "OCCTPATHS="
+if not "!DLLDIRS!"==";" set "OCCTPATHS=!DLLDIRS:~1!"
+if not "!TPDIRS!"==";" set "OCCTPATHS=!OCCTPATHS!!TPDIRS:~1!"
+if defined OCCTPATHS (
+    set "PATH=!PATH!;!OCCTPATHS!"
+    echo   Ensuring OCCT runtime folders are on your user PATH...
+    powershell -NoProfile -Command ^
+        "$add = '!OCCTPATHS!'.TrimEnd(';').Split(';');" ^
+        "$cur = [Environment]::GetEnvironmentVariable('Path','User');" ^
+        "if ($null -eq $cur) { $cur = '' };" ^
+        "$parts = $cur.Split(';') | ForEach-Object { $_.TrimEnd('\') };" ^
+        "$new = $cur;" ^
+        "foreach ($d in $add) { $t = $d.TrimEnd('\'); if ($t -and ($parts -notcontains $t)) { $new = ($new.TrimEnd(';') + ';' + $t) } };" ^
+        "if ($new -ne $cur) { [Environment]::SetEnvironmentVariable('Path',$new,'User'); Write-Output '  user PATH updated' } else { Write-Output '  already on PATH' }" 2>>"%LOG%"
 )
 ctest --test-dir build -C Release --output-on-failure
 if %errorLevel% neq 0 (
