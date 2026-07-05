@@ -182,6 +182,9 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
                 // Handoff step 3: minimal (default) + adaptive + strips.
                 gs.defaults.minimal = true;
                 gs.defaults.adaptive = true;
+                // Game topology: deviation relative to feature size, so
+                // ring counts follow the ANGLE criterion at every scale.
+                gs.defaults.relativeDeviation = true;
             } else if (prof == "dense") {
                 gs.defaults.minimal = false;
             } else {

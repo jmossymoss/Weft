@@ -1017,6 +1017,9 @@ static void loadModel(App& app, const std::string& path) {
         // New sessions solve curvature adaptively (deviation/angle drive
         // each edge's count); saved recipes bring their own flag back.
         app.recipe.settings.defaults.adaptive = true;
+        // Deviation relative to feature size: a 500mm bore and a 5mm bore
+        // carry the same ring topology, the angle criterion drives counts.
+        app.recipe.settings.defaults.relativeDeviation = true;
         regenerate(app);
         frameModel(app);
         app.status = path + ": " + std::to_string(app.model.faceCount()) +

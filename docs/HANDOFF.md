@@ -292,6 +292,23 @@ attribute it: probably an absorber splice or strip corner; 0 opens);
 warped patches below the demotion threshold). Everything else clean:
 bracket 31t, angle1 0t, as1_pe 0t, iso 136t/98% quads, 4pinplug.
 
+## Relative-deviation round (latest — bores as light rings)
+User report: bores still hyper-dense brick halves (iso14649 face 118,
+r=508mm arcs solved at 80/half). Cause: ABSOLUTE chord deviation
+(0.1mm) on huge parts makes the sagitta criterion dominate the angle
+criterion. LANDED: adaptiveCount honors s.relativeDeviation — chord
+scales by the edge's own extent (max of endpoint distance and
+first-to-mid distance, so closed circles use their diameter and don't
+collapse to the 1e-6 floor -> n=256). Cache key gains the flag. cad
+profile + app new-session defaults now set relativeDeviation = true.
+Results: iso bores 80 -> 7/half (angle-driven), board no regressions,
+unterlaf folds 12 -> 0 (now fully clean), weldment folds 22 -> 2,
+slotted cad-profile folds 36 -> 6 (A/B vs old profile confirmed
+improvement; slotted --adaptive absolute mode still 36 on face #1 —
+pre-existing). Prior round (adfb61e) already unites co-circular arc
+groups so half-bores share one density group; together the two fixes
+make holes read as single revolution rings.
+
 ## Next steps, in order
 1. COUNT DECOUPLING: extend the absorber to multi-vertex gaps (complement
    path v→w1→…→wk→u along a shared B-rep edge), then let 9–16-edge chained

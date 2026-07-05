@@ -3917,8 +3917,11 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
     // straight edges get 1. Memoized per (edge, tolerances) for this solve.
     std::map<std::tuple<int, long long, long long>, int> adCache;
     auto adaptiveCount = [&](int eid, const FaceMeshSettings& s) {
-        auto key = std::make_tuple(eid, (long long)(s.chordTolerance * 1e9),
-                                   (long long)(s.angleToleranceDeg * 1e6));
+        auto key = std::make_tuple(
+            eid,
+            (long long)(s.chordTolerance * 1e9) +
+                (s.relativeDeviation ? 1 : 0),
+            (long long)(s.angleToleranceDeg * 1e6));
         auto it = adCache.find(key);
         if (it != adCache.end()) return it->second;
         int n = 1;
@@ -3930,6 +3933,23 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                 double ang =
                     std::max(1.0, s.angleToleranceDeg) * M_PI / 180.0;
                 double chord = std::max(1e-9, s.chordTolerance);
+                if (s.relativeDeviation) {
+                    // Deviation RELATIVE to the feature: sagitta as a
+                    // fraction of the edge's own extent, so a 500mm bore
+                    // and a 5mm bore carry the SAME ring topology and
+                    // the angle criterion drives the counts. Absolute
+                    // deviation stays for machining-accuracy meshes.
+                    const gp_Pnt pf = c.Value(c.FirstParameter());
+                    const gp_Pnt pl = c.Value(c.LastParameter());
+                    const gp_Pnt pm = c.Value(
+                        0.5 * (c.FirstParameter() + c.LastParameter()));
+                    // Midpoint term keeps closed edges honest: a full
+                    // circle's endpoints coincide but first-to-mid is
+                    // its diameter.
+                    const double extent = std::max(
+                        {pf.Distance(pl), pf.Distance(pm), 1e-6});
+                    chord = std::max(chord * extent, 1e-9);
+                }
                 try {
                     GCPnts_TangentialDeflection td(c, ang, chord, 2);
                     n = std::clamp(td.NbPoints() - 1, 1, 256);
