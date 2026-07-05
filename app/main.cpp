@@ -67,6 +67,26 @@ static FILE* gDebugLog = nullptr;
 static std::string gDataDir;   // per-user app data (log, imgui.ini)
 static std::string gLogPath;
 
+// Control scheme. Desktop = Blender-style MMB navigation. Laptop = the
+// same scheme with alt+LMB standing in for MMB (Blender's "emulate
+// 3-button mouse") so a bare trackpad can orbit/pan/zoom. Persisted per
+// user next to imgui.ini.
+static bool gLaptopControls = false;
+static std::string gControlsPath;
+static void loadControls() {
+    if (FILE* f = std::fopen(gControlsPath.c_str(), "r")) {
+        int v = 0;
+        if (std::fscanf(f, "laptop=%d", &v) == 1) gLaptopControls = v != 0;
+        std::fclose(f);
+    }
+}
+static void saveControls() {
+    if (FILE* f = std::fopen(gControlsPath.c_str(), "w")) {
+        std::fprintf(f, "laptop=%d\n", gLaptopControls ? 1 : 0);
+        std::fclose(f);
+    }
+}
+
 // %LOCALAPPDATA%\Weft on Windows, ~/.local/state/weft elsewhere — keeps
 // the app's own files (debug log, UI layout) out of whatever directory
 // it was launched from.
@@ -2951,8 +2971,21 @@ static void drawUi(App& app) {
         // popover (top-right of the viewport, Blender-style).
         ImGui::TextDisabled("shading: use the viewport corner popover");
         ImGui::TextDisabled("orange convex / blue concave / green smooth");
-        ImGui::TextDisabled("LMB select · MMB orbit · shift+MMB pan");
-        ImGui::TextDisabled("ctrl+MMB zoom · alt+MMB axis view · wheel");
+        int scheme = gLaptopControls ? 1 : 0;
+        const char* schemes[] = {"desktop (3-button mouse)",
+                                 "laptop (trackpad, no MMB)"};
+        if (ImGui::Combo("controls", &scheme, schemes, 2)) {
+            gLaptopControls = scheme == 1;
+            saveControls();
+        }
+        if (gLaptopControls) {
+            ImGui::TextDisabled("LMB select · alt+LMB orbit");
+            ImGui::TextDisabled("shift+alt+LMB pan · ctrl+alt+LMB zoom");
+            ImGui::TextDisabled("two-finger scroll zooms");
+        } else {
+            ImGui::TextDisabled("LMB select · MMB orbit · shift+MMB pan");
+            ImGui::TextDisabled("ctrl+MMB zoom · alt+MMB axis view · wheel");
+        }
         ImGui::Text("%zu manual op(s)", app.recipe.ops.size());
     }
 
@@ -3002,6 +3035,8 @@ static void scrollCb(GLFWwindow*, double, double dy) {
 
 int main(int argc, char** argv) {
     gDataDir = userDataDir();
+    gControlsPath = gDataDir + "/controls.ini";
+    loadControls();
     gLogPath = gDataDir + "/weft_debug.log";
     gDebugLog = std::fopen(gLogPath.c_str(), "w");
     installCrashHandler();
@@ -3088,6 +3123,7 @@ int main(int argc, char** argv) {
 
     double lastX = 0, lastY = 0;
     bool navOrbit = false, navPan = false, navZoom = false, navSnap = false;
+    bool navFromLmb = false;  // laptop scheme: this nav drag rode alt+LMB
     double downX = 0, downY = 0, downRX = 0, downRY = 0;
     bool prevLmb = false, prevRmb = false;
     double lastClickTime = 0;  // double-click select-similar
@@ -3128,21 +3164,33 @@ int main(int argc, char** argv) {
 
         // Blender-standard navigation: MMB orbit, shift+MMB pan, ctrl+MMB
         // drag-zoom, wheel zoom; alt+MMB orbits and snaps to the nearest
-        // axis-aligned view on release.
+        // axis-aligned view on release. Laptop scheme: alt+LMB emulates
+        // MMB; once such a drag starts it stays navigation until the
+        // button lifts, even if alt lifts first — otherwise the tail of
+        // an orbit would turn into a box select.
         if (!io.WantCaptureMouse) {
-            bool mmb = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_MIDDLE) ==
-                       GLFW_PRESS;
+            bool realMmb =
+                glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_MIDDLE) ==
+                GLFW_PRESS;
+            bool lmbBtn = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) ==
+                          GLFW_PRESS;
             bool shift = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
                          glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
             bool ctrl = glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
                         glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
             bool alt = glfwGetKey(window, GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||
                        glfwGetKey(window, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS;
-            if (mmb && !navOrbit && !navPan && !navZoom) {
+            bool navActive = navOrbit || navPan || navZoom;
+            bool mmb = realMmb ||
+                       (gLaptopControls &&
+                        ((alt && lmbBtn && !navActive) ||
+                         (navFromLmb && lmbBtn)));
+            if (mmb && !navActive) {
                 navPan = shift;
                 navZoom = ctrl && !shift;
                 navOrbit = !navPan && !navZoom;
-                navSnap = alt;
+                navSnap = alt && realMmb;  // axis snap needs a real MMB
+                navFromLmb = !realMmb;
                 lastX = mx;
                 lastY = my;
             }
@@ -3155,6 +3203,7 @@ int main(int argc, char** argv) {
                     app.cam.pitch = std::clamp(app.cam.pitch, -1.55f, 1.55f);
                 }
                 navOrbit = navPan = navZoom = navSnap = false;
+                navFromLmb = false;
             }
             if (navOrbit) {
                 app.cam.yaw -= float(mx - lastX) * 0.008f;
@@ -3548,7 +3597,14 @@ int main(int argc, char** argv) {
             }
         }
 
-        bool lmb = !io.WantCaptureMouse &&
+        // Laptop scheme: alt+LMB belongs to navigation, and a nav drag
+        // that started on LMB keeps owning the button until release.
+        bool navChord =
+            gLaptopControls &&
+            (navFromLmb ||
+             glfwGetKey(window, GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||
+             glfwGetKey(window, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS);
+        bool lmb = !io.WantCaptureMouse && !navChord &&
                    glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) ==
                        GLFW_PRESS;
         bool lmbPressed = lmb && !prevLmb;
