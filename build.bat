@@ -192,10 +192,19 @@ REM wildcard goes in the dir pattern so versioned names match too
 REM (tbb12.dll, avcodec-57.dll...). ffmpeg is imported by TKService
 REM when OCCT was built with video support, even though Weft never
 REM uses it.
+REM Search the OCCT dir itself AND any 3rdparty* sibling (the official
+REM installer keeps third-party products NEXT TO the opencascade dir,
+REM not inside it). CMake also deploys these post-build by resolving
+REM the .lib paths recorded in OCCT's link interface -- this pass is
+REM belt and braces for layouts CMake can't see.
+set "TPROOTS="!OCCT_DIR!""
+for /d %%p in ("!OCCT_DIR!\..\3rdparty*") do set "TPROOTS=!TPROOTS! "%%~fp""
 for %%d in (tbb jemalloc freetype FreeImage openvr zlib
             avcodec avformat avutil swscale swresample) do (
-    for /f "delims=" %%f in ('dir /s /b "!OCCT_DIR!\%%d*.dll" 2^>nul') do (
-        xcopy "%%f" "%BINDIR%" /D /Y >nul
+    for %%r in (!TPROOTS!) do (
+        for /f "delims=" %%f in ('dir /s /b "%%~r\%%d*.dll" 2^>nul') do (
+            xcopy "%%f" "%BINDIR%" /D /Y >nul
+        )
     )
 )
 for /f %%c in ('dir /b "%BINDIR%\*.dll" 2^>nul ^| find /c ".dll"') do (
