@@ -185,6 +185,39 @@ diagnose the gate), face 16 is minimal-ngon yet emits 143 tris
 (investigate which path), 4 folded polys, 11 degenerate. The model
 lives in the user's uploads only — never commit it.
 
+## Visual review of tests/STEP_Examples (11 models, fleet-reviewed renders)
+Verdicts: as1_pe/4pinplug/2827056 minor; bracket(1797609in)/angle1/
+iso14649/mohne/nasty_cheese/unterlaf/weldment bad; tork = broken source
+per user, IGNORE. tools/visual_check.sh runs the sweep (mesh + validate
++ 3 renders + report.html); visual review is part of the gate now.
+FIX CLASSES, in priority order:
+1. KEYHOLE N-GONS ARE NOT PRODUCTION POLYGONS. Doubled-bridge keyhole
+   rings render/import as hole membranes (angle1's sealed bores) and
+   show slit edges on every holed panel (as1_pe, 2827056, iso14649,
+   mohne). Replace with SIMPLE decomposition: two non-crossing bridges
+   per hole, splitting the panel into k+1 simple n-gons with real
+   shared edges (what Plasticity exports). Implement in
+   meshMinimalPlanar's rings>1 path (and quad-fill webs' outer rings);
+   remove the keyhole splice from display/export paths afterwards.
+2. Annulus/disc zippers emit WWWW triangle zigzags when ring counts
+   differ (unterlaf perimeter, weldment flange fan, mohne cap sliver
+   band). Replace meshAnnulusRing's alternating-triangle walk with the
+   arc-fraction grouped bridging already used by the closed strips
+   (quads + isolated 5-gons). Disc caps of large radius likewise.
+3. iso14649-demo: bores render as staggered brick tris (69% tris
+   overall) and a pocket has a folded membrane — run --debug, find why
+   its prismatic/bore faces demote or plan fallback, fix the gate.
+4. nasty_cheese: 243 folds + 57 non-manifold + hole barrels collapsing
+   into dense baskets — likely tiny-feature density explosion plus
+   fold-prone coons; diagnose per-face with --debug + isolate.
+5. weldment: giant chord tris on round end plates (disc caps at huge
+   radius rendered as coarse chords?) + 55 folds; 2 open border loops.
+6. bracket pocket: counterbore pocket floor fans + countersink cone
+   giant tri (cone face routed wrong at tiny radius, cf. face 37
+   radius 0.313 planning fallback).
+App/display: sheet models need two-sided shading (tork showed
+backfaces as black); fold-highlight magenta overlay works well.
+
 ## Next steps, in order
 1. COUNT DECOUPLING: extend the absorber to multi-vertex gaps (complement
    path v→w1→…→wk→u along a shared B-rep edge), then let 9–16-edge chained
