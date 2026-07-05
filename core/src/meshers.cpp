@@ -3600,7 +3600,8 @@ double revolutionUPhase(const BRepAdaptor_Surface& surf,
 void meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                         const Model& model, const std::vector<int>& rimEdges,
                         const std::vector<int>& solvedEdge, int faceId,
-                        int nu, int nv, MeshBuilder& out) {
+                        int nu, int nv, MeshBuilder& out,
+                        const std::vector<double>* vRowsOpt = nullptr) {
     nu = std::max(3, nu);
     nv = std::max(1, nv);
     const double v0 = surf.FirstVParameter();
@@ -3608,8 +3609,18 @@ void meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
     const double vspan = std::max(1e-12, v1 - v0);
     const double period = surf.LastUParameter() - surf.FirstUParameter();
     const bool vWrap = surf.IsVClosed();
+    // Explicit row positions (insert faces put rows exactly at each slot
+    // band's v-extents so deleted cells stay strictly interior and the
+    // staircase closes). Only meaningful for open-v bands.
+    const std::vector<double>* vRows =
+        (!vWrap && vRowsOpt && vRowsOpt->size() >= 2) ? vRowsOpt : nullptr;
+    if (vRows) nv = int(vRows->size()) - 1;
     const double dv = (v1 - v0) / nv;
     const int rows = vWrap ? nv : nv + 1;
+    auto rowV = [&](int j) {
+        return vRows ? (*vRows)[std::min<size_t>(j, vRows->size() - 1)]
+                     : v0 + j * dv;
+    };
     const bool flip = face.Orientation() == TopAbs_REVERSED;
 
     // Rim rows sample the rim EDGE CURVES (like every chain mesher), so
@@ -3649,6 +3660,26 @@ void meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
                   [](const RimPt& a, const RimPt& b) { return a.u < b.u; });
     }
 
+    // The rim samples OWN the border contract — they are what the
+    // neighbouring faces emit on the shared edges, and a border row may
+    // never be re-spaced (doctrine). When the rims disagree with the
+    // requested radial count, the rims win: if they agree with each
+    // other (or there is only one), the whole lattice follows them; if
+    // the two rims themselves differ, the interior keeps the requested
+    // density and each rim is stitched to its neighbouring uniform ring
+    // by a closed transition strip of quads/5-gons below.
+    const int nRim0 = int(rim[0].size());
+    const int nRim1 = int(rim[1].size());
+    const bool rim0ok = !vWrap && nRim0 >= 3;
+    const bool rim1ok = !vWrap && nRim1 >= 3;
+    if (rim0ok && nRim0 != nu && (!rim1ok || nRim1 == nRim0)) {
+        nu = nRim0;
+    } else if (!rim0ok && rim1ok && nRim1 != nu) {
+        nu = nRim1;
+    }
+    dbg("revgrid face %d: nu=%d nv=%d rims=%d/%d wrap=%d rimEdges=%zu",
+        faceId, nu, nv, nRim0, nRim1, vWrap ? 1 : 0, rimEdges.size());
+
     std::vector<std::vector<uint32_t>> ring(rows);
     const bool chained = !vWrap && int(rim[0].size()) == nu &&
                          (rim[1].empty() || int(rim[1].size()) == nu);
@@ -3672,7 +3703,7 @@ void meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
             }
         }
         for (int j = 0; j < rows; ++j) {
-            double v = v0 + j * dv;
+            double v = rowV(j);
             double w = (v - v0) / vspan;
             std::vector<gp_Pnt> pts(nu);
             std::vector<double> us(nu);
@@ -3699,11 +3730,28 @@ void meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
                 }
             }
         }
-    } else {
+    }
+    std::vector<double> ringU[2];  // rim-row u positions (bridge path)
+    if (!chained) {
         const double du = period / nu;
         const double u0 = surf.FirstUParameter();
         for (int j = 0; j < rows; ++j) {
-            double v = v0 + j * dv;
+            double v = rowV(j);
+            // Rim rows with usable samples are the EXACT rim points; the
+            // strips below stitch them to the uniform interior.
+            const int side = (j == 0 && rim0ok)          ? 0
+                             : (j == rows - 1 && rim1ok) ? 1
+                                                         : -1;
+            if (side >= 0) {
+                const auto& R = rim[side];
+                ring[j].resize(R.size());
+                for (size_t i = 0; i < R.size(); ++i) {
+                    ring[j][i] =
+                        out.addVertex(R[i].p, {faceId, R[i].u, v});
+                    ringU[side].push_back(R[i].u);
+                }
+                continue;
+            }
             std::vector<gp_Pnt> pts(nu);
             bool degenerate = true;
             for (int i = 0; i < nu; ++i) {
@@ -3727,6 +3775,7 @@ void meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
     for (int j = 0; j < nv; ++j) {
         const std::vector<uint32_t>& lo = ring[j];
         const std::vector<uint32_t>& hi = ring[(j + 1) % rows];
+        if (lo.size() != hi.size()) continue;  // strip-bridged pair
         for (int i = 0; i < nu; ++i) {
             int i2 = (i + 1) % nu;
             std::vector<uint32_t> quad{lo[i], lo[i2], hi[i2], hi[i]};
@@ -3735,6 +3784,96 @@ void meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
             if (quad.size() > 1 && quad.front() == quad.back()) quad.pop_back();
             if (quad.size() < 3) continue;
             out.addPolygon(std::move(quad), faceId, flip);
+        }
+    }
+
+    // Closed transition strips between an exact rim row and its
+    // neighbouring ring when their counts differ: monotone circular
+    // grouping by u — quads where the counts advance together, a 5-gon
+    // (or a small fan against a degenerate ring) where the dense ring
+    // contributes extra points. Winding matches the lattice cells:
+    // lower row forward, upper row backward.
+    auto emitClosedStrip = [&](const std::vector<uint32_t>& loI,
+                               const std::vector<double>& loU,
+                               const std::vector<uint32_t>& hiI,
+                               const std::vector<double>& hiU) {
+        const int nl = int(loI.size()), nh = int(hiI.size());
+        if (nl < 3 || nh < 3) return;
+        const bool loSparse = nl <= nh;
+        const std::vector<uint32_t>& S = loSparse ? loI : hiI;
+        const std::vector<double>& sU = loSparse ? loU : hiU;
+        const std::vector<uint32_t>& D = loSparse ? hiI : loI;
+        const std::vector<double>& dU = loSparse ? hiU : loU;
+        const int ns = int(S.size()), nd = int(D.size());
+        auto duAt = [&](int i) {
+            int w = ((i % nd) + nd) % nd;
+            return dU[w] + period * std::floor(double(i) / nd);
+        };
+        // m[k] = unwrapped dense index paired with sparse k, monotone,
+        // closing after exactly one full turn.
+        std::vector<int> m(ns + 1);
+        double bd = 1e300;
+        for (int i = 0; i < nd; ++i) {
+            double d = std::abs(dU[i] - sU[0]);
+            d = std::min(d, period - d);
+            if (d < bd) { bd = d; m[0] = i; }
+        }
+        double tPrev = sU[0];
+        for (int k = 1; k < ns; ++k) {
+            double t = sU[k];
+            while (t < tPrev - 1e-12) t += period;
+            tPrev = t;
+            int best = m[k - 1];
+            double bestD = std::abs(duAt(best) - t);
+            for (int i = m[k - 1] + 1; i <= m[0] + nd; ++i) {
+                double d = std::abs(duAt(i) - t);
+                if (d < bestD) { bestD = d; best = i; }
+                if (duAt(i) > t + period / nd) break;
+            }
+            m[k] = best;
+        }
+        m[ns] = m[0] + nd;
+        for (int k = 0; k < ns; ++k) {
+            std::vector<uint32_t> ring2;
+            if (loSparse) {
+                ring2 = {S[k], S[(k + 1) % ns]};
+                for (int i = m[k + 1]; i >= m[k]; --i) {
+                    ring2.push_back(D[((i % nd) + nd) % nd]);
+                }
+            } else {
+                for (int i = m[k]; i <= m[k + 1]; ++i) {
+                    ring2.push_back(D[((i % nd) + nd) % nd]);
+                }
+                ring2.push_back(S[(k + 1) % ns]);
+                ring2.push_back(S[k]);
+            }
+            ring2.erase(std::unique(ring2.begin(), ring2.end()), ring2.end());
+            if (ring2.size() > 1 && ring2.front() == ring2.back()) {
+                ring2.pop_back();
+            }
+            if (ring2.size() < 3) continue;
+            out.addPolygon(std::move(ring2), faceId, flip);
+        }
+    };
+    if (!chained) {
+        const double du = period / nu;
+        const double u0 = surf.FirstUParameter();
+        auto uniformU = [&]() {
+            std::vector<double> us(nu);
+            for (int i = 0; i < nu; ++i) us[i] = u0 + i * du;
+            return us;
+        };
+        if (rim0ok && rim1ok && rows == 2) {
+            // No interior ring at all: bridge rim to rim directly.
+            emitClosedStrip(ring[0], ringU[0], ring[1], ringU[1]);
+        } else {
+            if (rim0ok && ring[0].size() != ring[1].size()) {
+                emitClosedStrip(ring[0], ringU[0], ring[1], uniformU());
+            }
+            if (rim1ok && ring[rows - 1].size() != ring[rows - 2].size()) {
+                emitClosedStrip(ring[rows - 2], uniformU(), ring[rows - 1],
+                                ringU[1]);
+            }
         }
     }
 }
@@ -3760,18 +3899,17 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
         }
         if (total < 3) return false;
     }
-    PolyMesh grid;
-    {
-        MeshBuilder tmp(grid);
-        meshRevolutionGrid(face, surf, model, plan.uEdges, solvedEdge,
-                           faceId, nu, nv, tmp);
-    }
     const double u0 = surf.FirstUParameter(), u1 = surf.LastUParameter();
     const double v0 = surf.FirstVParameter(), v1 = surf.LastVParameter();
     const double du = (u1 - u0) / std::max(3, nu);
-    const double dv = (v1 - v0) / std::max(1, nv);
+    const double vspan = std::max(1e-12, v1 - v0);
 
-    // UV bbox per wire, grown by most of a cell so sliver cells go too.
+    // UV bbox per wire. u grows by most of a cell so sliver cells go
+    // too (u wraps, columns always exist on both sides); v stays EXACT —
+    // the grid below places rows precisely at these extents, so deleted
+    // cells are strictly interior and the staircase closes by
+    // construction (a full-height deletion used to clip the rims and
+    // leave the whole slot unwebbed, silently).
     struct Box { double u0, u1, v0, v1; };
     std::vector<Box> boxes;
     for (const auto& wire : plan.insertWires) {
@@ -3789,9 +3927,36 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
                 b.v1 = std::max(b.v1, uv.Y());
             }
         }
+        if (b.u0 > b.u1) return false;  // no usable pcurves on this wire
         b.u0 -= 0.6 * du; b.u1 += 0.6 * du;
-        b.v0 -= 0.6 * dv; b.v1 += 0.6 * dv;
         boxes.push_back(b);
+    }
+    // Row layout: rims plus every band extent. A wire too close to a rim
+    // can't be banded — plan-time margins should have excluded it.
+    std::vector<double> vRows{v0, v1};
+    for (const Box& b : boxes) {
+        if (b.v0 <= v0 + 0.01 * vspan || b.v1 >= v1 - 0.01 * vspan) {
+            return false;
+        }
+        vRows.push_back(b.v0);
+        vRows.push_back(b.v1);
+    }
+    std::sort(vRows.begin(), vRows.end());
+    vRows.erase(std::unique(vRows.begin(), vRows.end(),
+                            [&](double a, double c) {
+                                return c - a < 1e-7 * vspan;
+                            }),
+                vRows.end());
+    if (vRows.size() < 3 ||
+        std::abs(vRows.back() - v1) > 1e-7 * vspan) {
+        return false;
+    }
+
+    PolyMesh grid;
+    {
+        MeshBuilder tmp(grid);
+        meshRevolutionGrid(face, surf, model, plan.uEdges, solvedEdge,
+                           faceId, nu, int(vRows.size()) - 1, tmp, &vRows);
     }
 
     auto covered = [&](const std::vector<uint32_t>& poly) {
@@ -3840,10 +4005,71 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
     for (size_t p = 0; p < grid.polygons.size(); ++p) {
         if (covered(grid.polygons[p])) { keep[p] = 0; any = true; }
     }
+    // Wires present but nothing deleted: the intact grid would cover the
+    // holes and every wall border would dangle. Refuse visibly.
+    if (!any) return false;
     auto before = directedBoundary(grid, all);
     auto after = directedBoundary(grid, keep);
 
-    // Copy the surviving grid into the real builder.
+    // New staircase loops = directed open edges present now, absent
+    // before. Extract and VALIDATE them BEFORE emitting anything: an
+    // unclosed chain means the deletion clipped the outer boundary and
+    // the hole could never be webbed — fail the whole face while it is
+    // still un-emitted, so the planner's fallback stays contract-clean.
+    std::map<uint32_t, uint32_t> stair;
+    for (const auto& [a, b] : after) {
+        auto it = before.find(a);
+        if (it == before.end() || it->second != b) stair[a] = b;
+    }
+    std::vector<std::vector<uint32_t>> loops;
+    while (!stair.empty()) {
+        std::vector<uint32_t> loop;
+        uint32_t start = stair.begin()->first, cur = start;
+        bool closedLoop = false;
+        while (loop.size() <= grid.vertices.size()) {
+            auto it = stair.find(cur);
+            if (it == stair.end()) break;
+            loop.push_back(cur);
+            cur = it->second;
+            stair.erase(it);
+            if (cur == start) { closedLoop = true; break; }
+        }
+        if (!closedLoop || loop.size() < 3) return false;
+        loops.push_back(std::move(loop));
+    }
+    if (loops.empty()) return false;
+    // Every wire must belong to a loop or its hole stays open.
+    std::vector<std::vector<size_t>> loopWires(loops.size());
+    {
+        std::vector<char> assigned(boxes.size(), 0);
+        for (size_t li = 0; li < loops.size(); ++li) {
+            double lu0 = 1e300, lu1 = -1e300, lv0 = 1e300, lv1 = -1e300;
+            for (uint32_t idx : loops[li]) {
+                lu0 = std::min(lu0, grid.anchors[idx].u);
+                lu1 = std::max(lu1, grid.anchors[idx].u);
+                lv0 = std::min(lv0, grid.anchors[idx].v);
+                lv1 = std::max(lv1, grid.anchors[idx].v);
+            }
+            for (size_t w = 0; w < boxes.size(); ++w) {
+                if (assigned[w]) continue;
+                double cu = (boxes[w].u0 + boxes[w].u1) / 2;
+                double cv = (boxes[w].v0 + boxes[w].v1) / 2;
+                if (cu >= lu0 && cu <= lu1 && cv >= lv0 && cv <= lv1) {
+                    loopWires[li].push_back(w);
+                    assigned[w] = 1;
+                }
+            }
+        }
+        for (char a : assigned) {
+            if (!a) return false;
+        }
+        // And every loop needs at least one wire, or it has no lid.
+        for (const auto& lw : loopWires) {
+            if (lw.empty()) return false;
+        }
+    }
+
+    // Everything validated — safe to emit. Copy the surviving grid.
     std::vector<uint32_t> remap(grid.vertices.size(), UINT32_MAX);
     auto emitVert = [&](uint32_t i) {
         if (remap[i] == UINT32_MAX) {
@@ -3861,14 +4087,6 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
         for (uint32_t idx : grid.polygons[p]) poly.push_back(emitVert(idx));
         out.addPolygon(std::move(poly), faceId, false);
     }
-    if (!any) return true;
-
-    // New staircase loops = directed open edges present now, absent before.
-    std::map<uint32_t, uint32_t> stair;
-    for (const auto& [a, b] : after) {
-        auto it = before.find(a);
-        if (it == before.end() || it->second != b) stair[a] = b;
-    }
 
     const double rScale =
         std::max(1e-6, surf.Value((u0 + u1) / 2, (v0 + v1) / 2)
@@ -3876,40 +4094,11 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
                                                 (v0 + v1) / 2)) /
                            1e-3);
 
-    // One web per insert wire: nearest staircase loop, keyhole ear-clip.
-    std::vector<char> stairUsed;
-    while (!stair.empty()) {
-        // Extract one closed staircase loop.
-        std::vector<uint32_t> loop;
-        uint32_t start = stair.begin()->first, cur = start;
-        do {
-            loop.push_back(cur);
-            auto it = stair.find(cur);
-            if (it == stair.end()) break;
-            uint32_t nxt = it->second;
-            stair.erase(it);
-            cur = nxt;
-        } while (cur != start && loop.size() < 100000);
-        if (loop.size() < 3) continue;
-
-        // Loop bbox in UV; every insert wire inside it gets bridged into
-        // this ring (nearby slots can merge into one staircase).
-        double lu0 = 1e300, lu1 = -1e300, lv0 = 1e300, lv1 = -1e300;
-        for (uint32_t idx : loop) {
-            lu0 = std::min(lu0, grid.anchors[idx].u);
-            lu1 = std::max(lu1, grid.anchors[idx].u);
-            lv0 = std::min(lv0, grid.anchors[idx].v);
-            lv1 = std::max(lv1, grid.anchors[idx].v);
-        }
-        std::vector<size_t> inLoop;
-        for (size_t w = 0; w < boxes.size(); ++w) {
-            double cu = (boxes[w].u0 + boxes[w].u1) / 2;
-            double cv = (boxes[w].v0 + boxes[w].v1) / 2;
-            if (cu >= lu0 && cu <= lu1 && cv >= lv0 && cv <= lv1) {
-                inLoop.push_back(w);
-            }
-        }
-        if (inLoop.empty()) continue;
+    // One web per staircase loop, splicing in every wire assigned to it
+    // (nearby slots can merge into one staircase): keyhole ear-clip.
+    for (size_t li = 0; li < loops.size(); ++li) {
+        const std::vector<uint32_t>& loop = loops[li];
+        const std::vector<size_t>& inLoop = loopWires[li];
 
         // Working ring: reversed staircase (it bounds the remaining mesh)
         // in synthetic planar coords + output vertex ids.
@@ -5209,6 +5398,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 } else if (!plan.insertWires.empty()) {
                     if (!meshRevolutionInsert(face, surf, model, plan,
                                               solvedEdge, fid, nu, nv, out)) {
+                        dbg("mesh face %d: revolution insert failed, "
+                            "falling back", fid);
                         fellBack[fid] = 1;
                         meshFallback(face, surf, fid, s, out);
                     }
@@ -5234,6 +5425,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 if (!meshCoonsGrid(face, model, fid, clusteredParams(nu, holdU),
                                    clusteredParams(nv, holdV), s.coonsRotate,
                                    solvedEdge, out)) {
+                    dbg("mesh face %d: coons failed, falling back", fid);
                     fellBack[fid] = 1;
                     meshFallback(face, surf, fid, s, out);
                 }
