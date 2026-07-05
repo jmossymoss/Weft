@@ -40,6 +40,9 @@
 #include "gl_compat.hpp"
 
 #include <imgui.h>
+#ifdef IMGUI_HAS_DOCK
+#include <imgui_internal.h>
+#endif
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
 
@@ -48,7 +51,11 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <thread>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -575,6 +582,20 @@ struct App {
     // meeting under the angle shade smooth, harder creases stay sharp.
     bool smoothShade = false;
     float smoothAngleDeg = 30.0f;
+    // Keybinds help panel (collapsed to a bottom-left prompt by default).
+    bool showKeybinds = false;
+    // Async regenerate: the mesh builds on a worker thread so the UI
+    // never hangs; a centred progress overlay reports faces meshed.
+    std::thread genThread;
+    std::atomic<bool> genBusy{false};
+    std::atomic<bool> genReady{false};
+    std::atomic<int> genProgress{0};
+    int genTotal = 0;
+    double genStartTime = 0.0;
+    weft::GenerationSettings genSettings;  // worker's frozen snapshot
+    weft::PolyMesh genMesh;
+    weft::GenerationReport genReport;
+    std::string genError;
     // A defaults control being hovered highlights the faces it drives —
     // the live "which parts does this knob change" map.
     std::set<int> highlightMeshers;  // weft::MesherKind values
@@ -926,26 +947,64 @@ static void updateProblems(App& app) {
     if (lines.empty()) app.problems.count = 0;
 }
 
-static void regenerate(App& app) {
-    if (!app.hasModel) return;
-    // Never let a geometry failure take the app down: keep the previous
-    // mesh, surface the error, and let the user undo the change.
+static void finishGenerate(App& app);
+
+// Kick the worker: the UI thread never blocks on meshing. Settings are
+// snapshotted so live slider edits during the run can't race the solver;
+// further edits leave `dirty` set and coalesce into the next run.
+static void startGenerate(App& app) {
+    if (!app.hasModel || app.genBusy) return;
     logLine("regenerate: begin (%zu overrides, %zu edge pins, %zu ops)",
             app.recipe.settings.perFace.size(),
             app.recipe.settings.perEdge.size(), app.recipe.ops.size());
-    try {
-        weft::GenerationReport report;
-        double t0 = glfwGetTime();
-        weft::PolyMesh mesh =
-            weft::generate(app.model, app.analysis, app.recipe.settings,
-                           &report, &app.genCache);
-        logLine("regenerate: generate took %.1f ms",
-                (glfwGetTime() - t0) * 1000.0);
-        logLine("regenerate: generate ok, applying %zu op(s)",
-                app.recipe.ops.size());
-        weft::applyOps(mesh, app.model, app.recipe.ops);
-        app.mesh = std::move(mesh);
-        app.report = std::move(report);
+    if (app.genThread.joinable()) app.genThread.join();
+    app.genSettings = app.recipe.settings;
+    app.genProgress = 0;
+    app.genTotal = app.model.faceCount();
+    app.genSettings.progressFaces = &app.genProgress;
+    app.genError.clear();
+    app.genStartTime = glfwGetTime();
+    app.genBusy = true;
+    app.genReady = false;
+    app.dirty = false;
+    App* a = &app;  // outlives the thread (owned by main)
+    app.genThread = std::thread([a] {
+        try {
+            weft::GenerationReport report;
+            weft::PolyMesh mesh =
+                weft::generate(a->model, a->analysis, a->genSettings,
+                               &report, &a->genCache);
+            weft::applyOps(mesh, a->model, a->recipe.ops);
+            a->genMesh = std::move(mesh);
+            a->genReport = std::move(report);
+        } catch (const std::exception& e) {
+            a->genError = e.what();
+        } catch (...) {
+            a->genError = "unknown exception";
+        }
+        a->genReady = true;
+    });
+}
+
+// Worker finished: adopt its mesh on the UI thread and rebuild all the
+// GL-side derived state. Failures keep the previous mesh (ctrl+Z path).
+static void frameModel(App& app);
+
+static void finishGenerate(App& app) {
+    if (app.genThread.joinable()) app.genThread.join();
+    app.genBusy = false;
+    app.genReady = false;
+    const bool firstMesh = app.mesh.vertices.empty();
+    if (!app.genError.empty()) {
+        logLine("regenerate: FAILED: %s", app.genError.c_str());
+        app.status = "regenerate failed (ctrl+Z): " + app.genError;
+        return;
+    }
+    logLine("regenerate: generate took %.1f ms",
+            (glfwGetTime() - app.genStartTime) * 1000.0);
+    {
+        app.mesh = std::move(app.genMesh);
+        app.report = std::move(app.genReport);
         app.selPolys.clear();  // mesh indices died with the old mesh
         app.selVerts.clear();
         app.selMeshEdges.clear();
@@ -962,16 +1021,6 @@ static void regenerate(App& app) {
                 }
             }
         }
-    } catch (const std::exception& e) {
-        logLine("regenerate: FAILED: %s", e.what());
-        app.status = std::string("regenerate failed (ctrl+Z): ") + e.what();
-        app.dirty = false;
-        return;
-    } catch (...) {
-        logLine("regenerate: FAILED (unknown exception)");
-        app.status = "regenerate failed (ctrl+Z to revert)";
-        app.dirty = false;
-        return;
     }
     logLine("regenerate: ops applied, rebuilding buffers");
     updateProblems(app);
@@ -1034,6 +1083,7 @@ static void regenerate(App& app) {
     }
 
     rebuildBuffers(app);
+    if (firstMesh) frameModel(app);  // async initial load framed late
     app.dirty = false;
     logLine("regenerate: done (%zu verts, %zu polys)",
             app.mesh.vertexCount(), app.mesh.polygonCount());
@@ -1050,6 +1100,22 @@ static void regenerate(App& app) {
             app.status = std::string("live link write failed: ") + e.what();
         }
     }
+}
+
+// Synchronous regenerate for flows that need the fresh mesh in hand
+// (budget fitting, recipe remap, load-with-recipe): runs the same
+// worker and waits. The async dirty-flag path is the norm.
+static void regenerate(App& app) {
+    if (!app.hasModel) return;
+    while (app.genBusy && !app.genReady) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    if (app.genReady) finishGenerate(app);  // adopt any in-flight run
+    startGenerate(app);
+    while (!app.genReady) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    finishGenerate(app);
 }
 
 // Frame the selection if there is one, else the whole model (F).
@@ -1107,7 +1173,7 @@ static void loadModel(App& app, const std::string& path) {
         // Deviation relative to feature size: a 500mm bore and a 5mm bore
         // carry the same ring topology, the angle criterion drives counts.
         app.recipe.settings.defaults.relativeDeviation = true;
-        regenerate(app);
+        startGenerate(app);  // async: the progress overlay covers the wait
         frameModel(app);
         app.status = path + ": " + std::to_string(app.model.faceCount()) +
                      " faces, " + std::to_string(app.model.edgeCount()) +
@@ -2533,8 +2599,63 @@ static void rimControls(App& app, int fid) {
 
 // Mode indicator + hotkey reference, floating over the
 // viewport so the keyboard flow never needs the side panel.
+// The 3D viewport rectangle (the dockspace's central node): overlays
+// anchor to it so they never sit under the docked panels.
+static ImVec2 gViewMin{0, 0}, gViewMax{0, 0};
+
+// While the worker meshes, a centred card shows a spinning hourglass
+// and the per-face progress — the app never just hangs.
+static void drawGenProgress(App& app) {
+    if (!app.genBusy) return;
+    if (glfwGetTime() - app.genStartTime < 0.2) return;  // no flicker
+    ImGui::SetNextWindowPos({(gViewMin.x + gViewMax.x) * 0.5f,
+                             (gViewMin.y + gViewMax.y) * 0.5f},
+                            ImGuiCond_Always, {0.5f, 0.5f});
+    ImGui::SetNextWindowBgAlpha(0.88f);
+    ImGui::Begin("##genprogress", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoFocusOnAppearing |
+                     ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs);
+    const float w = 260.0f * gUiScale;
+    const float r = 15.0f * gUiScale;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 cur = ImGui::GetCursorScreenPos();
+    ImVec2 ctr{cur.x + w * 0.5f, cur.y + r + 6.0f * gUiScale};
+    const float spin = float(glfwGetTime()) * 3.0f;
+    // Spinning hourglass: two point-to-point triangles rotating inside
+    // a chasing arc.
+    auto rot = [&](float x, float y) {
+        const float cs = std::cos(spin), sn = std::sin(spin);
+        return ImVec2{ctr.x + x * cs - y * sn, ctr.y + x * sn + y * cs};
+    };
+    const float h = r * 0.62f;
+    const ImU32 amber = IM_COL32(242, 158, 46, 255);
+    dl->AddTriangleFilled(rot(-h * 0.8f, -h), rot(h * 0.8f, -h), rot(0, 0),
+                          amber);
+    dl->AddTriangleFilled(rot(-h * 0.8f, h), rot(h * 0.8f, h), rot(0, 0),
+                          amber);
+    dl->PathArcTo(ctr, r + 4.0f * gUiScale, spin * 0.7f,
+                  spin * 0.7f + 4.6f, 32);
+    dl->PathStroke(IM_COL32(242, 158, 46, 160), 0, 2.5f * gUiScale);
+    ImGui::Dummy({w, (r + 8.0f * gUiScale) * 2.0f});
+    const int done = app.genProgress.load(std::memory_order_relaxed);
+    const int total = std::max(1, app.genTotal);
+    char label[64];
+    if (done < total) {
+        std::snprintf(label, sizeof label, "meshing %d / %d faces", done,
+                      total);
+    } else {
+        std::snprintf(label, sizeof label, "welding + conforming...");
+    }
+    ImGui::ProgressBar(std::min(1.0f, float(done) / float(total)), {w, 0},
+                       label);
+    ImGui::End();
+}
+
 static void drawOverlay(App& app) {
-    ImGui::SetNextWindowPos({12 * gUiScale, 12 * gUiScale});
+    ImGui::SetNextWindowPos(
+        {gViewMin.x + 12 * gUiScale, gViewMin.y + 12 * gUiScale});
     ImGui::SetNextWindowBgAlpha(0.55f);
     ImGui::Begin("##overlay", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
@@ -2649,26 +2770,66 @@ static void drawOverlay(App& app) {
         ImGui::End();
     }
 
-    const ImGuiViewport* vp = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos({12 * gUiScale, vp->WorkSize.y - 12 * gUiScale},
-                            ImGuiCond_Always, {0.0f, 1.0f});
-    ImGui::SetNextWindowBgAlpha(0.45f);
+    // Keybinds help: a minimised prompt bottom-left; click to open the
+    // formatted panel, the "–" in its corner collapses it again.
+    ImGui::SetNextWindowPos(
+        {gViewMin.x + 12 * gUiScale, gViewMax.y - 12 * gUiScale},
+        ImGuiCond_Always, {0.0f, 1.0f});
+    ImGui::SetNextWindowBgAlpha(app.showKeybinds ? 0.80f : 0.45f);
     ImGui::Begin("##hotkeys", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_AlwaysAutoResize |
                      ImGuiWindowFlags_NoFocusOnAppearing |
                      ImGuiWindowFlags_NoNav);
-    ImGui::TextDisabled(
-        "1-6 verts/edges/faces/feature edges/elements/objects\n"
-        "Tab mode pie   Q tools pie   (hold + release picks)\n"
-        "drag box-select (shift extends)\n"
-        "shift+click multi-select   ctrl+Z undo\n"
-        "shift+wheel density   ctrl+wheel 2nd axis   ctrl+shift+wheel loops\n"
-        "[ ] nudge counts\n"
-        "X delete   H/ctrl+H hide   alt+H show all   R loop cut   J bridge\n"
-        "G grab vertex   C cap   T tris   M minimal   W wire   B edges\n"
-        "numpad 1/3/7 views (ctrl flips)   numpad 5 ortho\n"
-        "ctrl+I invert   ctrl+shift+Z redo   F focus   esc");
+    const ImVec4 kKeyBlue{0.42f, 0.68f, 1.0f, 1.0f};
+    if (!app.showKeybinds) {
+        ImGui::TextColored(kKeyBlue, "Keybinds");
+        ImGui::SameLine();
+        ImGui::TextDisabled("help");
+        if (ImGui::IsWindowHovered() &&
+            ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            app.showKeybinds = true;
+        }
+    } else {
+        ImGui::TextColored(kKeyBlue, "Keybinds");
+        ImGui::SameLine(0.0f, 12.0f * gUiScale);
+        if (ImGui::SmallButton("-")) app.showKeybinds = false;
+        ImGui::Spacing();
+        auto section = [&](const char* title) {
+            ImGui::Spacing();
+            ImGui::TextDisabled("%s", title);
+        };
+        auto bind = [&](const char* key, const char* what) {
+            ImGui::TextColored(kKeyBlue, "%-18s", key);
+            ImGui::SameLine(140.0f * gUiScale);
+            ImGui::TextUnformatted(what);
+        };
+        section("select");
+        bind("1 - 6", "verts / edges / faces / feature edges / elements / objects");
+        bind("click", "select    shift+click extends");
+        bind("drag", "box-select (shift extends)");
+        bind("Tab / Q", "mode pie / tools pie (hold, release picks)");
+        bind("ctrl+I", "invert selection");
+        bind("esc", "clear");
+        section("edit");
+        bind("X", "delete face");
+        bind("H / ctrl+H", "hide / hide others    alt+H show all");
+        bind("R", "loop cut");
+        bind("J", "bridge");
+        bind("G", "grab vertex");
+        bind("C / T / M", "cap / tris / minimal");
+        bind("W / B", "wire / edges");
+        bind("[ ]", "nudge counts");
+        bind("ctrl+Z", "undo    ctrl+shift+Z redo");
+        section("density (hover a face, or empty space for globals)");
+        bind("shift+wheel", "density");
+        bind("ctrl+wheel", "second axis");
+        bind("ctrl+shift+wheel", "fillet loops");
+        section("view");
+        bind("numpad 1/3/7", "axis views (ctrl flips)    numpad 5 ortho");
+        bind("F", "focus selection");
+        bind("wheel", "zoom");
+    }
     ImGui::End();
 }
 
@@ -2909,17 +3070,120 @@ static void drawShadingBar(App& app) {
     ImGui::End();
 }
 
+// The Outliner lives in its own dockable window (right side by
+// default): object visibility, per-face lists, CAD part names.
+static void drawOutliner(App& app) {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos({vp->WorkPos.x + vp->WorkSize.x -
+                                 300.0f * gUiScale,
+                             vp->WorkPos.y + 40.0f * gUiScale},
+                            ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize({280.0f * gUiScale, 420.0f * gUiScale},
+                             ImGuiCond_FirstUseEver);
+    ImGui::Begin("Outliner");
+    if (app.hasModel) {
+        if (ImGui::SmallButton("show all")) {
+            app.hiddenFaces.clear();
+            rebuildBuffers(app);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("%zu object(s), %zu hidden face(s)",
+                            app.analysis.solidFaces.size(),
+                            app.hiddenFaces.size());
+        ImGui::BeginChild("##outliner", {0, 200 * gUiScale}, true);
+        for (size_t si = 0; si < app.analysis.solidFaces.size(); ++si) {
+            const std::vector<int>& fids = app.analysis.solidFaces[si];
+            ImGui::PushID(int(si));
+            // Object row: visibility eye + expandable face list.
+            bool anyVisible = false;
+            for (int fid : fids) {
+                if (!app.hiddenFaces.count(fid)) anyVisible = true;
+            }
+            bool vis = anyVisible;
+            if (ImGui::Checkbox("##ovis", &vis)) {
+                for (int fid : fids) {
+                    if (vis) app.hiddenFaces.erase(fid);
+                    else app.hiddenFaces.insert(fid);
+                }
+                rebuildBuffers(app);
+            }
+            ImGui::SameLine();
+            // CAD part names carry all the way through: the outliner
+            // shows what the source software called the body.
+            char objLabel[96];
+            const std::string nm = si < app.model.solidNames.size()
+                                       ? app.model.solidNames[si]
+                                       : std::string();
+            if (!nm.empty()) {
+                std::snprintf(objLabel, sizeof objLabel, "%s (%zu faces)",
+                              nm.c_str(), fids.size());
+            } else {
+                std::snprintf(objLabel, sizeof objLabel,
+                              "object %zu (%zu faces)", si + 1, fids.size());
+            }
+            bool open = ImGui::TreeNodeEx(
+                objLabel, ImGuiTreeNodeFlags_OpenOnArrow |
+                              ImGuiTreeNodeFlags_SpanAvailWidth);
+            if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+                // Select the whole object's faces (shift extends).
+                if (!ImGui::GetIO().KeyShift) app.selFaces.clear();
+                for (int fid : fids) app.selFaces.insert(fid);
+                if (!fids.empty()) app.activeFace = fids[0];
+                rebuildBuffers(app);
+            }
+            if (open) {
+                for (int fid : fids) {
+                    const weft::FaceInfo& f = app.analysis.faces[fid - 1];
+                    ImGui::PushID(fid);
+                    bool fvis = !app.hiddenFaces.count(fid);
+                    if (ImGui::Checkbox("##vis", &fvis)) {
+                        if (fvis) app.hiddenFaces.erase(fid);
+                        else app.hiddenFaces.insert(fid);
+                        rebuildBuffers(app);
+                    }
+                    ImGui::SameLine();
+                    auto ov = app.recipe.settings.perFace.find(fid);
+                    bool deleted = ov != app.recipe.settings.perFace.end() &&
+                                   ov->second.exclude;
+                    char label[112];
+                    std::snprintf(label, sizeof label, "face %-4d %s%s%s%s",
+                                  fid, weft::surfaceTypeName(f.type),
+                                  f.isFillet ? " [fillet]" : "",
+                                  f.isHole ? " [hole]" : "",
+                                  deleted ? " [deleted]" : "");
+                    if (ImGui::Selectable(label,
+                                          app.selFaces.count(fid) > 0)) {
+                        if (!ImGui::GetIO().KeyShift) app.selFaces.clear();
+                        if (app.selFaces.count(fid) &&
+                            ImGui::GetIO().KeyShift) {
+                            app.selFaces.erase(fid);
+                        } else {
+                            app.selFaces.insert(fid);
+                            app.activeFace = fid;
+                        }
+                        rebuildBuffers(app);
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndChild();
+    }
+    ImGui::End();
+}
+
 static void drawUi(App& app) {
     // Rebuilt every frame from whichever control is hovered right now.
     app.highlightMeshers.clear();
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     const float width = 330.0f * gUiScale;
-    ImGui::SetNextWindowPos({vp->WorkPos.x + vp->WorkSize.x - width,
-                             vp->WorkPos.y});
-    ImGui::SetNextWindowSize({width, vp->WorkSize.y});
-    ImGui::Begin("weft", nullptr,
-                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
-                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar);
+    ImGui::SetNextWindowPos({vp->WorkPos.x, vp->WorkPos.y},
+                            ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize({width, vp->WorkSize.y},
+                             ImGuiCond_FirstUseEver);
+    ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_NoCollapse);
 
     ImGui::TextColored({0.95f, 0.62f, 0.18f, 1.0f}, "WEFT");
     ImGui::SameLine();
@@ -3027,97 +3291,6 @@ static void drawUi(App& app) {
         ImGui::TextWrapped("%s", app.status.c_str());
     }
 
-    if (app.hasModel &&
-        ImGui::CollapsingHeader("Outliner", ImGuiTreeNodeFlags_DefaultOpen)) {
-        if (ImGui::SmallButton("show all")) {
-            app.hiddenFaces.clear();
-            rebuildBuffers(app);
-        }
-        ImGui::SameLine();
-        ImGui::TextDisabled("%zu object(s), %zu hidden face(s)",
-                            app.analysis.solidFaces.size(),
-                            app.hiddenFaces.size());
-        ImGui::BeginChild("##outliner", {0, 200 * gUiScale}, true);
-        for (size_t si = 0; si < app.analysis.solidFaces.size(); ++si) {
-            const std::vector<int>& fids = app.analysis.solidFaces[si];
-            ImGui::PushID(int(si));
-            // Object row: visibility eye + expandable face list.
-            bool anyVisible = false;
-            for (int fid : fids) {
-                if (!app.hiddenFaces.count(fid)) anyVisible = true;
-            }
-            bool vis = anyVisible;
-            if (ImGui::Checkbox("##ovis", &vis)) {
-                for (int fid : fids) {
-                    if (vis) app.hiddenFaces.erase(fid);
-                    else app.hiddenFaces.insert(fid);
-                }
-                rebuildBuffers(app);
-            }
-            ImGui::SameLine();
-            // CAD part names carry all the way through: the outliner
-            // shows what the source software called the body.
-            char objLabel[96];
-            const std::string nm = si < app.model.solidNames.size()
-                                       ? app.model.solidNames[si]
-                                       : std::string();
-            if (!nm.empty()) {
-                std::snprintf(objLabel, sizeof objLabel, "%s (%zu faces)",
-                              nm.c_str(), fids.size());
-            } else {
-                std::snprintf(objLabel, sizeof objLabel,
-                              "object %zu (%zu faces)", si + 1, fids.size());
-            }
-            bool open = ImGui::TreeNodeEx(
-                objLabel, ImGuiTreeNodeFlags_OpenOnArrow |
-                              ImGuiTreeNodeFlags_SpanAvailWidth);
-            if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
-                // Select the whole object's faces (shift extends).
-                if (!ImGui::GetIO().KeyShift) app.selFaces.clear();
-                for (int fid : fids) app.selFaces.insert(fid);
-                if (!fids.empty()) app.activeFace = fids[0];
-                rebuildBuffers(app);
-            }
-            if (open) {
-                for (int fid : fids) {
-                    const weft::FaceInfo& f = app.analysis.faces[fid - 1];
-                    ImGui::PushID(fid);
-                    bool fvis = !app.hiddenFaces.count(fid);
-                    if (ImGui::Checkbox("##vis", &fvis)) {
-                        if (fvis) app.hiddenFaces.erase(fid);
-                        else app.hiddenFaces.insert(fid);
-                        rebuildBuffers(app);
-                    }
-                    ImGui::SameLine();
-                    auto ov = app.recipe.settings.perFace.find(fid);
-                    bool deleted = ov != app.recipe.settings.perFace.end() &&
-                                   ov->second.exclude;
-                    char label[112];
-                    std::snprintf(label, sizeof label, "face %-4d %s%s%s%s",
-                                  fid, weft::surfaceTypeName(f.type),
-                                  f.isFillet ? " [fillet]" : "",
-                                  f.isHole ? " [hole]" : "",
-                                  deleted ? " [deleted]" : "");
-                    if (ImGui::Selectable(label,
-                                          app.selFaces.count(fid) > 0)) {
-                        if (!ImGui::GetIO().KeyShift) app.selFaces.clear();
-                        if (app.selFaces.count(fid) &&
-                            ImGui::GetIO().KeyShift) {
-                            app.selFaces.erase(fid);
-                        } else {
-                            app.selFaces.insert(fid);
-                            app.activeFace = fid;
-                        }
-                        rebuildBuffers(app);
-                    }
-                    ImGui::PopID();
-                }
-                ImGui::TreePop();
-            }
-            ImGui::PopID();
-        }
-        ImGui::EndChild();
-    }
 
     if (app.hasModel &&
         ImGui::CollapsingHeader("Topology", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -3446,6 +3619,21 @@ int main(int argc, char** argv) {
     ImGui::CreateContext();
     static std::string iniPath = gDataDir + "/imgui.ini";
     ImGui::GetIO().IniFilename = iniPath.c_str();
+#ifdef IMGUI_HAS_DOCK
+    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    // First run (or first run since the panels split): lay Settings out
+    // on the left and the Outliner on the right; afterwards the user's
+    // own docking arrangement persists in imgui.ini.
+    bool needDockLayout = true;
+    {
+        std::ifstream ini(iniPath);
+        std::string text((std::istreambuf_iterator<char>(ini)),
+                         std::istreambuf_iterator<char>());
+        if (text.find("[Window][Settings]") != std::string::npos) {
+            needDockLayout = false;
+        }
+    }
+#endif
     {
         float sx = 1.0f, sy = 1.0f;
         glfwGetWindowContentScale(window, &sx, &sy);
@@ -4021,7 +4209,8 @@ int main(int argc, char** argv) {
         }
 
         if (app.mutatedThisFrame) logLine("frame: input handled, dirty");
-        if (app.dirty) regenerate(app);
+        if (app.dirty && !app.genBusy) startGenerate(app);
+        if (app.genReady) finishGenerate(app);
 
         const float vpAspect = fbh > 0 ? float(fbw) / fbh : 1.6f;
         Mat4 proj =
@@ -4483,6 +4672,43 @@ int main(int argc, char** argv) {
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+#ifdef IMGUI_HAS_DOCK
+        // Dockable panels: the viewport hosts a passthru dockspace so
+        // Settings/Outliner dock to the sides (or float free) and the
+        // 3D view stays interactive through the middle.
+        {
+            ImGuiID dockspace = ImGui::DockSpaceOverViewport(
+                0, ImGui::GetMainViewport(),
+                ImGuiDockNodeFlags_PassthruCentralNode);
+            const ImGuiViewport* mainVp = ImGui::GetMainViewport();
+            gViewMin = mainVp->WorkPos;
+            gViewMax = {mainVp->WorkPos.x + mainVp->WorkSize.x,
+                        mainVp->WorkPos.y + mainVp->WorkSize.y};
+            if (ImGuiDockNode* central =
+                    ImGui::DockBuilderGetCentralNode(dockspace)) {
+                gViewMin = central->Pos;
+                gViewMax = {central->Pos.x + central->Size.x,
+                            central->Pos.y + central->Size.y};
+            }
+            if (needDockLayout) {
+                needDockLayout = false;
+                ImGui::DockBuilderRemoveNode(dockspace);
+                ImGui::DockBuilderAddNode(
+                    dockspace, ImGuiDockNodeFlags_PassthruCentralNode |
+                                   ImGuiDockNodeFlags_DockSpace);
+                ImGui::DockBuilderSetNodeSize(
+                    dockspace, ImGui::GetMainViewport()->WorkSize);
+                ImGuiID center = dockspace;
+                ImGuiID right = ImGui::DockBuilderSplitNode(
+                    center, ImGuiDir_Right, 0.20f, nullptr, &center);
+                ImGuiID left = ImGui::DockBuilderSplitNode(
+                    center, ImGuiDir_Left, 0.24f, nullptr, &center);
+                ImGui::DockBuilderDockWindow("Settings", left);
+                ImGui::DockBuilderDockWindow("Outliner", right);
+                ImGui::DockBuilderFinish(dockspace);
+            }
+        }
+#endif
         if (boxDrag) {
             ImGui::GetForegroundDrawList()->AddRect(
                 {float(downX), float(downY)}, {float(mx), float(my)},
@@ -4645,7 +4871,9 @@ int main(int argc, char** argv) {
             }
         }
         drawUi(app);
+        drawOutliner(app);
         drawOverlay(app);
+        drawGenProgress(app);
         drawFacePopup(app);
         ImGui::Render();
 
@@ -4843,7 +5071,10 @@ int main(int argc, char** argv) {
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         glfwSwapBuffers(window);
 
-        if (!screenshotPath.empty() && ++frame >= 4) {
+        // Screenshots wait for the async mesh: an empty viewport is not
+        // the model (automated visual checks depend on this).
+        if (!screenshotPath.empty() && ++frame >= 4 &&
+            !(app.hasModel && (app.genBusy || app.genReady))) {
             std::vector<unsigned char> px(size_t(fbw) * fbh * 3);
             glReadPixels(0, 0, fbw, fbh, GL_RGB, GL_UNSIGNED_BYTE, px.data());
             stbi_flip_vertically_on_write(1);

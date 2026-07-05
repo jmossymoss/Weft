@@ -7174,6 +7174,9 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     dbg("generate: meshing on %u thread(s), %d cached", threads, cacheHits);
     auto meshFaceCached = [&](int fid) {
         if (!cached[fid]) meshFace(fid);
+        if (settings.progressFaces) {
+            settings.progressFaces->fetch_add(1, std::memory_order_relaxed);
+        }
     };
     if (threads <= 1) {
         for (int fid = 1; fid <= faceN; ++fid) meshFaceCached(fid);
