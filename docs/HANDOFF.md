@@ -218,6 +218,29 @@ FIX CLASSES, in priority order:
 App/display: sheet models need two-sided shading (tork showed
 backfaces as black); fold-highlight magenta overlay works well.
 
+## One-shot batch results (2026-07-05 late)
+LANDED (commit e628dcb): simple n-gon decomposition (keyhole slits and
+hole membranes gone — holed panels = k+1 simple n-gons, two real
+bridges per hole), annulus arc-bridging (WWWW sliver bands gone),
+plain-coons sides sample solved counts, endpoint-tolerant border check
+(lying corner tolerances were demoting good quad grids: iso14649 went
+69% TRIS -> 98% QUADS, 22,598 -> 12,245 polys, zero demotions/folds),
+degenerate-skip + manual wire chaining in the ring sampler, and
+solid-scoped conform neighbours.
+TOP OPEN ITEM — CONTACT-FACE DEDUP: pre-imprinted assemblies (as1_pe,
+as1-oc-214) carry coincident internal contact plates (2-3 faces over
+the same area, e.g. as1_pe faces 20/21/22). When duplicates mesh
+IDENTICALLY (defaults minimal), the weld fuses them into non-manifold
+sandwiches (82/56 nm, defaults only; cad profile unaffected because
+adaptive counts differ per face). Detect coincident face pairs at
+analysis (same edge set / same sampled AABB + centroid), mesh ONE,
+skip or link the twin — the PixYZ-parity dedup feature. Until then
+DEFAULTS on such assemblies reports the sandwich honestly.
+Remaining from visual review: nasty_cheese folds/baskets, weldment
+disc chords + flange fan (disk-cap/plate routing at huge radius),
+bracket pocket floor fans + micro-radius cones (face 37 r=0.313),
+crescent/lune strip mesher (the queued rail-ladder feature).
+
 ## Next steps, in order
 1. COUNT DECOUPLING: extend the absorber to multi-vertex gaps (complement
    path v→w1→…→wk→u along a shared B-rep edge), then let 9–16-edge chained
