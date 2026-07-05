@@ -1371,6 +1371,9 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
 // the fallback/plate meshers unless the user forces the band.
 double wireElongation(const TopoDS_Wire& wire);  // defined with plate-web
 
+bool isGeometricallyFlat(const TopoDS_Face& face,
+                         const BRepAdaptor_Surface& surf);  // defined below
+
 bool planAnnulus(const TopoDS_Face& face, const Model& model, FacePlan& plan,
                  bool requireRing) {
     int wires = 0;
@@ -1389,6 +1392,11 @@ bool planAnnulus(const TopoDS_Face& face, const Model& model, FacePlan& plan,
             if (BRep_Tool::Curve(edge, f, l).IsNull()) return false;
             int eid = model.edges.FindIndex(edge);
             if (eid < 1) return false;
+            // A repeated edge (a closed-surface seam walked twice)
+            // would sample its border twice — non-manifold after weld.
+            for (int prev : loop[wires]) {
+                if (prev == eid) return false;
+            }
             loop[wires].push_back(eid);
         }
         if (loop[wires].empty() || loop[wires].size() > 8) return false;
@@ -1414,6 +1422,10 @@ bool planAnnulus(const TopoDS_Face& face, const Model& model, FacePlan& plan,
             wireElongation(wire2[1]) > 2.2) {
             return false;
         }
+        // Only actually-flat faces: a domed two-wire panel meshed as a
+        // straight-railed ring ignores the surface between its loops.
+        BRepAdaptor_Surface flatProbe(face);
+        if (!isGeometricallyFlat(face, flatProbe)) return false;
     }
     if (outerIdx == 1) std::swap(loop[0], loop[1]);
     plan.kind = MesherKind::AnnulusRing;
@@ -1423,7 +1435,7 @@ bool planAnnulus(const TopoDS_Face& face, const Model& model, FacePlan& plan,
     return true;
 }
 
-void meshAnnulusRing(const TopoDS_Face& face, const Model& model, int faceId,
+bool meshAnnulusRing(const TopoDS_Face& face, const Model& model, int faceId,
                      const std::vector<int>& outerLoop,
                      const std::vector<int>& innerLoop,
                      const std::vector<int>& solvedEdge, int radialDefault,
@@ -1469,7 +1481,7 @@ void meshAnnulusRing(const TopoDS_Face& face, const Model& model, int faceId,
     };
     std::vector<gp_Pnt> A = sampleRing(outerLoop);
     std::vector<gp_Pnt> B = sampleRing(innerLoop);
-    if (A.size() < 3 || B.size() < 3) return;
+    if (A.size() < 3 || B.size() < 3) return false;
     const int nOut = int(A.size());
     const int nIn = int(B.size());
 
@@ -1545,6 +1557,7 @@ void meshAnnulusRing(const TopoDS_Face& face, const Model& model, int faceId,
         flip = pn.Dot(n) < 0;
     }
     for (auto& poly : polys) out.addPolygon(std::move(poly), faceId, flip);
+    return true;
 }
 
 // A planar face with hole loops that the simpler patterns can't take
@@ -2986,7 +2999,20 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
 
     auto finishRevolution = [&]() {
         plan.kind = MesherKind::RevolutionGrid;
-        collectIsoEdges(face, model, info.edgeIds, plan,
+        // Interior insert wires must never contribute rim candidates —
+        // a slot border classified as a rim contaminates the emitted
+        // rim row with interior points.
+        std::vector<int> rimCandidates;
+        {
+            std::set<int> insertIds;
+            for (const auto& w : plan.insertWires) {
+                insertIds.insert(w.begin(), w.end());
+            }
+            for (int eid : info.edgeIds) {
+                if (!insertIds.count(eid)) rimCandidates.push_back(eid);
+            }
+        }
+        collectIsoEdges(face, model, rimCandidates, plan,
                         /*skipNonIso=*/true);
         if (plan.uEdges.empty()) plan.constrains = false;
         if (!s.linkRims && plan.uEdges.size() == 2) plan.linkRims = false;
@@ -3475,7 +3501,9 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
         auto [it, inserted] = pinned.try_emplace(root, count);
         if (!inserted) it->second = std::max(it->second, count);
     }
-    for (const auto& [root, count] : pinned) sol.groupCount[root] = count;
+    for (const auto& [root, count] : pinned) {
+        sol.groupCount[root] = std::max(1, count);  // a pin of 0 is a leak
+    }
 
     // Chained Coons: opposite sides must sample equal TOTALS. Chains
     // share rails with other chains, so one-shot bumps go stale — grow
@@ -3667,6 +3695,7 @@ void meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
     const std::vector<double>* vRows =
         (!vWrap && vRowsOpt && vRowsOpt->size() >= 2) ? vRowsOpt : nullptr;
     if (vRows) nv = int(vRows->size()) - 1;
+    if (vWrap) nv = std::max(3, nv);  // a wrapped ring of <3 rows is flat
     const double dv = (v1 - v0) / nv;
     const int rows = vWrap ? nv : nv + 1;
     auto rowV = [&](int j) {
@@ -3686,6 +3715,16 @@ void meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
         gp_Pnt p;
     };
     std::vector<RimPt> rim[2];
+    // Face-local edge orientations: sampling must honour them (like
+    // every other border sampler) so multi-edge rims with mixed curve
+    // senses keep each arc joint exactly once.
+    std::map<int, bool> revOf;
+    for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+        int e = model.edges.FindIndex(ex.Current());
+        if (e >= 1) {
+            revOf[e] = ex.Current().Orientation() == TopAbs_REVERSED;
+        }
+    }
     for (int eid : rimEdges) {
         if (eid < 1 || eid > model.edgeCount()) continue;
         const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
@@ -3698,8 +3737,10 @@ void meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
         int side = std::abs(mid.Y() - v0) < std::abs(mid.Y() - v1) ? 0 : 1;
         int n = eid < int(solvedEdge.size()) ? solvedEdge[eid] : 0;
         if (n < 1) n = nu;
+        const bool rev = revOf.count(eid) && revOf[eid];
         for (int i = 0; i < n; ++i) {
             double t = double(i) / n;
+            if (rev) t = 1.0 - t;
             gp_Pnt2d uv = pc->Value(f2 + (l2 - f2) * t);
             gp_Pnt p = c3->Value(f3 + (l3 - f3) * t);
             double u = uv.X();
@@ -5647,8 +5688,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                  s.junctionRings, out);
                 break;
             case MesherKind::AnnulusRing:
-                meshAnnulusRing(face, model, fid, plan.uEdges, plan.vEdges,
-                                solvedEdge, s.radial, out);
+                if (!meshAnnulusRing(face, model, fid, plan.uEdges,
+                                     plan.vEdges, solvedEdge, s.radial,
+                                     out)) {
+                    demote(fid, face, surf, s, "annulus ring failed");
+                }
                 break;
             case MesherKind::PlateWeb:
                 if (!meshPlateWeb(face, surf, model, fid, solvedEdge,
