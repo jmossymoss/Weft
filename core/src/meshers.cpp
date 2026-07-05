@@ -407,21 +407,26 @@ bool edgesHugRimsOrInserts(const TopoDS_Face& face,
             }
         }
     }
+    int plunges = 0;
     for (int i = 0; i < kBins; ++i) {
         if (loMax[i] > -1e300 && hiMin[i] < 1e300 && loMax[i] >= hiMin[i]) {
             return false;
         }
         // Loftable rims are FUNCTIONS of u: a chain that doubles back
-        // (gear teeth, deep slots cut into a rim) stacks several v's
-        // over one u and cannot drive a lofted row. Short jogs (weld
-        // steps) stay well under the limit.
+        // stacks several v's over one u and cannot drive a lofted row.
+        // A FEW deep bins are a NOTCH — a channel cut through the rim
+        // (flaregun face 81): its walls drop the whole way at one u
+        // each, and the loft handles them (rows never rise above the
+        // notch floor inside the mouth). MANY deep bins are gear teeth
+        // and still reject.
         if (loMax[i] > -1e300 && loMax[i] - loMin[i] > 0.3 * vspan) {
-            return false;
+            ++plunges;
         }
         if (hiMax[i] > -1e300 && hiMax[i] - hiMin[i] > 0.3 * vspan) {
-            return false;
+            ++plunges;
         }
     }
+    if (plunges > std::max(2, kBins / 8)) return false;
     // Between-chain coverage: the loft region must actually belong to
     // the face — a band with a large un-modeled cutout (not an insert
     // wire) cannot loft. Insert-wire boxes are skipped: their cells are
