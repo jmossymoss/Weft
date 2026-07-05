@@ -5757,9 +5757,27 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         std::lock_guard<std::mutex> lock(occtMeshMutex);
         BRepTools::Clean(face);
         IMeshTools_Parameters mp;
-        mp.Deflection = s.chordTolerance;
+        // Relative mode scales the tolerance by THIS FACE's extent
+        // ourselves (sagitta as a fraction of feature size — the same
+        // meaning the border solver uses). OCCT's own Relative flag
+        // multiplies per component edge, which saturates at the
+        // coarsest mesh for any typical value — the deviation slider
+        // read as dead.
+        double defl = std::max(1e-9, s.chordTolerance);
+        if (s.relativeDeviation) {
+            Bnd_Box bb;
+            BRepBndLib::Add(face, bb);
+            if (!bb.IsVoid()) {
+                double x0, y0, z0, x1, y1, z1;
+                bb.Get(x0, y0, z0, x1, y1, z1);
+                const double diag = gp_Pnt(x0, y0, z0).Distance(
+                    gp_Pnt(x1, y1, z1));
+                defl = std::max(1e-9, s.chordTolerance * 0.05 * diag);
+            }
+        }
+        mp.Deflection = defl;
         mp.Angle = s.angleToleranceDeg * M_PI / 180.0;
-        mp.Relative = s.relativeDeviation;
+        mp.Relative = Standard_False;
         if (s.minSize > 0) mp.MinSize = s.minSize;
         mp.InParallel = Standard_True;
         BRepMesh_IncrementalMesh mesher(face, mp);
