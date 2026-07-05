@@ -293,9 +293,12 @@ bool isClosedRevolution(const BRepAdaptor_Surface& surf) {
         case GeomAbs_Cone:
         case GeomAbs_Sphere:
         case GeomAbs_Torus:
-        case GeomAbs_SurfaceOfRevolution: break;
-        default: return false;
+        case GeomAbs_SurfaceOfRevolution: return surf.IsUClosed();
+        default: break;
     }
+    // Revolved bsplines (CAD kernels export revolves as NURBS all the
+    // time): u-closed is what the ring meshers actually need — exact
+    // rim rows, phase-aligned columns — not the analytic type tag.
     return surf.IsUClosed();
 }
 
@@ -978,14 +981,29 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
     // wherever a count is absorbed — the Plasticity pattern) stitches
     // the natural rail to the first interior grid line, and the
     // scaffold row is not emitted at all.
-    auto resample = [&](int i, size_t n, bool reversed) {
-        Handle(Geom_Surface) S = BRep_Tool::Surface(face);
+    // Scaffold rows resample the NATURAL rail by ARC LENGTH, not by
+    // chain fraction: side(i,t) walks chains piece-by-piece, so a
+    // T-junction with unequal piece densities shears every interior
+    // column diagonally (the flaregun jacket rungs). Arc-uniform
+    // scaffolds keep columns upright; UV interpolates within a natural
+    // segment and re-evaluates on the surface.
+    auto resample = [&](const std::vector<BPt>& nat, size_t n) {
+        std::vector<double> arc(nat.size(), 0.0);
+        for (size_t k = 1; k < nat.size(); ++k) {
+            arc[k] = arc[k - 1] + nat[k].p.Distance(nat[k - 1].p);
+        }
+        const double total = arc.back() > 1e-12 ? arc.back() : 1.0;
         std::vector<BPt> row(n);
+        size_t j = 0;
         for (size_t k = 0; k < n; ++k) {
-            double t = double(k) / double(n - 1);
-            if (reversed) t = 1.0 - t;
-            gp_Pnt2d uv = patch.side(i, t);
-            row[k] = {S->Value(uv.X(), uv.Y()), uv};
+            const double sTarget = total * double(k) / double(n - 1);
+            while (j + 2 < nat.size() && arc[j + 1] < sTarget) ++j;
+            const double seg = std::max(1e-12, arc[j + 1] - arc[j]);
+            const double t = std::clamp((sTarget - arc[j]) / seg, 0.0, 1.0);
+            gp_Pnt2d uv(
+                nat[j].uv.X() + t * (nat[j + 1].uv.X() - nat[j].uv.X()),
+                nat[j].uv.Y() + t * (nat[j + 1].uv.Y() - nat[j].uv.Y()));
+            row[k] = {surface->Value(uv.X(), uv.Y()), uv};
         }
         return row;
     };
@@ -994,10 +1012,10 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
         top.size() >= 2) {
         if (bottom.size() < top.size()) {
             natBottom = bottom;
-            bottom = resample(0, top.size(), false);
+            bottom = resample(natBottom, top.size());
         } else {
             natTop = top;
-            top = resample(2, bottom.size(), true);
+            top = resample(natTop, bottom.size());
         }
     }
     if (bottom.size() != top.size() || bottom.size() < 2) return false;
@@ -1021,10 +1039,10 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
         left.size() >= 2 && !patch.collapsedLast) {
         if (right.size() < left.size()) {
             natRight = right;
-            right = resample(1, left.size(), false);
+            right = resample(natRight, left.size());
         } else {
             natLeft = left;
-            left = resample(3, right.size(), true);
+            left = resample(natLeft, right.size());
         }
     }
     if (patch.collapsedLast && left.size() != right.size()) {

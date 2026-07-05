@@ -132,6 +132,25 @@ passes 8). CLI gained --density F (global budget dial, composes with
 --lods). Gates: ALL fixtures watertight in defaults/--adaptive/
 --profile cad at densities 0.2–5; both as1 assemblies watertight.
 
+## Field reports 2026-07-05 (user's HDD + flaregun screenshots, face IDs)
+FIXED this round: HDD #245/#248 washer/dome rings (bspline revolves now
+detected by isClosedRevolution via IsUClosed; annulus accepts 24-arc
+outlines; curved two-loop faces no longer zipper flat), HDD #484/#240
+fillet band crumples + zig-zag (ruled-chart interiors; arc-fraction
+strip maps; arc-uniform coons scaffolds), HDD #169 quad-dominant vertex
+spray (fallback now pairs only — NO midpoint subdivision, per user:
+"un-triangulate, don't add edges"), bossfillet fixture reproduces the
+boss-rim ring class (routes revolution-grid, watertight).
+STILL OPEN (the strip-mesher gap, next big step): flaregun #49/#55/#56
+jacket segments (partial cylinder wraps around the side slot — chained
+coons shears rungs; needs iso-aligned ruled strips), #50 (slot touches
+the border, falls back as fan spray), #112/#145/#146/#172 + HDD #314
+(crescent/lune sliver bands and notched cone bands — two long rails
+converging at tips; need a rail-ladder strip mesher: arc-fraction
+monotone pairing rail-to-rail, quads + absorbed 5-gons, ends collapse
+to the tips; emitStrip already implements the pairing — promote it to
+a full mesher with plan-time routing for 2-rail faces).
+
 ## Next steps, in order
 1. COUNT DECOUPLING: extend the absorber to multi-vertex gaps (complement
    path v→w1→…→wk→u along a shared B-rep edge), then let 9–16-edge chained

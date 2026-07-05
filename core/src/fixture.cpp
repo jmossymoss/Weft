@@ -16,6 +16,10 @@
 #include <gp_Ax2.hxx>
 #include <gp_Trsf.hxx>
 
+#include <BRep_Tool.hxx>
+#include <Geom_Curve.hxx>
+
+#include <cmath>
 #include <stdexcept>
 
 namespace weft {
@@ -84,6 +88,27 @@ TopoDS_Shape makeFixture(const std::string& name) {
         TopoDS_Shape slot2 = slot.Moved(up);
         TopoDS_Shape cut = BRepAlgoAPI_Cut(tube, slot).Shape();
         return BRepAlgoAPI_Cut(cut, slot2).Shape();
+    }
+    if (name == "bossfillet") {
+        // The HDD class: a round boss whose top rim is blended — the
+        // fillet ring is a full 360-degree torus band and must mesh as
+        // a revolution ring, not a coons patch with a seam twist.
+        TopoDS_Shape base = BRepPrimAPI_MakeBox(40.0, 40.0, 10.0).Shape();
+        gp_Ax2 axis(gp_Pnt(20.0, 20.0, 10.0), gp_Dir(0, 0, 1));
+        TopoDS_Shape boss = BRepPrimAPI_MakeCylinder(axis, 8.0, 15.0).Shape();
+        TopoDS_Shape fused = BRepAlgoAPI_Fuse(base, boss).Shape();
+        BRepFilletAPI_MakeFillet fillet(fused);
+        for (TopExp_Explorer ex(fused, TopAbs_EDGE); ex.More(); ex.Next()) {
+            const TopoDS_Edge e = TopoDS::Edge(ex.Current());
+            double f, l;
+            Handle(Geom_Curve) c = BRep_Tool::Curve(e, f, l);
+            if (c.IsNull()) continue;
+            gp_Pnt m = c->Value((f + l) / 2);
+            if (std::abs(m.Z() - 25.0) < 1e-6) {  // boss top rim
+                fillet.Add(2.0, e);
+            }
+        }
+        return fillet.Shape();
     }
     if (name == "boss") {
         TopoDS_Shape base = BRepPrimAPI_MakeBox(40.0, 40.0, 10.0).Shape();
