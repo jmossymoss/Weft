@@ -4867,14 +4867,65 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
                 bestOff = off;
             }
         }
+        // Interior rows ease across rim v-STEPS (a countersunk bore's
+        // rim arcs sit at different heights): a row that inherits the
+        // raw step per column twists against its neighbour and folds.
+        // A short circular moving average spreads the step over a few
+        // columns; the rim rows themselves stay exact, so the cells
+        // touching a rim absorb what remains of the step.
+        std::vector<double> vSmA(nu), vSmB(nu);
+        std::vector<double> uSmA(nu), uSmB(nu);
+        {
+            // Unwrap each rim's u into a monotone sequence first so the
+            // window average never mixes branches across the seam.
+            std::vector<double> uwA(nu), uwB(nu);
+            for (int i = 0; i < nu; ++i) {
+                double ua = A[i].u;
+                double ub = B[(i + bestOff) % nu].u;
+                if (i) {
+                    ua -= period * std::round((ua - uwA[i - 1]) / period);
+                    ub -= period * std::round((ub - uwB[i - 1]) / period);
+                }
+                uwA[i] = ua;
+                uwB[i] = ub;
+            }
+            const int win = std::max(1, nu / 12);
+            for (int i = 0; i < nu; ++i) {
+                double sa = 0, sb = 0, su = 0, sv = 0;
+                for (int k = -win; k <= win; ++k) {
+                    const int ia = ((i + k) % nu + nu) % nu;
+                    sa += A[ia].v;
+                    sb += mirrorB ? vFar : B[(ia + bestOff) % nu].v;
+                    // Column targets need the unwrapped branch nearest
+                    // sample i, not the wrapped raw value.
+                    double ua = uwA[ia], ub = uwB[ia];
+                    ua -= period * std::round((ua - uwA[i]) / period);
+                    ub -= period * std::round((ub - uwB[i]) / period);
+                    su += ua;
+                    sv += ub;
+                }
+                vSmA[i] = sa / (2 * win + 1);
+                vSmB[i] = sb / (2 * win + 1);
+                uSmA[i] = su / (2 * win + 1);
+                uSmB[i] = sv / (2 * win + 1);
+            }
+        }
         for (int j = 0; j < rows; ++j) {
             double v = rowV(j);
             double w = (v - v0) / vspan;
             std::vector<gp_Pnt> pts(nu);
             std::vector<double> us(nu), vs(nu);
             for (int i = 0; i < nu; ++i) {
-                double uA = A[i].u;
-                double dU = B[(i + bestOff) % nu].u - uA;
+                // Interior columns interpolate between SMOOTHED rim
+                // u's: a rim step stacks several samples at one angle,
+                // and raw targets pinch every interior column into that
+                // line (the fold fan on countersunk bores). Rim rows
+                // keep their exact points below.
+                double uA = j == 0 ? A[i].u : uSmA[i];
+                double uB = (j == nv && !rim[1].empty())
+                                ? B[(i + bestOff) % nu].u
+                                : uSmB[i];
+                double dU = uB - uA;
                 dU -= period * std::round(dU / period);
                 us[i] = uA + dU * w;
                 // Loft v per column: WAVY rims (pipe-saddle weld
@@ -4883,9 +4934,7 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
                 // cross the rims. Flat rims reduce to the old uniform
                 // spacing exactly. Explicit vRows (insert bands) keep
                 // absolute positions — inserts only plan on flat rims.
-                const double vB =
-                    mirrorB ? vFar : B[(i + bestOff) % nu].v;
-                vs[i] = vRows ? v : A[i].v + (vB - A[i].v) * w;
+                vs[i] = vRows ? v : vSmA[i] + (vSmB[i] - vSmA[i]) * w;
                 if (j == 0) pts[i] = A[i].p;  // exact curve points
                 else if (j == nv && !rim[1].empty())
                     pts[i] = B[(i + bestOff) % nu].p;
