@@ -3843,6 +3843,53 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
         sol.groups.unite(plan.vEdges);
     }
 
+    // Co-circular arcs are ONE ring to the eye: STEP kernels split
+    // closed bores into half-cylinders, and when each half's rim arc
+    // solves independently the two halves land on different counts and
+    // the ring breaks visually at the split lines. Arcs lying on the
+    // same circle (same centre, axis, radius) with near-equal spans
+    // unite into one group — both halves then carry the same count and
+    // their columns meet exactly at the seams. Proportional splits
+    // (a quarter against a three-quarter arc) keep their own counts.
+    {
+        std::map<std::array<long long, 7>, std::vector<std::pair<int, double>>>
+            rings;
+        for (int eid = 1; eid <= model.edgeCount(); ++eid) {
+            const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
+            if (BRep_Tool::Degenerated(e)) continue;
+            double f, l;
+            Handle(Geom_Curve) c = BRep_Tool::Curve(e, f, l);
+            if (c.IsNull()) continue;
+            GeomAdaptor_Curve gc(c, f, l);
+            if (gc.GetType() != GeomAbs_Circle) continue;
+            if (l - f >= 2.0 * M_PI - 1e-9) continue;  // full circles solo
+            const gp_Circ circ = gc.Circle();
+            auto q = [](double v) { return llround(v * 1e6); };
+            const gp_Pnt o = circ.Location();
+            gp_Dir d = circ.Axis().Direction();
+            if (d.Z() < 0 ||
+                (d.Z() == 0 && (d.Y() < 0 || (d.Y() == 0 && d.X() < 0)))) {
+                d.Reverse();  // sign-normalize so mirrored arcs meet
+            }
+            rings[{q(o.X()), q(o.Y()), q(o.Z()), q(d.X()), q(d.Y()),
+                   q(d.Z()), q(circ.Radius())}]
+                .push_back({eid, l - f});
+        }
+        for (auto& [key, arcs] : rings) {
+            if (arcs.size() < 2) continue;
+            double mn = 1e300, mx = 0.0;
+            for (const auto& [eid, span] : arcs) {
+                mn = std::min(mn, span);
+                mx = std::max(mx, span);
+            }
+            if (mx > 1.3 * mn) continue;
+            std::vector<int> ids;
+            ids.reserve(arcs.size());
+            for (const auto& [eid, span] : arcs) ids.push_back(eid);
+            sol.groups.unite(ids);
+        }
+    }
+
     // A face with an explicit per-face override PINS its groups: the user
     // asked for that density by name, so it must not be silently outvoted
     // by neighbours' defaults. Groups touched only by defaulted faces
