@@ -968,11 +968,14 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
     std::reverse(top.begin(), top.end());
 
     // Decoupled rails: opposite totals may disagree now that the solver
-    // no longer grows chains into equality. The deficit rail resamples by
-    // arc fraction along its own boundary (points stay ON the border
-    // curves through the pcurves); its NATURAL border vertices belong to
-    // the neighbours, and the post-weld seam absorber splices them into
-    // these lattice quads as small-edge n-gons.
+    // no longer grows chains into equality. The deficit rail's NATURAL
+    // points stay the emitted border — they are the neighbours' weld
+    // contract and are never re-spaced (doctrine). The lattice itself
+    // gets an arc-fraction resampling of that rail purely as blending
+    // scaffold; at emission a transition strip of quads (plus a 5-gon
+    // wherever a count is absorbed — the Plasticity pattern) stitches
+    // the natural rail to the first interior grid line, and the
+    // scaffold row is not emitted at all.
     auto resample = [&](int i, size_t n, bool reversed) {
         Handle(Geom_Surface) S = BRep_Tool::Surface(face);
         std::vector<BPt> row(n);
@@ -984,11 +987,14 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
         }
         return row;
     };
+    std::vector<BPt> natBottom, natTop;  // natural deficit rails
     if (bottom.size() != top.size() && bottom.size() >= 2 &&
         top.size() >= 2) {
         if (bottom.size() < top.size()) {
+            natBottom = bottom;
             bottom = resample(0, top.size(), false);
         } else {
+            natTop = top;
             top = resample(2, bottom.size(), true);
         }
     }
@@ -1008,11 +1014,14 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
         left = sampleSide(3, paramsFor(3, vParams));
         std::reverse(left.begin(), left.end());
     }
+    std::vector<BPt> natLeft, natRight;  // natural deficit rails
     if (right.size() != left.size() && right.size() >= 2 &&
         left.size() >= 2 && !patch.collapsedLast) {
         if (right.size() < left.size()) {
+            natRight = right;
             right = resample(1, left.size(), false);
         } else {
+            natLeft = left;
             left = resample(3, right.size(), true);
         }
     }
@@ -1212,9 +1221,17 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
         }
     }
 
-    std::vector<uint32_t> grid((nu + 1) * (nv + 1));
-    for (int j = 0; j <= nv; ++j) {
-        for (int i = 0; i <= nu; ++i) {
+    // A deficit rail's scaffold row is NOT emitted — its natural points
+    // are the border, bridged to the first interior line below. The
+    // emitted grid shrinks by one row/column on each such side.
+    const int j0 = natBottom.empty() ? 0 : 1;
+    const int j1 = natTop.empty() ? nv : nv - 1;
+    const int i0 = natLeft.empty() ? 0 : 1;
+    const int i1 = natRight.empty() ? nu : nu - 1;
+
+    std::vector<uint32_t> grid((nu + 1) * (nv + 1), 0);
+    for (int j = j0; j <= j1; ++j) {
+        for (int i = i0; i <= i1; ++i) {
             const BPt& bp = gpts[j * (nu + 1) + i];
             grid[j * (nu + 1) + i] =
                 out.addVertex(bp.p, {faceId, bp.uv.X(), bp.uv.Y()});
@@ -1243,8 +1260,8 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
         }
     }
 
-    for (int j = 0; j < nv; ++j) {
-        for (int i = 0; i < nu; ++i) {
+    for (int j = j0; j < j1; ++j) {
+        for (int i = i0; i < i1; ++i) {
             std::vector<uint32_t> ring = {grid[j * (nu + 1) + i],
                                           grid[j * (nu + 1) + i + 1],
                                           grid[(j + 1) * (nu + 1) + i + 1],
@@ -1254,6 +1271,89 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
             }
             out.addPolygon(std::move(ring), faceId, flip);
         }
+    }
+
+    // Transition strips for the deficit rails: natural border points
+    // bridge to the first interior grid line with a monotone index map —
+    // quads where the counts advance together, a 5-gon wherever the
+    // dense line contributes an extra point. Lattice-CCW is low line
+    // forward then high line backward, matching the grid cells' winding.
+    auto railIds = [&](const std::vector<BPt>& row) {
+        std::vector<uint32_t> ids(row.size());
+        for (size_t k = 0; k < row.size(); ++k) {
+            ids[k] = out.addVertex(row[k].p, {faceId, row[k].uv.X(),
+                                              row[k].uv.Y()});
+        }
+        return ids;
+    };
+    auto bridgeIdx = [](int k, int m, int n) {
+        return int(std::llround(double(k) * double(n) / double(m)));
+    };
+    // stubTail (with skipFirst / cornerAfter) reattaches the corner stub
+    // when the cell that used to carry it was replaced by a strip.
+    auto emitStrip = [&](const std::vector<uint32_t>& low,
+                         const std::vector<uint32_t>& high,
+                         const std::vector<uint32_t>* stubTail,
+                         bool skipFirstStub, uint32_t cornerAfter) {
+        const int nLow = int(low.size()) - 1;
+        const int nHigh = int(high.size()) - 1;
+        if (nLow < 1 || nHigh < 1) return;
+        const bool lowSparse = nLow <= nHigh;
+        const int m = lowSparse ? nLow : nHigh;
+        const int n = lowSparse ? nHigh : nLow;
+        for (int k = 0; k < m; ++k) {
+            const int a = bridgeIdx(k, m, n);
+            const int b = bridgeIdx(k + 1, m, n);
+            std::vector<uint32_t> ring;
+            if (lowSparse) {
+                ring = {low[k], low[k + 1]};
+                for (int t = b; t >= a; --t) ring.push_back(high[t]);
+            } else {
+                for (int t = a; t <= b; ++t) ring.push_back(low[t]);
+                ring.push_back(high[k + 1]);
+                ring.push_back(high[k]);
+            }
+            if (k == 0 && stubTail && !stubTail->empty()) {
+                ring.insert(ring.end(),
+                            stubTail->begin() + (skipFirstStub ? 1 : 0),
+                            stubTail->end());
+                if (cornerAfter != UINT32_MAX) ring.push_back(cornerAfter);
+            }
+            out.addPolygon(std::move(ring), faceId, flip);
+        }
+    };
+    if (!natBottom.empty()) {
+        std::vector<uint32_t> high;
+        for (int i = i0; i <= i1; ++i) high.push_back(grid[j0 * (nu + 1) + i]);
+        emitStrip(railIds(natBottom), high,
+                  stubVerts.empty() ? nullptr : &stubVerts, false,
+                  UINT32_MAX);
+    }
+    if (!natTop.empty()) {
+        std::vector<uint32_t> low;
+        for (int i = i0; i <= i1; ++i) low.push_back(grid[j1 * (nu + 1) + i]);
+        emitStrip(low, railIds(natTop), nullptr, false, UINT32_MAX);
+    }
+    if (!natLeft.empty()) {
+        std::vector<uint32_t> low;
+        for (int j = j0; j <= j1; ++j) low.push_back(grid[j * (nu + 1) + i0]);
+        // The stub's far end is side0's start — a contract point that
+        // lives at lattice (0,0), outside the emitted grid here. Close
+        // the strip through it. (stubVerts[0] coincides with the natural
+        // left rail's first point, so it is skipped.)
+        const bool stubHere = !stubVerts.empty() && natBottom.empty();
+        uint32_t corner00 = UINT32_MAX;
+        if (stubHere) {
+            const BPt& c = gpts[0];
+            corner00 = out.addVertex(c.p, {faceId, c.uv.X(), c.uv.Y()});
+        }
+        emitStrip(low, railIds(natLeft),
+                  stubHere ? &stubVerts : nullptr, true, corner00);
+    }
+    if (!natRight.empty()) {
+        std::vector<uint32_t> high;
+        for (int j = j0; j <= j1; ++j) high.push_back(grid[j * (nu + 1) + i1]);
+        emitStrip(railIds(natRight), high, nullptr, false, UINT32_MAX);
     }
     return true;
 }
