@@ -996,12 +996,13 @@ void testAdaptiveDensity() {
         *outCount = report.edgeDivisions.at(rims->second[0]);
         return model;
     };
-    int small = 0, large = 0;
-    radialOf(4.0, &small);
-    weft::Model largeModel = radialOf(60.0, &large);
-    CHECK(small >= 6);       // closed-ring floor holds
-    CHECK(large > small);    // curvature drives the count up with size
-    CHECK(large <= 256);     // ...within the cap
+    // NB: not "small"/"large" — Windows' rpcndr.h #defines those.
+    int smallCount = 0, largeCount = 0;
+    radialOf(4.0, &smallCount);
+    weft::Model largeModel = radialOf(60.0, &largeCount);
+    CHECK(smallCount >= 6);          // closed-ring floor holds
+    CHECK(largeCount > smallCount);  // curvature drives the count up with size
+    CHECK(largeCount <= 256);        // ...within the cap
 
     // A per-edge pin still beats the adaptive proposal.
     weft::Analysis a = weft::analyze(largeModel);
