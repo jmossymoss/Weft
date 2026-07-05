@@ -241,6 +241,29 @@ disc chords + flange fan (disk-cap/plate routing at huge radius),
 bracket pocket floor fans + micro-radius cones (face 37 r=0.313),
 crescent/lune strip mesher (the queued rail-ladder feature).
 
+## Queue state after the curvature-floor round (2026-07-05, latest)
+LANDED: solver curvature floor (no curved edge below ~60deg/segment —
+killed the as1 'sandwich' which was really collapsed bend arcs fusing;
+board-wide wins: bracket 187->31 tris, weldment 1743->571, unterlaf
+4650->3209, mohne 458->295); CLI fold attribution (worst faces named).
+Board: ALL ten kept examples watertight in cad profile; as1 defaults
+0/0 again; fixtures green all modes/densities.
+NEXT, in order:
+1. RAIL-LADDER STRIP MESHER (the big one): crescents/lunes, notched
+   bands, freeform pocket walls — arc-fraction monotone rail pairing,
+   quads + absorbed 5-gons, tips collapse; plan-time routing for
+   2-rail faces. Fixes bracket pocket fans, flaregun jackets 49/55/56,
+   HDD cone 314, mohne strip webs, iso pocket walls at quad quality
+   (they sit on the tri floor today).
+2. nasty_cheese basket eruptions: drills tangent to faces create
+   warped sliver patches (faces 46/321, 116 folds each) and 57 nm in
+   defaults; needs per-face isolation (app --select renders) and
+   probably plan-time sliver detection routing to the floor.
+3. weldment disc chords: round end plates render as giant chord tris;
+   check disk-cap vs minimal routing at large radius + fold overlay.
+4. Contact-face dedup: still worth having for true imprinted
+   assemblies (the PixYZ-parity feature), no longer urgent for as1.
+
 ## Next steps, in order
 1. COUNT DECOUPLING: extend the absorber to multi-vertex gaps (complement
    path v→w1→…→wk→u along a shared B-rep edge), then let 9–16-edge chained
