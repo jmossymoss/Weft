@@ -961,6 +961,22 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
         if (patch.chained()) {
             return uniformParams(solvedCount(patch.edgeIds[i]));
         }
+        // Plain patches: a UNIFORM request still samples at the edge's
+        // OWN solved count — the border contract — with any rail
+        // mismatch absorbed by the transition strips. Only deliberately
+        // clustered splits (fillet holds) keep the given params; those
+        // faces are exempt from the border check.
+        bool uniform = true;
+        for (size_t k = 0; k < plain.size() && uniform; ++k) {
+            uniform = std::abs(plain[k] - double(k) /
+                                              double(plain.size() - 1)) <
+                      1e-9;
+        }
+        const int eid = patch.edgeIds[i];
+        const int sc = eid > 0 && eid < int(solvedEdge.size())
+                           ? solvedEdge[eid]
+                           : 0;
+        if (uniform && sc >= 1) return uniformParams(sc);
         return plain;
     };
     // (Tried and reverted: sampling a single side at the opposite
@@ -1575,29 +1591,74 @@ bool meshAnnulusRing(const TopoDS_Face& face, const Model& model, int faceId,
         bv[j] = out.addVertex(B[(bestOff + j) % nIn], {});
     }
 
-    // Zipper by fraction (equal counts -> pure quads). Winding is fixed
-    // afterwards against the surface normal at the first polygon.
-    struct Poly { std::vector<uint32_t> ring; };
+    // Equal counts zip to pure quads; mismatched counts bridge by ARC
+    // fraction with the extra dense points grouped into 5-gons (the
+    // alternating-triangle zipper drew a WWWW sliver band around every
+    // count-mismatched disc rim). Winding is fixed afterwards against
+    // the surface normal at the first polygon.
     std::vector<std::vector<uint32_t>> polys;
-    int ia = 0, ib = 0;
-    while (ia < nOut && ib < nIn &&
-           nOut == nIn) {  // quad ring fast path
-        polys.push_back({av[ia % nOut], av[(ia + 1) % nOut],
-                         bv[(ib + 1) % nIn], bv[ib % nIn]});
-        ++ia;
-        ++ib;
-    }
-    while (ia < nOut || ib < nIn) {
-        double fa = double(ia + 1) / nOut, fb = double(ib + 1) / nIn;
-        bool stepA = ib >= nIn || (ia < nOut && fa <= fb);
-        if (stepA) {
-            polys.push_back({av[ia % nOut], av[(ia + 1) % nOut],
-                             bv[ib % nIn]});
-            ++ia;
-        } else {
-            polys.push_back({av[ia % nOut], bv[(ib + 1) % nIn],
-                             bv[ib % nIn]});
-            ++ib;
+    if (nOut == nIn) {
+        for (int i = 0; i < nOut; ++i) {
+            polys.push_back({av[i], av[(i + 1) % nOut],
+                             bv[(i + 1) % nIn], bv[i]});
+        }
+    } else {
+        const bool aSparse = nOut <= nIn;
+        const std::vector<uint32_t>& S = aSparse ? av : bv;
+        const std::vector<uint32_t>& D = aSparse ? bv : av;
+        const std::vector<gp_Pnt>* Sp = aSparse ? &A : &B;
+        const std::vector<gp_Pnt>* Dp = aSparse ? &B : &A;
+        const int ns = int(S.size()), nd = int(D.size());
+        // Normalized cumulative arcs. av pairs with A directly; bv was
+        // built offset-aligned, so its geometric order is
+        // B[(bestOff + j) % nIn].
+        auto fractionsOf = [&](const std::vector<gp_Pnt>& pts, int n,
+                               bool useOff) {
+            std::vector<double> f(n + 1, 0.0);
+            for (int i = 1; i <= n; ++i) {
+                const gp_Pnt& p0 =
+                    pts[useOff ? (bestOff + i - 1) % n : (i - 1)];
+                const gp_Pnt& p1 = pts[useOff ? (bestOff + i) % n : i % n];
+                f[i] = f[i - 1] + p0.Distance(p1);
+            }
+            const double t = f[n] > 1e-12 ? f[n] : 1.0;
+            for (double& x : f) x /= t;
+            return f;
+        };
+        const std::vector<double> sf = fractionsOf(*Sp, ns, !aSparse);
+        const std::vector<double> df = fractionsOf(*Dp, nd, aSparse);
+        std::vector<int> mp(ns + 1);
+        mp[0] = 0;
+        mp[ns] = nd;
+        for (int k = 1; k < ns; ++k) {
+            int j = mp[k - 1];
+            while (j + 1 < nd && std::abs(df[j + 1] - sf[k]) <=
+                                     std::abs(df[j] - sf[k])) {
+                ++j;
+            }
+            mp[k] = j;
+        }
+        for (int k = 0; k < ns; ++k) {
+            std::vector<uint32_t> ring2;
+            if (aSparse) {
+                ring2 = {S[k], S[(k + 1) % ns]};
+                for (int t = mp[k + 1]; t >= mp[k]; --t) {
+                    ring2.push_back(D[t % nd]);
+                }
+            } else {
+                for (int t = mp[k]; t <= mp[k + 1]; ++t) {
+                    ring2.push_back(D[t % nd]);
+                }
+                ring2.push_back(S[(k + 1) % ns]);
+                ring2.push_back(S[k]);
+            }
+            ring2.erase(std::unique(ring2.begin(), ring2.end()),
+                        ring2.end());
+            if (ring2.size() > 1 && ring2.front() == ring2.back()) {
+                ring2.pop_back();
+            }
+            if (ring2.size() < 3) continue;
+            polys.push_back(std::move(ring2));
         }
     }
 
@@ -2154,8 +2215,96 @@ bool samplePlanarRings(const TopoDS_Face& face, const Model& model,
         for (BRepTools_WireExplorer we(wire, face); we.More(); we.Next()) {
             ++wireEdges;
         }
+        // Sloppy wires defeat BRepTools_WireExplorer (it silently DROPS
+        // edges it cannot chain within tolerance) — every dropped edge
+        // is a missing border. Detect the drop and assemble the ring by
+        // hand: sample each edge, then chain pieces by nearest
+        // endpoints, exactly like the insert webs do.
+        int rawEdges = 0;
+        for (TopoDS_Iterator it(wire); it.More(); it.Next()) {
+            if (it.Value().ShapeType() == TopAbs_EDGE &&
+                !BRep_Tool::Degenerated(TopoDS::Edge(it.Value()))) {
+                ++rawEdges;
+            }
+        }
+        if (rawEdges > wireEdges) {
+            struct Piece {
+                std::vector<gp_Pnt2d> uv;
+                std::vector<gp_Pnt> p;
+            };
+            std::vector<Piece> pieces;
+            for (TopoDS_Iterator it(wire); it.More(); it.Next()) {
+                if (it.Value().ShapeType() != TopAbs_EDGE) continue;
+                const TopoDS_Edge edge = TopoDS::Edge(it.Value());
+                if (BRep_Tool::Degenerated(edge)) continue;
+                int eid = model.edges.FindIndex(edge);
+                int n = (eid >= 1 && eid < int(solvedEdge.size()))
+                            ? solvedEdge[eid]
+                            : 0;
+                if (n < 1) {
+                    n = std::max(1, std::max(3, radialDefault) /
+                                        std::max(1, rawEdges));
+                }
+                double f3, l3, f2, l2;
+                Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, f3, l3);
+                Handle(Geom2d_Curve) c2 =
+                    BRep_Tool::CurveOnSurface(edge, face, f2, l2);
+                if (c3.IsNull() || c2.IsNull()) return false;
+                const bool rev = edge.Orientation() == TopAbs_REVERSED;
+                Piece pc;
+                for (int i = 0; i <= n; ++i) {
+                    double t = rev ? 1.0 - double(i) / n : double(i) / n;
+                    pc.uv.push_back(c2->Value(f2 + (l2 - f2) * t));
+                    pc.p.push_back(c3->Value(f3 + (l3 - f3) * t));
+                }
+                pieces.push_back(std::move(pc));
+            }
+            if (pieces.empty()) return false;
+            Piece chain = std::move(pieces[0]);
+            std::vector<char> used(pieces.size(), 1);
+            used[0] = 1;
+            for (size_t k = 1; k < pieces.size(); ++k) used[k] = 0;
+            for (size_t step = 1; step < pieces.size(); ++step) {
+                double bd = 1e300;
+                size_t bi = 0;
+                bool rev2 = false;
+                for (size_t k = 0; k < pieces.size(); ++k) {
+                    if (used[k]) continue;
+                    double dF = chain.p.back().Distance(pieces[k].p.front());
+                    double dB = chain.p.back().Distance(pieces[k].p.back());
+                    if (dF < bd) { bd = dF; bi = k; rev2 = false; }
+                    if (dB < bd) { bd = dB; bi = k; rev2 = true; }
+                }
+                used[bi] = 1;
+                Piece pc = std::move(pieces[bi]);
+                if (rev2) {
+                    std::reverse(pc.uv.begin(), pc.uv.end());
+                    std::reverse(pc.p.begin(), pc.p.end());
+                }
+                chain.uv.insert(chain.uv.end(), pc.uv.begin() + 1,
+                                pc.uv.end());
+                chain.p.insert(chain.p.end(), pc.p.begin() + 1, pc.p.end());
+            }
+            // Drop the closing duplicate.
+            if (chain.p.size() > 1 &&
+                chain.p.front().Distance(chain.p.back()) <
+                    1e-6 + BRep_Tool::Tolerance(face)) {
+                chain.uv.pop_back();
+                chain.p.pop_back();
+            }
+            ring.uv = std::move(chain.uv);
+            ring.p = std::move(chain.p);
+            if (ring.uv.size() < 3) return false;
+            rings.push_back(std::move(ring));
+            continue;
+        }
         for (BRepTools_WireExplorer we(wire, face); we.More(); we.Next()) {
             const TopoDS_Edge edge = we.Current();
+            // Degenerate edges (pole collapses) carry no border contract
+            // — skip them rather than refusing the whole face (freeform
+            // pocket walls often carry one, and refusing sent those
+            // faces to raw OCCT triangulation).
+            if (BRep_Tool::Degenerated(edge)) continue;
             int eid = model.edges.FindIndex(edge);
             int n = (eid >= 1 && eid < int(solvedEdge.size()))
                         ? solvedEdge[eid]
@@ -2453,6 +2602,152 @@ bool meshPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
 // Generalized minimal n-gon: the flattest topology a planar face can
 // carry. One wire -> a single boundary n-gon on the exact solved border;
 // holes -> the hole-bridged ear-clip web with zero interior vertices.
+// Split a holed panel into SIMPLE n-gons: two non-crossing bridges per
+// hole become real shared edges dividing the region, so every emitted
+// polygon is simple (no doubled keyhole edges). Keyhole rings are legal
+// topology but no importer triangulates them reliably — they render and
+// export as membranes sealing the holes. Returns false when a hole
+// cannot see two distinct targets (caller falls back).
+bool splitIntoSimplePolys(std::vector<WebPoint> outer,
+                          std::vector<std::vector<WebPoint>> holes,
+                          std::vector<std::vector<WebPoint>>& polysOut) {
+    auto maxX = [](const std::vector<WebPoint>& ring) {
+        size_t best = 0;
+        for (size_t i = 1; i < ring.size(); ++i) {
+            if (ring[i].uv.X() > ring[best].uv.X()) best = i;
+        }
+        return best;
+    };
+    std::sort(holes.begin(), holes.end(),
+              [&](const std::vector<WebPoint>& a,
+                  const std::vector<WebPoint>& b) {
+                  return a[maxX(a)].uv.X() > b[maxX(b)].uv.X();
+              });
+    auto inside = [](const std::vector<WebPoint>& ring, const gp_Pnt2d& p) {
+        int c = 0;
+        for (size_t i = 0; i < ring.size(); ++i) {
+            const gp_Pnt2d& a = ring[i].uv;
+            const gp_Pnt2d& b = ring[(i + 1) % ring.size()].uv;
+            if ((a.Y() > p.Y()) == (b.Y() > p.Y())) continue;
+            double x = a.X() +
+                       (p.Y() - a.Y()) / (b.Y() - a.Y()) * (b.X() - a.X());
+            if (x > p.X()) ++c;
+        }
+        return (c & 1) != 0;
+    };
+    auto signedArea = [](const std::vector<WebPoint>& ring) {
+        double a = 0;
+        for (size_t i = 0; i < ring.size(); ++i) {
+            const gp_Pnt2d& p = ring[i].uv;
+            const gp_Pnt2d& q = ring[(i + 1) % ring.size()].uv;
+            a += p.X() * q.Y() - q.X() * p.Y();
+        }
+        return a / 2;
+    };
+
+    polysOut.clear();
+    polysOut.push_back(std::move(outer));
+    for (size_t h = 0; h < holes.size(); ++h) {
+        const std::vector<WebPoint>& H = holes[h];
+        // The (unique) current region that contains this hole.
+        size_t ri = polysOut.size();
+        for (size_t r = 0; r < polysOut.size(); ++r) {
+            if (inside(polysOut[r], H[0].uv)) {
+                ri = r;
+                break;
+            }
+        }
+        if (ri == polysOut.size()) return false;
+        const std::vector<WebPoint>& R = polysOut[ri];
+        auto crossesAny = [&](const gp_Pnt2d& a, const gp_Pnt2d& b,
+                              const gp_Pnt2d* alsoA,
+                              const gp_Pnt2d* alsoB) {
+            auto crossesRing = [&](const std::vector<WebPoint>& ring) {
+                for (size_t i = 0; i < ring.size(); ++i) {
+                    if (webSegmentsCross(a, b, ring[i].uv,
+                                         ring[(i + 1) % ring.size()].uv)) {
+                        return true;
+                    }
+                }
+                return false;
+            };
+            if (crossesRing(R) || crossesRing(H)) return true;
+            for (size_t j = h + 1; j < holes.size(); ++j) {
+                if (crossesRing(holes[j])) return true;
+            }
+            if (alsoA && webSegmentsCross(a, b, *alsoA, *alsoB)) return true;
+            return false;
+        };
+        // Bridge 1 from the hole's rightmost vertex; bridge 2 from near
+        // its antipode (scanning on from there if occluded).
+        const size_t a1 = maxX(H);
+        size_t b1 = R.size();
+        double bd = 1e300;
+        for (size_t p = 0; p < R.size(); ++p) {
+            double d = H[a1].uv.SquareDistance(R[p].uv);
+            if (d >= bd) continue;
+            if (crossesAny(H[a1].uv, R[p].uv, nullptr, nullptr)) continue;
+            bd = d;
+            b1 = p;
+        }
+        if (b1 == R.size()) return false;
+        size_t a2 = H.size(), b2 = R.size();
+        for (size_t off = 0; off < H.size() && a2 == H.size(); ++off) {
+            const size_t cand = (a1 + H.size() / 2 + off) % H.size();
+            if (cand == a1) continue;
+            double bd2 = 1e300;
+            for (size_t p = 0; p < R.size(); ++p) {
+                if (p == b1) continue;
+                double d = H[cand].uv.SquareDistance(R[p].uv);
+                if (d >= bd2) continue;
+                if (crossesAny(H[cand].uv, R[p].uv, &H[a1].uv,
+                               &R[b1].uv)) {
+                    continue;
+                }
+                bd2 = d;
+                b2 = p;
+            }
+            if (b2 != R.size()) a2 = cand;
+        }
+        if (a2 == H.size() || b2 == R.size()) return false;
+        // Split: region boundary arcs stay in wire order (R is CCW, H is
+        // CW as sampled), the bridges become the shared closing edges.
+        auto walkR = [&](size_t from, size_t to) {
+            std::vector<WebPoint> arc;
+            for (size_t i = from;; i = (i + 1) % R.size()) {
+                arc.push_back(R[i]);
+                if (i == to) break;
+            }
+            return arc;
+        };
+        auto walkH = [&](size_t from, size_t to) {
+            std::vector<WebPoint> arc;
+            for (size_t i = from;; i = (i + 1) % H.size()) {
+                arc.push_back(H[i]);
+                if (i == to) break;
+            }
+            return arc;
+        };
+        std::vector<WebPoint> ring1 = walkR(b1, b2);
+        {
+            std::vector<WebPoint> harc = walkH(a2, a1);
+            ring1.insert(ring1.end(), harc.begin(), harc.end());
+        }
+        std::vector<WebPoint> ring2 = walkR(b2, b1);
+        {
+            std::vector<WebPoint> harc = walkH(a1, a2);
+            ring2.insert(ring2.end(), harc.begin(), harc.end());
+        }
+        if (ring1.size() < 3 || ring2.size() < 3) return false;
+        if (signedArea(ring1) <= 0 || signedArea(ring2) <= 0) {
+            return false;  // bad split (occlusion edge case): fall back
+        }
+        polysOut[ri] = std::move(ring1);
+        polysOut.push_back(std::move(ring2));
+    }
+    return true;
+}
+
 bool meshMinimalPlanar(const TopoDS_Face& face, const Model& model,
                        int faceId, const std::vector<int>& solvedEdge,
                        int radialDefault, MeshBuilder& out) {
@@ -2482,9 +2777,20 @@ bool meshMinimalPlanar(const TopoDS_Face& face, const Model& model,
         else webHoles.push_back(std::move(ring));
     }
     if (webOuter.size() < 3) return false;
-    // Minimal means MINIMAL: holes bridge into the outer ring and the
-    // whole face is ONE keyhole n-gon — every boundary vertex retained,
-    // zero interior triangles (the doubled bridge edges cancel).
+    // Minimal means minimal AND simple: two real bridges per hole split
+    // the panel into k+1 simple n-gons (shared edges, no doubled
+    // keyhole slits — those render and import as hole membranes).
+    std::vector<std::vector<WebPoint>> simple;
+    if (splitIntoSimplePolys(webOuter, webHoles, simple)) {
+        for (const auto& ring : simple) {
+            std::vector<uint32_t> poly;
+            poly.reserve(ring.size());
+            for (const WebPoint& w : ring) poly.push_back(w.vert);
+            out.addPolygon(std::move(poly), faceId, flip);
+        }
+        return true;
+    }
+    // Pathological visibility: keep the keyhole as a last resort.
     std::vector<WebPoint> ring = mergeHolesIntoRing(
         std::move(webOuter), std::move(webHoles), faceId, flip, out);
     std::vector<uint32_t> poly;
@@ -2544,8 +2850,12 @@ bool meshContractFallback(const TopoDS_Face& face, const Model& model,
         else holes.push_back(std::move(ring));
     }
     if (outer.size() < 3) return false;
-    return triangulateWeb(std::move(outer), std::move(holes), faceId, flip,
-                          out);
+    if (!triangulateWeb(std::move(outer), std::move(holes), faceId, flip,
+                        out)) {
+        dbg("contract floor %d: web triangulation failed", faceId);
+        return false;
+    }
+    return true;
 }
 
 bool planQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
@@ -4817,6 +5127,29 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                             const std::map<int, FacePlan>& plans,
                             const GenerationSettings& settings,
                             const std::vector<std::array<size_t, 2>>& range) {
+    // Conforming across BODIES splices the other solid's vertex ids into
+    // this face's polygons — contact faces then fuse into non-manifold
+    // sandwiches. Neighbours must share the owning solid.
+    std::vector<int> faceSolid(model.faceCount() + 1, 0);
+    {
+        int solidId = 0;
+        auto assign = [&](const TopoDS_Shape& obj) {
+            ++solidId;
+            for (TopExp_Explorer fx(obj, TopAbs_FACE); fx.More();
+                 fx.Next()) {
+                int f2 = model.faces.FindIndex(fx.Current());
+                if (f2 > 0 && faceSolid[f2] == 0) faceSolid[f2] = solidId;
+            }
+        };
+        for (TopExp_Explorer sx(model.shape, TopAbs_SOLID); sx.More();
+             sx.Next()) {
+            assign(sx.Current());
+        }
+        for (TopExp_Explorer sx(model.shape, TopAbs_SHELL, TopAbs_SOLID);
+             sx.More(); sx.Next()) {
+            assign(sx.Current());
+        }
+    }
     auto isFreeform = [&](int fid) {
         MesherKind k = plans.at(fid).kind;
         return (k == MesherKind::Fallback || k == MesherKind::QuadDominant ||
@@ -4879,6 +5212,7 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                      model.edgeToFaces.FindFromKey(ex.Current())) {
                     int f2 = model.faces.FindIndex(s);
                     if (f2 == fid || f2 < 1) continue;
+                    if (faceSolid[f2] != faceSolid[fid]) continue;
                     if (nfid < 1 || (!isAnalytic(nfid) && isAnalytic(f2))) {
                         nfid = f2;
                     }
@@ -5629,10 +5963,36 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 c3->Value(f).Distance(c3->Value(l)) < 4.0 * q) {
                 continue;  // micro edge: below weld resolution
             }
-            std::vector<uint32_t> prev = nearVerts(c3->Value(f));
+            // Corner gaps on sloppy CAD reach the EDGE tolerance (1e-4
+            // and worse) and are healed later by corner
+            // canonicalization — endpoint samples get that tolerance,
+            // interior samples stay at weld exactness.
+            // Recorded tolerances LIE on sloppy exports (observed: a
+            // 1.4e-4 corner gap on an edge claiming 1e-6). Bound the
+            // endpoint radius by the local sample spacing instead —
+            // 40% of a step can never capture the wrong border sample.
+            const double eTol = std::max(
+                {q, BRep_Tool::Tolerance(E),
+                 0.4 * c3->Value(f).Distance(c3->Value(l)) /
+                     double(std::max(1, n))});
+            auto nearVertsEnd = [&](const gp_Pnt& p) {
+                std::vector<uint32_t> hits = nearVerts(p);
+                if (!hits.empty() || eTol <= q) return hits;
+                for (uint32_t vi = 0; vi < part.vertices.size(); ++vi) {
+                    const auto& P = part.vertices[vi];
+                    const double dx = P[0] - p.X(), dy = P[1] - p.Y(),
+                                 dz = P[2] - p.Z();
+                    if (dx * dx + dy * dy + dz * dz < eTol * eTol) {
+                        hits.push_back(vi);
+                    }
+                }
+                return hits;
+            };
+            std::vector<uint32_t> prev = nearVertsEnd(c3->Value(f));
             for (int i = 1; i <= n; ++i) {
                 std::vector<uint32_t> cur =
-                    nearVerts(c3->Value(f + (l - f) * i / n));
+                    i == n ? nearVertsEnd(c3->Value(l))
+                           : nearVerts(c3->Value(f + (l - f) * i / n));
                 bool linked = false;
                 for (uint32_t a : prev) {
                     for (uint32_t b : cur) {
@@ -5647,10 +6007,21 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     if (linked) break;
                 }
                 if (!linked) {
-                    dbg("contract check %d: edge %d sample %d/%d: %s", fid,
-                        eid, i, n,
-                        prev.empty() || cur.empty() ? "no vertex"
-                                                    : "no edge");
+                    const gp_Pnt sp = i == n
+                                          ? c3->Value(l)
+                                          : c3->Value(f + (l - f) * i / n);
+                    double bn = 1e300;
+                    for (uint32_t vi = 0; vi < part.vertices.size(); ++vi) {
+                        const auto& P = part.vertices[vi];
+                        const double dx = P[0] - sp.X(), dy = P[1] - sp.Y(),
+                                     dz = P[2] - sp.Z();
+                        bn = std::min(bn, dx * dx + dy * dy + dz * dz);
+                    }
+                    dbg("contract check %d: edge %d sample %d/%d: %s "
+                        "(nearest %.3g, eTol %.3g)",
+                        fid, eid, i, n,
+                        prev.empty() || cur.empty() ? "no vertex" : "no edge",
+                        std::sqrt(bn), eTol);
                     return eid;
                 }
                 prev = std::move(cur);
@@ -5669,12 +6040,17 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         fellBack[fid] = 1;
         {
             MeshBuilder retry(parts[fid]);
-            if (meshContractFallback(face, model, fid, solvedEdge,
-                                     s.radial, retry) &&
-                borderContractViolation(fid, parts[fid]) == 0) {
+            const bool built = meshContractFallback(face, model, fid,
+                                                    solvedEdge, s.radial,
+                                                    retry);
+            const int floorBad =
+                built ? borderContractViolation(fid, parts[fid]) : -1;
+            if (built && floorBad == 0) {
                 dbg("mesh face %d: %s -> contract floor", fid, why);
                 return;
             }
+            dbg("mesh face %d: floor %s (edge %d)", fid,
+                built ? "violates contract" : "failed to build", floorBad);
         }
         parts[fid] = PolyMesh();
         MeshBuilder retry(parts[fid]);
@@ -6112,6 +6488,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                  sx.More(); sx.Next()) {
                 assign(sx.Current());
             }
+            dbg("weld: %d body group(s)", solidId);
             if (solidId > 1) {
                 weldGroup.assign(mesh.vertices.size(), 0);
                 for (int fid = 1; fid <= faceN; ++fid) {
