@@ -74,21 +74,29 @@ leak at slot WALLS — the wall coons fails and demotes at mesh time,
 which breaks the border contract (the pre-existing demotion crack class,
 see doctrine). Plan-time routing for that case is part of step 1/2.
 
-## Count decoupling round 1 (landed — VERIFY ON THE BOARD)
+## Count decoupling round 1 (landed) + round 2 contract fix
 Step 1 is implemented: the solver's chained-coons fixpoint (grow lighter
-side until totals match) is gone; mismatched rails arc-fraction-resample
-the deficit side inside meshCoonsGrid (points stay on the border curves
-via pcurve+surface); unionSeams extended to MULTI-VERTEX complement
-paths (walk up to 8 open edges v->w1..wk->u, monotonic on-segment t,
-bail on ambiguity, all non-manifold guards kept); coons cap raised
-8 -> 16. Profile flag: `--profile cad` = minimal + adaptive. Local
-gates: all tests green, every fixture + both as1 assemblies watertight;
-the 15 MB dirty assembly collapses 2.62M -> 153k polys (cascade dead),
-non-manifold 493 -> 303, opens 9,068 -> 11,007 (decoupled seams the
-absorber misses yet). NOT yet run against the 8-model flaregun board —
-that gate (probe27, both modes, quad% targets) must run on the user's
-machine before this is called done. Absorber tuning knobs if the board
-regresses: walk depth (8), on-segment slack (8%), pass count (4).
+side until totals match) is gone; unionSeams extended to MULTI-VERTEX
+complement paths (walk up to 8 open edges v->w1..wk->u, monotonic
+on-segment t, bail on ambiguity, all non-manifold guards kept); coons
+cap raised 8 -> 16. Profile flag: `--profile cad` = minimal + adaptive.
+
+ROUND 1'S MISTAKE (fixed in round 2, keep it fixed): round 1 made
+meshCoonsGrid arc-fraction-RESAMPLE the deficit rail and emit it — a
+re-spaced shared border, the exact doctrine violation the code's own
+comments warn about. Field result: folded cells + open border loops on
+the user's flaregun/HDD/9mm-case tests; buggy opens 9,068 -> 11,007.
+Round 2: the deficit rail's NATURAL solved points stay the emitted
+border; the resampled rail is only interior blending scaffold (never
+emitted); a monotone TRANSITION STRIP of quads (5-gon wherever the
+dense line contributes an extra point — the Plasticity absorption
+pattern) bridges the natural rail to the first interior grid line.
+Corner stubs re-route into the strip's first polygon. Result: buggy
+opens back to 9,087 (pre-decoupling baseline 9,068), polys 150,843,
+all fixtures + as1 watertight in defaults and cad profile.
+Flaregun board still needs the user's machine (probe27, both modes,
+quad% targets). Absorber knobs if it regresses: walk depth (8),
+on-segment slack (8%), pass count (4).
 
 ## Next steps, in order
 1. COUNT DECOUPLING: extend the absorber to multi-vertex gaps (complement
