@@ -1035,6 +1035,7 @@ void testAdaptiveDensity() {
     weft::Model plateModel = weft::loadStep(platePath);
     weft::Analysis plateA = weft::analyze(plateModel);
     weft::GenerationSettings pgs;
+    pgs.defaults.minimal = false;  // exercise the plate-web pattern
     pgs.defaults.radial = 12;
     weft::GenerationReport prep;
     weft::generate(plateModel, plateA, pgs, &prep);
@@ -1118,6 +1119,7 @@ void testDeletePolyAndCollarRings() {
     weft::Model plateModel = weft::loadStep(platePath);
     weft::Analysis plateA = weft::analyze(plateModel);
     weft::GenerationSettings one;
+    one.defaults.minimal = false;  // exercise the collar-ring pattern
     one.defaults.radial = 12;
     weft::PolyMesh oneRing = weft::generate(plateModel, plateA, one);
     weft::GenerationSettings three = one;
