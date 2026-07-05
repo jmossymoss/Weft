@@ -1698,7 +1698,10 @@ bool collectPlanarLoops(const TopoDS_Face& face,
             if (eid < 1) return false;
             loop.push_back(eid);
         }
-        if (loop.empty() || loop.size() > 24) return false;
+        // Real CAD outlines run to dozens of arcs (rounded-corner
+        // brackets); the sampler handles any count, so the cap is only
+        // a pathological-input guard.
+        if (loop.empty() || loop.size() > 512) return false;
         if (wire.IsSame(outer)) outerIdx = wires;
         loops.push_back(std::move(loop));
         ++wires;
