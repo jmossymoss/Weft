@@ -3582,6 +3582,10 @@ static void drawUi(App& app) {
 // ---------------------------------------------------------------------------
 
 static float gScroll = 0.0f;
+// The mvp actually on screen this frame: wheel edits re-pick against it
+// so they always hit the face under the cursor RIGHT NOW.
+static Mat4 gScreenMvp;
+static bool gScreenMvpValid = false;
 static void scrollCb(GLFWwindow*, double, double dy) {
     gScroll += float(dy);
 }
@@ -3849,6 +3853,17 @@ int main(int argc, char** argv) {
                 } else if (app.hasModel && (shift || ctrl)) {
                     // No selection: edit the hovered face (or, over
                     // empty space, the globals) — scroll IS the editor.
+                    // Re-pick at scroll time: the idle-frame hover can
+                    // lag a mouse-off by a beat, and a stale target
+                    // kept adjusting the OLD face.
+                    if (gScreenMvpValid &&
+                        (app.selectMode == SelectMode::Face ||
+                         app.selectMode == SelectMode::Object)) {
+                        glViewport(0, 0, fbw, fbh);
+                        app.hoverFace =
+                            pickFace(app, flatProg, gScreenMvp, int(mx),
+                                     int(my), fbw, fbh);
+                    }
                     adjustHovered(app, ctrl, shift, steps);
                 } else {
                     app.cam.dist *= std::pow(0.92f, gScroll);
@@ -4244,6 +4259,8 @@ int main(int argc, char** argv) {
                                  app.cam.dist * 40.0f);
         Mat4 view = matLookAt(app.cam.eye(), app.cam.target, {0, 0, 1});
         Mat4 mvp = matMul(proj, view);
+        gScreenMvp = mvp;  // what the user is pointing at (scroll re-pick)
+        gScreenMvpValid = true;
 
         // Vertex grab starts from idle: G picks the interior vertex under
         // the cursor and drags it constrained to its CAD surface.
