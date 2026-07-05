@@ -168,6 +168,12 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         else if (a == "--pure-tris") gs.defaults.quadDominant = false;
         else if (a == "--flat-quads") gs.defaults.minimal = false;
         else if (a == "--adaptive") gs.defaults.adaptive = true;
+        else if (a == "--density") {
+            // One dial re-budgets the whole model: scales every
+            // solved count (adaptive ones too) before the group
+            // solve, and fallback tolerances to match.
+            gs.densityScale = std::stod(next());
+        }
         else if (a == "--profile") {
             std::string prof = next();
             if (prof == "cad") {
