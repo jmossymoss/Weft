@@ -17,6 +17,66 @@ endif()
 
 find_package(OpenCASCADE REQUIRED)
 
+# build.bat deploys the TK*.dlls next to the exes, but the TK dlls in turn
+# load the third-party runtimes OCCT was built against (tbb12, jemalloc,
+# FreeImage, openvr_api, freetype, ffmpeg...) and those usually live
+# OUTSIDE the OCCT install dir. Their true locations are recorded in
+# OCCT's link interface as absolute .lib paths, so resolve each to the
+# .dll beside it (or in a sibling bin/) and deploy those too.
+if(WIN32)
+  set(WEFT_OCCT_3P_DLLS "")
+  set(_weft_seen "")
+  set(_weft_stack ${OpenCASCADE_LIBRARIES})
+  while(_weft_stack)
+    list(POP_FRONT _weft_stack _t)
+    if(NOT TARGET ${_t})
+      continue()
+    endif()
+    if(_t IN_LIST _weft_seen)
+      continue()
+    endif()
+    list(APPEND _weft_seen ${_t})
+    get_target_property(_deps ${_t} INTERFACE_LINK_LIBRARIES)
+    if(NOT _deps)
+      continue()
+    endif()
+    foreach(_d IN LISTS _deps)
+      if(TARGET ${_d})
+        list(APPEND _weft_stack ${_d})
+        continue()
+      endif()
+      # Entries may be wrapped in generator expressions; fish the path out.
+      string(REGEX MATCH "[A-Za-z]:[^<>;$]*\\.lib" _lib "${_d}")
+      if(NOT _lib OR NOT EXISTS "${_lib}")
+        continue()
+      endif()
+      get_filename_component(_dir "${_lib}" DIRECTORY)
+      get_filename_component(_name "${_lib}" NAME_WE)
+      # Versioned dll names (zlib1.dll, avcodec-57.dll) need the glob.
+      file(GLOB _dll "${_dir}/${_name}*.dll" "${_dir}/../bin/${_name}*.dll")
+      list(APPEND WEFT_OCCT_3P_DLLS ${_dll})
+    endforeach()
+  endwhile()
+  list(REMOVE_DUPLICATES WEFT_OCCT_3P_DLLS)
+  if(WEFT_OCCT_3P_DLLS)
+    message(STATUS "OCCT third-party runtimes to deploy: ${WEFT_OCCT_3P_DLLS}")
+  else()
+    message(STATUS "OCCT third-party runtimes: none resolved from the link "
+                   "interface (OCCT built without them, or relocated)")
+  endif()
+endif()
+
+# Copy the third-party DLLs next to a just-built executable. All exes
+# share CMAKE_RUNTIME_OUTPUT_DIRECTORY, so any one build refreshes them.
+function(weft_deploy_occt_dlls tgt)
+  if(WIN32 AND WEFT_OCCT_3P_DLLS)
+    add_custom_command(TARGET ${tgt} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+              ${WEFT_OCCT_3P_DLLS} $<TARGET_FILE_DIR:${tgt}>
+      VERBATIM)
+  endif()
+endfunction()
+
 enable_testing()
 
 add_subdirectory(core)
