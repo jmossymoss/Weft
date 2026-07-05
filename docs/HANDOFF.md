@@ -264,6 +264,21 @@ NEXT, in order:
 4. Contact-face dedup: still worth having for true imprinted
    assemblies (the PixYZ-parity feature), no longer urgent for as1.
 
+## Rail-ladder + floor-first round (latest)
+LANDED: MesherKind::RailLadder (two-tip bands: crescents/lunes/tangent
+strips — wire-tangent detection >45deg, arc-fraction rail pairing,
+quads + grouped 5-gons, tips collapse; engages e.g. 2 faces on
+nasty_cheese, 4 on weldment). Planned Fallback/QuadDominant faces try
+meshContractFallback FIRST (exact borders; OCCT only when the floor
+can't express the face) — weldment 23->7 opens, 62->22 folds.
+Weldment residual: 7 scattered opens (#2/#4 x2, #86/91/92 x1) against
+2 non-manifold input edges — likely true input dirt; verify with
+--debug + app isolate next session. nasty_cheese basket faces remain
+(46/321 warped tangent-drill patches). The ladder currently targets
+EXACTLY-2-sharp-corner outlines; extending to notched bands (2 tips +
+smooth notches) and 4-corner elongated fold-prone strips is the next
+quality lever, along with fillet-loop rows inside ladder rungs.
+
 ## Next steps, in order
 1. COUNT DECOUPLING: extend the absorber to multi-vertex gaps (complement
    path v→w1→…→wk→u along a shared B-rep edge), then let 9–16-edge chained
