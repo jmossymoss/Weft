@@ -486,12 +486,10 @@ double ringAnchorAngle(const gp_Circ& circ) {
 
 // Lazy vertex->edges adjacency per model (read-only after build; the
 // mutex covers concurrent meshing threads).
-const TopTools_IndexedDataMapOfShapeListOfShape& modelVertexEdges(
+const EdgeFaceMap& modelVertexEdges(
     const Model& model) {
     static std::mutex mx;
-    static std::map<const void*,
-                    std::unique_ptr<TopTools_IndexedDataMapOfShapeListOfShape>>
-        cache;
+    static std::map<const void*, std::unique_ptr<EdgeFaceMap>> cache;
     std::lock_guard<std::mutex> lock(mx);
     const void* key = model.shape.TShape().get();
     if (!cache.count(key) && cache.size() > 8) {
@@ -502,7 +500,7 @@ const TopTools_IndexedDataMapOfShapeListOfShape& modelVertexEdges(
     }
     auto& slot = cache[key];
     if (!slot) {
-        slot = std::make_unique<TopTools_IndexedDataMapOfShapeListOfShape>();
+        slot = std::make_unique<EdgeFaceMap>();
         TopExp::MapShapesAndAncestors(model.shape, TopAbs_VERTEX,
                                       TopAbs_EDGE, *slot);
     }
@@ -540,7 +538,7 @@ double closedEdgePhase(const TopoDS_Edge& edge, const Model& model) {
             const int eid2 = model.edges.FindIndex(e2);
             bool seam = false;
             if (eid2 >= 1 && model.edgeToFaces.Contains(e2)) {
-                const TopTools_ListOfShape& fl =
+                const ShapeList& fl =
                     model.edgeToFaces.FindFromKey(e2);
                 if (fl.Extent() == 1) {
                     seam = BRep_Tool::IsClosed(
