@@ -151,6 +151,27 @@ monotone pairing rail-to-rail, quads + absorbed 5-gons, ends collapse
 to the tips; emitStrip already implements the pairing — promote it to
 a full mesher with plan-time routing for 2-rail faces).
 
+## Audit backlog (13-dimension fleet, 47 agents, adversarially verified)
+LANDED: pole-to-pole nv floor (full sphere at library-default axial=1
+emitted ZERO polygons silently), v-closed surfaces refuse the insert
+path (row alignment impossible -> contract floor), seam-cell centers
+unwrap the period before box tests, insert branch dispatches before the
+unlinked-rim taper (a taper never cuts slots), cache keys cover insert
+wires + chained coons sides + all coons border counts (stale-part
+reuse after density edits on slot borders was the CRITICAL find).
+REMAINING (all in conformFallbackBorders + friends; consider narrowing
+or retiring conform as contract coverage grows): solid-blind neighbour
+pick splices the OTHER body's vertex ids on 3+-face contact edges;
+pinned-resample targets land in weld group 0 (cross-body fusing);
+1.2x-chord mover capture kidnaps other edges' verts on faces narrower
+than the radius (corner folds); anti-wrap check skipped for counts <=3;
+excluded faces can squat nfid; fellBack should be tri-state (floor vs
+raw OCCT) so conform stops treating exact floor borders as decimated;
+microTol is model-relative and eats small features on large assemblies;
+quad-fill collar containment is vertex-only (can fold across thin
+features of another loop). Full details: the workflow result JSON in
+the session task file (14 confirmed / 22 refuted).
+
 ## Next steps, in order
 1. COUNT DECOUPLING: extend the absorber to multi-vertex gaps (complement
    path v→w1→…→wk→u along a shared B-rep edge), then let 9–16-edge chained
