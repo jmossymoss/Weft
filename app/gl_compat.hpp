@@ -71,5 +71,6 @@ typedef void(APIENTRYP PFNGLVERTEXATTRIBPOINTERPROC)(
     GLuint index, GLint size, GLenum type, GLboolean normalized,
     GLsizei stride, const void* pointer);
 typedef void(APIENTRYP PFNGLENABLEVERTEXATTRIBARRAYPROC)(GLuint index);
+typedef void(APIENTRYP PFNGLDISABLEVERTEXATTRIBARRAYPROC)(GLuint index);
 
 #endif  // no <GL/glext.h>
