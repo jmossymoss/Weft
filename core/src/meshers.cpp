@@ -1906,17 +1906,25 @@ bool isGeometricallyFlat(const TopoDS_Face& face,
     }
     if (n.Modulus() < 1e-12) return false;
     n.Normalize();
+    // diag is the face's own diameter — NEVER the distance from the
+    // world origin: seeding it with |p| made flatness origin-dependent,
+    // so a curved 1mm sliver 87mm out measured against an 87mm
+    // yardstick and passed as "flat" (weldment pipe-end corner, faces
+    // 71/72 — their n-gons tore off the neighbouring walls).
     double lo = 1e300, hi = -1e300, diag = 0;
     for (const gp_Pnt& p : pts) {
         double d = (p.XYZ() - c).Dot(n);
         lo = std::min(lo, d);
         hi = std::max(hi, d);
-        diag = std::max(diag, p.XYZ().Modulus());
     }
     for (const gp_Pnt& p : pts) {
         for (const gp_Pnt& q : pts) {
             diag = std::max(diag, p.Distance(q));
         }
+    }
+    if (getenv("WEFT_FLAT_DEBUG")) {
+        dbg("flat? dev=%g diag=%g -> %d", hi - lo, diag,
+            hi - lo < std::max(1e-6, 1e-3 * diag) ? 1 : 0);
     }
     return hi - lo < std::max(1e-6, 1e-3 * diag);
 }
@@ -3867,7 +3875,13 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // on (the topology policy: big flats are n-gons, quads go to curves;
     // triangulation is an export option). The junction patterns below
     // only see flat faces when minimal is off or can't build the face.
-    if (s.minimal && planMinimalPlanar(face, surf, model, plan)) return plan;
+    if (s.minimal && planMinimalPlanar(face, surf, model, plan)) {
+        if (getenv("WEFT_FLAT_DEBUG")) {
+            dbg("plan face %d: minimal-ngon (surf type %d)", fid,
+                (int)surf.GetType());
+        }
+        return plan;
+    }
 
     if (planRingJunction(face, model, plan)) return plan;
 

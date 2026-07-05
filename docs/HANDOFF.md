@@ -353,23 +353,24 @@ closed circle / feature edges should resolve as one circle". Landed:
    centroid projects onto the FAR side of the tube and false-flags.
    (The weldment tori strips were REAL folds though: lune-shaped
    cells; fixed by 5/6.)
-BOARD (cad profile): 2827056 folds 3->0 CLEAN; iso 737 polys clean,
-bores light single rings; mohne folds 9->4 (nm 1 unchanged);
-weldment folds 22->3; unterlaf/nasty back to baseline after the
-function-of-u + tri-state fixes; angle1 69q/12n; as1 pair + all 11
-fixtures x 3 modes green. WEFT_EDGE_DEBUG=ids env dumps solvedEdge.
+BOARD (cad profile, after the origin-flatness fix below): NINE OF
+TEN examples watertight — 2827056 folds 3->0 CLEAN, weldment
+WATERTIGHT (was 7 opens/2 nm pre-session), iso 737 polys with light
+single-ring bores, unterlaf/nasty at baseline, angle1 69q/12n.
+Only mohne keeps 1 pre-existing nm edge (0 opens, 4 folds). as1
+pair + bracket + all 11 fixtures x 3 modes green.
+WEFT_EDGE_DEBUG=ids dumps solvedEdge.
 
-KNOWN ISSUE (weldment micro-corner, 19 opens / 5 nm, faces 2/4/71/72
-at the small pipe-end): faces 71/72 are curved 3-edge cylinder
-slivers (r=34, ~0.8x0.74) that STILL plan minimal-ngon even though a
-standalone isGeometricallyFlat replication measures dev/diag=2.2e-3 >
-the 1e-3 gate (UNEXPLAINED — find what actually admits them; probe:
-scratchpad/probe_flat.cpp). Their n-gon borders + face 2/4 chain
-borders disagree on edges 9/10/25/26 (conform: 11 movers vs 7 targets
-on edge 9) — micro edges are EXEMPT from the border contract check,
-so nothing demotes them. Fix directions: find the real admission
-path; contract-check micro edges (scale the tolerance, don't exempt);
-loops-plans with solved-count borders shouldn't be conform movers.
+RESOLVED (was: weldment micro-corner 19 opens): isGeometricallyFlat
+seeded `diag` with p.XYZ().Modulus() — the distance from the WORLD
+ORIGIN — so flatness was origin-dependent: a curved 1mm sliver 87mm
+out measured against an 87mm yardstick and became an n-gon whose
+chords tore off the neighbouring pipe walls. diag is now the face's
+own diameter only. WELDMENT IS WATERTIGHT (0 opens, 0 nm, 4 folds vs
+7/2/22 at session start). WEFT_FLAT_DEBUG=1 dumps flat decisions +
+minimal admissions. Residual watch item: micro edges are still
+exempt from the border contract check (unexercised now, but scale
+the tolerance rather than exempt when it next bites).
 
 ## Next steps, in order
 1. COUNT DECOUPLING: extend the absorber to multi-vertex gaps (complement
