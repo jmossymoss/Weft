@@ -3260,6 +3260,67 @@ bool meshRailLadder(const TopoDS_Face& face, const Model& model, int faceId,
 // face that lands here cannot leak. The OCCT triangulation fallback
 // remains only for faces this cannot express (null curves, degenerate
 // UV rings).
+// Single-loop CURVED patch webbed on its own surface: ring at solved
+// counts (the contract) around one interior vertex at the UV centroid,
+// evaluated ON the surface. A bore piercing a wall leaves such a patch
+// on EACH side of the intersection loop; flat chord webs from the two
+// sides pick the same ring diagonals and weld NON-MANIFOLD (mohne face
+// 204 vs face 2's insert web) — a fan has no ring diagonals at all,
+// and the private apex follows the surface instead of denting it.
+bool meshSurfaceCapFan(const TopoDS_Face& face, const Model& model,
+                       int faceId, const std::vector<int>& solvedEdge,
+                       int radialDefault, MeshBuilder& out) {
+    int wires = 0;
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        ++wires;
+    }
+    if (wires != 1) return false;
+    BRepAdaptor_Surface surf(face);
+    if (surf.GetType() == GeomAbs_Plane) return false;  // flat webs fine
+    std::vector<PlanarRing> rings;
+    if (!samplePlanarRings(face, model, solvedEdge, radialDefault, rings)) {
+        return false;
+    }
+    if (rings.size() != 1 || rings[0].uv.size() < 3) return false;
+    const PlanarRing& r = rings[0];
+    const size_t n = r.uv.size();
+    double cu = 0, cv = 0;
+    for (const gp_Pnt2d& q : r.uv) {
+        cu += q.X();
+        cv += q.Y();
+    }
+    cu /= double(n);
+    cv /= double(n);
+    // Every fan triangle must run the ring's way in UV (positive with
+    // the normalized outer winding); a reflex loop that captures the
+    // centroid outside bails to the flat floor.
+    for (size_t i = 0; i < n; ++i) {
+        const gp_Pnt2d& a = r.uv[i];
+        const gp_Pnt2d& b = r.uv[(i + 1) % n];
+        const double cross = (a.X() - cu) * (b.Y() - cv) -
+                             (a.Y() - cv) * (b.X() - cu);
+        if (cross <= 1e-14) return false;
+    }
+    gp_Pnt apex;
+    try {
+        apex = surf.Value(cu, cv);
+    } catch (const Standard_Failure&) {
+        return false;
+    }
+    const bool flip = face.Orientation() == TopAbs_REVERSED;
+    std::vector<uint32_t> ring(n);
+    for (size_t i = 0; i < n; ++i) {
+        ring[i] = out.addVertex(r.p[i],
+                                {faceId, r.uv[i].X(), r.uv[i].Y()});
+    }
+    const uint32_t c = out.addVertex(apex, {faceId, cu, cv});
+    for (size_t i = 0; i < n; ++i) {
+        out.addPolygon({c, ring[i], ring[(i + 1) % n]}, faceId, flip);
+    }
+    dbg("surface cap fan %d: %zu ring verts", faceId, n);
+    return true;
+}
+
 bool meshContractFallback(const TopoDS_Face& face, const Model& model,
                           int faceId, const std::vector<int>& solvedEdge,
                           int radialDefault, MeshBuilder& out) {
@@ -6925,11 +6986,21 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 // OCCT's own discretization (observed: 23 opens on the
                 // weldment where conform couldn't). Raw OCCT remains for
                 // faces the floor cannot express.
-                if (meshContractFallback(face, model, fid, solvedEdge,
-                                         s.radial, out) &&
+                if (meshSurfaceCapFan(face, model, fid, solvedEdge,
+                                      s.radial, out) &&
                     borderContractViolation(fid, parts[fid]) == 0) {
                     fellBack[fid] = 2;  // exact borders: conform authority
                     break;
+                }
+                {
+                    parts[fid] = PolyMesh();
+                    MeshBuilder retryFloor(parts[fid]);
+                    if (meshContractFallback(face, model, fid, solvedEdge,
+                                             s.radial, retryFloor) &&
+                        borderContractViolation(fid, parts[fid]) == 0) {
+                        fellBack[fid] = 2;  // exact borders: authority
+                        break;
+                    }
                 }
                 parts[fid] = PolyMesh();
                 MeshBuilder retryFb(parts[fid]);
