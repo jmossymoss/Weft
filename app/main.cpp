@@ -203,7 +203,8 @@ static void installCrashHandler() {
     X(PFNGLBINDBUFFERPROC, glBindBuffer)                    \
     X(PFNGLBUFFERDATAPROC, glBufferData)                    \
     X(PFNGLVERTEXATTRIBPOINTERPROC, glVertexAttribPointer)  \
-    X(PFNGLENABLEVERTEXATTRIBARRAYPROC, glEnableVertexAttribArray)
+    X(PFNGLENABLEVERTEXATTRIBARRAYPROC, glEnableVertexAttribArray) \
+    X(PFNGLDISABLEVERTEXATTRIBARRAYPROC, glDisableVertexAttribArray)
 
 #define WEFT_GL_DECLARE(type, name) static type name = nullptr;
 WEFT_GL_FUNCS(WEFT_GL_DECLARE)
@@ -315,26 +316,33 @@ static GLuint makeProgram(const char* vs, const char* fs) {
 static const char* kLitVS = R"(#version 330 core
 layout(location=0) in vec3 aPos;
 layout(location=1) in vec3 aColor;
+layout(location=2) in vec3 aNormal;
 uniform mat4 uMVP;
 uniform mat4 uMV;
 out vec3 vPosVS;
 out vec3 vColor;
+out vec3 vNrmVS;
 void main() {
     vPosVS = (uMV * vec4(aPos, 1.0)).xyz;
     vColor = aColor;
+    vNrmVS = mat3(uMV) * aNormal;
     gl_Position = uMVP * vec4(aPos, 1.0);
 })";
 
 static const char* kLitFS = R"(#version 330 core
 in vec3 vPosVS;
 in vec3 vColor;
+in vec3 vNrmVS;
 out vec4 frag;
 uniform float uAmbient;
 uniform float uDiffuse;
 uniform float uRim;
-uniform int uMode;  // 0 = studio lighting, 1 = procedural matcap
+uniform int uMode;    // 0 = studio lighting, 1 = procedural matcap
+uniform int uSmooth;  // 1 = per-vertex smoothing-angle normals
 void main() {
-    vec3 n = normalize(cross(dFdx(vPosVS), dFdy(vPosVS)));
+    vec3 n = (uSmooth == 1 && dot(vNrmVS, vNrmVS) > 1e-8)
+                 ? normalize(vNrmVS)
+                 : normalize(cross(dFdx(vPosVS), dFdy(vPosVS)));
     if (uMode == 1) {
         // Procedural studio matcap: shading depends only on the view-space
         // normal, so surface flow, dents and folds read the same from any
@@ -385,23 +393,33 @@ struct Buffer {
     GLuint vao = 0, vbo = 0;
     int count = 0;
 
-    void upload(const std::vector<float>& data) {
+    // Layout: pos3 + col3, plus nrm3 when floatsPerVert == 9 (the solid
+    // fill buffer carries smooth-shading normals; everything else stays
+    // 6-float).
+    void upload(const std::vector<float>& data, int floatsPerVert = 6) {
         if (!vao) {
             glGenVertexArrays(1, &vao);
             glGenBuffers(1, &vbo);
         }
+        const GLsizei stride = floatsPerVert * sizeof(float);
         glBindVertexArray(vao);
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
         glBufferData(GL_ARRAY_BUFFER, data.size() * sizeof(float), data.data(),
                      GL_DYNAMIC_DRAW);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float),
-                              (void*)0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)0);
         glEnableVertexAttribArray(0);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float),
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride,
                               (void*)(3 * sizeof(float)));
         glEnableVertexAttribArray(1);
+        if (floatsPerVert >= 9) {
+            glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, stride,
+                                  (void*)(6 * sizeof(float)));
+            glEnableVertexAttribArray(2);
+        } else {
+            glDisableVertexAttribArray(2);
+        }
         glBindVertexArray(0);
-        count = static_cast<int>(data.size() / 6);
+        count = static_cast<int>(data.size()) / floatsPerVert;
     }
 };
 
@@ -553,6 +571,13 @@ struct App {
     float lightAmbient = 0.28f;
     float lightDiffuse = 0.68f;
     float lightRim = 0.12f;
+    // Smoothing-angle vertex normals (Blender auto-smooth style): faces
+    // meeting under the angle shade smooth, harder creases stay sharp.
+    bool smoothShade = false;
+    float smoothAngleDeg = 30.0f;
+    // A defaults control being hovered highlights the faces it drives —
+    // the live "which parts does this knob change" map.
+    std::set<int> highlightMeshers;  // weft::MesherKind values
 
     // Floating value HUD for modal wheel edits.
     char hudText[64] = "";
@@ -656,7 +681,7 @@ static void rebuildBuffers(App& app) {
     const weft::PolyMesh& m = app.mesh;
 
     std::vector<float> fill, pick, wire;
-    fill.reserve(m.polygons.size() * 18);
+    fill.reserve(m.polygons.size() * 27);
     auto push = [](std::vector<float>& v, const std::array<double, 3>& p,
                    const std::array<float, 3>& c) {
         v.push_back(float(p[0]));
@@ -667,13 +692,75 @@ static void rebuildBuffers(App& app) {
         v.push_back(c[2]);
     };
 
+    // Smoothing-angle vertex normals: per-polygon Newell normals,
+    // averaged per WELDED vertex over the adjacent polygons within the
+    // angle threshold — creases sharper than the angle keep both sides'
+    // own normals (Blender auto-smooth). Computed only when smooth
+    // shading is on; the fill layout always carries the slot.
+    std::vector<std::array<float, 3>> polyN;
+    std::vector<std::vector<uint32_t>> vertPolys;
+    if (app.smoothShade) {
+        polyN.assign(m.polygons.size(), {0, 0, 0});
+        vertPolys.assign(m.vertices.size(), {});
+        for (size_t i = 0; i < m.polygons.size(); ++i) {
+            const auto& poly = m.polygons[i];
+            double nx = 0, ny = 0, nz = 0;
+            for (size_t k = 0; k < poly.size(); ++k) {
+                const auto& a = m.vertices[poly[k]];
+                const auto& b = m.vertices[poly[(k + 1) % poly.size()]];
+                nx += (a[1] - b[1]) * (a[2] + b[2]);
+                ny += (a[2] - b[2]) * (a[0] + b[0]);
+                nz += (a[0] - b[0]) * (a[1] + b[1]);
+            }
+            // Keep the MAGNITUDE: area weighting makes big neighbours
+            // dominate slivers in the average, like every DCC.
+            polyN[i] = {float(nx), float(ny), float(nz)};
+            for (uint32_t v : poly) {
+                if (v < vertPolys.size()) vertPolys[v].push_back(uint32_t(i));
+            }
+        }
+    }
+    const float cosSmooth =
+        std::cos(app.smoothAngleDeg * float(M_PI) / 180.0f);
+    auto cornerNormal = [&](size_t polyIdx,
+                            uint32_t vert) -> std::array<float, 3> {
+        const auto& pn = polyN[polyIdx];
+        const float pl =
+            std::sqrt(pn[0] * pn[0] + pn[1] * pn[1] + pn[2] * pn[2]);
+        if (pl < 1e-20f) return {0, 0, 0};
+        float sx = 0, sy = 0, sz = 0;
+        for (uint32_t j : vertPolys[vert]) {
+            const auto& qn = polyN[j];
+            const float ql =
+                std::sqrt(qn[0] * qn[0] + qn[1] * qn[1] + qn[2] * qn[2]);
+            if (ql < 1e-20f) continue;
+            const float d =
+                (pn[0] * qn[0] + pn[1] * qn[1] + pn[2] * qn[2]) / (pl * ql);
+            if (d < cosSmooth) continue;
+            sx += qn[0];
+            sy += qn[1];
+            sz += qn[2];
+        }
+        const float sl = std::sqrt(sx * sx + sy * sy + sz * sz);
+        if (sl < 1e-20f) return {pn[0] / pl, pn[1] / pl, pn[2] / pl};
+        return {sx / sl, sy / sl, sz / sl};
+    };
+    auto pushN = [&](std::vector<float>& v, size_t polyIdx, uint32_t vert) {
+        if (!app.smoothShade) {
+            v.insert(v.end(), {0.0f, 0.0f, 0.0f});
+            return;
+        }
+        const auto n = cornerNormal(polyIdx, vert);
+        v.insert(v.end(), {n[0], n[1], n[2]});
+    };
+
     static const weft::FaceInfo kBridgeInfo{};  // bridge strips: faceId 0
     app.fillSegs.clear();
     app.polyFillRange.assign(m.polygons.size(), {-1, 0});
     for (size_t i = 0; i < m.polygons.size(); ++i) {
         int fid = m.polygonFaceId[i];
         if (fid > 0 && app.hiddenFaces.count(fid)) continue;
-        int segStart = int(fill.size() / 6);
+        int segStart = int(fill.size() / 9);
         app.polyFillRange[i] = {segStart, 0};
         if (!app.fillSegs.empty() && app.fillSegs.back()[0] == fid &&
             app.fillSegs.back()[1] + app.fillSegs.back()[2] == segStart) {
@@ -693,12 +780,11 @@ static void rebuildBuffers(App& app) {
         const auto& poly = m.polygons[i];
         if (poly.size() <= 4) {
             for (size_t k = 1; k + 1 < poly.size(); ++k) {  // fan
-                push(fill, m.vertices[poly[0]], col);
-                push(fill, m.vertices[poly[k]], col);
-                push(fill, m.vertices[poly[k + 1]], col);
-                push(pick, m.vertices[poly[0]], id);
-                push(pick, m.vertices[poly[k]], id);
-                push(pick, m.vertices[poly[k + 1]], id);
+                for (size_t c : {size_t(0), k, k + 1}) {
+                    push(fill, m.vertices[poly[c]], col);
+                    pushN(fill, i, poly[c]);
+                    push(pick, m.vertices[poly[c]], id);
+                }
             }
         } else {
             // N-gons ear-clip: a fan across a concave or keyhole ring
@@ -707,6 +793,7 @@ static void rebuildBuffers(App& app) {
             for (const auto& t : weft::triangulatePoly(m.vertices, poly)) {
                 for (int c = 0; c < 3; ++c) {
                     push(fill, m.vertices[poly[t[c]]], col);
+                    pushN(fill, i, poly[t[c]]);
                     push(pick, m.vertices[poly[t[c]]], id);
                 }
             }
@@ -716,10 +803,10 @@ static void rebuildBuffers(App& app) {
             push(wire, m.vertices[poly[k]], wc);
             push(wire, m.vertices[poly[(k + 1) % poly.size()]], wc);
         }
-        app.fillSegs.back()[2] = int(fill.size() / 6) - app.fillSegs.back()[1];
-        app.polyFillRange[i][1] = int(fill.size() / 6) - app.polyFillRange[i][0];
+        app.fillSegs.back()[2] = int(fill.size() / 9) - app.fillSegs.back()[1];
+        app.polyFillRange[i][1] = int(fill.size() / 9) - app.polyFillRange[i][0];
     }
-    app.fill.upload(fill);
+    app.fill.upload(fill, 9);
     app.pick.upload(pick);
     app.wire.upload(wire);
 
@@ -1461,6 +1548,60 @@ static void adjustFaceDensity(App& app, bool secondary, int steps) {
         std::snprintf(app.hudText, sizeof app.hudText, "%s", hud.c_str());
         app.hudUntil = glfwGetTime() + 0.9;
     }
+}
+
+// Fluid hover editing: with nothing selected, modifier+wheel edits the
+// face UNDER THE CURSOR directly (auto-creating its override), and over
+// empty space it edits the GLOBAL settings — no select, no panel:
+//   shift+wheel        face primary density   | global density scale
+//   ctrl+wheel         face secondary density | global angle tolerance
+//   ctrl+shift+wheel   face fillet loops      | global fillet loops
+static void adjustHovered(App& app, bool ctrl, bool shift, int steps) {
+    if (app.hoverFace > 0) {
+        const int fid = app.hoverFace;
+        auto it = app.recipe.settings.perFace.find(fid);
+        if (it == app.recipe.settings.perFace.end()) {
+            it = app.recipe.settings.perFace
+                     .emplace(fid, app.recipe.settings.defaults)
+                     .first;
+        }
+        std::string hud;
+        const int prevActive = app.activeFace;
+        app.activeFace = fid;  // adjustFaceDensityOne keys the mesher off it
+        if (ctrl && shift) {
+            it->second.filletLoops = std::max(1, it->second.filletLoops + steps);
+            hud = "fillet loops: " + std::to_string(it->second.filletLoops);
+        } else {
+            hud = adjustFaceDensityOne(app, it->second, ctrl, steps);
+        }
+        app.activeFace = prevActive;
+        std::snprintf(app.hudText, sizeof app.hudText, "face %d  %s", fid,
+                      hud.c_str());
+        app.hudUntil = glfwGetTime() + 0.9;
+        markDirty(app);
+        return;
+    }
+    // Background: the global knobs.
+    weft::FaceMeshSettings& d = app.recipe.settings.defaults;
+    if (ctrl && shift) {
+        d.filletLoops = std::max(1, d.filletLoops + steps);
+        std::snprintf(app.hudText, sizeof app.hudText, "fillet loops: %d",
+                      d.filletLoops);
+    } else if (ctrl) {
+        d.angleToleranceDeg =
+            std::clamp(d.angleToleranceDeg * std::pow(0.86, double(steps)),
+                       1.0, 60.0);
+        std::snprintf(app.hudText, sizeof app.hudText, "angle: %.1f deg",
+                      d.angleToleranceDeg);
+    } else {
+        app.recipe.settings.densityScale = std::clamp(
+            app.recipe.settings.densityScale * std::pow(1.06, double(steps)),
+            0.05, 20.0);
+        std::snprintf(app.hudText, sizeof app.hudText, "density scale: %.2fx",
+                      app.recipe.settings.densityScale);
+    }
+    app.hudUntil = glfwGetTime() + 0.9;
+    markDirty(app);
 }
 
 // Shared verbs (key handlers + pie menus call the same code).
@@ -2206,10 +2347,20 @@ static void styleUi() {
 // are freeform and deviation/angle are the real global density knobs.
 static bool settingsEditor(weft::FaceMeshSettings& s,
                            const weft::MesherKind* kind = nullptr,
-                           bool isFillet = false) {
+                           bool isFillet = false,
+                           App* highlightApp = nullptr) {
     using MK = weft::MesherKind;
     const bool all = kind == nullptr;
     const MK k = kind ? *kind : MK::Fallback;
+    // The knob-to-parts map: hovering a defaults control tints the faces
+    // that control actually drives (cyan overlay), so "which segment
+    // relates to which parts" is answered by pointing, not guessing.
+    // -2 marks "fillet faces" (a face property, not a mesher kind).
+    auto hover = [&](std::initializer_list<int> kinds) {
+        if (!highlightApp || !ImGui::IsItemHovered()) return;
+        for (int kk : kinds) highlightApp->highlightMeshers.insert(kk);
+    };
+    constexpr int kAllKinds = -1, kFilletFaces = -2;
     // Annulus loops and plate-web/quad-fill borders take the radial
     // default too (each closed loop, or each hole circle, proposes it).
     const bool revolved = all || k == MK::RevolutionGrid ||
@@ -2224,6 +2375,7 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
     // the manual counts below become floors. Nudging a count via the
     // wheel flips the face back to manual.
     ch |= ImGui::Checkbox("adaptive density (curvature)", &s.adaptive);
+    hover({kAllKinds});
     if (freeform || s.adaptive) {
         if (all) ImGui::TextDisabled("freeform / imported surfaces");
         float dev = float(s.chordTolerance);
@@ -2232,26 +2384,34 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
             s.chordTolerance = dev;
             ch = true;
         }
+        hover({kAllKinds});
         float ang = float(s.angleToleranceDeg);
         if (ImGui::DragFloat("angle", &ang, 0.25f, 1.0f, 60.0f, "%.1f deg")) {
             s.angleToleranceDeg = ang;
             ch = true;
         }
+        hover({kAllKinds});
     }
     if (freeform) {
         ch |= ImGui::Checkbox("quad-dominant fallback", &s.quadDominant);
+        hover({int(MK::QuadDominant), int(MK::Fallback)});
         float ms = float(s.minSize);
         if (ImGui::DragFloat("min size", &ms, 0.01f, 0.0f, 100.0f, "%.3f")) {
             s.minSize = ms;
             ch = true;
         }
+        hover({int(MK::QuadDominant), int(MK::Fallback)});
         ch |= ImGui::Checkbox("relative deviation", &s.relativeDeviation);
+        hover({kAllKinds});
     }
     if (revolved) {
         if (all) ImGui::TextDisabled("revolved surfaces");
         ch |= ImGui::DragInt("radial", &s.radial, 0.2f, 3, 256);
+        hover({int(MK::RevolutionGrid), int(MK::DiskCap),
+               int(MK::AnnulusRing), int(MK::PlateWeb), int(MK::QuadFill)});
         if (all || k == MK::RevolutionGrid) {
             ch |= ImGui::DragInt("axial", &s.axial, 0.2f, 1, 256);
+            hover({int(MK::RevolutionGrid)});
         }
         if (all || k == MK::DiskCap) {
             int cap = s.cap == weft::CapStyle::Fan ? 1 : 0;
@@ -2259,6 +2419,7 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
                 s.cap = cap ? weft::CapStyle::Fan : weft::CapStyle::NGon;
                 ch = true;
             }
+            hover({int(MK::DiskCap)});
         }
         if (!all && k == MK::PlateWeb) {
             // Concentric collar rings around each hole ("all" shows this
@@ -2278,10 +2439,15 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
     if (grid) {
         if (all) ImGui::TextDisabled("planar / parametric grids");
         ch |= ImGui::DragInt("grid u", &s.gridU, 0.2f, 1, 256);
+        hover({int(MK::PlanarGrid), int(MK::CoonsGrid),
+               int(MK::RingJunction)});
         ch |= ImGui::DragInt("grid v", &s.gridV, 0.2f, 1, 256);
+        hover({int(MK::PlanarGrid), int(MK::CoonsGrid),
+               int(MK::RingJunction)});
         if (all || k == MK::RingJunction) {
             ch |= ImGui::DragInt("junction rings", &s.junctionRings, 0.2f, 1,
                                  32);
+            hover({int(MK::RingJunction), int(MK::PlateWeb)});
         }
 
         if (!all && k == MK::CoonsGrid) {
@@ -2297,17 +2463,20 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
     if (all || isFillet) {
         if (all) ImGui::TextDisabled("fillets / blends");
         ch |= ImGui::DragInt("fillet loops", &s.filletLoops, 0.2f, 1, 64);
+        hover({kFilletFaces});
         float hold = float(s.filletHold);
         if (ImGui::SliderFloat("hold", &hold, 0.0f, 0.95f)) {
             s.filletHold = hold;
             ch = true;
         }
+        hover({kFilletFaces});
     }
     if (all || kind) {
         // Flat geometry (plane OR flat bspline) collapses to one exact
         // boundary n-gon, holes bridged in — available everywhere since
         // any mesher's face can turn out flat.
         ch |= ImGui::Checkbox("minimal n-gon (flat panels)", &s.minimal);
+        hover({int(MK::MinimalNGon)});
     }
     if (kind) {  // per-face contexts only
         // Manual mesher choice: auto picks per geometry; forcing one that
@@ -2739,6 +2908,8 @@ static void drawShadingBar(App& app) {
 }
 
 static void drawUi(App& app) {
+    // Rebuilt every frame from whichever control is hovered right now.
+    app.highlightMeshers.clear();
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     const float width = 330.0f * gUiScale;
     ImGui::SetNextWindowPos({vp->WorkPos.x + vp->WorkSize.x - width,
@@ -2754,6 +2925,18 @@ static void drawUi(App& app) {
     ImGui::Separator();
     drawShadingBar(app);
 
+    // The Model section matters until a model is in; once one loads it
+    // auto-collapses ONCE so the working sections get the panel height —
+    // the user can reopen it any time.
+    {
+        static bool collapsedAfterLoad = false;
+        if (app.hasModel && !collapsedAfterLoad) {
+            ImGui::SetNextItemOpen(false);
+            collapsedAfterLoad = true;
+        } else if (!app.hasModel) {
+            collapsedAfterLoad = false;
+        }
+    }
     if (ImGui::CollapsingHeader("Model", ImGuiTreeNodeFlags_DefaultOpen)) {
         if (ImGui::Button("Open STEP...", {-1, 0})) {
             std::string p = openFileDialog();
@@ -3003,7 +3186,7 @@ static void drawUi(App& app) {
         }
         ImGui::Separator();
         ImGui::TextDisabled("defaults (live)");
-        if (settingsEditor(app.recipe.settings.defaults)) markDirty(app);
+        if (settingsEditor(app.recipe.settings.defaults, nullptr, false, &app)) markDirty(app);
     }
 
     if (app.hasModel &&
@@ -3094,33 +3277,17 @@ static void drawUi(App& app) {
         }
     }
 
-    if (app.hasModel && ImGui::CollapsingHeader("Recipe")) {
-        ImGui::InputText("##recipe", app.recipeBuf, sizeof app.recipeBuf);
-        if (ImGui::Button("Save recipe")) {
-            try {
-                weft::saveRecipe(app.recipe, app.recipeBuf);
-                app.status = std::string("saved ") + app.recipeBuf;
-            } catch (const std::exception& e) {
-                app.status = e.what();
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Load recipe")) {
-            try {
-                app.recipe = weft::loadRecipe(app.recipeBuf);
-                markDirty(app);
-                app.status = std::string("loaded ") + app.recipeBuf;
-            } catch (const std::exception& e) {
-                app.status = e.what();
-            }
-        }
-        ImGui::Text("%zu manual op(s) recorded", app.recipe.ops.size());
-    }
-
     if (ImGui::CollapsingHeader("Display")) {
-        // Shading and overlay settings live in the viewport shading
-        // popover (top-right of the viewport, Blender-style).
-        ImGui::TextDisabled("shading: use the viewport corner popover");
+        if (ImGui::Checkbox("smooth shading", &app.smoothShade)) {
+            rebuildBuffers(app);
+        }
+        if (app.smoothShade) {
+            if (ImGui::SliderFloat("smooth angle", &app.smoothAngleDeg, 0.0f,
+                                   180.0f, "%.0f deg")) {
+                rebuildBuffers(app);
+            }
+        }
+        ImGui::TextDisabled("overlays: viewport corner popover");
         ImGui::TextDisabled("orange convex / blue concave / green smooth");
         int scheme = gLaptopControls ? 1 : 0;
         const char* schemes[] = {"desktop (3-button mouse)",
@@ -3137,40 +3304,69 @@ static void drawUi(App& app) {
             ImGui::TextDisabled("LMB select · MMB orbit · shift+MMB pan");
             ImGui::TextDisabled("ctrl+MMB zoom · alt+MMB axis view · wheel");
         }
-        ImGui::Text("%zu manual op(s)", app.recipe.ops.size());
+        ImGui::TextDisabled("hover a face, no selection needed:");
+        ImGui::TextDisabled("shift+wheel density · ctrl+wheel 2nd axis");
+        ImGui::TextDisabled("ctrl+shift+wheel loops · empty space = global");
     }
 
-    if (ImGui::CollapsingHeader("Debug")) {
-        ImGui::TextDisabled("bisect switches — try these if it crashes");
-        bool single = !app.recipe.settings.parallelMeshing;
-        if (ImGui::Checkbox("single-threaded meshing", &single)) {
-            app.recipe.settings.parallelMeshing = !single;
-            markDirty(app);
-        }
-        bool conform = app.recipe.settings.conformBorders;
-        if (ImGui::Checkbox("border conformity pass", &conform)) {
-            app.recipe.settings.conformBorders = conform;
-            markDirty(app);
-        }
-        static bool coreTrace = true;
-        if (ImGui::Checkbox("core trace in log", &coreTrace)) {
-            weft::setGenerateDebugLog(coreTrace ? gDebugLog : nullptr);
-        }
-        if (ImGui::Button("force regenerate")) app.dirty = true;
-        ImGui::TextDisabled("log (flushed per line — after a crash its");
-        ImGui::TextDisabled("tail names the face/stage that died):");
-        ImGui::TextWrapped("%s", gLogPath.c_str());
-    }
-
-    if (ImGui::CollapsingHeader("Dev fixtures")) {
-        ImGui::TextDisabled("built-in test shapes");
-        const char* fixtures[] = {"cylinder", "box",  "cone", "sphere",
-                                  "torus",    "fillet", "hole", "boss", "demo"};
-        for (int i = 0; i < 9; ++i) {
-            if (i % 3) ImGui::SameLine();
-            if (ImGui::Button(fixtures[i], {96 * gUiScale, 0})) {
-                loadFixture(app, fixtures[i]);
+    if (ImGui::CollapsingHeader("Advanced")) {
+        if (app.hasModel && ImGui::TreeNode("Recipe")) {
+            ImGui::InputText("##recipe", app.recipeBuf, sizeof app.recipeBuf);
+            if (ImGui::Button("Save recipe")) {
+                try {
+                    weft::saveRecipe(app.recipe, app.recipeBuf);
+                    app.status = std::string("saved ") + app.recipeBuf;
+                } catch (const std::exception& e) {
+                    app.status = e.what();
+                }
             }
+            ImGui::SameLine();
+            if (ImGui::Button("Load recipe")) {
+                try {
+                    app.recipe = weft::loadRecipe(app.recipeBuf);
+                    markDirty(app);
+                    app.status = std::string("loaded ") + app.recipeBuf;
+                } catch (const std::exception& e) {
+                    app.status = e.what();
+                }
+            }
+            ImGui::Text("%zu manual op(s) recorded", app.recipe.ops.size());
+            ImGui::TreePop();
+        }
+        if (ImGui::TreeNode("Debug")) {
+            ImGui::TextDisabled("bisect switches — try these if it crashes");
+            bool single = !app.recipe.settings.parallelMeshing;
+            if (ImGui::Checkbox("single-threaded meshing", &single)) {
+                app.recipe.settings.parallelMeshing = !single;
+                markDirty(app);
+            }
+            bool conform = app.recipe.settings.conformBorders;
+            if (ImGui::Checkbox("border conformity pass", &conform)) {
+                app.recipe.settings.conformBorders = conform;
+                markDirty(app);
+            }
+            static bool coreTrace = true;
+            if (ImGui::Checkbox("core trace in log", &coreTrace)) {
+                weft::setGenerateDebugLog(coreTrace ? gDebugLog : nullptr);
+            }
+            if (ImGui::Button("force regenerate")) app.dirty = true;
+            ImGui::TextDisabled("log (flushed per line — after a crash its");
+            ImGui::TextDisabled("tail names the face/stage that died):");
+            ImGui::TextWrapped("%s", gLogPath.c_str());
+            ImGui::TreePop();
+        }
+        if (ImGui::TreeNode("Dev fixtures")) {
+            ImGui::TextDisabled("built-in test shapes");
+            const char* fixtures[] = {"cylinder", "box",  "cone",
+                                      "sphere",   "torus", "fillet",
+                                      "hole",     "boss",  "demo"};
+            for (int i = 0; i < 9; ++i) {
+                if (i % 3) ImGui::SameLine();
+                if (ImGui::Button(fixtures[i], {96 * gUiScale, 0})) {
+                    loadFixture(app, fixtures[i]);
+                }
+            }
+            ImGui::TreePop();
         }
     }
 
@@ -3196,7 +3392,7 @@ int main(int argc, char** argv) {
 
     std::string screenshotPath, startModel, startFixture = "demo";
     int startSelect = 0, startMode = 0;
-    bool startQuality = false, startMatcap = false;
+    bool startQuality = false, startMatcap = false, startSmooth = false;
     float startYaw = 0.9f, startPitch = 0.5f;
     bool demoLoopCut = false;
     for (int i = 1; i < argc; ++i) {
@@ -3209,6 +3405,7 @@ int main(int argc, char** argv) {
         else if (a == "--loopcut") demoLoopCut = true;  // screenshot testing
         else if (a == "--quality") startQuality = true;
         else if (a == "--matcap") startMatcap = true;
+        else if (a == "--smooth") startSmooth = true;
         else if (a == "--mode" && i + 1 < argc) startMode = std::stoi(argv[++i]);
         else startModel = a;
     }
@@ -3263,6 +3460,10 @@ int main(int argc, char** argv) {
         if (app.hasModel) rebuildBuffers(app);
     }
     if (startMatcap) app.lightStyle = 1;
+    if (startSmooth) {
+        app.smoothShade = true;
+        if (app.hasModel) rebuildBuffers(app);  // normals into the fill
+    }
     if (startMode >= 1 && startMode <= 6) {
         setSelectMode(app, SelectMode(startMode - 1));
     }
@@ -3424,6 +3625,10 @@ int main(int argc, char** argv) {
                 } else if (app.hasModel && (shift || ctrl) &&
                            (!app.selFaces.empty())) {
                     adjustFaceDensity(app, /*secondary=*/ctrl, steps);
+                } else if (app.hasModel && (shift || ctrl)) {
+                    // No selection: edit the hovered face (or, over
+                    // empty space, the globals) — scroll IS the editor.
+                    adjustHovered(app, ctrl, shift, steps);
                 } else {
                     app.cam.dist *= std::pow(0.92f, gScroll);
                     app.cam.dist = std::clamp(app.cam.dist, 0.5f, 10000.0f);
@@ -4460,9 +4665,40 @@ int main(int argc, char** argv) {
                 glUniform1f(glGetUniformLocation(prog, "uRim"), app.lightRim);
                 glUniform1i(glGetUniformLocation(prog, "uMode"),
                             matcapFill ? 1 : 0);
+                glUniform1i(glGetUniformLocation(prog, "uSmooth"),
+                            app.smoothShade ? 1 : 0);
             }
             glBindVertexArray(app.fill.vao);
             glDrawArrays(GL_TRIANGLES, 0, app.fill.count);
+            // Knob-to-parts map: hovering a defaults control tints every
+            // face whose mesher that control drives.
+            if (!app.highlightMeshers.empty()) {
+                glDepthFunc(GL_LEQUAL);
+                glUseProgram(flatProg);
+                glUniformMatrix4fv(glGetUniformLocation(flatProg, "uMVP"), 1,
+                                   GL_FALSE, mvp.m);
+                glUniform1f(glGetUniformLocation(flatProg, "uMix"), 0.45f);
+                float hk[3] = {0.35f, 0.85f, 1.0f};
+                glUniform3fv(glGetUniformLocation(flatProg, "uColor"), 1, hk);
+                glBindVertexArray(app.fill.vao);
+                for (const auto& seg : app.fillSegs) {
+                    if (seg[0] <= 0) continue;
+                    bool hit = app.highlightMeshers.count(-1) > 0;
+                    if (!hit && app.highlightMeshers.count(-2) &&
+                        seg[0] <= int(app.analysis.faces.size())) {
+                        hit = app.analysis.faces[seg[0] - 1].isFillet;
+                    }
+                    if (!hit) {
+                        auto it = app.report.faceMesher.find(seg[0]);
+                        hit = it != app.report.faceMesher.end() &&
+                              app.highlightMeshers.count(int(it->second));
+                    }
+                    if (hit) glDrawArrays(GL_TRIANGLES, seg[1], seg[2]);
+                }
+                glUniform1f(glGetUniformLocation(flatProg, "uMix"), 0.0f);
+                glDepthFunc(GL_LESS);
+                glUseProgram(prog);
+            }
             // Hover highlight: re-draw just that face's runs, tinted.
             if (app.hoverFace > 0 && !app.selFaces.count(app.hoverFace)) {
                 glDepthFunc(GL_LEQUAL);
