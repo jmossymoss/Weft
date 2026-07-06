@@ -752,6 +752,44 @@ inline double phasedT(int i, int n, double ph, bool rev) {
     return t;
 }
 
+// ---- Pinned-sample facility (the column-alignment contract) -------------
+// An edge can carry EXPLICIT parameter samples instead of the uniform
+// phased steps. The samples are fractions in [0,1] along the edge's FORWARD
+// (non-reversed) 3D-curve direction, ascending, INCLUDING both endpoints
+// (0 and 1). Both faces sharing the edge read the same list and emit the
+// same physical points (fraction t -> the intrinsic edge parameter, so
+// c3->Value and the pcurve agree on both sides), welding bit-identically.
+// This lets a revolution band pin a shared rim/rail edge to its column
+// azimuths so columns run straight onto and through the edge with no
+// transition strip and no phase break. Empty entry = uniform sampling.
+using PinnedEdges = std::vector<std::vector<double>>;
+
+inline bool edgeIsPinned(int eid, const PinnedEdges* pins) {
+    return pins && eid >= 1 && eid < int(pins->size()) && !(*pins)[eid].empty();
+}
+
+// Face-local sample fractions for one edge. With a pin, the pinned
+// fractions in face-local order (reversed when the edge is reversed on this
+// face — same positions, opposite traversal, exactly like phasedT); else
+// the uniform phased fractions. `includeLast` keeps the final endpoint
+// (open-chain samplers); drop it when the next edge owns the shared corner
+// (closed-loop samplers).
+inline std::vector<double> edgeSampleFractions(int eid, int n, double ph,
+                                               bool rev, bool includeLast,
+                                               const PinnedEdges* pins) {
+    std::vector<double> t;
+    if (edgeIsPinned(eid, pins)) {
+        t = (*pins)[eid];  // ascending forward-param, endpoints included
+        if (rev) std::reverse(t.begin(), t.end());
+        if (!includeLast && t.size() > 1) t.pop_back();
+        return t;
+    }
+    n = std::max(1, n);
+    const int last = includeLast ? n : n - 1;
+    for (int i = 0; i <= last; ++i) t.push_back(phasedT(i, n, ph, rev));
+    return t;
+}
+
 // A planar face bounded by exactly one full-circle edge (a cylinder cap).
 bool boundingCircle(const TopoDS_Face& face, gp_Circ& circOut, int& edgeIdOut,
                     const Model& model) {
@@ -3375,7 +3413,8 @@ double planarRingArea(const PlanarRing& r) {
 // the face orientation fixes 3D winding.
 bool samplePlanarRings(const TopoDS_Face& face, const Model& model,
                        const std::vector<int>& solvedEdge, int radialDefault,
-                       std::vector<PlanarRing>& rings) {
+                       std::vector<PlanarRing>& rings,
+                       const PinnedEdges* pins = nullptr) {
     TopoDS_Wire outerWire = BRepTools::OuterWire(face);
     for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
         const TopoDS_Wire wire = TopoDS::Wire(wx.Current());
@@ -3423,8 +3462,9 @@ bool samplePlanarRings(const TopoDS_Face& face, const Model& model,
                 const bool rev = edge.Orientation() == TopAbs_REVERSED;
                 const double ph = closedEdgePhase(edge, model);
                 Piece pc;
-                for (int i = 0; i <= n; ++i) {
-                    double t = phasedT(i, n, ph, rev);
+                for (double t : edgeSampleFractions(eid, n, ph, rev,
+                                                    /*includeLast=*/true,
+                                                    pins)) {
                     pc.uv.push_back(c2->Value(f2 + (l2 - f2) * t));
                     pc.p.push_back(c3->Value(f3 + (l3 - f3) * t));
                 }
@@ -3491,8 +3531,9 @@ bool samplePlanarRings(const TopoDS_Face& face, const Model& model,
             if (c3.IsNull() || c2.IsNull()) return false;
             const bool rev = edge.Orientation() == TopAbs_REVERSED;
             const double ph = closedEdgePhase(edge, model);
-            for (int i = 0; i < n; ++i) {  // endpoint owned by the next edge
-                double t = phasedT(i, n, ph, rev);
+            // endpoint owned by the next edge
+            for (double t : edgeSampleFractions(eid, n, ph, rev,
+                                                /*includeLast=*/false, pins)) {
                 ring.uv.push_back(c2->Value(f2 + (l2 - f2) * t));
                 ring.p.push_back(c3->Value(f3 + (l3 - f3) * t));
             }
@@ -3922,9 +3963,11 @@ bool splitIntoSimplePolys(std::vector<WebPoint> outer,
 
 bool meshMinimalPlanar(const TopoDS_Face& face, const Model& model,
                        int faceId, const std::vector<int>& solvedEdge,
-                       int radialDefault, MeshBuilder& out) {
+                       int radialDefault, MeshBuilder& out,
+                       const PinnedEdges* pins = nullptr) {
     std::vector<PlanarRing> rings;
-    if (!samplePlanarRings(face, model, solvedEdge, radialDefault, rings)) {
+    if (!samplePlanarRings(face, model, solvedEdge, radialDefault, rings,
+                           pins)) {
         return false;
     }
     if (rings.empty()) return false;
@@ -6055,6 +6098,166 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
     return sol;
 }
 
+// Pin the base-arc edges of every full-wrap castellated rim to the plain
+// rim's column azimuths (plus the notch-corner endpoints). The band then
+// runs columns straight from the plain rim onto the cut rim with no
+// transition strip and no phase break, and the neighbour annulus face —
+// which samples these same edges — adopts the identical positions, so the
+// shared border stays watertight by construction (the column-alignment
+// contract). Runs after the density solve so nu (the plain rim's solved
+// count) is final; both this pass and the mesher derive uk[] from the same
+// plain-rim sampling, so their columns coincide.
+void pinCastellatedRims(const Model& model,
+                        const std::map<int, FacePlan>& plans,
+                        const GenerationSettings& settings,
+                        const std::vector<int>& solvedEdge,
+                        DensitySolution& density, PinnedEdges& pins) {
+    for (const auto& [fid, plan] : plans) {
+        if (!plan.castellated || plan.plainRimEdge < 1) continue;
+        const TopoDS_Face face = TopoDS::Face(model.faces(fid));
+        BRepAdaptor_Surface surf(face);
+        if (!surf.IsUClosed() || surf.IsVClosed()) continue;
+        const double u0 = surf.FirstUParameter(), u1 = surf.LastUParameter();
+        const double v0 = surf.FirstVParameter(), v1 = surf.LastVParameter();
+        const double period = std::max(1e-12, u1 - u0);
+        const double vspan = std::max(1e-12, v1 - v0);
+        const int nu = std::max(
+            3, std::max(solvedEdge[plan.plainRimEdge],
+                        density.countFor(plan.plainRimEdge,
+                                         settings.forFace(fid).radial)));
+        const double pitch = period / nu;
+
+        // Column azimuths from the plain rim (the mesher's own sampling).
+        const bool lowPlain =
+            plan.rimLow.size() == 1 && plan.rimLow[0] == plan.plainRimEdge;
+        const bool highPlain =
+            plan.rimHigh.size() == 1 && plan.rimHigh[0] == plan.plainRimEdge;
+        if (lowPlain == highPlain) continue;
+        const std::vector<int>& cutChain = lowPlain ? plan.rimHigh
+                                                     : plan.rimLow;
+        std::vector<double> uk;
+        double vPlain = 0;
+        {
+            const TopoDS_Edge edge =
+                TopoDS::Edge(model.edges(plan.plainRimEdge));
+            double f2, l2;
+            Handle(Geom2d_Curve) pc =
+                BRep_Tool::CurveOnSurface(edge, face, f2, l2);
+            if (pc.IsNull()) continue;
+            const bool rev = edge.Orientation() == TopAbs_REVERSED;
+            const double ph = closedEdgePhase(edge, model);
+            for (int i = 0; i < nu; ++i) {
+                const double t = phasedT(i, nu, ph, rev);
+                gp_Pnt2d uv = pc->Value(f2 + (l2 - f2) * t);
+                double u = uv.X();
+                u -= period * std::floor((u - u0) / period);
+                uk.push_back(u);
+                vPlain += uv.Y();
+            }
+            vPlain /= nu;
+        }
+        if (int(uk.size()) != nu) continue;
+        std::sort(uk.begin(), uk.end());
+        const double vCut =
+            std::abs(vPlain - v0) < std::abs(vPlain - v1) ? v1 : v0;
+
+        // Per-edge pcurve box (u-span, v-range) + the wall azimuths (the
+        // two notch corners). Classify: an azimuthal arc (base arc / floor)
+        // spans u at ~constant v; a wall spans v at ~constant u.
+        struct EdgeBox {
+            int eid;
+            std::vector<double> uSeq;  // unwrapped, monotone
+            bool wall = false;
+        };
+        const int NS = 32;
+        std::vector<EdgeBox> boxes;
+        std::vector<double> cornerU;  // wall azimuths (the notch corners)
+        for (int eid : cutChain) {
+            if (eid < 1 || eid >= int(pins.size())) continue;
+            const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+            if (BRep_Tool::Degenerated(edge)) continue;
+            double f2, l2;
+            Handle(Geom2d_Curve) pc =
+                BRep_Tool::CurveOnSurface(edge, face, f2, l2);
+            if (pc.IsNull()) continue;
+            EdgeBox box;
+            box.eid = eid;
+            box.uSeq.resize(NS + 1);
+            double vLo = 1e300, vHi = -1e300, uPrev = 0;
+            for (int k = 0; k <= NS; ++k) {
+                gp_Pnt2d uv = pc->Value(f2 + (l2 - f2) * double(k) / NS);
+                vLo = std::min(vLo, uv.Y());
+                vHi = std::max(vHi, uv.Y());
+                double u = uv.X();
+                u -= period * std::floor((u - u0) / period);
+                if (k > 0) u += period * std::round((uPrev - u) / period);
+                box.uSeq[k] = u;
+                uPrev = u;
+            }
+            const double uSpanE = std::abs(box.uSeq.back() - box.uSeq.front());
+            box.wall = uSpanE < 0.5 * pitch && vHi - vLo > 0.1 * vspan;
+            if (box.wall) {
+                cornerU.push_back(0.5 * (box.uSeq.front() + box.uSeq.back()));
+            }
+            boxes.push_back(std::move(box));
+        }
+        // Only a column essentially COINCIDENT with a corner rides it (the
+        // corner already owns that vertex); a column merely near a corner
+        // keeps its own sample and the cap n-gon absorbs the thin gap, so
+        // every uniform column stays present and straight.
+        auto nearCorner = [&](double c) {
+            for (double cu : cornerU) {
+                double d = c - cu;
+                d -= period * std::round(d / period);
+                if (std::abs(d) < 0.02 * pitch) return true;
+            }
+            return false;
+        };
+        for (EdgeBox& box : boxes) {
+            if (box.wall) {
+                pins[box.eid] = {0.0, 1.0};  // single flat span
+                continue;
+            }
+            const std::vector<double>& uSeq = box.uSeq;
+            const double uLo = std::min(uSeq.front(), uSeq.back());
+            const double uHi = std::max(uSeq.front(), uSeq.back());
+            // Column azimuths within the arc span become samples; the two
+            // notch corners (wall azimuths) reserve their own vertices, so a
+            // column riding a corner is dropped rather than minting a sliver.
+            // Guarding against the GLOBAL corners (not the edge endpoints)
+            // keeps columns near the u-seam — where a base arc is split into
+            // two edges with no corner between them.
+            std::vector<double> fr;
+            fr.push_back(0.0);
+            for (double col : uk) {
+                for (int kk = -1; kk <= 1; ++kk) {
+                    const double c = col + kk * period;
+                    if (c <= uLo + 1e-9 || c >= uHi - 1e-9) continue;
+                    if (nearCorner(c)) continue;
+                    double t = -1;
+                    for (int s = 0; s < NS; ++s) {
+                        const double a = uSeq[s], b = uSeq[s + 1];
+                        if ((c - a) * (c - b) <= 0 && std::abs(b - a) > 1e-15) {
+                            t = (double(s) + (c - a) / (b - a)) / NS;
+                            break;
+                        }
+                    }
+                    if (t > 1e-6 && t < 1 - 1e-6) fr.push_back(t);
+                }
+            }
+            fr.push_back(1.0);
+            std::sort(fr.begin(), fr.end());
+            fr.erase(std::unique(fr.begin(), fr.end(),
+                                 [](double a, double b) {
+                                     return std::abs(a - b) < 1e-9;
+                                 }),
+                     fr.end());
+            if (fr.size() < 2) continue;
+            pins[box.eid] = std::move(fr);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Execution.
 
@@ -6977,7 +7180,8 @@ bool meshRevolutionRimNotch(const TopoDS_Face& face,
                             const std::vector<int>& rimLow,
                             const std::vector<int>& rimHigh, int plainRimEdge,
                             const std::vector<int>& solvedEdge, int faceId,
-                            int nu, int nv, MeshBuilder& out) {
+                            int nu, int nv, MeshBuilder& out,
+                            const PinnedEdges* pins = nullptr) {
     if (!surf.IsUClosed() || surf.IsVClosed()) return false;
     if (rimLow.empty() || rimHigh.empty()) return false;
     nu = std::max(3, nu);
@@ -7045,6 +7249,7 @@ bool meshRevolutionRimNotch(const TopoDS_Face& face,
         bool hug = false;
     };
     std::vector<Piece> pieces;
+    bool basePinned = false;
     for (int eid : cutChain) {
         const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
         double f2, l2, f3, l3;
@@ -7064,8 +7269,17 @@ bool meshRevolutionRimNotch(const TopoDS_Face& face,
         }
         piece.hug = std::abs(bv0 - vCut) < 0.02 * vspan &&
                     std::abs(bv1 - vCut) < 0.02 * vspan;
-        for (int i = 0; i <= n; ++i) {
-            const double t = phasedT(i, n, ph, rev);
+        // Pinned cut-rim edges carry the column azimuths (base arc + floor)
+        // or a single flat span (walls); both faces read them, so the notch
+        // is a clean boolean cut of the uniform column lattice with no
+        // strip and no wall ladders. basePinned flips on when the base arc
+        // (a hug piece) is pinned — that's the reframed model.
+        const bool usePins = edgeIsPinned(eid, pins);
+        if (usePins && piece.hug) basePinned = true;
+        const std::vector<double> fr =
+            edgeSampleFractions(eid, n, ph, rev, /*includeLast=*/true,
+                                usePins ? pins : nullptr);
+        for (double t : fr) {
             gp_Pnt2d uv = pc->Value(f2 + (l2 - f2) * t);
             piece.pts.push_back({uv.X(), uv.Y(), c3->Value(f3 + (l3 - f3) * t)});
         }
@@ -7172,9 +7386,144 @@ bool meshRevolutionRimNotch(const TopoDS_Face& face,
     }
     if (colL < 1 || colR > nu - 1 || colR <= colL) return false;
 
+    // ===== PINNED BOOLEAN-CUT NOTCH (the reframed model) =================
+    // The end geometry is a perfect cylinder with a rectangular bite taken
+    // out. Lay a UNIFORM full-cylinder column lattice (columns at the plain
+    // rim's own azimuths, driven by radial/adaptive as if there were no
+    // notch), run every column straight from the plain rim to the cut rim,
+    // and boolean-cut the notch: columns in the notch u-range stop at the
+    // floor. No wall ladders, no feature columns, no inset strip — the two
+    // notch corners each fold into ONE cap n-gon; everywhere else is quads.
+    // The cut-rim base arcs and the notch floor carry the column azimuths
+    // (pinned), and the single-span walls carry only the two corner edges,
+    // so the neighbour annulus / floor / wall faces weld bit-identically.
+    if (basePinned) {
+        const double snapU = 0.02 * (period / nu);
+        const double tolV2 = 0.05 * vspan;
+        const double vFloor = vOf(wTop);
+        std::vector<int> baseArcS(nu, -1);
+        std::vector<int> floorS(nu, -1);
+        std::vector<int> topCorner, botCorner;  // S indices (az_L / az_R)
+        for (int i = 0; i < SN; ++i) {
+            const bool top = std::abs(S[i].v - vCut) < tolV2;
+            const bool bot = std::abs(S[i].v - vFloor) < tolV2;
+            if (top == bot) continue;  // wall interior (neither rim level)
+            int mc = -1;
+            for (int c = 0; c < nu; ++c) {
+                double d = S[i].u - uk[c];
+                d -= period * std::round(d / period);
+                if (std::abs(d) < snapU) { mc = c; break; }
+            }
+            if (top) {
+                if (mc >= 0) baseArcS[mc] = i;
+                else topCorner.push_back(i);
+            } else {
+                if (mc >= 0) floorS[mc] = i;
+                else botCorner.push_back(i);
+            }
+        }
+        // Derive the notch column span from the base-arc coverage gap.
+        int lo = nu, hi = -1;
+        for (int c = 0; c < nu; ++c) {
+            if (baseArcS[c] < 0) { lo = std::min(lo, c); hi = std::max(hi, c); }
+        }
+        if (hi < 0 || lo < 1 || hi > nu - 2) return false;  // interior notch
+        for (int c = lo; c <= hi; ++c) {
+            if (baseArcS[c] >= 0 || floorS[c] < 0) return false;
+        }
+        colL = lo - 1;  // last non-notch column left of the notch
+        colR = hi + 1;  // first non-notch column right of the notch
+        if (topCorner.size() != 2 || botCorner.size() != 2) return false;
+
+        // Corner azimuths sit in the two coverage gaps; pair top<->bottom
+        // by azimuth and label left (colL..colL+1) / right (colR-1..colR).
+        auto uNorm = [&](double u) {
+            u -= period * std::floor((u - u0) / period);
+            return u;
+        };
+        auto inGap = [&](double u, int a, int b) {
+            double lo2 = uNorm(uk[a]), hi2 = uNorm(uk[b]);
+            double uu = uNorm(u);
+            if (hi2 < lo2) hi2 += period;
+            if (uu < lo2) uu += period;
+            return uu > lo2 - 1e-9 && uu < hi2 + 1e-9;
+        };
+        int TL = -1, TR = -1, BL = -1, BR = -1;
+        for (int i : topCorner) {
+            if (inGap(S[i].u, colL, colL + 1)) TL = i;
+            else if (inGap(S[i].u, colR - 1, colR)) TR = i;
+        }
+        for (int i : botCorner) {
+            if (inGap(S[i].u, colL, colL + 1)) BL = i;
+            else if (inGap(S[i].u, colR - 1, colR)) BR = i;
+        }
+        if (TL < 0 || TR < 0 || BL < 0 || BR < 0) return false;
+
+        PolyMesh local;
+        MeshBuilder wb(local);
+        const bool flip = (face.Orientation() == TopAbs_REVERSED) ^ (sign < 0);
+        std::vector<uint32_t> cutIds(SN);
+        for (int i = 0; i < SN; ++i) {
+            cutIds[i] = wb.addVertex(S[i].p, {faceId, S[i].u, S[i].v});
+        }
+        std::vector<uint32_t> plainIds(nu);
+        for (int c = 0; c < nu; ++c) {
+            plainIds[c] =
+                wb.addVertex(plainS[c].p, {faceId, plainS[c].u, plainS[c].v});
+        }
+        // Each column's cut-rim end: base-arc vertex outside the notch,
+        // floor vertex inside it.
+        auto topOf = [&](int c) {
+            return baseArcS[c] >= 0 ? cutIds[baseArcS[c]] : cutIds[floorS[c]];
+        };
+        auto emit = [&](std::vector<uint32_t> ring) {
+            ring.erase(std::unique(ring.begin(), ring.end()), ring.end());
+            while (ring.size() > 1 && ring.front() == ring.back()) {
+                ring.pop_back();
+            }
+            if (ring.size() >= 3) wb.addPolygon(std::move(ring), faceId, flip);
+        };
+        for (int c = 0; c < nu; ++c) {
+            const int cp = (c + 1) % nu;
+            const bool cNotch = c > colL && c < colR;
+            const bool pNotch = cp > colL && cp < colR;
+            if (c == colL) {
+                // Left cap: base arc -> wall (TL,BL) -> floor, folded once.
+                emit({topOf(c), cutIds[TL], cutIds[BL], topOf(cp),
+                      plainIds[cp], plainIds[c]});
+            } else if (c == colR - 1) {
+                // Right cap.
+                emit({topOf(c), cutIds[BR], cutIds[TR], topOf(cp),
+                      plainIds[cp], plainIds[c]});
+            } else {
+                (void)cNotch;
+                (void)pNotch;
+                emit({topOf(c), topOf(cp), plainIds[cp], plainIds[c]});
+            }
+        }
+        dbg("rimnotch face %d: PINNED nu=%d cols[%d,%d] polys=%zu", faceId,
+            nu, colL, colR, local.polygons.size());
+        std::vector<uint32_t> outMap(local.vertices.size());
+        for (uint32_t i = 0; i < local.vertices.size(); ++i) {
+            outMap[i] = out.addVertex(
+                gp_Pnt(local.vertices[i][0], local.vertices[i][1],
+                       local.vertices[i][2]),
+                local.anchors[i]);
+        }
+        for (const auto& poly : local.polygons) {
+            std::vector<uint32_t> mapped;
+            mapped.reserve(poly.size());
+            for (uint32_t idx2 : poly) mapped.push_back(outMap[idx2]);
+            out.addPolygon(std::move(mapped), faceId, false);
+        }
+        return true;
+    }
+
     // ---- Rows in w. Feature row just past the notch depth; a thin strip
     // row hugs the cut rim so the columns stay straight for (nearly) the
     // whole height. The plain rim is exact at w = wspan (no strip there).
+    // (Pinned castellated rims never reach here — they emit the clean
+    // boolean-cut lattice above and return.)
     const double wFeat = wTop + std::max(0.04 * wTop, 0.005 * wspan);
     const double wBot = std::min({0.25 * wspan / nv, 0.05 * wspan, 0.4 * wFeat});
     if (wBot < 1e-3 * wspan) return false;
@@ -9456,6 +9805,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     }
     dbg("generate: density solved");
 
+    // Pin castellated rims' base arcs to their column azimuths (the
+    // column-alignment contract): the notch band and the neighbour annulus
+    // both emit these exact positions, so columns run straight to the cut
+    // rim with no inset strip and no top-to-bottom phase break.
+    PinnedEdges pinnedEdge(model.edgeCount() + 1);
+    pinCastellatedRims(model, plans, settings, solvedEdge, density,
+                       pinnedEdge);
+
     // Resolve every face's division counts up front (union-find lookups
     // path-compress, so they must not run concurrently) — after this the
     // per-face meshing is embarrassingly parallel.
@@ -9735,13 +10092,18 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 return hits;
             };
             const double ph = closedEdgePhase(E, model);
+            // Pinned edges expect their explicit samples, not uniform steps.
+            const std::vector<double> frac = edgeSampleFractions(
+                eid, n, ph, false, /*includeLast=*/true, &pinnedEdge);
+            const int m = int(frac.size()) - 1;
+            if (m < 1) continue;
             auto sampleAt = [&](int i) {
-                return c3->Value(f + (l - f) * phasedT(i, n, ph, false));
+                return c3->Value(f + (l - f) * frac[i]);
             };
             std::vector<uint32_t> prev = nearVertsEnd(sampleAt(0));
-            for (int i = 1; i <= n; ++i) {
-                std::vector<uint32_t> cur = i == n
-                                                ? nearVertsEnd(sampleAt(n))
+            for (int i = 1; i <= m; ++i) {
+                std::vector<uint32_t> cur = i == m
+                                                ? nearVertsEnd(sampleAt(m))
                                                 : nearVerts(sampleAt(i));
                 bool linked = false;
                 for (uint32_t a : prev) {
@@ -9767,7 +10129,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     }
                     dbg("contract check %d: edge %d sample %d/%d: %s "
                         "(nearest %.3g, eTol %.3g)",
-                        fid, eid, i, n,
+                        fid, eid, i, m,
                         prev.empty() || cur.empty() ? "no vertex" : "no edge",
                         std::sqrt(bn), eTol);
                     return eid;
@@ -9855,7 +10217,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     if (!meshRevolutionRimNotch(face, surf, model,
                                                 plan.rimLow, plan.rimHigh,
                                                 plan.plainRimEdge, solvedEdge,
-                                                fid, nu, nv, out)) {
+                                                fid, nu, nv, out,
+                                                &pinnedEdge)) {
                         demote(fid, face, surf, s, "rim notch failed");
                     }
                 } else if (!plan.insertWires.empty()) {
@@ -9943,7 +10306,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             case MesherKind::MinimalNGon:
                 if (!plan.loops.empty()) {
                     if (!meshMinimalPlanar(face, model, fid, solvedEdge,
-                                           s.radial, out)) {
+                                           s.radial, out, &pinnedEdge)) {
                         demote(fid, face, surf, s, "minimal planar failed");
                     }
                 } else {
