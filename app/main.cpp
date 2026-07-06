@@ -26,9 +26,15 @@
 #include <dbghelp.h>
 #endif
 
+#include <BRepAdaptor_Surface.hxx>
 #include <BRepTools.hxx>
+#include <BRep_Tool.hxx>
+#include <Geom_Circle.hxx>
+#include <Geom_Curve.hxx>
+#include <GeomAbs_SurfaceType.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Edge.hxx>
 #include <TopoDS_Wire.hxx>
 
 #include "weft/analysis.hpp"
@@ -1612,6 +1618,64 @@ static std::array<int, 2> faceSolvedCounts(App& app, int faceId) {
     return it->second;
 }
 
+// Which mesher-combo options can plausibly build on a face, as a bitmask
+// over the combo indices (bit i set = combo item i is offered; bit 0
+// "auto" is always set). CONSERVATIVE: only the structured meshers with
+// strict geometric prerequisites are greyed out (a plane can't be a
+// revolution grid; a disk-cap needs a single circular loop; an annulus
+// needs two loops or two co-axial radii). The flexible meshers
+// (parametric/coons/quad-fill/minimal/quad-dominant/fallback) stay
+// offered everywhere and fail gracefully if forced where they can't
+// build — better than hiding a choice that would have worked. Combo
+// order: 0 auto, 1 revolution-grid, 2 disk-cap, 3 parametric-grid,
+// 4 coons-grid, 5 ring-junction, 6 quad-dominant, 7 minimal-ngon,
+// 8 fallback-tri, 9 annulus-ring, 10 plate-web, 11 quad-fill.
+static uint32_t buildableMesherMask(App& app, int faceId) {
+    if (!app.hasModel || faceId < 1 || faceId > app.model.faceCount()) {
+        return ~0u;
+    }
+    uint32_t mask = ~0u;
+    auto off = [&](int i) { mask &= ~(1u << i); };
+    try {
+        const TopoDS_Face face = TopoDS::Face(app.model.faces(faceId));
+        const bool isPlane =
+            BRepAdaptor_Surface(face).GetType() == GeomAbs_Plane;
+        int nLoops = 0, nSingleCircleLoops = 0;
+        std::vector<double> radii;
+        for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+            ++nLoops;
+            int nEdges = 0;
+            bool circle = false;
+            for (TopExp_Explorer ex(wx.Current(), TopAbs_EDGE); ex.More();
+                 ex.Next()) {
+                ++nEdges;
+                double f, l;
+                Handle(Geom_Curve) c =
+                    BRep_Tool::Curve(TopoDS::Edge(ex.Current()), f, l);
+                if (!c.IsNull() && c->IsKind(STANDARD_TYPE(Geom_Circle))) {
+                    circle = true;
+                    radii.push_back(
+                        Handle(Geom_Circle)::DownCast(c)->Radius());
+                }
+            }
+            if (nEdges == 1 && circle) ++nSingleCircleLoops;
+        }
+        std::sort(radii.begin(), radii.end());
+        int distinctRadii = 0;
+        for (size_t i = 0; i < radii.size(); ++i) {
+            if (i == 0 || radii[i] - radii[i - 1] > 1e-4) ++distinctRadii;
+        }
+        if (isPlane) off(1);                        // revolution-grid
+        if (!isPlane || nLoops != 1 || nSingleCircleLoops != 1) off(2);  // disk
+        if (!isPlane || nLoops < 2) off(5);         // ring-junction
+        if (!isPlane) off(10);                      // plate-web
+        if (nLoops < 2 && distinctRadii < 2) off(9);  // annulus-ring
+    } catch (const Standard_Failure&) {
+        return ~0u;
+    }
+    return mask;
+}
+
 // Kind-aware density nudge: EVERY mesher answers the wheel / [ ] with the
 // field that actually drives its density — counts for structured grids,
 // boundary totals for plate-web/quad-fill/minimal, deviation scaling for
@@ -2738,15 +2802,31 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
     }
     if (kind) {  // per-face contexts only
         // Manual mesher choice: auto picks per geometry; forcing one that
-        // can't build on the face falls back to triangulation.
-        static const char* kMesherItems =
-            "auto\0revolution-grid\0disk-cap\0parametric-grid\0"
-            "coons-grid\0ring-junction\0quad-dominant\0minimal-ngon\0"
-            "fallback-tri\0annulus-ring\0plate-web\0quad-fill\0";
-        int mesher = s.forceMesher;
-        if (ImGui::Combo("mesher", &mesher, kMesherItems)) {
-            s.forceMesher = mesher;
-            ch = true;
+        // can't build on the face falls back to triangulation. Options
+        // whose geometric prerequisites the selected face can't meet are
+        // greyed out so the user doesn't force a "couldn't build here".
+        static const char* kMesherNames[] = {
+            "auto",          "revolution-grid", "disk-cap",
+            "parametric-grid", "coons-grid",    "ring-junction",
+            "quad-dominant", "minimal-ngon",    "fallback-tri",
+            "annulus-ring",  "plate-web",       "quad-fill"};
+        const int nMesher = int(IM_ARRAYSIZE(kMesherNames));
+        const uint32_t bmask =
+            highlightApp ? buildableMesherMask(*highlightApp,
+                                               highlightApp->activeFace)
+                         : ~0u;
+        int mesher = std::clamp(s.forceMesher, 0, nMesher - 1);
+        if (ImGui::BeginCombo("mesher", kMesherNames[mesher])) {
+            for (int i = 0; i < nMesher; ++i) {
+                const bool ok = i == 0 || (bmask & (1u << i));
+                ImGui::BeginDisabled(!ok);
+                if (ImGui::Selectable(kMesherNames[i], mesher == i)) {
+                    s.forceMesher = i;
+                    ch = true;
+                }
+                ImGui::EndDisabled();
+            }
+            ImGui::EndCombo();
         }
         ch |= ImGui::Checkbox("delete face (bridge with J)", &s.exclude);
     }
