@@ -4723,6 +4723,24 @@ RibbonRails findRibbonRails(const std::vector<gp_Pnt>& P,
         if (std::min(wCap0, wCap1) < 0.2 * width) return;
         const double aspect = std::min(la, lc) / width;
         if (aspect < 3.5) return;
+        // The two cells that ABUT the caps must have real area. When a rail
+        // swallows a short ~90-degree cap corner (e1/e11 on the grip's flat
+        // top, the notch corners on the guard), that corner lies on the cap
+        // line together with its neighbour, so the abutting cell goes
+        // collinear -- a zero-area quad no sweep can rescue. Rejecting the
+        // split here forces the honest one: the corner stays in the cap and
+        // the cap webs. (a1..b0 is cap 2, b1..a0 is cap 1; rail A runs
+        // i->j forward, rail B l->k backward.)
+        auto cellArea = [&](int p0, int p1, int p2, int p3) {
+            gp_XYZ n = gp_Vec(P[p0], P[p1]).Crossed(gp_Vec(P[p0], P[p2]))
+                           .XYZ() +
+                       gp_Vec(P[p0], P[p2]).Crossed(gp_Vec(P[p0], P[p3]))
+                           .XYZ();
+            return 0.5 * n.Modulus();
+        };
+        const double capCell1 = cellArea(i, (i + 1) % N, (l - 1 + N) % N, l);
+        const double capCell2 = cellArea((j - 1 + N) % N, j, k, (k + 1) % N);
+        if (std::min(capCell1, capCell2) < 0.02 * width * width) return;
         // Prefer EQUAL segment counts (a clean 1:1 ladder), then the longest
         // rails: a true rail cannot extend without swallowing a cap, which
         // the alignment/width gates fence off. The segment count is the
@@ -4900,22 +4918,22 @@ bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
             return gp_Vec(pnt(a), pnt(b)).Crossed(gp_Vec(pnt(a), pnt(c)))
                 .Magnitude();
         };
+        auto polyArea = [&](const std::vector<uint32_t>& p) {
+            gp_XYZ n(0, 0, 0);
+            for (size_t i = 0; i + 1 < p.size(); ++i) {
+                n += gp_Vec(pnt(p[0]), pnt(p[i])).Crossed(
+                         gp_Vec(pnt(p[0]), pnt(p[i + 1]))).XYZ();
+            }
+            return 0.5 * n.Modulus();
+        };
         // A quad whose area collapses is a bowtie (a rail veering across the
         // strip at a crease or a swallowed notch corner): split it along the
-        // diagonal that keeps both triangles non-degenerate. A cell that is
-        // collinear on BOTH diagonals is a genuine zero-width fold -- ship it
-        // flat rather than as two flat triangles.
+        // diagonal that keeps both triangles non-degenerate.
         if (dd.size() == 4) {
-            const double q = 0.5 * gp_Vec(pnt(dd[0]), pnt(dd[1]))
-                                       .Crossed(gp_Vec(pnt(dd[0]), pnt(dd[2])))
-                                       .Magnitude() +
-                             0.5 * gp_Vec(pnt(dd[0]), pnt(dd[2]))
-                                       .Crossed(gp_Vec(pnt(dd[0]), pnt(dd[3])))
-                                       .Magnitude();
             const double refW =
                 0.5 * (pnt(dd[0]).Distance(pnt(dd[3])) +
                        pnt(dd[1]).Distance(pnt(dd[2])));
-            if (q < 1e-3 * std::max(1e-9, refW) * refW) {
+            if (polyArea(dd) < 1e-3 * std::max(1e-9, refW) * refW) {
                 const double d02 = std::min(triA(dd[0], dd[1], dd[2]),
                                             triA(dd[0], dd[2], dd[3]));
                 const double d13 = std::min(triA(dd[1], dd[2], dd[3]),
@@ -4929,6 +4947,41 @@ bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
                         put({dd[1], dd[3], dd[0]});
                     }
                     return;
+                }
+                // Collinear on BOTH diagonals: a genuine zero-width fold where
+                // the strip's edge runs parallel to the rung (the grip's flat
+                // top, a notch corner). No triangulation has area -- MERGE the
+                // dead cell into the previous polygon across their shared rung
+                // so the flat sliver disappears into a valid neighbour instead
+                // of shipping a zero-area quad.
+                std::vector<uint32_t> cur = dd;
+                if (reverseAll) std::reverse(cur.begin(), cur.end());
+                PolyMesh& m = out.mesh();
+                if (!m.polygons.empty() && m.polygonFaceId.back() == faceId) {
+                    const std::vector<uint32_t>& prev = m.polygons.back();
+                    const size_t na = prev.size(), nb = cur.size();
+                    for (size_t i = 0; i < na; ++i) {
+                        const uint32_t a = prev[i], an = prev[(i + 1) % na];
+                        bool merged = false;
+                        for (size_t j = 0; j < nb; ++j) {
+                            if (cur[j] != an || cur[(j + 1) % nb] != a) {
+                                continue;
+                            }
+                            std::vector<uint32_t> out2;
+                            for (size_t k = 0; k < na; ++k) {
+                                out2.push_back(prev[(i + 1 + k) % na]);
+                            }
+                            for (size_t k = 0; k < nb - 2; ++k) {
+                                out2.push_back(cur[(j + 2 + k) % nb]);
+                            }
+                            if (polyArea(out2) > 1e-9) {
+                                m.polygons.back() = std::move(out2);
+                                merged = true;
+                            }
+                            break;
+                        }
+                        if (merged) return;
+                    }
                 }
             }
         }
