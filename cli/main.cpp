@@ -69,6 +69,9 @@ void usage() {
         "                      (they pair into quads by default)\n"
         "                      where quality allows (default: pure tris)\n"
         "    --chord T         fallback triangulation tolerance (default 0.1)\n"
+        "    --weld MM         global weld tolerance in mm (default 1e-6);\n"
+        "                      raise to close seams on sloppy CAD / off-curve\n"
+        "                      fallback borders (per-face: --face ID:weld=MM)\n"
         "    --face ID:k=v[,k=v...]\n"
         "                      per-face override, e.g. --face 1:radial=24,axial=2\n"
         "                      keys: radial, axial, gridu, gridv, cap, chord\n"
@@ -183,6 +186,12 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
             // solved count (adaptive ones too) before the group
             // solve, and fallback tolerances to match.
             gs.densityScale = std::stod(next());
+        }
+        else if (a == "--weld") {
+            // Global weld tolerance (mm): how far apart coincident border
+            // verts may sit and still fuse. Loosening it closes seams on
+            // sloppy CAD / off-curve fallback borders.
+            gs.weldTolerance = std::stod(next());
         }
         else if (a == "--profile") {
             std::string prof = next();

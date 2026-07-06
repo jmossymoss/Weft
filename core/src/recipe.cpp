@@ -25,6 +25,7 @@ void applySetting(FaceMeshSettings& s, const std::string& key,
     else if (key == "mesher") s.forceMesher = std::stoi(value);
     else if (key == "linkrims") s.linkRims = std::stoi(value) != 0;
     else if (key == "minsize") s.minSize = std::stod(value);
+    else if (key == "weld") s.weldTolerance = std::stod(value);
     else if (key == "reldev") s.relativeDeviation = std::stoi(value) != 0;
     else if (key == "adapt") s.adaptive = std::stoi(value) != 0;
     else if (key == "boundary") s.boundary = std::stoi(value);
@@ -54,12 +55,13 @@ void applySettingsList(FaceMeshSettings& s, const std::string& list) {
 }
 
 static std::string settingsToString(const FaceMeshSettings& s) {
-    char buf[384];
+    char buf[448];
     std::snprintf(buf, sizeof buf,
                   "radial=%d,axial=%d,gridu=%d,gridv=%d,cap=%s,chord=%g,"
                   "angle=%g,loops=%d,hold=%g,rings=%d,quads=%d,minimal=%d,"
                   "skip=%d,mesher=%d,linkrims=%d,minsize=%g,reldev=%d,"
-                  "adapt=%d,boundary=%d,sqcollar=%d,crot=%d,puretris=%d",
+                  "adapt=%d,boundary=%d,sqcollar=%d,crot=%d,puretris=%d,"
+                  "weld=%g",
                   s.radial, s.axial, s.gridU, s.gridV,
                   s.cap == CapStyle::Fan ? "fan" : "ngon", s.chordTolerance,
                   s.angleToleranceDeg, s.filletLoops, s.filletHold,
@@ -67,7 +69,7 @@ static std::string settingsToString(const FaceMeshSettings& s) {
                   s.exclude ? 1 : 0, s.forceMesher, s.linkRims ? 1 : 0,
                   s.minSize, s.relativeDeviation ? 1 : 0,
                   s.adaptive ? 1 : 0, s.boundary, s.squareCollar ? 1 : 0,
-                  s.coonsRotate, s.pureTriFloor ? 1 : 0);
+                  s.coonsRotate, s.pureTriFloor ? 1 : 0, s.weldTolerance);
     return buf;
 }
 
@@ -78,6 +80,9 @@ void saveRecipe(const Recipe& recipe, const std::string& path) {
     out << "default " << settingsToString(recipe.settings.defaults) << "\n";
     if (recipe.settings.densityScale != 1.0) {
         out << "scale " << recipe.settings.densityScale << "\n";
+    }
+    if (recipe.settings.weldTolerance != 1e-6) {
+        out << "weld " << recipe.settings.weldTolerance << "\n";
     }
     for (const auto& [fid, s] : recipe.settings.perFace) {
         out << "face " << fid << " " << settingsToString(s) << "\n";
@@ -157,6 +162,9 @@ Recipe loadRecipe(const std::string& path) {
             } else if (kind == "scale") {
                 ss >> gs.densityScale;
                 if (!ss || gs.densityScale <= 0) gs.densityScale = 1.0;
+            } else if (kind == "weld") {
+                ss >> gs.weldTolerance;
+                if (!ss || gs.weldTolerance < 0) gs.weldTolerance = 1e-6;
             } else if (kind == "op") {
                 std::string opKind;
                 ss >> opKind;
