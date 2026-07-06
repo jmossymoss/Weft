@@ -1234,7 +1234,8 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
                        int faceId, const std::vector<double>& uParams,
                        const std::vector<double>& vParams, int rotate,
                        const std::vector<int>& solvedEdge, MeshBuilder& out,
-                       int refineLevel = 0) {
+                       const std::vector<double>* uScaffold = nullptr,
+                       const std::vector<double>* vScaffold = nullptr) {
     CoonsPatch patch;
     if (!makeCoonsPatch(face, model, patch, rotate)) return false;
     Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
@@ -1356,16 +1357,17 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
     // column diagonally (the flaregun jacket rungs). Arc-uniform
     // scaffolds keep columns upright; UV interpolates within a natural
     // segment and re-evaluates on the surface.
-    auto resample = [&](const std::vector<BPt>& nat, size_t n) {
+    auto resampleAt = [&](const std::vector<BPt>& nat,
+                          const std::vector<double>& fracs) {
         std::vector<double> arc(nat.size(), 0.0);
         for (size_t k = 1; k < nat.size(); ++k) {
             arc[k] = arc[k - 1] + nat[k].p.Distance(nat[k - 1].p);
         }
         const double total = arc.back() > 1e-12 ? arc.back() : 1.0;
-        std::vector<BPt> row(n);
+        std::vector<BPt> row(fracs.size());
         size_t j = 0;
-        for (size_t k = 0; k < n; ++k) {
-            const double sTarget = total * double(k) / double(n - 1);
+        for (size_t k = 0; k < fracs.size(); ++k) {
+            const double sTarget = total * fracs[k];
             while (j + 2 < nat.size() && arc[j + 1] < sTarget) ++j;
             const double seg = std::max(1e-12, arc[j + 1] - arc[j]);
             const double t = std::clamp((sTarget - arc[j]) / seg, 0.0, 1.0);
@@ -1375,6 +1377,11 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
             row[k] = {surface->Value(uv.X(), uv.Y()), uv};
         }
         return row;
+    };
+    auto resample = [&](const std::vector<BPt>& nat, size_t n) {
+        std::vector<double> fr(n);
+        for (size_t k = 0; k < n; ++k) fr[k] = double(k) / double(n - 1);
+        return resampleAt(nat, fr);
     };
     std::vector<BPt> natBottom, natTop;  // natural deficit rails
     if (bottom.size() != top.size() && bottom.size() >= 2 &&
@@ -1388,16 +1395,16 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
         }
     }
     // Interior densification (hole cutouts): the borders are a fixed
-    // contract, so extra lattice resolution comes from scaffold rails —
-    // ALL sides go natural and the strips absorb the count difference.
-    if (refineLevel > 0 && bottom.size() == top.size() &&
-        bottom.size() >= 2) {
-        const size_t tgt =
-            (bottom.size() - 1) * (size_t(1) << refineLevel) + 1;
+    // contract, so extra lattice lines come from scaffold rails at the
+    // CALLER'S fractions — natural rails keep their own points (shared
+    // fractions line up, so those columns still reach the border) and
+    // the transition strips absorb only the added lines.
+    if (uScaffold && uScaffold->size() > bottom.size() &&
+        bottom.size() == top.size() && bottom.size() >= 2) {
         if (natBottom.empty()) natBottom = bottom;
         if (natTop.empty()) natTop = top;
-        bottom = resample(natBottom, tgt);
-        top = resample(natTop, tgt);
+        bottom = resampleAt(natBottom, *uScaffold);
+        top = resampleAt(natTop, *uScaffold);
     }
     if (bottom.size() != top.size() || bottom.size() < 2) return false;
     const int nu = int(bottom.size()) - 1;
@@ -1434,14 +1441,13 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
             left[j].uv = patch.side(3, 1.0 - double(j) / (right.size() - 1));
         }
     }
-    if (refineLevel > 0 && !patch.collapsedLast &&
-        right.size() == left.size() && right.size() >= 2) {
-        const size_t tgt =
-            (right.size() - 1) * (size_t(1) << refineLevel) + 1;
+    if (vScaffold && vScaffold->size() > right.size() &&
+        !patch.collapsedLast && right.size() == left.size() &&
+        right.size() >= 2) {
         if (natLeft.empty()) natLeft = left;
         if (natRight.empty()) natRight = right;
-        left = resample(natLeft, tgt);
-        right = resample(natRight, tgt);
+        left = resampleAt(natLeft, *vScaffold);
+        right = resampleAt(natRight, *vScaffold);
     }
     if (right.size() != left.size() || right.size() < 2) return false;
     const int nv = int(right.size()) - 1;
@@ -2661,15 +2667,115 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
     }
     const bool flip = face.Orientation() == TopAbs_REVERSED;
     // The border params are a fixed contract (paramsFor pins them to the
-    // solved counts), so retries densify the INTERIOR scaffold instead:
-    // refineLevel doubles the lattice per attempt, natural borders bridge
-    // through transition strips.
+    // solved counts), so extra resolution comes from scaffold lines — and
+    // ONLY where geometry demands them. Curvature already lives in the
+    // solved border counts (adaptive), so each direction keeps its
+    // natural lines (those columns run border to border) and gains just
+    // a snug BRACKET pair around every hole. A flat direction never
+    // sprouts rows with nothing to follow; escalation midpoints the
+    // hole band first and only then doubles everything.
+    CoonsPatch cpatch;
+    if (!makeCoonsPatch(face, model, cpatch, rotate)) return false;
+    auto sideCount = [&](int i) {
+        const auto& ch = cpatch.chain[i];
+        if (ch.size() > 1) {
+            int total = 0;
+            for (const auto& pce : ch) {
+                int n = 1;
+                if (pce.edgeId > 0 && pce.edgeId < int(solvedEdge.size()) &&
+                    solvedEdge[pce.edgeId] > 0) {
+                    n = solvedEdge[pce.edgeId];
+                }
+                total += n;
+            }
+            return std::max(1, total);
+        }
+        const int eid = cpatch.edgeIds[i];
+        return eid > 0 && eid < int(solvedEdge.size()) && solvedEdge[eid] > 0
+                   ? solvedEdge[eid]
+                   : 1;
+    };
+    const int nU = std::max(sideCount(0), sideCount(2));
+    const int nV = std::max(sideCount(1), sideCount(3));
+    // Lattice-fraction -> surface-uv tables along the two mid-isolines,
+    // for placing hole brackets in fraction space. Each direction sweeps
+    // ONE uv axis dominantly; measure against that one.
+    const int kTab = 128;
+    std::vector<gp_Pnt2d> uTab(kTab + 1), vTab(kTab + 1);
+    for (int k = 0; k <= kTab; ++k) {
+        const double fr = double(k) / kTab;
+        uTab[k] = cpatch.uv(fr, 0.5);
+        vTab[k] = cpatch.uv(0.5, fr);
+    }
+    auto bracket = [&](const std::vector<gp_Pnt2d>& tab,
+                       const std::array<double, 4>& b,
+                       double& fa, double& fb) {
+        double x0 = 1e300, x1 = -1e300, y0 = 1e300, y1 = -1e300;
+        for (const auto& q : tab) {
+            x0 = std::min(x0, q.X());
+            x1 = std::max(x1, q.X());
+            y0 = std::min(y0, q.Y());
+            y1 = std::max(y1, q.Y());
+        }
+        const bool useX = (x1 - x0) >= (y1 - y0);
+        const double lo = useX ? b[0] : b[2];
+        const double hi = useX ? b[1] : b[3];
+        fa = 2.0;
+        fb = -1.0;
+        for (size_t k = 0; k < tab.size(); ++k) {
+            const double val = useX ? tab[k].X() : tab[k].Y();
+            if (val >= lo && val <= hi) {
+                const double fr = double(k) / double(tab.size() - 1);
+                fa = std::min(fa, fr);
+                fb = std::max(fb, fr);
+            }
+        }
+        return fb >= fa;
+    };
+    auto mergeIn = [](std::vector<double>& fr, double x) {
+        x = std::clamp(x, 0.01, 0.99);
+        for (double e : fr) {
+            if (std::abs(e - x) < 5e-3) return;
+        }
+        fr.push_back(x);
+    };
+    auto scaffoldFor = [&](int attempt, bool uDir) {
+        const int nat = uDir ? nU : nV;
+        std::vector<double> fr(nat + 1);
+        for (int k = 0; k <= nat; ++k) fr[k] = double(k) / nat;
+        for (const auto& b : boxes) {
+            double fa, fb;
+            if (!bracket(uDir ? uTab : vTab, b, fa, fb)) continue;
+            const double m = std::max(0.25 * (fb - fa), 0.02);
+            mergeIn(fr, fa - m);
+            mergeIn(fr, fb + m);
+            if (attempt >= 1) mergeIn(fr, 0.5 * (fa + fb));
+        }
+        std::sort(fr.begin(), fr.end());
+        for (int d = 2; d <= attempt; ++d) {  // last-resort doubling
+            std::vector<double> dense;
+            dense.reserve(fr.size() * 2);
+            for (size_t k = 0; k + 1 < fr.size(); ++k) {
+                dense.push_back(fr[k]);
+                dense.push_back(0.5 * (fr[k] + fr[k + 1]));
+            }
+            dense.push_back(fr.back());
+            fr = std::move(dense);
+        }
+        return fr;
+    };
     for (int attempt = 0; attempt < 5; ++attempt) {
+        std::vector<double> uFr = scaffoldFor(attempt, true);
+        std::vector<double> vFr = scaffoldFor(attempt, false);
+        const std::vector<double>* uSc =
+            int(uFr.size()) > nU + 1 ? &uFr : nullptr;
+        const std::vector<double>* vSc =
+            int(vFr.size()) > nV + 1 ? &vFr : nullptr;
         PolyMesh grid;
         {
             MeshBuilder tmp(grid);
             if (!meshCoonsGridBody(face, model, faceId, uParams, vParams,
-                                   rotate, solvedEdge, tmp, attempt)) {
+                                   rotate, solvedEdge, tmp, uSc, vSc)) {
                 dbg("coons cutout %d: body failed (attempt %d)", faceId,
                     attempt);
                 return false;
@@ -2721,6 +2827,12 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
                 if (u1 >= b[0] && u0 <= b[1] && v1 >= b[2] && v0 <= b[3]) {
                     for (uint32_t vi : grid.polygons[pi]) {
                         if (borderVert.count(vi)) {
+                            if (!touchedBorder) {
+                                dbg("coons cutout %d: %zu-gon rect "
+                                    "[%.3f..%.3f]x[%.3f..%.3f] hits box %zu",
+                                    faceId, grid.polygons[pi].size(), u0,
+                                    u1, v0, v1, w);
+                            }
                             coarse = true;
                             touchedBorder = true;
                         }
@@ -4777,9 +4889,13 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                 if (s.relativeDeviation) {
                     // Deviation RELATIVE to the feature: sagitta as a
                     // fraction of the edge's own extent, so a 500mm bore
-                    // and a 5mm bore carry the SAME ring topology and
-                    // the angle criterion drives the counts. Absolute
-                    // deviation stays for machining-accuracy meshes.
+                    // and a 5mm bore carry the SAME ring topology.
+                    // The 0.2 factor puts the 0.1 default at 2% of
+                    // extent: circles stay ANGLE-driven (a 28-degree
+                    // ring segment bulges only ~1.5%), while a long
+                    // gently-waving edge — 3-4% sagitta, total turn
+                    // under the angle tolerance — finally subdivides
+                    // instead of shipping as one straight span.
                     const gp_Pnt pf = c.Value(c.FirstParameter());
                     const gp_Pnt pl = c.Value(c.LastParameter());
                     const gp_Pnt pm = c.Value(
@@ -4789,7 +4905,19 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                     // its diameter.
                     const double extent = std::max(
                         {pf.Distance(pl), pf.Distance(pm), 1e-6});
-                    chord = std::max(chord * extent, 1e-9);
+                    // Constant-curvature edges (rings, arcs, bore lips)
+                    // stay ANGLE-driven — a 28-degree ring segment only
+                    // bulges ~1.5%, under the 2% gate. Freeform curves
+                    // get the tight 0.5% gate: a long gentle wave whose
+                    // total turn ducks the angle tolerance still reads
+                    // as blatantly faceted at one span.
+                    const GeomAbs_CurveType ct = c.GetType();
+                    const double frac = (ct == GeomAbs_Line ||
+                                         ct == GeomAbs_Circle ||
+                                         ct == GeomAbs_Ellipse)
+                                            ? 0.2
+                                            : 0.05;
+                    chord = std::max(chord * frac * extent, 1e-9);
                 }
                 try {
                     GCPnts_TangentialDeflection td(c, ang, chord, 2);
