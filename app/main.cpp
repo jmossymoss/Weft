@@ -511,7 +511,8 @@ struct App {
     std::vector<std::array<int, 2>> polyFillRange;
     bool dirty = false;  // regenerate this frame
     std::set<int> hiddenFaces;
-    bool openFacePopup = false;  // context popup requested at the cursor
+    bool openFacePopup = false;
+    bool openWeldPopup = false;  // context popup requested at the cursor
 
     // Undo: recipe snapshots, one per edit gesture (drags coalesce).
     std::vector<weft::Recipe> undoStack;
@@ -594,7 +595,8 @@ struct App {
     std::atomic<int> genProgress{0};
     int genTotal = 0;
     double genStartTime = 0.0;
-    weft::GenerationSettings genSettings;  // worker's frozen snapshot
+    weft::GenerationSettings genSettings;
+    std::vector<weft::ManualOp> genOps;  // worker's frozen ops snapshot  // worker's frozen snapshot
     weft::PolyMesh genMesh;
     weft::GenerationReport genReport;
     std::string genError;
@@ -961,6 +963,10 @@ static void startGenerate(App& app) {
             app.recipe.settings.perEdge.size(), app.recipe.ops.size());
     if (app.genThread.joinable()) app.genThread.join();
     app.genSettings = app.recipe.settings;
+    // Ops frozen like settings: the UI thread mutates them mid-run
+    // (weld, undo, grab drags) and a live read is a use-after-free
+    // in the worker.
+    app.genOps = app.recipe.ops;
     app.genProgress = 0;
     app.genTotal = app.model.faceCount();
     app.genSettings.progressFaces = &app.genProgress;
@@ -976,7 +982,7 @@ static void startGenerate(App& app) {
             weft::PolyMesh mesh =
                 weft::generate(a->model, a->analysis, a->genSettings,
                                &report, &a->genCache);
-            weft::applyOps(mesh, a->model, a->recipe.ops);
+            weft::applyOps(mesh, a->model, a->genOps);
             a->genMesh = std::move(mesh);
             a->genReport = std::move(report);
         } catch (const std::exception& e) {
@@ -2306,10 +2312,20 @@ static uint64_t pickMeshEdge(App& app, const Mat4& mvp, double mx, double my,
 static void startVertexGrab(App& app, const Mat4& mvp, double mx, double my,
                             int fbw, int fbh) {
     const weft::PolyMesh& m = app.mesh;
+    // Only vertices some SURVIVING polygon still uses: DeletePoly
+    // leaves orphan verts behind (valid anchors, invisible) and a
+    // ghost stealing the pick reads as "grab does nothing".
+    std::vector<bool> live(m.vertexCount(), false);
+    for (size_t p = 0; p < m.polygons.size(); ++p) {
+        int fid = m.polygonFaceId[p];
+        if (fid > 0 && app.hiddenFaces.count(fid)) continue;
+        for (uint32_t v : m.polygons[p]) live[v] = true;
+    }
     double best = 30.0 * gUiScale;  // px
     size_t bestV = m.vertexCount();
     bool sawAnchorless = false;
     for (size_t v = 0; v < m.vertexCount(); ++v) {
+        if (!live[v]) continue;
         const weft::Anchor& a = m.anchors[v];
         float s[3] = {0, 0, -1};
         projectPoint(mvp, m.vertices[v], fbw, fbh, s);
@@ -2868,6 +2884,43 @@ static void drawOverlay(App& app) {
 // face's live controls (edits apply to the whole selection and override
 // automatically) plus visibility actions. Left-click just selects; the
 // modal keys/wheel are the primary editing path.
+
+// Weld menu (Blender's M merge): the selected verts collapse into one,
+// recorded as a replayable op keyed to their world positions. Drawn
+// INSIDE the ImGui frame: popup calls in the pre-NewFrame input section
+// dereference a null current window the moment any other popup is open
+// (the right-click / shading-button crashes).
+static void drawWeldPopup(App& app) {
+    if (app.openWeldPopup) {
+        ImGui::OpenPopup("weld verts");
+        app.openWeldPopup = false;
+    }
+    if (ImGui::BeginPopup("weld verts")) {
+        auto doWeld = [&](int mode) {
+            weft::ManualOp op;
+            op.kind = weft::ManualOp::Kind::WeldVerts;
+            op.weldMode = mode;
+            for (uint32_t v : app.selVertOrder) {
+                const auto& q = app.mesh.vertices[v];
+                op.weldPoints.push_back({q[0], q[1], q[2]});
+            }
+            size_t n = op.weldPoints.size();
+            app.recipe.ops.push_back(std::move(op));
+            app.selVerts.clear();
+            app.selVertOrder.clear();
+            markDirty(app);
+            app.status = "welded " + std::to_string(n) +
+                         " vert(s) (ctrl+Z undoes)";
+        };
+        ImGui::TextDisabled("weld %zu verts", app.selVerts.size());
+        ImGui::Separator();
+        if (ImGui::MenuItem("at center")) doWeld(0);
+        if (ImGui::MenuItem("at last pick")) doWeld(1);
+        if (ImGui::MenuItem("at first pick")) doWeld(2);
+        ImGui::EndPopup();
+    }
+}
+
 static void drawFacePopup(App& app) {
     if (app.openFacePopup) {
         if (app.activeFace > 0) ImGui::OpenPopup("##facectx");
@@ -3658,6 +3711,18 @@ int main(int argc, char** argv) {
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    // IMGUI_CHECKVERSION is compiled out in Release: a build tree
+    // mixing stale non-docking ImGui objects with docking headers
+    // crashes deep in the dock code on the first undock. Fail loud.
+    if (!ImGui::DebugCheckVersionAndDataLayout(
+            IMGUI_VERSION, sizeof(ImGuiIO), sizeof(ImGuiStyle),
+            sizeof(ImVec2), sizeof(ImVec4), sizeof(ImDrawVert),
+            sizeof(ImDrawIdx))) {
+        std::fprintf(stderr,
+                     "fatal: Dear ImGui header/library mismatch - "
+                     "delete the build _deps directory and rebuild\n");
+        return 1;
+    }
     static std::string iniPath = gDataDir + "/imgui.ini";
     ImGui::GetIO().IniFilename = iniPath.c_str();
 #ifdef IMGUI_HAS_DOCK
@@ -4122,7 +4187,11 @@ int main(int argc, char** argv) {
             if (ImGui::IsKeyPressed(ImGuiKey_M, false) && app.hasModel) {
                 if (app.selectMode == SelectMode::Vert) {
                     if (app.selVerts.size() >= 2) {
-                        ImGui::OpenPopup("weld verts");
+                        // Deferred: this input block runs BEFORE
+                        // NewFrame, where popup calls dereference a
+                        // null current window (the right-click and
+                        // shading-button crashes rode on that).
+                        app.openWeldPopup = true;
                     } else {
                         app.status = "weld: select 2+ verts first (M opens "
                                      "the merge menu)";
@@ -4133,33 +4202,6 @@ int main(int argc, char** argv) {
                         s.minimal = next;
                     });
                 }
-            }
-            // Weld menu (Blender's M merge): the selected verts collapse
-            // into one, recorded as a replayable op keyed to their world
-            // positions.
-            if (ImGui::BeginPopup("weld verts")) {
-                auto doWeld = [&](int mode) {
-                    weft::ManualOp op;
-                    op.kind = weft::ManualOp::Kind::WeldVerts;
-                    op.weldMode = mode;
-                    for (uint32_t v : app.selVertOrder) {
-                        const auto& q = app.mesh.vertices[v];
-                        op.weldPoints.push_back({q[0], q[1], q[2]});
-                    }
-                    size_t n = op.weldPoints.size();
-                    app.recipe.ops.push_back(std::move(op));
-                    app.selVerts.clear();
-                    app.selVertOrder.clear();
-                    markDirty(app);
-                    app.status = "welded " + std::to_string(n) +
-                                 " vert(s) (ctrl+Z undoes)";
-                };
-                ImGui::TextDisabled("weld %zu verts", app.selVerts.size());
-                ImGui::Separator();
-                if (ImGui::MenuItem("at center")) doWeld(0);
-                if (ImGui::MenuItem("at last pick")) doWeld(1);
-                if (ImGui::MenuItem("at first pick")) doWeld(2);
-                ImGui::EndPopup();
             }
             if (ImGui::IsKeyPressed(ImGuiKey_X, false) && app.hasModel) {
                 if (io.KeyCtrl && app.selectMode == SelectMode::MeshEdge &&
@@ -4985,6 +5027,7 @@ int main(int argc, char** argv) {
         drawOverlay(app);
         drawGenProgress(app);
         drawFacePopup(app);
+        drawWeldPopup(app);
         ImGui::Render();
 
         glViewport(0, 0, fbw, fbh);

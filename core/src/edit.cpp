@@ -630,12 +630,20 @@ int deletePoly(PolyMesh& mesh, const ManualOp& op) {
 
 int nudgeVertex(PolyMesh& mesh, const Model& model, const ManualOp& op) {
     if (op.faceId < 1 || op.faceId > model.faceCount()) return 0;
+    // Only vertices a polygon still references: DeletePoly leaves
+    // orphans behind, and a nudge binding to one 'succeeds' while
+    // the visible mesh never moves.
+    std::vector<char> used(mesh.vertexCount(), 0);
+    for (const auto& poly : mesh.polygons) {
+        for (uint32_t v : poly) used[v] = 1;
+    }
     // The source is found in anchor space, not 3D: it's stable under the
     // very nudges being replayed (an earlier op moving a vertex must not
     // steal a later op's target).
     size_t best = mesh.vertexCount();
     double bestD = 1e300;
     for (size_t v = 0; v < mesh.vertexCount(); ++v) {
+        if (!used[v]) continue;
         const Anchor& a = mesh.anchors[v];
         if (a.faceId != op.faceId) continue;
         double d = (a.u - op.u) * (a.u - op.u) + (a.v - op.v) * (a.v - op.v);
