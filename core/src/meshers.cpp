@@ -207,6 +207,14 @@ struct FacePlan {
     // PlateWeb: every boundary wire's edge chain (loops[0] = outer wire).
     // Each edge solves independently — a bore drives its own hole loop.
     std::vector<std::vector<int>> loops;
+    // Open (C-shaped) annulus band: a single wire of two concentric arc
+    // rails (uEdges = outer, vEdges = inner) joined by two radial walls
+    // (cWalls). Meshes as radial quad spokes between the rails — the
+    // notch-open sibling of the two-closed-loop AnnulusRing. When set the
+    // AnnulusRing dispatch routes to meshAnnulusCRing instead of the
+    // zipper. The wall edges carry the across-ring (radial row) count.
+    bool cRing = false;
+    std::vector<int> cWalls;
 };
 
 // A genuine full revolution band's boundary consists only of its two
@@ -2372,6 +2380,346 @@ bool meshAnnulusRing(const TopoDS_Face& face, const Model& model, int faceId,
         flip = pn.Dot(n) < 0;
     }
     for (auto& poly : polys) out.addPolygon(std::move(poly), faceId, flip);
+    return true;
+}
+
+// OPEN (C-shaped) annulus band. A notch cut clean through a flat ring leaves
+// a SINGLE wire — two concentric arc rails (an inner circle and an outer
+// circle, same centre/axis, each interrupted by the notch) joined by two
+// radial walls — instead of the two closed loops planAnnulus wants. A full
+// washer keeps two wires and never reaches here. On success: uEdges = the
+// outer arc(s), vEdges = the inner arc(s), cWalls = the two joining walls.
+bool planAnnulusCRing(const TopoDS_Face& face, const Model& model,
+                      FacePlan& plan) {
+    BRepAdaptor_Surface surf(face);
+    if (!isGeometricallyFlat(face, surf)) return false;
+    int wires = 0;
+    TopoDS_Wire theWire;
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        if (++wires > 1) return false;
+        theWire = TopoDS::Wire(wx.Current());
+    }
+    if (wires != 1) return false;
+
+    struct ArcE {
+        int eid;
+        double rad;
+        double span;
+        gp_Pnt ctr;
+        gp_Dir axis;
+    };
+    std::vector<ArcE> arcs;
+    std::vector<int> walls;
+    for (BRepTools_WireExplorer we(theWire, face); we.More(); we.Next()) {
+        const TopoDS_Edge e = we.Current();
+        if (BRep_Tool::Degenerated(e)) return false;
+        double f, l;
+        if (BRep_Tool::Curve(e, f, l).IsNull()) return false;
+        const int eid = model.edges.FindIndex(e);
+        if (eid < 1) return false;
+        BRepAdaptor_Curve c(e);
+        if (c.GetType() == GeomAbs_Circle) {
+            const gp_Circ ci = c.Circle();
+            arcs.push_back({eid, ci.Radius(),
+                            std::abs(c.LastParameter() - c.FirstParameter()),
+                            ci.Location(), ci.Axis().Direction()});
+        } else {
+            walls.push_back(eid);
+        }
+    }
+    // Two arc rails + exactly two connecting walls.
+    if (arcs.size() < 2 || walls.size() != 2) return false;
+    double rMin = 1e300, rMax = 0;
+    for (const ArcE& a : arcs) {
+        rMin = std::min(rMin, a.rad);
+        rMax = std::max(rMax, a.rad);
+    }
+    if (rMax - rMin < 1e-4) return false;  // one radius: not a ring
+    const gp_Pnt ctr = arcs[0].ctr;
+    const gp_Dir axis = arcs[0].axis;
+    std::vector<int> outer, inner;
+    double outerSpan = 0, innerSpan = 0;
+    for (const ArcE& a : arcs) {
+        if (a.ctr.Distance(ctr) > 1e-4) return false;      // one centre
+        if (std::abs(a.axis.Dot(axis)) < 0.999) return false;  // one axis
+        const double dOut = std::abs(a.rad - rMax);
+        const double dIn = std::abs(a.rad - rMin);
+        if (std::min(dOut, dIn) > 1e-4) return false;  // exactly two radii
+        if (dOut < dIn) { outer.push_back(a.eid); outerSpan += a.span; }
+        else { inner.push_back(a.eid); innerSpan += a.span; }
+    }
+    if (outer.empty() || inner.empty()) return false;
+    // The rails must be the RING (most of the circle present, cut open by
+    // a small notch) — not a thin annular sector whose short arcs are ends
+    // and long straight sides are the "walls". A ring-with-a-notch keeps
+    // well over half the circle on each rail; a sector spans a sliver.
+    if (outerSpan < M_PI || innerSpan < M_PI) return false;
+    // Each wall spans from the inner radius to the outer radius.
+    auto radiusOf = [&](const gp_Pnt& p) {
+        gp_Vec v(ctr, p);
+        const gp_Vec ax(axis);
+        return (v - ax.Multiplied(v.Dot(ax))).Magnitude();
+    };
+    for (int weid : walls) {
+        BRepAdaptor_Curve c(TopoDS::Edge(model.edges(weid)));
+        const double ra = radiusOf(c.Value(c.FirstParameter()));
+        const double rb = radiusOf(c.Value(c.LastParameter()));
+        const double lo = std::min(ra, rb), hi = std::max(ra, rb);
+        if (std::abs(lo - rMin) > 0.05 * rMax ||
+            std::abs(hi - rMax) > 0.05 * rMax) {
+            return false;
+        }
+    }
+    plan.kind = MesherKind::AnnulusRing;
+    plan.uEdges = outer;
+    plan.vEdges = inner;
+    plan.cWalls = walls;
+    plan.cRing = true;
+    plan.constrains = true;
+    return true;
+}
+
+// Mesh the C-ring as radial quad spokes. Both rails are sampled at their
+// pinned column azimuths (shared with the cylinder wall / bore rims, so
+// they weld bit-identically and every column meets a spoke). The two rails
+// pair by arc fraction into radial quads; a count difference near the notch
+// (a column present on the outer rail but inside the inner rail's wider
+// notch gap) is absorbed by one grouped n-gon at that wall end. The walls
+// carry the across-ring row count: >1 gives interior rows (uniform radial
+// spokes), 1 gives a single quad band.
+bool meshAnnulusCRing(const TopoDS_Face& face, const Model& model, int faceId,
+                      const std::vector<int>& outerEdges,
+                      const std::vector<int>& innerEdges,
+                      const std::vector<int>& wallEdges,
+                      const std::vector<int>& solvedEdge, int radialDefault,
+                      MeshBuilder& out, const PinnedEdges* pins) {
+    const double weld = 1e-4 + BRep_Tool::Tolerance(face);
+    // Sample an open edge chain end-to-end, honouring per-edge pins.
+    auto sampleChain = [&](const std::vector<int>& edges,
+                           int fallbackN) -> std::vector<gp_Pnt> {
+        std::vector<std::vector<gp_Pnt>> pieces;
+        for (int eid : edges) {
+            const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
+            double f, l;
+            Handle(Geom_Curve) c3 = BRep_Tool::Curve(e, f, l);
+            if (c3.IsNull()) return {};
+            int n = (eid >= 1 && eid < int(solvedEdge.size())) ? solvedEdge[eid]
+                                                               : 0;
+            if (n < 1) n = std::max(1, fallbackN);
+            const bool rev = e.Orientation() == TopAbs_REVERSED;
+            const double ph = closedEdgePhase(e, model);
+            std::vector<gp_Pnt> pc;
+            for (double t : edgeSampleFractions(eid, n, ph, rev,
+                                                /*includeLast=*/true, pins)) {
+                pc.push_back(c3->Value(f + (l - f) * t));
+            }
+            if (pc.size() < 2) return {};
+            pieces.push_back(std::move(pc));
+        }
+        if (pieces.empty()) return {};
+        std::vector<gp_Pnt> chain = pieces[0];
+        std::vector<char> used(pieces.size(), 0);
+        used[0] = 1;
+        bool progress = true;
+        while (progress) {
+            progress = false;
+            for (size_t k = 0; k < pieces.size(); ++k) {
+                if (used[k]) continue;
+                std::vector<gp_Pnt> pv = pieces[k];
+                if (chain.back().Distance(pv.front()) < weld) {
+                    chain.insert(chain.end(), pv.begin() + 1, pv.end());
+                } else if (chain.back().Distance(pv.back()) < weld) {
+                    std::reverse(pv.begin(), pv.end());
+                    chain.insert(chain.end(), pv.begin() + 1, pv.end());
+                } else if (chain.front().Distance(pv.back()) < weld) {
+                    chain.insert(chain.begin(), pv.begin(), pv.end() - 1);
+                } else if (chain.front().Distance(pv.front()) < weld) {
+                    std::reverse(pv.begin(), pv.end());
+                    chain.insert(chain.begin(), pv.begin(), pv.end() - 1);
+                } else {
+                    continue;
+                }
+                used[k] = 1;
+                progress = true;
+            }
+        }
+        for (char u : used) {
+            if (!u) return {};  // disconnected chain
+        }
+        return chain;
+    };
+
+    std::vector<gp_Pnt> O = sampleChain(outerEdges, std::max(3, radialDefault));
+    std::vector<gp_Pnt> I = sampleChain(innerEdges, std::max(3, radialDefault));
+    if (O.size() < 2 || I.size() < 2) return false;
+    // Run both rails the same rotational sense: inner end 0 near outer end 0.
+    if (O.front().Distance(I.back()) < O.front().Distance(I.front())) {
+        std::reverse(I.begin(), I.end());
+    }
+
+    // The two walls carry the across-ring row count. Sample each from its
+    // outer end to its inner end; match to the left (O.front/I.front) and
+    // right (O.back/I.back) corners.
+    auto sampleWall = [&](int eid) -> std::vector<gp_Pnt> {
+        const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
+        double f, l;
+        Handle(Geom_Curve) c3 = BRep_Tool::Curve(e, f, l);
+        if (c3.IsNull()) return {};
+        int n = (eid >= 1 && eid < int(solvedEdge.size())) ? solvedEdge[eid]
+                                                           : 0;
+        if (n < 1) n = 1;
+        const bool rev = e.Orientation() == TopAbs_REVERSED;
+        const double ph = closedEdgePhase(e, model);
+        std::vector<gp_Pnt> pc;
+        for (double t : edgeSampleFractions(eid, n, ph, rev,
+                                            /*includeLast=*/true, pins)) {
+            pc.push_back(c3->Value(f + (l - f) * t));
+        }
+        return pc;
+    };
+    std::vector<gp_Pnt> wA = sampleWall(wallEdges[0]);
+    std::vector<gp_Pnt> wB = sampleWall(wallEdges[1]);
+    if (wA.size() < 2 || wB.size() < 2) return false;
+    // Left wall joins O.front to I.front; right joins O.back to I.back.
+    auto orientWall = [&](std::vector<gp_Pnt> w, const gp_Pnt& outEnd,
+                          const gp_Pnt& inEnd) {
+        if (w.front().Distance(outEnd) > w.back().Distance(outEnd)) {
+            std::reverse(w.begin(), w.end());
+        }
+        (void)inEnd;
+        return w;
+    };
+    std::vector<gp_Pnt> Lw, Rw;
+    if (wA.front().Distance(O.front()) + wA.back().Distance(O.front()) <
+        wB.front().Distance(O.front()) + wB.back().Distance(O.front())) {
+        Lw = orientWall(wA, O.front(), I.front());
+        Rw = orientWall(wB, O.back(), I.back());
+    } else {
+        Lw = orientWall(wB, O.front(), I.front());
+        Rw = orientWall(wA, O.back(), I.back());
+    }
+    int R = int(Lw.size()) - 1;
+    if (int(Rw.size()) - 1 != R) R = std::min(R, int(Rw.size()) - 1);
+    if (R < 1) R = 1;
+
+    // Ring centre/axis + radii for polar interior-row placement.
+    gp_Pnt ctr;
+    gp_Dir axis(0, 0, 1);
+    double rOut = 0, rIn = 0;
+    {
+        BRepAdaptor_Curve oc(TopoDS::Edge(model.edges(outerEdges[0])));
+        BRepAdaptor_Curve ic(TopoDS::Edge(model.edges(innerEdges[0])));
+        const gp_Circ oci = oc.Circle();
+        ctr = oci.Location();
+        axis = oci.Axis().Direction();
+        rOut = oci.Radius();
+        rIn = ic.Circle().Radius();
+    }
+    const gp_Vec ax(axis);
+    auto polar = [&](const gp_Pnt& p, double radius) {
+        gp_Vec v(ctr, p);
+        gp_Vec radial = v - ax.Multiplied(v.Dot(ax));
+        if (radial.Magnitude() < 1e-12) return p;
+        radial.Normalize();
+        return gp_Pnt(ctr.XYZ() + radial.Multiplied(radius).XYZ());
+    };
+
+    const int M = int(O.size());
+    // Build one id array per radial row. Rows 0..R-1 carry M columns; row R
+    // is the inner rail (its own count). Adjacent rows share their vertices.
+    std::vector<std::vector<uint32_t>> rowId(R + 1);
+    std::vector<std::vector<gp_Pnt>> rowPt(R + 1);
+    rowPt[0] = O;
+    rowPt[R] = I;
+    for (int r = 1; r < R; ++r) {
+        const double t = double(r) / R;
+        const double rad = rOut + (rIn - rOut) * t;
+        rowPt[r].resize(M);
+        for (int c = 0; c < M; ++c) {
+            if (c == 0) rowPt[r][c] = Lw[std::min(r, int(Lw.size()) - 1)];
+            else if (c == M - 1) rowPt[r][c] = Rw[std::min(r, int(Rw.size()) - 1)];
+            else rowPt[r][c] = polar(O[c], rad);
+        }
+    }
+    for (int r = 0; r <= R; ++r) {
+        rowId[r].resize(rowPt[r].size());
+        for (size_t c = 0; c < rowPt[r].size(); ++c) {
+            rowId[r][c] = out.addVertex(rowPt[r][c], {});
+        }
+    }
+
+    // Winding: compare a sample quad's normal to the face normal.
+    BRepAdaptor_Surface surf(face);
+    double um = (surf.FirstUParameter() + surf.LastUParameter()) / 2;
+    double vm = (surf.FirstVParameter() + surf.LastVParameter()) / 2;
+    gp_Pnt sp;
+    gp_Vec du, dv;
+    surf.D1(um, vm, sp, du, dv);
+    gp_Vec fn = du.Crossed(dv);
+    if (face.Orientation() == TopAbs_REVERSED) fn.Reverse();
+    bool flip = false;
+    if (fn.Magnitude() > 1e-12) {
+        gp_Vec pn = gp_Vec(O[0], O[1 % M]).Crossed(gp_Vec(O[0], I[0]));
+        flip = pn.Dot(fn) < 0;
+    }
+
+    // Interior quad bands (both rows M-wide).
+    for (int r = 1; r < R; ++r) {
+        for (int c = 0; c + 1 < M; ++c) {
+            out.addPolygon({rowId[r - 1][c], rowId[r - 1][c + 1],
+                            rowId[r][c + 1], rowId[r][c]},
+                           faceId, flip);
+        }
+    }
+
+    // Final band: arc-fraction ladder between the last M-wide row and the
+    // inner rail — quads with grouped n-gons absorbing the count mismatch.
+    const std::vector<uint32_t>& A = rowId[R - 1];
+    const std::vector<gp_Pnt>& Ap = rowPt[R - 1];
+    const std::vector<uint32_t>& B = rowId[R];
+    const std::vector<gp_Pnt>& Bp = rowPt[R];
+    auto arcFrac = [](const std::vector<gp_Pnt>& pts) {
+        std::vector<double> f(pts.size(), 0.0);
+        for (size_t i = 1; i < pts.size(); ++i) {
+            f[i] = f[i - 1] + pts[i].Distance(pts[i - 1]);
+        }
+        const double t = f.back() > 1e-12 ? f.back() : 1.0;
+        for (double& x : f) x /= t;
+        return f;
+    };
+    const bool aSparse = A.size() <= B.size();
+    const std::vector<uint32_t>& S = aSparse ? A : B;
+    const std::vector<uint32_t>& D = aSparse ? B : A;
+    const std::vector<double> sf = arcFrac(aSparse ? Ap : Bp);
+    const std::vector<double> df = arcFrac(aSparse ? Bp : Ap);
+    const int m = int(S.size()) - 1;
+    const int nd = int(D.size()) - 1;
+    std::vector<int> mp(m + 1);
+    mp[0] = 0;
+    mp[m] = nd;
+    for (int k = 1; k < m; ++k) {
+        int j = mp[k - 1];
+        while (j + 1 < nd &&
+               std::abs(df[j + 1] - sf[k]) <= std::abs(df[j] - sf[k])) {
+            ++j;
+        }
+        mp[k] = j;
+    }
+    for (int k = 0; k < m; ++k) {
+        std::vector<uint32_t> ring2;
+        if (aSparse) {
+            ring2 = {S[k], S[k + 1]};
+            for (int t = mp[k + 1]; t >= mp[k]; --t) ring2.push_back(D[t]);
+        } else {
+            for (int t = mp[k]; t <= mp[k + 1]; ++t) ring2.push_back(D[t]);
+            ring2.push_back(S[k + 1]);
+            ring2.push_back(S[k]);
+        }
+        ring2.erase(std::unique(ring2.begin(), ring2.end()), ring2.end());
+        if (ring2.size() > 1 && ring2.front() == ring2.back()) ring2.pop_back();
+        if (ring2.size() < 3) continue;
+        out.addPolygon(std::move(ring2), faceId, flip);
+    }
     return true;
 }
 
@@ -5435,6 +5783,8 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             }
             case MesherKind::AnnulusRing:
                 // Forced: no ring-shape gate — the user asked for the band.
+                // The open (C-shaped) single-wire ring routes here too.
+                if (planAnnulusCRing(face, model, plan)) return plan;
                 if (planAnnulus(face, model, plan, /*requireRing=*/false)) {
                     return plan;
                 }
@@ -5490,6 +5840,15 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         planMinimalPlanar(face, surf, model, plan)) {
         return plan;
     }
+
+    // A notch cut clean through a flat ring leaves an open (C-shaped)
+    // annulus band: two concentric arc rails joined by two walls. It reads
+    // as a flat n-gon, but the neighbour cylinder/bore rims carry column
+    // azimuths (pinned) that this face's arcs share — so it meshes as
+    // radial quad spokes aligned to those columns, not a flat boundary
+    // n-gon. Wins over the default minimal grab (but not an explicit
+    // per-face minimal override handled just above).
+    if (planAnnulusCRing(face, model, plan)) return plan;
 
     // Minimal n-gon owns EVERY flat face it can express when the mode is
     // on (the topology policy: big flats are n-gons, quads go to curves;
@@ -10176,6 +10535,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             for (int eid : plan.vEdges) {
                 cacheKey[fid] += "v" + std::to_string(solvedEdge[eid]);
             }
+            // C-ring walls carry the across-ring row count.
+            for (int eid : plan.cWalls) {
+                cacheKey[fid] += "w" + std::to_string(solvedEdge[eid]);
+            }
         }
         // Every solved count the part consumes must key the cache, or a
         // density edit on a slot border / chained side / corner stub
@@ -10558,9 +10921,15 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 break;
             }
             case MesherKind::AnnulusRing:
-                if (!meshAnnulusRing(face, model, fid, plan.uEdges,
-                                     plan.vEdges, solvedEdge, s.radial,
-                                     out)) {
+                if (plan.cRing) {
+                    if (!meshAnnulusCRing(face, model, fid, plan.uEdges,
+                                          plan.vEdges, plan.cWalls, solvedEdge,
+                                          s.radial, out, &pinnedEdge)) {
+                        demote(fid, face, surf, s, "annulus c-ring failed");
+                    }
+                } else if (!meshAnnulusRing(face, model, fid, plan.uEdges,
+                                            plan.vEdges, solvedEdge, s.radial,
+                                            out)) {
                     demote(fid, face, surf, s, "annulus ring failed");
                 }
                 break;
