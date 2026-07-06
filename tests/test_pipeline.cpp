@@ -733,8 +733,23 @@ void testBridge() {
     weft::PolyMesh open2 = weft::generate(model, a, gs);
     CHECK(!isWatertight(open2));
     weft::PolyMesh closed2 = open2;
+    const size_t beforeZip = open2.polygonCount();
     CHECK_EQ(weft::bridgeLoops(closed2, model, bridge), 30);
     CHECK(isWatertight(closed2));
+
+    // No fan collapse: the arc-fraction zipper advances whichever rail
+    // is proportionally behind, so no vertex absorbs more than its share
+    // of the strip. (Distance-greedy could consume one rail whole and
+    // fan the remainder around a single vertex.)
+    {
+        std::map<uint32_t, int> uses;
+        for (size_t pi = beforeZip; pi < closed2.polygonCount(); ++pi) {
+            for (uint32_t v : closed2.polygons[pi]) ++uses[v];
+        }
+        int maxUse = 0;
+        for (const auto& [v, c] : uses) maxUse = std::max(maxUse, c);
+        CHECK(maxUse <= 5);  // 12-vs-18: proportional share is 3-4
+    }
 
     // Twisting the pairing keeps the strip watertight (any rotation of
     // the rails is still a closed strip) and rotates the rail seams.
@@ -744,6 +759,30 @@ void testBridge() {
         weft::PolyMesh tw = open;
         CHECK_EQ(weft::bridgeLoops(tw, model, twisted), 12);
         CHECK(isWatertight(tw));
+    }
+
+    // Per-side twist: A counter-rotates against B and each side keeps
+    // its own value — matching them cancels back to the automatic
+    // alignment exactly.
+    {
+        weft::ManualOp both = bridge;
+        both.twist = 2;
+        both.twistA = 2;  // net zero
+        weft::PolyMesh twBoth = open;
+        CHECK_EQ(weft::bridgeLoops(twBoth, model, both), 12);
+        CHECK(isWatertight(twBoth));
+        weft::ManualOp none = bridge;
+        none.twist = 0;
+        weft::PolyMesh twNone = open;
+        CHECK_EQ(weft::bridgeLoops(twNone, model, none), 12);
+        CHECK(twBoth.polygons == twNone.polygons);
+        // And a lone A twist really rotates (differs from no twist).
+        weft::ManualOp onlyA = none;
+        onlyA.twistA = 1;
+        weft::PolyMesh twA = open;
+        CHECK_EQ(weft::bridgeLoops(twA, model, onlyA), 12);
+        CHECK(isWatertight(twA));
+        CHECK(twA.polygons != twNone.polygons);
     }
 
     // Pinned resample on a boundary with no analytic driver: the wall is

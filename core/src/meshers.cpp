@@ -893,9 +893,18 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
     };
     TopoDS_Wire outer = BRepTools::OuterWire(face);
     if (outer.IsNull()) return reject("no outer wire");
-    // Extra wires are HOLES: fine as long as each sits strictly inside
-    // the outer wire's UV box — the grid meshes whole, the covered
-    // cells are cut out and webbed to the hole's exact border after.
+    // Extra wires are HOLES: fine on CURVED charts as long as each sits
+    // strictly inside the outer wire's UV box — the grid meshes whole,
+    // the covered cells are cut out and webbed to the hole's exact
+    // border after. Planar plates with holes stay with quad-fill /
+    // plate-web, which own flat topology.
+    if (BRepAdaptor_Surface(face).GetType() == GeomAbs_Plane) {
+        TopExp_Explorer wx(face, TopAbs_WIRE);
+        if (wx.More()) {
+            wx.Next();
+            if (wx.More()) return reject("face has holes");
+        }
+    }
     {
         double ou0 = 1e300, ou1 = -1e300, ov0 = 1e300, ov1 = -1e300;
         auto wireBox = [&](const TopoDS_Shape& w, double& u0, double& u1,

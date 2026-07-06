@@ -2693,8 +2693,9 @@ static void drawOverlay(App& app) {
         ImGui::TextDisabled(app.bridgeFirstEdge
                                 ? "pick the second side - esc restarts"
                                 : "pick two loops (or two sides of one) - "
-                                  "F fills hovered - [ ] twists (shift+"
-                                  "wheel flips side) - J/esc exits");
+                                  "F fills hovered - [ ] twists the active "
+                                  "side (shift+wheel flips A/B, each keeps "
+                                  "its twist) - J/esc exits");
         if (app.hoverLoop >= 0) {
             ImGui::Text("loop: edge #%d, %zu verts",
                         app.bLoopEdge[app.hoverLoop],
@@ -3811,8 +3812,10 @@ int main(int argc, char** argv) {
                                             : std::floor(gScroll));
                 if (app.hasModel && shift && app.mode == Mode::Bridge &&
                     !app.recipe.ops.empty()) {
-                    // shift+wheel while bridging: flip WHICH loop the
-                    // twist rotates (A or B) on the most recent bridge.
+                    // shift+wheel while bridging: flip WHICH side [ ]
+                    // edits on the most recent bridge. Each side keeps
+                    // its own twist (they counter-rotate), so flipping
+                    // changes nothing until the wheel turns again.
                     for (auto op = app.recipe.ops.rbegin();
                          op != app.recipe.ops.rend(); ++op) {
                         if (op->kind != weft::ManualOp::Kind::Bridge) {
@@ -3820,10 +3823,11 @@ int main(int argc, char** argv) {
                         }
                         op->twistSide = op->twistSide ? 0 : 1;
                         std::snprintf(app.hudText, sizeof app.hudText,
-                                      "twist side: %s",
-                                      op->twistSide ? "A" : "B");
+                                      "twist side: %s (%+d)",
+                                      op->twistSide ? "A" : "B",
+                                      op->twistSide ? op->twistA
+                                                    : op->twist);
                         app.hudUntil = glfwGetTime() + 0.9;
-                        markDirty(app);
                         break;
                     }
                 } else if (app.hasModel && (shift || ctrl) &&
@@ -4069,9 +4073,11 @@ int main(int argc, char** argv) {
                             std::snprintf(app.hudText, sizeof app.hudText,
                                           "bridge spans: %d", op->spans);
                         } else {
-                            op->twist += delta;
+                            int& tw = op->twistSide ? op->twistA : op->twist;
+                            tw += delta;
                             std::snprintf(app.hudText, sizeof app.hudText,
-                                          "bridge twist: %+d", op->twist);
+                                          "bridge twist %s: %+d",
+                                          op->twistSide ? "A" : "B", tw);
                         }
                         markDirty(app);
                         app.hudUntil = glfwGetTime() + 0.9;
