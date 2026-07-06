@@ -26,6 +26,11 @@
 #include <dbghelp.h>
 #endif
 
+#include <BRepTools.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Wire.hxx>
+
 #include "weft/analysis.hpp"
 #include "weft/edit.hpp"
 #include "weft/export_fbx.hpp"
@@ -1571,6 +1576,31 @@ static void markDirty(App& app) {
     app.mutatedThisFrame = true;
 }
 
+
+// The solved subdivision total around a face's OUTER loop — the honest
+// seed when a pinned boundary total switches on (seeding from 0 or a
+// tiny constant collapses the whole neighbourhood to 1-per-edge pins).
+static int outerLoopSolvedTotal(App& app, int faceId) {
+    if (!app.hasModel || faceId < 1 || faceId > app.model.faceCount()) {
+        return 0;
+    }
+    try {
+        TopoDS_Wire w = BRepTools::OuterWire(
+            TopoDS::Face(app.model.faces(faceId)));
+        int total = 0;
+        for (TopExp_Explorer ex(w, TopAbs_EDGE); ex.More(); ex.Next()) {
+            int eid = app.model.edges.FindIndex(ex.Current());
+            auto it = app.report.edgeDivisions.find(eid);
+            if (eid > 0 && it != app.report.edgeDivisions.end()) {
+                total += it->second;
+            }
+        }
+        return total;
+    } catch (const std::exception&) {
+        return 0;
+    }
+}
+
 // Kind-aware density nudge: EVERY mesher answers the wheel / [ ] with the
 // field that actually drives its density — counts for structured grids,
 // boundary totals for plate-web/quad-fill/minimal, deviation scaling for
@@ -1583,14 +1613,24 @@ static std::string adjustFaceDensityOne(App& app, weft::FaceMeshSettings& s,
         if (it != app.report.faceMesher.end()) kind = it->second;
     }
     char hud[64] = "";
-    auto count = [&](int& v, int lo, const char* name) {
+    auto count = [&](int& v, int lo, const char* name,
+                     bool manual = true) {
         v = std::max(lo, v + steps);
-        s.adaptive = false;  // explicit count = manual
+        // Explicit count = manual — but ONLY for meshers this count
+        // actually drives. Coons floors coexist with adaptive borders;
+        // killing adaptive there pins every border to the flat default
+        // and the face collapses to a handful of giant polys.
+        if (manual) s.adaptive = false;
         std::snprintf(hud, sizeof hud, "%s: %d", name, v);
     };
     // Pinned totals coexist with adaptive density — don't clear it.
     auto total = [&](int& v, const char* name) {
-        if (v <= 0) v = 16;  // 0 = auto; seed a sensible total first
+        if (v <= 0) {
+            // 0 = auto: seed from the CURRENT solved total so the pin
+            // starts where the mesh already is, not at a collapse.
+            const int live = outerLoopSolvedTotal(app, app.activeFace);
+            v = live > 0 ? live : 16;
+        }
         v = std::max(4, v + steps);
         std::snprintf(hud, sizeof hud, "%s: %d", name, v);
     };
@@ -1633,8 +1673,11 @@ static std::string adjustFaceDensityOne(App& app, weft::FaceMeshSettings& s,
             }
             break;
         default:  // PlanarGrid, CoonsGrid
-            if (secondary) count(s.gridV, 1, "grid v");
-            else count(s.gridU, 1, "grid u");
+            if (secondary) {
+                count(s.gridV, 1, "grid v", kind != MK::CoonsGrid);
+            } else {
+                count(s.gridU, 1, "grid u", kind != MK::CoonsGrid);
+            }
             break;
     }
     return hud;
@@ -2560,14 +2603,20 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
         // adaptive keeps driving and they never match.
         if (ImGui::DragInt("radial", &s.radial, 0.2f, 3, 256)) {
             ch = true;
-            if (kind) s.adaptive = false;
+            // Manual only where radial IS the density; on plate-web /
+            // quad-fill it merely seeds loop shares and killing
+            // adaptive collapses the borders to flat pins.
+            if (kind && (k == MK::RevolutionGrid || k == MK::DiskCap ||
+                         k == MK::AnnulusRing)) {
+                s.adaptive = false;
+            }
         }
         hover({int(MK::RevolutionGrid), int(MK::DiskCap),
                int(MK::AnnulusRing), int(MK::PlateWeb), int(MK::QuadFill)});
         if (all || k == MK::RevolutionGrid) {
             if (ImGui::DragInt("axial", &s.axial, 0.2f, 1, 256)) {
                 ch = true;
-                if (kind) s.adaptive = false;
+                if (kind && k == MK::RevolutionGrid) s.adaptive = false;
             }
             hover({int(MK::RevolutionGrid)});
         }
@@ -2590,21 +2639,34 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
                      k == MK::MinimalNGon)) {
             // Total verts around the outer loop, length-distributed and
             // pinned (drives the neighbouring walls' shared edges).
-            ch |= ImGui::DragInt("boundary verts (0=auto)", &s.boundary,
-                                 0.2f, 0, 512);
+            const int prevBoundary = s.boundary;
+            if (ImGui::DragInt("boundary verts (0=auto)", &s.boundary,
+                               0.2f, 0, 512)) {
+                if (prevBoundary == 0 && s.boundary > 0 && highlightApp) {
+                    const int live = outerLoopSolvedTotal(
+                        *highlightApp, highlightApp->activeFace);
+                    if (live > 0) s.boundary = std::max(s.boundary, live);
+                }
+                ch = true;
+            }
         }
     }
     if (grid) {
         if (all) ImGui::TextDisabled("planar / parametric grids");
         if (ImGui::DragInt("grid u", &s.gridU, 0.2f, 1, 256)) {
             ch = true;
-            if (kind) s.adaptive = false;
+            // Coons floors coexist with adaptive borders — no flip.
+            if (kind && (k == MK::PlanarGrid || k == MK::RingJunction)) {
+                s.adaptive = false;
+            }
         }
         hover({int(MK::PlanarGrid), int(MK::CoonsGrid),
                int(MK::RingJunction)});
         if (ImGui::DragInt("grid v", &s.gridV, 0.2f, 1, 256)) {
             ch = true;
-            if (kind) s.adaptive = false;
+            if (kind && (k == MK::PlanarGrid || k == MK::RingJunction)) {
+                s.adaptive = false;
+            }
         }
         hover({int(MK::PlanarGrid), int(MK::CoonsGrid),
                int(MK::RingJunction)});
@@ -3071,7 +3133,7 @@ static void drawFacePopup(App& app) {
     ImGui::Separator();
     ImGui::PushID("ctx");
     ImGui::PushItemWidth(150 * gUiScale);
-    bool changed = settingsEditor(edited, &kind, f.isFillet);
+    bool changed = settingsEditor(edited, &kind, f.isFillet, &app);
     if (changed) {
         editSelected(app, [&](weft::FaceMeshSettings& s) { s = edited; });
     }
@@ -3731,7 +3793,7 @@ static void drawUi(App& app) {
                 kind = forced;
             }
             ImGui::PushID("perface");
-            bool changed = settingsEditor(edited, &kind, f.isFillet);
+            bool changed = settingsEditor(edited, &kind, f.isFillet, &app);
             ImGui::PopID();
             if (changed) {
                 editSelected(app,
