@@ -645,3 +645,33 @@ is a boundary n-gon on the column azimuths (columns meet rim 1:1) but has
 no interior radial spokes (not annulus-ring-able as a single C-loop);
 axial no longer adds interior wall rows (radial drives columns).
 Phase 2 (fillet flow-through) resumed separately.
+
+## FILLET FLOW-THROUGH (landed 2b0e8a9 + 2431abb)
+Columns now continue through blend chains (barrel -> torus fillet ->
+torus fillet -> lower cyl) instead of dying in the open band's bottom
+transition strip. Two parts:
+- Pentagon fix (2b0e8a9): a fillet coons strip's ACROSS side proposed
+  filletLoops per PIECE, so a k-edge across chain summed to k*loops and
+  mismatched the single-edge opposite side (3-vs-6 -> bridged with
+  pentagons). Now the loop count is distributed over the across chain
+  as a TOTAL. flaregun sectors 49/57/59/61: {4:12,5:3} -> {4:9} pure
+  quads.
+- Pinning core (2431abb): pinFilletChains walks the coaxial coons blend
+  strips from each open band's fillet-side rim, rail to rail, to the
+  next revolution face, pinning every cross-rail arc to the band's
+  column azimuths (3D azimuth about the rev axis; arc endpoints stay the
+  castellation corners). COUNT-MATCHED to each rail's solved count so
+  nothing cascades; rails whose count diverges stay uniform (frame-cut/
+  slot/wrap-gap correctly skipped). Consumers: coons sampleSide (single
+  + chained) and open-band samplePieces emit the pinned fractions via
+  the FORWARD-param mapping (no rev flip -- rev only reorders; the coons
+  uniform path's 1-t flip would break asymmetric pins -- key subtlety).
+Result (ring_check.py on flaregun2 OBJ): 3 junction rings each 8 clean
+matched columns; TOP->MID 7/8 <=0.4deg (worst 0.47), MID->BOT 8/8
+<=0.4; every ring edge 2-shared; watertight, 0 fold at 1x. The 0.47
+residual is one column where bands 43/50 place a different interior
+count in a shared near-endpoint arc (geometric, not solved-count --
+rail-unite tried, zero effect, reverted). Density-2 flow deferred (count-
+match guard skips diverging rails; watertight preserved, pre-existing
+leaks on 21/29/312/315/317/318 only). Gates: ctest green; board mohne 0/
+nasty 10/weldment 7; 42/42 fixtures; notched (Phase 1) unaffected.
