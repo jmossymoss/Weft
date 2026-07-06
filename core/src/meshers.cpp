@@ -9207,6 +9207,17 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
     }
     dbg("revgrid face %d: nu=%d nv=%d rims=%d/%d wrap=%d rimEdges=%zu",
         faceId, nu, nv, nRim0, nRim1, vWrap ? 1 : 0, rimEdges.size());
+    // A single-rim SPHERE patch whose open end collapses to a pole reads as a
+    // smooth dome — Plasticity caps such a corner blend with one disk n-gon,
+    // not a tri fan. So on this exact case suppress the pole vertex and close
+    // the innermost real ring with a single n-gon (done in the emission below).
+    // Gated tightly: only GeomAbs_Sphere with exactly one usable rim (rim0ok
+    // XOR rim1ok). A cone's apex is a genuine SHARP tip (its fixture asserts
+    // the fan, and a flat cap would lose the point), and the rimless full
+    // sphere fixture (rims=0/0) has two poles and no single rim — both are
+    // excluded here and keep fanning byte-identically.
+    const bool sphereCapPole =
+        surf.GetType() == GeomAbs_Sphere && (rim0ok != rim1ok);
     // Mismatched-but-usable rims: rather than demote the whole face to the
     // contract floor (a tri soup), keep each rim's exact samples and absorb
     // the count difference in a transition strip. On an analytic revolution
@@ -9461,7 +9472,11 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
             for (int i = 1; i < nu && degenerate; ++i) {
                 degenerate = pts[i].Distance(pts[0]) <= 1e-9;
             }
-            if (degenerate) {
+            if (degenerate && sphereCapPole) {
+                // Suppress the pole vertex: its former fan band is skipped and
+                // the adjacent real ring is capped by one n-gon below.
+                ring[j].clear();
+            } else if (degenerate) {
                 ring[j].assign(nu,
                                out.addVertex(pts[0], {faceId, us[0], vs[0]}));
             } else {
@@ -9597,7 +9612,11 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
                     degenerate = false;
                 }
             }
-            if (degenerate) {
+            if (degenerate && sphereCapPole) {
+                // Suppress the pole vertex: its former fan band is skipped and
+                // the adjacent real ring is capped by one n-gon below.
+                ring[j].clear();
+            } else if (degenerate) {
                 ring[j].assign(nu, out.addVertex(pts[0], {faceId, colU[0], v}));
             } else {
                 ring[j].resize(nu);
@@ -9621,6 +9640,25 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
             if (quad.size() > 1 && quad.front() == quad.back()) quad.pop_back();
             if (quad.size() < 3) continue;
             out.addPolygon(std::move(quad), faceId, flip);
+        }
+    }
+
+    // Close each suppressed pole (single-rim sphere dome) with one n-gon over
+    // the innermost real ring, wound to match the lattice cells its fan band
+    // replaced: a low pole (row 0) fanned the ring in reverse, a high pole
+    // forward. The cleared pole ring left its band unmeshed above, so this is
+    // the only polygon spanning it — watertight, no pole vertex, one clean cap.
+    if (sphereCapPole) {
+        for (int j = 0; j < rows; ++j) {
+            if (!ring[j].empty()) continue;  // not a suppressed pole
+            const int jn = (j == 0) ? 1 : rows - 2;
+            if (jn < 0 || jn >= rows || int(ring[jn].size()) < 3) continue;
+            std::vector<uint32_t> cap = ring[jn];
+            if (j == 0) std::reverse(cap.begin(), cap.end());
+            cap.erase(std::unique(cap.begin(), cap.end()), cap.end());
+            if (cap.size() > 1 && cap.front() == cap.back()) cap.pop_back();
+            if (cap.size() < 3) continue;
+            out.addPolygon(std::move(cap), faceId, flip);
         }
     }
 
