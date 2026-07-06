@@ -5936,11 +5936,32 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
             proposeSet(plan.uEdges, nu, nu, adU, s, overridden);
             proposeSet(plan.vEdges, nv, nv, adV, s, overridden);
             // Chained Coons sides: every piece proposes on its own; the
-            // chain pass below reconciles opposite sides by sum.
+            // chain pass below reconciles opposite sides by sum. But a
+            // fillet's ACROSS side carries filletLoops as a CHAIN TOTAL,
+            // not per edge — a k-edge across chain proposing filletLoops on
+            // each piece would sum to k*filletLoops and mismatch the
+            // opposite (single-edge) across side, pentagonating the strip.
+            // Distribute the loop count over the across chain's pieces so
+            // both across sides carry the same total.
             for (int sd = 0; sd < 4; ++sd) {
-                for (int e : plan.coonsSides[sd]) {
-                    proposeSet({e}, sd % 2 == 0 ? nu : nv, 1,
-                               sd % 2 == 0 ? adU : adV, s, overridden);
+                const int sideTotal = sd % 2 == 0 ? nu : nv;
+                const bool adSide = sd % 2 == 0 ? adU : adV;
+                const std::vector<int>& sedges = plan.coonsSides[sd];
+                const bool acrossSide =
+                    plan.isFillet && ((plan.acrossIsU && sd % 2 == 0) ||
+                                      (!plan.acrossIsU && sd % 2 == 1));
+                if (acrossSide && sedges.size() > 1) {
+                    const int k = int(sedges.size());
+                    for (int i = 0; i < k; ++i) {
+                        const int share =
+                            sideTotal / k + (i < sideTotal % k ? 1 : 0);
+                        proposeSet({sedges[i]}, std::max(1, share), 1, false,
+                                   s, overridden);
+                    }
+                } else {
+                    for (int e : sedges) {
+                        proposeSet({e}, sideTotal, 1, adSide, s, overridden);
+                    }
                 }
             }
         } else if (plan.kind == MesherKind::AnnulusRing) {
