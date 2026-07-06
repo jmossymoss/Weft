@@ -8,6 +8,7 @@
 #include "weft/mesh.hpp"
 #include "weft/meshers.hpp"
 #include "weft/model.hpp"
+#include "weft/export_fbx.hpp"
 #include "weft/export_gltf.hpp"
 #include "weft/recipe.hpp"
 #include "weft/validate.hpp"
@@ -271,10 +272,19 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         return (s2.size() > 4 && s2.compare(s2.size() - 4, 4, ".glb") == 0) ||
                (s2.size() > 5 && s2.compare(s2.size() - 5, 5, ".gltf") == 0);
     };
+    auto isFbx = [](const std::string& s2) {
+        return s2.size() > 4 && s2.compare(s2.size() - 4, 4, ".fbx") == 0;
+    };
     auto exportMesh = [&](const weft::PolyMesh& m, const std::string& path) {
         if (isGlb(path)) {
             weft::writeGlb(m, path, noNormals ? nullptr : &model,
                            &analysis.solidFaces);
+        } else if (isFbx(path)) {
+            weft::FbxExportOptions fo;
+            fo.triangulate = objOpts.triangulate;
+            fo.yUp = objOpts.yUp;
+            fo.scale = objOpts.scale;
+            weft::writeFbx(m, path, fo);
         } else {
             weft::writeObj(m, path, &analysis.solidFaces, &objOpts);
         }

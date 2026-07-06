@@ -28,6 +28,8 @@
 
 #include "weft/analysis.hpp"
 #include "weft/edit.hpp"
+#include "weft/export_fbx.hpp"
+#include "weft/export_gltf.hpp"
 #include "weft/fixture.hpp"
 #include "weft/mesh.hpp"
 #include "weft/meshers.hpp"
@@ -583,7 +585,7 @@ struct App {
     float lightRim = 0.12f;
     // Smoothing-angle vertex normals (Blender auto-smooth style): faces
     // meeting under the angle shade smooth, harder creases stay sharp.
-    bool smoothShade = false;
+    bool smoothShade = true;
     float smoothAngleDeg = 30.0f;
     // Keybinds help panel (collapsed to a bottom-left prompt by default).
     bool showKeybinds = false;
@@ -627,6 +629,10 @@ struct App {
     // Fit-to-budget: target polygon count for the density-scale solver.
     int budgetTarget = 5000;
     // Export shaping for game engines.
+    int exportFormat = 0;  // 0 = OBJ, 1 = glTF (.glb), 2 = FBX
+    bool openExportPopup = false;
+    float vertSizeActive = 5.0f;    // px at 1x ui scale
+    float vertSizeInactive = 3.0f;
     bool exportTriangulate = false;
     bool exportYUp = false;
     float exportScale = 1.0f;
@@ -943,8 +949,8 @@ static void updateProblems(App& app) {
         ++app.foldedPolyCount;
         const auto& poly = app.mesh.polygons[p];
         for (size_t i = 0; i < poly.size(); ++i) {
-            pushEdge(poly[i], poly[(i + 1) % poly.size()], 1.0f, 0.65f,
-                     0.1f);  // orange
+            pushEdge(poly[i], poly[(i + 1) % poly.size()], 1.0f, 0.12f,
+                     0.12f);  // red outline
         }
     }
     app.problems.upload(lines);
@@ -1478,6 +1484,53 @@ static std::string tempDir() {
 #else
     return gDataDir.empty() ? "." : gDataDir;
 #endif
+}
+
+static void exportObjTo(App& app, const std::string& out);
+
+// Format dispatch by extension: the dialog seeds the right one, and a
+// hand-typed path still lands with the exporter it names.
+static void exportMeshTo(App& app, const std::string& out) {
+    std::string ext;
+    size_t dot = out.find_last_of('.');
+    if (dot != std::string::npos) {
+        ext = out.substr(dot + 1);
+        for (char& c : ext) c = char(std::tolower(c));
+    }
+    try {
+        if (ext == "glb" || ext == "gltf") {
+            // writeGlb bakes exact CAD normals; engine-space knobs
+            // apply to a transformed copy (glTF is Y-up by spec).
+            weft::PolyMesh copy = app.mesh;
+            for (auto& v : copy.vertices) {
+                double x = v[0] * app.exportScale;
+                double y = v[1] * app.exportScale;
+                double z = v[2] * app.exportScale;
+                if (app.exportYUp) {
+                    v = {x, z, -y};
+                } else {
+                    v = {x, y, z};
+                }
+            }
+            weft::writeGlb(copy, out,
+                           app.exportYUp || app.exportScale != 1.0f
+                               ? nullptr  // moved verts: recompute
+                               : &app.model,
+                           &app.analysis.solidFaces);
+            app.status = "exported " + out;
+        } else if (ext == "fbx") {
+            weft::FbxExportOptions fo;
+            fo.triangulate = app.exportTriangulate;
+            fo.yUp = app.exportYUp;
+            fo.scale = app.exportScale;
+            weft::writeFbx(app.mesh, out, fo);
+            app.status = "exported " + out;
+        } else {
+            exportObjTo(app, out);
+        }
+    } catch (const std::exception& e) {
+        app.status = std::string("export failed: ") + e.what();
+    }
 }
 
 static void exportObjTo(App& app, const std::string& out) {
@@ -2864,6 +2917,7 @@ static void drawOverlay(App& app) {
         bind("J", "bridge");
         bind("G", "grab vertex");
         bind("M", "weld selected verts (vert mode)");
+        bind("ctrl+E", "export dialog");
         bind("C / T / M", "cap / tris / minimal");
         bind("W / B", "wire / edges");
         bind("[ ]", "nudge counts");
@@ -2890,6 +2944,62 @@ static void drawOverlay(App& app) {
 // INSIDE the ImGui frame: popup calls in the pre-NewFrame input section
 // dereference a null current window the moment any other popup is open
 // (the right-click / shading-button crashes).
+
+// Export dialog: format + engine-space settings in one place, opened by
+// the Export button or ctrl+E (deferred: the key handler runs before
+// NewFrame where popup calls are illegal).
+static void drawExportPopup(App& app) {
+    if (app.openExportPopup) {
+        ImGui::OpenPopup("Export settings");
+        app.openExportPopup = false;
+    }
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
+                            ImGuiCond_Appearing, {0.5f, 0.5f});
+    if (ImGui::BeginPopupModal("Export settings", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        const char* formats[] = {"OBJ (.obj)", "glTF binary (.glb)",
+                                 "FBX (.fbx)"};
+        ImGui::SetNextItemWidth(200.0f * gUiScale);
+        ImGui::Combo("format", &app.exportFormat, formats, 3);
+        ImGui::Checkbox("triangulate", &app.exportTriangulate);
+        if (app.exportFormat == 1 && ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("glTF always triangulates");
+        }
+        ImGui::SameLine();
+        ImGui::Checkbox("Y up", &app.exportYUp);
+        ImGui::SetNextItemWidth(120.0f * gUiScale);
+        ImGui::DragFloat("unit scale", &app.exportScale, 0.001f, 0.0001f,
+                         1000.0f, "%.4g");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("0.001 = mm to metres (Unity/Blender)\n"
+                              "0.1 = mm to cm (Unreal)");
+        }
+        ImGui::Separator();
+        if (ImGui::Button("Export", {120.0f * gUiScale, 0})) {
+            const char* exts[] = {".obj", ".glb", ".fbx"};
+            std::string base = app.sourcePath;
+            size_t slash = base.find_last_of("/\\");
+            if (slash != std::string::npos) base = base.substr(slash + 1);
+            size_t dot = base.find_last_of('.');
+            if (dot != std::string::npos) base = base.substr(0, dot);
+            if (base.empty()) base = "weft";
+            std::string name = base + exts[app.exportFormat];
+            ImGui::CloseCurrentPopup();
+            std::string out = saveFileDialog(name.c_str());
+            if (!out.empty()) {
+                exportMeshTo(app, out);
+            } else if (gNoDialogTool) {
+                gBrowser.start(true, name.c_str());
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", {120.0f * gUiScale, 0})) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
 static void drawWeldPopup(App& app) {
     if (app.openWeldPopup) {
         ImGui::OpenPopup("weld verts");
@@ -3004,6 +3114,116 @@ static void drawFacePopup(App& app) {
     }
     if (ImGui::MenuItem("loop cut mode", "R")) app.mode = Mode::LoopCut;
     ImGui::EndPopup();
+}
+
+
+// Orientation gizmo under the shading bar: the three world axes drawn
+// from the camera's own basis. Clicking an axis ball snaps the view to
+// look down that axis; clicking it again flips to the opposite side.
+static void drawAxisGizmo(App& app) {
+    const float sz = 92.0f * gUiScale;
+    // Anchor to the CENTRAL 3D area (gViewMin/gViewMax), not the OS
+    // viewport — the Outliner docks at the right edge.
+    ImGui::SetNextWindowPos({gViewMax.x - 10.0f * gUiScale,
+                             gViewMin.y + 44.0f * gUiScale},
+                            ImGuiCond_Always, {1.0f, 0.0f});
+    ImGui::SetNextWindowBgAlpha(0.0f);
+    ImGui::Begin("##axisgizmo", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoFocusOnAppearing);
+    ImGui::InvisibleButton("##gizmoarea", {sz, sz});
+    const ImVec2 mn = ImGui::GetItemRectMin();
+    const ImVec2 c{mn.x + sz * 0.5f, mn.y + sz * 0.5f};
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    // Camera basis (z-up view, same as matLookAt/mouseRay).
+    Vec3 eye = app.cam.eye();
+    Vec3 f = norm(sub(app.cam.target, eye));
+    Vec3 s = norm(cross(f, {0, 0, 1}));
+    Vec3 u = cross(s, f);
+    struct Axis {
+        Vec3 dir;
+        ImU32 col;
+        const char* label;
+        float yaw, pitch;  // view that looks down this axis
+    };
+    const float hp = 1.55f;
+    const Axis axes[3] = {
+        {{1, 0, 0}, IM_COL32(235, 66, 78, 255), "X", 0.0f, 0.0f},
+        {{0, 1, 0}, IM_COL32(108, 202, 77, 255), "Y", 1.5708f, 0.0f},
+        {{0, 0, 1}, IM_COL32(72, 135, 240, 255), "Z", app.cam.yaw, hp},
+    };
+    const float R = sz * 0.36f;
+    struct Ball {
+        ImVec2 pos;
+        float depth;
+        ImU32 col;
+        const char* label;  // null on the negative end
+        float yaw, pitch;
+    };
+    std::vector<Ball> balls;
+    for (const Axis& a : axes) {
+        float sx = a.dir.x * s.x + a.dir.y * s.y + a.dir.z * s.z;
+        float sy = a.dir.x * u.x + a.dir.y * u.y + a.dir.z * u.z;
+        float dz = a.dir.x * f.x + a.dir.y * f.y + a.dir.z * f.z;
+        balls.push_back({{c.x + sx * R, c.y - sy * R}, dz, a.col,
+                         a.label, a.yaw, a.pitch});
+        balls.push_back({{c.x - sx * R, c.y + sy * R}, -dz, a.col,
+                         nullptr,
+                         a.label[0] == 'Z' ? a.yaw : a.yaw + 3.1416f,
+                         a.label[0] == 'Z' ? -hp : -a.pitch});
+    }
+    // Far side first so the near balls draw on top.
+    std::sort(balls.begin(), balls.end(),
+              [](const Ball& a, const Ball& b) { return a.depth > b.depth; });
+    for (const Ball& b : balls) {
+        if (b.label) {
+            dl->AddLine(c, b.pos, (b.col & 0x00ffffff) | 0xB0000000,
+                        1.6f * gUiScale);
+        }
+    }
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    const Ball* hit = nullptr;
+    for (const Ball& b : balls) {
+        const float r = (b.label ? 7.0f : 5.0f) * gUiScale;
+        const bool hov = ImGui::IsItemHovered() &&
+                         std::hypot(mouse.x - b.pos.x, mouse.y - b.pos.y) <
+                             r + 2.0f * gUiScale;
+        ImU32 col = b.depth <= 0.0f ? b.col
+                                    : (b.col & 0x00ffffff) | 0x66000000;
+        if (b.label) {
+            dl->AddCircleFilled(b.pos, r, col, 20);
+            dl->AddText({b.pos.x - 3.5f * gUiScale,
+                         b.pos.y - 6.5f * gUiScale},
+                        IM_COL32(15, 15, 18, 255), b.label);
+        } else {
+            dl->AddCircleFilled(b.pos, r,
+                                (b.col & 0x00ffffff) | 0x30000000, 16);
+            dl->AddCircle(b.pos, r, col, 16, 1.4f * gUiScale);
+        }
+        if (hov) {
+            dl->AddCircle(b.pos, r + 2.0f * gUiScale,
+                          IM_COL32(255, 255, 255, 180), 20,
+                          1.5f * gUiScale);
+            if (ImGui::IsMouseClicked(0)) hit = &b;
+        }
+    }
+    if (hit) {
+        // Clicking the axis you are already on flips to the far side.
+        const bool same = std::abs(app.cam.yaw - hit->yaw) < 0.05f &&
+                          std::abs(app.cam.pitch - hit->pitch) < 0.05f;
+        if (same) {
+            app.cam.yaw = hit->pitch == 0.0f ? hit->yaw + 3.1416f
+                                             : hit->yaw;
+            app.cam.pitch = -hit->pitch;
+        } else {
+            app.cam.yaw = hit->yaw;
+            app.cam.pitch = hit->pitch;
+        }
+    }
+    ImGui::End();
 }
 
 // Blender-style viewport shading controls: a compact button row pinned to
@@ -3274,19 +3494,8 @@ static void drawUi(App& app) {
     ImGui::TextDisabled("b-rep retopology");
     ImGui::Separator();
     drawShadingBar(app);
+    drawAxisGizmo(app);
 
-    // The Model section matters until a model is in; once one loads it
-    // auto-collapses ONCE so the working sections get the panel height —
-    // the user can reopen it any time.
-    {
-        static bool collapsedAfterLoad = false;
-        if (app.hasModel && !collapsedAfterLoad) {
-            ImGui::SetNextItemOpen(false);
-            collapsedAfterLoad = true;
-        } else if (!app.hasModel) {
-            collapsedAfterLoad = false;
-        }
-    }
     if (ImGui::CollapsingHeader("Model", ImGuiTreeNodeFlags_DefaultOpen)) {
         if (ImGui::Button("Open STEP...", {-1, 0})) {
             std::string p = openFileDialog();
@@ -3339,38 +3548,13 @@ static void drawUi(App& app) {
                 }
             }
         }
-        if (app.hasModel) {
-            ImGui::Checkbox("triangulate", &app.exportTriangulate);
-            ImGui::SameLine();
-            ImGui::Checkbox("Y up", &app.exportYUp);
-            ImGui::SetNextItemWidth(90.0f * gUiScale);
-            ImGui::DragFloat("unit scale", &app.exportScale, 0.001f, 0.0001f,
-                             1000.0f, "%.4g");
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("0.001 = mm to metres (Unity/Blender)\n"
-                                  "0.1 = mm to cm (Unreal)");
-            }
-        }
-        if (app.hasModel && ImGui::Button("Export OBJ...", {-1, 0})) {
-            // Default name: the source file with .obj — one group per
-            // B-rep face, so CAD face IDs survive into Blender.
-            std::string base = app.sourcePath;
-            size_t slash = base.find_last_of("/\\");
-            if (slash != std::string::npos) base = base.substr(slash + 1);
-            size_t dot = base.find_last_of('.');
-            if (dot != std::string::npos) base = base.substr(0, dot);
-            if (base.empty()) base = "weft";
-            std::string out = saveFileDialog((base + ".obj").c_str());
-            if (!out.empty()) {
-                exportObjTo(app, out);
-            } else if (gNoDialogTool) {
-                gBrowser.start(true, (base + ".obj").c_str());
-            }
+        if (app.hasModel && ImGui::Button("Export...  (ctrl+E)", {-1, 0})) {
+            app.openExportPopup = true;
         }
         if (!gBrowser.picked.empty() && gBrowser.saveMode) {
             std::string out = std::move(gBrowser.picked);
             gBrowser.picked.clear();
-            exportObjTo(app, out);
+            exportMeshTo(app, out);
         }
         ImGui::TextWrapped("%s", app.status.c_str());
     }
@@ -3392,7 +3576,7 @@ static void drawUi(App& app) {
             ImGui::Checkbox("show##problems", &app.showProblems);
         }
         if (app.foldedPolyCount > 0) {
-            ImGui::TextColored({1.0f, 0.65f, 0.15f, 1.0f},
+            ImGui::TextColored({1.0f, 0.25f, 0.2f, 1.0f},
                                "%d folded cell(s)", app.foldedPolyCount);
             if (app.openEdgeCount == 0 && app.multiEdgeCount == 0) {
                 ImGui::SameLine();
@@ -3411,8 +3595,33 @@ static void drawUi(App& app) {
         float ds = float(app.recipe.settings.densityScale);
         if (ImGui::SliderFloat("density scale", &ds, 0.25f, 4.0f, "%.2fx",
                                ImGuiSliderFlags_Logarithmic)) {
-            app.recipe.settings.densityScale = ds;
+            // The slider covers the everyday range; typed entry
+            // (ctrl+click or double-click) reaches the full one.
+            app.recipe.settings.densityScale =
+                std::clamp(double(ds), 0.05, 20.0);
             markDirty(app);
+        }
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+            ImGui::OpenPopup("density value");
+        }
+        if (ImGui::BeginPopup("density value")) {
+            static float typed = 1.0f;
+            if (ImGui::IsWindowAppearing()) {
+                typed = float(app.recipe.settings.densityScale);
+                ImGui::SetKeyboardFocusHere();
+            }
+            ImGui::SetNextItemWidth(90.0f * gUiScale);
+            if (ImGui::InputFloat("##densityexact", &typed, 0, 0,
+                                  "%.3f",
+                                  ImGuiInputTextFlags_EnterReturnsTrue)) {
+                app.recipe.settings.densityScale =
+                    std::clamp(double(typed), 0.05, 20.0);
+                markDirty(app);
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("0.05 .. 20");
+            ImGui::EndPopup();
         }
         // Fit-to-budget: secant search on the scale knob (poly count is
         // roughly quadratic in linear density) until within 5%.
@@ -3429,7 +3638,7 @@ static void drawUi(App& app) {
                 if (err < 0.05) break;
                 double next = app.recipe.settings.densityScale *
                               std::sqrt(target / P);
-                next = std::clamp(next, 0.25, 4.0);
+                next = std::clamp(next, 0.05, 20.0);
                 if (std::abs(next - app.recipe.settings.densityScale) <
                     1e-3) {
                     break;
@@ -3553,6 +3762,13 @@ static void drawUi(App& app) {
         ImGui::SameLine();
         ImGui::Checkbox("feature edges", &app.showBrepEdges);
         ImGui::Checkbox("show folded cells", &app.showProblems);
+        ImGui::SetNextItemWidth(110.0f * gUiScale);
+        ImGui::SliderFloat("vert size (active)", &app.vertSizeActive,
+                           1.0f, 12.0f, "%.0f px");
+        ImGui::SetNextItemWidth(110.0f * gUiScale);
+        ImGui::SliderFloat("vert size (inactive)",
+                           &app.vertSizeInactive, 1.0f, 12.0f,
+                           "%.0f px");
         if (ImGui::Checkbox("smooth shading", &app.smoothShade)) {
             rebuildBuffers(app);
         }
@@ -4266,6 +4482,10 @@ int main(int argc, char** argv) {
                 } catch (const std::exception& e) {
                     app.status = std::string("save failed: ") + e.what();
                 }
+            }
+            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_E, false) &&
+                app.hasModel) {
+                app.openExportPopup = true;  // dialog drawn in-frame
             }
             if (io.KeyCtrl && !shift &&
                 ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
@@ -5031,6 +5251,7 @@ int main(int argc, char** argv) {
         drawGenProgress(app);
         drawFacePopup(app);
         drawWeldPopup(app);
+        drawExportPopup(app);
         ImGui::Render();
 
         glViewport(0, 0, fbw, fbh);
@@ -5170,7 +5391,7 @@ int main(int argc, char** argv) {
             // The whole cage: small dark points, depth-tested so only
             // front-facing verts show (the fill's polygon offset keeps
             // them from z-fighting their own surface).
-            glPointSize(3.0f * gUiScale);
+            glPointSize(app.vertSizeInactive * gUiScale);
             glUniform1f(uMix, 1.0f);
             const float dark[3] = {0.03f, 0.03f, 0.04f};
             glUniform3fv(uColor, 1, dark);
@@ -5182,7 +5403,7 @@ int main(int argc, char** argv) {
             (app.showVerts || app.selectMode == SelectMode::Vert) &&
             app.verts.count) {
             glDisable(GL_DEPTH_TEST);
-            glPointSize(5.0f * gUiScale);
+            glPointSize(app.vertSizeActive * gUiScale);
             glUniform1f(uMix, 1.0f);
             glUniform3fv(uColor, 1, app.vertColor);
             glBindVertexArray(app.verts.vao);
