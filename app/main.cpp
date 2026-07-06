@@ -1688,14 +1688,22 @@ static std::string adjustFaceDensityOne(App& app, weft::FaceMeshSettings& s,
         if (it != app.report.faceMesher.end()) kind = it->second;
     }
     char hud[64] = "";
-    auto count = [&](int& v, int lo, const char* name,
-                     bool manual = true) {
+    // The counts the face was actually meshed at — the honest starting
+    // point when the wheel leaves adaptive (nu -> radial/grid u, nv ->
+    // axial/grid v).
+    const std::array<int, 2> live = faceSolvedCounts(app, app.activeFace);
+    auto count = [&](int& v, int lo, const char* name, int liveSeed) {
+        // Scrolling a count IS choosing manual density — always leave
+        // adaptive. A PER-FACE adapt-off is safe (the shared borders are
+        // held by the adaptive neighbours, so a coons face doesn't
+        // collapse — only a model-wide adapt-off does). Seed from the
+        // live solved value first so the wheel starts at the number on
+        // screen, not a stale default below the adaptive floor.
+        if (s.adaptive) {
+            if (liveSeed > 0) v = std::max(v, liveSeed);
+            s.adaptive = false;
+        }
         v = std::max(lo, v + steps);
-        // Explicit count = manual — but ONLY for meshers this count
-        // actually drives. Coons floors coexist with adaptive borders;
-        // killing adaptive there pins every border to the flat default
-        // and the face collapses to a handful of giant polys.
-        if (manual) s.adaptive = false;
         std::snprintf(hud, sizeof hud, "%s: %d", name, v);
     };
     // Pinned totals coexist with adaptive density — don't clear it.
@@ -1718,18 +1726,18 @@ static std::string adjustFaceDensityOne(App& app, weft::FaceMeshSettings& s,
     switch (kind) {
         case MK::RevolutionGrid:
         case MK::DiskCap:
-            if (secondary) count(s.axial, 1, "axial");
-            else count(s.radial, 3, "radial");
+            if (secondary) count(s.axial, 1, "axial", live[1]);
+            else count(s.radial, 3, "radial", live[0]);
             break;
         case MK::RingJunction:
-            if (secondary) count(s.junctionRings, 1, "junction rings");
-            else count(s.gridU, 1, "grid u");
+            if (secondary) count(s.junctionRings, 1, "junction rings", 0);
+            else count(s.gridU, 1, "grid u", live[0]);
             break;
         case MK::AnnulusRing:
-            count(s.radial, 3, "loop verts");
+            count(s.radial, 3, "loop verts", live[0]);
             break;
         case MK::PlateWeb:
-            if (secondary) count(s.junctionRings, 1, "collar rings");
+            if (secondary) count(s.junctionRings, 1, "collar rings", 0);
             else total(s.boundary, "boundary verts");
             break;
         case MK::QuadFill:
@@ -1748,11 +1756,8 @@ static std::string adjustFaceDensityOne(App& app, weft::FaceMeshSettings& s,
             }
             break;
         default:  // PlanarGrid, CoonsGrid
-            if (secondary) {
-                count(s.gridV, 1, "grid v", kind != MK::CoonsGrid);
-            } else {
-                count(s.gridU, 1, "grid u", kind != MK::CoonsGrid);
-            }
+            if (secondary) count(s.gridV, 1, "grid v", live[1]);
+            else count(s.gridU, 1, "grid u", live[0]);
             break;
     }
     return hud;
