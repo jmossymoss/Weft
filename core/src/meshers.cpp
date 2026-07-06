@@ -3306,7 +3306,7 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
                    const std::vector<int>& solvedEdge, MeshBuilder& out,
                    const std::vector<std::vector<int>>* inserts = nullptr,
                    int collarRings = 1,
-                   const PinnedEdges* pins = nullptr) {
+                   const PinnedEdges* pins = nullptr, int cellCap = 0) {
     if (!inserts || inserts->empty()) {
         return meshCoonsGridBody(face, model, faceId, uParams, vParams,
                                  rotate, solvedEdge, out, nullptr, nullptr,
@@ -3502,6 +3502,18 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
     for (int attempt = 0; attempt < 5; ++attempt) {
         std::vector<double> uFr = scaffoldFor(attempt, true);
         std::vector<double> vFr = scaffoldFor(attempt, false);
+        // Pathology guard: the scaffold doubling that separates close bores
+        // grows geometrically. Once it would blow the face's area-share
+        // cell budget it has stopped being real detail — stop densifying
+        // and let the face demote to the border-exact contract floor
+        // rather than ship tens of thousands of cells one face wide.
+        if (cellCap > 0 &&
+            double(uFr.size() - 1) * double(vFr.size() - 1) >
+                double(cellCap)) {
+            dbg("coons cutout %d: attempt %d over budget (%zux%zu > %d)",
+                faceId, attempt, uFr.size() - 1, vFr.size() - 1, cellCap);
+            break;
+        }
         const std::vector<double>* uSc =
             int(uFr.size()) > nU + 1 ? &uFr : nullptr;
         const std::vector<double>* vSc =
@@ -5888,7 +5900,9 @@ bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     // across the face — worse than a denser grid. Densify until the
     // kept cells actually cover the face (floored at border spacing;
     // when both directions are already there, this is one pass).
-    for (int attempt = 0;; ++attempt) {
+    // Build the grid at the current hu/hv: fill nx/ny/u0/v0/keep and
+    // return the number of kept (emitted) cells.
+    auto buildGrid = [&]() -> int {
         nx = std::max(1, int((iu1 - iu0) / hu));
         ny = std::max(1, int((iv1 - iv0) / hv));
         // Center the grid in the inset box so border cells get equal
@@ -5949,12 +5963,31 @@ bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                 }
             }
         }
-        const double coverage = kept * hu * hv / faceArea;
+        return kept;
+    };
+    int keptCells = 0;
+    for (int attempt = 0;; ++attempt) {
+        keptCells = buildGrid();
+        const double coverage = keptCells * hu * hv / faceArea;
         const bool canShrink =
             hu > 1.05 * huBorder || hv > 1.05 * hvBorder;
         if (coverage >= 0.45 || !canShrink || attempt >= 4) break;
         hu = std::max(huBorder, hu / 1.7);
         hv = std::max(hvBorder, hv / 1.7);
+    }
+    // Per-face pathology guard on ACTUAL emitted cells (fs.cellCap): an
+    // offset surface whose fine border/curvature drove the interior far
+    // past its area-share budget gets coarsened until it fits. A sane
+    // face exits the loop above already under its budget and never
+    // enters here, so its grid — and output — is byte-for-byte unchanged.
+    if (fs.cellCap > 0) {
+        for (int guard = 0;
+             keptCells > fs.cellCap && (nx > 1 || ny > 1) && guard < 48;
+             ++guard) {
+            hu = std::min(iu1 - iu0, hu * 1.3);
+            hv = std::min(iv1 - iv0, hv * 1.3);
+            keptCells = buildGrid();
+        }
     }
     auto cornerUV = [&](int i, int j) {
         return gp_Pnt2d(u0 + i * hu, v0 + j * hv);
@@ -11532,6 +11565,50 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         }
     }
 
+    // Per-face pathology guard (see FaceMeshSettings::cellCap). A face's
+    // cell count should track its surface area; a face carrying far more
+    // cells than its area-share of the model is a sizing pathology, not
+    // detail. Cap total cells at a generous multiple of the face's fair
+    // area-share of a reference global budget, scaled by the density dial
+    // (mesh cell area ~ 1/density^2, so the cell budget scales as
+    // density^2). Floored so a small high-curvature face keeps its detail
+    // and never trips the guard; the guard only ever bites gross outliers.
+    std::vector<int> faceCellCap(faceN + 1, 0);
+    {
+        // Reference whole-model cell budget at density 1.0: a face's fair
+        // ceiling is its area-share of this, so only a genuinely large
+        // face is allowed a large grid. Deliberately generous (~2x a
+        // Plasticity-parity model's total) — it is a pathology guard, not
+        // a density target. Cells scale with 1/spacing^2, so the budget
+        // scales with density^2. Floored so a small high-curvature face
+        // keeps its detail and never trips the guard; big faces scale past
+        // the floor by area. Both bounds verified to leave every fixture
+        // and board face byte-identical (guard bites only gross outliers).
+        const double kBudget = 26000.0;
+        const double kFloor = 1200.0;
+        const double dsc = std::clamp(settings.densityScale, 0.05, 20.0);
+        std::vector<double> faceArea(faceN + 1, 0.0);
+        double modelArea = 0.0;
+        for (int fid = 1; fid <= faceN; ++fid) {
+            try {
+                GProp_GProps gp;
+                BRepGProp::SurfaceProperties(TopoDS::Face(model.faces(fid)),
+                                             gp);
+                faceArea[fid] = std::max(0.0, gp.Mass());
+            } catch (const Standard_Failure&) {
+            }
+            modelArea += faceArea[fid];
+        }
+        if (modelArea > 1e-12) {
+            for (int fid = 1; fid <= faceN; ++fid) {
+                const double frac = faceArea[fid] / modelArea;
+                const double cap = kBudget * dsc * dsc * frac;
+                faceCellCap[fid] =
+                    (int)std::clamp(cap, kFloor, 1.0e8);
+            }
+        }
+    }
+
     // Cache keys: everything that shapes a face's part. A hit skips the
     // (expensive) meshing entirely and reuses the stored part.
     std::vector<std::string> cacheKey(faceN + 1);
@@ -11817,7 +11894,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     };
 
     auto meshFace = [&](int fid) {
-        const FaceMeshSettings& s = settings.forFace(fid);
+        // Copy (not ref): inject this face's pathology-guard cell ceiling,
+        // computed from area vs. the model above. Downstream qs/fsD copies
+        // inherit it, so every interior densifier sees the same budget.
+        FaceMeshSettings s = settings.forFace(fid);
+        s.cellCap = faceCellCap[fid];
         if (s.exclude) return;
         const TopoDS_Face face = TopoDS::Face(model.faces(fid));
         const FacePlan& plan = plans.at(fid);
@@ -11932,8 +12013,39 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         solvedEdge, out,
                         plan.insertWires.empty() ? nullptr
                                                  : &plan.insertWires,
-                        std::max(0, s.junctionRings), &pinnedEdge)) {
-                    demote(fid, face, surf, s, "coons failed");
+                        std::max(0, s.junctionRings), &pinnedEdge,
+                        s.cellCap)) {
+                    // A coons cutout that only resolves its bores by
+                    // blowing the cell budget (the hole-scaffold pathology)
+                    // gets the structured quad-fill grid instead: a clean
+                    // quad interior with CDT-webbed holes at the same
+                    // pathology cap, far tidier than the contract-floor
+                    // fans. The demote stays the last resort. Gated on
+                    // cellCap>0 so a face that would have failed anyway
+                    // (guard off) takes the exact historical demote path.
+                    bool built = false;
+                    if (s.cellCap > 0 && !plan.insertWires.empty()) {
+                        parts[fid] = PolyMesh();
+                        MeshBuilder qf(parts[fid]);
+                        FaceMeshSettings qs = s;
+                        const double qsc =
+                            std::clamp(settings.densityScale, 0.05, 20.0);
+                        if (qsc != 1.0) {
+                            qs.chordTolerance /= qsc * qsc;
+                            qs.angleToleranceDeg = std::clamp(
+                                qs.angleToleranceDeg / qsc, 1.0, 60.0);
+                        }
+                        if (meshQuadFill(face, surf, model, fid, solvedEdge,
+                                         s.radial, qs, qf)) {
+                            if (!s.pureTriFloor) pairPartTris(parts[fid]);
+                            built = borderContractViolation(
+                                        fid, parts[fid]) == 0;
+                        }
+                        if (!built) parts[fid] = PolyMesh();
+                    }
+                    if (!built) {
+                        demote(fid, face, surf, s, "coons failed");
+                    }
                 }
                 break;
             }
