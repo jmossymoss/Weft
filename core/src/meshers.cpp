@@ -9474,6 +9474,103 @@ double quadAngleCost(const std::array<gp_Pnt, 4>& q) {
     return cost;
 }
 
+// Pair adjacent triangles of a part into quads (the same greedy-by-angle
+// move the fallback floor uses). Only interior diagonals merge — a border
+// edge is on the outline and belongs to ONE triangle, so it is never a
+// merge candidate, and the outline plus every weld contract stay bit-
+// identical. A reflex or badly skewed merge is rejected by the cost
+// cutoff, so no folded quad ships. This lifts quad-fill's CDT rim from a
+// triangle fan to quad-dominant flow without touching the interior grid
+// (already quads) or moving a single vertex.
+void pairPartTris(PolyMesh& part) {
+    auto p3 = [&](uint32_t v) {
+        return gp_Pnt(part.vertices[v][0], part.vertices[v][1],
+                      part.vertices[v][2]);
+    };
+    auto ekey = [](uint32_t a, uint32_t b) {
+        return (uint64_t(std::min(a, b)) << 32) | std::max(a, b);
+    };
+    std::vector<std::array<uint32_t, 3>> tris;
+    std::vector<int> triFace;
+    std::vector<std::vector<uint32_t>> keep;
+    std::vector<int> keepFace;
+    for (size_t i = 0; i < part.polygons.size(); ++i) {
+        const int fid =
+            i < part.polygonFaceId.size() ? part.polygonFaceId[i] : -1;
+        if (part.polygons[i].size() == 3) {
+            tris.push_back({part.polygons[i][0], part.polygons[i][1],
+                            part.polygons[i][2]});
+            triFace.push_back(fid);
+        } else {
+            keep.push_back(part.polygons[i]);
+            keepFace.push_back(fid);
+        }
+    }
+    if (tris.size() < 2) return;
+    // Edge -> the (up to two) triangles that share it. An edge touched by
+    // three triangles is non-manifold input; leave those out of pairing.
+    std::map<uint64_t, std::array<int, 2>> em;
+    std::set<uint64_t> tooMany;
+    for (size_t t = 0; t < tris.size(); ++t) {
+        for (int i = 0; i < 3; ++i) {
+            const uint64_t k = ekey(tris[t][i], tris[t][(i + 1) % 3]);
+            auto& e = em.emplace(k, std::array<int, 2>{-1, -1}).first->second;
+            if (e[0] < 0) e[0] = int(t);
+            else if (e[1] < 0) e[1] = int(t);
+            else tooMany.insert(k);
+        }
+    }
+    struct Cand {
+        double cost;
+        int t1, t2;
+        std::array<uint32_t, 4> ring;
+    };
+    std::vector<Cand> cands;
+    for (const auto& [key, e] : em) {
+        if (e[1] < 0 || tooMany.count(key)) continue;
+        const int t1 = e[0], t2 = e[1];
+        if (triFace[t1] != triFace[t2]) continue;
+        const uint32_t p = uint32_t(key >> 32), q = uint32_t(key);
+        uint32_t P = p, Q = q;
+        bool fwd = false;
+        for (int i = 0; i < 3; ++i) {
+            if (tris[t1][i] == p && tris[t1][(i + 1) % 3] == q) fwd = true;
+        }
+        if (!fwd) std::swap(P, Q);
+        uint32_t c = 0, d = 0;
+        for (uint32_t v : tris[t1]) if (v != p && v != q) c = v;
+        for (uint32_t v : tris[t2]) if (v != p && v != q) d = v;
+        const std::array<uint32_t, 4> ring{P, d, Q, c};
+        const double cost = quadAngleCost(
+            {p3(ring[0]), p3(ring[1]), p3(ring[2]), p3(ring[3])});
+        if (cost > 1e8) continue;
+        cands.push_back({cost, t1, t2, ring});
+    }
+    std::sort(cands.begin(), cands.end(),
+              [](const Cand& a, const Cand& b) { return a.cost < b.cost; });
+    std::vector<char> used(tris.size(), 0);
+    std::vector<std::vector<uint32_t>> polys;
+    std::vector<int> polyFace;
+    for (const Cand& cd : cands) {
+        if (used[cd.t1] || used[cd.t2]) continue;
+        used[cd.t1] = used[cd.t2] = 1;
+        polys.push_back(
+            {cd.ring[0], cd.ring[1], cd.ring[2], cd.ring[3]});
+        polyFace.push_back(triFace[cd.t1]);
+    }
+    for (size_t t = 0; t < tris.size(); ++t) {
+        if (used[t]) continue;
+        polys.push_back({tris[t][0], tris[t][1], tris[t][2]});
+        polyFace.push_back(triFace[t]);
+    }
+    for (size_t i = 0; i < keep.size(); ++i) {
+        polys.push_back(std::move(keep[i]));
+        polyFace.push_back(keepFace[i]);
+    }
+    part.polygons = std::move(polys);
+    part.polygonFaceId = std::move(polyFace);
+}
+
 // Last resort for trimmed/freeform faces: OCCT chord-tolerance
 // triangulation, optionally paired into quads. Pairing is greedy over a
 // quality score that prefers near-rectangular quads whose edges follow the
@@ -10954,6 +11051,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 if (!meshQuadFill(face, surf, model, fid, solvedEdge,
                                   s.radial, qs, out)) {
                     demote(fid, face, surf, s, "quad fill failed");
+                } else if (!s.pureTriFloor) {
+                    // Lift the CDT rim from a tri fan into quad-dominant
+                    // flow: merge adjacent rim triangles into quads. Border
+                    // edges are single-tri, so the outline never moves.
+                    pairPartTris(parts[fid]);
                 }
                 break;
             }
