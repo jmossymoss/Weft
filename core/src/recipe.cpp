@@ -103,6 +103,12 @@ void saveRecipe(const Recipe& recipe, const std::string& path) {
             // (u,v,t) hold the world-space midpoint of the seed edge.
             out << "op dissolve " << op.u << " " << op.v << " " << op.t
                 << "\n";
+        } else if (op.kind == ManualOp::Kind::WeldVerts) {
+            out << "op weld " << op.weldMode << " " << op.weldPoints.size();
+            for (const auto& q : op.weldPoints) {
+                out << " " << q[0] << " " << q[1] << " " << q[2];
+            }
+            out << "\n";
         } else {
             out << "op loop " << op.faceId << " " << op.u << " " << op.v
                 << " " << op.t << "\n";
@@ -185,6 +191,19 @@ Recipe loadRecipe(const std::string& path) {
                     if (!ss) {
                         throw std::runtime_error("malformed op dissolve");
                     }
+                } else if (opKind == "weld") {
+                    op.kind = ManualOp::Kind::WeldVerts;
+                    size_t count = 0;
+                    ss >> op.weldMode >> count;
+                    if (!ss || count > 1000000) {
+                        throw std::runtime_error("malformed op weld");
+                    }
+                    for (size_t k = 0; k < count; ++k) {
+                        std::array<double, 3> q{};
+                        ss >> q[0] >> q[1] >> q[2];
+                        op.weldPoints.push_back(q);
+                    }
+                    if (!ss) throw std::runtime_error("malformed op weld");
                 } else {
                     throw std::runtime_error("unknown op: " + opKind);
                 }
