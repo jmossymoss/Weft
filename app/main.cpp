@@ -2667,6 +2667,21 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
             s.gridV = std::max(s.gridV, live[1]);
         }
     }
+    // Per-face weld tolerance (mm, 0 = inherit the global). Governs how
+    // loosely this face's boundary welds onto its neighbours; a shared
+    // edge welds at the looser of the two faces (and the global), so
+    // raising it on ONE side closes that junction. Shown for every kind:
+    // an analytic face's value still loosens its freeform neighbour's
+    // border onto it.
+    {
+        float wt = float(s.weldTolerance);
+        if (ImGui::DragFloat("weld tol (0=global)", &wt, 0.0005f, 0.0f, 1.0f,
+                             "%.5f", ImGuiSliderFlags_Logarithmic)) {
+            s.weldTolerance = std::max(0.0, double(wt));
+            ch = true;
+        }
+        hover({kAllKinds});
+    }
     if (freeform || s.adaptive) {
         if (all) ImGui::TextDisabled("freeform / imported surfaces");
         float dev = float(s.chordTolerance);
@@ -3840,6 +3855,23 @@ static void drawUi(App& app) {
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("solve density scale toward the target\n"
                               "polygon count (a few regenerations)");
+        }
+        // Global weld tolerance (mm): how far apart coincident border
+        // verts may sit and still fuse. The everyday floor is 1e-6;
+        // raising it closes seams on sloppy CAD / off-curve fallback
+        // borders. Per-face overrides (in the face panel) win when looser.
+        float wt = float(app.recipe.settings.weldTolerance);
+        if (ImGui::SliderFloat("weld tol (mm)", &wt, 1e-6f, 1.0f, "%.5f",
+                               ImGuiSliderFlags_Logarithmic)) {
+            app.recipe.settings.weldTolerance =
+                std::clamp(double(wt), 1e-6, 1.0);
+            markDirty(app);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("global weld tolerance: fuse border verts\n"
+                              "within this distance (mm). Clamped to the\n"
+                              "local feature size so it can't collapse\n"
+                              "real geometry.");
         }
         ImGui::Separator();
         ImGui::TextDisabled("defaults (live)");
