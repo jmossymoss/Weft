@@ -522,3 +522,26 @@ Known residuals:
   CLI .fbx by extension, XYZ view gizmo (gViewMin/gViewMax-anchored),
   smooth shading default, red fold outlines, Model open at launch,
   vert size sliders, density scale typed entry to [0.05, 20].
+
+## Session ledger — Plasticity-parity round 1
+Reference bar extracted from the user's Plasticity export (probe scripts
+in scratchpad): ~11°/segment circumferential pitch at ANY radius; ZERO
+interior rows on straight ruled sections (47:1 aspect quads shipped);
+rows only at feature z-extents / blend curvature; features absorb into
+ONE adjacent column as n-gons (≤2% tris); columns end ON rim verts
+(rim count == column count); planar faces = single giant n-gons.
+Landed:
+- Override collapse fix (c8e6ed7): kind-aware adaptive flip + boundary
+  totals seeded from live solved outer-loop totals.
+- Insert web folds (2f62dbe): hole boxes bound the web's own solved-
+  count/phase samples + 4% v-pad → strict annulus webs. slotted 0
+  folds, mohne 5→0, weldment 16→7.
+- Quad-fill anisotropy (91fe2a3): per-direction iso-curve sizing under
+  the face budget; ruled direction = 1 row; margins capped at border
+  spacing; inset grid box; probe clamp. Flaregun 8699→5778 polys,
+  barrel walls 1101→69 / 1059→77, zero folds.
+In flight: OPEN revolution bands (partial-wrap cylinders with
+castellated rims — flaregun barrel class) for true columns-to-rims
+topology; worktree agent implementing plan.bandSides routing +
+meshRevolutionGrid open-u mode. MERGE CAUTION: meshRevolutionInsert
+was edited on main after the worktree branched (insert-box sampling).
