@@ -8451,8 +8451,8 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
         };
         if (rowDegenerate(v0) && rowDegenerate(v1)) nv = 2;
     }
-    const double dv = (v1 - v0) / nv;
-    const int rows = vWrap ? nv : nv + 1;
+    double dv = (v1 - v0) / nv;
+    int rows = vWrap ? nv : nv + 1;
     auto rowV = [&](int j) {
         return vRows ? (*vRows)[std::min<size_t>(j, vRows->size() - 1)]
                      : v0 + j * dv;
@@ -8568,10 +8568,82 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
     }
     dbg("revgrid face %d: nu=%d nv=%d rims=%d/%d wrap=%d rimEdges=%zu",
         faceId, nu, nv, nRim0, nRim1, vWrap ? 1 : 0, rimEdges.size());
+    // Mismatched-but-usable rims: rather than demote the whole face to the
+    // contract floor (a tri soup), keep each rim's exact samples and absorb
+    // the count difference in a transition strip. On an analytic revolution
+    // surface (cylinder/cone/torus) the interior is a straight-column grid
+    // whose columns are rulings and emitClosedStrip bridges each rim to it
+    // (the non-chained path below). This only holds where the band is tall
+    // enough that the strip cells stay convex; on a THIN tube the strip
+    // degenerates into folded lunes (the case this bail originally guarded),
+    // so measure the band height against the rim's azimuthal chord and fall
+    // back to the floor when too thin.
+    bool stripReconcile = false;
     if (rim0ok && rim1ok && nRim0 != nRim1) {
-        dbg("revgrid face %d: rim totals %d/%d irreconcilable", faceId,
+        const GeomAbs_SurfaceType st = surf.GetType();
+        const bool analyticRev = st == GeomAbs_Cylinder ||
+                                 st == GeomAbs_Cone || st == GeomAbs_Torus;
+        if (analyticRev) {
+            const double u0i = surf.FirstUParameter();
+            double bandH = 0;
+            for (int i = 0; i < 12; ++i) {
+                double u = u0i + period * i / 12.0;
+                bandH += surf.Value(u, v0).Distance(surf.Value(u, v1));
+            }
+            bandH /= 12.0;
+            auto meanChord = [&](const std::vector<RimPt>& R) {
+                if (R.size() < 2) return 1e300;
+                double s = 0;
+                for (size_t i = 0; i < R.size(); ++i) {
+                    s += R[i].p.Distance(R[(i + 1) % R.size()].p);
+                }
+                return s / R.size();
+            };
+            auto vRange = [&](const std::vector<RimPt>& R) {
+                double lo = 1e300, hi = -1e300;
+                for (const RimPt& r : R) {
+                    lo = std::min(lo, r.v);
+                    hi = std::max(hi, r.v);
+                }
+                return hi - lo;
+            };
+            // The transition triangle at each extra dense sample rises the
+            // band height over half a rim chord (the widest pairing gap);
+            // it stays convex while the band is a fair fraction of that.
+            const double reach =
+                0.5 * std::max(meanChord(rim[0]), meanChord(rim[1]));
+            // Only the SPARSER rim takes a transition strip — the denser
+            // rim drives the interior azimuth and welds to it one-to-one.
+            // A strip over a WAVY rim folds (its cells shear past each
+            // other, the case this bail guarded on drilled bores), so the
+            // sparser rim must be essentially flat in v; the denser rim may
+            // wave freely. Both wavy => genuinely irreconcilable, bail.
+            const double sparseVr =
+                nRim0 <= nRim1 ? vRange(rim[0]) : vRange(rim[1]);
+            const double flatTol = std::max(1e-6, 0.02 * bandH);
+            stripReconcile = bandH >= 0.35 * reach && sparseVr <= flatTol;
+        }
+        if (!stripReconcile) {
+            dbg("revgrid face %d: rim totals %d/%d irreconcilable", faceId,
+                nRim0, nRim1);
+            return false;
+        }
+        dbg("revgrid face %d: rim totals %d/%d -> transition strip", faceId,
             nRim0, nRim1);
-        return false;
+        // Interior azimuthal count equals the denser rim's: its columns sit
+        // at that rim's own azimuths, so the busy rim welds to the interior
+        // through a clean one-to-one lattice (quads) and only the sparser
+        // rim needs a transition strip.
+        nu = std::max(nRim0, nRim1);
+        // The strip design bridges EACH rim to an interior ring; with
+        // nv==1 there is no interior and the two mismatched rims would
+        // bridge directly, twisting where their samples don't line up.
+        // Force at least one interior row.
+        if (!vWrap && !vRows && nv < 2) {
+            nv = 2;
+            dv = (v1 - v0) / nv;
+            rows = nv + 1;
+        }
     }
 
     std::vector<std::vector<uint32_t>> ring(rows);
@@ -8694,13 +8766,97 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
         }
     }
     std::vector<double> ringU[2];  // rim-row u positions (bridge path)
+    std::vector<double> colU;      // interior column azimuths (bridge path)
     if (!chained) {
         const double du = period / nu;
         const double u0 = surf.FirstUParameter();
+        // When reconciling mismatched rims, the interior rings must follow
+        // each rim's v(u) profile so the columns stay straight rulings and
+        // no constant-v ring crosses a WAVY rim (saddle cuts) or a
+        // scalloped rim's teeth — a crossing folds the transition strip.
+        // Each rim's samples give v as a function of azimuth; the interior
+        // column at azimuth u_i lofts v between the two profiles.
+        std::vector<std::pair<double, double>> prof[2];  // (wrapped u, v)
+        if (stripReconcile) {
+            for (int k = 0; k < 2; ++k) {
+                prof[k].reserve(rim[k].size());
+                for (const RimPt& r : rim[k]) {
+                    double uw =
+                        r.u - period * std::floor((r.u - u0) / period);
+                    prof[k].push_back({uw, r.v});
+                }
+                std::sort(prof[k].begin(), prof[k].end());
+            }
+        }
+        auto vAtU = [&](int k, double u) -> double {
+            const auto& P = prof[k];
+            if (P.empty()) return v0;
+            if (P.size() == 1) return P[0].second;
+            double uu = u - period * std::floor((u - u0) / period);
+            // First profile sample with u >= uu; the pair straddling uu is
+            // (lo, hi), wrapping the ends across the seam.
+            size_t hi = 0;
+            while (hi < P.size() && P[hi].first < uu) ++hi;
+            double u1, v1v, u0v, vv0;
+            if (hi == 0) {
+                u0v = P.back().first - period;
+                vv0 = P.back().second;
+                u1 = P.front().first;
+                v1v = P.front().second;
+            } else if (hi == P.size()) {
+                u0v = P.back().first;
+                vv0 = P.back().second;
+                u1 = P.front().first + period;
+                v1v = P.front().second;
+            } else {
+                u0v = P[hi - 1].first;
+                vv0 = P[hi - 1].second;
+                u1 = P[hi].first;
+                v1v = P[hi].second;
+            }
+            double span = u1 - u0v;
+            double t = span > 1e-12 ? (uu - u0v) / span : 0.0;
+            return vv0 + (v1v - vv0) * std::clamp(t, 0.0, 1.0);
+        };
+        // Interior column azimuths. Reconciled bands place them at the
+        // DENSER rim's own samples (nu == that rim's count), so the interior
+        // ring next to that rim pairs it one-to-one by index — a clean
+        // lattice with no twist — while the sparser rim takes the strip.
+        // Other non-chained bands keep the uniform ruling positions.
+        int denseSide = stripReconcile ? (nRim1 >= nRim0 ? 1 : 0) : -1;
+        // A SCALLOPED dense rim (radial step edges) backsteps in azimuth;
+        // pinning the interior to its samples then folds the aligned lattice
+        // at every tooth, and such a rim is already near-uniform in azimuth,
+        // so fall back to uniform columns and let its (evenly spaced) samples
+        // pair the uniform interior directly. A CLUSTERED but monotone dense
+        // rim (a saddle cut) instead needs its own azimuths, or the uniform
+        // lattice twists.
+        if (denseSide >= 0) {
+            const auto& R = rim[denseSide];
+            for (size_t i = 0; i + 1 < R.size(); ++i) {
+                double d = R[i + 1].u - R[i].u;
+                d -= period * std::round(d / period);
+                if (d < -1e-7) { denseSide = -2; break; }  // scalloped
+            }
+        }
+        colU.resize(nu);
+        if (denseSide >= 0 && int(rim[denseSide].size()) == nu) {
+            // Dense-rim azimuths, unwrapped monotone from its first sample.
+            const auto& R = rim[denseSide];
+            colU[0] = R[0].u;
+            for (int i = 1; i < nu; ++i) {
+                double d = R[i].u - R[i - 1].u;
+                d -= period * std::round(d / period);
+                if (d < 0) d = 0;
+                colU[i] = colU[i - 1] + d;
+            }
+        } else {
+            for (int i = 0; i < nu; ++i) colU[i] = u0 + i * du;
+        }
         for (int j = 0; j < rows; ++j) {
             double v = rowV(j);
             // Rim rows with usable samples are the EXACT rim points; the
-            // strips below stitch them to the uniform interior.
+            // strips below stitch them to the interior.
             const int side = (j == 0 && rim0ok)          ? 0
                              : (j == rows - 1 && rim1ok) ? 1
                                                          : -1;
@@ -8714,21 +8870,28 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
                 }
                 continue;
             }
+            const double w =
+                (stripReconcile && rows > 1) ? double(j) / (rows - 1) : 0.0;
             std::vector<gp_Pnt> pts(nu);
+            std::vector<double> vcol(nu, v);
             bool degenerate = true;
             for (int i = 0; i < nu; ++i) {
-                pts[i] = surf.Value(u0 + i * du, v);
+                const double ui = colU[i];
+                if (stripReconcile) {
+                    vcol[i] = vAtU(0, ui) * (1 - w) + vAtU(1, ui) * w;
+                }
+                pts[i] = surf.Value(ui, vcol[i]);
                 if (i > 0 && pts[i].Distance(pts[0]) > 1e-9) {
                     degenerate = false;
                 }
             }
             if (degenerate) {
-                ring[j].assign(nu, out.addVertex(pts[0], {faceId, u0, v}));
+                ring[j].assign(nu, out.addVertex(pts[0], {faceId, colU[0], v}));
             } else {
                 ring[j].resize(nu);
                 for (int i = 0; i < nu; ++i) {
-                    ring[j][i] =
-                        out.addVertex(pts[i], {faceId, u0 + i * du, v});
+                    ring[j][i] = out.addVertex(
+                        pts[i], {faceId, colU[i], vcol[i]});
                 }
             }
         }
@@ -8767,30 +8930,50 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
         const std::vector<uint32_t>& D = loSparse ? hiI : loI;
         const std::vector<double>& dU = loSparse ? hiU : loU;
         const int ns = int(S.size()), nd = int(D.size());
-        auto duAt = [&](int i) {
+        // Reference angle measured ALONG each ring's own order (cumulative
+        // short-step deltas), not the raw wrapped u: a rim sampled in
+        // wire-chain order winds once around but starts mid-circle (one
+        // seam wrap) and a scalloped rim adds tiny local backsteps — a raw
+        // wrapped-u comparison then misplaces the pairing. The cumulative
+        // angle is monotone from each ring's first sample and closes at one
+        // period. For an already-sorted ring (the uniform interior) this
+        // reduces to u - u[0], so existing callers are unchanged.
+        auto cumAngle = [&](const std::vector<double>& U) {
+            std::vector<double> c(U.size() + 1, 0.0);
+            for (size_t i = 1; i <= U.size(); ++i) {
+                double d = U[i % U.size()] - U[i - 1];
+                d -= period * std::round(d / period);
+                if (d < 0) d = 0;  // seam wrap / tiny scallop backsteps
+                c[i] = c[i - 1] + d;
+            }
+            return c;
+        };
+        const std::vector<double> dCum = cumAngle(dU);  // size nd+1
+        const std::vector<double> sCum = cumAngle(sU);  // size ns+1
+        double off = sU[0] - dU[0];  // sparse start ahead of dense start
+        off -= period * std::round(off / period);
+        if (off < 0) off += period;
+        auto dAt = [&](int i) {
             int w = ((i % nd) + nd) % nd;
-            return dU[w] + period * std::floor(double(i) / nd);
+            return dCum[w] + period * std::floor(double(i) / nd);
         };
         // m[k] = unwrapped dense index paired with sparse k, monotone,
         // closing after exactly one full turn.
         std::vector<int> m(ns + 1);
         double bd = 1e300;
         for (int i = 0; i < nd; ++i) {
-            double d = std::abs(dU[i] - sU[0]);
+            double d = std::abs(dCum[i] - off);
             d = std::min(d, period - d);
             if (d < bd) { bd = d; m[0] = i; }
         }
-        double tPrev = sU[0];
         for (int k = 1; k < ns; ++k) {
-            double t = sU[k];
-            while (t < tPrev - 1e-12) t += period;
-            tPrev = t;
+            double t = off + sCum[k];  // target angle from dense start
             int best = m[k - 1];
-            double bestD = std::abs(duAt(best) - t);
+            double bestD = std::abs(dAt(best) - t);
             for (int i = m[k - 1] + 1; i <= m[0] + nd; ++i) {
-                double d = std::abs(duAt(i) - t);
+                double d = std::abs(dAt(i) - t);
                 if (d < bestD) { bestD = d; best = i; }
-                if (duAt(i) > t + period / nd) break;
+                if (dAt(i) > t + period / nd) break;
             }
             m[k] = best;
         }
@@ -8820,20 +9003,24 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
     if (!chained) {
         const double du = period / nu;
         const double u0 = surf.FirstUParameter();
-        auto uniformU = [&]() {
-            std::vector<double> us(nu);
-            for (int i = 0; i < nu; ++i) us[i] = u0 + i * du;
-            return us;
-        };
+        // Interior column azimuths: the dense-rim positions when reconciling
+        // (colU was filled during ring construction), else uniform rulings.
+        if (colU.empty()) {
+            colU.resize(nu);
+            for (int i = 0; i < nu; ++i) colU[i] = u0 + i * du;
+        }
         if (rim0ok && rim1ok && rows == 2) {
             // No interior ring at all: bridge rim to rim directly.
             emitClosedStrip(ring[0], ringU[0], ring[1], ringU[1]);
         } else {
+            // Only a rim whose count differs from the interior takes a
+            // strip; a reconciled band's denser rim equals the interior and
+            // welds through the aligned lattice above.
             if (rim0ok && ring[0].size() != ring[1].size()) {
-                emitClosedStrip(ring[0], ringU[0], ring[1], uniformU());
+                emitClosedStrip(ring[0], ringU[0], ring[1], colU);
             }
             if (rim1ok && ring[rows - 1].size() != ring[rows - 2].size()) {
-                emitClosedStrip(ring[rows - 2], uniformU(), ring[rows - 1],
+                emitClosedStrip(ring[rows - 2], colU, ring[rows - 1],
                                 ringU[1]);
             }
         }
