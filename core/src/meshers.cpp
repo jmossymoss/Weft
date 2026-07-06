@@ -170,6 +170,13 @@ struct FacePlan {
     // Forced fallback flavour: -1 = follow settings, 0 = pure tris,
     // 1 = quad-dominant (used when the user forces a mesher).
     int forceFallbackQuads = -1;
+    // Hole-cutout lattice floors: a face with interior trim wires needs
+    // rows/columns FINE ENOUGH that each hole spans whole cells — the
+    // hole demands them even when the border edges are dead straight
+    // (straight edges alone propose 1). Solved into the border counts so
+    // the lattice lines run border to border with no transition strips.
+    int insertMinU = 0;
+    int insertMinV = 0;
     // Chained Coons: edge ids per side (wire order) when any side is a
     // chain of several edges. Opposite sides then match by SUM of their
     // per-edge counts (solveDensity's chain pass) instead of union-find.
@@ -814,6 +821,7 @@ struct CoonsPatch {
     // border sampling. Collected here so the planner can route them.
     std::vector<std::vector<int>> holeWires;
     std::vector<std::array<double, 4>> holeBoxes;  // u0,u1,v0,v1 per wire
+    std::array<double, 4> outerBox{0, 1, 0, 1};    // outer wire's uv box
     // Chained sides: a side may be SEVERAL wire edges whose joints are
     // smooth (a band whose long rail is split by a T-junction). Pieces
     // run in wire order; single-edge sides have one piece. The legacy
@@ -926,6 +934,7 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
             }
         };
         wireBox(outer, ou0, ou1, ov0, ov1);
+        patch.outerBox = {ou0, ou1, ov0, ov1};
         const double mu = 0.03 * std::max(1e-12, ou1 - ou0);
         const double mv = 0.03 * std::max(1e-12, ov1 - ov0);
         for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
@@ -1231,6 +1240,62 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
 // 0..1 splits, clustered for fillet strips); CHAINED sides sample each
 // piece at its own solved count, so the border matches every neighbour
 // vertex-for-vertex and the grid gains a column at each T-junction.
+// Lattice count floors for a holed patch: each hole should span roughly
+// HALF a cell, so the cutout takes 1-2 cells and the collar + one ring
+// of webbing absorbs it — the reference absorption pattern — without a
+// global density explosion. Structural (holes demand lattice lines even
+// across dead-straight borders), so it survives the density dial.
+// Measured PHYSICALLY (3D lengths), not in uv — bspline parameter space
+// compresses and a small hole can read as a third of the domain.
+void insertCountFloors(const TopoDS_Face& face, const CoonsPatch& patch,
+                       int& minU, int& minV) {
+    minU = minV = 0;
+    if (patch.holeWires.empty()) return;
+    Handle(Geom_Surface) S = BRep_Tool::Surface(face);
+    if (S.IsNull()) return;
+    const int kT = 64;
+    std::array<std::vector<gp_Pnt2d>, 2> tab;
+    double len[2] = {0, 0};
+    for (int d = 0; d < 2; ++d) {
+        gp_Pnt prev;
+        for (int k = 0; k <= kT; ++k) {
+            const double f = double(k) / kT;
+            const gp_Pnt2d uv =
+                d == 0 ? patch.uv(f, 0.5) : patch.uv(0.5, f);
+            tab[d].push_back(uv);
+            const gp_Pnt p = S->Value(uv.X(), uv.Y());
+            if (k) len[d] += prev.Distance(p);
+            prev = p;
+        }
+    }
+    for (const auto& b : patch.holeBoxes) {
+        const double ucm = 0.5 * (b[0] + b[1]);
+        const double vcm = 0.5 * (b[2] + b[3]);
+        const double hx =
+            S->Value(b[0], vcm).Distance(S->Value(b[1], vcm));
+        const double hy =
+            S->Value(ucm, b[2]).Distance(S->Value(ucm, b[3]));
+        for (int d = 0; d < 2; ++d) {
+            double x0 = 1e300, x1 = -1e300, y0 = 1e300, y1 = -1e300;
+            for (const auto& q : tab[d]) {
+                x0 = std::min(x0, q.X());
+                x1 = std::max(x1, q.X());
+                y0 = std::min(y0, q.Y());
+                y1 = std::max(y1, q.Y());
+            }
+            const bool sweepsX = (x1 - x0) >= (y1 - y0);
+            const double frac =
+                (sweepsX ? hx : hy) / std::max(1e-12, len[d]);
+            const int c = std::clamp(
+                int(std::ceil(0.5 / std::max(0.02, frac))), 2, 16);
+            int& slot = d == 0 ? minU : minV;
+            slot = std::max(slot, c);
+        }
+    }
+    dbg("insert floors: minU=%d minV=%d (mid-iso len %.3f / %.3f)", minU,
+        minV, len[0], len[1]);
+}
+
 bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
                        int faceId, const std::vector<double>& uParams,
                        const std::vector<double>& vParams, int rotate,
@@ -2581,7 +2646,8 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
                    const std::vector<double>& uParams,
                    const std::vector<double>& vParams, int rotate,
                    const std::vector<int>& solvedEdge, MeshBuilder& out,
-                   const std::vector<std::vector<int>>* inserts = nullptr) {
+                   const std::vector<std::vector<int>>* inserts = nullptr,
+                   int collarRings = 1) {
     if (!inserts || inserts->empty()) {
         return meshCoonsGridBody(face, model, faceId, uParams, vParams,
                                  rotate, solvedEdge, out);
@@ -2747,6 +2813,14 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
         for (const auto& b : boxes) {
             double fa, fb;
             if (!bracket(uDir ? uTab : vTab, b, fa, fb)) continue;
+            // The plan's insert floors normally make the natural lattice
+            // fine enough (hole spans about half a cell) — then NO
+            // brackets, so every line runs border to border and the
+            // borders carry the counts. Brackets return only when a pin
+            // or override starved the direction below the hole's need.
+            const int need =
+                int(std::ceil(0.5 / std::max(0.01, fb - fa)));
+            if (nat >= need && attempt == 0) continue;
             const double m = std::max(0.25 * (fb - fa), 0.02);
             mergeIn(fr, fa - m);
             mergeIn(fr, fb + m);
@@ -2979,11 +3053,95 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
                     {gp_Pnt2d(q.u * uScale, q.v),
                      ab.addVertex(q.p, {faceId, q.u, q.v})});
             }
-            if (area(holeRing) > 0) {
-                std::reverse(holeRing.begin(), holeRing.end());
+            // Concentric quad collar between the bore ring and the
+            // staircase (junctionRings, same knob as the planar ring
+            // junction): the ring's density gets absorbed by clean
+            // loops instead of one wide fan web. Scaled about the
+            // ring's own centroid, capped safely inside the staircase.
+            std::vector<WebPoint> webInner = holeRing;
+            if (collarRings > 0 && rings[w].size() >= 3) {
+                double rcU = 0, rcV = 0;
+                for (const HPt& q : rings[w]) {
+                    rcU += q.u;
+                    rcV += q.v;
+                }
+                rcU /= double(rings[w].size());
+                rcV /= double(rings[w].size());
+                // Max uniform scale before any ring vertex crosses the
+                // staircase: cast centroid->vertex rays against every
+                // staircase segment (scaled uv keeps the metric honest).
+                const gp_Pnt2d C(rcU * uScale, rcV);
+                double smax = 1e300;
+                for (const HPt& q : rings[w]) {
+                    const double dx = q.u * uScale - C.X();
+                    const double dy = q.v - C.Y();
+                    const double dlen = std::hypot(dx, dy);
+                    if (dlen < 1e-12) { smax = 0; break; }
+                    for (size_t si = 0; si < outerRing.size(); ++si) {
+                        const gp_Pnt2d& A = outerRing[si].uv;
+                        const gp_Pnt2d& B =
+                            outerRing[(si + 1) % outerRing.size()].uv;
+                        const double ex = B.X() - A.X();
+                        const double ey = B.Y() - A.Y();
+                        const double den = dx * ey - dy * ex;
+                        if (std::abs(den) < 1e-18) continue;
+                        const double t =
+                            ((A.X() - C.X()) * ey - (A.Y() - C.Y()) * ex) /
+                            den;
+                        const double uu =
+                            ((A.X() - C.X()) * dy - (A.Y() - C.Y()) * dx) /
+                            den;
+                        if (t > 0 && uu >= 0 && uu <= 1) {
+                            smax = std::min(smax, t);
+                        }
+                    }
+                }
+                if (smax > 1.25 && smax < 1e300) {
+                    Handle(Geom_Surface) cs = BRep_Tool::Surface(face);
+                    const double sTop = 1.0 + (smax * 0.85 - 1.0);
+                    std::vector<WebPoint> prev = holeRing;
+                    for (int k = 1; k <= collarRings && !cs.IsNull();
+                         ++k) {
+                        const double sk =
+                            1.0 + (sTop - 1.0) * double(k) /
+                                      double(collarRings);
+                        std::vector<WebPoint> loopK;
+                        for (const HPt& q : rings[w]) {
+                            const double lu = rcU + (q.u - rcU) * sk;
+                            const double lv = rcV + (q.v - rcV) * sk;
+                            gp_Pnt lp = cs->Value(lu, lv);
+                            loopK.push_back(
+                                {gp_Pnt2d(lu * uScale, lv),
+                                 ab.addVertex(lp, {faceId, lu, lv})});
+                        }
+                        const size_t n = prev.size();
+                        for (size_t i = 0; i < n; ++i) {
+                            std::vector<WebPoint> quad = {
+                                prev[i], prev[(i + 1) % n],
+                                loopK[(i + 1) % n], loopK[i]};
+                            std::vector<uint32_t> ids;
+                            double a2 = 0;
+                            for (size_t j = 0; j < 4; ++j) {
+                                const auto& p1 = quad[j].uv;
+                                const auto& p2 = quad[(j + 1) % 4].uv;
+                                a2 += p1.X() * p2.Y() - p2.X() * p1.Y();
+                                ids.push_back(quad[j].vert);
+                            }
+                            if (a2 < 0) {
+                                std::reverse(ids.begin(), ids.end());
+                            }
+                            ab.addPolygon(std::move(ids), faceId, flip);
+                        }
+                        prev = std::move(loopK);
+                    }
+                    webInner = std::move(prev);
+                }
+            }
+            if (area(webInner) > 0) {
+                std::reverse(webInner.begin(), webInner.end());
             }
             if (!triangulateWeb(std::move(outerRing),
-                                {std::move(holeRing)}, faceId, flip, ab)) {
+                                {std::move(webInner)}, faceId, flip, ab)) {
                 webbed = false;
                 break;
             }
@@ -4815,6 +4973,8 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                     plan.kind = MesherKind::CoonsGrid;
                     plan.constrains = true;
                     plan.insertWires = patch.holeWires;
+                    insertCountFloors(face, patch, plan.insertMinU,
+                                      plan.insertMinV);
                     if (patch.chained()) {
                         for (int i = 0; i < 4; ++i) {
                             for (const auto& pce : patch.chain[i]) {
@@ -4960,6 +5120,8 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             plan.kind = MesherKind::CoonsGrid;
             plan.constrains = true;
             plan.insertWires = patch.holeWires;
+            insertCountFloors(face, patch, plan.insertMinU,
+                              plan.insertMinV);
             if (patch.chained()) {
                 for (int i = 0; i < 4; ++i) {
                     for (const auto& pce : patch.chain[i]) {
@@ -5329,6 +5491,12 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                                      ? s.filletLoops : s.gridU);
             int nv = std::max(1, plan.isFillet && !plan.acrossIsU
                                      ? s.filletLoops : s.gridV);
+            // Hole cutouts demand lattice lines the border edges alone
+            // would never propose (a straight edge proposes 1); the
+            // floors size cells to the holes so lines run border to
+            // border and the collar absorbs the ring locally.
+            nu = std::max(nu, plan.insertMinU);
+            nv = std::max(nv, plan.insertMinV);
             // Support loops across a blend stay a deliberate choice; the
             // other directions adapt to their edges' curvature.
             bool adU = s.adaptive && !(plan.isFillet && plan.acrossIsU);
@@ -7932,7 +8100,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         clusteredParams(nv, holdV), s.coonsRotate,
                         solvedEdge, out,
                         plan.insertWires.empty() ? nullptr
-                                                 : &plan.insertWires)) {
+                                                 : &plan.insertWires,
+                        std::max(0, s.junctionRings))) {
                     demote(fid, face, surf, s, "coons failed");
                 }
                 break;
