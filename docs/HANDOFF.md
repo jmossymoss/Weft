@@ -561,3 +561,30 @@ Known: --density 2 grazes 2 Newell-heuristic slivers per barrel wall
 at tall notch walls (watertight, parametrically simple); column shear
 near feature-clustered rim chains is inherent to uniform top-rim
 contract sampling.
+
+## STRAIGHT-LATTICE OPEN BANDS (landed d921c95 + 27d40f4)
+The open band no longer lofts columns between index-paired rim samples
+(feature-clustered castellated chains sheared every column diagonally
+and the rim-SUM equalization silently overrode radial/axial). It is a
+straight revolution lattice FOLLOWED by a boolean castellation cut
+(meshRevolutionOpenBand): columns at fixed azimuths driven by the flat
+full-span rim (FacePlan.bandDriver — its solved count IS nu, so
+radial/adaptive/density/per-face pins flow through the border
+contract; count mismatch takes a transition strip, never re-spacing);
+notch runs delete lattice cells and web to the chains' exact contract
+samples; wavy rims (unterlaf gear flanks) absorb into the strip row
+when the wave fits <=35% of the band, else contract floor; everything
+runs in w = |v - vCut| space so top-castellated bands mirror. Side
+bands anchor on the columns' REAL keys with shared boundary anchors
+(27d40f4) — boundary-column suppression is comb-length-gated, fixing
+interior holes at coarse radial x mid axial.
+Verified: flaregun 43/50 = 77/85 polys, max column-edge |dAz| = 0 on
+all lattice quads/strip n-gons (web tris carry the only diagonals, by
+design); 4x4x2 radial/axial matrix + axial 100 stress: watertight, 0
+folds, straight; density 2x scales columns 13->25; board mohne 0 /
+nasty 10 / weldment 7; 42/42 fixtures; ctest green.
+NEXT (user, screenshot 27fb3b0a): columns must extend THROUGH fillets
+(face 49 torus under 43's base) — blend strips need rail-count + arc-
+phase propagation so barrel columns continue into the lower section;
+diagnosis workflow ran (face graph / solver rails / coons pairing /
+Plasticity reference).
