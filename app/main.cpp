@@ -3632,10 +3632,13 @@ static void drawUi(App& app) {
         }
         if (ImGui::TreeNode("Dev fixtures")) {
             ImGui::TextDisabled("built-in test shapes");
-            const char* fixtures[] = {"cylinder", "box",  "cone",
-                                      "sphere",   "torus", "fillet",
-                                      "hole",     "boss",  "demo"};
-            for (int i = 0; i < 9; ++i) {
+            const char* fixtures[] = {
+                "cylinder", "box",     "cone",   "sphere",
+                "torus",    "fillet",  "hole",   "boss",
+                "demo",     "notched", "slotted", "barrel",
+                "bossfillet"};
+            const int nFixtures = int(sizeof fixtures / sizeof *fixtures);
+            for (int i = 0; i < nFixtures; ++i) {
                 if (i % 3) ImGui::SameLine();
                 if (ImGui::Button(fixtures[i], {96 * gUiScale, 0})) {
                     loadFixture(app, fixtures[i]);

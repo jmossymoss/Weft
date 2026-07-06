@@ -89,6 +89,36 @@ TopoDS_Shape makeFixture(const std::string& name) {
         TopoDS_Shape cut = BRepAlgoAPI_Cut(tube, slot).Shape();
         return BRepAlgoAPI_Cut(cut, slot2).Shape();
     }
+    if (name == "barrel") {
+        // The flaregun face-81/87 class: a PARTIAL-wrap wall (the tube
+        // loses a quarter to a lengthwise cut) with a capsule slot
+        // milled through what remains. Not u-closed, so revolution
+        // grids don't apply — the wall is a coons chart with an
+        // interior trim wire and must mesh as a grid CUTOUT, not a
+        // fallback fan.
+        gp_Ax2 axis(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1));
+        TopoDS_Shape tube = BRepAlgoAPI_Cut(
+            BRepPrimAPI_MakeCylinder(axis, 12.0, 60.0).Shape(),
+            BRepPrimAPI_MakeCylinder(axis, 9.0, 60.0).Shape());
+        TopoDS_Shape sector =
+            BRepPrimAPI_MakeBox(gp_Pnt(0.0, 0.0, -1.0),
+                                gp_Pnt(30.0, 30.0, 61.0))
+                .Shape();
+        TopoDS_Shape cut = BRepAlgoAPI_Cut(tube, sector).Shape();
+        // Capsule slot through the -X wall: box + rounded ends.
+        TopoDS_Shape sBox =
+            BRepPrimAPI_MakeBox(gp_Pnt(-14.0, -3.0, 20.0),
+                                gp_Pnt(-8.0, 3.0, 40.0))
+                .Shape();
+        gp_Ax2 e1(gp_Pnt(-14.0, 0.0, 20.0), gp_Dir(1, 0, 0));
+        gp_Ax2 e2(gp_Pnt(-14.0, 0.0, 40.0), gp_Dir(1, 0, 0));
+        TopoDS_Shape cap1 = BRepPrimAPI_MakeCylinder(e1, 3.0, 6.0).Shape();
+        TopoDS_Shape cap2 = BRepPrimAPI_MakeCylinder(e2, 3.0, 6.0).Shape();
+        TopoDS_Shape slot =
+            BRepAlgoAPI_Fuse(BRepAlgoAPI_Fuse(sBox, cap1).Shape(), cap2)
+                .Shape();
+        return BRepAlgoAPI_Cut(cut, slot).Shape();
+    }
     if (name == "notched") {
         // The flaregun face-81 class: a tube whose wall carries a channel
         // cut clean THROUGH the top rim (the notch opens to the border).
