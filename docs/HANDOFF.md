@@ -772,3 +772,18 @@ quad on face 93 at the 90deg Z-crease (cross-rung has no width there; watertight
 consistent winding, 1 of 5721; force-split would make 2 zero-area tris) — a
 crease singularity, flagged by validate as 1 degenerate. Candidate follow-up:
 skip the zero-width rung and merge the crease into one cell.
+
+## RIBBON CAP/CREASE ZERO-AREA FIX (landed 65365ff)
+Both the ribbonnotch notch-end FAN and face 93's 1 degenerate quad were the
+SAME bug: findRibbonRails swallowed short ~90deg cap-corner edges into the
+rails, leaving a collinear zero-area cell (4 points at one y,z; edge parallel
+to the rung) that no split/triangulation rescues. Fix: (1) findRibbonRails
+rejects any 4-corner split whose cap-abutting cells collapse to ~zero area
+(forces the honest split, corner stays in the cap); (2) where the strip edge
+genuinely runs parallel to the rung, the dead cell is spliced into the
+previous polygon across their shared rung = one valid n-gon, not a zero-area
+quad or a fan. flaregun face 93: degenerate 1->0, 25 polys (24q+1hex) 96%
+quad; flaregun overall 0 degenerate. ribbonnotch: notch end clean quads
+around the slot (no fan/pinch/zero-area), watertight, 0 degenerate all 3
+modes. ctest; board mohne 0/nasty 10/weldment 7; 48/48 fixtures; face 131 +
+all non-93 flaregun faces byte-identical.
