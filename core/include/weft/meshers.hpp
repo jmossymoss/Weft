@@ -102,6 +102,17 @@ struct FaceMeshSettings {
     // Off by default in the core (recipes/tests keep exact counts) — the
     // app turns it on for new sessions.
     bool adaptive = false;
+    // Per-face pathology guard: a hard ceiling on this face's total cell
+    // count (0 = no ceiling). A face's mesh should scale with its surface
+    // area; a face carrying vastly more cells than its area-share of the
+    // model is a sizing pathology (an offset surface's curvature probe
+    // reporting a tiny local radius, a hole-cutout scaffold doubling to
+    // separate close bores) rather than real detail. generate() fills this
+    // per face from area vs. the model, scaled by the density dial, so the
+    // guard only ever bites gross outliers and rides --density like every
+    // other count. It is NOT a fixed cap — a legitimately large face gets a
+    // proportionally large ceiling.
+    int cellCap = 0;
 };
 
 struct GenerationSettings {
