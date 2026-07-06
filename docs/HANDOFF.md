@@ -588,3 +588,33 @@ NEXT (user, screenshot 27fb3b0a): columns must extend THROUGH fillets
 phase propagation so barrel columns continue into the lower section;
 diagnosis workflow ran (face graph / solver rails / coons pairing /
 Plasticity reference).
+
+## FULL-WRAP CASTELLATED RIMS (landed a44535c)
+Straight-lattice generalized from partial-wrap open bands to the CLOSED
+u-wrap case (the notched fixture / flaregun face-81 class: a full 360
+cylinder/cone whose top rim is castellated by a rim-open notch). The
+old meshRevolutionGrid chained loft index-paired the plain bottom rim
+against the notched top and u-smoothed across columns -> 27deg shear
+(default, after rim-SUM equalization forced 21/21); when a deviation
+override left the rims irreconcilable (13/21) the grid bailed to the
+contract floor -> triangle soup. New meshRevolutionRimNotch lays
+straight uniform columns anchored on the plain rim's own sample
+azimuths (exact rulings + exact neighbour weld), boolean-cuts the notch,
+and webs the walls/floor to their solved-count samples via structured
+strips (vertical wall ladders v-matched so every tall edge is a ruling,
+plus a horizontal floor strip) - never an ear-clip fan. Wiring:
+castellatedRimBand detector marks plan.castellated; rim-SUM
+equalization (8779 region), counts/dispatch/cache-key all branch on it;
+plain rim drives nu (natural count, no equalize). Detection gated to
+one plain full-circle rim + one mostly-flat rim with a single localized
+dip whose walls reach a real v-range - wavy pipe-saddle weld rims
+(mohne's 12) and plain matching rims keep the chained loft.
+Verified: notched face_1/face_7 max|dAz| 0.468/0.425 -> 0.000; override
+sweep face{1,7} x chord{0.05,0.1151,0.3} x radial{8,16,32} x angle{14,28}
+all watertight/0-fold/straight, no demote; knobs live (radial 8/32 ->
+nu 8/34, axial adds rows); flaregun2 OBJ byte-identical (open bands
+untouched, 0 castellated faces); board mohne 0/nasty 10/weldment 7 all
+watertight; 42/42 fixtures; ctest green.
+NEXT still open: fillet flow-through (#24, columns through blend chains
+barrel->fillet->lower with matched counts+azimuths; diagnosis in
+workflow wcfz9arp2, not yet implemented).
