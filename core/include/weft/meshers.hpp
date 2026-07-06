@@ -166,6 +166,11 @@ enum class MesherKind {
                      // outline has exactly two sharp corners): the two
                      // rails pair by arc fraction and ladder into quads
                      // with grouped 5-gons; the tips collapse naturally.
+    RibbonSweep,     // long thin BENT strip (grip/trigger-guard rails) coons
+                     // rejects: its two long rails are found robustly (not by
+                     // corner turns), matched station-by-station, and laddered
+                     // into an even quad flow, with the end caps (incl. notches)
+                     // webbed locally instead of a global transfinite blend.
 };
 
 const char* mesherKindName(MesherKind k);

@@ -107,6 +107,7 @@ const char* mesherKindName(MesherKind k) {
         case MesherKind::PlateWeb: return "plate-web";
         case MesherKind::QuadFill: return "quad-fill";
         case MesherKind::RailLadder: return "rail-ladder";
+        case MesherKind::RibbonSweep: return "ribbon-sweep";
     }
     return "fallback-tri";
 }
@@ -4542,6 +4543,510 @@ bool meshRailLadder(const TopoDS_Face& face, const Model& model, int faceId,
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// Ribbon sweep: a long, thin, BENT strip (the flaregun grip / trigger-guard
+// rails) whose flattened outline is non-convex, so coons rejects it and a
+// transfinite blend would fold over the bend. Its two long rails are found
+// by a robust anti-parallel pairing -- NOT the sharpest-corner pick, which
+// the strips' 90-degree rail bends and their weak (~22 deg) notch corners
+// both defeat -- then matched station-for-station and laddered into an even
+// quad flow. The end caps, including notches, are webbed LOCALLY (never a
+// global fan), so no inversion can propagate across the strip.
+
+// Sample the outer wire into an ordered 3D/UV ring. `corners` receives the
+// ring index at which each wire edge begins (the join candidates). When
+// `solvedEdge` is null a fixed dense count per edge is used (planning-time
+// geometry probe); otherwise the solved counts drive it (the border
+// contract). Returns false on any unsampleable edge or a sloppy wire.
+bool sampleRibbonRing(const TopoDS_Face& face, const Model& model,
+                      const std::vector<int>* solvedEdge, int radialDefault,
+                      std::vector<gp_Pnt>& P, std::vector<gp_Pnt2d>& UV,
+                      std::vector<int>& corners) {
+    P.clear();
+    UV.clear();
+    corners.clear();
+    TopoDS_Wire outer = BRepTools::OuterWire(face);
+    if (outer.IsNull()) return false;
+    int wireEdges = 0, rawEdges = 0;
+    for (BRepTools_WireExplorer we(outer, face); we.More(); we.Next()) {
+        ++wireEdges;
+    }
+    for (TopoDS_Iterator it(outer); it.More(); it.Next()) {
+        if (it.Value().ShapeType() == TopAbs_EDGE &&
+            !BRep_Tool::Degenerated(TopoDS::Edge(it.Value()))) {
+            ++rawEdges;
+        }
+    }
+    if (rawEdges > wireEdges) return false;  // sloppy wire: let quad-fill own it
+    for (BRepTools_WireExplorer we(outer, face); we.More(); we.Next()) {
+        const TopoDS_Edge edge = we.Current();
+        if (BRep_Tool::Degenerated(edge)) continue;
+        const int eid = model.edges.FindIndex(edge);
+        int n = 0;
+        if (solvedEdge && eid >= 1 && eid < int(solvedEdge->size())) {
+            n = (*solvedEdge)[eid];
+        }
+        if (n < 1) {
+            if (solvedEdge) {
+                n = std::max(1, std::max(3, radialDefault) /
+                                    std::max(1, wireEdges));
+            } else {
+                BRepAdaptor_Curve c(edge);
+                const double len = GCPnts_AbscissaPoint::Length(c);
+                n = std::clamp(int(len / 3.0) + 2, 2, 40);
+            }
+        }
+        double f3, l3, f2, l2;
+        Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, f3, l3);
+        Handle(Geom2d_Curve) c2 = BRep_Tool::CurveOnSurface(edge, face, f2, l2);
+        if (c3.IsNull() || c2.IsNull()) return false;
+        const bool rev = edge.Orientation() == TopAbs_REVERSED;
+        const double ph = closedEdgePhase(edge, model);
+        corners.push_back(int(P.size()));
+        for (double t : edgeSampleFractions(eid, n, ph, rev,
+                                            /*includeLast=*/false, nullptr)) {
+            UV.push_back(c2->Value(f2 + (l2 - f2) * t));
+            P.push_back(c3->Value(f3 + (l3 - f3) * t));
+        }
+    }
+    if (P.size() < 4 || corners.size() < 4) return false;
+    // The ring stays in raw wire-traversal order: the rail finder works in
+    // 3D, the sweep decides its winding from the surface normal, and the cap
+    // arcs are addressed by corner adjacency -- all orientation-agnostic, so
+    // no UV winding normalization (and its fragile index remap) is needed.
+    return true;
+}
+
+struct RibbonRails {
+    // Ring index ranges (into the sampled ring): railA walks forward
+    // a0 -> a1, railB walks forward b0 -> b1. railA[0] and railB[1]'s
+    // side are the SAME end cap (they are joined by end cap "one").
+    int a0 = -1, a1 = -1, b0 = -1, b1 = -1;
+    double railLen = 0, width = 0, aspect = 0, antiDot = 0;
+    double score_ = -1e300;
+    bool ok = false;
+};
+
+// Find the two long anti-parallel rails from the sampled ring. `corners`
+// are the wire-edge join ring indices -- the only legal cut points, so the
+// rails stay whole B-rep edge chains (border contract). Brute force over
+// 4-corner splits: maximize rail length minus end length, gated on aspect
+// ratio and anti-parallelism, so the two long sides win over the notched
+// end caps regardless of how weak or spurious the corner turns are.
+RibbonRails findRibbonRails(const std::vector<gp_Pnt>& P,
+                            const std::vector<int>& corners) {
+    RibbonRails best;
+    const int N = int(P.size());
+    const int n = int(corners.size());
+    if (N < 4 || n < 4 || n > 40) return best;
+    std::vector<double> cum(N + 1, 0.0);
+    for (int i = 0; i < N; ++i) {
+        cum[i + 1] = cum[i] + P[i].Distance(P[(i + 1) % N]);
+    }
+    const double perim = cum[N];
+    auto arcLen = [&](int i, int j) {  // forward ring length from i to j
+        double d = cum[j] - cum[i];
+        if (j < i) d = perim - (cum[i] - cum[j]);
+        return d;
+    };
+    auto ptAtFrac = [&](int i, int j, double f) {  // along ring i->j (fwd)
+        const double target = arcLen(i, j) * f;
+        double acc = 0;
+        int k = i;
+        while (true) {
+            int kn = (k + 1) % N;
+            double seg = P[k].Distance(P[kn]);
+            if (acc + seg >= target || kn == j) {
+                double u = seg > 1e-12 ? (target - acc) / seg : 0.0;
+                u = std::clamp(u, 0.0, 1.0);
+                return gp_Pnt(P[k].XYZ() * (1 - u) + P[kn].XYZ() * u);
+            }
+            acc += seg;
+            k = kn;
+            if (k == j) return P[j];
+        }
+    };
+    // Evaluate one rail assignment (railA arc [i..j], railB arc [k..l]).
+    // railB is traversed the opposite way around the loop, so railA at
+    // fraction f pairs with railB at fraction 1-f; walked that way the two
+    // rails advance ALONGSIDE the strip, so their local tangents should be
+    // PARALLEL at every station. Absorbing an end cap into a rail makes that
+    // rail veer across the strip, collapsing the alignment there -- so the
+    // WORST-station alignment (not the mean) is what fences the rails off
+    // from the caps, whatever the corner turns do.
+    auto consider = [&](int i, int j, int k, int l) {
+        const double la = arcLen(i, j), lc = arcLen(k, l);
+        const double lb = arcLen(j, k), ld = arcLen(l, i);
+        if (la < 1e-6 || lc < 1e-6) return;
+        const double railLen = la + lc;
+        if (railLen < 0.4 * perim) return;
+        if (std::max(la, lc) > 4.0 * std::min(la, lc)) return;
+        // Each end cap shorter than the longer rail (a cap, not a third rail).
+        if (std::max(lb, ld) > std::max(la, lc)) return;
+        const int S = 24;
+        const double df = 0.5 / S;
+        double width = 0, minW = 1e300, maxW = 0, meanAlign = 0;
+        int wn = 0, an = 0;
+        for (int s = 1; s < S; ++s) {
+            const double f = double(s) / S;
+            const gp_Pnt a0 = ptAtFrac(i, j, f);
+            const gp_Pnt b0 = ptAtFrac(k, l, 1.0 - f);
+            const double w = a0.Distance(b0);
+            width += w;
+            minW = std::min(minW, w);
+            maxW = std::max(maxW, w);
+            ++wn;
+            gp_Vec dA(a0, ptAtFrac(i, j, std::min(1.0, f + df)));
+            gp_Vec dB(b0, ptAtFrac(k, l, std::max(0.0, 1.0 - f - df)));
+            if (dA.Magnitude() < 1e-9 || dB.Magnitude() < 1e-9) continue;
+            meanAlign += dA.Dot(dB) / (dA.Magnitude() * dB.Magnitude());
+            ++an;
+        }
+        if (wn == 0 || an == 0) return;
+        width /= wn;
+        meanAlign /= an;
+        if (width < 1e-6) return;
+        // The two rails must run alongside each other: aligned tangents on
+        // average (a bent rail dips locally, so the MEAN, not the worst,
+        // station) and a roughly CONSTANT gap. A rail that veers into an end
+        // cap balloons the gap there -- the width-consistency gate is what
+        // fences the rails off from the caps without punishing sharp bends.
+        if (meanAlign < 0.5) return;
+        if (maxW > 2.6 * minW) return;
+        // The two cap junctions must have real width: if a rail END pinches
+        // to the far rail, that rail has veered across the strip to swallow
+        // a cap corner (the notch corners on the fixture / trigger guard),
+        // which would sweep into a collinear degenerate. A genuine cap holds
+        // the rails a finite gap apart.
+        const double wCap0 = P[i].Distance(P[l]);
+        const double wCap1 = P[j].Distance(P[k]);
+        if (std::min(wCap0, wCap1) < 0.2 * width) return;
+        const double aspect = std::min(la, lc) / width;
+        if (aspect < 3.5) return;
+        // Prefer EQUAL segment counts (a clean 1:1 ladder), then the longest
+        // rails: a true rail cannot extend without swallowing a cap, which
+        // the alignment/width gates fence off. The segment count is the
+        // ring-index span (= sum of the rail edges' sample counts).
+        const int segA = (j - i + N) % N, segC = (l - k + N) % N;
+        const double score = railLen - 1000.0 * std::abs(segA - segC);
+        if (!best.ok || score > best.score_) {
+            best.a0 = i; best.a1 = j; best.b0 = k; best.b1 = l;
+            best.railLen = railLen; best.width = width;
+            best.aspect = aspect; best.antiDot = meanAlign; best.ok = true;
+            best.score_ = score;
+        }
+    };
+    for (int ia = 0; ia < n; ++ia)
+        for (int ib = ia + 1; ib < n; ++ib)
+            for (int ic = ib + 1; ic < n; ++ic)
+                for (int id = ic + 1; id < n; ++id) {
+                    const int c0 = corners[ia], c1 = corners[ib],
+                              c2 = corners[ic], c3 = corners[id];
+                    // Pairing 1: rails = (c0..c1),(c2..c3).
+                    consider(c0, c1, c2, c3);
+                    // Pairing 2: rails = (c1..c2),(c3..c0).
+                    consider(c1, c2, c3, c0);
+                }
+    return best;
+}
+
+// Planning-time gate: is this face a long thin bent ribbon the sweep should
+// own? Pure geometry (no solved counts), so it memoizes with the face and
+// never disturbs density. A positive only redirects a face quad-fill would
+// otherwise take -- the mesh path falls straight back to quad-fill on any
+// doubt, so this stays permissive about the exact rail counts.
+bool ribbonDetect(const TopoDS_Face& face, const Model& model) {
+    // Single outer wire only (holes stay with quad-fill / plate-web).
+    int wires = 0;
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        if (++wires > 1) return false;
+    }
+    std::vector<gp_Pnt> P;
+    std::vector<gp_Pnt2d> UV;
+    std::vector<int> corners;
+    if (!sampleRibbonRing(face, model, nullptr, 16, P, UV, corners)) {
+        return false;
+    }
+    RibbonRails r = findRibbonRails(P, corners);
+    if (r.ok) {
+        dbg("ribbon detect: rails found, aspect %.1f width %.2f align %.2f",
+            r.aspect, r.width, r.antiDot);
+    }
+    return r.ok;
+}
+
+// Ribbon sweep mesher. Returns false (fall back to quad-fill) whenever the
+// strip does not resolve to two equal-count rails with cap-webbed ends --
+// never ships a fold or a leak.
+bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
+                     const std::vector<int>& solvedEdge, int radialDefault,
+                     MeshBuilder& out) {
+    std::vector<gp_Pnt> P;
+    std::vector<gp_Pnt2d> UV;
+    std::vector<int> corners;
+    if (!sampleRibbonRing(face, model, &solvedEdge, radialDefault, P, UV,
+                          corners)) {
+        return false;
+    }
+    const int N = int(P.size());
+    RibbonRails r = findRibbonRails(P, corners);
+    if (!r.ok) return false;
+    // Rail A walks a0 -> a1 forward; rail B walks b0 -> b1 forward but pairs
+    // in reverse (the strip is traversed the opposite way on the far rail),
+    // so railBr[0] sits on the SAME end cap as railA[0].
+    std::vector<int> railA, railBr;
+    for (int k = r.a0;; k = (k + 1) % N) {
+        railA.push_back(k);
+        if (k == r.a1) break;
+        if (int(railA.size()) > N) return false;
+    }
+    for (int k = r.b1;; k = (k + N - 1) % N) {
+        railBr.push_back(k);
+        if (k == r.b0) break;
+        if (int(railBr.size()) > N) return false;
+    }
+    const int M = int(railA.size()) - 1;
+    if (M < 2 || int(railBr.size()) - 1 != M) {
+        // Unequal rail counts: the clean 1:1 ladder can't form. Leave it to
+        // quad-fill rather than zip in stray triangles.
+        dbg("ribbon face %d: rails %d/%d unequal -> quad-fill", faceId,
+            int(railA.size()) - 1, int(railBr.size()) - 1);
+        return false;
+    }
+    // The two end caps: cap "1" joins railA[0]=a0 to railBr[0]=b1 along the
+    // ring arc b1 -> a0 (forward); cap "2" joins railA[M]=a1 to railBr[M]=b0
+    // along a1 -> b0. A cap with no interior ring sample is a single segment
+    // (a plain quad rung); a notched cap carries interior samples and gets a
+    // local web.
+    const bool cap1Simple = (r.a0 == (r.b1 + 1) % N);
+    const bool cap2Simple = (r.b0 == (r.a1 + 1) % N);
+    const bool flip = face.Orientation() == TopAbs_REVERSED;
+    // Border vertices are anchorless (they live on shared B-rep edges and
+    // must weld to the neighbour's samples); the sweep adds no interior
+    // vertices, so the whole strip welds by construction.
+    std::vector<uint32_t> vid(N, UINT32_MAX);
+    auto pushUv = [&](int ring) {
+        if (vid[ring] == UINT32_MAX) vid[ring] = out.addVertex(P[ring], {});
+        return vid[ring];
+    };
+    Handle(Geom_Surface) S = BRep_Tool::Surface(face);
+    if (S.IsNull()) return false;
+    // Winding decided ONCE from 3D geometry, not per-polygon UV area: a
+    // freeform chart can flip the sign of a thin cell's UV area even where
+    // the 3D strip is perfectly regular, which would wind adjacent quads
+    // oppositely (a duplicate directed edge = the self-check trips). A
+    // representative body quad's Newell normal against the surface normal
+    // fixes the whole strip's hand; every polygon is then emitted CAD-out.
+    auto surfN = [&](const gp_Pnt2d& uv) {
+        gp_Pnt p;
+        gp_Vec du, dv;
+        S->D1(uv.X(), uv.Y(), p, du, dv);
+        gp_Vec n = du.Crossed(dv);
+        if (flip) n.Reverse();
+        return n;
+    };
+    auto newell = [&](const std::vector<int>& ring) {
+        gp_XYZ n(0, 0, 0);
+        for (size_t i = 0; i < ring.size(); ++i) {
+            const gp_XYZ& a = P[ring[i]].XYZ();
+            const gp_XYZ& b = P[ring[(i + 1) % ring.size()]].XYZ();
+            n += gp_XYZ(a.Y() * b.Z() - a.Z() * b.Y(),
+                        a.Z() * b.X() - a.X() * b.Z(),
+                        a.X() * b.Y() - a.Y() * b.X());
+        }
+        return n;
+    };
+    // Reference: a mid-strip rung so the surface normal is well defined.
+    bool reverseAll = false;
+    {
+        const int rm = std::clamp(M / 2, 1, M - 1);
+        std::vector<int> refQuad = {railA[rm - 1], railA[rm], railBr[rm],
+                                    railBr[rm - 1]};
+        gp_XYZ nq = newell(refQuad);
+        gp_Pnt2d c(0.25 * (UV[railA[rm - 1]].X() + UV[railA[rm]].X() +
+                           UV[railBr[rm]].X() + UV[railBr[rm - 1]].X()),
+                   0.25 * (UV[railA[rm - 1]].Y() + UV[railA[rm]].Y() +
+                           UV[railBr[rm]].Y() + UV[railBr[rm - 1]].Y()));
+        gp_Vec ref = surfN(c);
+        if (ref.Magnitude() > 1e-12 && nq.Modulus() > 1e-12 &&
+            gp_Vec(nq).Dot(ref) < 0) {
+            reverseAll = true;
+        }
+    }
+    auto emit = [&](std::vector<uint32_t> poly) {
+        // Collapse vertices that coincide within the weld tolerance (a sharp
+        // reflex station can pinch a rung to zero width): a 4-gon becomes a
+        // clean triangle instead of a zero-area quad, and the dropped edge
+        // was zero length so the weld is unaffected.
+        std::vector<uint32_t> dd;
+        for (size_t i = 0; i < poly.size(); ++i) {
+            const auto& a = out.mesh().vertices[poly[i]];
+            const auto& b =
+                out.mesh().vertices[poly[(i + 1) % poly.size()]];
+            const double d = std::hypot(std::hypot(a[0] - b[0], a[1] - b[1]),
+                                        a[2] - b[2]);
+            if (d > 1e-7) dd.push_back(poly[i]);
+        }
+        if (dd.size() < 3) return;
+        auto put = [&](std::vector<uint32_t> p) {
+            if (reverseAll) std::reverse(p.begin(), p.end());
+            out.addPolygon(std::move(p), faceId, /*flip=*/false);
+        };
+        auto pnt = [&](uint32_t v) {
+            const auto& a = out.mesh().vertices[v];
+            return gp_Pnt(a[0], a[1], a[2]);
+        };
+        auto triA = [&](uint32_t a, uint32_t b, uint32_t c) {
+            return gp_Vec(pnt(a), pnt(b)).Crossed(gp_Vec(pnt(a), pnt(c)))
+                .Magnitude();
+        };
+        // A quad whose area collapses is a bowtie (a rail veering across the
+        // strip at a crease or a swallowed notch corner): split it along the
+        // diagonal that keeps both triangles non-degenerate. A cell that is
+        // collinear on BOTH diagonals is a genuine zero-width fold -- ship it
+        // flat rather than as two flat triangles.
+        if (dd.size() == 4) {
+            const double q = 0.5 * gp_Vec(pnt(dd[0]), pnt(dd[1]))
+                                       .Crossed(gp_Vec(pnt(dd[0]), pnt(dd[2])))
+                                       .Magnitude() +
+                             0.5 * gp_Vec(pnt(dd[0]), pnt(dd[2]))
+                                       .Crossed(gp_Vec(pnt(dd[0]), pnt(dd[3])))
+                                       .Magnitude();
+            const double refW =
+                0.5 * (pnt(dd[0]).Distance(pnt(dd[3])) +
+                       pnt(dd[1]).Distance(pnt(dd[2])));
+            if (q < 1e-3 * std::max(1e-9, refW) * refW) {
+                const double d02 = std::min(triA(dd[0], dd[1], dd[2]),
+                                            triA(dd[0], dd[2], dd[3]));
+                const double d13 = std::min(triA(dd[1], dd[2], dd[3]),
+                                            triA(dd[1], dd[3], dd[0]));
+                if (std::max(d02, d13) > 1e-4 * refW * refW) {
+                    if (d02 >= d13) {
+                        put({dd[0], dd[1], dd[2]});
+                        put({dd[0], dd[2], dd[3]});
+                    } else {
+                        put({dd[1], dd[2], dd[3]});
+                        put({dd[1], dd[3], dd[0]});
+                    }
+                    return;
+                }
+            }
+        }
+        put(std::move(dd));
+    };
+    // Body: skip the end interval that a notched cap will web.
+    const int lo = cap1Simple ? 0 : 1;
+    const int hi = cap2Simple ? M : M - 1;
+    // Zip the two rails by ARC LENGTH, not by index. Index pairing twists
+    // where a sharp reflex crowds the samples on one rail (the flaregun grip
+    // creases: adjacent rungs jump 10->18 wide and the cell between them
+    // collapses). Advancing whichever rail lags in arc fraction keeps every
+    // cell square: equal, evenly-spread rails stay a pure quad ladder;
+    // mismatches absorb as the occasional triangle at the crease.
+    std::vector<double> fA(M + 1, 0), fB(M + 1, 0);
+    for (int i = 1; i <= M; ++i) {
+        fA[i] = fA[i - 1] + P[railA[i - 1]].Distance(P[railA[i]]);
+        fB[i] = fB[i - 1] + P[railBr[i - 1]].Distance(P[railBr[i]]);
+    }
+    const double lenA = std::max(1e-12, fA[hi] - fA[lo]);
+    const double lenB = std::max(1e-12, fB[hi] - fB[lo]);
+    auto frA = [&](int i) { return (fA[i] - fA[lo]) / lenA; };
+    auto frB = [&](int i) { return (fB[i] - fB[lo]) / lenB; };
+    int ia = lo, ib = lo;
+    while (ia < hi || ib < hi) {
+        if (ia >= hi) {
+            emit({pushUv(railA[hi]), pushUv(railBr[ib + 1]),
+                  pushUv(railBr[ib])});
+            ++ib;
+            continue;
+        }
+        if (ib >= hi) {
+            emit({pushUv(railA[ia]), pushUv(railA[ia + 1]),
+                  pushUv(railBr[hi])});
+            ++ia;
+            continue;
+        }
+        const double na = frA(ia + 1), nb = frB(ib + 1);
+        const double stepA = frA(ia + 1) - frA(ia);
+        const double stepB = frB(ib + 1) - frB(ib);
+        if (std::abs(na - nb) < 0.5 * std::min(stepA, stepB)) {
+            emit({pushUv(railA[ia]), pushUv(railA[ia + 1]),
+                  pushUv(railBr[ib + 1]), pushUv(railBr[ib])});
+            ++ia;
+            ++ib;
+        } else if (na < nb) {
+            emit({pushUv(railA[ia]), pushUv(railA[ia + 1]),
+                  pushUv(railBr[ib])});
+            ++ia;
+        } else {
+            emit({pushUv(railA[ia]), pushUv(railBr[ib + 1]),
+                  pushUv(railBr[ib])});
+            ++ib;
+        }
+    }
+    // Local web for a notched cap: the small boundary polygon between the
+    // first interior rung and the cap's own samples, ear-clipped in 3D with
+    // the strip's hand (so it can never fold against the body).
+    auto webCap = [&](bool nearCap) -> bool {
+        std::vector<int> poly;  // ring indices, boundary order
+        if (nearCap) {  // cap 1: rung at r=1, cap arc b1..a0
+            poly.push_back(railA[1]);
+            for (int k = r.a0;; k = (k + N - 1) % N) {
+                poly.push_back(k);
+                if (k == r.b1) break;
+            }
+            poly.push_back(railBr[1]);
+        } else {  // cap 2: rung at r=M-1, cap arc a1..b0
+            poly.push_back(railA[M - 1]);
+            poly.push_back(railA[M]);
+            for (int k = (r.a1 + 1) % N;; k = (k + 1) % N) {
+                poly.push_back(k);
+                if (k == r.b0) break;
+            }
+            poly.push_back(railBr[M - 1]);
+        }
+        if (poly.size() < 3) return false;
+        std::vector<WebPoint> ring;
+        for (int idx : poly) ring.push_back({UV[idx], pushUv(idx)});
+        // Order the ring so its UV winding matches the body's hand: the body
+        // quads came out CAD-out; ask triangulateWeb for the same by feeding
+        // it a positively-wound ring and flip=reverseAll.
+        double area = 0;
+        for (size_t i = 0; i < ring.size(); ++i) {
+            const gp_Pnt2d& p = ring[i].uv;
+            const gp_Pnt2d& q = ring[(i + 1) % ring.size()].uv;
+            area += p.X() * q.Y() - q.X() * p.Y();
+        }
+        if (area < 0) std::reverse(ring.begin(), ring.end());
+        const bool okw = triangulateWeb(std::move(ring), {}, faceId,
+                                        reverseAll, out);
+        dbg("ribbon face %d: cap web (%s) %zu pts -> %s", faceId,
+            nearCap ? "near" : "far", poly.size(), okw ? "ok" : "FAIL");
+        return okw;
+    };
+    if (!cap1Simple && !webCap(/*nearCap=*/true)) return false;
+    if (!cap2Simple && !webCap(/*nearCap=*/false)) return false;
+    // Quality gate: the sweep only earns the face when the RAILS carry it --
+    // an even quad flow with the caps a small web. When triangles outnumber
+    // quads the "rails" were really a loop around a deep notched end (the
+    // trigger guard) and quad-fill's grid+pairing is the better, safer
+    // result -- hand it back rather than ship a tri-heavy strip.
+    int nq = 0, nt = 0;
+    for (const auto& p : out.mesh().polygons) {
+        if (p.size() == 4) ++nq;
+        else if (p.size() == 3) ++nt;
+    }
+    if (nt > nq) {
+        dbg("ribbon face %d: caps web-heavy (%d tri / %d quad) -> quad-fill",
+            faceId, nt, nq);
+        return false;
+    }
+    dbg("ribbon face %d: rails %d, width %.2f aspect %.1f, caps %s/%s",
+        faceId, M, r.width, r.aspect, cap1Simple ? "quad" : "web",
+        cap2Simple ? "quad" : "web");
+    return true;
+}
+
 // The demotion floor for ANY face with pcurves: every wire sampled at
 // the solved counts (the border contract, same formula every mesher
 // uses), holes bridged in UV, the region web-triangulated. Interior
@@ -5981,6 +6486,14 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     const bool planarHere = surf.GetType() == GeomAbs_Plane;
     if ((s.quadDominant || !planarHere) &&
         planQuadFill(face, surf, model, plan)) {
+        // A long thin BENT ribbon (grip / trigger-guard rails) coons just
+        // rejected: sweep the rails into an even quad flow instead of the
+        // grid+CDT pairing. The plan (edge lists, density) stays quad-fill's
+        // exactly — only the mesher changes, and it falls straight back to
+        // quad-fill on any doubt, so this never disturbs a neighbour.
+        if (ribbonDetect(face, model)) {
+            plan.kind = MesherKind::RibbonSweep;
+        }
         return plan;
     }
 
@@ -11229,6 +11742,32 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     demote(fid, face, surf, s, "plate web failed");
                 }
                 break;
+            case MesherKind::RibbonSweep: {
+                // The rail sweep, or -- on any doubt (unequal rails, a fold,
+                // a leak) -- the exact quad-fill+pairing safe path this face
+                // would have taken, which is watertight by construction.
+                if (meshRibbonSweep(face, model, fid, solvedEdge, s.radial,
+                                    out)) {
+                    break;
+                }
+                parts[fid] = PolyMesh();
+                MeshBuilder qf(parts[fid]);
+                FaceMeshSettings qs = s;
+                const double qsc =
+                    std::clamp(settings.densityScale, 0.05, 20.0);
+                if (qsc != 1.0) {
+                    qs.chordTolerance /= qsc * qsc;
+                    qs.angleToleranceDeg =
+                        std::clamp(qs.angleToleranceDeg / qsc, 1.0, 60.0);
+                }
+                if (!meshQuadFill(face, surf, model, fid, solvedEdge,
+                                  s.radial, qs, qf)) {
+                    demote(fid, face, surf, s, "ribbon->quad fill failed");
+                } else if (!s.pureTriFloor) {
+                    pairPartTris(parts[fid]);
+                }
+                break;
+            }
             case MesherKind::QuadFill: {
                 // The same budget scaling the fallback path applies, so
                 // the density dial reaches quad-fill interiors too.
