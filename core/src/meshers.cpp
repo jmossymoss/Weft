@@ -9145,6 +9145,17 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
     // so measure the band height against the rim's azimuthal chord and fall
     // back to the floor when too thin.
     bool stripReconcile = false;
+    // Carried out of the reconcile test for the interior-row bump below.
+    double reconBandH = 0;     // band height (v0->v1 chord)
+    double reconAzStep = 0;    // driving rim's mean azimuthal chord
+    bool reconFrayStrip = false;  // the flat strip frays (needs row bump)
+    // Which rim welds one-to-one to the interior (drives its azimuths). A
+    // strip bridges the OTHER rim. A strip over a rim that JUMPS in v (the
+    // foam body's mess-side rim leaps ~46 between adjacent samples) shears
+    // into folded slivers, so the wavier rim must drive (weld to its exact
+    // points, no strip over it) and the flatter rim — clean at any count —
+    // takes the strip. -1 means "denser drives" (both rims equally flat).
+    int driveSide = -1;
     if (rim0ok && rim1ok && nRim0 != nRim1) {
         const GeomAbs_SurfaceType st = surf.GetType();
         const bool analyticRev = st == GeomAbs_Cylinder ||
@@ -9178,16 +9189,60 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
             // it stays convex while the band is a fair fraction of that.
             const double reach =
                 0.5 * std::max(meanChord(rim[0]), meanChord(rim[1]));
-            // Only the SPARSER rim takes a transition strip — the denser
-            // rim drives the interior azimuth and welds to it one-to-one.
-            // A strip over a WAVY rim folds (its cells shear past each
-            // other, the case this bail guarded on drilled bores), so the
-            // sparser rim must be essentially flat in v; the denser rim may
-            // wave freely. Both wavy => genuinely irreconcilable, bail.
-            const double sparseVr =
-                nRim0 <= nRim1 ? vRange(rim[0]) : vRange(rim[1]);
-            const double flatTol = std::max(1e-6, 0.02 * bandH);
-            stripReconcile = bandH >= 0.35 * reach && sparseVr <= flatTol;
+            auto maxStep = [&](const std::vector<RimPt>& R) {
+                double m = 0;
+                for (size_t i = 0; i < R.size(); ++i) {
+                    m = std::max(m, std::abs(R[(i + 1) % R.size()].v - R[i].v));
+                }
+                return m;
+            };
+            // Pick the drive rim: the wavier one welds one-to-one (a strip
+            // over its v-jumps would shear into folds), the flatter one
+            // takes the transition strip. When both rims are equally flat,
+            // -1 keeps the old "denser drives" so its many samples weld
+            // rather than pile into one strip.
+            const double vr0 = vRange(rim[0]), vr1 = vRange(rim[1]);
+            const double flatV = std::max(1e-6, 0.02 * bandH);
+            if (std::abs(vr0 - vr1) > flatV) driveSide = vr0 > vr1 ? 0 : 1;
+            // A strip can only stay convex over a FLAT rim: the drive rim
+            // absorbs its wander by welding, but the stripped rim (the
+            // flatter of the two) must itself be near-flat, or its own
+            // v-wander shears the strip cells into folds. So the reconcile
+            // holds only when a genuinely flat rim exists to strip — both
+            // rims wavy (nasty_cheese's pipe-saddle bands) is irreconcilable
+            // and takes the contract floor, as before. The band must also be
+            // tall enough that the transition triangles stay convex (reach).
+            const double stripVr = std::min(vr0, vr1);
+            stripReconcile = bandH >= 0.35 * reach && stripVr <= flatV;
+            const int driveCount =
+                driveSide >= 0 ? int(rim[driveSide].size())
+                               : std::max(nRim0, nRim1);
+            const int stripCount =
+                driveSide >= 0 ? int(rim[driveSide ^ 1].size())
+                               : std::min(nRim0, nRim1);
+            reconBandH = bandH;
+            const std::vector<RimPt>& driveRim =
+                driveSide >= 0 ? rim[driveSide]
+                               : (nRim0 >= nRim1 ? rim[0] : rim[1]);
+            reconAzStep = meanChord(driveRim);
+            // The interior welds one-to-one to the drive rim, so it inherits
+            // the drive rim's v profile. When that rim carries a steep local
+            // v-JUMP — the foam body's mess-side rim leaps ~46 (0.4 * band
+            // height) between two adjacent samples — the lattice cells across
+            // the jump collapse into transition triangles, and a coarse band
+            // (a manual radial that samples the rim sparsely, concentrating
+            // the whole jump into one step) can't spread them out. A taller
+            // interior lattice out-numbers those triangles and keeps quads
+            // dominant. A rim that only wanders GRADUALLY (face 4's dense
+            // 278-sample blend: max step 0.12 * band height, the default
+            // body's 38-sample rim: 0.13) makes no triangles and must NOT
+            // trip the bump, so gate on the step, not the total wander.
+            const double driveStep = maxStep(driveRim);
+            reconFrayStrip = driveStep > 0.25 * bandH;
+            dbg("revgrid face %d: RECDIAG bandH=%g reach=%g stripVr=%g "
+                "vr0=%g vr1=%g drive=%d(%d) strip=%d driveStep=%g fray=%d",
+                faceId, bandH, reach, stripVr, vr0, vr1, driveSide,
+                driveCount, stripCount, driveStep, reconFrayStrip ? 1 : 0);
         }
         if (!stripReconcile) {
             dbg("revgrid face %d: rim totals %d/%d irreconcilable", faceId,
@@ -9196,17 +9251,31 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
         }
         dbg("revgrid face %d: rim totals %d/%d -> transition strip", faceId,
             nRim0, nRim1);
-        // Interior azimuthal count equals the denser rim's: its columns sit
-        // at that rim's own azimuths, so the busy rim welds to the interior
-        // through a clean one-to-one lattice (quads) and only the sparser
-        // rim needs a transition strip.
-        nu = std::max(nRim0, nRim1);
+        // Interior azimuthal count equals the DRIVE rim's: its columns sit
+        // at that rim's own azimuths, so it welds to the interior through a
+        // clean one-to-one lattice (quads) and only the other rim needs a
+        // transition strip. The drive rim is the wavier one (a strip over
+        // its v-jumps folds); with both flat, the denser rim drives.
+        nu = driveSide >= 0 ? int(rim[driveSide].size())
+                            : std::max(nRim0, nRim1);
         // The strip design bridges EACH rim to an interior ring; with
         // nv==1 there is no interior and the two mismatched rims would
         // bridge directly, twisting where their samples don't line up.
         // Force at least one interior row.
-        if (!vWrap && !vRows && nv < 2) {
-            nv = 2;
+        int nvFloor = 2;
+        // A fraying strip needs the one-to-one lattice to out-number it, so
+        // give the tall band enough interior rows: a cell aspect near 2:1
+        // (v-height : azimuth-width) from the band height, capped so a
+        // genuinely tall body doesn't over-mesh. Only fires when the drive
+        // rim carries a steep v-jump (reconFrayStrip), so clean reconciles
+        // (the default foam body, every fixture) are untouched.
+        if (reconFrayStrip && reconAzStep > 1e-9) {
+            int aspectRows =
+                int(std::lround(reconBandH / (2.0 * reconAzStep)));
+            nvFloor = std::max(nvFloor, std::min(aspectRows, 8));
+        }
+        if (!vWrap && !vRows && nv < nvFloor) {
+            nv = nvFloor;
             dv = (v1 - v0) / nv;
             rows = nv + 1;
         }
@@ -9385,11 +9454,15 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
             return vv0 + (v1v - vv0) * std::clamp(t, 0.0, 1.0);
         };
         // Interior column azimuths. Reconciled bands place them at the
-        // DENSER rim's own samples (nu == that rim's count), so the interior
+        // DRIVE rim's own samples (nu == that rim's count), so the interior
         // ring next to that rim pairs it one-to-one by index — a clean
-        // lattice with no twist — while the sparser rim takes the strip.
-        // Other non-chained bands keep the uniform ruling positions.
-        int denseSide = stripReconcile ? (nRim1 >= nRim0 ? 1 : 0) : -1;
+        // lattice with no twist — while the other rim takes the strip. The
+        // drive rim is the wavier one (driveSide) or, both flat, the denser
+        // one. Other non-chained bands keep the uniform ruling positions.
+        int denseSide = stripReconcile
+                            ? (driveSide >= 0 ? driveSide
+                                              : (nRim1 >= nRim0 ? 1 : 0))
+                            : -1;
         // A SCALLOPED dense rim (radial step edges) backsteps in azimuth;
         // pinning the interior to its samples then folds the aligned lattice
         // at every tooth, and such a rim is already near-uniform in azimuth,
