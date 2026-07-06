@@ -47,12 +47,16 @@ struct CellKeyHash {
 }  // namespace
 
 void weldVertices(PolyMesh& mesh, double tolerance,
-                  const std::vector<int>* group) {
+                  const std::vector<int>* group,
+                  const std::vector<double>* vertTol) {
     if (tolerance <= 0 || mesh.vertices.empty()) return;
 
     // Spatial hash with a true distance test over the 27 neighbouring
     // cells: two points inside tolerance can still straddle a cell
-    // boundary, so a plain cell-identity weld leaves hairline seams.
+    // boundary, so a plain cell-identity weld leaves hairline seams. The
+    // cell size is `tolerance` (the maximum weld radius), so any pair that
+    // may merge lands in the same or an adjacent cell even when different
+    // vertices carry different (smaller) per-vertex radii.
     std::unordered_map<CellKey, std::vector<uint32_t>, CellKeyHash> cells;
     std::vector<uint32_t> remap(mesh.vertices.size());
     std::vector<std::array<double, 3>> kept;
@@ -68,10 +72,25 @@ void weldVertices(PolyMesh& mesh, double tolerance,
         const int64_t cx = int64_t(std::llround(v[0] / tolerance));
         const int64_t cy = int64_t(std::llround(v[1] / tolerance));
         const int64_t cz = int64_t(std::llround(v[2] / tolerance));
+        // This vertex's own weld radius; a pair merges within the LOOSER
+        // of the two radii (max-wins), so a loosened face pulls its own
+        // border verts in without the neighbour having to agree.
+        const double ti = (vertTol && i < vertTol->size()) ? (*vertTol)[i]
+                                                           : tolerance;
+        // Scalar path takes the FIRST candidate within tolerance (its cell
+        // size equals the radius, so first is effectively nearest and the
+        // historical result is preserved bit for bit). The per-vertex path
+        // uses a cell size of the MAXIMUM radius, so a cell can hold verts
+        // well outside a given pair's threshold — pick the NEAREST match so
+        // a coincident duplicate always wins over a merely-in-cell vertex.
         uint32_t match = UINT32_MAX;
-        for (int dz = -1; dz <= 1 && match == UINT32_MAX; ++dz) {
-            for (int dy = -1; dy <= 1 && match == UINT32_MAX; ++dy) {
-                for (int dx = -1; dx <= 1 && match == UINT32_MAX; ++dx) {
+        double matchD2 = 0.0;
+        const bool nearest = vertTol != nullptr;
+        for (int dz = -1; dz <= 1 && (nearest || match == UINT32_MAX); ++dz) {
+            for (int dy = -1; dy <= 1 && (nearest || match == UINT32_MAX);
+                 ++dy) {
+                for (int dx = -1; dx <= 1 && (nearest || match == UINT32_MAX);
+                     ++dx) {
                     auto it = cells.find({cx + dx, cy + dy, cz + dz});
                     if (it == cells.end()) continue;
                     for (uint32_t k : it->second) {
@@ -79,12 +98,28 @@ void weldVertices(PolyMesh& mesh, double tolerance,
                                          (*group)[i]) {
                             continue;  // different solids never fuse
                         }
+                        double thr2 = tol2;
+                        if (vertTol) {
+                            const double tk =
+                                keptSource[k] < vertTol->size()
+                                    ? (*vertTol)[keptSource[k]]
+                                    : tolerance;
+                            const double thr = ti > tk ? ti : tk;
+                            thr2 = thr * thr;
+                        }
                         const auto& q = kept[k];
                         double ddx = q[0] - v[0], ddy = q[1] - v[1],
                                ddz = q[2] - v[2];
-                        if (ddx * ddx + ddy * ddy + ddz * ddz <= tol2) {
-                            match = k;
-                            break;
+                        const double d2 = ddx * ddx + ddy * ddy + ddz * ddz;
+                        if (d2 <= thr2) {
+                            if (!nearest) {
+                                match = k;
+                                break;
+                            }
+                            if (match == UINT32_MAX || d2 < matchD2) {
+                                match = k;
+                                matchD2 = d2;
+                            }
                         }
                     }
                 }
