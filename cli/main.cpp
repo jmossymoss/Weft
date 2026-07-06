@@ -62,8 +62,8 @@ void usage() {
         "                      big arcs get more segments, straights get 1)\n"
 "    --flat-quads      dense grids on flat faces too (default: flats\n"
         "                      are boundary n-gons/webs; quads go to curves)\n"
-        "    --pure-tris       disable quad pairing on fallback-triangulated\n"
-        "                      faces (default: quad-dominant)\n"
+        "    --quads           pair fallback triangulations into quads\n"
+        "                      where quality allows (default: pure tris)\n"
         "    --chord T         fallback triangulation tolerance (default 0.1)\n"
         "    --face ID:k=v[,k=v...]\n"
         "                      per-face override, e.g. --face 1:radial=24,axial=2\n"
@@ -168,6 +168,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         else if (a == "--hold") gs.defaults.filletHold = std::stod(next());
         else if (a == "--rings") gs.defaults.junctionRings = std::stoi(next());
         else if (a == "--pure-tris") gs.defaults.quadDominant = false;
+        else if (a == "--quads") gs.defaults.quadDominant = true;
         else if (a == "--flat-quads") gs.defaults.minimal = false;
         else if (a == "--adaptive") gs.defaults.adaptive = true;
         else if (a == "--density") {

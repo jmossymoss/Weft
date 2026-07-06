@@ -130,6 +130,7 @@ public:
     }
 
     const PolyMesh& mesh() const { return mesh_; }
+    PolyMesh& mesh() { return mesh_; }
 
 private:
     PolyMesh& mesh_;
@@ -3851,9 +3852,317 @@ bool meshSurfaceCapFan(const TopoDS_Face& face, const Model& model,
     return true;
 }
 
+double quadAngleCost(const std::array<gp_Pnt, 4>& q);  // with meshFallback
+
+// The deflection budget a face's triangulation must honor — the same
+// meaning meshFallback gives the deviation slider (relative mode scales
+// by THIS face's extent).
+double faceDeflection(const TopoDS_Face& face, const FaceMeshSettings& s) {
+    double defl = std::max(1e-9, s.chordTolerance);
+    if (s.relativeDeviation) {
+        Bnd_Box bb;
+        BRepBndLib::Add(face, bb);
+        if (!bb.IsVoid()) {
+            double x0, y0, z0, x1, y1, z1;
+            bb.Get(x0, y0, z0, x1, y1, z1);
+            const double diag =
+                gp_Pnt(x0, y0, z0).Distance(gp_Pnt(x1, y1, z1));
+            defl = std::max(1e-9, s.chordTolerance * 0.05 * diag);
+        }
+    }
+    return defl;
+}
+
+// Whether the surface region stays within the deflection budget of a
+// single flat sheet — the gate that lets a cap fan (no interior detail)
+// stand in for a refined web.
+bool faceWithinDeflection(const TopoDS_Face& face,
+                          const FaceMeshSettings& s) {
+    try {
+        Handle(Geom_Surface) S = BRep_Tool::Surface(face);
+        if (S.IsNull()) return true;
+        double u0, u1, v0, v1;
+        BRepTools::UVBounds(face, u0, u1, v0, v1);
+        const double defl = faceDeflection(face, s);
+        std::vector<gp_Pnt> pts;
+        for (int i = 0; i <= 5; ++i) {
+            for (int j = 0; j <= 5; ++j) {
+                pts.push_back(S->Value(u0 + (u1 - u0) * i / 5.0,
+                                       v0 + (v1 - v0) * j / 5.0));
+            }
+        }
+        gp_XYZ c(0, 0, 0);
+        for (const gp_Pnt& p : pts) c += p.XYZ();
+        c /= double(pts.size());
+        // Newell normal over the sample fan gives a stable plane.
+        gp_XYZ n(0, 0, 0);
+        for (size_t k = 0; k + 1 < pts.size(); ++k) {
+            n += (pts[k].XYZ() - c).Crossed(pts[k + 1].XYZ() - c);
+        }
+        if (n.Modulus() < 1e-12) return true;
+        n /= n.Modulus();
+        double maxD = 0;
+        for (const gp_Pnt& p : pts) {
+            maxD = std::max(maxD, std::abs((p.XYZ() - c).Dot(n)));
+        }
+        return maxD <= defl;
+    } catch (const Standard_Failure&) {
+        return true;
+    }
+}
+
+// Deviation-driven interior refinement for floor webs: split interior
+// edges whose surface midpoint sags off the mesh by more than the
+// deflection, flip diagonals toward Delaunay in UV, then (optionally)
+// pair triangles into quads. Border edges are the weld contract and
+// never split; every new vertex evaluates ON the surface and carries a
+// face anchor. This is what makes deviation / min-size / quad-dominant
+// LIVE on floored faces — a border-only web has no interior to respond.
+void refineFloorWeb(PolyMesh& part, const TopoDS_Face& face, int faceId,
+                    const FaceMeshSettings& s, double uScale,
+                    std::vector<gp_Pnt2d> uvOf) {
+    Handle(Geom_Surface) S = BRep_Tool::Surface(face);
+    if (S.IsNull()) return;
+    if (uvOf.size() != part.vertices.size()) return;
+    std::vector<std::array<uint32_t, 3>> tris;
+    tris.reserve(part.polygons.size());
+    for (const auto& poly : part.polygons) {
+        if (poly.size() != 3) return;  // floor webs are all-tri
+        tris.push_back({poly[0], poly[1], poly[2]});
+    }
+    const double defl = faceDeflection(face, s);
+    auto p3 = [&](uint32_t v) {
+        return gp_Pnt(part.vertices[v][0], part.vertices[v][1],
+                      part.vertices[v][2]);
+    };
+    auto ekey = [](uint32_t a, uint32_t b) {
+        return (uint64_t(std::min(a, b)) << 32) | std::max(a, b);
+    };
+
+    for (int round = 0; round < 8 && tris.size() < 20000; ++round) {
+        std::map<uint64_t, std::array<int, 2>> etri;
+        for (size_t t = 0; t < tris.size(); ++t) {
+            for (int i = 0; i < 3; ++i) {
+                auto& e =
+                    etri.emplace(ekey(tris[t][i], tris[t][(i + 1) % 3]),
+                                 std::array<int, 2>{-1, -1})
+                        .first->second;
+                (e[0] < 0 ? e[0] : e[1]) = int(t);
+            }
+        }
+        auto splittable = [&](uint32_t a, uint32_t b) {
+            const auto it = etri.find(ekey(a, b));
+            if (it == etri.end() || it->second[1] < 0) return false;
+            const double len = p3(a).Distance(p3(b));
+            if (s.minSize > 0 && len <= 2.0 * s.minSize) return false;
+            const gp_Pnt2d um(0.5 * (uvOf[a].X() + uvOf[b].X()),
+                              0.5 * (uvOf[a].Y() + uvOf[b].Y()));
+            gp_Pnt onSurf = S->Value(um.X(), um.Y());
+            gp_XYZ lerp = (p3(a).XYZ() + p3(b).XYZ()) / 2.0;
+            return onSurf.Distance(gp_Pnt(lerp)) > defl;
+        };
+        std::set<uint64_t> marked;
+        for (const auto& t : tris) {
+            for (int i = 0; i < 3; ++i) {
+                uint32_t a = t[i], b = t[(i + 1) % 3];
+                if (marked.count(ekey(a, b))) continue;
+                if (splittable(a, b)) marked.insert(ekey(a, b));
+            }
+        }
+        if (marked.empty()) break;
+        // One split per triangle per round keeps the children sane.
+        std::vector<char> touched(tris.size(), 0);
+        for (uint64_t key : marked) {
+            const auto it = etri.find(key);
+            if (it == etri.end()) continue;
+            const int t1 = it->second[0], t2 = it->second[1];
+            if (t1 < 0 || t2 < 0 || touched[t1] || touched[t2]) continue;
+            const uint32_t a = uint32_t(key >> 32), b = uint32_t(key);
+            const gp_Pnt2d um(0.5 * (uvOf[a].X() + uvOf[b].X()),
+                              0.5 * (uvOf[a].Y() + uvOf[b].Y()));
+            const gp_Pnt pw = S->Value(um.X(), um.Y());
+            const uint32_t w = uint32_t(part.vertices.size());
+            part.vertices.push_back({pw.X(), pw.Y(), pw.Z()});
+            part.anchors.push_back({faceId, um.X(), um.Y()});
+            uvOf.push_back(um);
+            for (int t : {t1, t2}) {
+                touched[t] = 1;
+                std::array<uint32_t, 3> tri = tris[t];
+                for (int i = 0; i < 3; ++i) {
+                    uint32_t p = tri[i], q = tri[(i + 1) % 3];
+                    if ((p == a && q == b) || (p == b && q == a)) {
+                        const uint32_t r = tri[(i + 2) % 3];
+                        tris[t] = {p, w, r};
+                        tris.push_back({w, q, r});
+                        touched.push_back(1);
+                        break;
+                    }
+                }
+            }
+        }
+        // Delaunay flips in (anisotropy-corrected) UV restore quality
+        // after the splits.
+        for (int sweep = 0; sweep < 2; ++sweep) {
+            std::map<uint64_t, std::array<int, 2>> em;
+            for (size_t t = 0; t < tris.size(); ++t) {
+                for (int i = 0; i < 3; ++i) {
+                    auto& e = em.emplace(
+                                    ekey(tris[t][i], tris[t][(i + 1) % 3]),
+                                    std::array<int, 2>{-1, -1})
+                                  .first->second;
+                    (e[0] < 0 ? e[0] : e[1]) = int(t);
+                }
+            }
+            auto sc = [&](uint32_t v) {
+                return gp_Pnt2d(uvOf[v].X() * uScale, uvOf[v].Y());
+            };
+            auto cross2 = [](const gp_Pnt2d& o, const gp_Pnt2d& a,
+                             const gp_Pnt2d& b) {
+                return (a.X() - o.X()) * (b.Y() - o.Y()) -
+                       (a.Y() - o.Y()) * (b.X() - o.X());
+            };
+            bool flipped = false;
+            for (auto& [key, e] : em) {
+                if (e[1] < 0) continue;
+                const uint32_t p = uint32_t(key >> 32),
+                               q = uint32_t(key);
+                int t1 = e[0], t2 = e[1];
+                // The map goes stale as flips land: skip entries whose
+                // triangles no longer carry this edge (a garbage third
+                // vertex here once tore a face into internal opens).
+                auto hasEdge = [&](int t) {
+                    int hit = 0;
+                    for (uint32_t v : tris[t]) {
+                        if (v == p || v == q) ++hit;
+                    }
+                    return hit == 2;
+                };
+                if (!hasEdge(t1) || !hasEdge(t2)) continue;
+                uint32_t c = 0, d = 0;
+                for (uint32_t v : tris[t1]) {
+                    if (v != p && v != q) c = v;
+                }
+                for (uint32_t v : tris[t2]) {
+                    if (v != p && v != q) d = v;
+                }
+                if (c == d || em.count(ekey(c, d))) continue;
+                // in-circle test on t1 (p,q,c) against d
+                const gp_Pnt2d P = sc(p), Q = sc(q), C = sc(c), D = sc(d);
+                const double ax = P.X() - D.X(), ay = P.Y() - D.Y();
+                const double bx = Q.X() - D.X(), by = Q.Y() - D.Y();
+                const double cx = C.X() - D.X(), cy = C.Y() - D.Y();
+                const double det =
+                    (ax * ax + ay * ay) * (bx * cy - by * cx) -
+                    (bx * bx + by * by) * (ax * cy - ay * cx) +
+                    (cx * cx + cy * cy) * (ax * by - ay * bx);
+                const double orient = cross2(P, Q, C);
+                if (orient == 0 || det * (orient > 0 ? 1 : -1) <= 0) {
+                    continue;
+                }
+                // Flip only when both children stay non-degenerate.
+                if (std::abs(cross2(C, P, D)) < 1e-16 ||
+                    std::abs(cross2(D, Q, C)) < 1e-16) {
+                    continue;
+                }
+                // Rebuild with the orientation pattern of the originals:
+                // t1 walks p->q somewhere; the children keep that hand.
+                bool fwd1 = false;
+                for (int i = 0; i < 3; ++i) {
+                    if (tris[t1][i] == p &&
+                        tris[t1][(i + 1) % 3] == q) {
+                        fwd1 = true;
+                    }
+                }
+                if (fwd1) {
+                    tris[t1] = {p, d, c};
+                    tris[t2] = {d, q, c};
+                } else {
+                    tris[t1] = {q, d, c};
+                    tris[t2] = {d, p, c};
+                }
+                // Register the new diagonal so a later stale entry can't
+                // recreate it (duplicate edge = non-manifold).
+                em[ekey(c, d)] = {t1, t2};
+                flipped = true;
+            }
+            if (!flipped) break;
+        }
+    }
+
+    // Rebuild the part's polygons; optionally pair into quads (greedy by
+    // corner-angle cost, exactly the quad-dominant fallback's move).
+    std::vector<std::vector<uint32_t>> polys;
+    if (!s.quadDominant) {
+        for (const auto& t : tris) polys.push_back({t[0], t[1], t[2]});
+    } else {
+        std::map<uint64_t, std::array<int, 2>> em;
+        for (size_t t = 0; t < tris.size(); ++t) {
+            for (int i = 0; i < 3; ++i) {
+                auto& e = em.emplace(
+                                ekey(tris[t][i], tris[t][(i + 1) % 3]),
+                                std::array<int, 2>{-1, -1})
+                              .first->second;
+                (e[0] < 0 ? e[0] : e[1]) = int(t);
+            }
+        }
+        struct Cand {
+            double cost;
+            int t1, t2;
+            std::array<uint32_t, 4> ring;
+        };
+        std::vector<Cand> cands;
+        for (const auto& [key, e] : em) {
+            if (e[1] < 0) continue;
+            const uint32_t p = uint32_t(key >> 32), q = uint32_t(key);
+            int t1 = e[0], t2 = e[1];
+            // Orient by t1: it walks the shared edge in SOME direction;
+            // the merged cycle keeps that hand.
+            uint32_t P = p, Q = q;
+            bool fwd = false;
+            for (int i = 0; i < 3; ++i) {
+                if (tris[t1][i] == p && tris[t1][(i + 1) % 3] == q) {
+                    fwd = true;
+                }
+            }
+            if (!fwd) std::swap(P, Q);
+            uint32_t c = 0, d = 0;
+            for (uint32_t v : tris[t1]) {
+                if (v != p && v != q) c = v;
+            }
+            for (uint32_t v : tris[t2]) {
+                if (v != p && v != q) d = v;
+            }
+            const std::array<uint32_t, 4> ring{P, d, Q, c};
+            const double cost = quadAngleCost(
+                {p3(ring[0]), p3(ring[1]), p3(ring[2]), p3(ring[3])});
+            if (cost > 1e8) continue;
+            cands.push_back({cost, t1, t2, ring});
+        }
+        std::sort(cands.begin(), cands.end(),
+                  [](const Cand& a, const Cand& b) {
+                      return a.cost < b.cost;
+                  });
+        std::vector<char> used(tris.size(), 0);
+        for (const Cand& cd : cands) {
+            if (used[cd.t1] || used[cd.t2]) continue;
+            used[cd.t1] = used[cd.t2] = 1;
+            polys.push_back({cd.ring[0], cd.ring[1], cd.ring[2],
+                             cd.ring[3]});
+        }
+        for (size_t t = 0; t < tris.size(); ++t) {
+            if (!used[t]) {
+                polys.push_back({tris[t][0], tris[t][1], tris[t][2]});
+            }
+        }
+    }
+    part.polygons = std::move(polys);
+    part.polygonFaceId.assign(part.polygons.size(), faceId);
+}
+
 bool meshContractFallback(const TopoDS_Face& face, const Model& model,
                           int faceId, const std::vector<int>& solvedEdge,
-                          int radialDefault, MeshBuilder& out) {
+                          int radialDefault, MeshBuilder& out,
+                          const FaceMeshSettings* refine = nullptr) {
     std::vector<PlanarRing> rings;
     if (!samplePlanarRings(face, model, solvedEdge, radialDefault, rings)) {
         dbg("contract floor %d: ring sampling failed", faceId);
@@ -3882,12 +4191,14 @@ bool meshContractFallback(const TopoDS_Face& face, const Model& model,
     }
     std::vector<WebPoint> outer;
     std::vector<std::vector<WebPoint>> holes;
+    std::vector<gp_Pnt2d> uvOf;  // per emitted vertex, UNSCALED uv
     for (PlanarRing& r : rings) {
         std::vector<WebPoint> ring;
         for (size_t i = 0; i < r.uv.size(); ++i) {
             ring.push_back(
                 {gp_Pnt2d(r.uv[i].X() * uScale, r.uv[i].Y()),
                  out.addVertex(r.p[i], {})});
+            uvOf.push_back(r.uv[i]);
         }
         if (r.isOuter) outer = std::move(ring);
         else holes.push_back(std::move(ring));
@@ -3897,6 +4208,10 @@ bool meshContractFallback(const TopoDS_Face& face, const Model& model,
                         out)) {
         dbg("contract floor %d: web triangulation failed", faceId);
         return false;
+    }
+    if (refine) {
+        refineFloorWeb(out.mesh(), face, faceId, *refine, uScale,
+                       std::move(uvOf));
     }
     return true;
 }
@@ -7485,11 +7800,21 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                       const FaceMeshSettings& s, const char* why) {
         parts[fid] = PolyMesh();
         fellBack[fid] = 1;
+        // Density settings reach demoted faces too: the floor's interior
+        // refinement and the OCCT retry both honor the (budget-scaled)
+        // deviation, so a failed mesher doesn't freeze the face's detail.
+        FaceMeshSettings fsD = s;
+        const double dscD = std::clamp(settings.densityScale, 0.05, 20.0);
+        if (dscD != 1.0) {
+            fsD.chordTolerance /= dscD * dscD;
+            fsD.angleToleranceDeg =
+                std::clamp(fsD.angleToleranceDeg / dscD, 1.0, 60.0);
+        }
         {
             MeshBuilder retry(parts[fid]);
             const bool built = meshContractFallback(face, model, fid,
                                                     solvedEdge, s.radial,
-                                                    retry);
+                                                    retry, &fsD);
             const int floorBad =
                 built ? borderContractViolation(fid, parts[fid]) : -1;
             if (built && floorBad == 0) {
@@ -7505,7 +7830,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         }
         parts[fid] = PolyMesh();
         MeshBuilder retry(parts[fid]);
-        meshFallback(face, surf, fid, s, retry);
+        meshFallback(face, surf, fid, fsD, retry);
         dbg("mesh face %d: %s -> OCCT fallback (no contract floor)", fid,
             why);
     };
@@ -7668,24 +7993,6 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 // OCCT's own discretization (observed: 23 opens on the
                 // weldment where conform couldn't). Raw OCCT remains for
                 // faces the floor cannot express.
-                if (meshSurfaceCapFan(face, model, fid, solvedEdge,
-                                      s.radial, out) &&
-                    borderContractViolation(fid, parts[fid]) == 0) {
-                    fellBack[fid] = 2;  // exact borders: conform authority
-                    break;
-                }
-                {
-                    parts[fid] = PolyMesh();
-                    MeshBuilder retryFloor(parts[fid]);
-                    if (meshContractFallback(face, model, fid, solvedEdge,
-                                             s.radial, retryFloor) &&
-                        borderContractViolation(fid, parts[fid]) == 0) {
-                        fellBack[fid] = 2;  // exact borders: authority
-                        break;
-                    }
-                }
-                parts[fid] = PolyMesh();
-                MeshBuilder retryFb(parts[fid]);
                 FaceMeshSettings fs = s;
                 if (plan.forceFallbackQuads >= 0) {
                     fs.quadDominant = plan.forceFallbackQuads != 0;
@@ -7700,6 +8007,31 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     fs.angleToleranceDeg =
                         std::clamp(fs.angleToleranceDeg / dsc, 1.0, 60.0);
                 }
+                // The cap fan is the minimal single-wire answer — valid
+                // only while the face stays inside the deviation budget;
+                // a curved face takes the floor web, whose interior
+                // REFINES to the same budget (that's what makes the
+                // deviation / min-size / quad-dominant settings live on
+                // floored faces).
+                if (faceWithinDeflection(face, fs) &&
+                    meshSurfaceCapFan(face, model, fid, solvedEdge,
+                                      s.radial, out) &&
+                    borderContractViolation(fid, parts[fid]) == 0) {
+                    fellBack[fid] = 2;  // exact borders: conform authority
+                    break;
+                }
+                {
+                    parts[fid] = PolyMesh();
+                    MeshBuilder retryFloor(parts[fid]);
+                    if (meshContractFallback(face, model, fid, solvedEdge,
+                                             s.radial, retryFloor, &fs) &&
+                        borderContractViolation(fid, parts[fid]) == 0) {
+                        fellBack[fid] = 2;  // exact borders: authority
+                        break;
+                    }
+                }
+                parts[fid] = PolyMesh();
+                MeshBuilder retryFb(parts[fid]);
                 meshFallback(face, surf, fid, fs, retryFb);
                 break;
             }
