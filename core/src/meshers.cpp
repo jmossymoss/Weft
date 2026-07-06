@@ -4649,64 +4649,102 @@ bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     const double iu0 = umin + huBorder, iu1 = umax - huBorder;
     const double iv0 = vmin + hvBorder, iv1 = vmax - hvBorder;
     if (iu1 - iu0 < 0.5 * hu || iv1 - iv0 < 0.5 * hv) return false;
-    const int nx = std::max(1, int((iu1 - iu0) / hu));
-    const int ny = std::max(1, int((iv1 - iv0) / hv));
-    // Center the grid in the inset box so border cells get equal
-    // clearance on both sides instead of sitting flush against one edge.
-    const double u0 = iu0 + 0.5 * ((iu1 - iu0) - nx * hu);
-    const double v0 = iv0 + 0.5 * ((iv1 - iv0) - ny * hv);
+    // Face uv area (outer rings minus holes): the coverage check below
+    // compares kept-cell area against it.
+    double faceArea = 0;
+    for (const PlanarRing& r : rings) {
+        double a = 0;
+        for (size_t i = 0; i < r.uv.size(); ++i) {
+            const gp_Pnt2d& pa = r.uv[i];
+            const gp_Pnt2d& pb = r.uv[(i + 1) % r.uv.size()];
+            a += pa.X() * pb.Y() - pb.X() * pa.Y();
+        }
+        faceArea += (r.isOuter ? 1.0 : -1.0) * std::abs(a / 2);
+    }
+    faceArea = std::max(1e-12, faceArea);
+    int nx = 1, ny = 1;
+    double u0 = iu0, v0 = iv0;
+    double marginU = 0, marginV = 0;
+    std::vector<char> keep;
+    // Geometry sizing gives the LEAN grid; a castellated or strongly
+    // concave outline can cull most of it, leaving the rim web to fan
+    // across the face — worse than a denser grid. Densify until the
+    // kept cells actually cover the face (floored at border spacing;
+    // when both directions are already there, this is one pass).
+    for (int attempt = 0;; ++attempt) {
+        nx = std::max(1, int((iu1 - iu0) / hu));
+        ny = std::max(1, int((iv1 - iv0) / hv));
+        // Center the grid in the inset box so border cells get equal
+        // clearance on both sides instead of flush against one edge.
+        u0 = iu0 + 0.5 * ((iu1 - iu0) - nx * hu);
+        v0 = iv0 + 0.5 * ((iv1 - iv0) - ny * hv);
+
+        // Bin boundary segments by grid row so the per-cell clearance
+        // test only looks at nearby geometry.
+        std::vector<std::vector<int>> rowSegs(ny + 1);
+        for (int si = 0; si < int(segs.size()); ++si) {
+            double y0s = std::min(segs[si].a.Y(), segs[si].b.Y()) - hv;
+            double y1s = std::max(segs[si].a.Y(), segs[si].b.Y()) + hv;
+            int j0 = std::max(0, int(std::floor((y0s - v0) / hv)));
+            int j1 = std::min(ny, int(std::floor((y1s - v0) / hv)) + 1);
+            for (int j = j0; j <= j1; ++j) rowSegs[j].push_back(si);
+        }
+
+        // A cell is kept when its four corners are inside the domain and
+        // no boundary segment comes near its (slightly inflated) box —
+        // the rim web needs breathing room to stay well-shaped.
+        // Clearance margins scale with the BORDER spacing, not the cell:
+        // a full-height cell inflated by 30% of itself always overlaps
+        // the rims and the whole grid self-culls to nothing.
+        marginU = 0.30 * std::min(hu, huBorder);
+        marginV = 0.30 * std::min(hv, hvBorder);
+        keep.assign(size_t(nx) * ny, 0);
+        int kept = 0;
+        for (int j = 0; j < ny; ++j) {
+            for (int i = 0; i < nx; ++i) {
+                bool ok = true;
+                for (int c = 0; c < 4 && ok; ++c) {
+                    ok = insideDomain(
+                        gp_Pnt2d(u0 + (i + (c & 1)) * hu,
+                                 v0 + (j + (c >> 1)) * hv));
+                }
+                if (!ok) continue;
+                double x0 = u0 + i * hu - marginU;
+                double x1 = x0 + hu + 2 * marginU;
+                double y0 = v0 + j * hv - marginV;
+                double y1 = y0 + hv + 2 * marginV;
+                for (int si : rowSegs[j]) {
+                    const Seg& s = segs[si];
+                    // Conservative: reject when the segment's box overlaps
+                    // the inflated cell box.
+                    if (std::max(s.a.X(), s.b.X()) < x0 ||
+                        std::min(s.a.X(), s.b.X()) > x1 ||
+                        std::max(s.a.Y(), s.b.Y()) < y0 ||
+                        std::min(s.a.Y(), s.b.Y()) > y1) {
+                        continue;
+                    }
+                    ok = false;
+                    break;
+                }
+                if (ok) {
+                    keep[size_t(j) * nx + i] = 1;
+                    ++kept;
+                }
+            }
+        }
+        const double coverage = kept * hu * hv / faceArea;
+        const bool canShrink =
+            hu > 1.05 * huBorder || hv > 1.05 * hvBorder;
+        if (coverage >= 0.45 || !canShrink || attempt >= 4) break;
+        hu = std::max(huBorder, hu / 1.7);
+        hv = std::max(hvBorder, hv / 1.7);
+    }
     auto cornerUV = [&](int i, int j) {
         return gp_Pnt2d(u0 + i * hu, v0 + j * hv);
     };
-
-    // Bin boundary segments by grid row so the per-cell clearance test
-    // only looks at nearby geometry.
-    std::vector<std::vector<int>> rowSegs(ny + 1);
-    for (int si = 0; si < int(segs.size()); ++si) {
-        double y0 = std::min(segs[si].a.Y(), segs[si].b.Y()) - hv;
-        double y1 = std::max(segs[si].a.Y(), segs[si].b.Y()) + hv;
-        int j0 = std::max(0, int(std::floor((y0 - v0) / hv)));
-        int j1 = std::min(ny, int(std::floor((y1 - v0) / hv)) + 1);
-        for (int j = j0; j <= j1; ++j) rowSegs[j].push_back(si);
-    }
-
-    // A cell is kept when its four corners are inside the domain and no
-    // boundary segment comes near its (slightly inflated) box — the rim
-    // web needs breathing room to stay well-shaped.
-    // Clearance margins scale with the BORDER spacing, not the cell:
-    // a full-height cell inflated by 30% of itself always overlaps the
-    // rims and the whole grid self-culls to nothing.
-    const double marginU = 0.30 * std::min(hu, huBorder);
-    const double marginV = 0.30 * std::min(hv, hvBorder);
-    std::vector<char> keep(size_t(nx) * ny, 0);
     auto keepAt = [&](int i, int j) -> char& {
         return keep[size_t(j) * nx + i];
     };
-    for (int j = 0; j < ny; ++j) {
-        for (int i = 0; i < nx; ++i) {
-            bool ok = true;
-            for (int c = 0; c < 4 && ok; ++c) {
-                ok = insideDomain(cornerUV(i + (c & 1), j + (c >> 1)));
-            }
-            if (!ok) continue;
-            double x0 = u0 + i * hu - marginU, x1 = x0 + hu + 2 * marginU;
-            double y0 = v0 + j * hv - marginV, y1 = y0 + hv + 2 * marginV;
-            for (int si : rowSegs[j]) {
-                const Seg& s = segs[si];
-                // Conservative: reject when the segment's box overlaps the
-                // inflated cell box (exact seg/box adds little here).
-                if (std::max(s.a.X(), s.b.X()) < x0 ||
-                    std::min(s.a.X(), s.b.X()) > x1 ||
-                    std::max(s.a.Y(), s.b.Y()) < y0 ||
-                    std::min(s.a.Y(), s.b.Y()) > y1) {
-                    continue;
-                }
-                ok = false;
-                break;
-            }
-            if (ok) keepAt(i, j) = 1;
-        }
-    }
 
     // Diagonal pinches (two kept cells touching only at a corner) would
     // give that corner four frontier edges; drop one cell until clean.
