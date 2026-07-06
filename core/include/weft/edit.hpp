@@ -45,14 +45,15 @@ struct ManualOp {
     double v2 = 0.0;
     int edgeA = 0;  // Bridge: stable B-rep edge ids the two loops hug
     int edgeB = 0;
-    // Bridge: rotate the rail pairing by N steps — the automatic
-    // alignment can land a step off on symmetric loops, which reads as
-    // a spiral. [ ] adjusts this on the last bridge in the app; the
-    // rotation applies around loop B by default, or loop A when
-    // twistSide is 1 (shift+wheel in bridge mode flips it — which side
-    // rotates matters on tapered/unequal bridges).
-    int twist = 0;
-    int twistSide = 0;  // 0 = rotate B, 1 = rotate A
+    // Bridge: rotate the rail pairing by N steps PER SIDE — the automatic
+    // alignment can land a step off on symmetric loops, which reads as a
+    // spiral. [ ] adjusts the active side on the last bridge in the app;
+    // shift+wheel flips which side is active (each side KEEPS its value).
+    // The two sides counter-rotate (net pairing = twist - twistA), so a
+    // spiral that spins both rims is undone by matching them.
+    int twist = 0;      // B-side rotation
+    int twistA = 0;     // A-side rotation (counter-direction)
+    int twistSide = 0;  // app UI state: which side [ ] edits (0 = B, 1 = A)
     // Bridge: rows ACROSS the strip (V spans). Equal-count bridges emit
     // spans x N quads; zipper/same-loop bridges ignore it.
     int spans = 1;

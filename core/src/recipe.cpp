@@ -89,7 +89,7 @@ void saveRecipe(const Recipe& recipe, const std::string& path) {
         if (op.kind == ManualOp::Kind::Bridge) {
             out << "op bridge " << op.edgeA << " " << op.edgeB << " "
                 << op.twist << " " << op.spans << " " << op.twistSide
-                << "\n";
+                << " " << op.twistA << "\n";
         } else if (op.kind == ManualOp::Kind::NudgeVertex) {
             out << "op nudge " << op.faceId << " " << op.u << " " << op.v
                 << " " << op.u2 << " " << op.v2 << "\n";
@@ -164,6 +164,7 @@ Recipe loadRecipe(const std::string& path) {
                     if (!(ss >> op.twist)) op.twist = 0;  // older recipes
                     if (!(ss >> op.spans)) op.spans = 1;
                     if (!(ss >> op.twistSide)) op.twistSide = 0;
+                    if (!(ss >> op.twistA)) op.twistA = 0;
                 } else if (opKind == "nudge") {
                     op.kind = ManualOp::Kind::NudgeVertex;
                     ss >> op.faceId >> op.u >> op.v >> op.u2 >> op.v2;

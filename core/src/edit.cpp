@@ -403,15 +403,24 @@ int bridgeWithinLoop(PolyMesh& mesh, const std::vector<uint32_t>& L,
     // Zipper: ra walks forward in loop order, rb walks BACKWARD from its
     // far end (the two rails counter-rotate along the band). Every rail
     // edge is traversed in loop order inside its polygon, cancelling the
-    // open boundary edge it covers.
+    // open boundary edge it covers. Advance by ARC FRACTION so the rungs
+    // stay evenly matched — distance-greedy runs away on offset rails
+    // and fans the leftover around one vertex.
     auto vd = [&](uint32_t a, uint32_t b) { return vdist(mesh, a, b); };
+    std::vector<double> accA(N + 1, 0.0), accB(M + 1, 0.0);
+    for (int k = 0; k < N; ++k) accA[k + 1] = accA[k] + vd(ra[k], ra[k + 1]);
+    for (int k = 0; k < M; ++k) {
+        accB[k + 1] = accB[k] + vd(rb[M - k], rb[M - k - 1]);
+    }
+    const double totA = std::max(accA[N], 1e-12);
+    const double totB = std::max(accB[M], 1e-12);
     int i = 0, t = 0;
     while (i < N || t < M) {
         uint32_t bq = rb[M - t];
         bool stepA;
         if (i >= N) stepA = false;
         else if (t >= M) stepA = true;
-        else stepA = vd(ra[i + 1], bq) <= vd(ra[i], rb[M - t - 1]);
+        else stepA = accA[i + 1] * totB <= accB[t + 1] * totA;
         if (stepA) {
             emit({ra[i], ra[i + 1], bq});
             ++i;
@@ -474,22 +483,16 @@ int bridgeLoops(PolyMesh& mesh, const Model& model, const ManualOp& op) {
     // windings, so a bridge polygon must traverse loop edges in loop order
     // to cancel the open edge. The two rims counter-rotate geometrically,
     // which pairs A's forward walk with a DECREASING index walk on B.
-    std::vector<uint32_t> Arot = loops[ia];
-    // Twist rotates ONE side's whole loop by N steps: B by default, A
-    // when twistSide says so (which side rotates matters on tapered
-    // bridges — the extra segments land elsewhere).
-    if (op.twist && op.twistSide == 1 && Arot.size() > 1) {
-        int na = int(Arot.size());
-        int shift = ((op.twist % na) + na) % na;
-        std::rotate(Arot.begin(), Arot.begin() + shift, Arot.end());
-    }
-    const std::vector<uint32_t>& A = Arot;
+    const std::vector<uint32_t>& A = loops[ia];
     const std::vector<uint32_t>& B = loops[ib];
     const int n = int(A.size()), m = int(B.size());
     auto wrapB = [&](int k) { return ((k % m) + m) % m; };
 
     // Rotational alignment: pair A[i] with B[off - i]; pick the offset
-    // minimizing total rail length.
+    // minimizing total rail length. The user twists apply on top of the
+    // automatic pick — rotating A before the search would just be undone
+    // by it. A and B twist in opposite directions so the two rims can be
+    // counter-rotated against a shared spiral.
     int bestOff = 0;
     double bestSum = 1e300;
     for (int off = 0; off < m; ++off) {
@@ -502,9 +505,7 @@ int bridgeLoops(PolyMesh& mesh, const Model& model, const ManualOp& op) {
             bestOff = off;
         }
     }
-    if (op.twistSide == 0) {
-        bestOff = wrapB(bestOff + op.twist);  // whole-loop rotation on B
-    }
+    bestOff = wrapB(bestOff + op.twist - op.twistA);
 
     int added = 0;
     auto emit = [&](std::vector<uint32_t> poly) {
@@ -545,9 +546,21 @@ int bridgeLoops(PolyMesh& mesh, const Model& model, const ManualOp& op) {
         return added;
     }
 
-    // Unequal counts: greedy triangle zipper. i counts consumed A edges
-    // (walking forward), t consumed B edges (index walking backward from
-    // bestOff); advance whichever makes the shorter bridging diagonal.
+    // Unequal counts: triangle zipper advanced by ARC FRACTION — the rail
+    // that's proportionally behind steps next, so the strips distribute
+    // evenly whatever the shapes. (Distance-greedy walks run away when
+    // the loops are laterally offset — an angled socket — consuming one
+    // rail whole and fanning the rest around a single vertex.)
+    std::vector<double> accA(n + 1, 0.0), accB(m + 1, 0.0);
+    for (int k = 0; k < n; ++k) {
+        accA[k + 1] = accA[k] + vdist(mesh, A[k], A[(k + 1) % n]);
+    }
+    for (int k = 0; k < m; ++k) {
+        accB[k + 1] = accB[k] + vdist(mesh, B[wrapB(bestOff - k)],
+                                      B[wrapB(bestOff - k - 1)]);
+    }
+    const double totA = std::max(accA[n], 1e-12);
+    const double totB = std::max(accB[m], 1e-12);
     int i = 0, t = 0;
     while (i < n || t < m) {
         int ai = i % n;            // current A vertex
@@ -555,10 +568,7 @@ int bridgeLoops(PolyMesh& mesh, const Model& model, const ManualOp& op) {
         bool stepA;
         if (i >= n) stepA = false;
         else if (t >= m) stepA = true;
-        else {
-            stepA = vdist(mesh, A[(ai + 1) % n], B[bp]) <=
-                    vdist(mesh, A[ai], B[wrapB(bp - 1)]);
-        }
+        else stepA = accA[i + 1] * totB <= accB[t + 1] * totA;
         if (stepA) {
             emit({A[ai], A[(ai + 1) % n], B[bp]});
             ++i;
