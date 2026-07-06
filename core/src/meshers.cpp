@@ -4508,7 +4508,8 @@ bool zipperRings(const std::vector<WebPoint>& outer,
 bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                   const Model& model, int faceId,
                   const std::vector<int>& solvedEdge, int radialDefault,
-                  double minSize, MeshBuilder& out) {
+                  const FaceMeshSettings& fs, MeshBuilder& out) {
+    const double minSize = fs.minSize;
     std::vector<PlanarRing> rings;
     if (!samplePlanarRings(face, model, solvedEdge, radialDefault, rings)) {
         return false;
@@ -4558,6 +4559,72 @@ bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     const double uvToWorld = (su + sv) / 2;
     double hWorld = h3 * uvToWorld;
     double hu = hWorld / su, hv = hWorld / sv;
+    const double huBorder = hu, hvBorder = hv;  // rim clearance scale
+    // Per-DIRECTION geometry sizing: the border spacing says how fine the
+    // rims are, not how much the surface bends. On a barrel chart the v
+    // direction is ruled — stamping the rim's 1.7mm arc spacing onto a
+    // 60mm straight axis buys a thousand cells that say nothing. Each
+    // direction follows its own centre iso-curve under the face's
+    // deviation/angle budget; a straight direction costs ONE row.
+    {
+        auto isoCount = [&](bool uDir) -> int {
+            try {
+                Handle(Geom_Surface) S = BRep_Tool::Surface(face);
+                if (S.IsNull()) return 0;
+                Handle(Geom_Curve) iso =
+                    uDir ? S->VIso((vmin + vmax) / 2)
+                         : S->UIso((umin + umax) / 2);
+                if (iso.IsNull()) return 0;
+                const double a = uDir ? umin : vmin;
+                const double b = uDir ? umax : vmax;
+                GeomAdaptor_Curve gc(iso, a, b);
+                double chord = std::max(1e-9, fs.chordTolerance);
+                if (fs.relativeDeviation) {
+                    const gp_Pnt pf = gc.Value(a);
+                    const gp_Pnt pl = gc.Value(b);
+                    const gp_Pnt pm = gc.Value(0.5 * (a + b));
+                    const double extent = std::max(
+                        {pf.Distance(pl), pf.Distance(pm), 1e-6});
+                    chord = std::max(chord * 0.2 * extent, 1e-9);
+                }
+                const double ang =
+                    std::max(1.0, fs.angleToleranceDeg) * M_PI / 180.0;
+                GCPnts_TangentialDeflection td(gc, ang, chord, 2);
+                return std::clamp(td.NbPoints() - 1, 1, 256);
+            } catch (const Standard_Failure&) {
+                return 0;
+            }
+        };
+        const int gu = isoCount(true);
+        const int gv = isoCount(false);
+        // Flat charts keep the border-driven grid (plates in quad-
+        // dominant mode deliberately grid at border density).
+        if (gu > 1 || gv > 1) {
+            if (gu > 0) {
+                hu = std::max((umax - umin) / std::max(1, gu), huBorder);
+            }
+            if (gv > 0) {
+                hv = std::max((vmax - vmin) / std::max(1, gv), hvBorder);
+            }
+            // Hole wires still demand rows fine enough that each hole
+            // spans whole cells in the straight direction too.
+            for (size_t ri = 0; ri < rings.size(); ++ri) {
+                if (rings[ri].isOuter) continue;
+                double hu0 = 1e300, hu1 = -1e300;
+                double hv0 = 1e300, hv1 = -1e300;
+                for (const gp_Pnt2d& q : rings[ri].uv) {
+                    hu0 = std::min(hu0, q.X());
+                    hu1 = std::max(hu1, q.X());
+                    hv0 = std::min(hv0, q.Y());
+                    hv1 = std::max(hv1, q.Y());
+                }
+                const double needU = (hu1 - hu0) + 2.0 * huBorder;
+                const double needV = (hv1 - hv0) + 2.0 * hvBorder;
+                if (needU > 4.0 * huBorder) hu = std::min(hu, needU);
+                if (needV > 4.0 * hvBorder) hv = std::min(hv, needV);
+            }
+        }
+    }
     // Cap the grid size; a tiny median segment on a huge plate would
     // otherwise explode the cell count.
     while ((umax - umin) / hu * ((vmax - vmin) / hv) > 20000.0) {
@@ -4576,12 +4643,18 @@ bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         return (crossings & 1) != 0;
     };
 
-    const int nx = std::max(1, int((umax - umin) / hu));
-    const int ny = std::max(1, int((vmax - vmin) / hv));
-    // Center the grid in the bbox so border cells get equal clearance on
-    // both sides instead of sitting flush against one edge.
-    const double u0 = umin + 0.5 * ((umax - umin) - nx * hu);
-    const double v0 = vmin + 0.5 * ((vmax - vmin) - ny * hv);
+    // The grid lives in a box inset by one BORDER cell per side: the
+    // rim web needs its clearance by construction — a 1-row grid has no
+    // sacrificial rows for the culling to eat.
+    const double iu0 = umin + huBorder, iu1 = umax - huBorder;
+    const double iv0 = vmin + hvBorder, iv1 = vmax - hvBorder;
+    if (iu1 - iu0 < 0.5 * hu || iv1 - iv0 < 0.5 * hv) return false;
+    const int nx = std::max(1, int((iu1 - iu0) / hu));
+    const int ny = std::max(1, int((iv1 - iv0) / hv));
+    // Center the grid in the inset box so border cells get equal
+    // clearance on both sides instead of sitting flush against one edge.
+    const double u0 = iu0 + 0.5 * ((iu1 - iu0) - nx * hu);
+    const double v0 = iv0 + 0.5 * ((iv1 - iv0) - ny * hv);
     auto cornerUV = [&](int i, int j) {
         return gp_Pnt2d(u0 + i * hu, v0 + j * hv);
     };
@@ -4600,8 +4673,11 @@ bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     // A cell is kept when its four corners are inside the domain and no
     // boundary segment comes near its (slightly inflated) box — the rim
     // web needs breathing room to stay well-shaped.
-    const double marginU = 0.30 * hu;
-    const double marginV = 0.30 * hv;
+    // Clearance margins scale with the BORDER spacing, not the cell:
+    // a full-height cell inflated by 30% of itself always overlaps the
+    // rims and the whole grid self-culls to nothing.
+    const double marginU = 0.30 * std::min(hu, huBorder);
+    const double marginV = 0.30 * std::min(hv, hvBorder);
     std::vector<char> keep(size_t(nx) * ny, 0);
     auto keepAt = [&](int i, int j) -> char& {
         return keep[size_t(j) * nx + i];
@@ -4784,8 +4860,14 @@ bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         gp_Pnt2d dir(web[1].uv.X() - web[0].uv.X(),
                      web[1].uv.Y() - web[0].uv.Y());
         double side = area > 0 ? 1.0 : -1.0;  // interior is left of CCW
-        gp_Pnt2d probe(m.X() - side * dir.Y() * 0.25,
-                       m.Y() + side * dir.X() * 0.25);
+        // Perpendicular offset clamped to a fraction of the cell step:
+        // on anisotropic grids a quarter of a LONG edge can jump past
+        // the neighbouring row and misclassify an island as a pocket.
+        double offX = -side * dir.Y() * 0.25;
+        double offY = side * dir.X() * 0.25;
+        if (std::abs(offX) > 0.4 * hu) offX *= 0.4 * hu / std::abs(offX);
+        if (std::abs(offY) > 0.4 * hv) offY *= 0.4 * hv / std::abs(offY);
+        gp_Pnt2d probe(m.X() + offX, m.Y() + offY);
         int pi = int(std::floor((probe.X() - u0) / hu));
         int pj = int(std::floor((probe.Y() - v0) / hv));
         if (kept(pi, pj)) {
@@ -8185,12 +8267,23 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     demote(fid, face, surf, s, "plate web failed");
                 }
                 break;
-            case MesherKind::QuadFill:
+            case MesherKind::QuadFill: {
+                // The same budget scaling the fallback path applies, so
+                // the density dial reaches quad-fill interiors too.
+                FaceMeshSettings qs = s;
+                const double qsc =
+                    std::clamp(settings.densityScale, 0.05, 20.0);
+                if (qsc != 1.0) {
+                    qs.chordTolerance /= qsc * qsc;
+                    qs.angleToleranceDeg =
+                        std::clamp(qs.angleToleranceDeg / qsc, 1.0, 60.0);
+                }
                 if (!meshQuadFill(face, surf, model, fid, solvedEdge,
-                                  s.radial, s.minSize, out)) {
+                                  s.radial, qs, out)) {
                     demote(fid, face, surf, s, "quad fill failed");
                 }
                 break;
+            }
             case MesherKind::RailLadder:
                 if (!meshRailLadder(face, model, fid, solvedEdge, s.radial,
                                     out)) {
