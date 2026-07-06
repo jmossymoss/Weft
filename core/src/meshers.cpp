@@ -808,6 +808,11 @@ struct CoonsPatch {
     bool stubRev = false;
     Handle(Geom2d_Curve) stubPc;
     double stubFirst = 0.0, stubLast = 0.0;
+    // Interior trim wires (a hole through a curved top): meshed as a
+    // grid CUTOUT — cells deleted, staircase webbed to the wire's exact
+    // border sampling. Collected here so the planner can route them.
+    std::vector<std::vector<int>> holeWires;
+    std::vector<std::array<double, 4>> holeBoxes;  // u0,u1,v0,v1 per wire
     // Chained sides: a side may be SEVERAL wire edges whose joints are
     // smooth (a band whose long rail is split by a T-junction). Pieces
     // run in wire order; single-edge sides have one piece. The legacy
@@ -888,14 +893,49 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
     };
     TopoDS_Wire outer = BRepTools::OuterWire(face);
     if (outer.IsNull()) return reject("no outer wire");
-    // A grid paves the whole outer boundary; a face with holes would get
-    // its holes quadded over (and the hole edges never sampled).
+    // Extra wires are HOLES: fine as long as each sits strictly inside
+    // the outer wire's UV box — the grid meshes whole, the covered
+    // cells are cut out and webbed to the hole's exact border after.
     {
-        int wires = 0;
+        double ou0 = 1e300, ou1 = -1e300, ov0 = 1e300, ov1 = -1e300;
+        auto wireBox = [&](const TopoDS_Shape& w, double& u0, double& u1,
+                           double& v0, double& v1) {
+            u0 = 1e300; u1 = -1e300; v0 = 1e300; v1 = -1e300;
+            for (TopExp_Explorer ex(w, TopAbs_EDGE); ex.More(); ex.Next()) {
+                const TopoDS_Edge e = TopoDS::Edge(ex.Current());
+                if (BRep_Tool::Degenerated(e)) continue;
+                double f, l;
+                Handle(Geom2d_Curve) pc =
+                    BRep_Tool::CurveOnSurface(e, face, f, l);
+                if (pc.IsNull()) continue;
+                for (int k = 0; k <= 12; ++k) {
+                    gp_Pnt2d uv = pc->Value(f + (l - f) * k / 12.0);
+                    u0 = std::min(u0, uv.X()); u1 = std::max(u1, uv.X());
+                    v0 = std::min(v0, uv.Y()); v1 = std::max(v1, uv.Y());
+                }
+            }
+        };
+        wireBox(outer, ou0, ou1, ov0, ov1);
+        const double mu = 0.03 * std::max(1e-12, ou1 - ou0);
+        const double mv = 0.03 * std::max(1e-12, ov1 - ov0);
         for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
-            ++wires;
+            if (wx.Current().IsSame(outer)) continue;
+            double u0, u1, v0, v1;
+            wireBox(wx.Current(), u0, u1, v0, v1);
+            if (u0 <= ou0 + mu || u1 >= ou1 - mu || v0 <= ov0 + mv ||
+                v1 >= ov1 - mv) {
+                return reject("face has holes");  // rim-touching hole
+            }
+            std::vector<int> ids;
+            for (TopExp_Explorer ex(wx.Current(), TopAbs_EDGE); ex.More();
+                 ex.Next()) {
+                int eid = model.edges.FindIndex(ex.Current());
+                if (eid > 0) ids.push_back(eid);
+            }
+            if (ids.empty()) return reject("face has holes");
+            patch.holeWires.push_back(std::move(ids));
+            patch.holeBoxes.push_back({u0, u1, v0, v1});
         }
-        if (wires != 1) return reject("face has holes");
     }
     struct WireEdge {
         TopoDS_Edge edge;
@@ -1160,6 +1200,15 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
     for (int j = 1; j < 4; ++j) {
         for (int i = 1; i < 4; ++i) {
             gp_Pnt2d p = patch.uv(i / 4.0, j / 4.0);
+            bool inHole = false;
+            for (const auto& b : patch.holeBoxes) {
+                if (p.X() >= b[0] && p.X() <= b[1] && p.Y() >= b[2] &&
+                    p.Y() <= b[3]) {
+                    inHole = true;
+                    break;
+                }
+            }
+            if (inHole) continue;  // the cutout web covers that region
             BRepClass_FaceClassifier cls(const_cast<TopoDS_Face&>(face), p,
                                          tol);
             if (cls.State() == TopAbs_OUT) return reject("interior probe outside face");
@@ -1172,10 +1221,11 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
 // 0..1 splits, clustered for fillet strips); CHAINED sides sample each
 // piece at its own solved count, so the border matches every neighbour
 // vertex-for-vertex and the grid gains a column at each T-junction.
-bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
-                   const std::vector<double>& uParams,
-                   const std::vector<double>& vParams, int rotate,
-                   const std::vector<int>& solvedEdge, MeshBuilder& out) {
+bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
+                       int faceId, const std::vector<double>& uParams,
+                       const std::vector<double>& vParams, int rotate,
+                       const std::vector<int>& solvedEdge, MeshBuilder& out,
+                       int refineLevel = 0) {
     CoonsPatch patch;
     if (!makeCoonsPatch(face, model, patch, rotate)) return false;
     Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
@@ -1328,6 +1378,18 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
             top = resample(natTop, bottom.size());
         }
     }
+    // Interior densification (hole cutouts): the borders are a fixed
+    // contract, so extra lattice resolution comes from scaffold rails —
+    // ALL sides go natural and the strips absorb the count difference.
+    if (refineLevel > 0 && bottom.size() == top.size() &&
+        bottom.size() >= 2) {
+        const size_t tgt =
+            (bottom.size() - 1) * (size_t(1) << refineLevel) + 1;
+        if (natBottom.empty()) natBottom = bottom;
+        if (natTop.empty()) natTop = top;
+        bottom = resample(natBottom, tgt);
+        top = resample(natTop, tgt);
+    }
     if (bottom.size() != top.size() || bottom.size() < 2) return false;
     const int nu = int(bottom.size()) - 1;
 
@@ -1362,6 +1424,15 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
         for (size_t j = 0; j < left.size(); ++j) {
             left[j].uv = patch.side(3, 1.0 - double(j) / (right.size() - 1));
         }
+    }
+    if (refineLevel > 0 && !patch.collapsedLast &&
+        right.size() == left.size() && right.size() >= 2) {
+        const size_t tgt =
+            (right.size() - 1) * (size_t(1) << refineLevel) + 1;
+        if (natLeft.empty()) natLeft = left;
+        if (natRight.empty()) natRight = right;
+        left = resample(natLeft, tgt);
+        right = resample(natRight, tgt);
     }
     if (right.size() != left.size() || right.size() < 2) return false;
     const int nv = int(right.size()) - 1;
@@ -2483,6 +2554,341 @@ bool triangulateWeb(std::vector<WebPoint> outer,
     if (ring.size() < 3) return false;
     return earClip(std::move(ring), faceId, flip, out);
 }
+
+// Interior trim wires on a coons face (an angled hole through a curved
+// top): mesh the grid whole, DELETE the covered cells, and web the
+// staircase to the wires' exact border sampling — the same two-step
+// the revolution bands use, so the hole welds watertight to the bore.
+// The interior refines (borders stay at solved counts) until every
+// hole is strictly interior to the lattice.
+bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
+                   const std::vector<double>& uParams,
+                   const std::vector<double>& vParams, int rotate,
+                   const std::vector<int>& solvedEdge, MeshBuilder& out,
+                   const std::vector<std::vector<int>>* inserts = nullptr) {
+    if (!inserts || inserts->empty()) {
+        return meshCoonsGridBody(face, model, faceId, uParams, vParams,
+                                 rotate, solvedEdge, out);
+    }
+    dbg("coons cutout %d: %zu insert wire(s)", faceId, inserts->size());
+    // Hole rings: 3D edge curves at solved counts (the bore wall's own
+    // contract), uv through the pcurves, pieces chained by endpoints.
+    struct HPt {
+        gp_Pnt p;
+        double u, v;
+    };
+    std::vector<std::vector<HPt>> rings;
+    std::vector<std::array<double, 4>> boxes;
+    for (const auto& wire : *inserts) {
+        std::vector<std::vector<HPt>> pieces;
+        for (int eid : wire) {
+            if (eid < 1 || eid > model.edgeCount()) continue;
+            const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+            if (BRep_Tool::Degenerated(edge)) continue;
+            int n = eid < int(solvedEdge.size()) && solvedEdge[eid] > 0
+                        ? solvedEdge[eid]
+                        : 8;
+            double f2, l2, f3, l3;
+            Handle(Geom2d_Curve) pc =
+                BRep_Tool::CurveOnSurface(edge, face, f2, l2);
+            Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, f3, l3);
+            if (pc.IsNull() || c3.IsNull()) return false;
+            const double ph = closedEdgePhase(edge, model);
+            std::vector<HPt> piece;
+            for (int i = 0; i <= n; ++i) {
+                double t = phasedT(i, n, ph, false);
+                gp_Pnt2d uv = pc->Value(f2 + (l2 - f2) * t);
+                piece.push_back(
+                    {c3->Value(f3 + (l3 - f3) * t), uv.X(), uv.Y()});
+            }
+            pieces.push_back(std::move(piece));
+        }
+        if (pieces.empty()) return false;
+        std::vector<HPt> ring = std::move(pieces[0]);
+        std::vector<char> used(pieces.size(), 0);
+        used[0] = 1;
+        for (size_t step = 1; step < pieces.size(); ++step) {
+            double bd = 1e300;
+            size_t bi = 0;
+            bool rev = false;
+            for (size_t k = 0; k < pieces.size(); ++k) {
+                if (used[k]) continue;
+                double dF = ring.back().p.Distance(pieces[k].front().p);
+                double dB = ring.back().p.Distance(pieces[k].back().p);
+                if (dF < bd) { bd = dF; bi = k; rev = false; }
+                if (dB < bd) { bd = dB; bi = k; rev = true; }
+            }
+            used[bi] = 1;
+            std::vector<HPt> pc2 = std::move(pieces[bi]);
+            if (rev) std::reverse(pc2.begin(), pc2.end());
+            ring.insert(ring.end(), pc2.begin() + 1, pc2.end());
+        }
+        if (ring.size() > 1 &&
+            ring.front().p.Distance(ring.back().p) < 1e-9) {
+            ring.pop_back();
+        }
+        if (ring.size() < 3) return false;
+        std::array<double, 4> b{1e300, -1e300, 1e300, -1e300};
+        for (const HPt& q : ring) {
+            b[0] = std::min(b[0], q.u);
+            b[1] = std::max(b[1], q.u);
+            b[2] = std::min(b[2], q.v);
+            b[3] = std::max(b[3], q.v);
+        }
+        rings.push_back(std::move(ring));
+        boxes.push_back(b);
+    }
+    double uScale = 1.0;
+    try {
+        BRepAdaptor_Surface sa(face);
+        const double um = (sa.FirstUParameter() + sa.LastUParameter()) / 2;
+        const double vm = (sa.FirstVParameter() + sa.LastVParameter()) / 2;
+        const double su = std::max(
+            1e-9, sa.Value(um, vm).Distance(sa.Value(um + 1e-3, vm)) / 1e-3);
+        const double sv = std::max(
+            1e-9, sa.Value(um, vm).Distance(sa.Value(um, vm + 1e-3)) / 1e-3);
+        uScale = su / sv;
+    } catch (const Standard_Failure&) {
+    }
+    const bool flip = face.Orientation() == TopAbs_REVERSED;
+    // The border params are a fixed contract (paramsFor pins them to the
+    // solved counts), so retries densify the INTERIOR scaffold instead:
+    // refineLevel doubles the lattice per attempt, natural borders bridge
+    // through transition strips.
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        PolyMesh grid;
+        {
+            MeshBuilder tmp(grid);
+            if (!meshCoonsGridBody(face, model, faceId, uParams, vParams,
+                                   rotate, solvedEdge, tmp, attempt)) {
+                dbg("coons cutout %d: body failed (attempt %d)", faceId,
+                    attempt);
+                return false;
+            }
+        }
+        if (grid.polygons.empty()) continue;  // degenerate lattice level
+        auto ekey = [](uint32_t a, uint32_t b) {
+            return (uint64_t(std::min(a, b)) << 32) | std::max(a, b);
+        };
+        std::map<uint64_t, int> use;
+        for (const auto& poly : grid.polygons) {
+            for (size_t i = 0; i < poly.size(); ++i) {
+                ++use[ekey(poly[i], poly[(i + 1) % poly.size()])];
+            }
+        }
+        std::set<uint32_t> borderVert;
+        for (const auto& poly : grid.polygons) {
+            for (size_t i = 0; i < poly.size(); ++i) {
+                uint32_t a = poly[i], b = poly[(i + 1) % poly.size()];
+                if (use[ekey(a, b)] == 1) {
+                    borderVert.insert(a);
+                    borderVert.insert(b);
+                }
+            }
+        }
+        std::vector<char> keep(grid.polygons.size(), 1);
+        std::vector<int> deletedPer(rings.size(), 0);
+        bool coarse = false;
+        bool touchedBorder = false;
+        for (size_t pi = 0; pi < grid.polygons.size() && !coarse; ++pi) {
+            double u0 = 1e300, u1 = -1e300, v0 = 1e300, v1 = -1e300;
+            int cn = 0;
+            for (uint32_t vi : grid.polygons[pi]) {
+                const Anchor& an = grid.anchors[vi];
+                if (an.faceId != faceId) { cn = 0; break; }
+                u0 = std::min(u0, an.u);
+                u1 = std::max(u1, an.u);
+                v0 = std::min(v0, an.v);
+                v1 = std::max(v1, an.v);
+                ++cn;
+            }
+            if (!cn) continue;
+            // Delete on uv-RECT overlap, not centroid membership: a kept
+            // cell that the ring still crosses self-intersects the web.
+            // Over-deletion only widens the web; a deletion reaching the
+            // border rails refines instead.
+            for (size_t w = 0; w < boxes.size(); ++w) {
+                const auto& b = boxes[w];
+                if (u1 >= b[0] && u0 <= b[1] && v1 >= b[2] && v0 <= b[3]) {
+                    for (uint32_t vi : grid.polygons[pi]) {
+                        if (borderVert.count(vi)) {
+                            coarse = true;
+                            touchedBorder = true;
+                        }
+                    }
+                    keep[pi] = 0;
+                    ++deletedPer[w];
+                    break;
+                }
+            }
+        }
+        for (int d : deletedPer) {
+            if (d < 1) coarse = true;
+        }
+        if (coarse) {
+            dbg("coons cutout %d: attempt %d too coarse (polys=%zu, "
+                "deleted[0]=%d, borderTouch=%d, box=[%.3f..%.3f]x"
+                "[%.3f..%.3f])",
+                faceId, attempt, grid.polygons.size(), deletedPer[0],
+                touchedBorder ? 1 : 0, boxes[0][0], boxes[0][1],
+                boxes[0][2], boxes[0][3]);
+            continue;
+        }
+        std::map<uint64_t, std::array<int, 2>> sideUse;
+        for (size_t pi = 0; pi < grid.polygons.size(); ++pi) {
+            const auto& poly = grid.polygons[pi];
+            for (size_t i = 0; i < poly.size(); ++i) {
+                uint64_t k = ekey(poly[i], poly[(i + 1) % poly.size()]);
+                auto& s2 =
+                    sideUse.emplace(k, std::array<int, 2>{0, 0})
+                        .first->second;
+                ++s2[keep[pi] ? 0 : 1];
+            }
+        }
+        std::map<uint32_t, std::vector<uint32_t>> adj;
+        for (const auto& [k, s2] : sideUse) {
+            if (s2[0] == 1 && s2[1] == 1) {
+                uint32_t a = uint32_t(k >> 32), b = uint32_t(k);
+                adj[a].push_back(b);
+                adj[b].push_back(a);
+            }
+        }
+        bool bad = false;
+        for (const auto& [v, ns] : adj) {
+            if (ns.size() != 2) bad = true;
+        }
+        if (bad) {
+            dbg("coons cutout %d: attempt %d staircase not a loop", faceId,
+                attempt);
+            continue;
+        }
+        std::vector<std::vector<uint32_t>> loops;
+        {
+            std::set<uint32_t> seen;
+            for (const auto& [v0, ns] : adj) {
+                if (seen.count(v0)) continue;
+                std::vector<uint32_t> loop{v0};
+                seen.insert(v0);
+                uint32_t prev = v0, cur = ns[0];
+                while (cur != v0) {
+                    loop.push_back(cur);
+                    seen.insert(cur);
+                    const auto& nn = adj[cur];
+                    uint32_t nxt = nn[0] == prev ? nn[1] : nn[0];
+                    prev = cur;
+                    cur = nxt;
+                    if (loop.size() > adj.size()) { bad = true; break; }
+                }
+                if (bad) break;
+                loops.push_back(std::move(loop));
+            }
+        }
+        if (bad || loops.size() != rings.size()) {
+            dbg("coons cutout %d: attempt %d loops %zu != holes %zu", faceId,
+                attempt, loops.size(), rings.size());
+            continue;
+        }
+        // Assemble locally; `out` receives the part only when every web
+        // proves complete (a partial face is a guaranteed leak).
+        PolyMesh assembled;
+        MeshBuilder ab(assembled);
+        std::vector<uint32_t> remap(grid.vertices.size(), UINT32_MAX);
+        auto emitVert = [&](uint32_t i) {
+            if (remap[i] == UINT32_MAX) {
+                remap[i] = ab.addVertex(
+                    gp_Pnt(grid.vertices[i][0], grid.vertices[i][1],
+                           grid.vertices[i][2]),
+                    grid.anchors[i]);
+            }
+            return remap[i];
+        };
+        for (size_t pi = 0; pi < grid.polygons.size(); ++pi) {
+            if (!keep[pi]) continue;
+            std::vector<uint32_t> poly;
+            poly.reserve(grid.polygons[pi].size());
+            for (uint32_t vi : grid.polygons[pi]) {
+                poly.push_back(emitVert(vi));
+            }
+            ab.addPolygon(std::move(poly), faceId, false);
+        }
+        std::vector<char> ringUsed(rings.size(), 0);
+        bool webbed = true;
+        for (const auto& loop : loops) {
+            double cu = 0, cv = 0;
+            for (uint32_t vi : loop) {
+                cu += grid.anchors[vi].u;
+                cv += grid.anchors[vi].v;
+            }
+            cu /= double(loop.size());
+            cv /= double(loop.size());
+            int w = -1;
+            for (size_t k = 0; k < rings.size(); ++k) {
+                const auto& b = boxes[k];
+                if (!ringUsed[k] && cu >= b[0] && cu <= b[1] &&
+                    cv >= b[2] && cv <= b[3]) {
+                    w = int(k);
+                    break;
+                }
+            }
+            if (w < 0) { webbed = false; break; }
+            ringUsed[w] = 1;
+            std::vector<WebPoint> outerRing;
+            for (uint32_t vi : loop) {
+                outerRing.push_back(
+                    {gp_Pnt2d(grid.anchors[vi].u * uScale,
+                              grid.anchors[vi].v),
+                     emitVert(vi)});
+            }
+            auto area = [](const std::vector<WebPoint>& r) {
+                double a = 0;
+                for (size_t i = 0; i < r.size(); ++i) {
+                    const auto& p1 = r[i].uv;
+                    const auto& p2 = r[(i + 1) % r.size()].uv;
+                    a += p1.X() * p2.Y() - p2.X() * p1.Y();
+                }
+                return a / 2;
+            };
+            if (area(outerRing) < 0) {
+                std::reverse(outerRing.begin(), outerRing.end());
+            }
+            std::vector<WebPoint> holeRing;
+            for (const HPt& q : rings[w]) {
+                holeRing.push_back(
+                    {gp_Pnt2d(q.u * uScale, q.v),
+                     ab.addVertex(q.p, {faceId, q.u, q.v})});
+            }
+            if (area(holeRing) > 0) {
+                std::reverse(holeRing.begin(), holeRing.end());
+            }
+            if (!triangulateWeb(std::move(outerRing),
+                                {std::move(holeRing)}, faceId, flip, ab)) {
+                webbed = false;
+                break;
+            }
+        }
+        if (!webbed) {
+            dbg("coons cutout %d: attempt %d web failed", faceId, attempt);
+            continue;
+        }
+        for (size_t vi = 0; vi < assembled.vertices.size(); ++vi) {
+            out.addVertex(gp_Pnt(assembled.vertices[vi][0],
+                                 assembled.vertices[vi][1],
+                                 assembled.vertices[vi][2]),
+                          assembled.anchors[vi]);
+        }
+        // addVertex ids are sequential from the part's current size —
+        // the part is always empty here (planned meshers own it), so
+        // polygon indices carry over unchanged.
+        for (size_t pi = 0; pi < assembled.polygons.size(); ++pi) {
+            out.addPolygon(assembled.polygons[pi], faceId, false);
+        }
+        dbg("coons cutout %d: %zu hole(s), %zu polys after %d refine(s)",
+            faceId, rings.size(), assembled.polygons.size(), attempt);
+        return true;
+    }
+    return false;
+}
+
 
 // A planar face's wire sampled as one chained ring: each edge at its own
 // solved count, positions on the 3D edge curve (weld-exact), UV from the
@@ -3972,6 +4378,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 if (coonsOk(patch)) {
                     plan.kind = MesherKind::CoonsGrid;
                     plan.constrains = true;
+                    plan.insertWires = patch.holeWires;
                     if (patch.chained()) {
                         for (int i = 0; i < 4; ++i) {
                             for (const auto& pce : patch.chain[i]) {
@@ -4116,6 +4523,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             }
             plan.kind = MesherKind::CoonsGrid;
             plan.constrains = true;
+            plan.insertWires = patch.holeWires;
             if (patch.chained()) {
                 for (int i = 0; i < 4; ++i) {
                     for (const auto& pce : patch.chain[i]) {
@@ -7057,9 +7465,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             case MesherKind::CoonsGrid: {
                 double holdU = plan.isFillet && plan.acrossIsU ? s.filletHold : 0;
                 double holdV = plan.isFillet && !plan.acrossIsU ? s.filletHold : 0;
-                if (!meshCoonsGrid(face, model, fid, clusteredParams(nu, holdU),
-                                   clusteredParams(nv, holdV), s.coonsRotate,
-                                   solvedEdge, out)) {
+                if (!meshCoonsGrid(
+                        face, model, fid, clusteredParams(nu, holdU),
+                        clusteredParams(nv, holdV), s.coonsRotate,
+                        solvedEdge, out,
+                        plan.insertWires.empty() ? nullptr
+                                                 : &plan.insertWires)) {
                     demote(fid, face, surf, s, "coons failed");
                 }
                 break;
