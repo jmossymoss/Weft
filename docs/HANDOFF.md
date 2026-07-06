@@ -454,3 +454,44 @@ DualHose3 0/0 & 0/0 · ExtendedClipHolder 0/50 & 0/50 (naked edges).
   post-weld or every border looks open.
 - Sliver bands (flaregun 2mm trim band, ECH strips) defeat any
   proximity/tolerance matching — use exact topology instead.
+
+## Session ledger — cutouts, bridge, weld, live floors
+Landed (each pushed to main, in order):
+- **Coons cutout** (3626f91): coons faces with strictly-interior trim
+  wires (angled bore through a curved bspline top — hole_angled face 10)
+  mesh whole, delete cells whose uv RECT overlaps a hole box (centroid
+  tests keep ring-crossed cells → web self-intersects), and web the
+  staircase to the hole's exact solved-count ring. All-or-nothing local
+  assembly; planar faces with holes stay with quad-fill/plate-web.
+- **Anisotropic scaffold + honest freeform edges** (5686fa1): scaffold
+  lines are per-direction — natural fractions (shared with the border
+  samples, so those columns run border to border) + snug hole BRACKETS;
+  a flat direction never sprouts rows (user's yellow/red annotation).
+  Relative deviation gates freeform curves at 0.5% of extent
+  (lines/circles/ellipses keep 2% → rings stay angle-driven): a 780mm
+  edge with 27mm sagitta and 16° total turn was shipping as ONE span.
+  Cost: weldment folds 6→18 (same chained-strip class, denser rails).
+- **Bridge** (81ec535): arc-fraction zipper (distance-greedy ran away on
+  offset loops and fanned the remainder around one vertex — the user's
+  hex-socket collapse); per-side twist (twist=B, twistA=A, counter-
+  rotating, each side KEEPS its value across shift+wheel side flips).
+- **Weld + grab** (581ccc6): M in vert mode → merge at center/last/first
+  (WeldVerts op, world-point keyed, recipe round-trips); selVertOrder
+  tracks pick order. G now works from bridge/loop-cut modes (it was
+  Idle-gated — dead right after bridging) and explains anchorless verts.
+- **Live floors** (8a6dbdb): contract-floor webs refine their interiors
+  to the deflection budget (split interior edges whose surface midpoint
+  sags > defl; Delaunay flips in uScale-corrected UV; minSize floors
+  edge length; quadDominant pairs by quadAngleCost). Cap fan only when
+  the face fits the budget as one sheet. Demote path honors the
+  density-scaled tolerances. CLI gains --quads (docs claimed quad
+  pairing was default; it never was).
+
+Known residuals:
+- quadDominant=true GLOBALLY reroutes planning (planQuadFill) and mohne
+  face 204 quad-fill leaks 2 opens + nm edges at chord 0.05 —
+  pre-existing, reachable from the app checkbox too. Fix quad-fill's
+  rim web seam before defaulting --quads on.
+- Fold class (chained strips): mohne 4 / nasty 10 / weldment 18 under
+  profile cad. Angle tolerance still only affects OCCT-fallback faces,
+  not floor refinement (deviation/minSize/quads do).
