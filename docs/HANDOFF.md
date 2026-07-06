@@ -618,3 +618,30 @@ watertight; 42/42 fixtures; ctest green.
 NEXT still open: fillet flow-through (#24, columns through blend chains
 barrel->fillet->lower with matched counts+azimuths; diagnosis in
 workflow wcfz9arp2, not yet implemented).
+
+## NOTCHED REFINEMENT — uniform lattice + clean cut (landed 2acb541)
+User feedback on the rim-notch result (red/green annotation): remove the
+inset ring, align columns top-to-bottom, no wall ladders, no extra
+columns, no right-angle corner breaks. North star (user): "the end
+geometry is a perfect cylinder with a notch taken out — look at the
+cylinder like it never had the notch cut for its samples." New pinned-
+sample facility (PinnedEdges + edgeSampleFractions near phasedT): an
+edge carries explicit forward-curve fractions that BOTH sharing faces
+emit (watertight while samples move off uniform phase). pinCastellatedRims
+(post density solve) pins each castellated rim's base arcs + notch floor
+to the plain rim's column azimuths and the single-span walls to their
+endpoints (corner guard 0.02*pitch, guards global wall azimuths so seam-
+split arcs keep near-seam columns). Consumers: samplePlanarRings
+(neighbour annulus/floor/wall) + the border-contract postcondition adopt
+the pins. meshRevolutionRimNotch pinned branch: uniform full-cylinder
+lattice at the plain rim's natural count, columns straight plain->cut
+rim, notch boolean-cut (notch-range columns stop at floor), each corner
+one cap n-gon. Result face_1/face_7: z-levels {0, 22(floor,notch only),
+40} — NO z=38 inset; top az == bottom az (uniform) + 2 notch corners;
+11 quads + 2 hex caps; max|dAz|=0.000; watertight. Override sweep 54/54
+clean; board mohne 0/nasty 10/weldment 7; 42/42 fixtures; ctest green;
+flaregun untouched (facility opt-in). Follow-up: the top C-shaped annulus
+is a boundary n-gon on the column azimuths (columns meet rim 1:1) but has
+no interior radial spokes (not annulus-ring-able as a single C-loop);
+axial no longer adds interior wall rows (radial drives columns).
+Phase 2 (fillet flow-through) resumed separately.
