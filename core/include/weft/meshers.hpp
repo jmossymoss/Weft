@@ -38,11 +38,17 @@ struct FaceMeshSettings {
     // Ring junctions (a hole/boss circle inside a rectangular planar face):
     // number of concentric quad loops between the circle and the boundary.
     int junctionRings = 1;
-    // Trimmed/freeform faces that fall back to triangulation: pair the
-    // triangles into quads where quality allows (guided by the surface's
-    // parametric directions). Off (default) = pure triangles, which keep
-    // their borders exactly on the B-rep edges for clean seam conformity.
+    // Route flat plates (and reflex coons outlines) through the
+    // structured quad-fill grid instead of minimal n-gons / transfinite
+    // patches. Routing only — the fallback floor pairs its triangles
+    // into quads regardless (see pureTriFloor).
     bool quadDominant = false;
+    // The contract-floor fallback pairs its interior triangles into
+    // quads by default (greedy on corner-angle quality; borders are
+    // exact contract samples either way — pairing merges interior
+    // diagonals only). Set to keep the raw triangulation instead; full
+    // triangle output for engines is the export-time triangulate flag.
+    bool pureTriFloor = false;
     // Game-topology minimalism (plan §1/§4.1): a flat face doesn't need an
     // interior grid. When set, a planar grid-safe face emits one boundary
     // n-gon instead — border vertices stay density-matched, so neighbours

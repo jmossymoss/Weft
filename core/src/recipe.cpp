@@ -19,6 +19,7 @@ void applySetting(FaceMeshSettings& s, const std::string& key,
     else if (key == "hold") s.filletHold = std::stod(value);
     else if (key == "rings") s.junctionRings = std::stoi(value);
     else if (key == "quads") s.quadDominant = std::stoi(value) != 0;
+    else if (key == "puretris") s.pureTriFloor = std::stoi(value) != 0;
     else if (key == "minimal") s.minimal = std::stoi(value) != 0;
     else if (key == "skip") s.exclude = std::stoi(value) != 0;
     else if (key == "mesher") s.forceMesher = std::stoi(value);
@@ -58,7 +59,7 @@ static std::string settingsToString(const FaceMeshSettings& s) {
                   "radial=%d,axial=%d,gridu=%d,gridv=%d,cap=%s,chord=%g,"
                   "angle=%g,loops=%d,hold=%g,rings=%d,quads=%d,minimal=%d,"
                   "skip=%d,mesher=%d,linkrims=%d,minsize=%g,reldev=%d,"
-                  "adapt=%d,boundary=%d,sqcollar=%d,crot=%d",
+                  "adapt=%d,boundary=%d,sqcollar=%d,crot=%d,puretris=%d",
                   s.radial, s.axial, s.gridU, s.gridV,
                   s.cap == CapStyle::Fan ? "fan" : "ngon", s.chordTolerance,
                   s.angleToleranceDeg, s.filletLoops, s.filletHold,
@@ -66,7 +67,7 @@ static std::string settingsToString(const FaceMeshSettings& s) {
                   s.exclude ? 1 : 0, s.forceMesher, s.linkRims ? 1 : 0,
                   s.minSize, s.relativeDeviation ? 1 : 0,
                   s.adaptive ? 1 : 0, s.boundary, s.squareCollar ? 1 : 0,
-                  s.coonsRotate);
+                  s.coonsRotate, s.pureTriFloor ? 1 : 0);
     return buf;
 }
 

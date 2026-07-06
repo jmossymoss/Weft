@@ -4329,10 +4329,12 @@ void refineFloorWeb(PolyMesh& part, const TopoDS_Face& face, int faceId,
         }
     }
 
-    // Rebuild the part's polygons; optionally pair into quads (greedy by
-    // corner-angle cost, exactly the quad-dominant fallback's move).
+    // Rebuild the part's polygons; pair into quads by default (greedy by
+    // corner-angle cost, exactly the quad-dominant fallback's move) —
+    // the refined web's triangles are grid-shaped already, so merging
+    // interior diagonals is free and borders never move.
     std::vector<std::vector<uint32_t>> polys;
-    if (!s.quadDominant) {
+    if (s.pureTriFloor) {
         for (const auto& t : tris) polys.push_back({t[0], t[1], t[2]});
     } else {
         std::map<uint64_t, std::array<int, 2>> em;
@@ -8916,7 +8918,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             key, sizeof key,
             "k%d c%d f%d a%d l%d q%d|%d,%d,%d|r%d x%d u%d v%d cap%d ch%.6g "
             "an%.6g fl%d fh%.6g jr%d qd%d mn%d ex%d ms%.6g rd%d sq%d cr%d "
-            "ds%.4g",
+            "ds%.4g pt%d",
             int(plan.kind), plan.constrains ? 1 : 0, plan.isFillet ? 1 : 0,
             plan.acrossIsU ? 1 : 0, plan.linkRims ? 1 : 0,
             plan.forceFallbackQuads, counts[fid][0], counts[fid][1],
@@ -8925,7 +8927,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             s.filletHold, s.junctionRings, s.quadDominant ? 1 : 0,
             s.minimal ? 1 : 0, s.exclude ? 1 : 0, s.minSize,
             s.relativeDeviation ? 1 : 0, s.squareCollar ? 1 : 0,
-            s.coonsRotate, settings.densityScale);
+            s.coonsRotate, settings.densityScale, s.pureTriFloor ? 1 : 0);
         cacheKey[fid] = key;
         if (plan.kind == MesherKind::AnnulusRing ||
             plan.kind == MesherKind::RailLadder ||

@@ -2587,6 +2587,8 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
     if (freeform) {
         ch |= ImGui::Checkbox("quad-dominant fallback", &s.quadDominant);
         hover({int(MK::QuadDominant), int(MK::Fallback)});
+        ch |= ImGui::Checkbox("triangulate fallback", &s.pureTriFloor);
+        hover({int(MK::QuadDominant), int(MK::Fallback)});
         float ms = float(s.minSize);
         if (ImGui::DragFloat("min size", &ms, 0.01f, 0.0f, 100.0f, "%.3f")) {
             s.minSize = ms;
