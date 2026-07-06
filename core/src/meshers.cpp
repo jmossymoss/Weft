@@ -180,6 +180,16 @@ struct FacePlan {
     // uspan / 2*pi: 'radial' keeps meaning divisions per full turn, so
     // a partial wrap takes its proportional share.
     double bandWrapFrac = 1.0;
+    // Full-wrap castellated rim: a u-closed ruled band (cylinder/cone)
+    // whose one rim is a plain full circle and the other carries a
+    // rim-open notch (walls that drop from the rim to an interior floor).
+    // Meshes as a STRAIGHT uniform lattice driven by the plain rim, with
+    // the notch boolean-cut and its walls/floor webbed to their exact
+    // samples — the full-wrap sibling of the open-band straight lattice.
+    // The plain rim (never the castellated total) drives the column count,
+    // so the rim-SUM equalization skips these the way it skips open bands.
+    bool castellated = false;
+    int plainRimEdge = 0;  // the plain full-circle rim: drives nu
     // Forced fallback flavour: -1 = follow settings, 0 = pure tris,
     // 1 = quad-dominant (used when the user forces a mesher).
     int forceFallbackQuads = -1;
@@ -532,6 +542,95 @@ bool openBandSides(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         }
     }
     return sides.size() == 2;
+}
+
+// Full-wrap castellated rim: a u-closed straight-ruling band (cylinder or
+// cone) whose two rim chains are one PLAIN full circle and one NOTCHED rim
+// — a channel cut clean through the rim, its two walls dropping from the
+// rim to an interior floor. Detected so the face meshes as a straight
+// uniform lattice driven by the plain rim (the notch boolean-cut, exactly
+// like a partial-wrap open band) instead of a sheared chained loft. Returns
+// the plain rim's edge id (which drives the column count), or 0 if the face
+// is not this shape. Gated tightly: plain cylinders/cones with two matching
+// plain rims fall through to the clean chained loft and never take this
+// path (both rims flat -> neither notched).
+int castellatedRimBand(const TopoDS_Face& face,
+                       const BRepAdaptor_Surface& surf, const Model& model,
+                       const std::vector<int>& rimLow,
+                       const std::vector<int>& rimHigh) {
+    switch (surf.GetType()) {
+        case GeomAbs_Cylinder:
+        case GeomAbs_Cone: break;  // u-isolines are straight rulings
+        default: return 0;
+    }
+    if (!surf.IsUClosed() || surf.IsVClosed()) return 0;
+    if (rimLow.empty() || rimHigh.empty()) return 0;
+    const double u0 = surf.FirstUParameter(), u1 = surf.LastUParameter();
+    const double v0 = surf.FirstVParameter(), v1 = surf.LastVParameter();
+    const double uspan = std::max(1e-12, u1 - u0);
+    const double vspan = std::max(1e-12, v1 - v0);
+    // A lone flat full circle (the plain rim).
+    auto plainCircleOf = [&](const std::vector<int>& chain) {
+        if (chain.size() != 1) return false;
+        double f, l;
+        Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(
+            TopoDS::Edge(model.edges(chain[0])), face, f, l);
+        if (pc.IsNull()) return false;
+        double vLo = 1e300, vHi = -1e300, uLo = 1e300, uHi = -1e300;
+        for (int k = 0; k <= 16; ++k) {
+            gp_Pnt2d uv = pc->Value(f + (l - f) * k / 16.0);
+            vLo = std::min(vLo, uv.Y());
+            vHi = std::max(vHi, uv.Y());
+            uLo = std::min(uLo, uv.X());
+            uHi = std::max(uHi, uv.X());
+        }
+        return (vHi - vLo) < 0.02 * vspan && (uHi - uLo) > 0.98 * uspan;
+    };
+    // A rim carrying a single rim-open NOTCH: mostly flat at one rim level
+    // (the base arcs), with ONE localized dip whose walls reach a real way
+    // toward the interior. A wavy pipe-saddle weld rim (mohne) oscillates
+    // around the whole wrap — its off-rim samples span most of u and few sit
+    // at the rim level — and is REJECTED so it keeps the chained loft.
+    auto notchedOk = [&](const std::vector<int>& chain) {
+        int nearV0 = 0, nearV1 = 0, total = 0;
+        bool hasWall = false;
+        double notchU0 = 1e300, notchU1 = -1e300;
+        for (int eid : chain) {
+            double f, l;
+            Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(
+                TopoDS::Edge(model.edges(eid)), face, f, l);
+            if (pc.IsNull()) return false;
+            double evLo = 1e300, evHi = -1e300;
+            gp_Pnt2d uv[17];
+            for (int k = 0; k <= 16; ++k) {
+                uv[k] = pc->Value(f + (l - f) * k / 16.0);
+                evLo = std::min(evLo, uv[k].Y());
+                evHi = std::max(evHi, uv[k].Y());
+            }
+            if (evHi - evLo > 0.15 * vspan) hasWall = true;
+            for (int k = 0; k <= 16; ++k) {
+                ++total;
+                const bool at0 = std::abs(uv[k].Y() - v0) < 0.05 * vspan;
+                const bool at1 = std::abs(uv[k].Y() - v1) < 0.05 * vspan;
+                if (at0) ++nearV0;
+                if (at1) ++nearV1;
+                if (!at0 && !at1) {
+                    notchU0 = std::min(notchU0, uv[k].X());
+                    notchU1 = std::max(notchU1, uv[k].X());
+                }
+            }
+        }
+        if (!hasWall || total == 0) return false;
+        const double arcFrac = double(std::max(nearV0, nearV1)) / total;
+        const double notchUspan = notchU1 > notchU0 ? notchU1 - notchU0 : 0.0;
+        // Most of the rim flat, one dip narrower than half the wrap.
+        return arcFrac > 0.4 && notchUspan < 0.5 * uspan;
+    };
+    const bool loPlain = plainCircleOf(rimLow);
+    const bool hiPlain = plainCircleOf(rimHigh);
+    if (loPlain && !hiPlain && notchedOk(rimHigh)) return rimLow[0];
+    if (hiPlain && !loPlain && notchedOk(rimLow)) return rimHigh[0];
+    return 0;
 }
 
 bool isClosedRevolution(const BRepAdaptor_Surface& surf) {
@@ -5124,6 +5223,20 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             plan.bandSides.empty()) {
             plan.linkRims = false;  // the taper cannot span an open band
         }
+        // A full-wrap rim cut through by a notch (one plain rim, one rim
+        // whose walls drop to a floor): straight uniform lattice + rim-open
+        // cut, driven by the plain rim. Closed bands only (open bands own
+        // the partial-wrap version above).
+        if (plan.bandSides.empty()) {
+            const int pr = castellatedRimBand(face, surf, model, plan.rimLow,
+                                              plan.rimHigh);
+            if (pr) {
+                plan.castellated = true;
+                plan.plainRimEdge = pr;
+                dbg("plan face %d: full-wrap castellated rim, plain edge %d",
+                    fid, pr);
+            }
+        }
     };
 
     // Partial-wrap revolution band plan: two full-height u-iso sides
@@ -6830,6 +6943,522 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
         faceId, nu, nv, regions.size(), passCut ? 1 : 0, passPlain ? 1 : 0,
         local.polygons.size());
     // Everything validated: splat the local result into the builder.
+    std::vector<uint32_t> outMap(local.vertices.size());
+    for (uint32_t i = 0; i < local.vertices.size(); ++i) {
+        outMap[i] = out.addVertex(
+            gp_Pnt(local.vertices[i][0], local.vertices[i][1],
+                   local.vertices[i][2]),
+            local.anchors[i]);
+    }
+    for (const auto& poly : local.polygons) {
+        std::vector<uint32_t> mapped;
+        mapped.reserve(poly.size());
+        for (uint32_t idx2 : poly) mapped.push_back(outMap[idx2]);
+        out.addPolygon(std::move(mapped), faceId, false);
+    }
+    return true;
+}
+
+// Full-wrap castellated rim (see castellatedRimBand): a u-closed
+// cylinder/cone whose one rim is a plain full circle and the other is cut
+// through by a notch — two walls dropping from the rim to an interior
+// floor. The plain rim drives a STRAIGHT uniform column lattice (columns at
+// fixed azimuths are exact rulings on a cylinder/cone), and its own samples
+// ARE the columns, so it welds bit-identically to its neighbour. The
+// notched rim's base arcs weld through a thin transition strip (which does
+// not disturb the straight columns), and the notch itself is boolean-cut,
+// its walls/floor webbed to their exact edge samples (the same contract the
+// notch's wall/floor faces sample). This is the full-wrap sibling of
+// meshRevolutionOpenBand: identical cut/strip/web, but the lattice wraps
+// periodically instead of running between two side edges.
+bool meshRevolutionRimNotch(const TopoDS_Face& face,
+                            const BRepAdaptor_Surface& surf,
+                            const Model& model,
+                            const std::vector<int>& rimLow,
+                            const std::vector<int>& rimHigh, int plainRimEdge,
+                            const std::vector<int>& solvedEdge, int faceId,
+                            int nu, int nv, MeshBuilder& out) {
+    if (!surf.IsUClosed() || surf.IsVClosed()) return false;
+    if (rimLow.empty() || rimHigh.empty()) return false;
+    nu = std::max(3, nu);
+    nv = std::max(1, nv);
+    const double u0 = surf.FirstUParameter(), u1 = surf.LastUParameter();
+    const double v0 = surf.FirstVParameter(), v1 = surf.LastVParameter();
+    const double period = std::max(1e-12, u1 - u0);
+    const double vspan = std::max(1e-12, v1 - v0);
+
+    const bool lowPlain = rimLow.size() == 1 && rimLow[0] == plainRimEdge;
+    const bool highPlain = rimHigh.size() == 1 && rimHigh[0] == plainRimEdge;
+    if (lowPlain == highPlain) return false;  // exactly one plain rim
+    const std::vector<int>& plainChain = lowPlain ? rimLow : rimHigh;
+    const std::vector<int>& cutChain = lowPlain ? rimHigh : rimLow;
+
+    struct SPt {
+        double u, v;
+        gp_Pnt p;
+    };
+
+    // ---- Plain rim: sample the full circle at nu; its samples ARE the
+    // columns (uniform azimuths = straight rulings) and weld to whatever
+    // shares this circle.
+    std::vector<SPt> plainS;
+    {
+        const TopoDS_Edge edge = TopoDS::Edge(model.edges(plainChain[0]));
+        double f2, l2, f3, l3;
+        Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(edge, face, f2, l2);
+        Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, f3, l3);
+        if (pc.IsNull() || c3.IsNull()) return false;
+        const bool rev = edge.Orientation() == TopAbs_REVERSED;
+        const double ph = closedEdgePhase(edge, model);
+        for (int i = 0; i < nu; ++i) {
+            const double t = phasedT(i, nu, ph, rev);
+            gp_Pnt2d uv = pc->Value(f2 + (l2 - f2) * t);
+            double u = uv.X();
+            u -= period * std::floor((u - u0) / period);
+            plainS.push_back({u, uv.Y(), c3->Value(f3 + (l3 - f3) * t)});
+        }
+    }
+    if (int(plainS.size()) != nu) return false;
+    std::sort(plainS.begin(), plainS.end(),
+              [](const SPt& a, const SPt& b) { return a.u < b.u; });
+    std::vector<double> uk(nu);
+    for (int c = 0; c < nu; ++c) {
+        uk[c] = plainS[c].u;
+        if (c && uk[c] <= uk[c - 1] + 1e-9 * period) return false;
+    }
+    double vPlain = 0;
+    for (const SPt& s : plainS) vPlain += s.v;
+    vPlain /= nu;
+    const double vCut =
+        std::abs(vPlain - v0) < std::abs(vPlain - v1) ? v1 : v0;
+    const double sign = vPlain > vCut ? 1.0 : -1.0;
+    auto wOf = [&](double v) { return sign * (v - vCut); };
+    auto vOf = [&](double w) { return vCut + sign * w; };
+    const double wspan = wOf(vPlain);
+    if (wspan <= 1e-9) return false;
+
+    // ---- Cut rim: sample each edge at its solved count; a piece that
+    // stays at the cut rim level is a base arc (hug), anything that drops
+    // away is the notch (walls + floor).
+    struct Piece {
+        std::vector<SPt> pts;
+        bool hug = false;
+    };
+    std::vector<Piece> pieces;
+    for (int eid : cutChain) {
+        const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+        double f2, l2, f3, l3;
+        Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(edge, face, f2, l2);
+        Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, f3, l3);
+        if (pc.IsNull() || c3.IsNull()) return false;
+        int n = eid < int(solvedEdge.size()) ? solvedEdge[eid] : 0;
+        if (n < 1) n = 1;
+        const bool rev = edge.Orientation() == TopAbs_REVERSED;
+        const double ph = closedEdgePhase(edge, model);
+        Piece piece;
+        double bv0 = 1e300, bv1 = -1e300;
+        for (int k = 0; k <= 16; ++k) {
+            gp_Pnt2d uv = pc->Value(f2 + (l2 - f2) * k / 16.0);
+            bv0 = std::min(bv0, uv.Y());
+            bv1 = std::max(bv1, uv.Y());
+        }
+        piece.hug = std::abs(bv0 - vCut) < 0.02 * vspan &&
+                    std::abs(bv1 - vCut) < 0.02 * vspan;
+        for (int i = 0; i <= n; ++i) {
+            const double t = phasedT(i, n, ph, rev);
+            gp_Pnt2d uv = pc->Value(f2 + (l2 - f2) * t);
+            piece.pts.push_back({uv.X(), uv.Y(), c3->Value(f3 + (l3 - f3) * t)});
+        }
+        pieces.push_back(std::move(piece));
+    }
+
+    // Chain the pieces into one loop by nearest 3D endpoints; each sample
+    // inherits its piece's hug flag.
+    std::vector<SPt> S;
+    std::vector<char> hug;
+    {
+        auto append = [&](const Piece& pc2, bool rev) {
+            const auto& p = pc2.pts;
+            for (size_t k = 0; k < p.size(); ++k) {
+                const SPt& s = rev ? p[p.size() - 1 - k] : p[k];
+                if (!S.empty() && S.back().p.Distance(s.p) < 1e-9) continue;
+                S.push_back(s);
+                hug.push_back(pc2.hug ? 1 : 0);
+            }
+        };
+        std::vector<char> used(pieces.size(), 0);
+        append(pieces[0], false);
+        used[0] = 1;
+        for (size_t step = 1; step < pieces.size(); ++step) {
+            double bd = 1e300;
+            size_t bi = 0;
+            bool rev = false;
+            for (size_t k = 0; k < pieces.size(); ++k) {
+                if (used[k]) continue;
+                const double dF = S.back().p.Distance(pieces[k].pts.front().p);
+                const double dB = S.back().p.Distance(pieces[k].pts.back().p);
+                if (dF < bd) { bd = dF; bi = k; rev = false; }
+                if (dB < bd) { bd = dB; bi = k; rev = true; }
+            }
+            used[bi] = 1;
+            append(pieces[bi], rev);
+        }
+        if (S.size() > 1 && S.front().p.Distance(S.back().p) < 1e-9) {
+            S.pop_back();
+            hug.pop_back();
+        }
+    }
+    const int SN = int(S.size());
+    if (SN < 4) return false;
+
+    // Orient ascending in u and rotate to start just past the seam so the
+    // notch (feature run) sits strictly interior.
+    for (SPt& s : S) s.u -= period * std::floor((s.u - u0) / period);
+    double turn = 0;
+    for (int i = 0; i < SN; ++i) {
+        double d = S[(i + 1) % SN].u - S[i].u;
+        d -= period * std::round(d / period);
+        turn += d;
+    }
+    if (turn < 0) {
+        std::reverse(S.begin(), S.end());
+        std::reverse(hug.begin(), hug.end());
+    }
+    int startIdx = 0;
+    for (int i = 0; i < SN; ++i) {
+        if (S[i].u < S[(i - 1 + SN) % SN].u - 1e-9 * period) {
+            startIdx = i;
+            break;
+        }
+    }
+    std::rotate(S.begin(), S.begin() + startIdx, S.end());
+    std::rotate(hug.begin(), hug.begin() + startIdx, hug.end());
+
+    // Single contiguous feature run (one notch), strictly interior.
+    int iFa = -1, iFb = -1;
+    for (int i = 0; i < SN; ++i) {
+        if (!hug[i]) {
+            if (iFa < 0) iFa = i;
+            iFb = i;
+        }
+    }
+    if (iFa <= 0 || iFb >= SN - 1) return false;  // no notch / straddles seam
+    for (int i = iFa; i <= iFb; ++i) {
+        if (hug[i]) return false;  // more than one notch: not handled here
+    }
+
+    double nu0 = 1e300, nu1 = -1e300, wTop = 0;
+    for (int i = iFa; i <= iFb; ++i) {
+        nu0 = std::min(nu0, S[i].u);
+        nu1 = std::max(nu1, S[i].u);
+        wTop = std::max(wTop, wOf(S[i].v));
+    }
+    if (wTop <= 1e-6 * wspan || wTop > 0.9 * wspan) return false;
+
+    // Bounding KEPT columns; sliver cells are pushed out with the notch.
+    int colL = 0;
+    while (colL + 1 < nu && uk[colL + 1] <= nu0) ++colL;
+    if (colL > 0 && colL + 1 < nu &&
+        nu0 - uk[colL] < 0.3 * (uk[colL + 1] - uk[colL])) {
+        --colL;
+    }
+    int colR = nu - 1;
+    for (int c = 0; c < nu; ++c) {
+        if (uk[c] >= nu1) { colR = c; break; }
+    }
+    if (colR > 0 && colR < nu - 1 &&
+        uk[colR] - nu1 < 0.3 * (uk[colR] - uk[colR - 1])) {
+        ++colR;
+    }
+    if (colL < 1 || colR > nu - 1 || colR <= colL) return false;
+
+    // ---- Rows in w. Feature row just past the notch depth; a thin strip
+    // row hugs the cut rim so the columns stay straight for (nearly) the
+    // whole height. The plain rim is exact at w = wspan (no strip there).
+    const double wFeat = wTop + std::max(0.04 * wTop, 0.005 * wspan);
+    const double wBot = std::min({0.25 * wspan / nv, 0.05 * wspan, 0.4 * wFeat});
+    if (wBot < 1e-3 * wspan) return false;
+    if (wFeat > wspan - 0.02 * wspan || wFeat < wBot + 0.01 * wspan) {
+        return false;
+    }
+    std::vector<double> rowW;
+    auto addRow = [&](double w) {
+        for (size_t i = 0; i < rowW.size(); ++i) {
+            if (std::abs(rowW[i] - w) < 0.008 * wspan) return int(i);
+        }
+        rowW.push_back(w);
+        return int(rowW.size()) - 1;
+    };
+    const int keyBot = addRow(wBot);
+    const int keyTop = addRow(wspan);
+    if (keyBot == keyTop) return false;
+    std::vector<int> keyAx;
+    for (int j = 1; j < nv; ++j) keyAx.push_back(addRow(j * wspan / nv));
+    const int keyFeat = addRow(wFeat);
+
+    // Identify the notch outline GEOMETRICALLY (coarse sampling can class
+    // a wall's rim corner as a hug arc endpoint, so the hug flag alone
+    // misses it): the floor is the deepest-v run, each wall the constant-u
+    // run rising from a floor end back to the rim. Ordered top -> bottom.
+    const double vFloorLvl = vOf(wTop);
+    const double tolV = 0.03 * vspan;
+    const double tolU = 0.15 * std::max(1e-9, nu1 - nu0);
+    int fL = iFa, fR = iFb;
+    {
+        bool found = false;
+        for (int i = iFa; i <= iFb; ++i) {
+            if (std::abs(S[i].v - vFloorLvl) < tolV) {
+                if (!found) { fL = i; found = true; }
+                fR = i;
+            }
+        }
+        if (!found) return false;
+    }
+    auto climbWall = [&](int from, int dir) {
+        const double uW = S[from].u;
+        std::vector<int> w;
+        for (int step = 0, i = from; step < SN;
+             ++step, i = (i + dir + SN) % SN) {
+            if (std::abs(S[i].u - uW) > tolU) break;
+            w.push_back(i);
+            if (std::abs(S[i].v - vCut) < tolV) break;
+        }
+        std::reverse(w.begin(), w.end());  // top (rim) -> bottom (floor)
+        return w;
+    };
+    const std::vector<int> leftWall = climbWall(fL, -1);
+    const std::vector<int> rightWall = climbWall(fR, +1);
+    if (leftWall.size() < 2 || rightWall.size() < 2) return false;
+    if (std::abs(S[leftWall.front()].v - vCut) > tolV ||
+        std::abs(S[rightWall.front()].v - vCut) > tolV) {
+        return false;  // a wall that never reaches the rim: malformed
+    }
+    // The bounding columns carry a row at each wall sample's depth so the
+    // wall strip is a clean 1:1 ladder (vertical rulings, dAz = 0) — a
+    // coarse column would slant a diagonal across the wall instead. Only
+    // the notch-depth band (below keyBot, above keyFeat) is populated.
+    std::vector<int> wallRowsL, wallRowsR;
+    auto collectWallRows = [&](const std::vector<int>& wall,
+                               std::vector<int>& out) {
+        for (int i : wall) {
+            const double w = wOf(S[i].v);
+            if (w <= rowW[keyBot] + 1e-9 || w >= rowW[keyFeat] - 1e-9) continue;
+            out.push_back(addRow(w));
+        }
+    };
+    collectWallRows(leftWall, wallRowsL);
+    collectWallRows(rightWall, wallRowsR);
+
+    std::vector<std::vector<int>> colKeys(nu);
+    for (int c = 0; c < nu; ++c) {
+        const int floorKey = (colL < c && c < colR) ? keyFeat : keyBot;
+        std::vector<int> ks{floorKey, keyTop};
+        for (int k : keyAx) {
+            if (rowW[k] > rowW[floorKey] + 1e-12 &&
+                rowW[k] < rowW[keyTop] - 1e-12) {
+                ks.push_back(k);
+            }
+        }
+        if (c == colL || c == colR) ks.push_back(keyFeat);
+        if (c == colL) ks.insert(ks.end(), wallRowsL.begin(), wallRowsL.end());
+        if (c == colR) ks.insert(ks.end(), wallRowsR.begin(), wallRowsR.end());
+        std::sort(ks.begin(), ks.end(),
+                  [&](int a, int b) { return rowW[a] < rowW[b]; });
+        ks.erase(std::unique(ks.begin(), ks.end()), ks.end());
+        colKeys[c] = std::move(ks);
+    }
+
+    // ---- Build locally; a failed web must leave nothing emitted.
+    PolyMesh local;
+    MeshBuilder wb(local);
+    const bool flip = (face.Orientation() == TopAbs_REVERSED) ^ (sign < 0);
+    std::vector<uint32_t> cutIds(SN);
+    for (int i = 0; i < SN; ++i) {
+        cutIds[i] = wb.addVertex(S[i].p, {faceId, S[i].u, S[i].v});
+    }
+    std::vector<uint32_t> plainIds(nu);
+    for (int c = 0; c < nu; ++c) {
+        plainIds[c] =
+            wb.addVertex(plainS[c].p, {faceId, plainS[c].u, plainS[c].v});
+    }
+    std::vector<std::map<int, uint32_t>> vid(nu);
+    for (int c = 0; c < nu; ++c) {
+        for (int key : colKeys[c]) {
+            if (key == keyTop) {
+                vid[c][key] = plainIds[c];
+                continue;
+            }
+            const double vv = vOf(rowW[key]);
+            vid[c][key] =
+                wb.addVertex(surf.Value(uk[c], vv), {faceId, uk[c], vv});
+        }
+    }
+
+    auto emitRing = [&](std::vector<uint32_t> ring) {
+        ring.erase(std::unique(ring.begin(), ring.end()), ring.end());
+        while (ring.size() > 1 && ring.front() == ring.back()) ring.pop_back();
+        if (ring.size() < 3) return;
+        wb.addPolygon(std::move(ring), faceId, flip);
+    };
+
+    // Lattice cells, wrapping periodically; region cells below the feature
+    // row simply never exist (the boolean cut).
+    for (int c = 0; c < nu; ++c) {
+        const int cp = (c + 1) % nu;
+        const std::vector<int>& L = colKeys[c];
+        const std::vector<int>& R = colKeys[cp];
+        std::vector<int> common;
+        for (int k : L) {
+            if (std::find(R.begin(), R.end(), k) != R.end()) common.push_back(k);
+        }
+        for (size_t b = 0; b + 1 < common.size(); ++b) {
+            const double wA = rowW[common[b]], wB = rowW[common[b + 1]];
+            std::vector<uint32_t> ring{vid[c][common[b]], vid[cp][common[b]]};
+            for (int k : R) {
+                if (rowW[k] > wA + 1e-12 && rowW[k] < wB - 1e-12) {
+                    ring.push_back(vid[cp][k]);
+                }
+            }
+            ring.push_back(vid[cp][common[b + 1]]);
+            ring.push_back(vid[c][common[b + 1]]);
+            for (auto it = L.rbegin(); it != L.rend(); ++it) {
+                if (rowW[*it] > wA + 1e-12 && rowW[*it] < wB - 1e-12) {
+                    ring.push_back(vid[c][*it]);
+                }
+            }
+            emitRing(std::move(ring));
+        }
+    }
+
+    // Transition strip: the cut rim's base-arc samples (exact, welded to
+    // the neighbour) bridged to the keyBot uniform row by a monotone u map
+    // — quads where the counts advance together, an n-gon absorbing each
+    // extra point. Wraps once around through the seam.
+    auto emitStrip = [&](const std::vector<uint32_t>& lowIds,
+                         const std::vector<double>& lowU,
+                         const std::vector<uint32_t>& highIds,
+                         const std::vector<double>& highU) {
+        const int nL = int(lowIds.size()) - 1, nH = int(highIds.size()) - 1;
+        if (nL < 1 || nH < 1) return false;
+        const bool lowSparse = nL <= nH;
+        const std::vector<uint32_t>& Sp = lowSparse ? lowIds : highIds;
+        const std::vector<double>& sU = lowSparse ? lowU : highU;
+        const std::vector<uint32_t>& D = lowSparse ? highIds : lowIds;
+        const std::vector<double>& dU = lowSparse ? highU : lowU;
+        const int m = int(Sp.size()) - 1, n = int(D.size()) - 1;
+        std::vector<int> mp(m + 1);
+        mp[0] = 0;
+        mp[m] = n;
+        for (int k = 1; k < m; ++k) {
+            int j = mp[k - 1];
+            while (j + 1 < n && std::abs(dU[j + 1] - sU[k]) <=
+                                    std::abs(dU[j] - sU[k])) {
+                ++j;
+            }
+            mp[k] = j;
+        }
+        for (int k = 0; k < m; ++k) {
+            std::vector<uint32_t> ring;
+            if (lowSparse) {
+                ring = {Sp[k], Sp[k + 1]};
+                for (int t = mp[k + 1]; t >= mp[k]; --t) ring.push_back(D[t]);
+            } else {
+                for (int t = mp[k]; t <= mp[k + 1]; ++t) ring.push_back(D[t]);
+                ring.push_back(Sp[k + 1]);
+                ring.push_back(Sp[k]);
+            }
+            emitRing(std::move(ring));
+        }
+        return true;
+    };
+    auto unwrapAsc = [&](std::vector<double>& us) {
+        for (size_t i = 1; i < us.size(); ++i) {
+            while (us[i] < us[i - 1]) us[i] += period;
+        }
+    };
+    // Cut-rim strip: the hug ARC (right wall top, around outside the
+    // notch through the seam, to left wall top) bridged to the keyBot
+    // uniform row. Wraps once around.
+    {
+        std::vector<uint32_t> lowIds, highIds;
+        std::vector<double> lowU, highU;
+        const int arcStart = rightWall.front(), arcEnd = leftWall.front();
+        for (int step = 0, i = arcStart; step < SN; ++step, i = (i + 1) % SN) {
+            lowIds.push_back(cutIds[i]);
+            lowU.push_back(S[i].u);
+            if (i == arcEnd) break;
+        }
+        for (int step = 0, c = colR; step < nu; ++step, c = (c + 1) % nu) {
+            highIds.push_back(vid[c][keyBot]);
+            highU.push_back(uk[c]);
+            if (c == colL) break;
+        }
+        unwrapAsc(lowU);
+        unwrapAsc(highU);
+        if (!emitStrip(lowIds, lowU, highIds, highU)) return false;
+    }
+
+    // Notch region: welded through STRUCTURED strips so the columns stay
+    // straight (an ear-clip fan would slant across the notch). The two
+    // walls are u-iso (constant azimuth = vertical rulings): a vertical
+    // strip v-matches each bounding column to its wall samples, so every
+    // large-dz edge is a vertical ruling (dAz = 0). The floor is v-iso: a
+    // horizontal strip u-matches the bounding-column feature row to the
+    // floor samples. Corners are shared edges with the cut-rim strip
+    // (top) and the below-feature lattice (bottom).
+    // Left wall: wall samples <-> colL column (cut rim .. floor). Wall is
+    // the low-u rail here so the shared colL edges wind opposite the
+    // lattice cell on colL's left (manifold).
+    {
+        std::vector<uint32_t> colIds, wallIds;
+        std::vector<double> colW, wallW;
+        for (int k : colKeys[colL]) {
+            if (rowW[k] <= rowW[keyFeat] + 1e-9) {
+                colIds.push_back(vid[colL][k]);
+                colW.push_back(rowW[k]);
+            }
+        }
+        for (int i : leftWall) {
+            wallIds.push_back(cutIds[i]);
+            wallW.push_back(wOf(S[i].v));
+        }
+        if (!emitStrip(wallIds, wallW, colIds, colW)) return false;
+    }
+    // Right wall: colR column <-> wall samples (colR is the low-u rail so
+    // its shared edges wind opposite the lattice cell on colR's right).
+    {
+        std::vector<uint32_t> colIds, wallIds;
+        std::vector<double> colW, wallW;
+        for (int i : rightWall) {
+            wallIds.push_back(cutIds[i]);
+            wallW.push_back(wOf(S[i].v));
+        }
+        for (int k : colKeys[colR]) {
+            if (rowW[k] <= rowW[keyFeat] + 1e-9) {
+                colIds.push_back(vid[colR][k]);
+                colW.push_back(rowW[k]);
+            }
+        }
+        if (!emitStrip(colIds, colW, wallIds, wallW)) return false;
+    }
+    // Floor: the bounding columns' feature row (colL..colR) <-> the floor
+    // edge samples (the wall bottoms are the shared end corners).
+    {
+        std::vector<uint32_t> gridIds, floorIds;
+        std::vector<double> gridU, floorU;
+        for (int c = colL; c <= colR; ++c) {
+            gridIds.push_back(vid[c][keyFeat]);
+            gridU.push_back(uk[c]);
+        }
+        for (int i = fL; i <= fR; ++i) {
+            floorIds.push_back(cutIds[i]);
+            floorU.push_back(S[i].u);
+        }
+        if (!emitStrip(floorIds, floorU, gridIds, gridU)) return false;
+    }
+
+    dbg("rimnotch face %d: nu=%d nv=%d cols[%d,%d] wTop=%.3f polys=%zu",
+        faceId, nu, nv, colL, colR, wTop / wspan, local.polygons.size());
     std::vector<uint32_t> outMap(local.vertices.size());
     for (uint32_t i = 0; i < local.vertices.size(); ++i) {
         outMap[i] = out.addVertex(
@@ -8777,6 +9406,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 // plain rim to the chain's sum is what made the radial
                 // dial dead on partial barrel walls.
                 if (!plan.bandSides.empty()) continue;
+                // Full-wrap castellated rims are the closed-band analog:
+                // the plain rim drives the columns and the notch is
+                // boolean-cut, so raising the plain rim to the castellated
+                // total would only over-mesh (and re-arm the irreconcilable
+                // bail) — skip them exactly like open bands.
+                if (plan.castellated) continue;
                 const auto& lo = plan.rimLow;
                 const auto& hi = plan.rimHigh;
                 if (lo.empty() || hi.empty()) continue;
@@ -8841,6 +9476,16 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         switch (plan.kind) {
             case MesherKind::RevolutionGrid:
             case MesherKind::DiskCap: {
+                if (plan.castellated) {
+                    // Full-wrap castellated rim: the plain rim drives the
+                    // column count (the notch is cut, never counted); the
+                    // castellated chain's arcs weld through a strip.
+                    const int nuP = std::max(
+                        solvedEdge[plan.plainRimEdge],
+                        density.countFor(plan.plainRimEdge, s.radial));
+                    counts[fid] = {std::max(3, nuP), std::max(1, s.axial), 0};
+                    break;
+                }
                 if (!plan.bandSides.empty()) {
                     // Open band: nu follows the flat full-span rim's
                     // solved count (which follows radial/adaptive/
@@ -8931,7 +9576,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         cacheKey[fid] = key;
         if (plan.kind == MesherKind::AnnulusRing ||
             plan.kind == MesherKind::RailLadder ||
-            !plan.bandSides.empty() || !plan.loops.empty()) {
+            !plan.bandSides.empty() || !plan.loops.empty() ||
+            plan.castellated) {
+            // A castellated rim consumes the plain rim's count (columns)
+            // AND every cut-chain edge's count (arc/wall/floor samples),
+            // all of which live in uEdges — key them so a density edit
+            // regenerates the part against re-meshed neighbours.
             for (int eid : plan.uEdges) {
                 cacheKey[fid] += "u" + std::to_string(solvedEdge[eid]);
             }
@@ -9199,7 +9849,16 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         };
         switch (plan.kind) {
             case MesherKind::RevolutionGrid:
-                if (!plan.insertWires.empty()) {
+                if (plan.castellated) {
+                    // Full-wrap castellated rim: straight uniform lattice
+                    // with the notch cut out and webbed.
+                    if (!meshRevolutionRimNotch(face, surf, model,
+                                                plan.rimLow, plan.rimHigh,
+                                                plan.plainRimEdge, solvedEdge,
+                                                fid, nu, nv, out)) {
+                        demote(fid, face, surf, s, "rim notch failed");
+                    }
+                } else if (!plan.insertWires.empty()) {
                     // Before the taper branch: a taper never cuts the
                     // slots out, so insert bands go first regardless of
                     // rim linkage.
