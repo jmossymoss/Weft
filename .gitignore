@@ -12,3 +12,4 @@ weft_debug.log
 weft_fixture_*.step
 __pycache__/
 build_log.txt
+.claude/
