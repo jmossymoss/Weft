@@ -1520,7 +1520,8 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
                        const std::vector<double>& vParams, int rotate,
                        const std::vector<int>& solvedEdge, MeshBuilder& out,
                        const std::vector<double>* uScaffold = nullptr,
-                       const std::vector<double>* vScaffold = nullptr) {
+                       const std::vector<double>* vScaffold = nullptr,
+                       const PinnedEdges* pins = nullptr) {
     CoonsPatch patch;
     if (!makeCoonsPatch(face, model, patch, rotate)) return false;
     Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
@@ -1540,8 +1541,23 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
         std::vector<BPt> row;
         const auto& ch = patch.chain[i];
         if (ch.size() <= 1) {
-            BRepAdaptor_Curve c(TopoDS::Edge(model.edges(patch.edgeIds[i])));
+            const int eid = patch.edgeIds[i];
+            BRepAdaptor_Curve c(TopoDS::Edge(model.edges(eid)));
             const double f3 = c.FirstParameter(), l3 = c.LastParameter();
+            // A pinned rail carries explicit column-azimuth fractions
+            // (forward-param) that both faces emit; the fraction maps the
+            // edge directly (no rev flip — rev only reorders the list).
+            if (edgeIsPinned(eid, pins)) {
+                for (double tt : edgeSampleFractions(eid, 0, 0.0,
+                                                     patch.rev[i], true, pins)) {
+                    row.push_back(
+                        {c.Value(f3 + tt * (l3 - f3)),
+                         patch.pc[i]->Value(patch.first[i] +
+                                            tt * (patch.last[i] -
+                                                  patch.first[i]))});
+                }
+                return row;
+            }
             for (double t : params) {
                 double tt = patch.rev[i] ? 1.0 - t : t;
                 row.push_back(
@@ -1561,6 +1577,16 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
             }
             BRepAdaptor_Curve c(TopoDS::Edge(model.edges(pce.edgeId)));
             const double f3 = c.FirstParameter(), l3 = c.LastParameter();
+            if (edgeIsPinned(pce.edgeId, pins)) {
+                for (double tt : edgeSampleFractions(
+                         pce.edgeId, 0, 0.0, pce.rev,
+                         /*includeLast=*/k + 1 == ch.size(), pins)) {
+                    row.push_back(
+                        {c.Value(f3 + tt * (l3 - f3)),
+                         pce.pc->Value(pce.f + tt * (pce.l - pce.f))});
+                }
+                continue;
+            }
             const int last = k + 1 == ch.size() ? n : n - 1;
             for (int q = 0; q <= last; ++q) {
                 double t = double(q) / n;
@@ -2866,10 +2892,12 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
                    const std::vector<double>& vParams, int rotate,
                    const std::vector<int>& solvedEdge, MeshBuilder& out,
                    const std::vector<std::vector<int>>* inserts = nullptr,
-                   int collarRings = 1) {
+                   int collarRings = 1,
+                   const PinnedEdges* pins = nullptr) {
     if (!inserts || inserts->empty()) {
         return meshCoonsGridBody(face, model, faceId, uParams, vParams,
-                                 rotate, solvedEdge, out);
+                                 rotate, solvedEdge, out, nullptr, nullptr,
+                                 pins);
     }
     dbg("coons cutout %d: %zu insert wire(s)", faceId, inserts->size());
     // Hole rings: 3D edge curves at solved counts (the bore wall's own
@@ -3069,7 +3097,7 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
         {
             MeshBuilder tmp(grid);
             if (!meshCoonsGridBody(face, model, faceId, uParams, vParams,
-                                   rotate, solvedEdge, tmp, uSc, vSc)) {
+                                   rotate, solvedEdge, tmp, uSc, vSc, pins)) {
                 dbg("coons cutout %d: body failed (attempt %d)", faceId,
                     attempt);
                 return false;
@@ -6279,6 +6307,181 @@ void pinCastellatedRims(const Model& model,
     }
 }
 
+// Pin fillet blend chains so columns continue THROUGH them. From each open
+// revolution band's fillet-side rim, walk the coaxial coons blend strips
+// rail-to-rail until the next revolution face, pinning every cross-rail arc
+// to the band's column azimuths (the arc endpoints stay the castellation
+// corners). The band's bottom transition strip then degenerates to quads and
+// the barrel columns run straight into and through the blends. Count-matched
+// (interior columns == solved count - 1) so nothing cascades; a rail whose
+// column count doesn't match its solved count is left uniform.
+void pinFilletChains(const Model& model,
+                     const std::map<int, FacePlan>& plans,
+                     const std::vector<int>& solvedEdge, PinnedEdges& pins) {
+    // Azimuth about a revolution axis (loc O, unit dir D), with an in-plane
+    // reference frame (r1, r2).
+    auto frameOf = [](const gp_Ax1& ax, gp_Vec& r1, gp_Vec& r2) {
+        const gp_Dir d = ax.Direction();
+        gp_Vec dv(d);
+        gp_Vec t = std::abs(d.X()) < 0.9 ? gp_Vec(1, 0, 0) : gp_Vec(0, 1, 0);
+        r1 = t - dv * (t.Dot(dv));
+        r1.Normalize();
+        r2 = dv.Crossed(r1);
+    };
+    auto azimuth = [](const gp_Pnt& p, const gp_Pnt& o, const gp_Vec& r1,
+                      const gp_Vec& r2) {
+        gp_Vec w(o, p);
+        return std::atan2(w.Dot(r2), w.Dot(r1));
+    };
+    // The two coaxial circular rails of a coons blend face, longest-span
+    // first; empties when the face isn't a two-rail blend on this axis.
+    auto railsOf = [&](int fid, const gp_Ax1& ax, const gp_Pnt& o,
+                       const gp_Vec& r1, const gp_Vec& r2) {
+        std::vector<int> rails;
+        const TopoDS_Face F = TopoDS::Face(model.faces(fid));
+        for (TopExp_Explorer ex(F, TopAbs_EDGE); ex.More(); ex.Next()) {
+            const TopoDS_Edge e = TopoDS::Edge(ex.Current());
+            if (BRep_Tool::Degenerated(e)) continue;
+            const int eid = model.edges.FindIndex(e);
+            if (eid < 1) continue;
+            double f, l;
+            Handle(Geom_Curve) c = BRep_Tool::Curve(e, f, l);
+            if (c.IsNull()) continue;
+            GeomAdaptor_Curve gc(c, f, l);
+            if (gc.GetType() != GeomAbs_Circle) continue;
+            // Coaxial with the band axis?
+            gp_Ax1 ca = gc.Circle().Axis();
+            if (1.0 - std::abs(ca.Direction().Dot(ax.Direction())) > 1e-4) {
+                continue;
+            }
+            double amn = 1e300, amx = -1e300;
+            for (int k = 0; k <= 8; ++k) {
+                const double a =
+                    azimuth(c->Value(f + (l - f) * k / 8.0), o, r1, r2);
+                amn = std::min(amn, a);
+                amx = std::max(amx, a);
+            }
+            if (amx - amn < 0.05) continue;  // an across edge, not a rail
+            rails.push_back(eid);
+        }
+        return rails;
+    };
+    // Project the band columns onto one arc edge and pin it, keeping the
+    // count equal to the edge's solved count (else leave it uniform).
+    auto pinArc = [&](int eid, const std::vector<double>& cols,
+                      const gp_Pnt& o, const gp_Vec& r1, const gp_Vec& r2) {
+        if (eid < 1 || eid >= int(pins.size()) || !pins[eid].empty()) return;
+        const int want = eid < int(solvedEdge.size()) ? solvedEdge[eid] : 0;
+        if (want < 2) return;
+        const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
+        double f, l;
+        Handle(Geom_Curve) c = BRep_Tool::Curve(e, f, l);
+        if (c.IsNull()) return;
+        const int NS = 64;
+        std::vector<double> aSeq(NS + 1);
+        double aPrev = 0;
+        for (int k = 0; k <= NS; ++k) {
+            double a = azimuth(c->Value(f + (l - f) * double(k) / NS), o, r1,
+                               r2);
+            if (k > 0) a += 2 * M_PI * std::round((aPrev - a) / (2 * M_PI));
+            aSeq[k] = a;
+            aPrev = a;
+        }
+        const double aLo = std::min(aSeq.front(), aSeq.back());
+        const double aHi = std::max(aSeq.front(), aSeq.back());
+        std::vector<double> fr{0.0};
+        for (double col : cols) {
+            for (int kk = -1; kk <= 1; ++kk) {
+                const double a = col + kk * 2 * M_PI;
+                if (a <= aLo + 1e-6 || a >= aHi - 1e-6) continue;
+                double t = -1;
+                for (int s = 0; s < NS; ++s) {
+                    const double x = aSeq[s], y = aSeq[s + 1];
+                    if ((a - x) * (a - y) <= 0 && std::abs(y - x) > 1e-15) {
+                        t = (double(s) + (a - x) / (y - x)) / NS;
+                        break;
+                    }
+                }
+                if (t > 1e-6 && t < 1 - 1e-6) fr.push_back(t);
+            }
+        }
+        fr.push_back(1.0);
+        std::sort(fr.begin(), fr.end());
+        fr.erase(std::unique(fr.begin(), fr.end(),
+                             [](double a, double b) {
+                                 return std::abs(a - b) < 1e-9;
+                             }),
+                 fr.end());
+        if (int(fr.size()) - 1 != want) return;  // count mismatch: no cascade
+        pins[eid] = std::move(fr);
+    };
+    auto faceAcross = [&](int eid, int notFid, MesherKind wantKind) {
+        const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
+        if (!model.edgeToFaces.Contains(e)) return 0;
+        for (const TopoDS_Shape& s : model.edgeToFaces.FindFromKey(e)) {
+            const int f2 = model.faces.FindIndex(s);
+            if (f2 < 1 || f2 == notFid) continue;
+            auto it = plans.find(f2);
+            if (it != plans.end() && it->second.kind == wantKind) return f2;
+        }
+        return 0;
+    };
+
+    for (const auto& [fid, plan] : plans) {
+        if (plan.bandSides.empty() || plan.kind != MesherKind::RevolutionGrid) {
+            continue;
+        }
+        const TopoDS_Face bandFace = TopoDS::Face(model.faces(fid));
+        BRepAdaptor_Surface surf(bandFace);
+        if (surf.GetType() != GeomAbs_Cylinder) continue;
+        const gp_Ax1 ax = surf.Cylinder().Axis();
+        gp_Vec r1, r2;
+        frameOf(ax, r1, r2);
+        const gp_Pnt o = ax.Location();
+        if (plan.bandDriver < 1) continue;
+        // Column azimuths = the driver rim's own samples.
+        std::vector<double> cols;
+        {
+            const int drv = plan.bandDriver;
+            const int nu = drv < int(solvedEdge.size()) ? solvedEdge[drv] : 0;
+            if (nu < 3) continue;
+            const TopoDS_Edge de = TopoDS::Edge(model.edges(drv));
+            double f, l;
+            Handle(Geom_Curve) dc = BRep_Tool::Curve(de, f, l);
+            if (dc.IsNull()) continue;
+            const bool rev = de.Orientation() == TopAbs_REVERSED;
+            const double ph = closedEdgePhase(de, model);
+            for (int i = 0; i < nu; ++i) {
+                const double t = phasedT(i, nu, ph, rev);
+                cols.push_back(azimuth(dc->Value(f + (l - f) * t), o, r1, r2));
+            }
+            std::sort(cols.begin(), cols.end());
+        }
+        // Walk the blend chain from every fillet-side rim arc.
+        for (int rimEid : plan.uEdges) {
+            int cur = rimEid;
+            int prevFid = fid;
+            std::set<int> seen;
+            while (cur >= 1 && !seen.count(cur)) {
+                seen.insert(cur);
+                const int F = faceAcross(cur, prevFid, MesherKind::CoonsGrid);
+                if (F < 1) break;  // reached a non-coons neighbour
+                pinArc(cur, cols, o, r1, r2);
+                // The blend's OPPOSITE rail continues the chain.
+                std::vector<int> rails = railsOf(F, ax, o, r1, r2);
+                int nxt = 0;
+                for (int e2 : rails) {
+                    if (e2 != cur) { nxt = e2; break; }
+                }
+                if (nxt < 1) break;
+                pinArc(nxt, cols, o, r1, r2);
+                prevFid = F;
+                cur = nxt;
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Execution.
 
@@ -6402,7 +6605,8 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
                             const std::vector<int>& rimEdges,
                             const std::vector<int>& solvedEdge, int faceId,
                             int nu, int nv, const std::vector<int>& sides,
-                            MeshBuilder& out) {
+                            MeshBuilder& out,
+                            const PinnedEdges* pins = nullptr) {
     if (sides.size() != 2 || surf.IsVClosed() || surf.IsUClosed()) {
         return false;
     }
@@ -6479,8 +6683,11 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
             const bool rev = edge.Orientation() == TopAbs_REVERSED;
             Piece piece;
             piece.eid = eid;
-            for (int i = 0; i <= n; ++i) {
-                const double t = phasedT(i, n, 0.0, rev);
+            // A pinned far-rim arc carries the band's column azimuths, so
+            // the rim samples land ON the columns and the bottom transition
+            // strip collapses to quads (columns run straight to the rim).
+            for (double t : edgeSampleFractions(eid, n, 0.0, rev,
+                                                /*includeLast=*/true, pins)) {
                 gp_Pnt2d uv = pc->Value(f2 + (l2 - f2) * t);
                 piece.pts.push_back(
                     {uv.X(), uv.Y(), c3->Value(f3 + (l3 - f3) * t)});
@@ -9833,6 +10040,9 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     PinnedEdges pinnedEdge(model.edgeCount() + 1);
     pinCastellatedRims(model, plans, settings, solvedEdge, density,
                        pinnedEdge);
+    // Fillet flow-through: pin blend-chain cross-rails to the band columns
+    // so columns run barrel -> fillet -> fillet -> lower band unbroken.
+    pinFilletChains(model, plans, solvedEdge, pinnedEdge);
 
     // Resolve every face's division counts up front (union-find lookups
     // path-compress, so they must not run concurrently) — after this the
@@ -10281,7 +10491,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     if (!meshRevolutionOpenBand(face, surf, model,
                                                 plan.uEdges, solvedEdge,
                                                 fid, nu, nv,
-                                                plan.bandSides, out)) {
+                                                plan.bandSides, out,
+                                                &pinnedEdge)) {
                         demote(fid, face, surf, s, "open band failed");
                     }
                 } else {
@@ -10319,7 +10530,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         solvedEdge, out,
                         plan.insertWires.empty() ? nullptr
                                                  : &plan.insertWires,
-                        std::max(0, s.junctionRings))) {
+                        std::max(0, s.junctionRings), &pinnedEdge)) {
                     demote(fid, face, surf, s, "coons failed");
                 }
                 break;
