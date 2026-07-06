@@ -722,3 +722,26 @@ contract welds by construction) so global reductions are small; the real
 payoff is sloppy imports. An absurd value (e.g. --weld 0.5 on a small part)
 still leaves a few non-manifold edges (graceful degradation bounded by the
 clamp, not soup) — opt-in, default-safe.
+
+## MISMATCHED REVOLUTION RIMS -> transition strip (landed ee67b7d)
+meshRevolutionGrid bailed to the contract floor (tri soup) whenever a closed
+band's two rims solved to different totals (the irreconcilable check fired
+before the existing non-chained interior + emitClosedStrip path). Now an
+analytic revolution surface (cyl/cone/torus) with usable-but-mismatched rims
+routes into the strip: interior count = the DENSER rim's count (it welds 1:1;
+only the sparser rim takes a strip); interior azimuths at the dense rim's own
+samples for a clustered monotone rim (saddle) or uniform rulings for a near-
+uniform scalloped rim (detected by azimuth backsteps); interior v lofts
+between the two rims' v(u) profiles (no constant-v ring crosses a wavy rim).
+emitClosedStrip rewritten to match by CUMULATIVE ANGLE along each ring's own
+order (not raw wrapped-u) so a wire-chain-ordered rim pairs correctly — strict
+generalization, identical for sorted input. Thinness+flat guard keeps the bail
+where it mattered: reconcile only if bandH >= 0.35*reach AND the sparser rim
+is flat (sparseVr <= 0.02*bandH) -> two wavy rims stay irreconcilable
+(nasty_cheese drilled bores keep the floor, no regression). foam --profile cad:
+face 4 (cone) 376{158q,218t} -> 534{512q,22n} 96% quad; 183 91%; 184 85%; 0
+folds. foam's 82 open / 2 non-manifold are PRE-EXISTING open-shell B-rep (source
+isn't a closed solid there) — unchanged before/after, the demoted faces never
+contributed crack-opens; the win is quality. ctest green; board mohne 0/nasty
+10/weldment 7; 42/42 fixtures; flaregun barrels + notched byte-identical/unaffected.
+Foam dome-cap (bspline petals) + remaining coons rejects still open.
