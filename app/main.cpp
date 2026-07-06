@@ -1601,6 +1601,17 @@ static int outerLoopSolvedTotal(App& app, int faceId) {
     }
 }
 
+// The solved primary/secondary counts the mesher used for a face (nu/nv:
+// radial/axial, gridU/gridV, ...). {0,0} when unavailable. Leaving
+// adaptive seeds the manual fields from these so the value the face was
+// already meshed at appears in the box — no dead zone before a manual
+// count climbs past the adaptive floor.
+static std::array<int, 2> faceSolvedCounts(App& app, int faceId) {
+    auto it = app.report.faceCounts.find(faceId);
+    if (it == app.report.faceCounts.end()) return {0, 0};
+    return it->second;
+}
+
 // Kind-aware density nudge: EVERY mesher answers the wheel / [ ] with the
 // field that actually drives its density — counts for structured grids,
 // boundary totals for plate-web/quad-fill/minimal, deviation scaling for
@@ -2566,8 +2577,27 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
     // Curvature-adaptive density: deviation/angle size every curved edge;
     // the manual counts below become floors. Nudging a count via the
     // wheel flips the face back to manual.
+    const bool prevAdaptive = s.adaptive;
     ch |= ImGui::Checkbox("adaptive density (curvature)", &s.adaptive);
     hover({kAllKinds});
+    // Leaving adaptive: seed the manual count fields from what the face
+    // was actually meshed at, so the boxes show the live value the user
+    // sees on screen — not a stale default that needs cranking past the
+    // adaptive floor before anything moves. nu seeds radial/grid u, nv
+    // seeds axial/grid v (only the field the panel shows for this kind is
+    // used; seeding both is harmless).
+    if (prevAdaptive && !s.adaptive && highlightApp) {
+        const std::array<int, 2> live =
+            faceSolvedCounts(*highlightApp, highlightApp->activeFace);
+        if (live[0] > 0) {
+            s.radial = std::max(s.radial, live[0]);
+            s.gridU = std::max(s.gridU, live[0]);
+        }
+        if (live[1] > 0) {
+            s.axial = std::max(s.axial, live[1]);
+            s.gridV = std::max(s.gridV, live[1]);
+        }
+    }
     if (freeform || s.adaptive) {
         if (all) ImGui::TextDisabled("freeform / imported surfaces");
         float dev = float(s.chordTolerance);
