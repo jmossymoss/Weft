@@ -652,6 +652,80 @@ int nudgeVertex(PolyMesh& mesh, const Model& model, const ManualOp& op) {
     return 1;
 }
 
+int weldVerts(PolyMesh& mesh, const ManualOp& op) {
+    if (op.weldPoints.size() < 2 || mesh.vertexCount() == 0) return 0;
+    // Each recorded point maps onto the nearest CURRENT vertex (world
+    // space, like DeletePoly), so the op replays across density changes
+    // for as long as the picks stay meaningful.
+    std::vector<uint32_t> picked;
+    for (const auto& q : op.weldPoints) {
+        size_t best = 0;
+        double bestD = 1e300;
+        for (size_t v = 0; v < mesh.vertexCount(); ++v) {
+            const auto& p = mesh.vertices[v];
+            double d = (p[0] - q[0]) * (p[0] - q[0]) +
+                       (p[1] - q[1]) * (p[1] - q[1]) +
+                       (p[2] - q[2]) * (p[2] - q[2]);
+            if (d < bestD) {
+                bestD = d;
+                best = v;
+            }
+        }
+        picked.push_back(uint32_t(best));
+    }
+    std::vector<uint32_t> uniq;  // pick order, first occurrence wins
+    for (uint32_t v : picked) {
+        if (std::find(uniq.begin(), uniq.end(), v) == uniq.end()) {
+            uniq.push_back(v);
+        }
+    }
+    if (uniq.size() < 2) return 0;
+
+    const uint32_t keep = uniq.front();  // survivor id (stable)
+    std::array<double, 3> pos;
+    Anchor an{};  // centroid sits on no surface — anchorless
+    if (op.weldMode == 1) {
+        pos = mesh.vertices[uniq.back()];
+        an = mesh.anchors[uniq.back()];
+    } else if (op.weldMode == 2) {
+        pos = mesh.vertices[uniq.front()];
+        an = mesh.anchors[uniq.front()];
+    } else {
+        pos = {0.0, 0.0, 0.0};
+        for (uint32_t v : uniq) {
+            for (int c = 0; c < 3; ++c) pos[c] += mesh.vertices[v][c];
+        }
+        for (int c = 0; c < 3; ++c) pos[c] /= double(uniq.size());
+    }
+    mesh.vertices[keep] = pos;
+    mesh.anchors[keep] = an;
+
+    std::set<uint32_t> gone(uniq.begin() + 1, uniq.end());
+    for (size_t p = 0; p < mesh.polygons.size();) {
+        std::vector<uint32_t>& poly = mesh.polygons[p];
+        for (uint32_t& v : poly) {
+            if (gone.count(v)) v = keep;
+        }
+        // Collapse runs the weld created (cyclic), then drop degenerates.
+        std::vector<uint32_t> clean;
+        for (uint32_t v : poly) {
+            if (clean.empty() || clean.back() != v) clean.push_back(v);
+        }
+        while (clean.size() > 1 && clean.front() == clean.back()) {
+            clean.pop_back();
+        }
+        std::set<uint32_t> distinct(clean.begin(), clean.end());
+        if (distinct.size() < 3) {
+            mesh.polygons.erase(mesh.polygons.begin() + p);
+            mesh.polygonFaceId.erase(mesh.polygonFaceId.begin() + p);
+            continue;
+        }
+        poly = std::move(clean);
+        ++p;
+    }
+    return int(uniq.size());
+}
+
 void applyOps(PolyMesh& mesh, const Model& model,
               const std::vector<ManualOp>& ops) {
     for (const ManualOp& op : ops) {
@@ -666,6 +740,7 @@ void applyOps(PolyMesh& mesh, const Model& model,
                 break;
             case ManualOp::Kind::FillLoop: fillLoop(mesh, model, op); break;
             case ManualOp::Kind::DeletePoly: deletePoly(mesh, op); break;
+            case ManualOp::Kind::WeldVerts: weldVerts(mesh, op); break;
         }
     }
 }

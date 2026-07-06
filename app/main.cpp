@@ -494,6 +494,8 @@ struct App {
     // Vert / mesh-edge modes: direct mesh element selection (cleared on
     // regenerate with selPolys — indices belong to the current mesh).
     std::set<uint32_t> selVerts;
+    // Pick ORDER of selVerts — weld-to-last/first need it (a set forgets).
+    std::vector<uint32_t> selVertOrder;
     int64_t hoverVert = -1;
     std::set<uint64_t> selMeshEdges;  // (min vert << 32) | max vert
     uint64_t hoverMeshEdge = UINT64_MAX;
@@ -1007,6 +1009,7 @@ static void finishGenerate(App& app) {
         app.report = std::move(app.genReport);
         app.selPolys.clear();  // mesh indices died with the old mesh
         app.selVerts.clear();
+        app.selVertOrder.clear();
         app.selMeshEdges.clear();
         app.hoverVert = -1;
         app.hoverMeshEdge = UINT64_MAX;
@@ -1680,6 +1683,7 @@ static void setSelectMode(App& app, SelectMode next) {
     app.selEdges.clear();
     app.selPolys.clear();
     app.selVerts.clear();
+    app.selVertOrder.clear();
     app.selMeshEdges.clear();
     app.activeFace = 0;
     app.hoverFace = 0;
@@ -1748,6 +1752,7 @@ static void deleteSelection(App& app) {
             }
         }
         app.selVerts.clear();
+        app.selVertOrder.clear();
         markDirty(app);
         app.status = std::to_string(n) +
                      " polygon(s) around verts deleted (ctrl+Z undoes)";
@@ -2303,21 +2308,28 @@ static void startVertexGrab(App& app, const Mat4& mvp, double mx, double my,
     const weft::PolyMesh& m = app.mesh;
     double best = 30.0 * gUiScale;  // px
     size_t bestV = m.vertexCount();
+    bool sawAnchorless = false;
     for (size_t v = 0; v < m.vertexCount(); ++v) {
         const weft::Anchor& a = m.anchors[v];
-        if (a.faceId == 0 || app.hiddenFaces.count(a.faceId)) continue;
         float s[3] = {0, 0, -1};
         projectPoint(mvp, m.vertices[v], fbw, fbh, s);
         if (s[2] <= 0) continue;
         double d = std::hypot(s[0] - mx, s[1] - my);
-        if (d < best) {
-            best = d;
-            bestV = v;
+        if (d >= best) continue;
+        if (a.faceId == 0) {
+            sawAnchorless = true;  // bridge strip / weld vert: no surface
+            continue;
         }
+        if (app.hiddenFaces.count(a.faceId)) continue;
+        best = d;
+        bestV = v;
     }
     if (bestV == m.vertexCount()) {
-        app.status = "grab: no interior vertex under the cursor (border "
-                     "verts are density-driven)";
+        app.status = sawAnchorless
+                         ? "grab: that vertex has no CAD anchor (bridge/"
+                           "weld verts can't be surface-grabbed)"
+                         : "grab: no interior vertex under the cursor "
+                           "(border verts are density-driven)";
         return;
     }
     const weft::Anchor& a = m.anchors[bestV];
@@ -2712,9 +2724,11 @@ static void drawOverlay(App& app) {
         ImGui::SameLine();
         if (app.selVerts.empty()) {
             ImGui::TextDisabled(
-                "click verts (shift extends) - G grabs interior verts");
+                "click verts (shift extends) - G grabs interior verts - "
+                "M welds");
         } else {
-            ImGui::TextDisabled("%zu vert(s) - G grabs", app.selVerts.size());
+            ImGui::TextDisabled("%zu vert(s) - G grabs - M welds",
+                                app.selVerts.size());
         }
     } else if (app.selectMode == SelectMode::MeshEdge) {
         ImGui::TextColored({0.55f, 0.9f, 1.0f, 1.0f}, "EDGE MODE");
@@ -2833,6 +2847,7 @@ static void drawOverlay(App& app) {
         bind("R", "loop cut");
         bind("J", "bridge");
         bind("G", "grab vertex");
+        bind("M", "weld selected verts (vert mode)");
         bind("C / T / M", "cap / tris / minimal");
         bind("W / B", "wire / edges");
         bind("[ ]", "nudge counts");
@@ -3951,6 +3966,7 @@ int main(int argc, char** argv) {
                     app.selFaces.clear();
                     app.selEdges.clear();
                     app.selVerts.clear();
+                    app.selVertOrder.clear();
                     app.selMeshEdges.clear();
                     app.activeFace = 0;
                     rebuildBuffers(app);
@@ -4104,9 +4120,46 @@ int main(int argc, char** argv) {
                 });
             }
             if (ImGui::IsKeyPressed(ImGuiKey_M, false) && app.hasModel) {
-                bool next = !activeSettings(app).minimal;
-                editSelected(app,
-                             [&](weft::FaceMeshSettings& s) { s.minimal = next; });
+                if (app.selectMode == SelectMode::Vert) {
+                    if (app.selVerts.size() >= 2) {
+                        ImGui::OpenPopup("weld verts");
+                    } else {
+                        app.status = "weld: select 2+ verts first (M opens "
+                                     "the merge menu)";
+                    }
+                } else {
+                    bool next = !activeSettings(app).minimal;
+                    editSelected(app, [&](weft::FaceMeshSettings& s) {
+                        s.minimal = next;
+                    });
+                }
+            }
+            // Weld menu (Blender's M merge): the selected verts collapse
+            // into one, recorded as a replayable op keyed to their world
+            // positions.
+            if (ImGui::BeginPopup("weld verts")) {
+                auto doWeld = [&](int mode) {
+                    weft::ManualOp op;
+                    op.kind = weft::ManualOp::Kind::WeldVerts;
+                    op.weldMode = mode;
+                    for (uint32_t v : app.selVertOrder) {
+                        const auto& q = app.mesh.vertices[v];
+                        op.weldPoints.push_back({q[0], q[1], q[2]});
+                    }
+                    size_t n = op.weldPoints.size();
+                    app.recipe.ops.push_back(std::move(op));
+                    app.selVerts.clear();
+                    app.selVertOrder.clear();
+                    markDirty(app);
+                    app.status = "welded " + std::to_string(n) +
+                                 " vert(s) (ctrl+Z undoes)";
+                };
+                ImGui::TextDisabled("weld %zu verts", app.selVerts.size());
+                ImGui::Separator();
+                if (ImGui::MenuItem("at center")) doWeld(0);
+                if (ImGui::MenuItem("at last pick")) doWeld(1);
+                if (ImGui::MenuItem("at first pick")) doWeld(2);
+                ImGui::EndPopup();
             }
             if (ImGui::IsKeyPressed(ImGuiKey_X, false) && app.hasModel) {
                 if (io.KeyCtrl && app.selectMode == SelectMode::MeshEdge &&
@@ -4268,11 +4321,14 @@ int main(int argc, char** argv) {
         gScreenMvp = mvp;  // what the user is pointing at (scroll re-pick)
         gScreenMvpValid = true;
 
-        // Vertex grab starts from idle: G picks the interior vertex under
-        // the cursor and drags it constrained to its CAD surface.
-        if (app.hasModel && app.mode == Mode::Idle &&
+        // Vertex grab: G picks the interior vertex under the cursor and
+        // drags it constrained to its CAD surface. Works from idle AND
+        // from bridge/loop-cut (the natural next step after bridging is
+        // fixing a vertex — G exits that mode instead of going dead).
+        if (app.hasModel && app.mode != Mode::Grab && app.slideOp < 0 &&
             !io.WantCaptureKeyboard && !io.WantCaptureMouse &&
             ImGui::IsKeyPressed(ImGuiKey_G, false)) {
+            app.bridgeFirstEdge = 0;
             startVertexGrab(app, mvp, mx, my, fbw, fbh);
         }
 
@@ -4396,6 +4452,7 @@ int main(int argc, char** argv) {
             };
             if (app.selectMode == SelectMode::Vert) {
                 if (!extend) app.selVerts.clear();
+                if (!extend) app.selVertOrder.clear();
                 std::vector<bool> seen(app.mesh.vertexCount(), false);
                 for (size_t p = 0; p < app.mesh.polygons.size(); ++p) {
                     int fid = app.mesh.polygonFaceId[p];
@@ -4407,7 +4464,9 @@ int main(int argc, char** argv) {
                         projectPoint(mvp, app.mesh.vertices[v], fbw, fbh, sp);
                         if (sp[2] <= 0 || !inRect(sp[0], sp[1])) continue;
                         if (vertVisibleAt(app, v, pr.at(sp[0], sp[1]))) {
-                            app.selVerts.insert(v);
+                            if (app.selVerts.insert(v).second) {
+                                app.selVertOrder.push_back(v);
+                            }
                         }
                     }
                 }
@@ -4512,12 +4571,19 @@ int main(int argc, char** argv) {
                 PickRect pr = pickRectAtCursor();
                 int64_t hit = pickMeshVert(app, mvp, mx, my, fbw, fbh, pr);
                 if (!shift) app.selVerts.clear();
+                if (!shift) app.selVertOrder.clear();
                 if (hit >= 0) {
                     uint32_t h = uint32_t(hit);
                     if (shift && app.selVerts.count(h)) {
                         app.selVerts.erase(h);
+                        app.selVertOrder.erase(
+                            std::remove(app.selVertOrder.begin(),
+                                        app.selVertOrder.end(), h),
+                            app.selVertOrder.end());
                     } else {
-                        app.selVerts.insert(h);
+                        if (app.selVerts.insert(h).second) {
+                            app.selVertOrder.push_back(h);
+                        }
                     }
                 }
             } else if (app.selectMode == SelectMode::MeshEdge && clicked) {

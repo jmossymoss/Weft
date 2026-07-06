@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <map>
+#include <set>
 #include <string>
 
 static int failures = 0;
@@ -1487,6 +1488,73 @@ void testGenerationCache() {
         }                                                     \
     } while (0)
 
+// Weld: merge picked vertices into one (center/last/first), polygons
+// remap and degenerates drop; the op replays from world points and
+// round-trips through recipes.
+void testWeldVerts() {
+    std::printf("-- weld verts --\n");
+    std::string stepPath = tmpPath("weft_test_weld.step");
+    weft::writeStep(weft::makeFixture("box"), stepPath);
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis a = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = false;  // dense flats: interior verts exist
+    gs.defaults.gridU = 4;
+    gs.defaults.gridV = 4;
+    weft::PolyMesh mesh = weft::generate(model, a, gs);
+    CHECK(isWatertight(mesh));
+
+    // Weld two ADJACENT verts (a mesh edge's ends) at their center: the
+    // two polygons sharing that edge lose a corner, everything else
+    // remaps, and the solid stays closed.
+    uint32_t va = 0, vb = 0;
+    bool found = false;
+    for (size_t pp = 0; pp < mesh.polygons.size() && !found; ++pp) {
+        const auto& poly = mesh.polygons[pp];
+        if (poly.size() == 4) {
+            va = poly[0];
+            vb = poly[1];
+            found = true;
+        }
+    }
+    CHECK(found);
+    weft::ManualOp weld;
+    weld.kind = weft::ManualOp::Kind::WeldVerts;
+    weld.weldMode = 0;  // center
+    weld.weldPoints.push_back(mesh.vertices[va]);
+    weld.weldPoints.push_back(mesh.vertices[vb]);
+    const size_t polysBefore = mesh.polygonCount();
+    weft::PolyMesh welded = mesh;
+    CHECK_EQ(weft::weldVerts(welded, weld), 2);
+    CHECK(welded.polygonCount() <= polysBefore);
+    for (const auto& poly : welded.polygons) {
+        std::set<uint32_t> distinct(poly.begin(), poly.end());
+        CHECK(distinct.size() >= 3);
+        CHECK_EQ(distinct.size(), poly.size());  // no repeated corners
+    }
+    CHECK(isWatertight(welded));
+
+    // weld-to-last lands exactly on the last pick's position.
+    weft::ManualOp toLast = weld;
+    toLast.weldMode = 1;
+    weft::PolyMesh w2 = mesh;
+    std::array<double, 3> lastPos = mesh.vertices[vb];
+    CHECK_EQ(weft::weldVerts(w2, toLast), 2);
+    CHECK(w2.vertices[va] == lastPos);
+
+    // Recipe round trip carries mode and points.
+    weft::Recipe recipe;
+    recipe.ops.push_back(toLast);
+    std::string rPath = tmpPath("weft_test_weld.recipe");
+    weft::saveRecipe(recipe, rPath);
+    weft::Recipe loaded = weft::loadRecipe(rPath);
+    CHECK_EQ(loaded.ops.size(), 1);
+    CHECK(loaded.ops[0].kind == weft::ManualOp::Kind::WeldVerts);
+    CHECK_EQ(loaded.ops[0].weldMode, 1);
+    CHECK_EQ(loaded.ops[0].weldPoints.size(), 2);
+    CHECK(std::abs(loaded.ops[0].weldPoints[1][0] - lastPos[0]) < 1e-9);
+}
+
 int main() {
     RUN(testCylinder);
     RUN(testBox);
@@ -1511,6 +1579,7 @@ int main() {
     RUN(testQuadFill);
     RUN(testDeletePolyAndCollarRings);
     RUN(testSameLoopBridgeAndFill);
+    RUN(testWeldVerts);
     RUN(testGenerationCache);
     if (failures) {
         std::printf("\n%d FAILURE(S)\n", failures);

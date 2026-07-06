@@ -35,6 +35,10 @@ struct ManualOp {
                        // (u,v,t), merging the polygons across each loop
                        // edge and dropping the loop's 2-valence verts —
                        // the faces survive (Blender's ctrl+X)
+        WeldVerts,  // merge the vertices nearest to the recorded WORLD
+                    // points (weldPoints, in pick order) into one, placed
+                    // by weldMode; polygons remap to the survivor and
+                    // degenerates drop (Blender's M merge)
     };
     Kind kind = Kind::LoopInsert;
     int faceId = 0;
@@ -57,6 +61,11 @@ struct ManualOp {
     // Bridge: rows ACROSS the strip (V spans). Equal-count bridges emit
     // spans x N quads; zipper/same-loop bridges ignore it.
     int spans = 1;
+    // WeldVerts: the picked vertices' world positions IN PICK ORDER (each
+    // replays onto the nearest current vertex), and where the survivor
+    // lands: 0 = the set's centroid, 1 = the LAST pick, 2 = the FIRST.
+    std::vector<std::array<double, 3>> weldPoints;
+    int weldMode = 0;
 };
 
 // Snap a point onto a B-rep face: exact re-projection, not shrinkwrap.
@@ -114,6 +123,12 @@ int fillLoop(PolyMesh& mesh, const Model& model, const ManualOp& op);
 // Remove the polygon whose centroid is nearest to the world point in the
 // op's (u,v,t). Returns 1 or 0 (empty mesh).
 int deletePoly(PolyMesh& mesh, const ManualOp& op);
+
+// Merge the vertices nearest to op.weldPoints into one, placed by
+// op.weldMode (0 centroid / 1 last pick / 2 first pick). Polygons remap
+// to the survivor; any left with fewer than 3 distinct verts drop.
+// Returns the number of vertices merged (0 = nothing to do).
+int weldVerts(PolyMesh& mesh, const ManualOp& op);
 
 // An open boundary loop of the mesh: ordered vertex ring where each edge is
 // used by exactly one polygon. Exposed for interactive tools (hover/pick).
