@@ -119,6 +119,41 @@ TopoDS_Shape makeFixture(const std::string& name) {
                 .Shape();
         return BRepAlgoAPI_Cut(cut, slot).Shape();
     }
+    if (name == "barrel2") {
+        // The realistic barrel wall: partial wrap, a capsule slot through
+        // the wall AND a step interrupting the top rim — the outer wire
+        // becomes a 7+ edge chain, which is how real gun parts arrive
+        // (adjacent features slice the rims). The wall must still take
+        // the coons cutout via chained sides, not fall back to tri fans.
+        gp_Ax2 axis(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1));
+        TopoDS_Shape tube = BRepAlgoAPI_Cut(
+            BRepPrimAPI_MakeCylinder(axis, 12.0, 60.0).Shape(),
+            BRepPrimAPI_MakeCylinder(axis, 9.0, 60.0).Shape());
+        TopoDS_Shape sector =
+            BRepPrimAPI_MakeBox(gp_Pnt(0.0, 0.0, -1.0),
+                                gp_Pnt(30.0, 30.0, 61.0))
+                .Shape();
+        TopoDS_Shape cut = BRepAlgoAPI_Cut(tube, sector).Shape();
+        // Step in the top rim on the -Y side.
+        TopoDS_Shape step =
+            BRepPrimAPI_MakeBox(gp_Pnt(-6.0, -30.0, 50.0),
+                                gp_Pnt(6.0, 0.0, 61.0))
+                .Shape();
+        cut = BRepAlgoAPI_Cut(cut, step).Shape();
+        // Capsule slot through the -X wall, below the step.
+        TopoDS_Shape sBox =
+            BRepPrimAPI_MakeBox(gp_Pnt(-14.0, -3.0, 15.0),
+                                gp_Pnt(-8.0, 3.0, 35.0))
+                .Shape();
+        gp_Ax2 e1(gp_Pnt(-14.0, 0.0, 15.0), gp_Dir(1, 0, 0));
+        gp_Ax2 e2(gp_Pnt(-14.0, 0.0, 35.0), gp_Dir(1, 0, 0));
+        TopoDS_Shape cap1 = BRepPrimAPI_MakeCylinder(e1, 3.0, 6.0).Shape();
+        TopoDS_Shape cap2 = BRepPrimAPI_MakeCylinder(e2, 3.0, 6.0).Shape();
+        TopoDS_Shape slot =
+            BRepAlgoAPI_Fuse(BRepAlgoAPI_Fuse(sBox, cap1).Shape(), cap2)
+                .Shape();
+        return BRepAlgoAPI_Cut(cut, slot).Shape();
+    }
     if (name == "notched") {
         // The flaregun face-81 class: a tube whose wall carries a channel
         // cut clean THROUGH the top rim (the notch opens to the border).
