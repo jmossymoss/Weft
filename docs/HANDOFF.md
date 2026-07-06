@@ -495,3 +495,30 @@ Known residuals:
 - Fold class (chained strips): mohne 4 / nasty 10 / weldment 18 under
   profile cad. Angle tolerance still only affects OCCT-fallback faces,
   not floor refinement (deviation/minSize/quads do).
+
+## Session ledger — crash batch, collar round 2, exports
+- Crashes (49857ab): weld/right-click/shading-v were ONE bug — the weld
+  popup's OpenPopup/BeginPopup ran in the pre-NewFrame input section
+  (null CurrentWindow once any popup is open; gdb-verified). Popups now
+  latch flags and draw in-frame (drawWeldPopup/drawExportPopup pattern —
+  NEVER call popup APIs from the input section). Worker snapshots
+  recipe.ops (genOps) like settings — live reads were a use-after-free.
+  Ghost verts (DeletePoly leaves orphans) stole grabs: live-vertex masks
+  in startVertexGrab + nudgeVertex. Undock: sources fuzz clean under
+  ASan; the Windows crash is a stale mixed build/_deps —
+  DebugCheckVersionAndDataLayout now fails loud; user must delete
+  build\_deps once and rebuild.
+- Collar round 2 (594f2ea): insert-coons plans propose hole-sized count
+  floors (PHYSICAL mid-isoline measure, not uv — bspline params
+  compress); junctionRings quad collar between bore ring and staircase;
+  brackets only when a pin starves a direction.
+- Barrel fixture (2f9008b): ¾-wrap wall + capsule slot = flaregun
+  81/87 class → coons cutout, watertight. Dev fixtures panel lists all
+  complex shapes. Flaregun face #206 NOT reproducible here (no model in
+  the repo corpus) — needs the user's file or a screenshot-matched
+  fixture next session.
+- Features (8e08448): export dialog (OBJ/glb/FBX + triangulate/Y-up/
+  scale, ctrl+E), NEW core binary FBX 7.4 writer (assimp-validated),
+  CLI .fbx by extension, XYZ view gizmo (gViewMin/gViewMax-anchored),
+  smooth shading default, red fold outlines, Model open at launch,
+  vert size sliders, density scale typed entry to [0.05, 20].
