@@ -2785,6 +2785,70 @@ bool isGeometricallyFlat(const TopoDS_Face& face,
     return hi - lo < std::max(1e-6, 1e-3 * diag);
 }
 
+double wireElongation(const TopoDS_Wire& wire);  // defined below
+
+// A dead-end conical cap so shallow it reads as a flat panel — the top of
+// a bevelled spray-can disk (foam faces 325/366): a cone whose taper is a
+// small fraction of its width, a single round boundary (no holes), and no
+// neighbour to tear. isGeometricallyFlat rejects it (its 3% dish is far
+// past the 0.1% plane tolerance), so it would otherwise tri-fan; a single
+// boundary n-gon is the clean flat-panel result the CAD n-gon policy wants.
+// Deliberately narrow: only genuine caps (round, single loop, barely
+// dished) qualify, never a structural cone wall or a strip.
+bool isShallowCapCone(const TopoDS_Face& face,
+                      const BRepAdaptor_Surface& surf) {
+    if (surf.GetType() != GeomAbs_Cone) return false;
+    // Exactly one wire (a hole would need a web, not a single n-gon).
+    int wires = 0;
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        if (++wires > 1) return false;
+    }
+    if (wires != 1) return false;
+    double u0, u1, v0, v1;
+    BRepTools::UVBounds(face, u0, u1, v0, v1);
+    // Sample the surface; measure dish (deviation from the boundary's mean
+    // plane) and the in-plane diameter. A cap dishes by a small fraction of
+    // its width; a cone WALL runs far in v and dishes as much as it spans.
+    const int N = 6;
+    std::vector<gp_Pnt> pts;
+    gp_XYZ c(0, 0, 0);
+    for (int j = 0; j < N; ++j) {
+        for (int i = 0; i < N; ++i) {
+            gp_Pnt p = surf.Value(u0 + (u1 - u0) * i / (N - 1),
+                                  v0 + (v1 - v0) * j / (N - 1));
+            pts.push_back(p);
+            c += p.XYZ();
+        }
+    }
+    c /= double(pts.size());
+    gp_XYZ n(0, 0, 0);
+    for (int j = 0; j + 1 < N; ++j) {
+        for (int i = 0; i + 1 < N; ++i) {
+            gp_XYZ d1 = pts[(j + 1) * N + i + 1].XYZ() - pts[j * N + i].XYZ();
+            gp_XYZ d2 = pts[(j + 1) * N + i].XYZ() - pts[j * N + i + 1].XYZ();
+            n += d1.Crossed(d2);
+        }
+    }
+    if (n.Modulus() < 1e-12) return false;
+    n.Normalize();
+    double lo = 1e300, hi = -1e300, diam = 0;
+    for (const gp_Pnt& p : pts) {
+        double d = (p.XYZ() - c).Dot(n);
+        lo = std::min(lo, d);
+        hi = std::max(hi, d);
+    }
+    for (const gp_Pnt& p : pts)
+        for (const gp_Pnt& q : pts) diam = std::max(diam, p.Distance(q));
+    if (diam < 1e-9) return false;
+    const double dish = (hi - lo) / diam;  // 0 = flat panel, big = a wall
+    if (dish > 0.10) return false;
+    // Round, compact cap: the boundary's radius barely varies (a strip or a
+    // gouged outline swings wide). Reuse the wire-elongation probe.
+    TopoDS_Wire outer = BRepTools::OuterWire(face);
+    if (outer.IsNull() || wireElongation(outer) > 1.6) return false;
+    return true;
+}
+
 bool collectPlanarLoops(const TopoDS_Face& face,
                         const BRepAdaptor_Surface& surf, const Model& model,
                         FacePlan& plan, bool requirePlane = true) {
@@ -6550,6 +6614,15 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         return plan;
     }
 
+    // A shallow conical cap nothing else claimed would tri-fan; a single
+    // boundary n-gon is the clean flat-panel result (foam spray-can disk
+    // faces 325/366). Tightly gated (isShallowCapCone) so only genuine
+    // round, barely-dished, hole-free caps qualify — never a cone wall.
+    if (s.minimal && isShallowCapCone(face, surf) &&
+        collectPlanarLoops(face, surf, model, plan, /*requirePlane=*/false)) {
+        plan.kind = MesherKind::MinimalNGon;
+        return plan;
+    }
     plan.kind = MesherKind::Fallback;
     // Quad-dominant decimation moves border verts by up to the chord
     // tolerance; on a face with features SMALLER than that it wraps flaps
