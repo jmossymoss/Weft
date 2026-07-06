@@ -167,6 +167,11 @@ struct FacePlan {
     // Revolution bands: false lets the two rims solve independently and
     // the band meshes as a triangulated taper between them.
     bool linkRims = true;
+    // Partial-wrap revolution bands: the two full-height u-iso side
+    // edges bounding the open band. They carry the row contract the way
+    // a closed band's seam does; everything else on the outline is a rim
+    // chain. Empty for closed bands.
+    std::vector<int> bandSides;
     // Forced fallback flavour: -1 = follow settings, 0 = pure tris,
     // 1 = quad-dominant (used when the user forces a mesher).
     int forceFallbackQuads = -1;
@@ -325,10 +330,14 @@ bool rimChains(const TopoDS_Face& face, const Model& model,
 // Like edgesHugRims, but a wire living STRICTLY inside the band (a slot
 // or hole through the wall) is collected as an insert instead of
 // disqualifying the whole face.
+// With `bandSides` (a partial-wrap band's two side edges) the sides are
+// excluded from the rim chains, BOTH chains must exist (the sides must
+// join two rims, not close a slit), and u never wraps.
 bool edgesHugRimsOrInserts(const TopoDS_Face& face,
                            const BRepAdaptor_Surface& surf,
                            const Model& model,
-                           std::vector<std::vector<int>>& wires) {
+                           std::vector<std::vector<int>>& wires,
+                           const std::vector<int>* bandSides = nullptr) {
     const double u0 = surf.FirstUParameter(), u1 = surf.LastUParameter();
     const double v0 = surf.FirstVParameter(), v1 = surf.LastVParameter();
     const double uspan = std::max(1e-12, u1 - u0);
@@ -378,10 +387,14 @@ bool edgesHugRimsOrInserts(const TopoDS_Face& face,
     // (Flat rims pass trivially; crossing or interleaved chains reject.)
     std::set<int> insertIds;
     for (const auto& w : wires) insertIds.insert(w.begin(), w.end());
+    if (bandSides) insertIds.insert(bandSides->begin(), bandSides->end());
     std::vector<int> lowChain, highChain;
     if (!rimChains(face, model, insertIds, lowChain, highChain)) {
         return false;
     }
+    // An open band's grid runs side column to side column between TWO
+    // rims; a lone chain means the sides bound a slit, not a band.
+    if (bandSides && (lowChain.empty() || highChain.empty())) return false;
     // Pure bands (full sphere/torus) have no rim chains to vet.
     if (lowChain.empty() && highChain.empty()) return true;
     constexpr int kBins = 64;
@@ -402,7 +415,9 @@ bool edgesHugRimsOrInserts(const TopoDS_Face& face,
             for (int k = 0; k <= 16; ++k) {
                 gp_Pnt2d uv = pc->Value(f + (l - f) * k / 16.0);
                 double uu = uv.X() - u0;
-                uu -= uspan * std::floor(uu / uspan);
+                // Open bands never wrap: a sample at exactly u1 belongs
+                // to the last bin, not bin 0.
+                if (!bandSides) uu -= uspan * std::floor(uu / uspan);
                 int bin =
                     std::clamp(int(uu / uspan * kBins), 0, kBins - 1);
                 if (pass == 0) {
@@ -457,6 +472,58 @@ bool edgesHugRimsOrInserts(const TopoDS_Face& face,
         if (cls.State() == TopAbs_OUT) return false;
     }
     return true;
+}
+
+// Partial-wrap revolution band: an analytic periodic surface trimmed
+// short of the full period, bounded by exactly two full-height u-iso
+// side edges (a barrel wall that stops at 92% of the circle). The sides
+// are the band's u extremes; everything else on the wire — however
+// castellated — is a rim chain. Interior wires keep their own paths
+// (coons cutout handles a partial wrap around a slot), so only
+// single-wire faces qualify.
+bool openBandSides(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
+                   const Model& model, std::vector<int>& sides) {
+    sides.clear();
+    switch (surf.GetType()) {
+        case GeomAbs_Cylinder:
+        case GeomAbs_Cone:
+        case GeomAbs_SurfaceOfRevolution: break;
+        default: return false;  // spheres/tori: poles and v-wrap instead
+    }
+    if (surf.IsUClosed() || surf.IsVClosed()) return false;
+    int wireCount = 0;
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        ++wireCount;
+    }
+    if (wireCount != 1) return false;
+    const double uspan = std::max(
+        1e-12, surf.LastUParameter() - surf.FirstUParameter());
+    const double vspan = std::max(
+        1e-12, surf.LastVParameter() - surf.FirstVParameter());
+    for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+        const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+        if (BRep_Tool::Degenerated(edge)) continue;
+        if (BRep_Tool::IsClosed(edge, face)) return false;  // seam
+        double f, l;
+        Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(edge, face, f, l);
+        if (pc.IsNull()) return false;
+        double umin = 1e300, umax = -1e300, vmin = 1e300, vmax = -1e300;
+        for (int k = 0; k <= 8; ++k) {
+            gp_Pnt2d uv = pc->Value(f + (l - f) * k / 8.0);
+            umin = std::min(umin, uv.X());
+            umax = std::max(umax, uv.X());
+            vmin = std::min(vmin, uv.Y());
+            vmax = std::max(vmax, uv.Y());
+        }
+        // A side spans (nearly) the whole band height at one u; a notch
+        // wall is u-iso too but stops at the notch arch.
+        if (umax - umin < 0.02 * uspan && vmax - vmin >= 0.9 * vspan) {
+            const int eid = model.edges.FindIndex(edge);
+            if (eid < 1) return false;
+            sides.push_back(eid);
+        }
+    }
+    return sides.size() == 2;
 }
 
 bool isClosedRevolution(const BRepAdaptor_Surface& surf) {
@@ -5014,16 +5081,15 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         plan.kind = MesherKind::RevolutionGrid;
         // Interior insert wires must never contribute rim candidates —
         // a slot border classified as a rim contaminates the emitted
-        // rim row with interior points.
+        // rim row with interior points. Open-band side edges are the
+        // row contract, not rims, and stay out for the same reason.
+        std::set<int> nonRim(plan.bandSides.begin(), plan.bandSides.end());
+        for (const auto& w : plan.insertWires) {
+            nonRim.insert(w.begin(), w.end());
+        }
         std::vector<int> rimCandidates;
-        {
-            std::set<int> insertIds;
-            for (const auto& w : plan.insertWires) {
-                insertIds.insert(w.begin(), w.end());
-            }
-            for (int eid : info.edgeIds) {
-                if (!insertIds.count(eid)) rimCandidates.push_back(eid);
-            }
+        for (int eid : info.edgeIds) {
+            if (!nonRim.count(eid)) rimCandidates.push_back(eid);
         }
         collectIsoEdges(face, model, rimCandidates, plan,
                         /*skipNonIso=*/true);
@@ -5032,23 +5098,22 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         // chains replace whatever iso classification put in uEdges;
         // they also drive the density SUM constraint (multi-edge rims
         // must total the opposite rim, not copy its per-edge count).
-        {
-            std::set<int> insertIds;
-            for (const auto& w : plan.insertWires) {
-                insertIds.insert(w.begin(), w.end());
-            }
-            if (rimChains(face, model, insertIds, plan.rimLow,
-                          plan.rimHigh)) {
-                plan.uEdges = plan.rimLow;
-                plan.uEdges.insert(plan.uEdges.end(), plan.rimHigh.begin(),
-                                   plan.rimHigh.end());
-            } else {
-                plan.rimLow.clear();
-                plan.rimHigh.clear();
-            }
+        if (rimChains(face, model, nonRim, plan.rimLow, plan.rimHigh)) {
+            plan.uEdges = plan.rimLow;
+            plan.uEdges.insert(plan.uEdges.end(), plan.rimHigh.begin(),
+                               plan.rimHigh.end());
+        } else {
+            plan.rimLow.clear();
+            plan.rimHigh.clear();
         }
+        // The sides drive the row count exactly as a closed band's seam
+        // does — never the rim-chain u-iso pieces collectIsoEdges saw.
+        if (!plan.bandSides.empty()) plan.vEdges = plan.bandSides;
         if (plan.uEdges.empty()) plan.constrains = false;
-        if (!s.linkRims && plan.uEdges.size() == 2) plan.linkRims = false;
+        if (!s.linkRims && plan.uEdges.size() == 2 &&
+            plan.bandSides.empty()) {
+            plan.linkRims = false;  // the taper cannot span an open band
+        }
     };
 
     // The user can force a strategy; if it can't build on this face the
@@ -5287,6 +5352,30 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // corners and the webs fan these — the rail ladder pairs the two
     // rails directly.
     if (planRailLadder(face, model, plan)) return plan;
+
+    // PARTIAL-WRAP revolution band (a barrel wall trimmed short of the
+    // full period, its rim castellated by notches): two full-height
+    // u-iso sides bound the band and carry the row contract the way a
+    // seam would; the rim chains loft exactly as on closed bands, the
+    // notch mouths absorbed by the wavy-rim loft. Faces a Coons patch
+    // or the ladder can express never reach this point, so only the
+    // long-chain outlines that used to lattice as quad-fill qualify.
+    {
+        std::vector<int> sides;
+        std::vector<std::vector<int>> inserts;
+        if (openBandSides(face, surf, model, sides) &&
+            edgesHugRimsOrInserts(face, surf, model, inserts, &sides) &&
+            inserts.empty()) {
+            plan.bandSides = std::move(sides);
+            finishRevolution();
+            if (!plan.rimLow.empty() && !plan.rimHigh.empty()) {
+                dbg("plan face %d: open revolution band, sides %d/%d",
+                    fid, plan.bandSides[0], plan.bandSides[1]);
+                return plan;
+            }
+            plan = FacePlan();  // chains failed: keep the default route
+        }
+    }
 
     // Flat faces with quad-dominant set get the structured grid + rim
     // fill instead of OCCT triangulation + pairing. CURVED faces whose
@@ -5654,7 +5743,19 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
             proposeSet(plan.vEdges, std::max(3, s.radial), 3, s.adaptive, s,
                        overridden);
         } else {  // revolution sides and disk caps subdivide rings radially
-            if (!plan.linkRims && plan.uEdges.size() == 2) {
+            if (!plan.bandSides.empty()) {
+                // Open band: the columns are a rim CHAIN's total, so
+                // each rim edge proposes its own curvature count — a
+                // per-group radial (or the closed-ring floor of 3)
+                // would hand every notch wall three segments and
+                // triple the chain. Never pinned: the rim-sum
+                // equalization must stay free to raise the plain rim
+                // to the castellated chain's total.
+                for (int e : plan.uEdges) {
+                    proposeSet({e}, 1, 1, s.adaptive, s,
+                               /*overridden=*/false);
+                }
+            } else if (!plan.linkRims && plan.uEdges.size() == 2) {
                 // Unlinked rims: each ring solves on its own (pin per-edge
                 // or via the rim fields to make them differ).
                 proposeSet({plan.uEdges[0]}, std::max(3, s.radial), 3,
@@ -5876,7 +5977,8 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
                         const std::vector<int>& solvedEdge, int faceId,
                         int nu, int nv, MeshBuilder& out,
                         const std::vector<double>* vRowsOpt = nullptr,
-                        const std::vector<int>* rimLowOpt = nullptr) {
+                        const std::vector<int>* rimLowOpt = nullptr,
+                        const std::vector<int>* bandSidesOpt = nullptr) {
     nu = std::max(3, nu);
     nv = std::max(1, nv);
     const double v0 = surf.FirstVParameter();
@@ -5913,6 +6015,233 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
                      : v0 + j * dv;
     };
     const bool flip = face.Orientation() == TopAbs_REVERSED;
+
+    // OPEN BAND: a partial wrap bounded by two full-height u-iso sides.
+    // The border cycle is sideA -> rim chain -> sideB -> rim chain, so
+    // the wire order between the sides IS each chain in traversal
+    // order. Columns never wrap; the first and last columns sample the
+    // SIDE edges' 3D curves at their solved counts — the border
+    // contract with the faces across the band's ends — and the two rim
+    // chains (castellated or flat) are the row-0 / row-nv borders
+    // exactly as on closed bands.
+    if (bandSidesOpt && bandSidesOpt->size() == 2) {
+        if (vWrap || vRows) return false;
+        // The single wire's cycle, keeping the explorer's edge
+        // instances: they carry the FACE-LOCAL orientation the sample
+        // direction depends on (the model map's copies do not).
+        std::vector<std::pair<int, TopoDS_Edge>> order;
+        for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+            for (BRepTools_WireExplorer we(TopoDS::Wire(wx.Current()),
+                                           face);
+                 we.More(); we.Next()) {
+                if (BRep_Tool::Degenerated(we.Current())) continue;
+                const int eid = model.edges.FindIndex(we.Current());
+                if (eid >= 1) order.push_back({eid, we.Current()});
+            }
+            break;
+        }
+        const int sA = (*bandSidesOpt)[0], sB = (*bandSidesOpt)[1];
+        int ia = -1, ib = -1;
+        for (size_t k = 0; k < order.size(); ++k) {
+            if (order[k].first == sA) ia = int(k);
+            if (order[k].first == sB) ib = int(k);
+        }
+        // A sloppy wire the explorer walked short would blend the
+        // chains — refuse and let the face take the contract floor.
+        const std::set<int> want(rimEdges.begin(), rimEdges.end());
+        if (ia < 0 || ib < 0 || order.size() != want.size() + 2) {
+            return false;
+        }
+        auto runOf = [&](int from, int to) {
+            std::vector<std::pair<int, TopoDS_Edge>> r;
+            const int n = int(order.size());
+            for (int k = (from + 1) % n; k != to; k = (k + 1) % n) {
+                r.push_back(order[k]);
+            }
+            return r;
+        };
+        const std::vector<std::pair<int, TopoDS_Edge>> runs[2] = {
+            runOf(ia, ib), runOf(ib, ia)};
+        if (runs[0].empty() || runs[1].empty()) return false;
+        for (const auto& r : runs) {
+            for (const auto& [eid, e] : r) {
+                if (!want.count(eid)) return false;
+            }
+        }
+        struct BandPt {
+            double u, v;
+            gp_Pnt p;
+        };
+        // Chain samples in face-traversal order: each edge contributes
+        // its solved count of samples, the run's last edge adds its
+        // terminal — an open chain's endpoint has no successor edge to
+        // supply it.
+        auto sampleRun = [&](const std::vector<std::pair<int, TopoDS_Edge>>&
+                                 runEdges,
+                             std::vector<BandPt>& dst) {
+            for (size_t k = 0; k < runEdges.size(); ++k) {
+                const int eid = runEdges[k].first;
+                const TopoDS_Edge& edge = runEdges[k].second;
+                double f2, l2, f3, l3;
+                Handle(Geom2d_Curve) pc =
+                    BRep_Tool::CurveOnSurface(edge, face, f2, l2);
+                Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, f3, l3);
+                if (pc.IsNull() || c3.IsNull()) return false;
+                int n = eid < int(solvedEdge.size()) ? solvedEdge[eid] : 0;
+                if (n < 1) n = 1;
+                const bool rev =
+                    edge.Orientation() == TopAbs_REVERSED;
+                const int last = k + 1 == runEdges.size() ? n : n - 1;
+                for (int i = 0; i <= last; ++i) {
+                    const double t = phasedT(i, n, 0.0, rev);
+                    gp_Pnt2d uv = pc->Value(f2 + (l2 - f2) * t);
+                    dst.push_back(
+                        {uv.X(), uv.Y(), c3->Value(f3 + (l3 - f3) * t)});
+                }
+            }
+            return true;
+        };
+        std::vector<BandPt> chain[2];
+        if (!sampleRun(runs[0], chain[0]) ||
+            !sampleRun(runs[1], chain[1])) {
+            return false;
+        }
+        if (chain[0].size() < 2 ||
+            chain[0].size() != chain[1].size()) {
+            dbg("revgrid face %d: open rim totals %zu/%zu irreconcilable",
+                faceId, chain[0].size(), chain[1].size());
+            return false;
+        }
+        double meanV[2] = {0, 0};
+        for (int c = 0; c < 2; ++c) {
+            for (const BandPt& r : chain[c]) meanV[c] += r.v;
+            meanV[c] /= double(chain[c].size());
+        }
+        std::vector<BandPt>& A = chain[meanV[0] <= meanV[1] ? 0 : 1];
+        std::vector<BandPt>& B = chain[meanV[0] <= meanV[1] ? 1 : 0];
+        // The wire traverses the two chains in opposite u directions;
+        // column i must mean the same u on both, so both run ascending.
+        if (A.back().u < A.front().u) std::reverse(A.begin(), A.end());
+        if (B.back().u < B.front().u) std::reverse(B.begin(), B.end());
+        // Column 0 is at the band's low-u side; the sides are u-iso so
+        // their pcurve names the end they bound.
+        auto sideAt = [&](int eid) {
+            double f, l;
+            Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(
+                TopoDS::Edge(model.edges(eid)), face, f, l);
+            return pc.IsNull() ? 1e300 : pc->Value(0.5 * (f + l)).X();
+        };
+        const double uSa = sideAt(sA), uSb = sideAt(sB);
+        if (uSa > 1e299 || uSb > 1e299) return false;
+        const int sideLo = uSa <= uSb ? sA : sB;
+        const int sideHi = uSa <= uSb ? sB : sA;
+        // Rows are the SIDES' solved count — the neighbours across the
+        // side edges sample exactly that many steps.
+        auto sideCount = [&](int eid) {
+            const int n =
+                eid < int(solvedEdge.size()) ? solvedEdge[eid] : 0;
+            return n < 1 ? std::max(1, nv) : n;
+        };
+        const int nvLo = sideCount(sideLo), nvHi = sideCount(sideHi);
+        if (nvLo != nvHi) {
+            dbg("revgrid face %d: open side counts %d/%d differ", faceId,
+                nvLo, nvHi);
+            return false;
+        }
+        nv = nvLo;
+        struct SidePts {
+            std::vector<gp_Pnt> p;
+            std::vector<double> u, v;
+        };
+        auto sampleSide = [&](int eid, SidePts& sp) {
+            const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+            double f2, l2, f3, l3;
+            Handle(Geom2d_Curve) pc =
+                BRep_Tool::CurveOnSurface(edge, face, f2, l2);
+            Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, f3, l3);
+            if (pc.IsNull() || c3.IsNull()) return false;
+            // Row j must land on sample j whichever way the curve runs;
+            // the sample SET {i/n} is direction-independent, so the
+            // contract holds either way.
+            const bool up = pc->Value(f2).Y() <= pc->Value(l2).Y();
+            for (int j = 0; j <= nv; ++j) {
+                const double t =
+                    up ? double(j) / nv : 1.0 - double(j) / nv;
+                gp_Pnt2d uv = pc->Value(f2 + (l2 - f2) * t);
+                sp.p.push_back(c3->Value(f3 + (l3 - f3) * t));
+                sp.u.push_back(uv.X());
+                sp.v.push_back(uv.Y());
+            }
+            return true;
+        };
+        SidePts sLo, sHi;
+        if (!sampleSide(sideLo, sLo) || !sampleSide(sideHi, sHi)) {
+            return false;
+        }
+        // Smoothed loft targets (the closed path's vSmA/uSmA machinery,
+        // window clamped instead of wrapped): interior rows ease across
+        // the castellated rim's v steps rather than inheriting them raw.
+        const int cols = int(A.size());
+        std::vector<double> vSmA(cols), vSmB(cols), uSmA(cols), uSmB(cols);
+        const int win = std::max(1, cols / 12);
+        for (int i = 0; i < cols; ++i) {
+            double sa = 0, sb = 0, su = 0, sv = 0;
+            for (int k = -win; k <= win; ++k) {
+                const int j2 = std::clamp(i + k, 0, cols - 1);
+                sa += A[j2].v;
+                sb += B[j2].v;
+                su += A[j2].u;
+                sv += B[j2].u;
+            }
+            const double cnt = 2 * win + 1;
+            vSmA[i] = sa / cnt;
+            vSmB[i] = sb / cnt;
+            uSmA[i] = su / cnt;
+            uSmB[i] = sv / cnt;
+        }
+        dbg("revgrid face %d: open band cols=%d rows=%d sides=%d/%d",
+            faceId, cols, nv, sideLo, sideHi);
+        std::vector<std::vector<uint32_t>> band(nv + 1);
+        for (int j = 0; j <= nv; ++j) {
+            band[j].resize(cols);
+            const double w = double(j) / nv;
+            for (int i = 0; i < cols; ++i) {
+                if (j == 0) {
+                    band[j][i] =
+                        out.addVertex(A[i].p, {faceId, A[i].u, A[i].v});
+                } else if (j == nv) {
+                    band[j][i] =
+                        out.addVertex(B[i].p, {faceId, B[i].u, B[i].v});
+                } else if (i == 0) {
+                    band[j][i] = out.addVertex(
+                        sLo.p[j], {faceId, sLo.u[j], sLo.v[j]});
+                } else if (i == cols - 1) {
+                    band[j][i] = out.addVertex(
+                        sHi.p[j], {faceId, sHi.u[j], sHi.v[j]});
+                } else {
+                    const double uu = uSmA[i] + (uSmB[i] - uSmA[i]) * w;
+                    const double vv = vSmA[i] + (vSmB[i] - vSmA[i]) * w;
+                    band[j][i] =
+                        out.addVertex(surf.Value(uu, vv), {faceId, uu, vv});
+                }
+            }
+        }
+        for (int j = 0; j < nv; ++j) {
+            for (int i = 0; i + 1 < cols; ++i) {
+                std::vector<uint32_t> quad{band[j][i], band[j][i + 1],
+                                           band[j + 1][i + 1],
+                                           band[j + 1][i]};
+                quad.erase(std::unique(quad.begin(), quad.end()),
+                           quad.end());
+                if (quad.size() > 1 && quad.front() == quad.back()) {
+                    quad.pop_back();
+                }
+                if (quad.size() < 3) continue;
+                out.addPolygon(std::move(quad), faceId, flip);
+            }
+        }
+        return true;
+    }
 
     // Rim rows sample the rim EDGE CURVES (like every chain mesher), so
     // multi-arc rims keep their joint vertices and neighbours weld
@@ -7926,7 +8255,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             s.coonsRotate, settings.densityScale);
         cacheKey[fid] = key;
         if (plan.kind == MesherKind::AnnulusRing ||
-            plan.kind == MesherKind::RailLadder || !plan.loops.empty()) {
+            plan.kind == MesherKind::RailLadder ||
+            !plan.bandSides.empty() || !plan.loops.empty()) {
             for (int eid : plan.uEdges) {
                 cacheKey[fid] += "u" + std::to_string(solvedEdge[eid]);
             }
@@ -8233,7 +8563,9 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     meshRevolutionGrid(
                         face, surf, model, plan.uEdges, solvedEdge, fid, nu,
                         nv, out, nullptr,
-                        plan.rimLow.empty() ? nullptr : &plan.rimLow);
+                        plan.rimLow.empty() ? nullptr : &plan.rimLow,
+                        plan.bandSides.empty() ? nullptr
+                                               : &plan.bandSides);
                 }
                 break;
             case MesherKind::DiskCap: {
