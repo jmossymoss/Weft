@@ -745,3 +745,30 @@ isn't a closed solid there) — unchanged before/after, the demoted faces never
 contributed crack-opens; the win is quality. ctest green; board mohne 0/nasty
 10/weldment 7; 42/42 fixtures; flaregun barrels + notched byte-identical/unaffected.
 Foam dome-cap (bspline petals) + remaining coons rejects still open.
+
+## RIBBON-SWEEP MESHER (landed 46499c5 + 37c9720)
+New mesher for long CURVED bspline "ribbon" strips (flaregun grip/guard) that
+coons rejects (non-convex bent domains fold) and quad-fill only reaches ~60%
+quad. ribbonDetect (planFace branch, only on faces quad-fill would take):
+findRibbonRails brute-forces every 4-corner wire split, picks the two long
+ANTI-PARALLEL constant-width rails (tangent alignment >0.5, width ratio <2.6,
+non-pinching caps, aspect >3.5) — finds rails where RailLadder's sharpest-
+corner pick fails (93's 90deg bends, 131's weak 22deg notch corners).
+meshRibbonSweep: both rails sampled at solved edge counts (border contract),
+arc-length-ZIPPED station-by-station into an even quad ladder (advance the
+lagging rail so a Z-crease never twists), winding from the 3D surface normal
+(freeform UV area unreliable), end caps a quad rung or locally webbed
+(triangulateWeb) when notched — never a global fan. Tight gating + safe
+fallback: any doubt (unequal rails, web-heavy cap tris>quads, failed web)
+hands the face back to quad-fill+pairing (watertight). New fixtures: `ribbon`
+(bent bspline strip, 4-sided -> coons owns it 100% quad, proves gating) and
+`ribbonnotch` (slotted end -> routes to ribbon-sweep). face 93: 60% -> 100%
+quad (26-poly even ladder); face 131 byte-identical safe fallback (its deep
+notched U-cap ~224mm rivals the 237mm rails -> no even rail-to-rail sweep, one
+end wants 7 across-cells the other 56). Gates: ctest; board mohne 0/nasty
+10/weldment 7; 48/48 fixtures (16 shapes x3); flaregun 1/3/7/43/50 + all non-
+93/131 faces byte-identical; watertight, 0 fold. KNOWN: 1 zero-area collinear
+quad on face 93 at the 90deg Z-crease (cross-rung has no width there; watertight,
+consistent winding, 1 of 5721; force-split would make 2 zero-area tris) — a
+crease singularity, flagged by validate as 1 degenerate. Candidate follow-up:
+skip the zero-width rung and merge the crease into one cell.
