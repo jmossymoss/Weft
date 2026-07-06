@@ -699,3 +699,26 @@ NEXT: grey out mesher-dropdown options that can't build per face (needs
 core per-face buildable-mesher exposure; must reflect this C-ring
 capability). Deviation dead-zone on genuine fallback faces (OCCT
 quantization plateaus) still open/lower-priority.
+
+## WELD TOLERANCE — global + per-face (landed 1818e79/ea8d56a/42fca0d/0796df4)
+User-facing weld tolerance, global (UI slider + recipe `weld <v>` line + CLI
+`--weld MM`) and per-face (FaceMeshSettings::weldTolerance, 0=inherit; UI
+field + recipe `weld=` key + `--face ID:weld=`). Implemented as a PER-VERTEX
+weldVertices tolerance, NOT via the conform pass: folding it into conform's
+capture radius (tolTarget/tolMoverPre) kidnaps verts from adjacent edges and
+folds borders onto the wrong curve (the tight tolerances at ~9910 guard
+exactly that) — reverted. weldVertices takes an optional per-vertex radius;
+a pair merges within the LOOSER of the two (max-wins). generate() derives each
+vertex's radius from the loosest per-face override on any incident polygon
+(via polygonFaceId) + global, CLAMPED to half the shortest incident mesh edge
+(local resolution, so only genuine near-dups merge). The border-contract
+oracle (~10598) is decoupled from the knob (it plans faces; must not shift on
+a weld-only change). Bit-identical at default (0/22 board OBJs differ; the
+per-vertex path is skipped when global==1e-6 and no override). ctest (+new
+testWeldTolerance) green; board mohne 0/nasty 10/weldment 7; 42/42 fixtures.
+Max-wins proven by unit test (0.01mm-gap seam closes when EITHER face
+loosened). Honest limits: the repo board is already ~0-weld clean (border
+contract welds by construction) so global reductions are small; the real
+payoff is sloppy imports. An absurd value (e.g. --weld 0.5 on a small part)
+still leaves a few non-manifold edges (graceful degradation bounded by the
+clamp, not soup) — opt-in, default-safe.
