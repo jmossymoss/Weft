@@ -545,3 +545,19 @@ castellated rims — flaregun barrel class) for true columns-to-rims
 topology; worktree agent implementing plan.bandSides routing +
 meshRevolutionGrid open-u mode. MERGE CAUTION: meshRevolutionInsert
 was edited on main after the worktree branched (insert-box sampling).
+
+## OPEN REVOLUTION BANDS (landed)
+Partial-wrap cylinders/cones/revolves with two full-height u-iso side
+edges plan as open revolution bands (FacePlan.bandSides): nu+1 columns
+sampled in wire order at solved counts, first/last columns ON the side
+edges' 3D curves, no phase/bestOff/seam-wrap, sides carry the row
+contract via plan.vEdges, rim SUM equalization raises the plain rim to
+the castellated chain's total. Flaregun barrel walls: 1101/1059 polys
+-> 57/65 (58/66 cols x 1 row), columns end ON rim verts, watertight,
+zero folds. Board's best-ever folds: mohne 0 / weldment 7 / nasty 10.
+Quad-fill (per-direction sizing + coverage guard) is the safety tier
+for curved faces the band/coons/cutout routes reject.
+Known: --density 2 grazes 2 Newell-heuristic slivers per barrel wall
+at tall notch walls (watertight, parametrically simple); column shear
+near feature-clustered rim chains is inherent to uniform top-rim
+contract sampling.
