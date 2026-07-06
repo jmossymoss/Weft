@@ -74,6 +74,14 @@ struct FaceMeshSettings {
     // deviation measured relative to face size instead of absolute.
     double minSize = 0.0;
     bool relativeDeviation = false;
+    // Per-face weld tolerance override in mm (0 = inherit the global
+    // GenerationSettings::weldTolerance). Governs how loosely THIS face's
+    // boundary edges weld onto their neighbours: a shared edge welds at
+    // max(faceA.weldTolerance, faceB.weldTolerance, global), so loosening
+    // one side closes that junction. Clamped to the local feature size at
+    // use so a value larger than nearby detail can't collapse real
+    // geometry (see conformFallbackBorders).
+    double weldTolerance = 0.0;
     // Plate-web collars: square borders instead of hole-shaped rings —
     // the classic game pattern (round hole -> square collar -> plate).
     bool squareCollar = false;

@@ -10602,12 +10602,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     for (int fid = 1; fid <= faceN; ++fid) {
         const FaceMeshSettings& s = settings.forFace(fid);
         const FacePlan& plan = plans.at(fid);
-        char key[320];
+        char key[352];
         std::snprintf(
             key, sizeof key,
             "k%d c%d f%d a%d l%d q%d|%d,%d,%d|r%d x%d u%d v%d cap%d ch%.6g "
             "an%.6g fl%d fh%.6g jr%d qd%d mn%d ex%d ms%.6g rd%d sq%d cr%d "
-            "ds%.4g pt%d",
+            "ds%.4g pt%d wt%.6g",
             int(plan.kind), plan.constrains ? 1 : 0, plan.isFillet ? 1 : 0,
             plan.acrossIsU ? 1 : 0, plan.linkRims ? 1 : 0,
             plan.forceFallbackQuads, counts[fid][0], counts[fid][1],
@@ -10616,7 +10616,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             s.filletHold, s.junctionRings, s.quadDominant ? 1 : 0,
             s.minimal ? 1 : 0, s.exclude ? 1 : 0, s.minSize,
             s.relativeDeviation ? 1 : 0, s.squareCollar ? 1 : 0,
-            s.coonsRotate, settings.densityScale, s.pureTriFloor ? 1 : 0);
+            s.coonsRotate, settings.densityScale, s.pureTriFloor ? 1 : 0,
+            s.weldTolerance);
         cacheKey[fid] = key;
         if (plan.kind == MesherKind::AnnulusRing ||
             plan.kind == MesherKind::RailLadder ||
@@ -10691,7 +10692,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     auto borderContractViolation = [&](int fid,
                                        const PolyMesh& part) -> int {
         const TopoDS_Face F = TopoDS::Face(model.faces(fid));
-        const double q = std::max(1e-9, settings.weldTolerance);
+        // Fixed quantum (the historical weld floor): the contract oracle
+        // decides which mesher/fallback a face gets, so it must NOT move
+        // with the user's weld knob — otherwise raising the global weld
+        // silently re-plans faces. Welding proper happens post-plan.
+        const double q = 1e-6;
         std::map<std::tuple<long long, long long, long long>,
                  std::vector<uint32_t>>
             cells;
@@ -11385,6 +11390,34 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         }
     }
 
+    // Whole-mesh weld tolerance (the surfaced global knob), clamped to a
+    // fraction of the model diagonal so an absurd user value can't fuse
+    // the entire model into a point. 0.02 * diagonal is generous (a 1mm
+    // gap on a 50mm part is 0.02 of a ~87mm diagonal) yet forbids a
+    // model-scale collapse; the default 1e-6 is orders below the clamp, so
+    // unionSeams stays bit-identical at default. (weldVertices below gets a
+    // per-vertex, feature-clamped radius instead of this blunt scalar.)
+    double weldGlobal = settings.weldTolerance;
+    {
+        Bnd_Box wbb;
+        BRepBndLib::Add(model.shape, wbb);
+        if (!wbb.IsVoid()) {
+            const double diag = std::sqrt(wbb.SquareExtent());
+            if (diag > 0.0) weldGlobal = std::min(weldGlobal, 0.02 * diag);
+        }
+    }
+
+    // Per-face weld tolerances (0 = inherit the global), indexed by FaceId.
+    std::vector<double> faceWeld(faceN + 1, 0.0);
+    bool anyPerFaceWeld = false;
+    for (int fid = 1; fid <= faceN; ++fid) {
+        double w = settings.forFace(fid).weldTolerance;
+        if (w > 0.0) {
+            faceWeld[fid] = w;
+            anyPerFaceWeld = true;
+        }
+    }
+
     // Corner canonicalization: curve endpoints of DIFFERENT edges meeting
     // at one B-rep vertex disagree by the vertex tolerance (~1e-4 on real
     // exports), far above the weld tolerance — every face computes its
@@ -11508,16 +11541,73 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             }
         }
 
-        dbg("generate: welding%s", weldGroup.empty() ? "" : " (per solid)");
-        weldVertices(mesh, settings.weldTolerance,
-                     weldGroup.empty() ? nullptr : &weldGroup);
+        // Per-vertex weld radius: each vertex welds at the LOOSEST of the
+        // global tolerance and every per-face override on a polygon that
+        // touches it (max-wins, so raising one face closes its junctions).
+        // The radius is clamped to HALF the shortest mesh edge incident to
+        // the vertex — the local resolution — so a tolerance larger than
+        // nearby detail only ever fuses genuine near-duplicates and never
+        // swallows a distinct neighbouring vertex into non-manifold soup.
+        // Never below 1e-6 (the historical floor), so the default global
+        // 1e-6 with no override reproduces the old single-tolerance weld
+        // bit for bit. Built only when a knob is actually off default;
+        // otherwise the scalar path (weldGlobal) runs unchanged.
+        std::vector<double> vertTol;
+        double weldMax = weldGlobal;
+        const bool perVertex =
+            anyPerFaceWeld || settings.weldTolerance != 1e-6;
+        if (perVertex) {
+            constexpr double kFloor = 1e-6;
+            const double g = std::max(settings.weldTolerance, 0.0);
+            std::vector<double> loose(mesh.vertices.size(),
+                                      std::max(g, kFloor));
+            std::vector<double> shortEdge(mesh.vertices.size(), 1e300);
+            for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+                const int fid = mesh.polygonFaceId[p];
+                const double fw =
+                    (fid >= 1 && fid <= faceN) ? faceWeld[fid] : 0.0;
+                const auto& poly = mesh.polygons[p];
+                const size_t n = poly.size();
+                for (size_t i = 0; i < n; ++i) {
+                    const uint32_t a = poly[i], b = poly[(i + 1) % n];
+                    if (fw > loose[a]) loose[a] = fw;
+                    if (fw > loose[b]) loose[b] = fw;
+                    const auto& A = mesh.vertices[a];
+                    const auto& B = mesh.vertices[b];
+                    const double dx = A[0] - B[0], dy = A[1] - B[1],
+                                 dz = A[2] - B[2];
+                    const double len = std::sqrt(dx * dx + dy * dy + dz * dz);
+                    if (len > 0.0) {
+                        if (len < shortEdge[a]) shortEdge[a] = len;
+                        if (len < shortEdge[b]) shortEdge[b] = len;
+                    }
+                }
+            }
+            vertTol.resize(mesh.vertices.size());
+            weldMax = 0.0;
+            for (size_t v = 0; v < mesh.vertices.size(); ++v) {
+                const double clamp =
+                    shortEdge[v] < 1e300 ? 0.5 * shortEdge[v] : 1e300;
+                double t = std::min(loose[v], std::max(clamp, kFloor));
+                if (t < kFloor) t = kFloor;
+                vertTol[v] = t;
+                if (t > weldMax) weldMax = t;
+            }
+            if (weldMax <= 0.0) weldMax = weldGlobal;
+        }
+
+        dbg("generate: welding%s%s", weldGroup.empty() ? "" : " (per solid)",
+            perVertex ? " (per-vertex tol)" : "");
+        weldVertices(mesh, weldMax,
+                     weldGroup.empty() ? nullptr : &weldGroup,
+                     perVertex ? &vertTol : nullptr);
     };
 
     finish(mesh);
     if (settings.conformBorders) {
         // Post-weld: borders share ids now, so an open edge with an exact
         // complement path is a REAL T-junction, never a pre-weld ghost.
-        unionSeams(mesh, model, settings.weldTolerance);
+        unionSeams(mesh, model, weldGlobal);
     }
 
     // Fold cleanup: a directed edge traversed twice WITHIN one face means

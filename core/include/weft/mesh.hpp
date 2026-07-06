@@ -39,8 +39,16 @@ struct PolyMesh {
 // With `group`, only vertices in the same group merge — generation welds
 // per SOLID, so contacting bodies in a multi-body file keep their own
 // coincident skins instead of fusing into non-manifold shared edges.
+//
+// `vertTol` (optional, parallel to mesh.vertices) gives each vertex its
+// own weld radius: a pair merges when their distance is within the LOOSER
+// of the two (max-wins), so raising one face's weld tolerance closes its
+// junctions without touching the rest of the model. `tolerance` is then
+// the spatial-hash cell size and must be >= every vertTol entry (pass the
+// maximum). Absent, every vertex uses `tolerance`.
 void weldVertices(PolyMesh& mesh, double tolerance,
-                  const std::vector<int>* group = nullptr);
+                  const std::vector<int>* group = nullptr,
+                  const std::vector<double>* vertTol = nullptr);
 
 // Tessellate one polygon for display or export: triples of LOCAL indices
 // into `poly`. Convex rings fan; concave and keyhole rings (minimal
