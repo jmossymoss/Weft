@@ -175,6 +175,12 @@ struct GenerationReport {
     // Revolution faces: the edge ids of their two rims (u-boundary rings),
     // so UIs can pin each rim's count individually when rims are unlinked.
     std::map<int, std::array<int, 2>> faceRims;
+    // FaceId -> the solved primary/secondary counts the mesher actually
+    // used ({nu, nv} = radial/axial, gridU/gridV, etc.). A UI leaving
+    // adaptive seeds its manual fields from these so the count starts at
+    // the value the face was already meshed at (no dead zone before a
+    // manual count exceeds the adaptive floor).
+    std::map<int, std::array<int, 2>> faceCounts;
 };
 
 // Per-face mesh reuse across generate() calls: pass the same cache and

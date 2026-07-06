@@ -10664,6 +10664,9 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 plan.uEdges.size() == 2) {
                 report->faceRims[fid] = {plan.uEdges[0], plan.uEdges[1]};
             }
+            // The solved primary/secondary counts, so a UI can seed its
+            // manual fields from what the face actually meshed at.
+            report->faceCounts[fid] = {counts[fid][0], counts[fid][1]};
             if (plan.constrains) {
                 for (int eid : plan.uEdges) {
                     report->edgeDivisions[eid] = density.countFor(eid, 0);
