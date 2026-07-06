@@ -675,3 +675,27 @@ rail-unite tried, zero effect, reverted). Density-2 flow deferred (count-
 match guard skips diverging rails; watertight preserved, pre-existing
 leaks on 21/29/312/315/317/318 only). Gates: ctest green; board mohne 0/
 nasty 10/weldment 7; 42/42 fixtures; notched (Phase 1) unaffected.
+
+## NOTCHED TOP RING — open annulus (landed 19ed8f0)
+The notched top ring (face 3, a C-shaped planar annulus: the notch cuts
+through the ring between outer wall and inner bore) meshed as minimal-
+ngon (auto) or a fallback-tri FAN (forced annulus-ring "couldn't build"
+- it needs two closed loops, this is one C-wire). New open-annulus path:
+planAnnulusCRing detects a single planar wire whose circle edges fall on
+two co-axial radii (inner+outer rail) joined by exactly two non-arc
+walls, each rail spanning > pi (a ring cut by a notch, not a thin
+sector - the span>pi gate also fixed a weldment misdetection: 6 sector
+faces -> 2 folds, reverted to 7). meshAnnulusCRing samples each rail at
+its PINNED column azimuths (the same edges faces 1/7 pin via 2acb541),
+pairs the rails by arc fraction into radial quads, walls carry the
+across-ring row count. FacePlan gained cRing + cWalls; wired into forced
+AnnulusRing and the auto path (ahead of the minimal grab). Result face 3
+(radial=13): 11 quads + 1 five-gon, 0 tris, every column of faces 1/7
+meets a spoke 1:1 (outer 14 = 12 cols + 2 corners, inner 13 = 11 + 2),
+watertight. Radial knob -> across-ring rows. Closed 2-loop annuli
+(barrel/barrel2/bossfillet) unregressed. Gates: ctest green; board mohne
+0/nasty 10/weldment 7; 42/42 fixtures.
+NEXT: grey out mesher-dropdown options that can't build per face (needs
+core per-face buildable-mesher exposure; must reflect this C-ring
+capability). Deviation dead-zone on genuine fallback faces (OCCT
+quantization plateaus) still open/lower-priority.
