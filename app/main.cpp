@@ -3996,6 +3996,7 @@ int main(int argc, char** argv) {
         app.selFaces = {startSelect};
         app.activeFace = startSelect;
         rebuildBuffers(app);
+        frameModel(app);  // zoom to the face under inspection
     }
 
     double lastX = 0, lastY = 0;

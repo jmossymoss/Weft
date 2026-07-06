@@ -963,7 +963,7 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
     };
     std::vector<WireEdge> all;
     for (BRepTools_WireExplorer wx(outer, face); wx.More(); wx.Next()) {
-        if (all.size() >= 16) return reject("more than 16 edges");
+        if (all.size() >= 24) return reject("more than 24 edges");
         const TopoDS_Edge edge = wx.Current();
         double f, l;
         Handle(Geom2d_Curve) pcurve =
@@ -1147,6 +1147,13 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
         for (size_t k = from; k < to; ++k) {
             patch.chain[sIdx].push_back(pieceOf(order[k]));
             if (patch.chain[sIdx].front().edgeId < 1) return reject("side has invalid edge");
+        }
+        // A "side" that swallowed a third of the outline isn't a side —
+        // the face isn't four-cornered, and forcing a transfinite grid
+        // through it slivers and folds (the flaregun underside panel:
+        // one side chained ELEVEN edges). Quad-fill owns those.
+        if (patch.chain[sIdx].size() > 8) {
+            return reject("side chains too many edges");
         }
         const auto& p0 = patch.chain[sIdx].front();
         patch.pc[sIdx] = p0.pc;
@@ -5162,8 +5169,16 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     if (planRailLadder(face, model, plan)) return plan;
 
     // Flat faces with quad-dominant set get the structured grid + rim
-    // fill instead of OCCT triangulation + pairing.
-    if (s.quadDominant && planQuadFill(face, surf, model, plan)) return plan;
+    // fill instead of OCCT triangulation + pairing. CURVED faces whose
+    // coons rejected (concave outlines, long chains) take it by DEFAULT:
+    // the grid lives in UV and maps through the surface, which beats a
+    // sliver-fan triangulation — and the fold check still demotes any
+    // chart the grid can't express.
+    const bool planarHere = surf.GetType() == GeomAbs_Plane;
+    if ((s.quadDominant || !planarHere) &&
+        planQuadFill(face, surf, model, plan)) {
+        return plan;
+    }
 
     plan.kind = MesherKind::Fallback;
     // Quad-dominant decimation moves border verts by up to the chord
