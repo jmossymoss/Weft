@@ -787,3 +787,33 @@ quad; flaregun overall 0 degenerate. ribbonnotch: notch end clean quads
 around the slot (no fan/pinch/zero-area), watertight, 0 degenerate all 3
 modes. ctest; board mohne 0/nasty 10/weldment 7; 48/48 fixtures; face 131 +
 all non-93 flaregun faces byte-identical.
+
+## FOAM BODY HARDENING (landed c24b7ec + bc40ab8)
+Two foam robustness fixes.
+- Radial-override degradation (c24b7ec): body face 183 (flat bottom rim,
+  WAVY top rim ~46u v-jump near the head "mess") was 90% quad at default but
+  61%/57% under radial=20/32,adapt=0. The ee67b7d reconciliation (a) bailed to
+  the floor when the sparser-by-count rim wandered in v (under a manual radial
+  the flat rim out-counts the ~32-sample wavy rim), and (b) always drove the
+  interior from the DENSER rim, so the strip landed on the wavy rim and frayed
+  into folds. Fix: the WAVIER rim drives interior azimuths (welds 1:1 over its
+  v-jumps, no strip -> no folds), the FLATTER rim strips; reconcile only when a
+  genuinely flat rim exists (min rim v-range <= tol) so both-wavy bands
+  (nasty_cheese saddles) still floor; when the drive rim has a steep local
+  v-jump (>0.25*bandH) a sparse manual radial can't spread, give the tall band
+  height-proportional interior rows (aspect ~2:1, cap 8) gated on the JUMP not
+  the count ratio (face 4's 278-sample gradual rim + default body untouched).
+  face 183: radial 12/16/20/32 -> 92/100/86/85% quad (was .../61/57), straight
+  columns, 0 fold.
+- Shallow conical caps -> n-gon (bc40ab8): spray-can disk faces 325/366 are
+  shallow cones (3% dish, r~5) that isGeometricallyFlat's 0.1% tol rejects, so
+  they tri-fanned (~150 poly, ~50% tri). New isShallowCapCone gate (cone, dish
+  <10% width, single round hole-free boundary, elongation <1.6) routes them to
+  the boundary minimal n-gon -> 1 n-gon each. face 512 (concave cylinder fillet
+  needing interior topology) correctly LEFT on the floor (not n-gon-able).
+Gates: ctest; board mohne 0/nasty 10/weldment 7 BYTE-IDENTICAL (isShallowCapCone
+catches 0 board faces, revolution fix touches nothing there); 48/48 fixtures;
+foam default byte-identical except 325/366; flaregun byte-identical. foam opens
+82->82 at default (pre-existing source open-shells; 0 new cracks). Remaining
+foam: 512 concave fillet + a few cylinder quad-fill/coons-reject faces (49-60%
+tri, watertight) still open.
