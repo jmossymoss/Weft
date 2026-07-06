@@ -6218,8 +6218,9 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
         Box b{1e300, -1e300, 1e300, -1e300};
         for (int eid : wire) {
             double f, l;
-            Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(
-                TopoDS::Edge(model.edges(eid)), face, f, l);
+            const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+            Handle(Geom2d_Curve) pc =
+                BRep_Tool::CurveOnSurface(edge, face, f, l);
             if (pc.IsNull()) continue;
             for (int k = 0; k <= 16; ++k) {
                 gp_Pnt2d uv = pc->Value(f + (l - f) * k / 16.0);
@@ -6228,9 +6229,36 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
                 b.v0 = std::min(b.v0, uv.Y());
                 b.v1 = std::max(b.v1, uv.Y());
             }
+            // The web below samples this pcurve at the SOLVED count with
+            // the edge's phase — different positions than the uniform
+            // sweep above. The box's v-extents become grid rows, so they
+            // must bound THOSE samples: a polyline extremum past the row
+            // pokes the hole ring through the staircase, the keyhole
+            // ring self-intersects, and the ear-clip dead-ends into a
+            // folded fan (slotted tube: 58/181 inverted web cells).
+            const int wn = eid > 0 && eid < (int)solvedEdge.size() &&
+                                   solvedEdge[eid] > 0
+                               ? solvedEdge[eid]
+                               : 8;
+            const double ph = closedEdgePhase(edge, model);
+            for (int k = 0; k <= wn; ++k) {
+                const double t = phasedT(k, wn, ph, false);
+                gp_Pnt2d uv = pc->Value(f + (l - f) * t);
+                b.u0 = std::min(b.u0, uv.X());
+                b.u1 = std::max(b.u1, uv.X());
+                b.v0 = std::min(b.v0, uv.Y());
+                b.v1 = std::max(b.v1, uv.Y());
+            }
         }
         if (b.u0 > b.u1) return false;  // no usable pcurves on this wire
         b.u0 -= 0.6 * du; b.u1 += 0.6 * du;
+        // Rows sit at the box's v-extents; the ring's own extreme verts
+        // would then lie ON the staircase (tangent webs ear-clip into
+        // folded fans). Push the rows just past the ring so the web is
+        // a strict annulus.
+        const double vPad = 0.04 * std::max(1e-12, b.v1 - b.v0);
+        b.v0 -= vPad;
+        b.v1 += vPad;
         boxes.push_back(b);
     }
     // Row layout: rims plus every band extent. A wire too close to a rim
