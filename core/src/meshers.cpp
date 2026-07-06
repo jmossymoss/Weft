@@ -6464,16 +6464,29 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
     for (int c = 1; c < nu; ++c) {
         int floorKey = keyBot;
         // Region boundary columns suppress axial rows under their
-        // feature row: the outward cell absorbs the whole span as one
-        // n-gon and the web ring stays a clean ring — a comb of
-        // collinear staircase verts dead-ends the ear clip into
-        // zero-area slivers (observed at axial=100).
+        // feature row when the rows form a LONG comb: collinear
+        // staircase verts dead-end the web's ear clip into zero-area
+        // slivers (observed at axial=100), and the outward cell absorbs
+        // the whole span as one n-gon instead. SHORT combs stay — the
+        // side bands anchor on their natural axial rows and the web
+        // staircase handles a few steps fine.
         double axFloor = rowW[keyBot];
+        double axCand = axFloor;
         for (const Region& r : regions) {
             if (r.colL < c && c < r.colR) floorKey = r.rowKey;
             if (c == r.colL || c == r.colR) {
-                axFloor = std::max(axFloor, rowW[r.rowKey]);
+                axCand = std::max(axCand, rowW[r.rowKey]);
             }
+        }
+        if (axCand > axFloor) {
+            int comb = 0;
+            for (int k : keyAx) {
+                if (rowW[k] > rowW[keyBot] + 1e-12 &&
+                    rowW[k] < axCand - 1e-12) {
+                    ++comb;
+                }
+            }
+            if (comb > 8) axFloor = axCand;
         }
         std::vector<int> ks{floorKey, keyTop};
         for (int k : keyAx) {
@@ -6523,7 +6536,8 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
     // Side columns: uniform curve steps, corner verts shared with the
     // chains so the band welds to itself without tolerance games.
     auto sampleSide = [&](int eid, std::vector<uint32_t>& ids,
-                          uint32_t idW0, uint32_t idW1) {
+                          std::vector<double>& ws, uint32_t idW0,
+                          uint32_t idW1) {
         const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
         double f2, l2, f3, l3;
         Handle(Geom2d_Curve) pc =
@@ -6535,6 +6549,8 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
         // holds either way.
         const bool up = wOf(pc->Value(f2).Y()) <= wOf(pc->Value(l2).Y());
         ids.resize(nv + 1);
+        ws.assign(nv + 1, 0.0);
+        ws[nv] = wspan;
         for (int j = 0; j <= nv; ++j) {
             if (j == 0) {
                 ids[j] = idW0;
@@ -6546,14 +6562,18 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
             }
             const double t = up ? double(j) / nv : 1.0 - double(j) / nv;
             gp_Pnt2d uv = pc->Value(f2 + (l2 - f2) * t);
+            ws[j] = wOf(uv.Y());
             ids[j] = wb.addVertex(c3->Value(f3 + (l3 - f3) * t),
                                   {faceId, uv.X(), uv.Y()});
         }
         return true;
     };
     std::vector<uint32_t> sideLoIds, sideHiIds;
-    if (!sampleSide(sideLo, sideLoIds, cutIds.front(), plainIds.front()) ||
-        !sampleSide(sideHi, sideHiIds, cutIds.back(), plainIds.back())) {
+    std::vector<double> sideLoW, sideHiW;
+    if (!sampleSide(sideLo, sideLoIds, sideLoW, cutIds.front(),
+                    plainIds.front()) ||
+        !sampleSide(sideHi, sideHiIds, sideHiW, cutIds.back(),
+                    plainIds.back())) {
         return false;
     }
 
@@ -6602,43 +6622,52 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
     // the inner column's rows absorbed as ring verts. The bottom/top
     // bands close through the strip rows' diagonals.
     {
-        // Band bounds clamped into [wBot, wTopRow]: a WAVE strip row can
-        // sit above the first axial rows, whose bands then collapse onto
-        // the strip-row vertex (side samples fan onto it).
-        std::vector<double> Rw(nv + 1);
-        Rw[0] = wBot;
-        Rw[nv] = wTopRow;
-        for (int j = 1; j < nv; ++j) {
-            // The key's OWN value: addRow may have merged the axial row
-            // into a strip row, and the bounds must follow the merge or
-            // the bands miss their shared anchor vertex.
-            Rw[j] = std::clamp(rowW[keyAx[j - 1]], wBot, wTopRow);
-        }
+        // Each side sample anchors on the inner column's nearest EXISTING
+        // key (monotone), and consecutive bands SHARE their boundary
+        // anchor — so the inner column's vertical edges are covered
+        // gapless whatever keys the column actually carries. Anchoring
+        // on nominal axial heights left holes: a region boundary column
+        // suppresses axial rows under its feature row, two bands then
+        // met at different keys, and the segment between them faced the
+        // notch web on one side and nothing on the other (observed at
+        // radial 12 x axial 3).
+        auto sideAnchors = [&](const std::vector<int>& ks,
+                               const std::vector<double>& ws) {
+            std::vector<int> A(nv + 1);
+            A[0] = 0;
+            A[nv] = int(ks.size()) - 1;
+            for (int j = 1; j < nv; ++j) {
+                int best = A[j - 1];
+                double bd = std::abs(rowW[ks[best]] - ws[j]);
+                for (int k = A[j - 1] + 1; k + 1 < int(ks.size()); ++k) {
+                    const double d = std::abs(rowW[ks[k]] - ws[j]);
+                    if (d < bd) {
+                        bd = d;
+                        best = k;
+                    }
+                }
+                A[j] = best;
+            }
+            return A;
+        };
+        const std::vector<int> anchL = sideAnchors(colKeys[1], sideLoW);
+        const std::vector<int> anchR =
+            sideAnchors(colKeys[nu - 1], sideHiW);
         for (int j = 0; j < nv; ++j) {
-            const double wA = Rw[j], wB = Rw[j + 1];
-            std::vector<uint32_t> innerL, innerR;
-            for (int k : colKeys[1]) {
-                if (rowW[k] >= wA - 1e-12 && rowW[k] <= wB + 1e-12) {
-                    innerL.push_back(vid[1][k]);
-                }
-            }
-            for (int k : colKeys[nu - 1]) {
-                if (rowW[k] >= wA - 1e-12 && rowW[k] <= wB + 1e-12) {
-                    innerR.push_back(vid[nu - 1][k]);
-                }
-            }
-            if (innerL.empty() || innerR.empty()) return false;
             {
                 std::vector<uint32_t> ring{sideLoIds[j]};
-                ring.insert(ring.end(), innerL.begin(), innerL.end());
+                for (int k = anchL[j]; k <= anchL[j + 1]; ++k) {
+                    ring.push_back(vid[1][colKeys[1][k]]);
+                }
                 ring.push_back(sideLoIds[j + 1]);
                 emitRing(std::move(ring));
             }
             {
-                std::vector<uint32_t> ring{innerR.front(), sideHiIds[j],
-                                           sideHiIds[j + 1]};
-                for (size_t k = innerR.size(); k > 1; --k) {
-                    ring.push_back(innerR[k - 1]);
+                std::vector<uint32_t> ring{
+                    vid[nu - 1][colKeys[nu - 1][anchR[j]]], sideHiIds[j],
+                    sideHiIds[j + 1]};
+                for (int k = anchR[j + 1]; k > anchR[j]; --k) {
+                    ring.push_back(vid[nu - 1][colKeys[nu - 1][k]]);
                 }
                 emitRing(std::move(ring));
             }
