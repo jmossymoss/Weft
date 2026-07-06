@@ -6,17 +6,24 @@
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCone.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepPrimAPI_MakeSphere.hxx>
 #include <BRepPrimAPI_MakeTorus.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRep_Builder.hxx>
+#include <GeomAPI_PointsToBSplineSurface.hxx>
+#include <TColgp_Array2OfPnt.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Edge.hxx>
+#include <TopoDS_Face.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Trsf.hxx>
+#include <gp_Vec.hxx>
 
 #include <BRep_Tool.hxx>
+#include <Geom_BSplineSurface.hxx>
 #include <Geom_Curve.hxx>
 
 #include <cmath>
@@ -198,6 +205,59 @@ TopoDS_Shape makeFixture(const std::string& name) {
         gp_Ax2 axis(gp_Pnt(20.0, 20.0, 10.0), gp_Dir(0, 0, 1));
         TopoDS_Shape boss = BRepPrimAPI_MakeCylinder(axis, 8.0, 15.0).Shape();
         return BRepAlgoAPI_Fuse(base, boss).Shape();
+    }
+    if (name == "ribbon" || name == "ribbonnotch") {
+        // The flaregun grip/trigger-guard class: a long, thin, BENT strip
+        // whose surface is freeform (not a plane or a cylinder wrap) and
+        // whose flattened outline is NON-CONVEX. A transfinite/coons blend
+        // folds across such an outline; the strip must instead be swept
+        // rail-to-rail. Built as a ruled bspline surface between two bent
+        // rails, then thickened into a solid so the strip is a real
+        // outer-wire face. "ribbonnotch" cuts a notch clean through one
+        // end (the deeply-notched end-cap class) to exercise the local
+        // notch web on the sweep.
+        const int N = 25;          // stations along the strip
+        const double Lx = 80.0;    // length extent
+        const double Amp = 8.0;    // in-plane S-bend (freeform, not a wrap)
+        const double Hump = 7.0;   // out-of-plane lift (freeform surface)
+        const double W = 18.0;     // strip width
+        const double thick = 4.0;  // slab thickness
+        // A 2 x N net of poles: column 1 = rail A, column 2 = rail B. The
+        // width offset is a pure +/-Y shift so the two end caps stay clean
+        // axial lines (easy to notch); the S in Y and the hump in Z make
+        // the surface a genuine freeform bspline the rails must be swept
+        // across, not a plane or a cylinder.
+        TColgp_Array2OfPnt net(1, N, 1, 2);
+        for (int i = 0; i < N; ++i) {
+            const double t = double(i) / (N - 1);
+            const double cx = Lx * t;
+            // Tapered S: the sin(pi t) window pins cy and its slope to ~0
+            // at both ends, so the end caps stay axial (cleanly notchable)
+            // while the middle sweeps + then - (the reflex).
+            const double cy =
+                Amp * std::sin(2.0 * M_PI * t) * std::sin(M_PI * t);
+            const double cz = Hump * std::sin(M_PI * t);
+            net.SetValue(i + 1, 1, gp_Pnt(cx, cy + 0.5 * W, cz));
+            net.SetValue(i + 1, 2, gp_Pnt(cx, cy - 0.5 * W, cz));
+        }
+        Handle(Geom_BSplineSurface) surf =
+            GeomAPI_PointsToBSplineSurface(net).Surface();
+        TopoDS_Face strip = BRepBuilderAPI_MakeFace(surf, 1e-6).Face();
+        TopoDS_Shape slab =
+            BRepPrimAPI_MakePrism(strip, gp_Vec(0, 0, thick)).Shape();
+        if (name == "ribbonnotch") {
+            // A rectangular slot bitten into the middle of the far (x=Lx)
+            // end cap: it opens that cap into a rail-drop-notch-drop-rail
+            // chain, so the outline is no longer four-sided and coons rejects
+            // it — the notched end-cap class the sweep must web locally
+            // rather than fan.
+            TopoDS_Shape notch =
+                BRepPrimAPI_MakeBox(gp_Pnt(Lx - 10.0, -4.0, -5.0),
+                                    gp_Pnt(Lx + 5.0, 4.0, Hump + thick + 5.0))
+                    .Shape();
+            slab = BRepAlgoAPI_Cut(slab, notch).Shape();
+        }
+        return slab;
     }
     throw std::runtime_error(
         "unknown fixture: " + name +

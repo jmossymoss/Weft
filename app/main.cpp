@@ -4063,7 +4063,7 @@ static void drawUi(App& app) {
                 "cylinder", "box",     "cone",   "sphere",
                 "torus",    "fillet",  "hole",   "boss",
                 "demo",     "notched", "slotted", "barrel",
-                "bossfillet"};
+                "bossfillet", "ribbon", "ribbonnotch"};
             const int nFixtures = int(sizeof fixtures / sizeof *fixtures);
             for (int i = 0; i < nFixtures; ++i) {
                 if (i % 3) ImGui::SameLine();
