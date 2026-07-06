@@ -543,9 +543,11 @@ void testRecipeRoundTrip() {
     weft::GenerationSettings& gs = recipe.settings;
     gs.defaults.radial = 20;
     gs.defaults.cap = weft::CapStyle::Fan;
+    gs.weldTolerance = 0.02;  // surfaced global weld
     weft::FaceMeshSettings dense = gs.defaults;
     dense.radial = 40;
     dense.gridV = 7;
+    dense.weldTolerance = 0.005;  // per-face override
     gs.perFace[3] = dense;
     gs.perEdge[5] = 13;
     recipe.ops.push_back({weft::ManualOp::Kind::LoopInsert, 1, 0.25, 7.5, 0.5});
@@ -559,6 +561,8 @@ void testRecipeRoundTrip() {
     CHECK_EQ(loaded.settings.perFace.size(), 1);
     CHECK_EQ(loaded.settings.perFace[3].radial, 40);
     CHECK_EQ(loaded.settings.perFace[3].gridV, 7);
+    CHECK(std::abs(loaded.settings.weldTolerance - 0.02) < 1e-9);
+    CHECK(std::abs(loaded.settings.perFace[3].weldTolerance - 0.005) < 1e-9);
     CHECK_EQ(loaded.settings.perEdge[5], 13);
     CHECK_EQ(loaded.ops.size(), 1);
     CHECK_EQ(loaded.ops[0].faceId, 1);
@@ -1491,6 +1495,66 @@ void testGenerationCache() {
 // Weld: merge picked vertices into one (center/last/first), polygons
 // remap and degenerates drop; the op replays from world points and
 // round-trips through recipes.
+void testWeldTolerance() {
+    std::printf("-- weld tolerance (per-vertex, max-wins) --\n");
+    // Two quads on two faces whose shared border is NEAR-coincident: the
+    // right edge of face 1 and the left edge of face 2 sit `g` apart.
+    const double g = 0.01;
+    auto makeMesh = []() {
+        weft::PolyMesh m;
+        m.vertices = {{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0},
+                      {1 + 0.01, 0, 0}, {2, 0, 0}, {2, 1, 0}, {1 + 0.01, 1, 0}};
+        m.anchors.resize(8);
+        m.polygons = {{0, 1, 2, 3}, {4, 5, 6, 7}};
+        m.polygonFaceId = {1, 2};
+        return m;
+    };
+    auto weldWith = [&](double cell, const std::vector<double>* vt) {
+        weft::PolyMesh m = makeMesh();
+        weft::weldVertices(m, cell, nullptr, vt);
+        return m.vertexCount();
+    };
+
+    // Control: tight tolerance everywhere leaves the seam split (8 verts).
+    std::vector<double> tight(8, 1e-6);
+    CHECK_EQ(weldWith(1e-6, &tight), (size_t)8);
+    CHECK_EQ(weldWith(1e-6, nullptr), (size_t)8);  // scalar path agrees
+
+    // Loosen ONLY face 1 (verts 0..3) past the gap: the junction closes
+    // even though face 2 stayed tight — max-wins (looser side pulls it in).
+    std::vector<double> loosA = {0.05, 0.05, 0.05, 0.05, 1e-6, 1e-6, 1e-6, 1e-6};
+    CHECK_EQ(weldWith(0.05, &loosA), (size_t)6);
+    // Symmetric: loosening ONLY face 2 closes the SAME junction.
+    std::vector<double> loosB = {1e-6, 1e-6, 1e-6, 1e-6, 0.05, 0.05, 0.05, 0.05};
+    CHECK_EQ(weldWith(0.05, &loosB), (size_t)6);
+    // A tolerance BELOW the gap on both sides never merges, regardless of
+    // the (larger) hash cell size.
+    std::vector<double> sub = {g * 0.5, g * 0.5, g * 0.5, g * 0.5,
+                               g * 0.5, g * 0.5, g * 0.5, g * 0.5};
+    CHECK_EQ(weldWith(0.05, &sub), (size_t)8);
+    (void)g;
+
+    // generate() level: a per-face weld override is scoped and safe — an
+    // absurd value never collapses a clean solid into non-manifold soup
+    // (clamped to the local mesh resolution).
+    std::string stepPath = tmpPath("weft_test_weldtol.step");
+    weft::writeStep(weft::makeFixture("boss"), stepPath);
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis a = weft::analyze(model);
+    weft::GenerationSettings gs;
+    weft::PolyMesh base = weft::generate(model, a, gs);
+    CHECK(isWatertight(base));
+    weft::GenerationSettings gpf = gs;
+    weft::FaceMeshSettings over;  // absurd per-face weld on face 1
+    over.weldTolerance = 1000.0;
+    gpf.perFace[1] = over;
+    weft::PolyMesh pf = weft::generate(model, a, gpf);
+    // Still a valid closed solid (the clamp forbade a runaway collapse),
+    // and no MORE vertices than the baseline (weld only ever merges).
+    CHECK(isWatertight(pf));
+    CHECK(pf.vertexCount() <= base.vertexCount());
+}
+
 void testWeldVerts() {
     std::printf("-- weld verts --\n");
     std::string stepPath = tmpPath("weft_test_weld.step");
@@ -1579,6 +1643,7 @@ int main() {
     RUN(testQuadFill);
     RUN(testDeletePolyAndCollarRings);
     RUN(testSameLoopBridgeAndFill);
+    RUN(testWeldTolerance);
     RUN(testWeldVerts);
     RUN(testGenerationCache);
     if (failures) {
