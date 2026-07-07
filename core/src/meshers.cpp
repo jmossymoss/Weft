@@ -4899,12 +4899,12 @@ bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
         if (k == r.b0) break;
         if (int(railBr.size()) > N) return false;
     }
-    const int M = int(railA.size()) - 1;
-    if (M < 2 || int(railBr.size()) - 1 != M) {
-        // Unequal rail counts: the clean 1:1 ladder can't form. Leave it to
-        // quad-fill rather than zip in stray triangles.
-        dbg("ribbon face %d: rails %d/%d unequal -> quad-fill", faceId,
-            int(railA.size()) - 1, int(railBr.size()) - 1);
+    const int MA = int(railA.size()) - 1;
+    const int MB = int(railBr.size()) - 1;
+    if (MA < 2 || MB < 2) {
+        // Too few rungs for a ladder: leave it to quad-fill.
+        dbg("ribbon face %d: rails %d/%d too short -> quad-fill", faceId, MA,
+            MB);
         return false;
     }
     // The two end caps: cap "1" joins railA[0]=a0 to railBr[0]=b1 along the
@@ -4951,16 +4951,19 @@ bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
         return n;
     };
     // Reference: a mid-strip rung so the surface normal is well defined.
+    // The two rails can carry different station counts, so take the midpoint
+    // of EACH (same ~0.5 arc fraction) to form a representative body cell.
     bool reverseAll = false;
     {
-        const int rm = std::clamp(M / 2, 1, M - 1);
-        std::vector<int> refQuad = {railA[rm - 1], railA[rm], railBr[rm],
-                                    railBr[rm - 1]};
+        const int rmA = std::clamp(MA / 2, 1, MA - 1);
+        const int rmB = std::clamp(MB / 2, 1, MB - 1);
+        std::vector<int> refQuad = {railA[rmA - 1], railA[rmA], railBr[rmB],
+                                    railBr[rmB - 1]};
         gp_XYZ nq = newell(refQuad);
-        gp_Pnt2d c(0.25 * (UV[railA[rm - 1]].X() + UV[railA[rm]].X() +
-                           UV[railBr[rm]].X() + UV[railBr[rm - 1]].X()),
-                   0.25 * (UV[railA[rm - 1]].Y() + UV[railA[rm]].Y() +
-                           UV[railBr[rm]].Y() + UV[railBr[rm - 1]].Y()));
+        gp_Pnt2d c(0.25 * (UV[railA[rmA - 1]].X() + UV[railA[rmA]].X() +
+                           UV[railBr[rmB]].X() + UV[railBr[rmB - 1]].X()),
+                   0.25 * (UV[railA[rmA - 1]].Y() + UV[railA[rmA]].Y() +
+                           UV[railBr[rmB]].Y() + UV[railBr[rmB - 1]].Y()));
         gp_Vec ref = surfN(c);
         if (ref.Magnitude() > 1e-12 && nq.Modulus() > 1e-12 &&
             gp_Vec(nq).Dot(ref) < 0) {
@@ -5063,77 +5066,246 @@ bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
         }
         put(std::move(dd));
     };
-    // Body: skip the end interval that a notched cap will web.
-    const int lo = cap1Simple ? 0 : 1;
-    const int hi = cap2Simple ? M : M - 1;
-    // Zip the two rails by ARC LENGTH, not by index. Index pairing twists
-    // where a sharp reflex crowds the samples on one rail (the flaregun grip
-    // creases: adjacent rungs jump 10->18 wide and the cell between them
-    // collapses). Advancing whichever rail lags in arc fraction keeps every
-    // cell square: equal, evenly-spread rails stay a pure quad ladder;
-    // mismatches absorb as the occasional triangle at the crease.
-    std::vector<double> fA(M + 1, 0), fB(M + 1, 0);
-    for (int i = 1; i <= M; ++i) {
-        fA[i] = fA[i - 1] + P[railA[i - 1]].Distance(P[railA[i]]);
-        fB[i] = fB[i - 1] + P[railBr[i - 1]].Distance(P[railBr[i]]);
+    // Cap classification. An end that carries interior ring samples is either
+    // a genuinely FLAT, convex rim -- closed as ONE n-gon (Plasticity-style),
+    // with the rail-end rung staying a normal body cell -- or a NOTCHED end
+    // that gets a local web. A flat rim's n-gon spans only the cap arc, so the
+    // body owns the rung and the rim never drags interior rung vertices out of
+    // plane.
+    auto arcFwd = [&](int from, int to) {
+        std::vector<int> pts;
+        for (int k = from;; k = (k + 1) % N) {
+            pts.push_back(k);
+            if (k == to) break;
+            if (int(pts.size()) > N) break;
+        }
+        return pts;
+    };
+    // A flat, convex rim: every vertex within a small fraction of the rim
+    // perimeter of the best-fit plane, consistent turn sign in that plane.
+    auto capFlat = [&](const std::vector<int>& pts) {
+        if (pts.size() < 4) return false;
+        gp_XYZ nrm = newell(pts);
+        const double nmod = nrm.Modulus();
+        if (nmod < 1e-12) return false;
+        gp_Vec un(nrm);
+        un.Multiply(1.0 / nmod);
+        gp_XYZ cen(0, 0, 0);
+        for (int idx : pts) cen += P[idx].XYZ();
+        cen /= double(pts.size());
+        gp_Pnt cp(cen);
+        double perim = 0, dev = 0;
+        const int np = int(pts.size());
+        for (int i = 0; i < np; ++i) {
+            dev = std::max(dev, std::abs(gp_Vec(cp, P[pts[i]]).Dot(un)));
+            perim += P[pts[i]].Distance(P[pts[(i + 1) % np]]);
+        }
+        if (dev > 0.03 * perim) return false;
+        int sign = 0;
+        for (int i = 0; i < np; ++i) {
+            gp_Vec e0(P[pts[(i + np - 1) % np]], P[pts[i]]);
+            gp_Vec e1(P[pts[i]], P[pts[(i + 1) % np]]);
+            const double cr = e0.Crossed(e1).Dot(un);
+            const int s = cr > 1e-9 ? 1 : (cr < -1e-9 ? -1 : 0);
+            if (s == 0) continue;
+            if (sign == 0) sign = s;
+            else if (s != sign) return false;
+        }
+        return true;
+    };
+    const std::vector<int> cap1Arc = cap1Simple ? std::vector<int>()
+                                                : arcFwd(r.b1, r.a0);
+    const std::vector<int> cap2Arc = cap2Simple ? std::vector<int>()
+                                                : arcFwd(r.a1, r.b0);
+    const bool cap1Flat = !cap1Simple && capFlat(cap1Arc);
+    const bool cap2Flat = !cap2Simple && capFlat(cap2Arc);
+    // Emit a flat rim as ONE n-gon in NATURAL ring order (b1->..->a0 for cap
+    // 1, a1->..->b0 for cap 2). That order closes on the rail-end chord in the
+    // direction OPPOSITE the body cell that owns that rung, so the two weld
+    // manifold; routing it through emit() applies the strip's single hand
+    // (reverseAll) exactly as the body does.
+    auto emitFlatCap = [&](const std::vector<int>& arc) {
+        std::vector<uint32_t> ng;
+        for (int idx : arc) ng.push_back(pushUv(idx));
+        emit(std::move(ng));
+    };
+    // Body: skip only the end interval a NOTCHED cap will web. A simple or
+    // flat end keeps its rail-end rung as a body cell. The two rails can carry
+    // DIFFERENT station counts (one B-rep edge subdivides finer than its
+    // opposite side), so each rail keeps its own body span.
+    const int loA = (cap1Simple || cap1Flat) ? 0 : 1;
+    const int loB = (cap1Simple || cap1Flat) ? 0 : 1;
+    const int hiA = (cap2Simple || cap2Flat) ? MA : MA - 1;
+    const int hiB = (cap2Simple || cap2Flat) ? MB : MB - 1;
+    // Zip two rails (ring-index chains RA, RB, paired 1:1 at their ends) by
+    // ARC LENGTH, not by index. Index pairing twists where a sharp reflex
+    // crowds the samples on one rail (the flaregun grip creases: adjacent
+    // rungs jump 10->18 wide and the cell between them collapses), and it
+    // cannot pair rails of unequal count at all. Advancing whichever rail lags
+    // in arc fraction keeps every cell square: equal, evenly-spread rails stay
+    // a pure quad ladder; where one rail is finer its extra stations BATCH
+    // into the cell as a grouped n-gon (a pentagon / hexagon whose flat side
+    // runs along that rail), never a fanned triangle.
+    auto zipRailPair = [&](const std::vector<int>& RA,
+                           const std::vector<int>& RB) {
+        const int nA = int(RA.size()) - 1, nB = int(RB.size()) - 1;
+        if (nA < 1 || nB < 1) return;
+        std::vector<double> gA(nA + 1, 0), gB(nB + 1, 0);
+        for (int i = 1; i <= nA; ++i)
+            gA[i] = gA[i - 1] + P[RA[i - 1]].Distance(P[RA[i]]);
+        for (int i = 1; i <= nB; ++i)
+            gB[i] = gB[i - 1] + P[RB[i - 1]].Distance(P[RB[i]]);
+        const double LA = std::max(1e-12, gA[nA]), LB = std::max(1e-12, gB[nB]);
+        auto fa = [&](int i) { return gA[i] / LA; };
+        auto fb = [&](int i) { return gB[i] / LB; };
+        int ia = 0, ib = 0;
+        while (ia < nA || ib < nB) {
+            if (ia >= nA) {
+                // Rail A is spent: the leftover B stations close onto A's last
+                // vertex as ONE boundary n-gon instead of a triangle fan.
+                std::vector<uint32_t> poly = {pushUv(RA[nA])};
+                for (int k = nB; k >= ib; --k) poly.push_back(pushUv(RB[k]));
+                emit(std::move(poly));
+                ib = nB;
+                continue;
+            }
+            if (ib >= nB) {
+                std::vector<uint32_t> poly;
+                for (int k = ia; k <= nA; ++k) poly.push_back(pushUv(RA[k]));
+                poly.push_back(pushUv(RB[nB]));
+                emit(std::move(poly));
+                ia = nA;
+                continue;
+            }
+            const double na = fa(ia + 1), nb = fb(ib + 1);
+            const double sA = na - fa(ia), sB = nb - fb(ib);
+            if (std::abs(na - nb) < 0.5 * std::min(sA, sB)) {
+                emit({pushUv(RA[ia]), pushUv(RA[ia + 1]), pushUv(RB[ib + 1]),
+                      pushUv(RB[ib])});
+                ++ia;
+                ++ib;
+            } else if (na < nb) {
+                // Rail A finer here: batch its stations before B's next
+                // station into one polygon (a grouped n-gon, flat along A).
+                int ea = ia + 1;
+                while (ea < nA && fa(ea + 1) < nb) ++ea;
+                std::vector<uint32_t> poly;
+                for (int k = ia; k <= ea; ++k) poly.push_back(pushUv(RA[k]));
+                poly.push_back(pushUv(RB[ib + 1]));
+                poly.push_back(pushUv(RB[ib]));
+                emit(std::move(poly));
+                ia = ea;
+                ++ib;
+            } else {
+                int eb = ib + 1;
+                while (eb < nB && fb(eb + 1) < na) ++eb;
+                std::vector<uint32_t> poly = {pushUv(RA[ia]),
+                                              pushUv(RA[ia + 1])};
+                for (int k = eb; k >= ib; --k) poly.push_back(pushUv(RB[k]));
+                emit(std::move(poly));
+                ++ia;
+                ib = eb;
+            }
+        }
+    };
+    {
+        std::vector<int> bodyA(railA.begin() + loA, railA.begin() + hiA + 1);
+        std::vector<int> bodyB(railBr.begin() + loB, railBr.begin() + hiB + 1);
+        zipRailPair(bodyA, bodyB);
     }
-    const double lenA = std::max(1e-12, fA[hi] - fA[lo]);
-    const double lenB = std::max(1e-12, fB[hi] - fB[lo]);
-    auto frA = [&](int i) { return (fA[i] - fA[lo]) / lenA; };
-    auto frB = [&](int i) { return (fB[i] - fB[lo]) / lenB; };
-    int ia = lo, ib = lo;
-    while (ia < hi || ib < hi) {
-        if (ia >= hi) {
-            emit({pushUv(railA[hi]), pushUv(railBr[ib + 1]),
-                  pushUv(railBr[ib])});
-            ++ib;
-            continue;
-        }
-        if (ib >= hi) {
-            emit({pushUv(railA[ia]), pushUv(railA[ia + 1]),
-                  pushUv(railBr[hi])});
-            ++ia;
-            continue;
-        }
-        const double na = frA(ia + 1), nb = frB(ib + 1);
-        const double stepA = frA(ia + 1) - frA(ia);
-        const double stepB = frB(ib + 1) - frB(ib);
-        if (std::abs(na - nb) < 0.5 * std::min(stepA, stepB)) {
-            emit({pushUv(railA[ia]), pushUv(railA[ia + 1]),
-                  pushUv(railBr[ib + 1]), pushUv(railBr[ib])});
-            ++ia;
-            ++ib;
-        } else if (na < nb) {
-            emit({pushUv(railA[ia]), pushUv(railA[ia + 1]),
-                  pushUv(railBr[ib])});
-            ++ia;
-        } else {
-            emit({pushUv(railA[ia]), pushUv(railBr[ib + 1]),
-                  pushUv(railBr[ib])});
-            ++ib;
-        }
-    }
-    // Local web for a notched cap: the small boundary polygon between the
-    // first interior rung and the cap's own samples, ear-clipped in 3D with
-    // the strip's hand (so it can never fold against the body).
-    auto webCap = [&](bool nearCap) -> bool {
-        std::vector<int> poly;  // ring indices, boundary order
-        if (nearCap) {  // cap 1: rung at r=1, cap arc b1..a0
+    // The cap-region boundary in ring order: base-A vertex, the cap arc, then
+    // base-B vertex. The closing edge base-B -> base-A is the rail-end rung the
+    // body's last cell owns, so any tiling of this boundary welds to the body.
+    auto capBoundary = [&](bool nearCap) {
+        std::vector<int> poly;
+        if (nearCap) {  // cap 1: body rung at r=1, cap arc a0..b1
             poly.push_back(railA[1]);
             for (int k = r.a0;; k = (k + N - 1) % N) {
                 poly.push_back(k);
                 if (k == r.b1) break;
             }
             poly.push_back(railBr[1]);
-        } else {  // cap 2: rung at r=M-1, cap arc a1..b0
-            poly.push_back(railA[M - 1]);
-            poly.push_back(railA[M]);
+        } else {  // cap 2: body rung at r=MA-1/MB-1, cap arc a1..b0
+            poly.push_back(railA[MA - 1]);
+            poly.push_back(railA[MA]);
             for (int k = (r.a1 + 1) % N;; k = (k + 1) % N) {
                 poly.push_back(k);
                 if (k == r.b0) break;
             }
-            poly.push_back(railBr[M - 1]);
+            poly.push_back(railBr[MB - 1]);
         }
+        return poly;
+    };
+    // A cap whose boundary FOLDS BACK on itself is not a flat rim but a strip
+    // continuation the rail finder stopped short of (the flaregun trigger
+    // guard curls past where the two rails still run parallel). Split it at the
+    // fold and zip the two halves into a quad ladder instead of fanning the
+    // whole loop into triangles. The two base vertices are the body's last
+    // rung, so the ladder welds to the body; the halves converge at the tip
+    // into one closing triangle.
+    auto zipFoldedCap = [&](const std::vector<int>& bp) -> bool {
+        const int n = int(bp.size());
+        if (n < 8) return false;
+        std::vector<double> cum(n, 0);
+        for (int i = 1; i < n; ++i)
+            cum[i] = cum[i - 1] + P[bp[i - 1]].Distance(P[bp[i]]);
+        const double L = cum[n - 1];
+        const double baseW = P[bp[0]].Distance(P[bp[n - 1]]);
+        // A hairpin's boundary is far longer than its base rung is wide.
+        if (L < 3.0 * std::max(1e-9, baseW)) return false;
+        // Tip: the mid-path vertex farthest from the base-rung midpoint.
+        gp_Pnt baseMid((P[bp[0]].XYZ() + P[bp[n - 1]].XYZ()) * 0.5);
+        int tIdx = -1;
+        double best = -1;
+        for (int i = 1; i + 1 < n; ++i) {
+            const double f = cum[i] / L;
+            if (f < 0.30 || f > 0.70) continue;
+            const double d = P[bp[i]].Distance(baseMid);
+            if (d > best) {
+                best = d;
+                tIdx = i;
+            }
+        }
+        if (tIdx < 2 || tIdx > n - 3) return false;
+        std::vector<int> R1(bp.begin(), bp.begin() + tIdx + 1);
+        std::vector<int> R2(bp.rbegin(), bp.rbegin() + (n - tIdx));
+        // The two halves must run ALONGSIDE each other (a genuine fold), not
+        // diverge: their arc lengths are comparable and the gap at matched
+        // fractions stays a bounded multiple of the base width.
+        const double l1 = cum[tIdx], l2 = L - cum[tIdx];
+        if (std::max(l1, l2) > 2.5 * std::min(l1, l2)) return false;
+        auto ptAt = [&](const std::vector<int>& R, double f) {
+            double tot = 0;
+            for (size_t i = 0; i + 1 < R.size(); ++i)
+                tot += P[R[i]].Distance(P[R[i + 1]]);
+            const double target = tot * f;
+            double acc = 0;
+            for (size_t i = 0; i + 1 < R.size(); ++i) {
+                const double seg = P[R[i]].Distance(P[R[i + 1]]);
+                if (acc + seg >= target || i + 2 == R.size()) {
+                    const double u = seg > 1e-12 ? (target - acc) / seg : 0.0;
+                    return gp_Pnt(P[R[i]].XYZ() * (1 - u) +
+                                  P[R[i + 1]].XYZ() * u);
+                }
+                acc += seg;
+            }
+            return P[R.back()];
+        };
+        double maxGap = 0, minGap = 1e300;
+        for (int s = 1; s < 6; ++s) {
+            const double f = s / 6.0;
+            const double g = ptAt(R1, f).Distance(ptAt(R2, f));
+            maxGap = std::max(maxGap, g);
+            minGap = std::min(minGap, g);
+        }
+        if (maxGap > 3.0 * std::max(1e-9, minGap)) return false;
+        zipRailPair(R1, R2);
+        dbg("ribbon face %d: folded cap %d pts, tip@%d", faceId, n, tIdx);
+        return true;
+    };
+    // Ear-clip fallback for a genuinely notched (non-flat, non-folded) end.
+    auto webCap = [&](bool nearCap) -> bool {
+        std::vector<int> poly = capBoundary(nearCap);
         if (poly.size() < 3) return false;
         std::vector<WebPoint> ring;
         for (int idx : poly) ring.push_back({UV[idx], pushUv(idx)});
@@ -5153,25 +5325,40 @@ bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
             nearCap ? "near" : "far", poly.size(), okw ? "ok" : "FAIL");
         return okw;
     };
-    if (!cap1Simple && !webCap(/*nearCap=*/true)) return false;
-    if (!cap2Simple && !webCap(/*nearCap=*/false)) return false;
+    auto closeCap = [&](bool nearCap, bool simple, bool flat,
+                        const std::vector<int>& flatArc) -> bool {
+        if (simple) return true;
+        if (flat) {
+            emitFlatCap(flatArc);
+            return true;
+        }
+        if (zipFoldedCap(capBoundary(nearCap))) return true;
+        return webCap(nearCap);
+    };
+    if (!closeCap(/*nearCap=*/true, cap1Simple, cap1Flat, cap1Arc))
+        return false;
+    if (!closeCap(/*nearCap=*/false, cap2Simple, cap2Flat, cap2Arc))
+        return false;
     // Quality gate: the sweep only earns the face when the RAILS carry it --
-    // an even quad flow with the caps a small web. When triangles outnumber
-    // quads the "rails" were really a loop around a deep notched end (the
-    // trigger guard) and quad-fill's grid+pairing is the better, safer
-    // result -- hand it back rather than ship a tri-heavy strip.
-    int nq = 0, nt = 0;
+    // an even quad ladder with the caps a bounded quad/n-gon closure. When
+    // triangles outnumber every clean cell (quads plus grouped n-gons) the
+    // "rails" were spurious -- a loop around a notch the fold-zip could not
+    // rescue -- and quad-fill's grid+pairing is the safer result; hand it back
+    // rather than ship a tri-heavy strip.
+    int nq = 0, nt = 0, nn = 0;
     for (const auto& p : out.mesh().polygons) {
-        if (p.size() == 4) ++nq;
-        else if (p.size() == 3) ++nt;
+        if (p.size() == 3) ++nt;
+        else if (p.size() == 4) ++nq;
+        else ++nn;
     }
-    if (nt > nq) {
-        dbg("ribbon face %d: caps web-heavy (%d tri / %d quad) -> quad-fill",
-            faceId, nt, nq);
+    if (nt > nq + nn) {
+        dbg("ribbon face %d: caps web-heavy (%d tri / %d quad / %d ngon) -> "
+            "quad-fill",
+            faceId, nt, nq, nn);
         return false;
     }
-    dbg("ribbon face %d: rails %d, width %.2f aspect %.1f, caps %s/%s",
-        faceId, M, r.width, r.aspect, cap1Simple ? "quad" : "web",
+    dbg("ribbon face %d: rails %d/%d, width %.2f aspect %.1f, caps %s/%s",
+        faceId, MA, MB, r.width, r.aspect, cap1Simple ? "quad" : "web",
         cap2Simple ? "quad" : "web");
     return true;
 }
