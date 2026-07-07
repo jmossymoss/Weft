@@ -7410,12 +7410,20 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
         adCache[key] = n;
         return n;
     };
+    // A per-face COUNT the user typed (a density field that differs from the
+    // model default) is AUTHORITATIVE: it REPLACES the adaptive curvature
+    // floor for that face rather than acting as a floor under it. Without
+    // this, raising gridU/axial in adaptive mode does nothing until the
+    // number clears the curvature count (the coons-gridU / torus-axial dead
+    // zone). Tolerance-only overrides (chord/angle) leave this false so they
+    // keep refining adaptively.
+    bool curCountOverride = false;  // set per-face in the loop below
     // Propose `flat` onto a set, or — adaptive — each edge's own
     // curvature count with `floorA` as the minimum.
     auto proposeSet = [&](const std::vector<int>& edges, int flat,
                           int floorA, bool adaptive,
                           const FaceMeshSettings& s, bool overridden) {
-        if (!adaptive) {
+        if (!adaptive || curCountOverride) {
             propose(edges, flat, overridden);
             return;
         }
@@ -7432,6 +7440,14 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
         if (!plan.constrains) continue;
         const FaceMeshSettings& s = settings.forFace(fid);
         const bool overridden = settings.perFace.count(fid) > 0;
+        // Did the user type an explicit COUNT on this face (vs only a
+        // tolerance/flag)? If so its proposals are exact, not adaptive floors.
+        const FaceMeshSettings& dfl = settings.defaults;
+        curCountOverride =
+            overridden &&
+            (s.gridU != dfl.gridU || s.gridV != dfl.gridV ||
+             s.radial != dfl.radial || s.axial != dfl.axial ||
+             s.filletLoops != dfl.filletLoops);
         if (!plan.loops.empty()) {
             // Explicit boundary control: a TOTAL vertex count around the
             // outer loop, distributed across its edges by arc length and
