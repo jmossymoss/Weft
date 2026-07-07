@@ -4755,7 +4755,7 @@ bool planRailLadder(const TopoDS_Face& face, const Model& model,
 
 bool meshRailLadder(const TopoDS_Face& face, const Model& model, int faceId,
                     const std::vector<int>& solvedEdge, int radialDefault,
-                    MeshBuilder& out) {
+                    MeshBuilder& out, std::array<int, 2>* built = nullptr) {
     std::vector<PlanarRing> rings;
     if (!samplePlanarRings(face, model, solvedEdge, radialDefault, rings)) {
         return false;
@@ -4834,6 +4834,7 @@ bool meshRailLadder(const TopoDS_Face& face, const Model& model, int faceId,
         mp[k] = j;
     }
     const bool flip = face.Orientation() == TopAbs_REVERSED;
+    const size_t polyBefore = out.mesh().polygons.size();
     for (int k = 0; k < m; ++k) {
         std::vector<uint32_t> ring2;
         if (aSparse) {
@@ -4850,6 +4851,11 @@ bool meshRailLadder(const TopoDS_Face& face, const Model& model, int faceId,
         }
         if (ring2.size() < 3) continue;
         out.addPolygon(std::move(ring2), faceId, flip);
+    }
+    // Primary = the number of rungs actually laddered (sparse-rail stations);
+    // secondary = the dense rail's station count.
+    if (built) {
+        *built = {int(out.mesh().polygons.size() - polyBefore), n};
     }
     return true;
 }
@@ -5110,7 +5116,7 @@ bool ribbonDetect(const TopoDS_Face& face, const Model& model) {
 // never ships a fold or a leak.
 bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
                      const std::vector<int>& solvedEdge, int radialDefault,
-                     MeshBuilder& out) {
+                     MeshBuilder& out, std::array<int, 2>* built = nullptr) {
     std::vector<gp_Pnt> P;
     std::vector<gp_Pnt2d> UV;
     std::vector<int> corners;
@@ -5444,11 +5450,16 @@ bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
             }
         }
     };
+    const size_t polyBeforeBody = out.mesh().polygons.size();
     {
         std::vector<int> bodyA(railA.begin() + loA, railA.begin() + hiA + 1);
         std::vector<int> bodyB(railBr.begin() + loB, railBr.begin() + hiB + 1);
         zipRailPair(bodyA, bodyB);
     }
+    // The rungs laddered along the sweep body (excluding the end caps): the
+    // honest primary count for a rail sweep, which the `rail density` knob
+    // (radial) drives up and down.
+    const int bodyRungs = int(out.mesh().polygons.size() - polyBeforeBody);
     // The cap-region boundary in ring order: base-A vertex, the cap arc, then
     // base-B vertex. The closing edge base-B -> base-A is the rail-end rung the
     // body's last cell owns, so any tiling of this boundary welds to the body.
@@ -5596,6 +5607,7 @@ bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
     dbg("ribbon face %d: rails %d/%d, width %.2f aspect %.1f, caps %s/%s",
         faceId, MA, MB, r.width, r.aspect, cap1Simple ? "quad" : "web",
         cap2Simple ? "quad" : "web");
+    if (built) *built = {bodyRungs, 1};
     return true;
 }
 
@@ -10669,7 +10681,8 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
                         const std::vector<int>& solvedEdge, int faceId,
                         int nu, int nv, MeshBuilder& out,
                         const std::vector<double>* vRowsOpt = nullptr,
-                        const std::vector<int>* rimLowOpt = nullptr) {
+                        const std::vector<int>* rimLowOpt = nullptr,
+                        std::array<int, 2>* built = nullptr) {
     nu = std::max(3, nu);
     nv = std::max(1, nv);
     const double v0 = surf.FirstVParameter();
@@ -10990,8 +11003,15 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
                     "nvBody=%d notchRange=%g bandH=%g",
                     faceId, int(denseRim.size()), int(notchRim.size()), nvBody,
                     notchRange, reconBandH);
-                return meshRevolutionAnnulusBody(surf, faceId, denseRim,
-                                                 notchRim, nvBody, flip, out);
+                const bool okAB = meshRevolutionAnnulusBody(
+                    surf, faceId, denseRim, notchRim, nvBody, flip, out);
+                // The body drives its columns off the DENSE rim, not the
+                // sparse notch rim the counts table pre-sampled from uEdges[0]
+                // — report the count actually built so displayed == actual.
+                if (okAB && built) {
+                    *built = {int(denseRim.size()), nvBody};
+                }
+                return okAB;
             }
         }
         // Interior azimuthal count equals the DRIVE rim's: its columns sit
@@ -11353,6 +11373,11 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
             }
         }
     }
+    // The interior column count `nu` may have been raised to the drive rim's
+    // sample count (strip reconcile) and the row count `nv` floored — report
+    // what was actually built, which equals the passed request on the common
+    // matched/single-rim path.
+    if (built) *built = {nu, nv};
     return true;
 }
 
@@ -12876,6 +12901,51 @@ void unionSeams(PolyMesh& mesh, const Model& model, double weldTol) {
     if (total) dbg("seam union: absorbed %d vert(s) into n-gons", total);
 }
 
+// The solved subdivision total around a face's OUTER loop: the exact number
+// of boundary segments the boundary-driven meshers (quad-fill, plate-web,
+// minimal planar) lay down, since samplePlanarRings samples each outer wire
+// edge at solvedEdge[eid] segments (falling back to an even share of the
+// radial default when an edge took no density share). This is the honest
+// "primary count" for those meshers — they carry no interior grid count, only
+// a boundary total — and mirrors samplePlanarRings' own outer-ring sampling
+// so displayed == built. Report-only; drives no geometry.
+int outerWireSolvedTotal(const TopoDS_Face& face, const Model& model,
+                         const std::vector<int>& solvedEdge,
+                         int radialDefault) {
+    int total = 0;
+    try {
+        const TopoDS_Wire w = BRepTools::OuterWire(face);
+        // Iterate the wire's edges directly (TopoDS_Iterator), not via
+        // BRepTools_WireExplorer, which SILENTLY DROPS the edges of a sloppy
+        // wire — samplePlanarRings falls back to exactly this raw-edge walk
+        // when it detects the drop, so mirroring it keeps the total in step
+        // with the boundary the mesh actually laid down. The per-edge fallback
+        // share matches samplePlanarRings' sloppy-path divisor (raw count).
+        int rawEdges = 0;
+        for (TopoDS_Iterator it(w); it.More(); it.Next()) {
+            if (it.Value().ShapeType() == TopAbs_EDGE &&
+                !BRep_Tool::Degenerated(TopoDS::Edge(it.Value()))) {
+                ++rawEdges;
+            }
+        }
+        for (TopoDS_Iterator it(w); it.More(); it.Next()) {
+            if (it.Value().ShapeType() != TopAbs_EDGE) continue;
+            const TopoDS_Edge e = TopoDS::Edge(it.Value());
+            if (BRep_Tool::Degenerated(e)) continue;
+            const int eid = model.edges.FindIndex(e);
+            int n = (eid >= 1 && eid < int(solvedEdge.size())) ? solvedEdge[eid]
+                                                               : 0;
+            if (n < 1) {
+                n = std::max(1, std::max(3, radialDefault) /
+                                    std::max(1, rawEdges));
+            }
+            total += n;
+        }
+    } catch (const Standard_Failure&) {
+    }
+    return total;
+}
+
 }  // namespace
 
 PolyMesh generate(const Model& model, const Analysis& analysis,
@@ -13021,6 +13091,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     // per-face meshing is embarrassingly parallel.
     const int faceN = model.faceCount();
     std::vector<std::array<int, 3>> counts(faceN + 1, {0, 0, 0});
+    // The primary/secondary counts each face ACTUALLY built, filled in at
+    // mesh time by the meshers whose built count can differ from the `counts`
+    // table above — the annulus body drives its columns off the dense rim
+    // (not the sparse notch rim uEdges[0] pre-samples), and the boundary /
+    // rail meshers carry no interior grid count at all (they left {0,0}).
+    // -1 = "not reported, fall back to counts[]". Report-only: never keys the
+    // cache and never drives a mesher, so no mesh output moves.
+    std::vector<std::array<int, 2>> builtCounts(faceN + 1, {-1, -1});
     for (int fid = 1; fid <= faceN; ++fid) {
         const FaceMeshSettings& s = settings.forFace(fid);
         const FacePlan& plan = plans.at(fid);
@@ -13126,24 +13204,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         }
     }
 
-    // Report the counts the solver ACTUALLY landed on, per face, against
-    // what was requested — so a --radial that a shared/feature-constrained
-    // rim couldn't take is visible instead of silently ignored. --debug only.
-    for (int fid = 1; fid <= faceN; ++fid) {
-        const FacePlan& plan = plans.at(fid);
-        if (!plan.constrains) continue;
-        const FaceMeshSettings& s = settings.forFace(fid);
-        const int nu = counts[fid][0], nv = counts[fid][1];
-        const bool isRev = plan.kind == MesherKind::RevolutionGrid ||
-                           plan.kind == MesherKind::DiskCap ||
-                           plan.kind == MesherKind::DomeCap ||
-                           plan.kind == MesherKind::AnnulusRing;
-        const int reqU = isRev ? s.radial : s.gridU;
-        dbg("face %d %s: solved nu=%d nv=%d (requested %s=%d axial=%d)%s", fid,
-            mesherKindName(plan.kind), nu, nv, isRev ? "radial" : "gridu",
-            reqU, s.axial,
-            (isRev && nu != std::max(3, reqU)) ? "  [rim not free]" : "");
-    }
+    // The "solved nu/nv per face" report line moved AFTER meshing (below the
+    // parallel mesh loop): several meshers only settle their true built count
+    // at mesh time (the annulus body's dense-rim columns, the boundary/rail
+    // meshers' totals), so reporting the pre-mesh `counts` table here would
+    // show the sparse/zero placeholder instead of what was actually built.
 
     // Per-face pathology guard (see FaceMeshSettings::cellCap). A face's
     // cell count should track its surface area; a face carrying far more
@@ -13274,6 +13339,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 it->second.key == cacheKey[fid]) {
                 parts[fid] = it->second.part;  // copy: merge mutates
                 fellBack[fid] = it->second.fellBack;
+                builtCounts[fid] = it->second.builtCounts;
                 cached[fid] = true;
                 ++cacheHits;
             }
@@ -13581,7 +13647,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     meshRevolutionGrid(
                         face, surf, model, plan.uEdges, solvedEdge, fid, nu,
                         nv, out, nullptr,
-                        plan.rimLow.empty() ? nullptr : &plan.rimLow);
+                        plan.rimLow.empty() ? nullptr : &plan.rimLow,
+                        &builtCounts[fid]);
                 }
                 break;
             case MesherKind::DiskCap: {
@@ -13650,6 +13717,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 break;
             }
             case MesherKind::MinimalNGon:
+                // Boundary-driven (both the planar-web and UV-n-gon paths): the
+                // outer loop's solved sample total is the count the mesh
+                // presents (no interior grid). Set before the call so a
+                // contract-floor demote reports it too; raw-OCCT resets below.
+                builtCounts[fid] = {
+                    outerWireSolvedTotal(face, model, solvedEdge, s.radial), 0};
                 if (!plan.loops.empty()) {
                     if (!meshMinimalPlanar(face, model, fid, solvedEdge,
                                            s.radial, out, &pinnedEdge)) {
@@ -13695,6 +13768,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 }
                 break;
             case MesherKind::PlateWeb:
+                // Boundary-driven around the outer loop (plus collar rings at
+                // each hole, a separate knob) — report the outer total. Set
+                // before the call so a contract-floor demote (borders still
+                // exact at the solved counts) reports it too; a raw-OCCT
+                // demote resets it below.
+                builtCounts[fid] = {
+                    outerWireSolvedTotal(face, model, solvedEdge, s.radial), 0};
                 if (!meshPlateWeb(face, surf, model, fid, solvedEdge,
                                   s.radial, s.junctionRings, s.squareCollar,
                                   out)) {
@@ -13706,7 +13786,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 // a leak) -- the exact quad-fill+pairing safe path this face
                 // would have taken, which is watertight by construction.
                 if (meshRibbonSweep(face, model, fid, solvedEdge, s.radial,
-                                    out)) {
+                                    out, &builtCounts[fid])) {
                     break;
                 }
                 parts[fid] = PolyMesh();
@@ -13722,8 +13802,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 if (!meshQuadFill(face, surf, model, fid, solvedEdge,
                                   s.radial, qs, qf, quadGridU, quadGridV)) {
                     demote(fid, face, surf, s, "ribbon->quad fill failed");
-                } else if (!s.pureTriFloor) {
-                    pairPartTris(parts[fid]);
+                } else {
+                    // Fell back to the boundary-driven quad fill: report its
+                    // outer loop total, not a rail count.
+                    builtCounts[fid] = {
+                        outerWireSolvedTotal(face, model, solvedEdge, s.radial), 0};
+                    if (!s.pureTriFloor) pairPartTris(parts[fid]);
                 }
                 break;
             }
@@ -13738,6 +13822,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     qs.angleToleranceDeg =
                         std::clamp(qs.angleToleranceDeg / qsc, 1.0, 60.0);
                 }
+                // Boundary-driven: the outer loop's solved sample total is the
+                // count the mesh presents (the interior grid tracks it but
+                // carries no independent user count). Set before the call so a
+                // contract-floor demote reports it too; raw-OCCT resets below.
+                builtCounts[fid] = {
+                    outerWireSolvedTotal(face, model, solvedEdge, s.radial), 0};
                 if (!meshQuadFill(face, surf, model, fid, solvedEdge,
                                   s.radial, qs, out, quadGridU, quadGridV)) {
                     demote(fid, face, surf, s, "quad fill failed");
@@ -13751,7 +13841,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             }
             case MesherKind::RailLadder:
                 if (!meshRailLadder(face, model, fid, solvedEdge, s.radial,
-                                    out)) {
+                                    out, &builtCounts[fid])) {
                     demote(fid, face, surf, s, "rail ladder failed");
                 }
                 break;
@@ -13991,9 +14081,34 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         for (int fid = 1; fid <= faceN; ++fid) {
             if (!cached[fid]) {
                 cache->faces[fid] = {cacheKey[fid], parts[fid],
-                                     fellBack[fid]};
+                                     fellBack[fid], builtCounts[fid]};
             }
         }
+    }
+
+    // Report the counts the mesher ACTUALLY built, per face, against what was
+    // requested — so a --radial a shared/feature-constrained rim couldn't take
+    // (or a boundary/rail total) is visible instead of the sparse/zero
+    // placeholder. Runs post-mesh so the built count (annulus dense rim,
+    // boundary/rail totals) is settled. --debug only. Uses the planned kind
+    // (before the demote loop below rewrites it to Fallback).
+    for (int fid = 1; fid <= faceN; ++fid) {
+        const FacePlan& plan = plans.at(fid);
+        if (!plan.constrains) continue;
+        const FaceMeshSettings& s = settings.forFace(fid);
+        const int nu =
+            builtCounts[fid][0] >= 0 ? builtCounts[fid][0] : counts[fid][0];
+        const int nv =
+            builtCounts[fid][1] >= 0 ? builtCounts[fid][1] : counts[fid][1];
+        const bool isRev = plan.kind == MesherKind::RevolutionGrid ||
+                           plan.kind == MesherKind::DiskCap ||
+                           plan.kind == MesherKind::DomeCap ||
+                           plan.kind == MesherKind::AnnulusRing;
+        const int reqU = isRev ? s.radial : s.gridU;
+        dbg("face %d %s: solved nu=%d nv=%d (requested %s=%d axial=%d)%s", fid,
+            mesherKindName(plan.kind), nu, nv, isRev ? "radial" : "gridu",
+            reqU, s.axial,
+            (isRev && nu != std::max(3, reqU)) ? "  [rim not free]" : "");
     }
 
     // A part that fell back is a fallback for EVERY downstream stage:
@@ -14012,6 +14127,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             fid, mesherKindName(pl.kind));
         pl.kind = MesherKind::Fallback;
         pl.constrains = false;
+        // A demoted face built the contract-floor tri soup, not the mesher
+        // whose count was optimistically recorded — drop it so the report
+        // shows the deviation-driven fallback ({0,0}), as before.
+        builtCounts[fid] = {-1, -1};
         pl.coonsSides = {};
         pl.loops.clear();
     }
@@ -14059,8 +14178,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 report->faceRims[fid] = {plan.uEdges[0], plan.uEdges[1]};
             }
             // The solved primary/secondary counts, so a UI can seed its
-            // manual fields from what the face actually meshed at.
-            report->faceCounts[fid] = {counts[fid][0], counts[fid][1]};
+            // manual fields from what the face actually meshed at. Prefer the
+            // count the mesher REPORTED building (annulus dense-rim columns,
+            // boundary/rail totals) over the pre-mesh `counts` table, which
+            // holds the sparse notch rim / zero placeholder for those kinds.
+            report->faceCounts[fid] =
+                builtCounts[fid][0] >= 0
+                    ? builtCounts[fid]
+                    : std::array<int, 2>{counts[fid][0], counts[fid][1]};
             if (plan.constrains) {
                 for (int eid : plan.uEdges) {
                     report->edgeDivisions[eid] = density.countFor(eid, 0);
