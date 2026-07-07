@@ -3074,7 +3074,8 @@ bool isShallowCapCone(const TopoDS_Face& face,
 
 bool collectPlanarLoops(const TopoDS_Face& face,
                         const BRepAdaptor_Surface& surf, const Model& model,
-                        FacePlan& plan, bool requirePlane = true) {
+                        FacePlan& plan, bool requirePlane = true,
+                        bool tolerateDegenerate = false) {
     if (requirePlane && !isGeometricallyFlat(face, surf)) return false;
     TopoDS_Wire outer = BRepTools::OuterWire(face);
     if (outer.IsNull()) return false;
@@ -3085,7 +3086,16 @@ bool collectPlanarLoops(const TopoDS_Face& face,
         std::vector<int> loop;
         for (BRepTools_WireExplorer we(wire, face); we.More(); we.Next()) {
             const TopoDS_Edge edge = we.Current();
-            if (BRep_Tool::Degenerated(edge)) return false;
+            // A degenerate edge is a POLE: it collapses to a single 3D
+            // point that its neighbour edges already reach, so on a
+            // pole-tolerant collect it contributes no boundary segment
+            // and is simply skipped (the loop's real edges stay a closed
+            // 3D ring through the pole). Callers that grid in UV must not
+            // rely on the collapsed seam edge existing.
+            if (BRep_Tool::Degenerated(edge)) {
+                if (tolerateDegenerate) continue;
+                return false;
+            }
             double f, l;
             if (BRep_Tool::Curve(edge, f, l).IsNull()) return false;
             if (BRep_Tool::CurveOnSurface(edge, face, f, l).IsNull()) {
@@ -6086,7 +6096,8 @@ bool planQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     }
     FacePlan probe;
     if (!collectPlanarLoops(face, surf, model, probe,
-                            /*requirePlane=*/false)) {
+                            /*requirePlane=*/false,
+                            /*tolerateDegenerate=*/true)) {
         return false;
     }
     plan.loops = std::move(probe.loops);
