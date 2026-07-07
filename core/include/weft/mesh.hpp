@@ -74,8 +74,15 @@ struct ObjExportOptions {
     const std::vector<std::string>* objectNames = nullptr;
     // When set, every polygon corner carries the exact surface normal of
     // its own B-rep face ("f v//n"): sharp edges split, fillets shade
-    // smooth — no angle-threshold guessing.
+    // smooth — no angle-threshold guessing. Also the source of per-face
+    // colors (Model::faceColors) for the .mtl sidecar.
     const Model* model = nullptr;
+    // Emit exact CAD normals from `model`. False keeps `model` available for
+    // colors/names but writes no "vn"/normal indices.
+    bool emitNormals = true;
+    // Emit an mtllib + .mtl sidecar and per-group usemtl when `model` carries
+    // per-face (or per-solid) colors. No color data => no mtl (bytes unchanged).
+    bool emitColors = true;
 };
 
 // Write Wavefront OBJ. Polygons are grouped per B-rep face

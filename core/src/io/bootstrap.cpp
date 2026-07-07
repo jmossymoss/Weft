@@ -10,6 +10,10 @@ std::unique_ptr<Reader> makeStepReader();
 std::unique_ptr<Reader> makeIgesReader();
 std::unique_ptr<Reader> makeBrepReader();
 
+// Writer factory makers (Stage B).
+std::unique_ptr<FactoryWriter> makeMeshFactoryWriter();
+std::unique_ptr<FactoryWriter> makeOccFactoryWriter();
+
 namespace {
 
 // One factory for all three OCC B-rep readers (mirrors Mayo's OccFactory*).
@@ -33,7 +37,8 @@ public:
 
 void bootstrapIo(System& sys) {
     sys.addFactoryReader(std::make_unique<OccFactoryReader>());
-    // Writer factories are added in Stage B.
+    sys.addFactoryWriter(makeMeshFactoryWriter());  // Obj, Gltf, Stl, Fbx
+    sys.addFactoryWriter(makeOccFactoryWriter());   // Step, Iges, Brep
     addPredefinedFormatProbes(sys);
 }
 
