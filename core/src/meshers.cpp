@@ -5715,7 +5715,7 @@ bool faceWithinDeflection(const TopoDS_Face& face,
 // LIVE on floored faces — a border-only web has no interior to respond.
 void refineFloorWeb(PolyMesh& part, const TopoDS_Face& face, int faceId,
                     const FaceMeshSettings& s, double uScale,
-                    std::vector<gp_Pnt2d> uvOf) {
+                    std::vector<gp_Pnt2d> uvOf, bool angleSplit = false) {
     Handle(Geom_Surface) S = BRep_Tool::Surface(face);
     if (S.IsNull()) return;
     if (uvOf.size() != part.vertices.size()) return;
@@ -5726,6 +5726,14 @@ void refineFloorWeb(PolyMesh& part, const TopoDS_Face& face, int faceId,
         tris.push_back({poly[0], poly[1], poly[2]});
     }
     const double defl = faceDeflection(face, s);
+    // Surface normal at a UV, for the facet-turn (angle) split criterion.
+    auto surfNormal = [&](const gp_Pnt2d& uv) -> gp_Vec {
+        gp_Pnt p;
+        gp_Vec du, dv;
+        S->D1(uv.X(), uv.Y(), p, du, dv);
+        return du.Crossed(dv);
+    };
+    const double angTol = std::max(1.0, s.angleToleranceDeg);
     auto p3 = [&](uint32_t v) {
         return gp_Pnt(part.vertices[v][0], part.vertices[v][1],
                       part.vertices[v][2]);
@@ -5752,9 +5760,28 @@ void refineFloorWeb(PolyMesh& part, const TopoDS_Face& face, int faceId,
             if (s.minSize > 0 && len <= 2.0 * s.minSize) return false;
             const gp_Pnt2d um(0.5 * (uvOf[a].X() + uvOf[b].X()),
                               0.5 * (uvOf[a].Y() + uvOf[b].Y()));
+            // Deviation (chord) criterion: the surface midpoint sags off the
+            // straight span by more than the deflection. faceDeflection above
+            // already folds in relativeDeviation, so `reldev` refines here too.
             gp_Pnt onSurf = S->Value(um.X(), um.Y());
             gp_XYZ lerp = (p3(a).XYZ() + p3(b).XYZ()) / 2.0;
-            return onSurf.Distance(gp_Pnt(lerp)) > defl;
+            if (onSurf.Distance(gp_Pnt(lerp)) > defl) return true;
+            // Angle criterion: split where the surface TURNS more than the
+            // angle tolerance across the span (the facet-turn limit the border
+            // sampler already applies via GCPnts_TangentialDeflection), so a
+            // tightened `angle` finally densifies a floor whose sag stays
+            // under the chord budget. Gated on an explicit angle override —
+            // at the default tolerance this stays off and default output is
+            // byte-identical.
+            if (angleSplit) {
+                const gp_Vec na = surfNormal(uvOf[a]);
+                const gp_Vec nb = surfNormal(uvOf[b]);
+                if (na.Magnitude() > 1e-12 && nb.Magnitude() > 1e-12 &&
+                    na.Angle(nb) * 180.0 / M_PI > angTol) {
+                    return true;
+                }
+            }
+            return false;
         };
         std::set<uint64_t> marked;
         for (const auto& t : tris) {
@@ -5959,7 +5986,8 @@ void refineFloorWeb(PolyMesh& part, const TopoDS_Face& face, int faceId,
 bool meshContractFallback(const TopoDS_Face& face, const Model& model,
                           int faceId, const std::vector<int>& solvedEdge,
                           int radialDefault, MeshBuilder& out,
-                          const FaceMeshSettings* refine = nullptr) {
+                          const FaceMeshSettings* refine = nullptr,
+                          bool angleSplit = false) {
     std::vector<PlanarRing> rings;
     if (!samplePlanarRings(face, model, solvedEdge, radialDefault, rings)) {
         dbg("contract floor %d: ring sampling failed", faceId);
@@ -6008,7 +6036,7 @@ bool meshContractFallback(const TopoDS_Face& face, const Model& model,
     }
     if (refine) {
         refineFloorWeb(out.mesh(), face, faceId, *refine, uScale,
-                       std::move(uvOf));
+                       std::move(uvOf), angleSplit);
     }
     return true;
 }
@@ -6314,7 +6342,8 @@ bool meshDiskCap(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
 bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                   const Model& model, int faceId,
                   const std::vector<int>& solvedEdge, int radialDefault,
-                  const FaceMeshSettings& fs, MeshBuilder& out) {
+                  const FaceMeshSettings& fs, MeshBuilder& out,
+                  int gridUOverride = 0, int gridVOverride = 0) {
     // A curved dished cap (coons rejected it for want of four corners)
     // gets clean concentric quad rings + a central n-gon instead of the
     // grid+CDT rim's tri fan. Tightly gated inside; falls through here on
@@ -6462,6 +6491,15 @@ bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     // sacrificial rows for the culling to eat.
     const double iu0 = umin + huBorder, iu1 = umax - huBorder;
     const double iv0 = vmin + hvBorder, iv1 = vmax - hvBorder;
+    // Explicit interior grid density: gridU/gridV name the interior column/
+    // row counts directly, an alternative to the geometry/border-driven
+    // spacing above (the `boundary` key sizes the RIM; these size the
+    // interior grid). Only when the user typed them (differs from the model
+    // default) — otherwise the spacing above stands and default output is
+    // byte-identical. Sized on the inset box so nx/ny land on the request;
+    // the coverage pass below may still add rows, never remove them.
+    if (gridUOverride > 0) hu = std::max(1e-9, (iu1 - iu0) / gridUOverride);
+    if (gridVOverride > 0) hv = std::max(1e-9, (iv1 - iv0) / gridVOverride);
     if (iu1 - iu0 < 0.5 * hu || iv1 - iv0 < 0.5 * hv) return false;
     // Face uv area (outer rings minus holes): the coverage check below
     // compares kept-cell area against it.
@@ -6551,7 +6589,12 @@ bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         return kept;
     };
     int keptCells = 0;
-    for (int attempt = 0;; ++attempt) {
+    // An explicit gridU/gridV is the user's exact interior density; the
+    // coverage heuristic must not silently refine it away, so skip the
+    // densify pass when either was set (the cellCap guard below still bites
+    // a genuine pathology).
+    const bool gridPinned = gridUOverride > 0 || gridVOverride > 0;
+    for (int attempt = 0; !gridPinned; ++attempt) {
         keptCells = buildGrid();
         const double coverage = keptCells * hu * hv / faceArea;
         const bool canShrink =
@@ -6560,6 +6603,7 @@ bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         hu = std::max(huBorder, hu / 1.7);
         hv = std::max(hvBorder, hv / 1.7);
     }
+    if (gridPinned) keptCells = buildGrid();
     // Per-face pathology guard on ACTUAL emitted cells (fs.cellCap): an
     // offset surface whose fine border/curvature drove the interior far
     // past its area-share budget gets coarsened until it fits. A sane
@@ -12629,11 +12673,16 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             fsD.angleToleranceDeg =
                 std::clamp(fsD.angleToleranceDeg / dscD, 1.0, 60.0);
         }
+        // An explicit (tightened) angle tolerance makes the floor web's
+        // interior split on facet-turn angle too, not just chord sag.
+        const bool angleSplitD =
+            settings.perFace.count(fid) &&
+            s.angleToleranceDeg != settings.defaults.angleToleranceDeg;
         {
             MeshBuilder retry(parts[fid]);
             const bool built = meshContractFallback(face, model, fid,
                                                     solvedEdge, s.radial,
-                                                    retry, &fsD);
+                                                    retry, &fsD, angleSplitD);
             const int floorBad =
                 built ? borderContractViolation(fid, parts[fid]) : -1;
             if (built && floorBad == 0) {
@@ -12667,6 +12716,19 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         BRepAdaptor_Surface surf(face);
         MeshBuilder out(parts[fid]);
         const int nu = counts[fid][0], nv = counts[fid][1];
+        // An explicit per-face gridU/gridV (a count DIFFERING from the model
+        // default) drives the quad-fill interior grid directly; 0 means "not
+        // set" so the geometry/border spacing stands and default output is
+        // unchanged.
+        const bool ovFace = settings.perFace.count(fid) > 0;
+        const int quadGridU =
+            ovFace && s.gridU != settings.defaults.gridU ? s.gridU : 0;
+        const int quadGridV =
+            ovFace && s.gridV != settings.defaults.gridV ? s.gridV : 0;
+        // A tightened angle tolerance drives the floor-web angle split.
+        const bool angleSplit =
+            ovFace &&
+            s.angleToleranceDeg != settings.defaults.angleToleranceDeg;
 
         // Both rims' phases, each mapped to its own v end; a band with
         // one rim (or none) uses the same phase at both ends.
@@ -12797,7 +12859,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                 qs.angleToleranceDeg / qsc, 1.0, 60.0);
                         }
                         if (meshQuadFill(face, surf, model, fid, solvedEdge,
-                                         s.radial, qs, qf)) {
+                                         s.radial, qs, qf, quadGridU,
+                                         quadGridV)) {
                             if (!s.pureTriFloor) pairPartTris(parts[fid]);
                             built = borderContractViolation(
                                         fid, parts[fid]) == 0;
@@ -12871,7 +12934,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         std::clamp(qs.angleToleranceDeg / qsc, 1.0, 60.0);
                 }
                 if (!meshQuadFill(face, surf, model, fid, solvedEdge,
-                                  s.radial, qs, qf)) {
+                                  s.radial, qs, qf, quadGridU, quadGridV)) {
                     demote(fid, face, surf, s, "ribbon->quad fill failed");
                 } else if (!s.pureTriFloor) {
                     pairPartTris(parts[fid]);
@@ -12890,7 +12953,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         std::clamp(qs.angleToleranceDeg / qsc, 1.0, 60.0);
                 }
                 if (!meshQuadFill(face, surf, model, fid, solvedEdge,
-                                  s.radial, qs, out)) {
+                                  s.radial, qs, out, quadGridU, quadGridV)) {
                     demote(fid, face, surf, s, "quad fill failed");
                 } else if (!s.pureTriFloor) {
                     // Lift the CDT rim from a tri fan into quad-dominant
@@ -12945,7 +13008,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     parts[fid] = PolyMesh();
                     MeshBuilder retryFloor(parts[fid]);
                     if (meshContractFallback(face, model, fid, solvedEdge,
-                                             s.radial, retryFloor, &fs) &&
+                                             s.radial, retryFloor, &fs,
+                                             angleSplit) &&
                         borderContractViolation(fid, parts[fid]) == 0) {
                         fellBack[fid] = 2;  // exact borders: authority
                         break;
