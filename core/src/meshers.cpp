@@ -2004,16 +2004,135 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
         }
     }
 
+    // A collapsed patch side (makeCoonsPatch's pole, or a rim that sampled
+    // a near-zero corner edge) yields a COLUMN of degenerate cells: two of
+    // the four corners land on the same point, so the weld later shears
+    // each into a bare triangle -- the tri sunburst a coons pole sheds.
+    // Emit the honest quad cells straight away; gather each degenerate cell
+    // under its pole apex, then ladder the fan into quads (with one pentagon
+    // when the fan has an odd number of rungs) so the pole caps
+    // quad-dominant. Non-degenerate faces take exactly the old path.
+    // A corner pair this close collapses under the global weld (default
+    // 1e-6 mm) into the shared apex that a tri fan pivots on -- an order of
+    // magnitude above that catches near-degenerate poles too, and stays far
+    // below any legitimate cell edge, so honest faces never trip it.
+    auto samePos = [&](uint32_t a, uint32_t b) {
+        const auto& A = out.mesh().vertices[a];
+        const auto& B = out.mesh().vertices[b];
+        const double dx = A[0] - B[0], dy = A[1] - B[1], dz = A[2] - B[2];
+        return dx * dx + dy * dy + dz * dz <= 1e-10;  // ~1e-5 mm
+    };
+    struct PoleFan {
+        uint32_t apex;
+        std::vector<std::array<uint32_t, 2>> segs;  // rim rungs, in cell order
+    };
+    std::vector<PoleFan> fans;
     for (int j = j0; j < j1; ++j) {
         for (int i = i0; i < i1; ++i) {
-            std::vector<uint32_t> ring = {grid[j * (nu + 1) + i],
-                                          grid[j * (nu + 1) + i + 1],
-                                          grid[(j + 1) * (nu + 1) + i + 1],
-                                          grid[(j + 1) * (nu + 1) + i]};
+            std::array<uint32_t, 4> ring = {grid[j * (nu + 1) + i],
+                                            grid[j * (nu + 1) + i + 1],
+                                            grid[(j + 1) * (nu + 1) + i + 1],
+                                            grid[(j + 1) * (nu + 1) + i]};
             if (i == 0 && j == 0 && !stubVerts.empty()) {
-                ring.insert(ring.end(), stubVerts.begin(), stubVerts.end());
+                std::vector<uint32_t> withStub(ring.begin(), ring.end());
+                withStub.insert(withStub.end(), stubVerts.begin(),
+                                stubVerts.end());
+                out.addPolygon(std::move(withStub), faceId, flip);
+                continue;
             }
-            out.addPolygon(std::move(ring), faceId, flip);
+            int deg = -1;
+            for (int k = 0; k < 4; ++k) {
+                if (samePos(ring[k], ring[(k + 1) % 4])) { deg = k; break; }
+            }
+            if (deg < 0) {
+                out.addPolygon({ring[0], ring[1], ring[2], ring[3]}, faceId,
+                               flip);
+                continue;
+            }
+            // CCW triangle after the collapse: apex = the coincident corner,
+            // the two rim verts are the far pair in winding order.
+            const uint32_t apex = ring[deg];
+            const std::array<uint32_t, 2> seg = {ring[(deg + 2) % 4],
+                                                 ring[(deg + 3) % 4]};
+            int fi = -1;
+            for (size_t f = 0; f < fans.size(); ++f) {
+                if (samePos(fans[f].apex, apex)) { fi = int(f); break; }
+            }
+            if (fi < 0) {
+                fans.push_back({apex, {}});
+                fi = int(fans.size()) - 1;
+            }
+            fans[fi].segs.push_back(seg);
+        }
+    }
+    // Ladder every pole fan. The rungs are directed apex->a->b triangles;
+    // chained end-to-start they give the rim in winding order (a fan on the
+    // opposite side sweeps in reverse cell order, so chain by endpoints,
+    // not by loop order). Pair rungs into apex quads, folding the odd tail
+    // into a pentagon so no triangle survives. If the rungs don't form one
+    // clean path (never seen on a real pole), emit them raw -- watertight.
+    for (const PoleFan& fan : fans) {
+        std::map<uint32_t, std::array<uint32_t, 2>> byStart;
+        std::set<uint32_t> isEnd;
+        bool simple = true;
+        for (const auto& s : fan.segs) {
+            if (!byStart.emplace(s[0], s).second) simple = false;
+            isEnd.insert(s[1]);
+        }
+        uint32_t head = fan.segs.front()[0];
+        for (const auto& s : fan.segs) {
+            if (!isEnd.count(s[0])) { head = s[0]; break; }
+        }
+        std::vector<uint32_t> rim{head};
+        uint32_t cur = head;
+        while (byStart.count(cur) && rim.size() <= fan.segs.size()) {
+            cur = byStart[cur][1];
+            rim.push_back(cur);
+        }
+        if (!simple || int(rim.size()) != int(fan.segs.size()) + 1) {
+            for (const auto& s : fan.segs) {
+                out.addPolygon({fan.apex, s[0], s[1]}, faceId, flip);
+            }
+            continue;
+        }
+        // Two rungs merge into an apex quad only where the pole surface
+        // stays flat across them -- a crease (the tork jacket seam) would
+        // fold the merged cell over the CAD normal. Gauge it by the two
+        // rung triangles' normals: if they oppose, leave the rungs as
+        // triangles rather than ship a fold.
+        auto rungNormal = [&](uint32_t b, uint32_t c) {
+            const auto& A = out.mesh().vertices[fan.apex];
+            const auto& B = out.mesh().vertices[b];
+            const auto& C = out.mesh().vertices[c];
+            const double ux = B[0] - A[0], uy = B[1] - A[1], uz = B[2] - A[2];
+            const double vx = C[0] - A[0], vy = C[1] - A[1], vz = C[2] - A[2];
+            return gp_Vec(uy * vz - uz * vy, uz * vx - ux * vz,
+                          ux * vy - uy * vx);
+        };
+        auto flat = [&](int i) {  // rungs i and i+1 fold-free as one quad
+            const gp_Vec n1 = rungNormal(rim[i], rim[i + 1]);
+            const gp_Vec n2 = rungNormal(rim[i + 1], rim[i + 2]);
+            return n1.Magnitude() > 1e-20 && n2.Magnitude() > 1e-20 &&
+                   n1.Dot(n2) > 0.0;
+        };
+        const int segCount = int(rim.size()) - 1;
+        int t = 0;
+        while (t < segCount) {
+            const int left = segCount - t;
+            if (left == 3 && flat(t) && flat(t + 1)) {
+                // Pentagon soaks up the odd tail across three flat rungs.
+                out.addPolygon({fan.apex, rim[t], rim[t + 1], rim[t + 2],
+                                rim[t + 3]},
+                               faceId, flip);
+                t += 3;
+            } else if (left >= 2 && flat(t)) {
+                out.addPolygon({fan.apex, rim[t], rim[t + 1], rim[t + 2]},
+                               faceId, flip);
+                t += 2;
+            } else {  // a crease or a lone tail rung: an honest triangle
+                out.addPolygon({fan.apex, rim[t], rim[t + 1]}, faceId, flip);
+                t += 1;
+            }
         }
     }
 
@@ -5921,10 +6040,192 @@ bool zipperRings(const std::vector<WebPoint>& outer,
     return true;
 }
 
+// A curved single-loop cap that coons rejected for want of four clear
+// corners -- a dished disk, a two-tip lens, a rounded triangle -- meshes
+// here as CONCENTRIC quad rings shrinking toward the UV centroid, the
+// innermost closed as one n-gon: 0 tris, borders exact at their solved
+// counts, every interior vertex evaluated ON the surface so the dish is
+// followed (the Plasticity disk-cap pattern). The alternative, quad-fill's
+// grid + CDT rim, tri-fans the pointed rim of exactly these shapes. Bails
+// to false (so quad-fill takes over) for anything not star-shaped from its
+// centroid, or with four+ genuine corners (a rectangle already grids clean).
+bool meshDiskCap(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
+                 const Model& model, int faceId,
+                 const std::vector<int>& solvedEdge, int radialDefault,
+                 MeshBuilder& out) {
+    int wires = 0;
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        if (++wires > 1) return false;  // a hole needs a web, not a fan cap
+    }
+    if (wires != 1) return false;
+    if (surf.GetType() == GeomAbs_Plane) return false;  // flat: CDT/n-gon own it
+
+    std::vector<PlanarRing> rings;
+    if (!samplePlanarRings(face, model, solvedEdge, radialDefault, rings)) {
+        return false;
+    }
+    if (rings.size() != 1) return false;
+    const PlanarRing& r = rings[0];
+    const size_t n = r.uv.size();
+    if (n < 6) return false;
+
+    // UV centroid, and the star-shape test: every boundary edge must turn
+    // the same way about it (positive with the normalized outer winding),
+    // or a homothety-shrunk ring would self-cross. samplePlanarRings has
+    // already oriented the outer ring CCW in UV.
+    double cu = 0, cv = 0;
+    for (const gp_Pnt2d& q : r.uv) {
+        cu += q.X();
+        cv += q.Y();
+    }
+    cu /= double(n);
+    cv /= double(n);
+    // Tolerance relative to the strongest turn: a near-collinear rim vertex
+    // (a slightly dished, elongated cap) dips a hair negative from rounding
+    // and must not veto the cap; only a genuine reflex notch does.
+    double maxCross = 0;
+    for (size_t i = 0; i < n; ++i) {
+        const gp_Pnt2d& a = r.uv[i];
+        const gp_Pnt2d& b = r.uv[(i + 1) % n];
+        maxCross = std::max(maxCross, std::abs((a.X() - cu) * (b.Y() - cv) -
+                                               (a.Y() - cv) * (b.X() - cu)));
+    }
+    const double starTol = -1e-3 * maxCross;
+    for (size_t i = 0; i < n; ++i) {
+        const gp_Pnt2d& a = r.uv[i];
+        const gp_Pnt2d& b = r.uv[(i + 1) % n];
+        const double cross = (a.X() - cu) * (b.Y() - cv) -
+                             (a.Y() - cv) * (b.X() - cu);
+        if (cross <= starTol) return false;  // reflex / centroid outside
+    }
+
+    // Corner screen: a cap has at most a few genuine corners (disk 0, lens
+    // 2, rounded triangle 3). Four or more is a panel the grid quads well
+    // already -- don't hijack it.
+    int corners = 0;
+    for (size_t i = 0; i < n; ++i) {
+        const gp_Pnt& a = r.p[(i + n - 1) % n];
+        const gp_Pnt& b = r.p[i];
+        const gp_Pnt& c = r.p[(i + 1) % n];
+        gp_Vec u(a, b), v(b, c);
+        if (u.Magnitude() < 1e-12 || v.Magnitude() < 1e-12) continue;
+        if (u.Angle(v) > 50.0 * M_PI / 180.0) ++corners;
+    }
+    if (corners > 3) return false;
+
+    // Radial resolution: divide the mean rim->apex distance into steps of
+    // roughly the rim's own vertex spacing so ring cells stay near-square.
+    // At least two layers => >=1 quad ring plus the central n-gon.
+    gp_Pnt apex;
+    try {
+        apex = surf.Value(cu, cv);
+    } catch (const Standard_Failure&) {
+        return false;
+    }
+    double meanEdge = 0, meanR = 0;
+    for (size_t i = 0; i < n; ++i) {
+        meanEdge += r.p[i].Distance(r.p[(i + 1) % n]);
+        meanR += r.p[i].Distance(apex);
+    }
+    meanEdge /= double(n);
+    meanR /= double(n);
+    if (meanEdge < 1e-12 || meanR < 1e-12) return false;
+    int steps = int(std::lround(meanR / meanEdge));
+    steps = std::clamp(steps, 2, 16);
+
+    const bool flip = face.Orientation() == TopAbs_REVERSED;
+
+    // Layer 0 = the rim (the contract, its own vertices). Inner layers
+    // homothety-shrink the rim toward the UV centroid and re-evaluate on
+    // the surface. The innermost layer is closed as a single n-gon.
+    // Compute every layer's points FIRST (no mesh mutation yet). Layer 0 is
+    // the rim; inner layers homothety-shrink it toward the UV centroid and
+    // re-evaluate on the surface.
+    std::vector<std::vector<gp_Pnt>> P(steps, std::vector<gp_Pnt>(n));
+    std::vector<std::vector<gp_Pnt2d>> UV(steps, std::vector<gp_Pnt2d>(n));
+    for (size_t i = 0; i < n; ++i) {
+        P[0][i] = r.p[i];
+        UV[0][i] = r.uv[i];
+    }
+    for (int k = 1; k < steps; ++k) {
+        const double f = double(steps - k) / double(steps);
+        for (size_t i = 0; i < n; ++i) {
+            const double uu = cu + f * (r.uv[i].X() - cu);
+            const double vv = cv + f * (r.uv[i].Y() - cv);
+            try {
+                P[k][i] = surf.Value(uu, vv);
+            } catch (const Standard_Failure&) {
+                return false;
+            }
+            UV[k][i] = gp_Pnt2d(uu, vv);
+        }
+    }
+    // Fold guard: a strongly-dished cap can shrink a ring past a curvature
+    // crease and flip a cell over the surface. Sign each ring cell by its
+    // normal dotted with the analytic surface normal at the cell's UV
+    // centroid; a clean cap is sign-consistent (the sign only encodes face
+    // orientation). If any cell disagrees with the others, a cell folds --
+    // bail so quad-fill owns the face instead of shipping the fold.
+    int pos = 0, neg = 0;
+    for (int k = 0; k + 1 < steps; ++k) {
+        for (size_t i = 0; i < n; ++i) {
+            const size_t j = (i + 1) % n;
+            const gp_Vec cn = gp_Vec(P[k][i], P[k][j])
+                                  .Crossed(gp_Vec(P[k][i], P[k + 1][i]));
+            const double mu = 0.25 * (UV[k][i].X() + UV[k][j].X() +
+                                      UV[k + 1][j].X() + UV[k + 1][i].X());
+            const double mv = 0.25 * (UV[k][i].Y() + UV[k][j].Y() +
+                                      UV[k + 1][j].Y() + UV[k + 1][i].Y());
+            gp_Pnt sp;
+            gp_Vec sdu, sdv;
+            try {
+                surf.D1(mu, mv, sp, sdu, sdv);
+            } catch (const Standard_Failure&) {
+                return false;
+            }
+            const gp_Vec sn = sdu.Crossed(sdv);
+            if (cn.Magnitude() > 1e-18 && sn.Magnitude() > 1e-18) {
+                (cn.Dot(sn) >= 0 ? pos : neg)++;
+            }
+        }
+    }
+    if (pos > 0 && neg > 0) return false;  // a cell folds -> quad-fill owns it
+
+    // Clean: commit the vertices and cells.
+    std::vector<std::vector<uint32_t>> layer(steps);
+    for (int k = 0; k < steps; ++k) {
+        layer[k].resize(n);
+        for (size_t i = 0; i < n; ++i) {
+            layer[k][i] =
+                out.addVertex(P[k][i], {faceId, UV[k][i].X(), UV[k][i].Y()});
+        }
+    }
+    for (int k = 0; k + 1 < steps; ++k) {
+        for (size_t i = 0; i < n; ++i) {
+            const size_t j = (i + 1) % n;
+            out.addPolygon({layer[k][i], layer[k][j], layer[k + 1][j],
+                            layer[k + 1][i]},
+                           faceId, flip);
+        }
+    }
+    out.addPolygon(layer[steps - 1], faceId, flip);
+    dbg("disk cap %d: %zu rim verts, %d ring(s) + central %zu-gon", faceId,
+        n, steps - 1, n);
+    return true;
+}
+
 bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                   const Model& model, int faceId,
                   const std::vector<int>& solvedEdge, int radialDefault,
                   const FaceMeshSettings& fs, MeshBuilder& out) {
+    // A curved dished cap (coons rejected it for want of four corners)
+    // gets clean concentric quad rings + a central n-gon instead of the
+    // grid+CDT rim's tri fan. Tightly gated inside; falls through here on
+    // any doubt so no other quad-fill face is disturbed.
+    if (meshDiskCap(face, surf, model, faceId, solvedEdge, radialDefault,
+                    out)) {
+        return true;
+    }
     const double minSize = fs.minSize;
     std::vector<PlanarRing> rings;
     if (!samplePlanarRings(face, model, solvedEdge, radialDefault, rings)) {
