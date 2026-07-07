@@ -6466,6 +6466,26 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         return plan;
     }
 
+    // Sliver fillet guard: a fillet whose blend radius is below the chord
+    // tolerance is a micro-round smaller than the deviation the mesh is
+    // allowed to make anyway (the teleporter's 0.096 mm torus fillets). A
+    // transfinite Coons grid across such a near-degenerate strip folds —
+    // the untangler cannot separate rows thinner than the weld quantum —
+    // and it carries no shape a single boundary web can't. Demote it to a
+    // minimal n-gon: its border samples the neighbours' solved counts, so
+    // it still welds, and a boundary web cannot invert. Generalizes to any
+    // model's micro-fillets: catches the teleporter's 0.096 mm rounds and
+    // the STEP board's 0.06-0.125 mm ones, while the 0.15 mm gate sits
+    // safely below every genuine fillet (foam's smallest is 0.217 mm).
+    if (info.isFillet && info.radius > 0.0 &&
+        info.radius < 1.5 * std::max(1e-9, s.chordTolerance) &&
+        collectPlanarLoops(face, surf, model, plan, /*requirePlane=*/false)) {
+        plan.kind = MesherKind::MinimalNGon;
+        dbg("plan face %d: sliver fillet r=%.4g (< %.4g) -> minimal n-gon",
+            fid, info.radius, 1.5 * s.chordTolerance);
+        return plan;
+    }
+
     // revCovers is NOT required: a pipe-saddle band legitimately fails
     // fixed-v coverage — edgesHugRimsOrInserts checks between-chain
     // coverage itself, so wavy-rim bands loft instead of falling to a
