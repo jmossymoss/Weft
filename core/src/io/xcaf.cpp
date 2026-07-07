@@ -14,7 +14,6 @@
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopLoc_Location.hxx>
-#include <TopTools_ListIteratorOfListOfShape.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
@@ -327,8 +326,11 @@ static std::vector<TopoDS_Shape> mappedFinals(const BRepTools_History& hist,
     if (hist.IsRemoved(s)) return out;
     const TopTools_ListOfShape& mod = hist.Modified(s);
     if (!mod.IsEmpty()) {
-        for (TopTools_ListIteratorOfListOfShape it(mod); it.More(); it.Next())
-            out.push_back(it.Value());
+        // Range-based iteration over the NCollection list — portable across
+        // OCCT versions/platforms (the dedicated
+        // TopTools_ListIteratorOfListOfShape.hxx header is absent in some
+        // Windows OCCT packages).
+        for (const TopoDS_Shape& sm : mod) out.push_back(sm);
     } else {
         out.push_back(s);  // identity: survived heal unchanged
     }
