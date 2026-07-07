@@ -6057,15 +6057,30 @@ bool planQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     // through the surface. Only faces that wrap a FULL period need the
     // seam-aware revolution grids; a small patch trimmed from a closed
     // surface (fillet corners, wedges on cylinders) is a plain chart.
+    //
+    // A full-period BSPLINE band is the exception we DO take: it wraps a
+    // closed freeform loop (a curved skirt/collar), yet has no analytic
+    // revolution to fall back on — the revolution grids only fire for
+    // classic surfaces of revolution / cylinders, and coons rejects the
+    // seam. Meshing it as a plain UV chart keeps the seam ON the
+    // v-boundary (the grid never crosses it), so the two seam columns
+    // coincide in 3D and weld watertight, and the band gets clean quad
+    // flow instead of a fallback tri fan. Analytic periodic surfaces
+    // (cone caps, cylinders) keep rejecting so their dedicated
+    // revolution / minimal-cap routes still own them byte-for-byte.
     {
         Handle(Geom_Surface) S = BRep_Tool::Surface(face);
         if (S.IsNull()) return false;
         double umin, umax, vmin, vmax;
         BRepTools::UVBounds(face, umin, umax, vmin, vmax);
-        if (S->IsUPeriodic() && umax - umin >= 0.999 * S->UPeriod()) {
-            return false;
-        }
-        if (S->IsVPeriodic() && vmax - vmin >= 0.999 * S->VPeriod()) {
+        const bool isBSpline = surf.GetType() == GeomAbs_BSplineSurface;
+        const bool uFull =
+            S->IsUPeriodic() && umax - umin >= 0.999 * S->UPeriod();
+        const bool vFull =
+            S->IsVPeriodic() && vmax - vmin >= 0.999 * S->VPeriod();
+        // A doubly-periodic full wrap (a whole torus / closed tube) has no
+        // boundary to anchor a chart — never take it, even as a bspline.
+        if ((uFull || vFull) && !(isBSpline && !(uFull && vFull))) {
             return false;
         }
     }
