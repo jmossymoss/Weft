@@ -10613,19 +10613,51 @@ bool meshRevolutionAnnulusBody(const BRepAdaptor_Surface& surf, int faceId,
     // ceiling and this shoulder, not a full-height sheared triangle.
     std::vector<uint32_t> shoulder(nu);
     std::vector<gp_Pnt> shoulderP(nu);
+    std::vector<double> shoulderV(nu);
     for (int i = 0; i < nu; ++i) {
         const double v = notchVAt(colU[i]) - sgn * band;
         const gp_Pnt p = surf.Value(colU[i], v);
+        shoulderV[i] = v;
         shoulderP[i] = p;
         shoulder[i] = out.addVertex(p, {faceId, colU[i], v});
     }
-    // Eased lattice: flat body ceiling -> profiled shoulder (one-to-one dense
-    // quads, winding as the body cells).
-    for (int i = 0; i < nu; ++i) {
-        const int i2 = (i + 1) % nu;
-        out.addPolygon({ring[bodyRows - 1][i], ring[bodyRows - 1][i2],
-                        shoulder[i2], shoulder[i]},
-                       faceId, flip);
+    // Eased lattice: flat body ceiling -> profiled shoulder, in enough
+    // DENSE-count rows that the columns keep their resolution all the way up
+    // to the shoulder instead of collapsing into one oversized band. A wide
+    // notch (its v-range spans a big chunk of the band height) needs this
+    // eased zone to itself span a big chunk of the height, so a single row
+    // there would read as "segments stop partway up, boundary reached via one
+    // giant panel." Size the row count off the rim's own column spacing (near
+    // -square cells) rather than the flat body's row spacing — at the default
+    // axial=1 the flat body is intentionally one giant row, which must not
+    // starve this zone of resolution too.
+    double meanColChord = 0;
+    for (int i = 0; i < nu; ++i)
+        meanColChord += denseRim[i].p.Distance(denseRim[(i + 1) % nu].p);
+    meanColChord = std::max(1e-9, meanColChord / nu);
+    double maxTrans = 0;
+    for (int i = 0; i < nu; ++i)
+        maxTrans = std::max(maxTrans, std::abs(shoulderV[i] - vFlatTop));
+    int nEase = std::clamp(int(std::round(maxTrans / meanColChord)), 1, 64);
+    std::vector<std::vector<uint32_t>> ease(nEase + 1);
+    ease[0] = ring[bodyRows - 1];
+    for (int k = 1; k < nEase; ++k) {
+        const double t = double(k) / nEase;
+        ease[k].resize(nu);
+        for (int i = 0; i < nu; ++i) {
+            const double v = vFlatTop + (shoulderV[i] - vFlatTop) * t;
+            const gp_Pnt p = surf.Value(colU[i], v);
+            ease[k][i] = out.addVertex(p, {faceId, colU[i], v});
+        }
+    }
+    ease[nEase] = shoulder;
+    for (int k = 0; k + 1 < int(ease.size()); ++k) {
+        for (int i = 0; i < nu; ++i) {
+            const int i2 = (i + 1) % nu;
+            out.addPolygon({ease[k][i], ease[k][i2], ease[k + 1][i2],
+                            ease[k + 1][i]},
+                           faceId, flip);
+        }
     }
 
     // The notch rim's EXACT samples (its own solved count) and points.
