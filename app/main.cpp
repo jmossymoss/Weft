@@ -62,6 +62,8 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb/stb_image_write.h>
 
+#include "weft_logo_data.h"   // embedded RGBA window-icon + Settings badge
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -132,6 +134,7 @@ static std::string userDataDir() {
 // and style metrics rebuild when it changes (e.g. dragging the window to
 // a monitor with a different scale).
 static float gUiScale = 1.0f;
+static GLuint gLogoBadgeTex = 0;   // Settings-panel logo badge (0 until GL up)
 static float gPendingUiScale = 0.0f;
 
 static void logLine(const char* fmt, ...) {
@@ -3696,9 +3699,19 @@ static void drawUi(App& app) {
                              ImGuiCond_FirstUseEver);
     ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_NoCollapse);
 
-    ImGui::TextColored({0.95f, 0.62f, 0.18f, 1.0f}, "WEFT");
-    ImGui::SameLine();
-    ImGui::TextDisabled("b-rep retopology");
+    if (gLogoBadgeTex) {
+        const float h = 30.0f * gUiScale;
+        ImGui::Image((ImTextureID)(intptr_t)gLogoBadgeTex, {h, h});
+        ImGui::SameLine();
+        ImGui::BeginGroup();
+        ImGui::TextColored({0.95f, 0.62f, 0.18f, 1.0f}, "WEFT");
+        ImGui::TextDisabled("b-rep retopology");
+        ImGui::EndGroup();
+    } else {
+        ImGui::TextColored({0.95f, 0.62f, 0.18f, 1.0f}, "WEFT");
+        ImGui::SameLine();
+        ImGui::TextDisabled("b-rep retopology");
+    }
     ImGui::Separator();
     drawShadingBar(app);
     drawAxisGizmo(app);
@@ -4146,9 +4159,28 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "failed to create window/GL context\n");
         return 1;
     }
+    // Window/taskbar icon (embedded RGBA at several sizes; GLFW picks best).
+    {
+        GLFWimage icons[4] = {
+            {16, 16, const_cast<unsigned char*>(weft_icon_16)},
+            {32, 32, const_cast<unsigned char*>(weft_icon_32)},
+            {48, 48, const_cast<unsigned char*>(weft_icon_48)},
+            {64, 64, const_cast<unsigned char*>(weft_icon_64)},
+        };
+        glfwSetWindowIcon(window, 4, icons);
+    }
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
     loadGl();
+
+    // Settings-panel logo badge: upload the embedded RGBA as a GL texture.
+    glGenTextures(1, &gLogoBadgeTex);
+    glBindTexture(GL_TEXTURE_2D, gLogoBadgeTex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, weft_badge_w, weft_badge_h, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, weft_badge);
+    glBindTexture(GL_TEXTURE_2D, 0);
 
     glfwSetScrollCallback(window, scrollCb);  // ImGui chains it
 
