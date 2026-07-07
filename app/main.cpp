@@ -1726,8 +1726,15 @@ static std::string adjustFaceDensityOne(App& app, weft::FaceMeshSettings& s,
     switch (kind) {
         case MK::RevolutionGrid:
         case MK::DiskCap:
+        case MK::DomeCap:
             if (secondary) count(s.axial, 1, "axial", live[1]);
             else count(s.radial, 3, "radial", live[0]);
+            break;
+        case MK::RibbonSweep:
+        case MK::RailLadder:
+            // Rail density along the sweep — radial seeds the rail sample
+            // count; there is no independent secondary knob.
+            count(s.radial, 3, "rail density", live[0]);
             break;
         case MK::RingJunction:
             if (secondary) count(s.junctionRings, 1, "junction rings", 0);
@@ -2637,7 +2644,9 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
     // default too (each closed loop, or each hole circle, proposes it).
     const bool revolved = all || k == MK::RevolutionGrid ||
                           k == MK::DiskCap || k == MK::AnnulusRing ||
-                          k == MK::PlateWeb || k == MK::QuadFill;
+                          k == MK::PlateWeb || k == MK::QuadFill ||
+                          k == MK::RibbonSweep || k == MK::RailLadder ||
+                          k == MK::DomeCap;
     const bool grid = all || k == MK::PlanarGrid || k == MK::MinimalNGon ||
                       k == MK::RingJunction || k == MK::CoonsGrid;
     const bool freeform = all || k == MK::QuadDominant || k == MK::Fallback;
@@ -2723,18 +2732,21 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
             // quad-fill it merely seeds loop shares and killing
             // adaptive collapses the borders to flat pins.
             if (kind && (k == MK::RevolutionGrid || k == MK::DiskCap ||
-                         k == MK::AnnulusRing)) {
+                         k == MK::AnnulusRing || k == MK::RibbonSweep ||
+                         k == MK::RailLadder || k == MK::DomeCap)) {
                 s.adaptive = false;
             }
         }
         hover({int(MK::RevolutionGrid), int(MK::DiskCap),
-               int(MK::AnnulusRing), int(MK::PlateWeb), int(MK::QuadFill)});
-        if (all || k == MK::RevolutionGrid) {
+               int(MK::AnnulusRing), int(MK::PlateWeb), int(MK::QuadFill),
+               int(MK::RibbonSweep), int(MK::RailLadder), int(MK::DomeCap)});
+        if (all || k == MK::RevolutionGrid || k == MK::DomeCap) {
             if (ImGui::DragInt("axial", &s.axial, 0.2f, 1, 256)) {
                 ch = true;
-                if (kind && k == MK::RevolutionGrid) s.adaptive = false;
+                if (kind && (k == MK::RevolutionGrid || k == MK::DomeCap))
+                    s.adaptive = false;
             }
-            hover({int(MK::RevolutionGrid)});
+            hover({int(MK::RevolutionGrid), int(MK::DomeCap)});
         }
         if (all || k == MK::DiskCap) {
             int cap = s.cap == weft::CapStyle::Fan ? 1 : 0;
@@ -2829,7 +2841,8 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
             "auto",          "revolution-grid", "disk-cap",
             "parametric-grid", "coons-grid",    "ring-junction",
             "quad-dominant", "minimal-ngon",    "fallback-tri",
-            "annulus-ring",  "plate-web",       "quad-fill"};
+            "annulus-ring",  "plate-web",       "quad-fill",
+            "rail-ladder",   "ribbon-sweep",    "dome-cap"};
         const int nMesher = int(IM_ARRAYSIZE(kMesherNames));
         const uint32_t bmask =
             highlightApp ? buildableMesherMask(*highlightApp,
