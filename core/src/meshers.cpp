@@ -12776,6 +12776,25 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         }
     }
 
+    // Report the counts the solver ACTUALLY landed on, per face, against
+    // what was requested — so a --radial that a shared/feature-constrained
+    // rim couldn't take is visible instead of silently ignored. --debug only.
+    for (int fid = 1; fid <= faceN; ++fid) {
+        const FacePlan& plan = plans.at(fid);
+        if (!plan.constrains) continue;
+        const FaceMeshSettings& s = settings.forFace(fid);
+        const int nu = counts[fid][0], nv = counts[fid][1];
+        const bool isRev = plan.kind == MesherKind::RevolutionGrid ||
+                           plan.kind == MesherKind::DiskCap ||
+                           plan.kind == MesherKind::DomeCap ||
+                           plan.kind == MesherKind::AnnulusRing;
+        const int reqU = isRev ? s.radial : s.gridU;
+        dbg("face %d %s: solved nu=%d nv=%d (requested %s=%d axial=%d)%s", fid,
+            mesherKindName(plan.kind), nu, nv, isRev ? "radial" : "gridu",
+            reqU, s.axial,
+            (isRev && nu != std::max(3, reqU)) ? "  [rim not free]" : "");
+    }
+
     // Per-face pathology guard (see FaceMeshSettings::cellCap). A face's
     // cell count should track its surface area; a face carrying far more
     // cells than its area-share of the model is a sizing pathology, not
