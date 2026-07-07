@@ -228,6 +228,14 @@ struct FacePlan {
     bool domeAzimIsV = true;   // azimuth is the surface's V direction
     double domePolarBase = 0;  // polar param at the base loop
     double domePolarPole = 0;  // polar param at the collapsed pole
+    // A bent ribbon carrying a rectangular end notch whose outline STILL
+    // chains into a Coons patch (the pocket absorbed into one side). The plan
+    // stays Coons — density, borders, and the dense/coarse fallback are all
+    // the historic Coons ones — but the dispatch first TRIES the rail sweep's
+    // clean notch cut, keeping it only when it welds exactly (a fine-railed
+    // solve). When the solve is too coarse for the cut to weld, the untouched
+    // Coons plan carries the face exactly as before.
+    bool tryRibbonNotch = false;
 };
 
 // A genuine full revolution band's boundary consists only of its two
@@ -5111,6 +5119,125 @@ bool ribbonDetect(const TopoDS_Face& face, const Model& model) {
     return r.ok;
 }
 
+// A rectangular NOTCH bitten into one END of the ribbon (a trigger-guard /
+// grip end-slot): the two rails run whole from cap to cap, and the notched
+// cap opens into a rail-mouth-back-mouth-rail chain. findRibbonRails would
+// SWALLOW the notch walls into the rails and sweep the pocket shut (fill);
+// this recovers the TRUE rails (the two long sides, notch NOT absorbed) plus
+// the four notch-corner ring indices so the sweep can CUT the pocket, its
+// walls rising from the cut, instead of covering it.
+struct RibbonEndNotch {
+    bool ok = false;
+    int a0 = -1, a1 = -1, b0 = -1, b1 = -1;  // TRUE rail ring ranges
+    int mouthTop = -1, backTop = -1;         // notch corners, rail-A side
+    int backBot = -1, mouthBot = -1;         // notch corners, rail-B side
+};
+
+// The wire corner ring indices carry the join candidates; a simple ribbon
+// with one end notch has EXACTLY eight (2 rails + near cap + 5 far-cap: two
+// mouth stubs + three walls). The notch back shows as two consecutive REFLEX
+// corners in the outline; everything else is derived by adjacency.
+RibbonEndNotch findRibbonEndNotch(const std::vector<gp_Pnt>& P,
+                                  const std::vector<int>& corners) {
+    RibbonEndNotch nc;
+    const int n = int(corners.size());
+    if (n != 8) return nc;
+    std::vector<gp_Pnt> cp(n);
+    for (int i = 0; i < n; ++i) cp[i] = P[corners[i]];
+    // Average outline normal (Newell over the corner polygon) — the plane the
+    // reflex turns are measured against, robust to the strip's bend.
+    gp_XYZ nrm(0, 0, 0);
+    for (int i = 0; i < n; ++i) {
+        const gp_XYZ& a = cp[i].XYZ();
+        const gp_XYZ& b = cp[(i + 1) % n].XYZ();
+        nrm += gp_XYZ(a.Y() * b.Z() - a.Z() * b.Y(),
+                      a.Z() * b.X() - a.X() * b.Z(),
+                      a.X() * b.Y() - a.Y() * b.X());
+    }
+    if (nrm.Modulus() < 1e-12) return nc;
+    gp_Vec un(nrm);
+    un.Multiply(1.0 / nrm.Modulus());
+    std::vector<int> turn(n, 0);
+    for (int i = 0; i < n; ++i) {
+        gp_Vec e0(cp[(i + n - 1) % n], cp[i]);
+        gp_Vec e1(cp[i], cp[(i + 1) % n]);
+        if (e0.Magnitude() < 1e-9 || e1.Magnitude() < 1e-9) return nc;
+        const double cr = e0.Crossed(e1).Dot(un);
+        turn[i] = cr > 1e-9 ? 1 : (cr < -1e-9 ? -1 : 0);
+    }
+    int sum = 0;
+    for (int t : turn) sum += t;
+    const int convex = sum >= 0 ? 1 : -1;
+    // Exactly one run of two consecutive reflex corners, its neighbours
+    // convex — the notch back. More than one such run: not this class.
+    int rStart = -1;
+    for (int i = 0; i < n; ++i) {
+        if (turn[i] == -convex && turn[(i + 1) % n] == -convex &&
+            turn[(i + n - 1) % n] == convex && turn[(i + 2) % n] == convex) {
+            if (rStart >= 0) return nc;
+            rStart = i;
+        }
+    }
+    if (rStart < 0) return nc;
+    const int backTop = rStart, backBot = (rStart + 1) % n;
+    const int mouthTop = (rStart + n - 1) % n, mouthBot = (rStart + 2) % n;
+    const int railAend = (rStart + n - 2) % n, railBstart = (rStart + 3) % n;
+    const int nearB = (railBstart + 1) % n, nearA = (railBstart + 2) % n;
+    // Exactly two corners (the near cap) span the rails' far ends the long
+    // way round: guarantees single-edge rails and one near cap (the tested
+    // class). Anything richer falls back to the generic sweep.
+    if ((railBstart + 3) % n != railAend) return nc;
+    // Rectangular pocket: mouth and back comparable width, the two side
+    // walls comparable depth and non-trivial. Loose ratios — only rule out a
+    // spurious pair of reflex corners that is plainly not a rectangular bite.
+    const double wMouth = cp[mouthTop].Distance(cp[mouthBot]);
+    const double wBack = cp[backTop].Distance(cp[backBot]);
+    const double dTop = cp[mouthTop].Distance(cp[backTop]);
+    const double dBot = cp[mouthBot].Distance(cp[backBot]);
+    if (wMouth < 1e-6 || wBack < 1e-6 || dTop < 1e-6 || dBot < 1e-6) return nc;
+    if (std::max(wMouth, wBack) > 2.5 * std::min(wMouth, wBack)) return nc;
+    if (std::max(dTop, dBot) > 2.5 * std::min(dTop, dBot)) return nc;
+    // The two derived RAILS must be the dominant long sides -- otherwise the
+    // reflex pair is not a notch back but an ordinary curved-band corner (a
+    // partial-revolution barrel wall), whose short edges would masquerade as
+    // rails and collapse the sweep. Rails run cap to cap; every other outline
+    // segment (near cap, mouth stubs, notch walls) is a minor feature.
+    const double railALen = cp[nearA].Distance(cp[railAend]);
+    const double railBLen = cp[railBstart].Distance(cp[nearB]);
+    double maxOther = 0;
+    for (int i = 0; i < n; ++i) {
+        if (i == nearA || i == railBstart) continue;  // the two rail segments
+        maxOther = std::max(maxOther, cp[i].Distance(cp[(i + 1) % n]));
+    }
+    if (std::min(railALen, railBLen) < 1.8 * maxOther) return nc;
+    nc.a0 = corners[nearA];
+    nc.a1 = corners[railAend];
+    nc.b0 = corners[railBstart];
+    nc.b1 = corners[nearB];
+    nc.mouthTop = corners[mouthTop];
+    nc.backTop = corners[backTop];
+    nc.backBot = corners[backBot];
+    nc.mouthBot = corners[mouthBot];
+    nc.ok = true;
+    return nc;
+}
+
+// Planning-time gate: does this ribbon carry an end notch the cut path owns?
+bool ribbonEndNotchDetect(const TopoDS_Face& face, const Model& model) {
+    int wires = 0;
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        if (++wires > 1) return false;
+    }
+    std::vector<gp_Pnt> P;
+    std::vector<gp_Pnt2d> UV;
+    std::vector<int> corners;
+    if (!sampleRibbonRing(face, model, nullptr, 16, P, UV, corners)) {
+        return false;
+    }
+    if (!findRibbonRails(P, corners).ok) return false;
+    return findRibbonEndNotch(P, corners).ok;
+}
+
 // Ribbon sweep mesher. Returns false (fall back to quad-fill) whenever the
 // strip does not resolve to two equal-count rails with cap-webbed ends --
 // never ships a fold or a leak.
@@ -5127,6 +5254,16 @@ bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
     const int N = int(P.size());
     RibbonRails r = findRibbonRails(P, corners);
     if (!r.ok) return false;
+    // A rectangular end notch: the rail finder swallowed its walls (the rails
+    // veer inward to the pocket back). Recover the TRUE rails so the far cap
+    // stays a notched cap the cut path can open, instead of a swept-shut fill.
+    const RibbonEndNotch notch = findRibbonEndNotch(P, corners);
+    if (notch.ok) {
+        r.a0 = notch.a0;
+        r.a1 = notch.a1;
+        r.b0 = notch.b0;
+        r.b1 = notch.b1;
+    }
     // Rail A walks a0 -> a1 forward; rail B walks b0 -> b1 forward but pairs
     // in reverse (the strip is traversed the opposite way on the far rail),
     // so railBr[0] sits on the SAME end cap as railA[0].
@@ -5148,6 +5285,57 @@ bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
         dbg("ribbon face %d: rails %d/%d too short -> quad-fill", faceId, MA,
             MB);
         return false;
+    }
+    // Fractional station index of a point's nearest projection onto a rail
+    // polyline -- where a notch-back corner falls between two rail stations.
+    auto railStation = [&](const std::vector<int>& rail, const gp_Pnt& t) {
+        double bestD = 1e300, bestF = 0;
+        for (int k = 0; k + 1 < int(rail.size()); ++k) {
+            gp_Vec seg(P[rail[k]], P[rail[k + 1]]);
+            const double L2 = seg.SquareMagnitude();
+            double u = L2 > 1e-18
+                           ? gp_Vec(P[rail[k]], t).Dot(seg) / L2
+                           : 0.0;
+            u = std::clamp(u, 0.0, 1.0);
+            const gp_Pnt foot(P[rail[k]].XYZ() * (1 - u) +
+                              P[rail[k + 1]].XYZ() * u);
+            const double d = foot.Distance(t);
+            if (d < bestD) {
+                bestD = d;
+                bestF = k + u;
+            }
+        }
+        return bestF;
+    };
+    // End-notch cut: stop the full-width body at the last rail station BEFORE
+    // the pocket back (so no body cell straddles the cut), then tile the
+    // notched cap as two side bands + a back connector with the pocket open.
+    int sA = -1, sB = -1;
+    bool notchCut = false;
+    if (notch.ok) {
+        // The pocket walls must each be a SINGLE ring segment: the cut tiles
+        // them corner-to-corner, so an interior wall sample (a fine solve on
+        // the wall) would be dropped and the border would not weld. When they
+        // are not single-segment the cut can't stand -- and a detected notch
+        // must never be swept SHUT -- so bail (quad-fill / coons carries it).
+        const bool wallsSingle =
+            notch.mouthTop == (r.a1 + 1) % N &&
+            notch.backTop == (notch.mouthTop + 1) % N &&
+            notch.backBot == (notch.backTop + 1) % N &&
+            notch.mouthBot == (notch.backBot + 1) % N &&
+            r.b0 == (notch.mouthBot + 1) % N;
+        sA = int(std::floor(railStation(railA, P[notch.backTop])));
+        sB = int(std::floor(railStation(railBr, P[notch.backBot])));
+        notchCut = wallsSingle && sA >= 1 && sB >= 1 && MA - sA >= 1 &&
+                   MB - sB >= 1;
+        if (!notchCut) {
+            // A notch we cannot cleanly cut: never fill it. Hand the face
+            // back so quad-fill (or, for a coons-plan face, coons) owns it.
+            dbg("ribbon face %d: notch present but uncuttable "
+                "(wallsSingle=%d sA=%d sB=%d MA=%d MB=%d) -> fall back",
+                faceId, wallsSingle ? 1 : 0, sA, sB, MA, MB);
+            return false;
+        }
     }
     // The two end caps: cap "1" joins railA[0]=a0 to railBr[0]=b1 along the
     // ring arc b1 -> a0 (forward); cap "2" joins railA[M]=a1 to railBr[M]=b0
@@ -5377,8 +5565,8 @@ bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
     // opposite side), so each rail keeps its own body span.
     const int loA = (cap1Simple || cap1Flat) ? 0 : 1;
     const int loB = (cap1Simple || cap1Flat) ? 0 : 1;
-    const int hiA = (cap2Simple || cap2Flat) ? MA : MA - 1;
-    const int hiB = (cap2Simple || cap2Flat) ? MB : MB - 1;
+    const int hiA = notchCut ? sA : ((cap2Simple || cap2Flat) ? MA : MA - 1);
+    const int hiB = notchCut ? sB : ((cap2Simple || cap2Flat) ? MB : MB - 1);
     // Zip two rails (ring-index chains RA, RB, paired 1:1 at their ends) by
     // ARC LENGTH, not by index. Index pairing twists where a sharp reflex
     // crowds the samples on one rail (the flaregun grip creases: adjacent
@@ -5458,8 +5646,29 @@ bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
     }
     // The rungs laddered along the sweep body (excluding the end caps): the
     // honest primary count for a rail sweep, which the `rail density` knob
-    // (radial) drives up and down.
+    // (radial) drives up and down. Counted before the end-notch cut so it is
+    // the pure body-rung count.
     const int bodyRungs = int(out.mesh().polygons.size() - polyBeforeBody);
+    // End-notch cut. The body stopped full-width at railA[sA]/railBr[sB] (the
+    // last rung wholly BEFORE the pocket). The notched cap is then three
+    // pieces welded onto that rung and the pocket's B-rep walls, the pocket
+    // MOUTH left open (its wall faces rise from the cut):
+    //   * a MIDDLE-BACK quad from the last body rung to the back wall,
+    //   * a TOP band zipped from rail A's far stations to the top wall,
+    //   * a BOTTOM band zipped from the bottom wall to rail B's far stations.
+    // Every band edge is either a rail segment, an interior lattice row, or a
+    // notch wall sampled at its solved count, so the cut welds watertight and
+    // the flow stays an even ladder that simply parts around the slot.
+    if (notchCut) {
+        emit({pushUv(railA[sA]), pushUv(notch.backTop), pushUv(notch.backBot),
+              pushUv(railBr[sB])});
+        std::vector<int> topA(railA.begin() + sA, railA.end());
+        std::vector<int> topB = {notch.backTop, notch.mouthTop};
+        zipRailPair(topA, topB);
+        std::vector<int> botA = {notch.backBot, notch.mouthBot};
+        std::vector<int> botB(railBr.begin() + sB, railBr.end());
+        zipRailPair(botA, botB);
+    }
     // The cap-region boundary in ring order: base-A vertex, the cap arc, then
     // base-B vertex. The closing edge base-B -> base-A is the rail-end rung the
     // body's last cell owns, so any tiling of this boundary welds to the body.
@@ -5584,7 +5793,10 @@ bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
     };
     if (!closeCap(/*nearCap=*/true, cap1Simple, cap1Flat, cap1Arc))
         return false;
-    if (!closeCap(/*nearCap=*/false, cap2Simple, cap2Flat, cap2Arc))
+    // The end-notch cut owns cap 2 (the notched far end); its bands already
+    // closed the pocket, so the generic cap close is skipped there.
+    if (!notchCut &&
+        !closeCap(/*nearCap=*/false, cap2Simple, cap2Flat, cap2Arc))
         return false;
     // Quality gate: the sweep only earns the face when the RAILS carry it --
     // an even quad ladder with the caps a bounded quad/n-gon closure. When
@@ -7578,6 +7790,17 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 };
                 plan.acrossIsU =
                     sideLen(0) + sideLen(2) < sideLen(1) + sideLen(3);
+            }
+            // A bent ribbon whose end notch coons just chained into one side:
+            // the transfinite grid would fan/crowd toward the pocket and cover
+            // it. Flag the plan so the dispatch first tries the rail sweep's
+            // clean notch cut, keeping the Coons plan intact as the fallback
+            // when the solve is too coarse for the cut to weld.
+            if (!info.isFillet && plan.insertWires.empty() &&
+                ribbonEndNotchDetect(face, model)) {
+                plan.tryRibbonNotch = true;
+                dbg("plan face %d: coons + end-notch ribbon -> try sweep cut",
+                    fid);
             }
             return plan;
         }
@@ -13673,6 +13896,25 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             case MesherKind::CoonsGrid: {
                 double holdU = plan.isFillet && plan.acrossIsU ? s.filletHold : 0;
                 double holdV = plan.isFillet && !plan.acrossIsU ? s.filletHold : 0;
+                // A bent ribbon with an end notch: try the rail sweep's clean
+                // notch cut first. Keep it only when it welds EXACTLY (no
+                // border-contract violation) — a fine-railed solve. When the
+                // solve is too coarse for the pocket walls to weld single-row,
+                // the cut can't stand, so fall through to the untouched Coons
+                // plan (the historic result, byte-for-byte).
+                if (plan.tryRibbonNotch) {
+                    PolyMesh tmp;
+                    MeshBuilder rb(tmp);
+                    if (meshRibbonSweep(face, model, fid, solvedEdge, s.radial,
+                                        rb) &&
+                        borderContractViolation(fid, tmp) == 0) {
+                        parts[fid] = std::move(tmp);
+                        dbg("mesh face %d: end-notch ribbon cut (over coons)",
+                            fid);
+                        break;
+                    }
+                    dbg("mesh face %d: ribbon cut unweldable -> coons", fid);
+                }
                 if (!meshCoonsGrid(
                         face, model, fid, clusteredParams(nu, holdU),
                         clusteredParams(nv, holdV), s.coonsRotate,
