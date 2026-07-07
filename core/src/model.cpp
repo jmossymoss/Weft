@@ -1,41 +1,29 @@
 #include "weft/model.hpp"
 
-#include <BRepBuilderAPI_Sewing.hxx>
-#include <IFSelect_ReturnStatus.hxx>
-#include <STEPControl_Reader.hxx>
-#include <STEPControl_Writer.hxx>
-#include <BRepBuilderAPI_Sewing.hxx>
+#include "io/xcaf.hpp"  // declares weft::indexShape / weft::healWithHistory
+#include "weft/io/reader.hpp"
+#include "weft/io/system.hpp"
+
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepBuilderAPI_Sewing.hxx>
+#include <BRepTools_History.hxx>
+#include <IFSelect_ReturnStatus.hxx>
+#include <STEPControl_Writer.hxx>
+#include <ShapeBuild_ReShape.hxx>
 #include <ShapeFix_Shape.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
-#include <Interface_InterfaceModel.hxx>
-#include <StepBasic_Product.hxx>
-#include <StepBasic_ProductDefinition.hxx>
-#include <StepBasic_ProductDefinitionFormation.hxx>
-#include <StepRepr_ProductDefinitionShape.hxx>
-#include <StepRepr_Representation.hxx>
-#include <StepRepr_RepresentationItem.hxx>
-#include <StepShape_ShapeDefinitionRepresentation.hxx>
-#include <TCollection_HAsciiString.hxx>
-#include <TransferBRep.hxx>
-#include <Transfer_TransientProcess.hxx>
-#include <XSControl_TransferReader.hxx>
-#include <XSControl_WorkSession.hxx>
 #include <TopAbs_ShapeEnum.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
-#include <TopoDS_Iterator.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
 
-#include <cstdio>
-#include <cstdlib>
-#include <map>
+#include <memory>
 #include <stdexcept>
-#include <vector>
 
 namespace weft {
 
-static Model indexShape(const TopoDS_Shape& shape) {
+Model indexShape(const TopoDS_Shape& shape) {
     Model m;
     m.shape = shape;
     TopExp::MapShapes(shape, TopAbs_FACE, m.faces);
@@ -46,8 +34,7 @@ static Model indexShape(const TopoDS_Shape& shape) {
     for (TopExp_Explorer sx(shape, TopAbs_SOLID); sx.More(); sx.Next()) {
         m.solids.Add(sx.Current());
     }
-    for (TopExp_Explorer sx(shape, TopAbs_SHELL, TopAbs_SOLID); sx.More();
-         sx.Next()) {
+    for (TopExp_Explorer sx(shape, TopAbs_SHELL, TopAbs_SOLID); sx.More(); sx.Next()) {
         m.solids.Add(sx.Current());
     }
     TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, m.edgeToFaces);
@@ -55,120 +42,77 @@ static Model indexShape(const TopoDS_Shape& shape) {
     return m;
 }
 
-// Names carried by the STEP representation items (MANIFOLD_SOLID_BREP and
-// friends — Plasticity writes its object names there), keyed by the
-// underlying TShape so assembly placements don't break the lookup. Forward
-// walk over the transfer map; the reverse lookup (EntityFromShapeResult)
-// misses located instances.
-static std::map<const void*, std::string> shapeNames(
-    const STEPControl_Reader& reader) {
-    std::map<const void*, std::string> names;
-    const Handle(XSControl_TransferReader)& tr = reader.WS()->TransferReader();
-    if (tr.IsNull()) return names;
-    Handle(Transfer_TransientProcess) tp = tr->TransientProcess();
-    if (tp.IsNull()) return names;
-    for (int i = 1; i <= tp->NbMapped(); ++i) {
-        Handle(StepRepr_RepresentationItem) item =
-            Handle(StepRepr_RepresentationItem)::DownCast(tp->Mapped(i));
-        if (item.IsNull() || item->Name().IsNull() ||
-            item->Name()->Length() == 0) {
-            continue;
-        }
-        TopoDS_Shape sh = TransferBRep::ShapeResult(tp, tp->Mapped(i));
-        if (sh.IsNull()) continue;
-        names.try_emplace(sh.TShape().get(), item->Name()->ToCString());
-    }
-    // Most CAD packages leave the representation items anonymous and put
-    // the real part names on PRODUCT entities. Walk every shape
-    // definition: PRODUCT -> formation -> product definition ->
-    // property -> SHAPE_DEFINITION_REPRESENTATION -> representation
-    // items -> transferred shapes. Representation-item names (Plasticity
-    // writes those) keep priority via try_emplace above.
-    Handle(Interface_InterfaceModel) im = reader.WS()->Model();
-    if (im.IsNull()) return names;
-    for (int e = 1; e <= im->NbEntities(); ++e) {
-        Handle(StepShape_ShapeDefinitionRepresentation) sdr =
-            Handle(StepShape_ShapeDefinitionRepresentation)::DownCast(
-                im->Value(e));
-        if (sdr.IsNull() || sdr->UsedRepresentation().IsNull()) continue;
-        Handle(StepRepr_ProductDefinitionShape) pds =
-            Handle(StepRepr_ProductDefinitionShape)::DownCast(
-                sdr->Definition().PropertyDefinition());
-        if (pds.IsNull()) continue;
-        Handle(StepBasic_ProductDefinition) pd =
-            pds->Definition().ProductDefinition();
-        if (pd.IsNull() || pd->Formation().IsNull() ||
-            pd->Formation()->OfProduct().IsNull()) {
-            continue;
-        }
-        Handle(TCollection_HAsciiString) pname =
-            pd->Formation()->OfProduct()->Name();
-        if (pname.IsNull() || pname->Length() == 0) continue;
-        const Handle(StepRepr_Representation)& rep =
-            sdr->UsedRepresentation();
-        for (int k = 1; k <= rep->NbItems(); ++k) {
-            if (rep->ItemsValue(k).IsNull()) continue;
-            TopoDS_Shape sh = TransferBRep::ShapeResult(
-                tp, rep->ItemsValue(k));
-            if (sh.IsNull()) continue;
-            names.try_emplace(sh.TShape().get(), pname->ToCString());
-            // Located instances re-root the TShape one level down
-            // (a solid inside the mapped result) — name those too.
-            for (TopoDS_Iterator it(sh); it.More(); it.Next()) {
-                names.try_emplace(it.Value().TShape().get(),
-                                  pname->ToCString());
-            }
+// Build a per-stage history for a modifier that exposes IsModified/Modified
+// (faces) and IsModifiedSubShape/ModifiedSubShape (edges) — i.e. sewing.
+// Records only same-type modifications (BRepTools_History supports face/edge,
+// not compounds a split might yield); anything skipped is caught by the
+// geometric fallback during re-association.
+static Handle(BRepTools_History) historyOfSewing(const TopoDS_Shape& before,
+                                                 BRepBuilderAPI_Sewing& sew) {
+    Handle(BRepTools_History) h = new BRepTools_History();
+    TopTools_IndexedMapOfShape faces;
+    TopExp::MapShapes(before, TopAbs_FACE, faces);
+    for (int i = 1; i <= faces.Extent(); ++i) {
+        const TopoDS_Shape& s = faces(i);
+        if (sew.IsModified(s)) {
+            const TopoDS_Shape& r = sew.Modified(s);
+            if (!r.IsNull() && !r.IsSame(s) && r.ShapeType() == s.ShapeType())
+                h->AddModified(s, r);
         }
     }
-    return names;
+    TopTools_IndexedMapOfShape edges;
+    TopExp::MapShapes(before, TopAbs_EDGE, edges);
+    for (int i = 1; i <= edges.Extent(); ++i) {
+        const TopoDS_Shape& s = edges(i);
+        if (sew.IsModifiedSubShape(s)) {
+            TopoDS_Shape r = sew.ModifiedSubShape(s);
+            if (!r.IsNull() && !r.IsSame(s) && r.ShapeType() == s.ShapeType())
+                h->AddModified(s, r);
+        }
+    }
+    return h;
 }
 
-static std::string solidName(const std::map<const void*, std::string>& names,
-                             const TopoDS_Shape& solid) {
-    auto it = names.find(solid.TShape().get());
-    if (it != names.end()) return it->second;
-    for (TopExp_Explorer sx(solid, TopAbs_SHELL); sx.More(); sx.Next()) {
-        it = names.find(sx.Current().TShape().get());
-        if (it != names.end()) return it->second;
+// Build a per-stage history from a ShapeFix ReShape context by applying it to
+// each original face/edge.
+static Handle(BRepTools_History) historyOfReShape(const TopoDS_Shape& before,
+                                                  const Handle(ShapeBuild_ReShape)& ctx) {
+    Handle(BRepTools_History) h = new BRepTools_History();
+    if (ctx.IsNull()) return h;
+    for (TopAbs_ShapeEnum type : {TopAbs_FACE, TopAbs_EDGE}) {
+        TopTools_IndexedMapOfShape map;
+        TopExp::MapShapes(before, type, map);
+        for (int i = 1; i <= map.Extent(); ++i) {
+            const TopoDS_Shape& s = map(i);
+            TopoDS_Shape r = ctx->Apply(s);
+            if (r.IsNull())
+                h->Remove(s);
+            else if (!r.IsSame(s) && r.ShapeType() == s.ShapeType())
+                h->AddModified(s, r);
+        }
     }
-    return {};
+    return h;
 }
 
-Model loadStep(const std::string& path) {
-    STEPControl_Reader reader;
-    IFSelect_ReturnStatus status = reader.ReadFile(path.c_str());
-    if (status != IFSelect_RetDone) {
-        throw std::runtime_error("failed to read STEP file: " + path);
-    }
-    reader.TransferRoots();
-    TopoDS_Shape shape = reader.OneShape();
-    if (shape.IsNull()) {
-        throw std::runtime_error("STEP file contained no transferable shapes: " + path);
-    }
-
-    // Names must be read off the reader's ORIGINAL shapes — sewing and
-    // healing rebuild the TShapes the transfer map is keyed by.
-    const std::map<const void*, std::string> names = shapeNames(reader);
-    std::vector<std::string> rawNames;
-    for (TopExp_Explorer sx(shape, TopAbs_SOLID); sx.More(); sx.Next()) {
-        rawNames.push_back(solidName(names, sx.Current()));
-    }
-    for (TopExp_Explorer sx(shape, TopAbs_SHELL, TopAbs_SOLID); sx.More();
-         sx.Next()) {
-        rawNames.push_back(solidName(names, sx.Current()));
-    }
+TopoDS_Shape healWithHistory(const TopoDS_Shape& input, Handle(BRepTools_History)& outHist) {
+    outHist = new BRepTools_History();
+    TopoDS_Shape shape = input;
 
     // Sew faces that arrive with their own duplicate copies of shared
     // edges (common in some exporters): unshared edges can't take part in
     // density matching or welding, leaving open seams through the model.
+    TopoDS_Shape preSew = shape;
     BRepBuilderAPI_Sewing sewing(1e-4);
     sewing.Add(shape);
     sewing.Perform();
     if (!sewing.SewedShape().IsNull()) shape = sewing.SewedShape();
+    outHist->Merge(historyOfSewing(preSew, sewing));
 
+    TopoDS_Shape preFix = shape;
     ShapeFix_Shape fixer(shape);
     fixer.Perform();
     shape = fixer.Shape();
+    outHist->Merge(historyOfReShape(preFix, fixer.Context()));
 
     // STEP kernels split closed revolves into half-faces, so a bore
     // arrives as two half-cylinders with seam lines and split rim arcs.
@@ -196,6 +140,7 @@ Model loadStep(const std::string& path) {
         }
         unify.Build();
         if (!unify.Shape().IsNull()) shape = unify.Shape();
+        if (!unify.History().IsNull()) outHist->Merge(unify.History());
     }
     // Second, unscoped edge pass: tangent same-curve chains merge into
     // single edges everywhere (the kept planar faces blocked arc merges
@@ -208,24 +153,26 @@ Model loadStep(const std::string& path) {
                                            /*ConcatBSplines*/ true);
         unify.Build();
         if (!unify.Shape().IsNull()) shape = unify.Shape();
+        if (!unify.History().IsNull()) outHist->Merge(unify.History());
     }
 
-    Model m = indexShape(shape);
-    // ...then pair them with the healed solids by traversal order, which
-    // sew/heal preserve; bail to anonymous parts if the count changed.
-    if ((int)rawNames.size() == m.solids.Extent()) {
-        // Instanced parts share one product name; suffix duplicates so
-        // importers keep them as separate objects.
-        std::map<std::string, int> used;
-        for (int sid = 1; sid <= m.solids.Extent(); ++sid) {
-            std::string name = rawNames[sid - 1];
-            if (name.empty()) continue;
-            int n = ++used[name];
-            if (n > 1) name += "_" + std::to_string(n);
-            m.solidNames[sid - 1] = std::move(name);
-        }
+    return shape;
+}
+
+Model loadStep(const std::string& path) {
+    // Route through the content-detected registry so .stp/.step/mis-extended
+    // files and (now) IGES/BREP inputs all import; preserve the old
+    // "assume STEP on an unrecognized file" behavior.
+    io::System sys;
+    io::bootstrapIo(sys);
+    io::Format f = sys.probeFormat(path);
+    if (f == io::Format::Unknown) f = io::Format::Step;
+    std::unique_ptr<io::Reader> reader = sys.createReader(f);
+    if (!reader) reader = sys.createReader(io::Format::Step);
+    if (!reader || !reader->readFile(path)) {
+        throw std::runtime_error("failed to read STEP file: " + path);
     }
-    return m;
+    return reader->transfer();
 }
 
 void writeStep(const TopoDS_Shape& shape, const std::string& path) {
