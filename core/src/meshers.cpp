@@ -7093,6 +7093,34 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         return plan;
     }
 
+    // Explicit specialized-control override: when the user typed a control
+    // that NAMES a specialized planner — a per-face `radial` asks for radial
+    // spokes on a flat ring, a per-face `rings` asks for concentric
+    // ring-junction loops — route to that planner BEFORE the minimal-n-gon
+    // grab below. Otherwise the per-face override falls into the minimal
+    // branch and silently demotes the ring/junction to one flat n-gon,
+    // dropping the control entirely. Gated on the field DIFFERING from the
+    // model default (the same "explicit count" test solveDensity uses for
+    // its pins), so a face without such an override keeps the unchanged
+    // default route and default output stays byte-identical.
+    if (settings.perFace.count(fid)) {
+        const FaceMeshSettings& dfl = settings.defaults;
+        if (s.radial != dfl.radial) {
+            // An explicit radial on a flat ring: mesh it as radial spokes
+            // (open C-ring or full washer), not a boundary n-gon. Solve
+            // pins the shared rim group to `radial`, so the neighbour rims
+            // densify with it and the band stays watertight.
+            if (planAnnulusCRing(face, model, plan)) return plan;
+            if (planAnnulus(face, model, plan, /*requireRing=*/false)) {
+                return plan;
+            }
+        }
+        if (s.junctionRings != dfl.junctionRings &&
+            planRingJunction(face, model, plan)) {
+            return plan;
+        }
+    }
+
     // Game-topology minimal, explicit per-face override: the user asked
     // for THIS face's boundary shape, so it wins even over the junction
     // patterns below.
@@ -7615,6 +7643,23 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
             bool adV = s.adaptive && !(plan.isFillet && !plan.acrossIsU);
             proposeSet(plan.uEdges, nu, nu, adU, s, overridden);
             proposeSet(plan.vEdges, nv, nv, adV, s, overridden);
+            // Ring junction: the concentric loops need the SAME angular count
+            // on the inner circle and the outer rectangle row, but the circle
+            // (a full bore) otherwise solves to its own adaptive ring count
+            // and the border-contract rejects the n=2*(nu+nv) the junction
+            // samples it at — demoting the face and dropping every loop. When
+            // the user explicitly asked for ring loops, pin the circle (and
+            // its bore neighbour) to the junction's angular count so the rings
+            // survive watertight; the loop COUNT then rides junctionRings and
+            // the angular resolution rides gridU/gridV. Gated on the explicit
+            // override, so a defaulted ring junction keeps its historical path
+            // and default output stays byte-identical.
+            if (plan.kind == MesherKind::RingJunction &&
+                plan.circleEdgeId > 0 && overridden &&
+                s.junctionRings != settings.defaults.junctionRings) {
+                propose({plan.circleEdgeId}, 2 * (nu + nv),
+                        /*overridden=*/true);
+            }
             // Chained Coons sides: every piece proposes on its own; the
             // chain pass below reconciles opposite sides by sum. But a
             // fillet's ACROSS side carries filletLoops as a CHAIN TOTAL,
