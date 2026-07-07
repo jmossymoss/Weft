@@ -228,6 +228,12 @@ struct GenerationCache {
         // floor (borders exact at solved counts — conform must leave
         // them alone). 0 = the planned mesher built.
         char fellBack = 0;
+        // The primary/secondary counts this face actually built at, for
+        // meshers whose built count differs from the pre-mesh `counts`
+        // table (annulus body, boundary/rail meshers). {-1,-1} = fall back
+        // to the table. Stored so a cache HIT reports the same count a
+        // fresh mesh would, not the sparse/zero placeholder.
+        std::array<int, 2> builtCounts = {-1, -1};
     };
     std::map<int, CachedFace> faces;
     // Geometry-only memos (settings-independent, per model): results of
