@@ -7334,6 +7334,22 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             case MesherKind::QuadFill:
                 if (planQuadFill(face, surf, model, plan)) return plan;
                 break;
+            case MesherKind::RibbonSweep:
+                // Forced: skip the auto ribbonDetect gate (the user asked for
+                // it) but still build the quad-fill plan the ribbon mesher
+                // reads its edges/density from. meshRibbonSweep falls straight
+                // back to quad-fill if the rails don't resolve.
+                if (planQuadFill(face, surf, model, plan)) {
+                    plan.kind = MesherKind::RibbonSweep;
+                    return plan;
+                }
+                break;
+            case MesherKind::RailLadder:
+                if (planRailLadder(face, model, plan)) return plan;
+                break;
+            case MesherKind::DomeCap:
+                if (planDomeCap(face, surf, model, plan)) return plan;
+                break;
             case MesherKind::QuadDominant:
                 plan.kind = MesherKind::Fallback;
                 plan.forceFallbackQuads = 1;
