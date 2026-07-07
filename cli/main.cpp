@@ -44,7 +44,11 @@ void usage() {
         "      bake-ready checks: watertightness, winding, degenerates,\n"
         "      chord deviation vs the live B-rep; exits 1 on leaks\n"
         "\n"
-        "  weft mesh <in.step> -o <out.obj|out.glb> [options]\n"
+        "  weft convert <in> -o <out>\n"
+        "      import then export with no retopo: B-rep->B-rep serializes the\n"
+        "      shape (step/iges/brep); B-rep->mesh tessellates (obj/glb/stl/fbx)\n"
+        "\n"
+        "  weft mesh <in.step> -o <out.obj|out.glb|out.stl|out.fbx> [options]\n"
         "      generate topology and export OBJ (groups carry face IDs)\n"
         "    --radial N        divisions around cylinders/caps (default 16)\n"
         "    --axial N         divisions along cylinder axes  (default 4)\n"
@@ -147,6 +151,46 @@ int cmdInspect(const std::vector<std::string>& args) {
         }
         std::printf("]\n");
     }
+    return 0;
+}
+
+// weft convert <in> -o <out> — pure import -> export, no retopo. B-rep -> B-rep
+// serializes Model::shape; B-rep -> mesh uses a default BRepMesh tessellation.
+int cmdConvert(const std::vector<std::string>& args) {
+    if (args.empty()) { usage(); return 2; }
+    std::string input = args[0];
+    std::string output;
+    for (size_t i = 1; i < args.size(); ++i) {
+        if ((args[i] == "-o" || args[i] == "--output") && i + 1 < args.size()) {
+            output = args[++i];
+        } else {
+            throw std::runtime_error("unknown option: " + args[i]);
+        }
+    }
+    if (output.empty()) throw std::runtime_error("missing -o <out>");
+
+    weft::io::System sys;
+    weft::io::bootstrapIo(sys);
+    weft::Model model = weft::io::importFile(sys, input);
+
+    weft::io::Format out = sys.probeFormatForOutput(output);
+    const weft::io::FactoryWriter* fw = sys.findFactoryWriter(out);
+    std::unique_ptr<weft::io::Writer> w = sys.createWriter(out);
+    if (!w || !fw) throw std::runtime_error("no writer for output: " + output);
+    weft::io::ParamGroup pg = fw->createParams(out);
+    w->applyParams(pg);
+
+    weft::PolyMesh mesh;  // populated only for mesh targets (kept alive here)
+    weft::io::WriteInput in;
+    in.model = &model;
+    if (!weft::io::formatProvidesBRep(out)) {
+        mesh = weft::io::tessellate(model);
+        in.mesh = &mesh;
+    }
+    if (!w->transfer(in)) throw std::runtime_error("writer rejected input for " + output);
+    w->writeFile(output);
+    std::printf("%s -> %s (%s)\n", input.c_str(), output.c_str(),
+                std::string(weft::io::formatIdentifier(out)).c_str());
     return 0;
 }
 
@@ -428,6 +472,7 @@ int main(int argc, char** argv) {
     try {
         if (cmd == "fixture") return cmdFixture(args);
         if (cmd == "inspect") return cmdInspect(args);
+        if (cmd == "convert") return cmdConvert(args);
         if (cmd == "mesh") return cmdMesh(args);
         if (cmd == "validate") return cmdMesh(args, /*validateOnly=*/true);
         usage();
