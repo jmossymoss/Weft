@@ -10,6 +10,7 @@
 #include "weft/model.hpp"
 #include "weft/export_fbx.hpp"
 #include "weft/export_gltf.hpp"
+#include "weft/io/system.hpp"
 #include "weft/recipe.hpp"
 #include "weft/validate.hpp"
 
@@ -18,6 +19,7 @@
 #include <stdexcept>
 #include <algorithm>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -283,26 +285,34 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     weft::Analysis analysis = weft::analyze(model);
     objOpts.objectNames = &model.solidNames;
     if (!noNormals) objOpts.model = &model;
-    auto isGlb = [](const std::string& s2) {
-        return (s2.size() > 4 && s2.compare(s2.size() - 4, 4, ".glb") == 0) ||
-               (s2.size() > 5 && s2.compare(s2.size() - 5, 5, ".gltf") == 0);
-    };
-    auto isFbx = [](const std::string& s2) {
-        return s2.size() > 4 && s2.compare(s2.size() - 4, 4, ".fbx") == 0;
-    };
+
+    // All exports flow through the io registry: probe the OUTPUT extension,
+    // build the writer's params from the current CLI flags, then transfer +
+    // write. OBJ/glTF/FBX behavior is preserved because the mesh writers are
+    // thin adapters over the same hand-rolled exporters.
+    weft::io::System sys;
+    weft::io::bootstrapIo(sys);
     auto exportMesh = [&](const weft::PolyMesh& m, const std::string& path) {
-        if (isGlb(path)) {
-            weft::writeGlb(m, path, noNormals ? nullptr : &model,
-                           &analysis.solidFaces);
-        } else if (isFbx(path)) {
-            weft::FbxExportOptions fo;
-            fo.triangulate = objOpts.triangulate;
-            fo.yUp = objOpts.yUp;
-            fo.scale = objOpts.scale;
-            weft::writeFbx(m, path, fo);
-        } else {
-            weft::writeObj(m, path, &analysis.solidFaces, &objOpts);
+        weft::io::Format out = sys.probeFormatForOutput(path);
+        const weft::io::FactoryWriter* fw = sys.findFactoryWriter(out);
+        std::unique_ptr<weft::io::Writer> w = sys.createWriter(out);
+        if (!w || !fw) {  // unknown extension -> preserve the old OBJ fallback
+            out = weft::io::Format::Obj;
+            fw = sys.findFactoryWriter(out);
+            w = sys.createWriter(out);
         }
+        weft::io::ParamGroup pg = fw->createParams(out);
+        auto setIf = [&](const char* k, const std::string& v) {
+            if (pg.find(k)) pg.set(k, v);
+        };
+        setIf("triangulate", objOpts.triangulate ? "true" : "false");
+        setIf("yUp", objOpts.yUp ? "true" : "false");
+        setIf("scale", std::to_string(objOpts.scale));
+        setIf("normals", noNormals ? "false" : "true");
+        w->applyParams(pg);
+        weft::io::WriteInput in{&m, &model, &analysis.solidFaces};
+        if (!w->transfer(in)) throw std::runtime_error("writer rejected input for " + path);
+        w->writeFile(path);
     };
 
     // LOD tiers: one control setup, one export per density factor.

@@ -37,7 +37,9 @@ void pad4(std::vector<uint8_t>& buf, uint8_t filler) {
 
 void writeGlb(const PolyMesh& mesh, const std::string& path,
               const Model* model,
-              const std::vector<std::vector<int>>* solidFaces) {
+              const std::vector<std::vector<int>>* solidFaces,
+              const GltfExportOptions* options) {
+    const GltfExportOptions opts = options ? *options : GltfExportOptions{};
     // One glTF node+mesh per body, mapped from the analysis' per-solid
     // face lists (faces outside any solid group under part 0).
     std::map<int, int> partOfFace;
@@ -74,12 +76,26 @@ void writeGlb(const PolyMesh& mesh, const std::string& path,
         auto it = splitOf.find(key);
         if (it != splitOf.end()) return it->second;
         SplitVertex v{};
-        v.px = static_cast<float>(mesh.vertices[idx][0]);
-        v.py = static_cast<float>(mesh.vertices[idx][1]);
-        v.pz = static_cast<float>(mesh.vertices[idx][2]);
+        double px = mesh.vertices[idx][0] * opts.scale;
+        double py = mesh.vertices[idx][1] * opts.scale;
+        double pz = mesh.vertices[idx][2] * opts.scale;
+        if (opts.yUp) {  // Z-up CAD -> Y-up engine (X stays, Z->Y, Y->-Z)
+            double ny = pz, nz = -py;
+            py = ny;
+            pz = nz;
+        }
+        v.px = static_cast<float>(px);
+        v.py = static_cast<float>(py);
+        v.pz = static_cast<float>(pz);
         std::array<double, 3> n{0.0, 0.0, 1.0};
-        if (!model || !detail::cadNormal(mesh, *model, idx, fid, cache, n)) {
+        if (!opts.emitNormals || !model ||
+            !detail::cadNormal(mesh, *model, idx, fid, cache, n)) {
             n = {0.0, 0.0, 0.0};  // filled from polygon fan below
+        }
+        if (opts.yUp) {
+            double ny = n[2], nz = -n[1];
+            n[1] = ny;
+            n[2] = nz;
         }
         v.nx = static_cast<float>(n[0]);
         v.ny = static_cast<float>(n[1]);
@@ -118,12 +134,18 @@ void writeGlb(const PolyMesh& mesh, const std::string& path,
                cz = ax * by - ay * bx;
         double len = std::sqrt(cx * cx + cy * cy + cz * cz);
         if (len > 1e-30) {
+            double fnx = cx / len, fny = cy / len, fnz = cz / len;
+            if (opts.yUp) {
+                double ry = fnz, rz = -fny;
+                fny = ry;
+                fnz = rz;
+            }
             for (uint32_t s : ring) {
                 SplitVertex& v = verts[s];
                 if (v.nx == 0.0f && v.ny == 0.0f && v.nz == 0.0f) {
-                    v.nx = static_cast<float>(cx / len);
-                    v.ny = static_cast<float>(cy / len);
-                    v.nz = static_cast<float>(cz / len);
+                    v.nx = static_cast<float>(fnx);
+                    v.ny = static_cast<float>(fny);
+                    v.nz = static_cast<float>(fnz);
                 }
             }
         }
