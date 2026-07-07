@@ -110,6 +110,7 @@ const char* mesherKindName(MesherKind k) {
         case MesherKind::QuadFill: return "quad-fill";
         case MesherKind::RailLadder: return "rail-ladder";
         case MesherKind::RibbonSweep: return "ribbon-sweep";
+        case MesherKind::DomeCap: return "dome-cap";
     }
     return "fallback-tri";
 }
@@ -218,6 +219,15 @@ struct FacePlan {
     // zipper. The wall edges carry the across-ring (radial row) count.
     bool cRing = false;
     std::vector<int> cWalls;
+    // DomeCap: the revolution-like parametrization the mesher walks. The
+    // AZIMUTH runs along one parametric direction (periodic / the base loop
+    // wraps around the axis), the POLAR angle along the other — one polar end
+    // is the base loop (domePolarBase), the opposite end collapses to the pole
+    // (domePolarPole). uEdges carry the base rim (drives the meridian count),
+    // vEdges the polar boundary meridian (drives the latitude ring count).
+    bool domeAzimIsV = true;   // azimuth is the surface's V direction
+    double domePolarBase = 0;  // polar param at the base loop
+    double domePolarPole = 0;  // polar param at the collapsed pole
 };
 
 // A genuine full revolution band's boundary consists only of its two
@@ -6801,6 +6811,222 @@ bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     return true;
 }
 
+// Detect a spherical / dome cap: a single-outer-wire face whose surface
+// bulges from a base loop to a single pole, so it can mesh as a UV
+// hemisphere instead of a spiralling Coons grid. The test is GEOMETRIC (the
+// surface is usually a bspline, so the analytic type tells us nothing):
+//
+//  * exactly one outer wire, no interior holes (the base contract only
+//    covers the outer rim; a hole would leak);
+//  * the AZIMUTH parametric direction is periodic/closed (the base loop wraps
+//    a full turn about the axis);
+//  * exactly one of the two POLAR domain ends collapses to a point (the pole)
+//    while the opposite end is the finite base loop;
+//  * the surface is STAR-SHAPED about the base->apex axis: azimuth about the
+//    axis is monotone along the azimuth param, and height along the axis is
+//    monotone along the polar param — so constant-azimuth walks are straight
+//    meridians and constant-polar walks are clean latitude rings.
+//
+// Any doubt returns false so the face keeps its existing (Coons/fallback)
+// route and nothing else can regress.
+bool planDomeCap(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
+                 const Model& model, FacePlan& plan) {
+    // One outer wire only; interior wires (holes) disqualify.
+    int wireCount = 0;
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) ++wireCount;
+    if (wireCount != 1) return false;
+
+    const double u0 = surf.FirstUParameter(), u1 = surf.LastUParameter();
+    const double v0 = surf.FirstVParameter(), v1 = surf.LastVParameter();
+    const double uspan = u1 - u0, vspan = v1 - v0;
+    if (!(uspan > 1e-9) || !(vspan > 1e-9)) return false;
+
+    // Face scale from its bounding box diagonal — the collapse/planarity
+    // tolerances ride it so the test is scale-free.
+    Bnd_Box bb;
+    BRepBndLib::Add(face, bb);
+    if (bb.IsVoid()) return false;
+    double bx0, by0, bz0, bx1, by1, bz1;
+    bb.Get(bx0, by0, bz0, bx1, by1, bz1);
+    const double diag = gp_Pnt(bx0, by0, bz0).Distance(gp_Pnt(bx1, by1, bz1));
+    if (!(diag > 1e-9)) return false;
+    const double collapseTol = 0.01 * diag;
+
+    // 3D extent of a domain iso-line (fixed param, swept along the other).
+    auto isoExtent = [&](bool fixU, double fixed) {
+        gp_Pnt lo(1e300, 1e300, 1e300), hi(-1e300, -1e300, -1e300);
+        for (int k = 0; k <= 16; ++k) {
+            const double t = k / 16.0;
+            const gp_Pnt p = fixU ? surf.Value(fixed, v0 + vspan * t)
+                                  : surf.Value(u0 + uspan * t, fixed);
+            lo.SetX(std::min(lo.X(), p.X())); hi.SetX(std::max(hi.X(), p.X()));
+            lo.SetY(std::min(lo.Y(), p.Y())); hi.SetY(std::max(hi.Y(), p.Y()));
+            lo.SetZ(std::min(lo.Z(), p.Z())); hi.SetZ(std::max(hi.Z(), p.Z()));
+        }
+        return lo.Distance(hi);
+    };
+    const double eU0 = isoExtent(true, u0);   // u=u0 iso
+    const double eU1 = isoExtent(true, u1);   // u=u1 iso
+    const double eV0 = isoExtent(false, v0);  // v=v0 iso
+    const double eV1 = isoExtent(false, v1);  // v=v1 iso
+
+    // The pole is the single collapsing polar end; its opposite is the base.
+    // The perpendicular direction is the azimuth and must be periodic/closed
+    // (the base loop wraps a full turn). Exactly one collapse is required.
+    bool azimIsV;         // azimuth runs along V
+    double polarBase, polarPole;
+    const bool uPolar =                    // polar runs along U, azimuth V
+        (eU0 < collapseTol) != (eU1 < collapseTol) &&
+        eV0 > collapseTol && eV1 > collapseTol;
+    const bool vPolar =                    // polar runs along V, azimuth U
+        (eV0 < collapseTol) != (eV1 < collapseTol) &&
+        eU0 > collapseTol && eU1 > collapseTol;
+    if (uPolar && !vPolar) {
+        if (!surf.IsVClosed()) return false;
+        azimIsV = true;
+        polarPole = eU0 < collapseTol ? u0 : u1;
+        polarBase = eU0 < collapseTol ? u1 : u0;
+    } else if (vPolar && !uPolar) {
+        if (!surf.IsUClosed()) return false;
+        azimIsV = false;
+        polarPole = eV0 < collapseTol ? v0 : v1;
+        polarBase = eV0 < collapseTol ? v1 : v0;
+    } else {
+        return false;  // zero, two, or ambiguous collapses: not a clean cap
+    }
+
+    // Apex = the collapsed pole point; base centroid + normal from a ring of
+    // base samples. The axis runs base centroid -> apex.
+    auto surfAt = [&](double polar, double azim) {
+        return azimIsV ? surf.Value(polar, azim) : surf.Value(azim, polar);
+    };
+    const double aLo = azimIsV ? v0 : u0;
+    const double aSpan = azimIsV ? vspan : uspan;
+    const gp_Pnt apex = surfAt(polarPole, aLo);
+    gp_Pnt baseC(0, 0, 0);
+    const int NB = 24;
+    std::vector<gp_Pnt> baseP(NB);
+    for (int k = 0; k < NB; ++k) {
+        baseP[k] = surfAt(polarBase, aLo + aSpan * k / double(NB));
+        baseC.SetX(baseC.X() + baseP[k].X() / NB);
+        baseC.SetY(baseC.Y() + baseP[k].Y() / NB);
+        baseC.SetZ(baseC.Z() + baseP[k].Z() / NB);
+    }
+    gp_Vec axis(baseC, apex);
+    const double axisLen = axis.Magnitude();
+    if (axisLen < 0.05 * diag) return false;  // too flat to read as a dome
+    axis /= axisLen;
+
+    // Base must be roughly planar (a loop, not a bowl) and its mean radius a
+    // real fraction of the face — so the axis and azimuth frame are stable.
+    double baseR = 0, basePlanar = 0;
+    for (const gp_Pnt& p : baseP) {
+        gp_Vec r(baseC, p);
+        basePlanar = std::max(basePlanar, std::abs(r.Dot(axis)));
+        baseR += (r - r.Dot(axis) * axis).Magnitude() / NB;
+    }
+    if (baseR < 0.1 * diag) return false;
+    if (basePlanar > 0.25 * baseR) return false;
+
+    // Orthonormal azimuth frame in the base plane.
+    gp_Vec eX = gp_Vec(baseC, baseP[0]) - gp_Vec(baseC, baseP[0]).Dot(axis) * axis;
+    if (eX.Magnitude() < 1e-9) return false;
+    eX.Normalize();
+    gp_Vec eY = axis.Crossed(eX);
+    if (eY.Magnitude() < 1e-9) return false;
+    eY.Normalize();
+
+    // STAR-SHAPED test: over a UV grid, azimuth about the axis must advance
+    // monotonically along the azimuth param (one full turn, no backtracking)
+    // and height along the axis must advance monotonically along the polar
+    // param. Either failing means meridians would cross or the cap folds.
+    const int GA = 24, GP = 8;  // azimuth / polar grid resolution
+    auto azimuthAt = [&](const gp_Pnt& p) {
+        gp_Vec r(baseC, p);
+        return std::atan2(r.Dot(eY), r.Dot(eX));
+    };
+    auto heightAt = [&](const gp_Pnt& p) { return gp_Vec(baseC, p).Dot(axis); };
+    for (int j = 1; j < GP; ++j) {  // interior polar rings only (poles skip)
+        const double polar = polarBase + (polarPole - polarBase) * j / double(GP);
+        double prev = 0, turn = 0;
+        bool first = true;
+        for (int k = 0; k <= GA; ++k) {
+            const double a = azimuthAt(surfAt(polar, aLo + aSpan * k / double(GA)));
+            if (!first) {
+                double d = a - prev;
+                while (d > M_PI) d -= 2 * M_PI;
+                while (d < -M_PI) d += 2 * M_PI;
+                if (d < -1e-3) return false;  // azimuth backtracks: spiral risk
+                turn += d;
+            }
+            prev = a;
+            first = false;
+        }
+        if (std::abs(turn) < 1.5 * M_PI) return false;  // not a full wrap
+    }
+    for (int k = 0; k < GA; ++k) {  // meridians: height monotone base->pole
+        const double a = aLo + aSpan * (k + 0.5) / double(GA);
+        double prevH = heightAt(surfAt(polarBase, a));
+        for (int j = 1; j <= GP; ++j) {
+            const double polar =
+                polarBase + (polarPole - polarBase) * j / double(GP);
+            const double h = heightAt(surfAt(polar, a));
+            if (h < prevH - 0.02 * axisLen) return false;  // dips: not a dome
+            prevH = h;
+        }
+    }
+
+    // Collect the base rim edges (drive the meridian count) and the polar
+    // boundary meridian edges (drive the latitude count). A base edge's
+    // pcurve hugs the base polar value; a meridian spans the polar range at
+    // fixed azimuth. The degenerate pole edge and anything else disqualifies.
+    std::vector<int> baseEdges, meridianEdges;
+    const double polarTol = 0.05 * std::abs(polarBase - polarPole);
+    for (BRepTools_WireExplorer we(BRepTools::OuterWire(face), face); we.More();
+         we.Next()) {
+        const TopoDS_Edge e = we.Current();
+        if (BRep_Tool::Degenerated(e)) continue;  // the pole apex edge
+        const int eid = model.edges.FindIndex(e);
+        if (eid < 1) return false;
+        double f, l;
+        Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(e, face, f, l);
+        if (pc.IsNull()) return false;
+        double pmin = 1e300, pmax = -1e300;
+        for (int k = 0; k <= 8; ++k) {
+            const gp_Pnt2d uv = pc->Value(f + (l - f) * k / 8.0);
+            const double pv = azimIsV ? uv.X() : uv.Y();  // polar coordinate
+            pmin = std::min(pmin, pv);
+            pmax = std::max(pmax, pv);
+        }
+        const bool atBase = std::abs(pmin - polarBase) < polarTol &&
+                            std::abs(pmax - polarBase) < polarTol;
+        const bool spansPolar = pmax - pmin > 0.6 * std::abs(polarBase - polarPole);
+        if (atBase) {
+            if (std::find(baseEdges.begin(), baseEdges.end(), eid) ==
+                baseEdges.end()) {
+                baseEdges.push_back(eid);
+            }
+        } else if (spansPolar) {
+            if (std::find(meridianEdges.begin(), meridianEdges.end(), eid) ==
+                meridianEdges.end()) {
+                meridianEdges.push_back(eid);
+            }
+        } else {
+            return false;  // an edge that is neither base nor meridian
+        }
+    }
+    if (baseEdges.empty()) return false;
+
+    plan.kind = MesherKind::DomeCap;
+    plan.constrains = true;
+    plan.domeAzimIsV = azimIsV;
+    plan.domePolarBase = polarBase;
+    plan.domePolarPole = polarPole;
+    plan.uEdges = baseEdges;       // azimuth ring -> radial (meridian count)
+    plan.vEdges = meridianEdges;   // polar meridian -> axial (latitude count)
+    return true;
+}
+
 FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                   const GenerationSettings& settings,
                   GenerationCache* cache) {
@@ -7161,6 +7387,18 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         }
         plan.uEdges.clear();
         plan.vEdges.clear();
+    }
+
+    // Spherical / dome cap (a single-wire revolution-like bspline that bulges
+    // from a base loop to a pole): mesh as a clean UV hemisphere — latitude
+    // rings + straight meridians + a pole fan — instead of the Coons grid,
+    // which spirals inward to a messy centre. Tightly gated (planDomeCap bails
+    // on any doubt), so only genuine caps divert here; everything else keeps
+    // its existing route byte-for-byte.
+    if (planDomeCap(face, surf, model, plan)) {
+        dbg("plan face %d: dome cap (base %zu edges, meridian %zu)", fid,
+            plan.uEdges.size(), plan.vEdges.size());
+        return plan;
     }
 
     // Four-sided freeform/trimmed faces get a structured Coons grid; the
@@ -9802,6 +10040,159 @@ bool meshRevolutionRimNotch(const TopoDS_Face& face,
 // not equalize): the closed transition strip that would bridge them
 // degenerates into folded lunes on thin bands, so the face takes the
 // contract floor instead.
+// Mesh a spherical / dome cap (planDomeCap) as a UV hemisphere: concentric
+// latitude rings from the base loop to the pole, straight meridians at even
+// azimuth aligned to the base samples, closed at the crown by a triangle fan
+// into a single apex vertex. The base ring samples the shared base edges at
+// their solved counts (so it welds to the neighbours bit-for-bit — the
+// watertight contract); interior rings and meridians walk the true surface at
+// constant azimuth param, so they follow a squashed/ellipsoidal dome exactly.
+bool meshDomeCap(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
+                 const Model& model, const FacePlan& plan,
+                 const std::vector<int>& solvedEdge, int faceId, int nLat,
+                 MeshBuilder& out, const PinnedEdges* pins) {
+    const bool azimIsV = plan.domeAzimIsV;
+    const double polarBase = plan.domePolarBase;
+    const double polarPole = plan.domePolarPole;
+    nLat = std::max(2, nLat);
+    auto surfAt = [&](double polar, double azim) {
+        return azimIsV ? surf.Value(polar, azim) : surf.Value(azim, polar);
+    };
+
+    // Base ring: sample the shared base edges at their solved counts, walked
+    // in outer-wire order so azimuth is monotone around the loop. Each sample
+    // keeps its exact 3D point (welds to the neighbour) and its surface (u,v)
+    // — the polar coordinate is the axis climb, the azimuth coordinate drives
+    // the meridian above it.
+    struct BasePt { gp_Pnt p; double u, v, azim; };
+    std::vector<BasePt> ring0;
+    const std::set<int> baseSet(plan.uEdges.begin(), plan.uEdges.end());
+    std::set<int> seen;
+    auto sampleBaseEdge = [&](const TopoDS_Edge& e, int eid) {
+        double f2, l2, f3, l3;
+        Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(e, face, f2, l2);
+        Handle(Geom_Curve) c3 = BRep_Tool::Curve(e, f3, l3);
+        if (pc.IsNull() || c3.IsNull()) return;
+        seen.insert(eid);
+        int n = eid < int(solvedEdge.size()) ? solvedEdge[eid] : 0;
+        if (n < 1) n = 3;
+        const bool rev = e.Orientation() == TopAbs_REVERSED;
+        const double ph = closedEdgePhase(e, model);
+        for (double t : edgeSampleFractions(eid, n, ph, rev,
+                                            /*includeLast=*/false, pins,
+                                            &model)) {
+            const gp_Pnt2d uv = pc->Value(f2 + (l2 - f2) * t);
+            const gp_Pnt p = c3->Value(f3 + (l3 - f3) * t);
+            ring0.push_back({p, uv.X(), uv.Y(),
+                             azimIsV ? uv.Y() : uv.X()});
+        }
+    };
+    for (BRepTools_WireExplorer we(BRepTools::OuterWire(face), face); we.More();
+         we.Next()) {
+        const TopoDS_Edge e = we.Current();
+        if (BRep_Tool::Degenerated(e)) continue;
+        const int eid = model.edges.FindIndex(e);
+        if (eid < 1 || !baseSet.count(eid) || seen.count(eid)) continue;
+        sampleBaseEdge(e, eid);
+    }
+    for (int eid : plan.uEdges) {  // WireExplorer can silently drop edges
+        if (eid < 1 || eid > model.edgeCount() || seen.count(eid)) continue;
+        sampleBaseEdge(TopoDS::Edge(model.edges(eid)), eid);
+    }
+    const int nAz = int(ring0.size());
+    if (nAz < 3) return false;
+
+    // Normalize the azimuth direction: walk the frame and reverse if the loop
+    // runs clockwise, so latitude rings and meridians share one handedness.
+    {
+        const double aSpan = azimIsV ? (surf.LastVParameter() - surf.FirstVParameter())
+                                     : (surf.LastUParameter() - surf.FirstUParameter());
+        double turn = 0;
+        for (int k = 0; k < nAz; ++k) {
+            double d = ring0[(k + 1) % nAz].azim - ring0[k].azim;
+            d -= aSpan * std::round(d / aSpan);
+            turn += d;
+        }
+        if (turn < 0) std::reverse(ring0.begin(), ring0.end());
+    }
+
+    // Latitude ring vertices. Row 0 is the exact base samples; interior rows
+    // walk the surface at even polar fractions, constant azimuth per column
+    // (straight meridians); the last row is the single apex vertex, repeated
+    // per column so the shared quad loop collapses it into a clean pole fan.
+    std::vector<std::vector<uint32_t>> ring(nLat + 1);
+    ring[0].resize(nAz);
+    for (int k = 0; k < nAz; ++k) {
+        ring[0][k] = out.addVertex(ring0[k].p,
+                                   {faceId, ring0[k].u, ring0[k].v});
+    }
+    for (int j = 1; j < nLat; ++j) {
+        const double polar =
+            polarBase + (polarPole - polarBase) * (double(j) / nLat);
+        ring[j].resize(nAz);
+        for (int k = 0; k < nAz; ++k) {
+            const double azim = ring0[k].azim;
+            const gp_Pnt p = surfAt(polar, azim);
+            const double u = azimIsV ? polar : azim;
+            const double v = azimIsV ? azim : polar;
+            ring[j][k] = out.addVertex(p, {faceId, u, v});
+        }
+    }
+    const gp_Pnt apex = surfAt(polarPole, ring0[0].azim);
+    const uint32_t apexIdx = out.addVertex(
+        apex, {faceId, azimIsV ? polarPole : ring0[0].azim,
+                       azimIsV ? ring0[0].azim : polarPole});
+    ring[nLat].assign(nAz, apexIdx);
+
+    // Winding: pick the single flip that makes the emitted cells agree with
+    // orient * (du x dv) (the same rule foldedPolys judges by), sampled at an
+    // interior ring vertex where the surface normal is well defined.
+    bool flip = false;
+    {
+        const double orient = face.Orientation() == TopAbs_REVERSED ? -1.0 : 1.0;
+        const int jt = 1;  // first interior ring
+        const double polar =
+            polarBase + (polarPole - polarBase) * (double(jt) / nLat);
+        gp_Pnt sp; gp_Vec du, dv;
+        const double au = azimIsV ? polar : ring0[0].azim;
+        const double av = azimIsV ? ring0[0].azim : polar;
+        surf.D1(au, av, sp, du, dv);
+        gp_Vec sn = du.Crossed(dv);
+        if (sn.Magnitude() > 1e-14) {
+            sn *= orient;
+            // Newell normal of the test quad in default (unflipped) order.
+            const std::array<uint32_t, 4> q{ring[0][0], ring[0][1], ring[1][1],
+                                            ring[1][0]};
+            gp_Vec nw(0, 0, 0);
+            for (int i = 0; i < 4; ++i) {
+                const auto& A = out.mesh().vertices[q[i]];
+                const auto& B = out.mesh().vertices[q[(i + 1) % 4]];
+                nw += gp_Vec((A[1] - B[1]) * (A[2] + B[2]),
+                             (A[2] - B[2]) * (A[0] + B[0]),
+                             (A[0] - B[0]) * (A[1] + B[1]));
+            }
+            if (nw.Dot(sn) < 0) flip = true;
+        }
+    }
+
+    // Emit the lattice; the pole row (all apex) collapses each top quad into a
+    // fan triangle via the consecutive-duplicate squeeze.
+    for (int j = 0; j < nLat; ++j) {
+        for (int k = 0; k < nAz; ++k) {
+            const int k2 = (k + 1) % nAz;
+            std::vector<uint32_t> poly{ring[j][k], ring[j][k2], ring[j + 1][k2],
+                                       ring[j + 1][k]};
+            poly.erase(std::unique(poly.begin(), poly.end()), poly.end());
+            if (poly.size() > 1 && poly.front() == poly.back()) poly.pop_back();
+            if (poly.size() < 3) continue;
+            out.addPolygon(std::move(poly), faceId, flip);
+        }
+    }
+    dbg("domecap face %d: nAz=%d nLat=%d azimV=%d flip=%d", faceId, nAz, nLat,
+        azimIsV ? 1 : 0, flip ? 1 : 0);
+    return true;
+}
+
 bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                         const Model& model, const std::vector<int>& rimEdges,
                         const std::vector<int>& solvedEdge, int faceId,
@@ -12276,6 +12667,21 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 counts[fid] = {solved(plan.uEdges, s.radial),
                                solved(plan.vEdges, s.radial), 0};
                 break;
+            case MesherKind::DomeCap: {
+                // Meridian count = total base-loop samples (the base rim's
+                // edges solve like a revolution rim); latitude ring count =
+                // the polar meridian's solved count (axial + curvature),
+                // floored so a squat dome still reads as a hemisphere.
+                int nAz = 0;
+                for (int e : plan.uEdges) {
+                    if (e >= 1 && e < int(solvedEdge.size())) nAz += solvedEdge[e];
+                }
+                const int nLat = plan.vEdges.empty()
+                                     ? std::max(2, s.axial)
+                                     : std::max(2, solved(plan.vEdges, s.axial));
+                counts[fid] = {std::max(3, nAz), nLat, 0};
+                break;
+            }
             default:
                 break;
         }
@@ -12351,6 +12757,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         cacheKey[fid] = key;
         if (plan.kind == MesherKind::AnnulusRing ||
             plan.kind == MesherKind::RailLadder ||
+            plan.kind == MesherKind::DomeCap ||
             !plan.bandSides.empty() || !plan.loops.empty() ||
             plan.castellated) {
             // A castellated rim consumes the plain rim's count (columns)
@@ -12787,6 +13194,16 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                  s.junctionRings, out, a0);
                 break;
             }
+            case MesherKind::DomeCap:
+                // A UV hemisphere: latitude rings + straight meridians + a
+                // pole fan. On any doubt it falls back to the contract floor
+                // (exact borders, watertight by construction), so a dome the
+                // walk can't express never leaks.
+                if (!meshDomeCap(face, surf, model, plan, solvedEdge, fid, nv,
+                                 out, &pinnedEdge)) {
+                    demote(fid, face, surf, s, "dome cap failed");
+                }
+                break;
             case MesherKind::AnnulusRing:
                 if (plan.cRing) {
                     if (!meshAnnulusCRing(face, model, fid, plan.uEdges,
