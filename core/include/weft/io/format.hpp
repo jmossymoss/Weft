@@ -17,7 +17,8 @@ enum class Format {
     Stl,
     Obj,
     Gltf,
-    Ply  // mesh formats   (formatProvidesMesh == true)
+    Ply,  // mesh formats   (formatProvidesMesh == true)
+    Fbx   // mesh format (write-only in the registry)
 };
 
 // Metadata — all switch on the enum. Suffix arrays are function-static so the

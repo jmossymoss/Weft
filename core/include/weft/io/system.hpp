@@ -60,4 +60,8 @@ Model importFile(const System&, const std::string& path);  // probe->create->rea
 void exportFile(const System&, Format, const WriteInput&, const std::string& path,
                 const ParamGroup* = nullptr);
 
+// Default BRepMesh tessellation of Model::shape (for B-rep -> mesh convert,
+// which has no retopo step). polygonFaceId carries the model's FaceId.
+PolyMesh tessellate(const Model&);
+
 }  // namespace weft::io

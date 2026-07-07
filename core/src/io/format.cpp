@@ -11,6 +11,7 @@ std::string_view formatIdentifier(Format f) {
         case Format::Obj: return "OBJ";
         case Format::Gltf: return "GLTF";
         case Format::Ply: return "PLY";
+        case Format::Fbx: return "FBX";
         case Format::Unknown: break;
     }
     return "UNKNOWN";
@@ -25,6 +26,7 @@ std::string_view formatName(Format f) {
         case Format::Obj: return "Wavefront OBJ";
         case Format::Gltf: return "glTF (Khronos)";
         case Format::Ply: return "PLY (Stanford)";
+        case Format::Fbx: return "Autodesk FBX";
         case Format::Unknown: break;
     }
     return "Unknown";
@@ -39,6 +41,7 @@ std::span<const std::string_view> formatFileSuffixes(Format f) {
     static constexpr std::string_view kObj[] = {"obj"};
     static constexpr std::string_view kGltf[] = {"gltf", "glb"};
     static constexpr std::string_view kPly[] = {"ply"};
+    static constexpr std::string_view kFbx[] = {"fbx"};
     switch (f) {
         case Format::Step: return kStep;
         case Format::Iges: return kIges;
@@ -47,6 +50,7 @@ std::span<const std::string_view> formatFileSuffixes(Format f) {
         case Format::Obj: return kObj;
         case Format::Gltf: return kGltf;
         case Format::Ply: return kPly;
+        case Format::Fbx: return kFbx;
         case Format::Unknown: break;
     }
     return {};
