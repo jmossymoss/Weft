@@ -15,6 +15,8 @@
 #include <Extrema_ExtPC.hxx>
 #include <GCPnts_AbscissaPoint.hxx>
 #include <GCPnts_TangentialDeflection.hxx>
+#include <GCPnts_UniformAbscissa.hxx>
+#include <GeomAdaptor_Curve.hxx>
 #include <Standard_Failure.hxx>
 #include <BRepGProp.hxx>
 #include <BRepTools.hxx>
@@ -777,6 +779,46 @@ inline bool edgeIsPinned(int eid, const PinnedEdges* pins) {
     return pins && eid >= 1 && eid < int(pins->size()) && !(*pins)[eid].empty();
 }
 
+// ---- Even-arc-length sampling (the border contract) ---------------------
+// Forward param-fractions in [0,1] along edge `eid`'s FORWARD 3D curve at
+// EVEN 3D ARC LENGTH: n+1 abscissa-uniform stations via
+// GCPnts_UniformAbscissa, returned ascending with endpoints exactly 0 and
+// 1. The caller maps a fraction t -> the intrinsic edge parameter
+// f + t*(l-f), so c3->Value and the pcurve agree and both faces of a shared
+// edge, using the same edge curve and the same n, emit BIT-IDENTICAL points.
+//
+// Returns EMPTY for analytic line/circle edges — their parameter is already
+// proportional to arc, so even-arc == uniform and they stay byte-identical —
+// and on ANY failure, so the caller keeps its uniform fractions. Only
+// bspline/ellipse/etc. edges (parameter not proportional to arc) actually
+// move. Deterministic from the edge curve alone: no face/model dependence.
+std::vector<double> evenArcFractions(const Model& model, int eid, int n) {
+    std::vector<double> out;
+    if (n < 1 || eid < 1 || eid > model.edgeCount()) return out;
+    const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
+    double f = 0, l = 0;
+    Handle(Geom_Curve) c3 = BRep_Tool::Curve(e, f, l);
+    if (c3.IsNull()) return out;
+    const double span = l - f;
+    if (span <= 1e-12) return out;
+    GeomAdaptor_Curve gac(c3, f, l);
+    const GeomAbs_CurveType ct = gac.GetType();
+    if (ct == GeomAbs_Line || ct == GeomAbs_Circle) return out;  // already even
+    GCPnts_UniformAbscissa algo(gac, n + 1);
+    if (!algo.IsDone() || algo.NbPoints() != n + 1) return out;
+    out.reserve(n + 1);
+    double prev = -1.0;
+    for (int i = 1; i <= n + 1; ++i) {
+        double frac = std::clamp((algo.Parameter(i) - f) / span, 0.0, 1.0);
+        if (frac < prev) return {};  // non-monotone: bail to uniform
+        prev = frac;
+        out.push_back(frac);
+    }
+    out.front() = 0.0;
+    out.back() = 1.0;
+    return out;
+}
+
 // Face-local sample fractions for one edge. With a pin, the pinned
 // fractions in face-local order (reversed when the edge is reversed on this
 // face — same positions, opposite traversal, exactly like phasedT); else
@@ -785,7 +827,8 @@ inline bool edgeIsPinned(int eid, const PinnedEdges* pins) {
 // (closed-loop samplers).
 inline std::vector<double> edgeSampleFractions(int eid, int n, double ph,
                                                bool rev, bool includeLast,
-                                               const PinnedEdges* pins) {
+                                               const PinnedEdges* pins,
+                                               const Model* model) {
     std::vector<double> t;
     if (edgeIsPinned(eid, pins)) {
         t = (*pins)[eid];  // ascending forward-param, endpoints included
@@ -794,6 +837,19 @@ inline std::vector<double> edgeSampleFractions(int eid, int n, double ph,
         return t;
     }
     n = std::max(1, n);
+    // Even 3D arc-length is the shared border contract for freeform edges.
+    // Only the UNPHASED (open-edge) path resamples: a phased/closed rim is a
+    // circle (already even) and its phase offset is a uniform-parameter
+    // construct. Analytic edges return empty here and fall through to the
+    // uniform phased path below, staying byte-identical.
+    if (model && ph == 0.0) {
+        std::vector<double> arc = evenArcFractions(*model, eid, n);
+        if (!arc.empty()) {  // ascending forward fractions, endpoints in
+            if (rev) std::reverse(arc.begin(), arc.end());
+            if (!includeLast && arc.size() > 1) arc.pop_back();
+            return arc;
+        }
+    }
     const int last = includeLast ? n : n - 1;
     for (int i = 0; i <= last; ++i) t.push_back(phasedT(i, n, ph, rev));
     return t;
@@ -1558,7 +1614,34 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
             // edge directly (no rev flip — rev only reorders the list).
             if (edgeIsPinned(eid, pins)) {
                 for (double tt : edgeSampleFractions(eid, 0, 0.0,
-                                                     patch.rev[i], true, pins)) {
+                                                     patch.rev[i], true, pins,
+                                                     &model)) {
+                    row.push_back(
+                        {c.Value(f3 + tt * (l3 - f3)),
+                         patch.pc[i]->Value(patch.first[i] +
+                                            tt * (patch.last[i] -
+                                                  patch.first[i]))});
+                }
+                return row;
+            }
+            // A UNIFORM request goes through the shared even-arc sampler so
+            // a freeform single side spaces its divisions evenly in 3D and
+            // welds bit-identically to whatever samples the other face of
+            // this edge (analytic edges come back byte-identical). Only
+            // deliberately CLUSTERED params (a fillet hold) are kept
+            // verbatim — those faces are exempt from the border check.
+            bool uniform = params.size() >= 2;
+            for (size_t k = 0; k < params.size() && uniform; ++k) {
+                uniform = std::abs(params[k] -
+                                   double(k) / double(params.size() - 1)) <
+                          1e-9;
+            }
+            const std::vector<double> frac =
+                uniform ? edgeSampleFractions(eid, int(params.size()) - 1, 0.0,
+                                              patch.rev[i], true, pins, &model)
+                        : std::vector<double>{};
+            if (uniform) {
+                for (double tt : frac) {
                     row.push_back(
                         {c.Value(f3 + tt * (l3 - f3)),
                          patch.pc[i]->Value(patch.first[i] +
@@ -1589,17 +1672,19 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
             if (edgeIsPinned(pce.edgeId, pins)) {
                 for (double tt : edgeSampleFractions(
                          pce.edgeId, 0, 0.0, pce.rev,
-                         /*includeLast=*/k + 1 == ch.size(), pins)) {
+                         /*includeLast=*/k + 1 == ch.size(), pins, &model)) {
                     row.push_back(
                         {c.Value(f3 + tt * (l3 - f3)),
                          pce.pc->Value(pce.f + tt * (pce.l - pce.f))});
                 }
                 continue;
             }
-            const int last = k + 1 == ch.size() ? n : n - 1;
-            for (int q = 0; q <= last; ++q) {
-                double t = double(q) / n;
-                double tt = pce.rev ? 1.0 - t : t;
+            // Each chain piece samples its own edge at even 3D arc length
+            // (uniform for analytic edges — byte-identical), so a chained
+            // side welds to the same shared curve the neighbour meshes.
+            for (double tt : edgeSampleFractions(
+                     pce.edgeId, n, 0.0, pce.rev,
+                     /*includeLast=*/k + 1 == ch.size(), pins, &model)) {
                 row.push_back(
                     {c.Value(f3 + tt * (l3 - f3)),
                      pce.pc->Value(pce.f + tt * (pce.l - pce.f))});
@@ -1992,9 +2077,14 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
                        : 1;
         BRepAdaptor_Curve sc(TopoDS::Edge(model.edges(patch.stubEdgeId)));
         const double f = sc.FirstParameter(), l = sc.LastParameter();
-        for (int k = 0; k < segs; ++k) {
-            double tt = patch.stubRev ? 1.0 - double(k) / segs
-                                      : double(k) / segs;
+        // Even 3D arc on the stub too (near end + interiors, far endpoint
+        // owned by the corner): a freeform stub then welds to whatever
+        // samples this shared edge on the other face. Analytic stubs come
+        // back byte-identical.
+        for (double tt : edgeSampleFractions(patch.stubEdgeId, segs, 0.0,
+                                             patch.stubRev,
+                                             /*includeLast=*/false, pins,
+                                             &model)) {
             gp_Pnt pos = sc.Value(f + (l - f) * tt);
             gp_Pnt2d p2 = patch.stubPc->Value(patch.stubFirst +
                                               tt * (patch.stubLast -
@@ -2368,8 +2458,10 @@ bool meshAnnulusRing(const TopoDS_Face& face, const Model& model, int faceId,
                 double f = c.FirstParameter(), l = c.LastParameter();
                 const bool rev = edge.Orientation() == TopAbs_REVERSED;
                 const double ph = closedEdgePhase(edge, model);
-                for (int i = 0; i < n; ++i) {  // endpoint owned by next edge
-                    double t = phasedT(i, n, ph, rev);
+                // endpoint owned by next edge; even 3D arc for freeform
+                for (double t : edgeSampleFractions(
+                         eid, n, ph, rev, /*includeLast=*/false, nullptr,
+                         &model)) {
                     pts.push_back(c.Value(f + (l - f) * t));
                 }
             }
@@ -2630,7 +2722,8 @@ bool meshAnnulusCRing(const TopoDS_Face& face, const Model& model, int faceId,
             const double ph = closedEdgePhase(e, model);
             std::vector<gp_Pnt> pc;
             for (double t : edgeSampleFractions(eid, n, ph, rev,
-                                                /*includeLast=*/true, pins)) {
+                                                /*includeLast=*/true, pins,
+                                                &model)) {
                 pc.push_back(c3->Value(f + (l - f) * t));
             }
             if (pc.size() < 2) return {};
@@ -2692,7 +2785,8 @@ bool meshAnnulusCRing(const TopoDS_Face& face, const Model& model, int faceId,
         const double ph = closedEdgePhase(e, model);
         std::vector<gp_Pnt> pc;
         for (double t : edgeSampleFractions(eid, n, ph, rev,
-                                            /*includeLast=*/true, pins)) {
+                                            /*includeLast=*/true, pins,
+                                            &model)) {
             pc.push_back(c3->Value(f + (l - f) * t));
         }
         return pc;
@@ -3456,8 +3550,9 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
             if (pc.IsNull() || c3.IsNull()) return false;
             const double ph = closedEdgePhase(edge, model);
             std::vector<HPt> piece;
-            for (int i = 0; i <= n; ++i) {
-                double t = phasedT(i, n, ph, false);
+            for (double t : edgeSampleFractions(
+                     eid, n, ph, false, /*includeLast=*/true, nullptr,
+                     &model)) {
                 gp_Pnt2d uv = pc->Value(f2 + (l2 - f2) * t);
                 piece.push_back(
                     {c3->Value(f3 + (l3 - f3) * t), uv.X(), uv.Y()});
@@ -4036,7 +4131,7 @@ bool samplePlanarRings(const TopoDS_Face& face, const Model& model,
                 Piece pc;
                 for (double t : edgeSampleFractions(eid, n, ph, rev,
                                                     /*includeLast=*/true,
-                                                    pins)) {
+                                                    pins, &model)) {
                     pc.uv.push_back(c2->Value(f2 + (l2 - f2) * t));
                     pc.p.push_back(c3->Value(f3 + (l3 - f3) * t));
                 }
@@ -4105,7 +4200,8 @@ bool samplePlanarRings(const TopoDS_Face& face, const Model& model,
             const double ph = closedEdgePhase(edge, model);
             // endpoint owned by the next edge
             for (double t : edgeSampleFractions(eid, n, ph, rev,
-                                                /*includeLast=*/false, pins)) {
+                                                /*includeLast=*/false, pins,
+                                                &model)) {
                 ring.uv.push_back(c2->Value(f2 + (l2 - f2) * t));
                 ring.p.push_back(c3->Value(f3 + (l3 - f3) * t));
             }
@@ -4799,7 +4895,8 @@ bool sampleRibbonRing(const TopoDS_Face& face, const Model& model,
         const double ph = closedEdgePhase(edge, model);
         corners.push_back(int(P.size()));
         for (double t : edgeSampleFractions(eid, n, ph, rev,
-                                            /*includeLast=*/false, nullptr)) {
+                                            /*includeLast=*/false, nullptr,
+                                            &model)) {
             UV.push_back(c2->Value(f2 + (l2 - f2) * t));
             P.push_back(c3->Value(f3 + (l3 - f3) * t));
         }
@@ -8242,7 +8339,8 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
             // the rim samples land ON the columns and the bottom transition
             // strip collapses to quads (columns run straight to the rim).
             for (double t : edgeSampleFractions(eid, n, 0.0, rev,
-                                                /*includeLast=*/true, pins)) {
+                                                /*includeLast=*/true, pins,
+                                                &model)) {
                 gp_Pnt2d uv = pc->Value(f2 + (l2 - f2) * t);
                 piece.pts.push_back(
                     {uv.X(), uv.Y(), c3->Value(f3 + (l3 - f3) * t)});
@@ -9153,7 +9251,7 @@ bool meshRevolutionRimNotch(const TopoDS_Face& face,
         if (usePins && piece.hug) basePinned = true;
         const std::vector<double> fr =
             edgeSampleFractions(eid, n, ph, rev, /*includeLast=*/true,
-                                usePins ? pins : nullptr);
+                                usePins ? pins : nullptr, &model);
         for (double t : fr) {
             gp_Pnt2d uv = pc->Value(f2 + (l2 - f2) * t);
             piece.pts.push_back({uv.X(), uv.Y(), c3->Value(f3 + (l3 - f3) * t)});
@@ -9791,8 +9889,9 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
         if (n < 1) n = nu;
         const bool rev = edge.Orientation() == TopAbs_REVERSED;
         const double ph = closedEdgePhase(edge, model);
-        for (int i = 0; i < n; ++i) {
-            double t = phasedT(i, n, ph, rev);
+        for (double t : edgeSampleFractions(eid, n, ph, rev,
+                                            /*includeLast=*/false, nullptr,
+                                            &model)) {
             gp_Pnt2d uv = pc->Value(f2 + (l2 - f2) * t);
             gp_Pnt p = c3->Value(f3 + (l3 - f3) * t);
             double u = uv.X();
@@ -10744,8 +10843,9 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
                 const double f3 = c.FirstParameter(), l3 = c.LastParameter();
                 const double ph = closedEdgePhase(edge, model);
                 std::vector<WPt> piece;
-                for (int k = 0; k <= n; ++k) {
-                    double t = phasedT(k, n, ph, false);
+                for (double t : edgeSampleFractions(
+                         eid, n, ph, false, /*includeLast=*/true, nullptr,
+                         &model)) {
                     gp_Pnt2d uv = pc->Value(f + t * (l - f));
                     piece.push_back(
                         {c.Value(f3 + t * (l3 - f3)), uv.X(), uv.Y()});
@@ -12420,7 +12520,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             const double ph = closedEdgePhase(E, model);
             // Pinned edges expect their explicit samples, not uniform steps.
             const std::vector<double> frac = edgeSampleFractions(
-                eid, n, ph, false, /*includeLast=*/true, &pinnedEdge);
+                eid, n, ph, false, /*includeLast=*/true, &pinnedEdge, &model);
             const int m = int(frac.size()) - 1;
             if (m < 1) continue;
             auto sampleAt = [&](int i) {
