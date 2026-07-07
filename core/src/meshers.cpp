@@ -8336,14 +8336,15 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
                 return false;
             }
             if (g.c1 == g.c0) {
-                // Two regions touching at one column: the arc between
-                // them fans from that column's strip-row vertex (each
-                // triangle spans one arc step, so curvature stays
-                // local). End edges close against both webs.
-                for (int i = g.i0; i < g.i1; ++i) {
-                    emitRing({cutIds[i], cutIds[i + 1],
-                              vid[g.c0][keyBot]});
-                }
+                // Two regions touching at one column: only one strip-row
+                // vertex sits above the base arc, so the arc cannot ladder
+                // between columns. Gather it as ONE grouped n-gon fanned
+                // from that vertex instead of a tri fan — same boundary,
+                // one clean polygon rather than a run of triangles.
+                std::vector<uint32_t> ring;
+                for (int i = g.i0; i <= g.i1; ++i) ring.push_back(cutIds[i]);
+                ring.push_back(vid[g.c0][keyBot]);
+                emitRing(std::move(ring));
                 continue;
             }
             std::vector<uint32_t> lowIds, highIds;
@@ -8381,7 +8382,98 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
         surf.Value((u0 + u1) / 2, (v0 + v1) / 2)
                 .Distance(surf.Value((u0 + u1) / 2 + 1e-3, (v0 + v1) / 2)) /
             1e-3);
+    // Normalized cumulative arc-length (in the same (u*r, w) metric the web
+    // is measured in) — a rail's fraction parameter for laddering.
+    auto arcFrac = [](const std::vector<std::array<double, 2>>& p) {
+        std::vector<double> f(p.size(), 0.0);
+        double L = 0.0;
+        for (size_t i = 1; i < p.size(); ++i) {
+            L += std::hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]);
+            f[i] = L;
+        }
+        if (L > 1e-12) {
+            for (double& x : f) x /= L;
+        }
+        return f;
+    };
     for (const Region& r : regions) {
+        // Web as a QUAD RIBBON, not a tri fan. Two roughly-parallel rails
+        // bound it: the OUTER boundary (up the left bounding column, across
+        // the feature row, down the right) and the INNER cut chain. Both
+        // trace the notch's up/across/down profile from the low-u foot to
+        // the high-u foot, so laddering them by surface arc-fraction lays
+        // quads along the walls and only a few clean grouped n-gons over
+        // the rounded/scalloped top. The ribbon's boundary loop is edge-
+        // identical to the ear-clip's ring, so watertightness is unchanged.
+        std::vector<uint32_t> outer;
+        std::vector<std::array<double, 2>> outerUW;
+        auto pushOut = [&](uint32_t id, double u, double w) {
+            outer.push_back(id);
+            outerUW.push_back({u * rScale, w});
+        };
+        for (int k : colKeys[r.colL]) {
+            if (rowW[k] <= rowW[r.rowKey] + 1e-12) {
+                pushOut(vid[r.colL][k], uk[r.colL], rowW[k]);
+            }
+        }
+        for (int c = r.colL + 1; c <= r.colR - 1; ++c) {
+            pushOut(vid[c][r.rowKey], uk[c], rowW[r.rowKey]);
+        }
+        for (auto it = colKeys[r.colR].rbegin();
+             it != colKeys[r.colR].rend(); ++it) {
+            if (rowW[*it] <= rowW[r.rowKey] + 1e-12) {
+                pushOut(vid[r.colR][*it], uk[r.colR], rowW[*it]);
+            }
+        }
+        std::vector<uint32_t> inner;
+        std::vector<std::array<double, 2>> innerUW;
+        for (int i = r.iA; i <= r.iB; ++i) {
+            inner.push_back(cutIds[i]);
+            innerUW.push_back({cut.s[i].u * rScale, wOf(cut.s[i].v)});
+        }
+        // Cut chain is LOW (the notch floor), outer boundary is HIGH. Ladder
+        // by arc-fraction: attach each sparse outer vertex to the nearest
+        // dense cut sample (monotone), then emit one cell per span in which
+        // the cut chain advances — so every cell carries at least two cut
+        // samples and is a quad (or, where several cut samples or a shared-
+        // column vertex pile up, a clean grouped n-gon), never a tri fan.
+        if (outer.size() >= 3 && inner.size() >= 2) {
+            const std::vector<double> of = arcFrac(outerUW);
+            const std::vector<double> inf = arcFrac(innerUW);
+            const int m = int(outer.size()) - 1, n = int(inner.size()) - 1;
+            std::vector<int> mp(m + 1);
+            mp[0] = 0;
+            mp[m] = n;
+            for (int k = 1; k < m; ++k) {
+                int j = mp[k - 1];
+                while (j + 1 < n &&
+                       std::abs(inf[j + 1] - of[k]) <=
+                           std::abs(inf[j] - of[k])) {
+                    ++j;
+                }
+                mp[k] = j;
+            }
+            // Cell breakpoints: an outer vertex only closes a cell where the
+            // cut chain has advanced past the last break. Outer vertices that
+            // map to the same cut sample (a shared-column split, a compressed
+            // top) fold into the running cell as extra n-gon corners. The
+            // trailing run merges back so no leftover tri escapes.
+            std::vector<int> bp{0};
+            for (int b = 1; b <= m; ++b) {
+                if (mp[b] > mp[bp.back()]) bp.push_back(b);
+            }
+            if (bp.back() != m) bp.back() = m;
+            for (size_t g = 0; g + 1 < bp.size(); ++g) {
+                const int a = bp[g], b = bp[g + 1];
+                std::vector<uint32_t> ring;
+                for (int t = mp[a]; t <= mp[b]; ++t) ring.push_back(inner[t]);
+                for (int c = b; c >= a; --c) ring.push_back(outer[c]);
+                emitRing(std::move(ring));
+            }
+            continue;
+        }
+        // Degenerate region (pinched to a single column): fall back to the
+        // ear-clip, which tiles the identical ring either way.
         std::vector<uint32_t> ring;
         std::vector<std::array<double, 3>> pts;
         auto push = [&](uint32_t id, double u, double w) {
