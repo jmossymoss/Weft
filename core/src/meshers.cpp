@@ -10461,6 +10461,12 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
     double reconBandH = 0;     // band height (v0->v1 chord)
     double reconAzStep = 0;    // driving rim's mean azimuthal chord
     bool reconFrayStrip = false;  // the flat strip frays (needs row bump)
+    // A genuinely TALL band whose rim counts are a near-integer ratio (the
+    // foam fillet barrel, 32/16): the reduction is localized into a short
+    // horizontal band next to the dense rim and the body meshed as clean
+    // quad rings, instead of one slanted strip spanning the whole height.
+    bool tallCleanReduce = false;
+    double reconDenseChord = 0;  // strip (flat) rim's azimuthal chord
     // Which rim welds one-to-one to the interior (drives its azimuths). A
     // strip bridges the OTHER rim. A strip over a rim that JUMPS in v (the
     // foam body's mess-side rim leaps ~46 between adjacent samples) shears
@@ -10585,6 +10591,44 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
             int aspectRows =
                 int(std::lround(reconBandH / (2.0 * reconAzStep)));
             nvFloor = std::max(nvFloor, std::min(aspectRows, 8));
+        }
+        // Tall-clean-ratio localization: when the drive rim frays only at a
+        // localized notch (steep single jump, but otherwise flat) and the
+        // two rim counts form a near-integer ratio, the band should read as
+        // clean horizontal rings with the reduction confined to one short
+        // band next to the dense rim. The aspect-row count above uses the
+        // drive rim's 3D chord, which the notch plunge INFLATES (too few
+        // rows), so recompute rows from the flat dense rim's pure-azimuth
+        // chord and cluster them so the rings dominate. Gated tightly on a
+        // genuinely tall band with a clean count ratio, so short transition
+        // strips (bracket's 22/19 micro-band, every fixture) are untouched.
+        if (reconFrayStrip && driveSide >= 0) {
+            const std::vector<RimPt>& SR = rim[driveSide ^ 1];  // flat rim
+            const int denseCount = int(SR.size());
+            const int driveCount = int(rim[driveSide].size());
+            if (denseCount >= 3 && driveCount >= 3) {
+                double chord = 0;
+                for (int i = 0; i < denseCount; ++i) {
+                    chord +=
+                        SR[i].p.Distance(SR[(i + 1) % denseCount].p);
+                }
+                chord /= denseCount;
+                reconDenseChord = chord;
+                const int hiC = std::max(denseCount, driveCount);
+                const int loC = std::min(denseCount, driveCount);
+                const double ratio = double(hiC) / loC;
+                const double ratioErr =
+                    std::abs(ratio - std::round(ratio));
+                const double redBandH = 1.5 * chord;
+                if (ratioErr < 0.15 && redBandH > 1e-9 &&
+                    reconBandH >= 4.0 * redBandH) {
+                    tallCleanReduce = true;
+                    // Rows from the true azimuth chord so the body is a
+                    // stack of near-square quad rings (capped).
+                    int azRows = int(std::lround(reconBandH / (2.0 * chord)));
+                    nvFloor = std::max(nvFloor, std::min(azRows, 8));
+                }
+            }
         }
         if (!vWrap && !vRows && nv < nvFloor) {
             nv = nvFloor;
@@ -10808,6 +10852,44 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
         } else {
             for (int i = 0; i < nu; ++i) colU[i] = u0 + i * du;
         }
+        // Localize the count reduction into a SHORT band next to the dense
+        // (strip) rim instead of stretching one transition strip across the
+        // whole height: place the interior row adjacent to the strip rim
+        // close to it, so the reduction cells stay short and the rest of the
+        // band is clean horizontal quad rings. A tall fray band otherwise
+        // spans one slanted strip over the full body (the foam fillet
+        // barrel's diagonal shear). Gated tightly to genuinely TALL bands
+        // whose rim counts are a near-integer ratio, so the common short
+        // transition strips stay byte-identical.
+        bool localizeReduction = false;
+        double redFrac = 0.0;
+        int stripRimSide = -1;
+        if (tallCleanReduce && driveSide >= 0 && rows >= 3 &&
+            reconDenseChord > 1e-9 && reconBandH > 1e-9) {
+            stripRimSide = driveSide ^ 1;  // the rim that takes the strip
+            // Reduction band ~1.5 dense chords tall keeps its transition
+            // cells near-square (short, no shear); the rest of the band is
+            // clean horizontal quad rings.
+            const double redBandH = 1.5 * reconDenseChord;
+            localizeReduction = true;
+            redFrac = std::clamp(redBandH / reconBandH, 0.02, 0.4);
+            dbg("revgrid face %d: LOCALIZE strip=%d redFrac=%g", faceId,
+                stripRimSide, redFrac);
+        }
+        auto rowW = [&](int j) -> double {
+            const double uniform =
+                (stripReconcile && rows > 1) ? double(j) / (rows - 1) : 0.0;
+            if (!localizeReduction || rows < 3) return uniform;
+            if (j <= 0) return 0.0;
+            if (j >= rows - 1) return 1.0;
+            if (stripRimSide == 0) {
+                // Strip at the v0 rim (row 0): interior rows span [redFrac,1].
+                return redFrac +
+                       (1.0 - redFrac) * double(j - 1) / double(rows - 2);
+            }
+            // Strip at the v1 rim (last row): rows 0..rows-2 span [0,1-redFrac].
+            return (1.0 - redFrac) * double(j) / double(rows - 2);
+        };
         for (int j = 0; j < rows; ++j) {
             double v = rowV(j);
             // Rim rows with usable samples are the EXACT rim points; the
@@ -10825,8 +10907,7 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
                 }
                 continue;
             }
-            const double w =
-                (stripReconcile && rows > 1) ? double(j) / (rows - 1) : 0.0;
+            const double w = rowW(j);
             std::vector<gp_Pnt> pts(nu);
             std::vector<double> vcol(nu, v);
             bool degenerate = true;
