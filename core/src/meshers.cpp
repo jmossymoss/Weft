@@ -7334,6 +7334,22 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             case MesherKind::QuadFill:
                 if (planQuadFill(face, surf, model, plan)) return plan;
                 break;
+            case MesherKind::RibbonSweep:
+                // Forced: skip the auto ribbonDetect gate (the user asked for
+                // it) but still build the quad-fill plan the ribbon mesher
+                // reads its edges/density from. meshRibbonSweep falls straight
+                // back to quad-fill if the rails don't resolve.
+                if (planQuadFill(face, surf, model, plan)) {
+                    plan.kind = MesherKind::RibbonSweep;
+                    return plan;
+                }
+                break;
+            case MesherKind::RailLadder:
+                if (planRailLadder(face, model, plan)) return plan;
+                break;
+            case MesherKind::DomeCap:
+                if (planDomeCap(face, surf, model, plan)) return plan;
+                break;
             case MesherKind::QuadDominant:
                 plan.kind = MesherKind::Fallback;
                 plan.forceFallbackQuads = 1;
@@ -10524,16 +10540,11 @@ bool meshRevolutionAnnulusBody(const BRepAdaptor_Surface& surf, int faceId,
     const bool denseBelow = vDense <= vNmin;
     const double sgn = denseBelow ? 1.0 : -1.0;
     const double notchRange = std::max(1e-9, vNmax - vNmin);
-    // `band` is the short height of the reduction cells. The flat body ceiling
-    // sits 2*band inside the notch's nearest dip so the eased shoulder lattice
-    // keeps >= band height everywhere (no degenerate/inverted cells at the
-    // notch's low point).
+    // `band` is the short height of the final reduction cells: the shoulder
+    // ring sits `band` inside the notch's own profile so that closing band
+    // (dense->sparse count change) never goes degenerate at the notch's
+    // nearest point.
     const double band = std::max(1e-6, 0.15 * notchRange);
-    const double vNear = denseBelow ? vNmin : vNmax;
-    double vFlatTop = vNear - sgn * 2.0 * band;
-    // Never march the flat body past the dense rim itself.
-    if (denseBelow) vFlatTop = std::max(vFlatTop, vDense);
-    else vFlatTop = std::min(vFlatTop, vDense);
 
     // Column azimuths follow the dense rim (so it welds one-to-one through the
     // horizontal lattice), unwrapped monotone from its first sample.
@@ -10577,21 +10588,39 @@ bool meshRevolutionAnnulusBody(const BRepAdaptor_Surface& surf, int faceId,
         return va + (vb - va) * std::clamp(t, 0.0, 1.0);
     };
 
-    // Horizontal body rings: row 0 is the dense rim's EXACT samples; rows
-    // 1..nvBody are face-private, at the dense azimuths and CONSTANT v,
-    // marching from vDense to vFlatTop. This is the clean quad-ring body that
-    // `radial` (columns) and `axial` (rows) densify.
+    // Per-column TOP profile: each dense column rises to the notch's own
+    // v-profile at that azimuth (pulled `band` back into the body so the final
+    // reduction band has a short, uniform strip). This is the SHOULDER ring.
+    // The vertical columns follow the notch shape and reach the top boundary —
+    // there is no flat ceiling that stops the body short of the feature edge.
+    // Clamp the top to stay a body-band above the dense rim even where the
+    // notch dips close to it (no degenerate/inverted body cells).
+    std::vector<double> topV(nu);
+    for (int i = 0; i < nu; ++i) {
+        double v = notchVAt(colU[i]) - sgn * band;
+        if (denseBelow) v = std::max(v, vDense + band);
+        else            v = std::min(v, vDense - band);
+        topV[i] = v;
+    }
+
+    // Body rings: row 0 is the dense rim's EXACT samples (flat, shared edge);
+    // rows 1..nvBody march each column from vDense up to its own top profile
+    // topV[i]. A single band (default axial) already spans the FULL height,
+    // bottom rim to notched top; `axial` adds intermediate rows. Because the
+    // count is constant (nu columns throughout) this is a clean one-to-one
+    // quad lattice — the notch's vertical walls just tilt the top edge of the
+    // affected cells, they do not fold.
     const int bodyRows = nvBody + 1;
     std::vector<std::vector<uint32_t>> ring(bodyRows);
     for (int j = 0; j < bodyRows; ++j) {
         ring[j].resize(nu);
         const double t = double(j) / nvBody;
-        const double v = vDense + (vFlatTop - vDense) * t;
         for (int i = 0; i < nu; ++i) {
             if (j == 0) {
-                ring[j][i] =
-                    out.addVertex(denseRim[i].p, {faceId, denseRim[i].u, v});
+                ring[j][i] = out.addVertex(denseRim[i].p,
+                                           {faceId, denseRim[i].u, vDense});
             } else {
+                const double v = vDense + (topV[i] - vDense) * t;
                 const gp_Pnt p = surf.Value(colU[i], v);
                 ring[j][i] = out.addVertex(p, {faceId, colU[i], v});
             }
@@ -10606,27 +10635,11 @@ bool meshRevolutionAnnulusBody(const BRepAdaptor_Surface& surf, int faceId,
         }
     }
 
-    // SHOULDER ring (dense count): follows the notch v-profile offset one
-    // `band` back into the body, so the reduction band above it stays a short,
-    // uniform-height strip even across the notch's vertical walls — the wall's
-    // height jump becomes an eased (non-folding) quad between the flat body
-    // ceiling and this shoulder, not a full-height sheared triangle.
-    std::vector<uint32_t> shoulder(nu);
+    // The profiled top ring IS the last body row (dense count) — the shoulder
+    // the single reduction band pairs down to the sparse notch rim.
+    std::vector<uint32_t>& shoulder = ring[bodyRows - 1];
     std::vector<gp_Pnt> shoulderP(nu);
-    for (int i = 0; i < nu; ++i) {
-        const double v = notchVAt(colU[i]) - sgn * band;
-        const gp_Pnt p = surf.Value(colU[i], v);
-        shoulderP[i] = p;
-        shoulder[i] = out.addVertex(p, {faceId, colU[i], v});
-    }
-    // Eased lattice: flat body ceiling -> profiled shoulder (one-to-one dense
-    // quads, winding as the body cells).
-    for (int i = 0; i < nu; ++i) {
-        const int i2 = (i + 1) % nu;
-        out.addPolygon({ring[bodyRows - 1][i], ring[bodyRows - 1][i2],
-                        shoulder[i2], shoulder[i]},
-                       faceId, flip);
-    }
+    for (int i = 0; i < nu; ++i) shoulderP[i] = surf.Value(colU[i], topV[i]);
 
     // The notch rim's EXACT samples (its own solved count) and points.
     std::vector<uint32_t> notchId(notchRim.size());
