@@ -10308,6 +10308,349 @@ bool meshDomeCap(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     return true;
 }
 
+// One rim sample: azimuth u, height v, and the exact 3D curve point.
+struct RevRimPt {
+    double u;
+    double v;
+    gp_Pnt p;
+};
+
+// Closed transition strip between two full-circle rings whose azimuthal
+// counts differ: monotone circular grouping by cumulative arc angle — quads
+// where the counts advance together, a grouped n-gon where the dense ring
+// contributes extra points, distributed around the whole ring. Winding
+// matches the lattice cells (lower row forward, upper row backward). Factored
+// out of meshRevolutionGrid so the annulus-body path shares the exact code
+// (existing callers stay byte-identical).
+void emitClosedRimStrip(MeshBuilder& out, int faceId, bool flip, double period,
+                        const std::vector<uint32_t>& loI,
+                        const std::vector<double>& loU,
+                        const std::vector<uint32_t>& hiI,
+                        const std::vector<double>& hiU) {
+    const int nl = int(loI.size()), nh = int(hiI.size());
+    if (nl < 3 || nh < 3) return;
+    const bool loSparse = nl <= nh;
+    const std::vector<uint32_t>& S = loSparse ? loI : hiI;
+    const std::vector<double>& sU = loSparse ? loU : hiU;
+    const std::vector<uint32_t>& D = loSparse ? hiI : loI;
+    const std::vector<double>& dU = loSparse ? hiU : loU;
+    const int ns = int(S.size()), nd = int(D.size());
+    // Reference angle measured ALONG each ring's own order (cumulative
+    // short-step deltas), not the raw wrapped u: a rim sampled in wire-chain
+    // order winds once around but starts mid-circle (one seam wrap) and a
+    // scalloped rim adds tiny local backsteps — a raw wrapped-u comparison
+    // then misplaces the pairing. The cumulative angle is monotone from each
+    // ring's first sample and closes at one period.
+    auto cumAngle = [&](const std::vector<double>& U) {
+        std::vector<double> c(U.size() + 1, 0.0);
+        for (size_t i = 1; i <= U.size(); ++i) {
+            double d = U[i % U.size()] - U[i - 1];
+            d -= period * std::round(d / period);
+            if (d < 0) d = 0;  // seam wrap / tiny scallop backsteps
+            c[i] = c[i - 1] + d;
+        }
+        return c;
+    };
+    const std::vector<double> dCum = cumAngle(dU);  // size nd+1
+    const std::vector<double> sCum = cumAngle(sU);  // size ns+1
+    double off = sU[0] - dU[0];  // sparse start ahead of dense start
+    off -= period * std::round(off / period);
+    if (off < 0) off += period;
+    auto dAt = [&](int i) {
+        int w = ((i % nd) + nd) % nd;
+        return dCum[w] + period * std::floor(double(i) / nd);
+    };
+    // m[k] = unwrapped dense index paired with sparse k, monotone, closing
+    // after exactly one full turn.
+    std::vector<int> m(ns + 1);
+    double bd = 1e300;
+    for (int i = 0; i < nd; ++i) {
+        double d = std::abs(dCum[i] - off);
+        d = std::min(d, period - d);
+        if (d < bd) { bd = d; m[0] = i; }
+    }
+    for (int k = 1; k < ns; ++k) {
+        double t = off + sCum[k];  // target angle from dense start
+        int best = m[k - 1];
+        double bestD = std::abs(dAt(best) - t);
+        for (int i = m[k - 1] + 1; i <= m[0] + nd; ++i) {
+            double d = std::abs(dAt(i) - t);
+            if (d < bestD) { bestD = d; best = i; }
+            if (dAt(i) > t + period / nd) break;
+        }
+        m[k] = best;
+    }
+    m[ns] = m[0] + nd;
+    for (int k = 0; k < ns; ++k) {
+        std::vector<uint32_t> ring2;
+        if (loSparse) {
+            ring2 = {S[k], S[(k + 1) % ns]};
+            for (int i = m[k + 1]; i >= m[k]; --i) {
+                ring2.push_back(D[((i % nd) + nd) % nd]);
+            }
+        } else {
+            for (int i = m[k]; i <= m[k + 1]; ++i) {
+                ring2.push_back(D[((i % nd) + nd) % nd]);
+            }
+            ring2.push_back(S[(k + 1) % ns]);
+            ring2.push_back(S[k]);
+        }
+        ring2.erase(std::unique(ring2.begin(), ring2.end()), ring2.end());
+        if (ring2.size() > 1 && ring2.front() == ring2.back()) {
+            ring2.pop_back();
+        }
+        if (ring2.size() < 3) continue;
+        out.addPolygon(std::move(ring2), faceId, flip);
+    }
+}
+
+// Closed transition strip paired by 3D ARC FRACTION (meshAnnulusCRing's
+// metric), not azimuth. A notched rim runs its samples DOWN a near-vertical
+// wall and back up: in azimuth those samples pile at one angle, so an
+// azimuth-paired strip collapses them into folded slivers. Arc fraction spends
+// the wall's real length as loop distance, so the wall's samples pair one-to-
+// one with the mating ring's own climb — quads up the wall, grouped n-gons
+// only where one ring genuinely has more points along the same arc.
+void emitClosedRimStripArc(MeshBuilder& out, int faceId, bool flip,
+                           const std::vector<uint32_t>& loI,
+                           const std::vector<gp_Pnt>& loP,
+                           const std::vector<uint32_t>& hiI,
+                           const std::vector<gp_Pnt>& hiP) {
+    const int nl = int(loI.size()), nh = int(hiI.size());
+    if (nl < 3 || nh < 3) return;
+    const bool loSparse = nl <= nh;
+    const std::vector<uint32_t>& S = loSparse ? loI : hiI;
+    const std::vector<gp_Pnt>& sP = loSparse ? loP : hiP;
+    const std::vector<uint32_t>& D = loSparse ? hiI : loI;
+    const std::vector<gp_Pnt>& dP = loSparse ? hiP : loP;
+    const int ns = int(S.size()), nd = int(D.size());
+    // Cumulative loop distance (closing back to index 0), normalised to [0,1].
+    auto cumFrac = [](const std::vector<gp_Pnt>& P) {
+        std::vector<double> c(P.size() + 1, 0.0);
+        for (size_t i = 1; i <= P.size(); ++i) {
+            c[i] = c[i - 1] + P[i - 1].Distance(P[i % P.size()]);
+        }
+        const double per = c.back() > 1e-12 ? c.back() : 1.0;
+        for (double& x : c) x /= per;
+        return c;  // c[0]=0, c[n]=1, monotone
+    };
+    const std::vector<double> dCum = cumFrac(dP);  // size nd+1
+    const std::vector<double> sCum = cumFrac(sP);  // size ns+1
+    // Align sparse[0] to its nearest dense vertex in 3D; that is the loop
+    // origin so the two rings' fractions are comparable.
+    int base = 0;
+    double best = 1e300;
+    for (int i = 0; i < nd; ++i) {
+        const double dd = dP[i].Distance(sP[0]);
+        if (dd < best) { best = dd; base = i; }
+    }
+    const double off = dCum[base];  // dense-loop fraction of the origin
+    auto dAt = [&](int i) {
+        int w = ((i % nd) + nd) % nd;
+        return dCum[w] + std::floor(double(i) / nd);
+    };
+    std::vector<int> m(ns + 1);
+    m[0] = base;
+    for (int k = 1; k < ns; ++k) {
+        const double t = off + sCum[k];  // target fraction from the origin
+        int bestI = m[k - 1];
+        double bestD = std::abs(dAt(bestI) - t);
+        for (int i = m[k - 1] + 1; i <= base + nd; ++i) {
+            const double d = std::abs(dAt(i) - t);
+            if (d < bestD) { bestD = d; bestI = i; }
+            if (dAt(i) > t + 1.0 / nd) break;
+        }
+        m[k] = bestI;
+    }
+    m[ns] = base + nd;
+    for (int k = 0; k < ns; ++k) {
+        std::vector<uint32_t> ring2;
+        if (loSparse) {
+            ring2 = {S[k], S[(k + 1) % ns]};
+            for (int i = m[k + 1]; i >= m[k]; --i) {
+                ring2.push_back(D[((i % nd) + nd) % nd]);
+            }
+        } else {
+            for (int i = m[k]; i <= m[k + 1]; ++i) {
+                ring2.push_back(D[((i % nd) + nd) % nd]);
+            }
+            ring2.push_back(S[(k + 1) % ns]);
+            ring2.push_back(S[k]);
+        }
+        ring2.erase(std::unique(ring2.begin(), ring2.end()), ring2.end());
+        if (ring2.size() > 1 && ring2.front() == ring2.back()) {
+            ring2.pop_back();
+        }
+        if (ring2.size() < 3) continue;
+        out.addPolygon(std::move(ring2), faceId, flip);
+    }
+}
+
+// Mesh a tall mismatched two-rim revolution band the ANNULUS way (modelled on
+// meshAnnulusCRing). The strip reconcile in meshRevolutionGrid drives the
+// interior off the SPARSE rim and bridges the dense rim with one full-height
+// diagonal strip — which makes `radial` dead (the body stays at the sparse
+// count) and shears the body. Instead:
+//   * the DENSE (flat) rim drives clean STRAIGHT columns (nu = its count, so
+//     `radial` densifies the whole body),
+//   * interior rings are HORIZONTAL (constant v) — the body reads as quad
+//     rings and `axial` adds more,
+//   * the count reduction (dense->sparse) AND the sparse rim's height
+//     variation (a notched shoulder) are both absorbed in ONE short band
+//     adjacent to that rim, via arc-fraction grouped n-gons distributed around
+//     the ring (emitClosedRimStrip) — never a full-height diagonal strip.
+// Watertight because BOTH rims are emitted as their exact solved samples; only
+// the face-private interior rings carry the dense column count.
+bool meshRevolutionAnnulusBody(const BRepAdaptor_Surface& surf, int faceId,
+                               const std::vector<RevRimPt>& denseRim,
+                               const std::vector<RevRimPt>& notchRim,
+                               int nvBody, bool flip, MeshBuilder& out) {
+    const int nu = int(denseRim.size());
+    if (nu < 3 || notchRim.size() < 3 || nvBody < 1) return false;
+    const double period = surf.LastUParameter() - surf.FirstUParameter();
+
+    // Dense rim height (flat) and the notch rim's v-extent.
+    double vDense = 0;
+    for (const RevRimPt& r : denseRim) vDense += r.v;
+    vDense /= nu;
+    double vNmin = 1e300, vNmax = -1e300;
+    for (const RevRimPt& r : notchRim) {
+        vNmin = std::min(vNmin, r.v);
+        vNmax = std::max(vNmax, r.v);
+    }
+    const double u0 = surf.FirstUParameter();
+    // The notch rim rises toward the dense rim (denseBelow) or hangs below it.
+    // sgn points from the body toward the notch.
+    const bool denseBelow = vDense <= vNmin;
+    const double sgn = denseBelow ? 1.0 : -1.0;
+    const double notchRange = std::max(1e-9, vNmax - vNmin);
+    // `band` is the short height of the reduction cells. The flat body ceiling
+    // sits 2*band inside the notch's nearest dip so the eased shoulder lattice
+    // keeps >= band height everywhere (no degenerate/inverted cells at the
+    // notch's low point).
+    const double band = std::max(1e-6, 0.15 * notchRange);
+    const double vNear = denseBelow ? vNmin : vNmax;
+    double vFlatTop = vNear - sgn * 2.0 * band;
+    // Never march the flat body past the dense rim itself.
+    if (denseBelow) vFlatTop = std::max(vFlatTop, vDense);
+    else vFlatTop = std::min(vFlatTop, vDense);
+
+    // Column azimuths follow the dense rim (so it welds one-to-one through the
+    // horizontal lattice), unwrapped monotone from its first sample.
+    std::vector<double> colU(nu);
+    colU[0] = denseRim[0].u;
+    for (int i = 1; i < nu; ++i) {
+        double d = denseRim[i].u - denseRim[i - 1].u;
+        d -= period * std::round(d / period);
+        if (d < 0) d = 0;
+        colU[i] = colU[i - 1] + d;
+    }
+
+    // Notch v-profile v(u): the sparse rim's height as a function of azimuth,
+    // wrapped and sorted so a dense column can read the notch shape at its own
+    // azimuth. The vertical notch WALLS show up as a steep local slope here.
+    std::vector<std::pair<double, double>> prof;
+    prof.reserve(notchRim.size());
+    for (const RevRimPt& r : notchRim) {
+        double uw = r.u - period * std::floor((r.u - u0) / period);
+        prof.push_back({uw, r.v});
+    }
+    std::sort(prof.begin(), prof.end());
+    auto notchVAt = [&](double u) -> double {
+        if (prof.size() == 1) return prof[0].second;
+        double uu = u - period * std::floor((u - u0) / period);
+        size_t hi = 0;
+        while (hi < prof.size() && prof[hi].first < uu) ++hi;
+        double ua, va, ub, vb;
+        if (hi == 0) {
+            ua = prof.back().first - period; va = prof.back().second;
+            ub = prof.front().first;         vb = prof.front().second;
+        } else if (hi == prof.size()) {
+            ua = prof.back().first;          va = prof.back().second;
+            ub = prof.front().first + period; vb = prof.front().second;
+        } else {
+            ua = prof[hi - 1].first; va = prof[hi - 1].second;
+            ub = prof[hi].first;     vb = prof[hi].second;
+        }
+        const double s = ub - ua;
+        const double t = s > 1e-12 ? (uu - ua) / s : 0.0;
+        return va + (vb - va) * std::clamp(t, 0.0, 1.0);
+    };
+
+    // Horizontal body rings: row 0 is the dense rim's EXACT samples; rows
+    // 1..nvBody are face-private, at the dense azimuths and CONSTANT v,
+    // marching from vDense to vFlatTop. This is the clean quad-ring body that
+    // `radial` (columns) and `axial` (rows) densify.
+    const int bodyRows = nvBody + 1;
+    std::vector<std::vector<uint32_t>> ring(bodyRows);
+    for (int j = 0; j < bodyRows; ++j) {
+        ring[j].resize(nu);
+        const double t = double(j) / nvBody;
+        const double v = vDense + (vFlatTop - vDense) * t;
+        for (int i = 0; i < nu; ++i) {
+            if (j == 0) {
+                ring[j][i] =
+                    out.addVertex(denseRim[i].p, {faceId, denseRim[i].u, v});
+            } else {
+                const gp_Pnt p = surf.Value(colU[i], v);
+                ring[j][i] = out.addVertex(p, {faceId, colU[i], v});
+            }
+        }
+    }
+    for (int j = 0; j + 1 < bodyRows; ++j) {
+        for (int i = 0; i < nu; ++i) {
+            const int i2 = (i + 1) % nu;
+            out.addPolygon({ring[j][i], ring[j][i2], ring[j + 1][i2],
+                            ring[j + 1][i]},
+                           faceId, flip);
+        }
+    }
+
+    // SHOULDER ring (dense count): follows the notch v-profile offset one
+    // `band` back into the body, so the reduction band above it stays a short,
+    // uniform-height strip even across the notch's vertical walls — the wall's
+    // height jump becomes an eased (non-folding) quad between the flat body
+    // ceiling and this shoulder, not a full-height sheared triangle.
+    std::vector<uint32_t> shoulder(nu);
+    std::vector<gp_Pnt> shoulderP(nu);
+    for (int i = 0; i < nu; ++i) {
+        const double v = notchVAt(colU[i]) - sgn * band;
+        const gp_Pnt p = surf.Value(colU[i], v);
+        shoulderP[i] = p;
+        shoulder[i] = out.addVertex(p, {faceId, colU[i], v});
+    }
+    // Eased lattice: flat body ceiling -> profiled shoulder (one-to-one dense
+    // quads, winding as the body cells).
+    for (int i = 0; i < nu; ++i) {
+        const int i2 = (i + 1) % nu;
+        out.addPolygon({ring[bodyRows - 1][i], ring[bodyRows - 1][i2],
+                        shoulder[i2], shoulder[i]},
+                       faceId, flip);
+    }
+
+    // The notch rim's EXACT samples (its own solved count) and points.
+    std::vector<uint32_t> notchId(notchRim.size());
+    std::vector<gp_Pnt> notchP(notchRim.size());
+    for (size_t i = 0; i < notchRim.size(); ++i) {
+        notchP[i] = notchRim[i].p;
+        notchId[i] =
+            out.addVertex(notchRim[i].p, {faceId, notchRim[i].u, notchRim[i].v});
+    }
+
+    // One short reduction band from the profiled shoulder (dense count) to the
+    // notch rim (sparse count), paired by ARC FRACTION so the notch's vertical
+    // walls pair one-to-one (no folded slivers). Winding matches the lattice
+    // (the notch on the high side is the upper row).
+    if (denseBelow) {
+        emitClosedRimStripArc(out, faceId, flip, shoulder, shoulderP, notchId,
+                              notchP);
+    } else {
+        emitClosedRimStripArc(out, faceId, flip, notchId, notchP, shoulder,
+                              shoulderP);
+    }
+    return true;
+}
+
 bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                         const Model& model, const std::vector<int>& rimEdges,
                         const std::vector<int>& solvedEdge, int faceId,
@@ -10589,6 +10932,55 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
         }
         dbg("revgrid face %d: rim totals %d/%d -> transition strip", faceId,
             nRim0, nRim1);
+        // ANNULUS-BODY route (tight gate): the strip reconcile above must pick
+        // a WAVY rim to drive (driveSide >= 0), and that wavy rim is the
+        // SPARSE one (drives fewer columns than the flat rim it strips). That
+        // is exactly the pathology on the foam body — the interior collapses
+        // to the sparse count so `radial` is dead and the flat dense rim rides
+        // one full-height diagonal strip. Every other reconciled band drives
+        // off the DENSER rim (radial already works) and is untouched here. The
+        // wavy/sparse rim must carry a genuine notch (a fair slice of the band
+        // height) with room left for a horizontal body. When it matches, run
+        // the body the annulus way: dense flat rim drives clean columns,
+        // horizontal interior rings, one short distributed-n-gon reduction
+        // band at the notched rim.
+        {
+            const int driveCount =
+                driveSide >= 0 ? int(rim[driveSide].size())
+                               : std::max(nRim0, nRim1);
+            const int stripCount =
+                driveSide >= 0 ? int(rim[driveSide ^ 1].size())
+                               : std::min(nRim0, nRim1);
+            double notchRange = 0;
+            if (driveSide >= 0) {
+                double lo = 1e300, hi = -1e300;
+                for (const RimPt& r : rim[driveSide]) {
+                    lo = std::min(lo, r.v);
+                    hi = std::max(hi, r.v);
+                }
+                notchRange = hi - lo;
+            }
+            const bool annulusBody =
+                !vWrap && driveSide >= 0 && driveCount < stripCount &&
+                reconBandH > 1e-9 && notchRange >= 0.15 * reconBandH &&
+                notchRange <= 0.85 * reconBandH;
+            if (annulusBody) {
+                std::vector<RevRimPt> denseRim, notchRim;
+                denseRim.reserve(rim[driveSide ^ 1].size());
+                notchRim.reserve(rim[driveSide].size());
+                for (const RimPt& r : rim[driveSide ^ 1])
+                    denseRim.push_back({r.u, r.v, r.p});
+                for (const RimPt& r : rim[driveSide])
+                    notchRim.push_back({r.u, r.v, r.p});
+                const int nvBody = std::max(1, nv);
+                dbg("revgrid face %d: ANNULUS-BODY nu=%d(dense) notch=%d "
+                    "nvBody=%d notchRange=%g bandH=%g",
+                    faceId, int(denseRim.size()), int(notchRim.size()), nvBody,
+                    notchRange, reconBandH);
+                return meshRevolutionAnnulusBody(surf, faceId, denseRim,
+                                                 notchRim, nvBody, flip, out);
+            }
+        }
         // Interior azimuthal count equals the DRIVE rim's: its columns sit
         // at that rim's own azimuths, so it welds to the interior through a
         // clean one-to-one lattice (quads) and only the other rim needs a
@@ -10916,94 +11308,11 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
         }
     }
 
-    // Closed transition strips between an exact rim row and its
-    // neighbouring ring when their counts differ: monotone circular
-    // grouping by u — quads where the counts advance together, a 5-gon
-    // (or a small fan against a degenerate ring) where the dense ring
-    // contributes extra points. Winding matches the lattice cells:
-    // lower row forward, upper row backward.
-    auto emitClosedStrip = [&](const std::vector<uint32_t>& loI,
-                               const std::vector<double>& loU,
-                               const std::vector<uint32_t>& hiI,
-                               const std::vector<double>& hiU) {
-        const int nl = int(loI.size()), nh = int(hiI.size());
-        if (nl < 3 || nh < 3) return;
-        const bool loSparse = nl <= nh;
-        const std::vector<uint32_t>& S = loSparse ? loI : hiI;
-        const std::vector<double>& sU = loSparse ? loU : hiU;
-        const std::vector<uint32_t>& D = loSparse ? hiI : loI;
-        const std::vector<double>& dU = loSparse ? hiU : loU;
-        const int ns = int(S.size()), nd = int(D.size());
-        // Reference angle measured ALONG each ring's own order (cumulative
-        // short-step deltas), not the raw wrapped u: a rim sampled in
-        // wire-chain order winds once around but starts mid-circle (one
-        // seam wrap) and a scalloped rim adds tiny local backsteps — a raw
-        // wrapped-u comparison then misplaces the pairing. The cumulative
-        // angle is monotone from each ring's first sample and closes at one
-        // period. For an already-sorted ring (the uniform interior) this
-        // reduces to u - u[0], so existing callers are unchanged.
-        auto cumAngle = [&](const std::vector<double>& U) {
-            std::vector<double> c(U.size() + 1, 0.0);
-            for (size_t i = 1; i <= U.size(); ++i) {
-                double d = U[i % U.size()] - U[i - 1];
-                d -= period * std::round(d / period);
-                if (d < 0) d = 0;  // seam wrap / tiny scallop backsteps
-                c[i] = c[i - 1] + d;
-            }
-            return c;
-        };
-        const std::vector<double> dCum = cumAngle(dU);  // size nd+1
-        const std::vector<double> sCum = cumAngle(sU);  // size ns+1
-        double off = sU[0] - dU[0];  // sparse start ahead of dense start
-        off -= period * std::round(off / period);
-        if (off < 0) off += period;
-        auto dAt = [&](int i) {
-            int w = ((i % nd) + nd) % nd;
-            return dCum[w] + period * std::floor(double(i) / nd);
-        };
-        // m[k] = unwrapped dense index paired with sparse k, monotone,
-        // closing after exactly one full turn.
-        std::vector<int> m(ns + 1);
-        double bd = 1e300;
-        for (int i = 0; i < nd; ++i) {
-            double d = std::abs(dCum[i] - off);
-            d = std::min(d, period - d);
-            if (d < bd) { bd = d; m[0] = i; }
-        }
-        for (int k = 1; k < ns; ++k) {
-            double t = off + sCum[k];  // target angle from dense start
-            int best = m[k - 1];
-            double bestD = std::abs(dAt(best) - t);
-            for (int i = m[k - 1] + 1; i <= m[0] + nd; ++i) {
-                double d = std::abs(dAt(i) - t);
-                if (d < bestD) { bestD = d; best = i; }
-                if (dAt(i) > t + period / nd) break;
-            }
-            m[k] = best;
-        }
-        m[ns] = m[0] + nd;
-        for (int k = 0; k < ns; ++k) {
-            std::vector<uint32_t> ring2;
-            if (loSparse) {
-                ring2 = {S[k], S[(k + 1) % ns]};
-                for (int i = m[k + 1]; i >= m[k]; --i) {
-                    ring2.push_back(D[((i % nd) + nd) % nd]);
-                }
-            } else {
-                for (int i = m[k]; i <= m[k + 1]; ++i) {
-                    ring2.push_back(D[((i % nd) + nd) % nd]);
-                }
-                ring2.push_back(S[(k + 1) % ns]);
-                ring2.push_back(S[k]);
-            }
-            ring2.erase(std::unique(ring2.begin(), ring2.end()), ring2.end());
-            if (ring2.size() > 1 && ring2.front() == ring2.back()) {
-                ring2.pop_back();
-            }
-            if (ring2.size() < 3) continue;
-            out.addPolygon(std::move(ring2), faceId, flip);
-        }
-    };
+    // Closed transition strips between an exact rim row and its neighbouring
+    // ring when their counts differ — the shared emitClosedRimStrip: quads
+    // where the counts advance together, a grouped n-gon where the dense ring
+    // contributes extra points, distributed around the ring. Winding matches
+    // the lattice cells (lower row forward, upper row backward).
     if (!chained) {
         const double du = period / nu;
         const double u0 = surf.FirstUParameter();
@@ -11015,17 +11324,19 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
         }
         if (rim0ok && rim1ok && rows == 2) {
             // No interior ring at all: bridge rim to rim directly.
-            emitClosedStrip(ring[0], ringU[0], ring[1], ringU[1]);
+            emitClosedRimStrip(out, faceId, flip, period, ring[0], ringU[0],
+                               ring[1], ringU[1]);
         } else {
             // Only a rim whose count differs from the interior takes a
             // strip; a reconciled band's denser rim equals the interior and
             // welds through the aligned lattice above.
             if (rim0ok && ring[0].size() != ring[1].size()) {
-                emitClosedStrip(ring[0], ringU[0], ring[1], colU);
+                emitClosedRimStrip(out, faceId, flip, period, ring[0], ringU[0],
+                                   ring[1], colU);
             }
             if (rim1ok && ring[rows - 1].size() != ring[rows - 2].size()) {
-                emitClosedStrip(ring[rows - 2], colU, ring[rows - 1],
-                                ringU[1]);
+                emitClosedRimStrip(out, faceId, flip, period, ring[rows - 2],
+                                   colU, ring[rows - 1], ringU[1]);
             }
         }
     }
