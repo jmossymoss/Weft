@@ -7391,10 +7391,23 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         }
     }
 
+    // A per-face COUNT override means "subdivide THIS panel" — it must
+    // escape the single-n-gon grab (both the override grab just below and
+    // the default grab further down) and fall through to the grid meshers.
+    // Without this, minimal owns every flat/flat-ish face and swallows the
+    // control: the foam body's tall cylinder wall is split into near-flat
+    // panels that ship as one n-gon each, so gridu/radial did nothing. Gated
+    // on a field DIFFERING from the model default (the same explicit-count
+    // test solveDensity uses), so a non-overridden face is byte-identical.
+    const FaceMeshSettings& mdfl = settings.defaults;
+    const bool wantsSubdiv =
+        s.gridU != mdfl.gridU || s.gridV != mdfl.gridV ||
+        s.radial != mdfl.radial || s.axial != mdfl.axial;
+
     // Game-topology minimal, explicit per-face override: the user asked
     // for THIS face's boundary shape, so it wins even over the junction
-    // patterns below.
-    if (s.minimal && settings.perFace.count(fid) &&
+    // patterns below — unless they asked to subdivide it (wantsSubdiv).
+    if (s.minimal && settings.perFace.count(fid) && !wantsSubdiv &&
         planMinimalPlanar(face, surf, model, plan)) {
         return plan;
     }
@@ -7412,7 +7425,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // on (the topology policy: big flats are n-gons, quads go to curves;
     // triangulation is an export option). The junction patterns below
     // only see flat faces when minimal is off or can't build the face.
-    if (s.minimal && planMinimalPlanar(face, surf, model, plan)) {
+    if (s.minimal && !wantsSubdiv && planMinimalPlanar(face, surf, model, plan)) {
         if (getenv("WEFT_FLAT_DEBUG")) {
             dbg("plan face %d: minimal-ngon (surf type %d)", fid,
                 (int)surf.GetType());
