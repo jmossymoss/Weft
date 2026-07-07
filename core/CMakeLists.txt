@@ -61,6 +61,18 @@ else()                              # OCCT 7.5-7.7 (this tree is 7.6.3)
   set(WEFT_OCCT_XCAF TKXCAF TKLCAF TKCAF TKCDF TKBinXCAF TKBinL TKBin)
 endif()
 
+# Mesh / tessellation IO toolkits. OCCT 7.8's Data Exchange refactor renamed
+# these (TKSTL -> TKDESTL; TKRWMesh split into TKXMesh + TKDEGLTF/TKDEOBJ/
+# TKDEPLY), so the old names are absent on >= 7.8 and the new names are absent
+# on <= 7.7. Link whichever toolkits the installed OCCT actually provides so
+# both trees build (this tree is 7.6.3 -> TKRWMesh + TKSTL).
+set(WEFT_OCCT_MESHIO "")
+foreach(_tk TKRWMesh TKSTL TKXMesh TKDESTL TKDEGLTF TKDEOBJ TKDEPLY)
+  if(TARGET ${_tk})
+    list(APPEND WEFT_OCCT_MESHIO ${_tk})
+  endif()
+endforeach()
+
 target_link_libraries(weft_core PUBLIC
   TKernel TKMath
   TKBRep TKG2d TKG3d TKGeomBase
@@ -68,6 +80,5 @@ target_link_libraries(weft_core PUBLIC
   TKXSBase ${WEFT_OCCT_STEP}
   # --- new: XCAF/XDE document stack + mesh toolkits ---
   ${WEFT_OCCT_XCAF} ${WEFT_OCCT_XDE}
-  TKRWMesh   # RWMesh/RWGltf/RWObj (used by convert/default tessellation in later stages)
-  TKSTL      # RWStl + StlAPI
+  ${WEFT_OCCT_MESHIO}   # RWStl/StlAPI + RWMesh/RWGltf/RWObj (convert + tessellation)
 )
