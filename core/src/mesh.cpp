@@ -287,7 +287,71 @@ void writeObj(const PolyMesh& mesh, const std::string& path,
     if (!f) throw std::runtime_error("cannot open for writing: " + path);
 
     const ObjExportOptions opts = options ? *options : ObjExportOptions{};
+
+    // Object structure: FaceId -> solid index, so each CAD body writes as
+    // its own "o" block and importers keep bodies as separate meshes. Built
+    // up front because the color fallback below also keys off the solid.
+    std::map<int, int> faceSolid;
+    if (solidFaces) {
+        for (size_t si = 0; si < solidFaces->size(); ++si) {
+            for (int fid : (*solidFaces)[si]) faceSolid[fid] = int(si);
+        }
+    }
+
+    // Source colors -> .mtl materials. A face resolves to its own per-face
+    // color, else its solid's color; an uncolored model emits no mtllib/.mtl
+    // and no usemtl, so its bytes are unchanged.
+    auto q8 = [](float x) {
+        int v = (int)std::lround(x * 255.0f);
+        return v < 0 ? 0 : (v > 255 ? 255 : v);
+    };
+    auto colorName = [&](const std::array<float, 3>& c) {
+        char b[32];
+        std::snprintf(b, sizeof b, "weft_col_%02x%02x%02x", q8(c[0]), q8(c[1]), q8(c[2]));
+        return std::string(b);
+    };
+    const weft::Model* cm = opts.emitColors ? opts.model : nullptr;
+    auto faceColor = [&](int fid, std::array<float, 3>& out) -> bool {
+        if (!cm) return false;
+        int fi = fid - 1;
+        if (fi >= 0 && fi < (int)cm->faceHasColor.size() && cm->faceHasColor[fi]) {
+            out = cm->faceColors[fi];
+            return true;
+        }
+        auto it = faceSolid.find(fid);
+        if (it != faceSolid.end()) {
+            int s = it->second;
+            if (s >= 0 && s < (int)cm->solidHasColor.size() && cm->solidHasColor[s]) {
+                out = cm->solidColors[s];
+                return true;
+            }
+        }
+        return false;
+    };
+    // Distinct materials (name -> rgb), in first-appearance order over faces.
+    std::vector<std::pair<std::string, std::array<float, 3>>> materials;
+    std::map<std::string, int> materialSeen;
+    {
+        std::array<float, 3> c{};
+        for (size_t p = 0; p < mesh.polygonFaceId.size(); ++p) {
+            if (!faceColor(mesh.polygonFaceId[p], c)) continue;
+            std::string name = colorName(c);
+            if (materialSeen.emplace(name, (int)materials.size()).second)
+                materials.push_back({name, c});
+        }
+    }
+    const bool hasColors = !materials.empty();
+    std::string mtlPath, mtlName;
+    if (hasColors) {
+        size_t dot = path.rfind('.');
+        std::string base = (dot == std::string::npos) ? path : path.substr(0, dot);
+        mtlPath = base + ".mtl";
+        size_t slash = mtlPath.find_last_of("/\\");
+        mtlName = slash == std::string::npos ? mtlPath : mtlPath.substr(slash + 1);
+    }
+
     std::fprintf(f, "# weft export\n");
+    if (hasColors) std::fprintf(f, "mtllib %s\n", mtlName.c_str());
     for (const auto& v : mesh.vertices) {
         double x = v[0] * opts.scale;
         double y = v[1] * opts.scale;
@@ -302,19 +366,11 @@ void writeObj(const PolyMesh& mesh, const std::string& path,
         std::fprintf(f, "v %.9g %.9g %.9g\n", x, y, z);
     }
 
-    // Object structure: FaceId -> solid index, so each CAD body writes as
-    // its own "o" block and importers keep bodies as separate meshes.
-    std::map<int, int> faceSolid;
-    if (solidFaces) {
-        for (size_t si = 0; si < solidFaces->size(); ++si) {
-            for (int fid : (*solidFaces)[si]) faceSolid[fid] = int(si);
-        }
-    }
-
     // Exact CAD normals: one per used (vertex, face) pair, evaluated on
     // the B-rep. Corners of polygons from different faces carry each
     // face's own normal, so sharp edges split and tangent joins shade
     // smooth. Polygons with a pole/apex corner fall back to no-normal.
+    const bool useNormals = opts.emitNormals && opts.model != nullptr;
     std::map<std::pair<uint32_t, int>, int> normalIndex;
     std::map<int, BRepAdaptor_Surface> normalCache;
     int normalCount = 0;
@@ -324,7 +380,7 @@ void writeObj(const PolyMesh& mesh, const std::string& path,
         if (it != normalIndex.end()) return it->second;
         int slot = -1;
         std::array<double, 3> n;
-        if (opts.model &&
+        if (useNormals &&
             detail::cadNormal(mesh, *opts.model, idx, fid, normalCache, n)) {
             if (opts.yUp) {
                 double ny = n[2], nz = -n[1];
@@ -342,6 +398,7 @@ void writeObj(const PolyMesh& mesh, const std::string& path,
     // DCC. Polygons of a face are contiguous by construction; emitting in
     // solid order keeps each object's polygons contiguous too.
     int currentObject = -1, currentGroup = -1;
+    std::string currentMaterial;
     auto objectLabel = [&](int object) {
         std::string label = "object_" + std::to_string(object + 1);
         if (opts.objectNames && object >= 0 &&
@@ -355,7 +412,7 @@ void writeObj(const PolyMesh& mesh, const std::string& path,
         return label;
     };
     auto emitPoly = [&](const std::vector<uint32_t>& corners, int fid) {
-        bool full = opts.model != nullptr;
+        bool full = useNormals;
         std::vector<int> slots(corners.size(), -1);
         if (full) {
             for (size_t i = 0; i < corners.size(); ++i) {
@@ -380,6 +437,16 @@ void writeObj(const PolyMesh& mesh, const std::string& path,
                 std::fprintf(f, "o %s\n", objectLabel(currentObject).c_str());
             }
             std::fprintf(f, "g face_%d\n", currentGroup);
+            if (hasColors) {
+                std::array<float, 3> c{};
+                if (faceColor(currentGroup, c)) {
+                    std::string mn = colorName(c);
+                    if (mn != currentMaterial) {
+                        std::fprintf(f, "usemtl %s\n", mn.c_str());
+                        currentMaterial = mn;
+                    }
+                }
+            }
         }
         const auto& poly = mesh.polygons[p];
         const int fid = mesh.polygonFaceId[p];
@@ -408,6 +475,18 @@ void writeObj(const PolyMesh& mesh, const std::string& path,
         for (size_t p = 0; p < mesh.polygons.size(); ++p) writeFacePolys(p);
     }
     std::fclose(f);
+
+    // Sidecar .mtl: one newmtl per distinct source color.
+    if (hasColors) {
+        FILE* mf = std::fopen(mtlPath.c_str(), "w");
+        if (!mf) throw std::runtime_error("cannot open for writing: " + mtlPath);
+        std::fprintf(mf, "# weft materials\n");
+        for (const auto& [name, c] : materials) {
+            std::fprintf(mf, "newmtl %s\n", name.c_str());
+            std::fprintf(mf, "Kd %.6g %.6g %.6g\n", c[0], c[1], c[2]);
+        }
+        std::fclose(mf);
+    }
 }
 
 }  // namespace weft
