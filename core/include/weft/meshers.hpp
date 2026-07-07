@@ -182,6 +182,15 @@ enum class MesherKind {
                      // corner turns), matched station-by-station, and laddered
                      // into an even quad flow, with the end caps (incl. notches)
                      // webbed locally instead of a global transfinite blend.
+    RevolutionStrip, // an OPEN (not u/v-closed) cylinder/cone/revolution
+                     // patch bounded by two ~axial "rail" sides (constant-u)
+                     // and two ~arc "rim" ends (constant-v) — a tall curved
+                     // wall strip a CAD kernel split off. Meshes as a clean
+                     // horizontal-ring quad grid (constant-v rows × constant-u
+                     // columns on the true surface), controllable by density
+                     // (radial=columns around, axial=rows up), where a Coons
+                     // patch rejects the smooth rail↔arc corners and the rail
+                     // ladder would shear the rails into diagonal flow.
     DomeCap,         // spherical / dome cap: a single-outer-wire revolution-
                      // like surface (often a bspline) that bulges from a base
                      // loop to a single pole. Meshes as a UV-sphere hemisphere

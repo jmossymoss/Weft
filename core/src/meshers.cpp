@@ -110,6 +110,7 @@ const char* mesherKindName(MesherKind k) {
         case MesherKind::QuadFill: return "quad-fill";
         case MesherKind::RailLadder: return "rail-ladder";
         case MesherKind::RibbonSweep: return "ribbon-sweep";
+        case MesherKind::RevolutionStrip: return "revolution-strip";
         case MesherKind::DomeCap: return "dome-cap";
     }
     return "fallback-tri";
@@ -1074,6 +1075,165 @@ bool revolutionCovers(const TopoDS_Face& face) {
             if (cls.State() == TopAbs_OUT) return false;
         }
     }
+    return true;
+}
+
+// A single-wire OPEN cylinder/cone/revolution patch that reads as a tall
+// curved "wall strip": a CAD kernel split a barrel into vertical panels, so
+// the face is bounded by two ~axial RAIL sides (predominantly constant-u,
+// the u-extremes) and two ~arc RIM ends (predominantly constant-v, the
+// v-extremes) forming a UV rectangle. Coons rejects it (the rail↔rim corners
+// are smooth/tangent, no clear fourth corner) and the rail ladder shears the
+// rails into diagonal flow; this meshes it as a clean horizontal-ring quad
+// grid instead. More permissive than openBandSides — the rails may wander in
+// u (they needn't be clean 90%-height u-isos) and each side may be a chain of
+// several edges. Fills plan.coonsSides = {rimLow, rimHigh, railLow, railHigh}
+// and the flat uEdges (rims/columns) / vEdges (rails/rows) for the solve.
+bool planRevolutionStrip(const TopoDS_Face& face,
+                         const BRepAdaptor_Surface& surf, const Model& model,
+                         FacePlan& plan) {
+    switch (surf.GetType()) {
+        case GeomAbs_Cylinder:
+        case GeomAbs_Cone:
+        case GeomAbs_SurfaceOfRevolution: break;
+        default: return false;
+    }
+    if (surf.IsUClosed() || surf.IsVClosed()) return false;
+    // Single outer wire only: interior slots/holes keep their own path
+    // (a trimmed strip is not a clean rectangle).
+    int wireCount = 0;
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) ++wireCount;
+    if (wireCount != 1) return false;
+
+    const double u0 = surf.FirstUParameter(), u1 = surf.LastUParameter();
+    const double v0 = surf.FirstVParameter(), v1 = surf.LastVParameter();
+    const double uspan = u1 - u0, vspan = v1 - v0;
+    if (!(uspan > 1e-12) || !(vspan > 1e-12)) return false;
+
+    struct SideE {
+        int eid;
+        double uLo, uHi, vLo, vHi;  // pcurve param extent
+        double meanU, meanV;
+    };
+    std::vector<SideE> rails, rims;  // rails = const-u, rims = const-v
+    for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+        const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+        if (BRep_Tool::Degenerated(edge)) return false;  // no poles on a strip
+        if (BRep_Tool::IsClosed(edge, face)) return false;  // seam ⇒ u-closed
+        const int eid = model.edges.FindIndex(edge);
+        if (eid < 1) return false;
+        double f, l;
+        Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(edge, face, f, l);
+        if (pc.IsNull()) return false;
+        double umin = 1e300, umax = -1e300, vmin = 1e300, vmax = -1e300;
+        double su = 0, sv = 0;
+        for (int k = 0; k <= 12; ++k) {
+            gp_Pnt2d uv = pc->Value(f + (l - f) * k / 12.0);
+            umin = std::min(umin, uv.X());
+            umax = std::max(umax, uv.X());
+            vmin = std::min(vmin, uv.Y());
+            vmax = std::max(vmax, uv.Y());
+            su += uv.X();
+            sv += uv.Y();
+        }
+        const double fu = (umax - umin) / uspan;  // u fraction spanned
+        const double fv = (vmax - vmin) / vspan;
+        SideE se{eid, umin, umax, vmin, vmax, su / 13.0, sv / 13.0};
+        // A RAIL runs along v at ~constant u (narrow in u, tall in v); a RIM
+        // runs along u at ~constant v. "Predominantly" — the rail may wander
+        // in u up to a third of its v reach, so a slightly-off-iso split face
+        // still qualifies (openBandSides demands a clean 90% u-iso and bails
+        // on exactly these). An edge that spans both directions is a diagonal
+        // trim and disqualifies the whole face.
+        if (fv > 3.0 * fu && fv > 0.25) {
+            rails.push_back(se);
+        } else if (fu > 3.0 * fv && fu > 0.25) {
+            rims.push_back(se);
+        } else {
+            return false;
+        }
+    }
+    if (rails.size() < 2 || rims.size() < 2) return false;
+
+    // Cluster the rails into low-u / high-u chains and the rims into
+    // low-v / high-v chains, then demand each chain sits at its param
+    // extreme and its cluster spans most of the perpendicular direction —
+    // i.e. the four sides really are the rectangle's border.
+    auto cluster = [](std::vector<SideE>& sides, bool byU, double lo, double hi,
+                      double span, std::vector<int>& loChain,
+                      std::vector<int>& hiChain, double& loCover,
+                      double& hiCover) {
+        double mid = 0.5 * (lo + hi);
+        double loMin = 1e300, loMax = -1e300, hiMin = 1e300, hiMax = -1e300;
+        for (const SideE& s : sides) {
+            const double key = byU ? s.meanU : s.meanV;
+            // The COVER runs along the perpendicular axis (a rail's v reach,
+            // a rim's u reach).
+            const double cLo = byU ? s.vLo : s.uLo;
+            const double cHi = byU ? s.vHi : s.uHi;
+            if (key < mid) {
+                loChain.push_back(s.eid);
+                loMin = std::min(loMin, cLo);
+                loMax = std::max(loMax, cHi);
+            } else {
+                hiChain.push_back(s.eid);
+                hiMin = std::min(hiMin, cLo);
+                hiMax = std::max(hiMax, cHi);
+            }
+        }
+        loCover = loMax > loMin ? (loMax - loMin) / span : 0.0;
+        hiCover = hiMax > hiMin ? (hiMax - hiMin) / span : 0.0;
+    };
+    std::vector<int> railLow, railHigh, rimLow, rimHigh;
+    double rlCov = 0, rhCov = 0, mlCov = 0, mhCov = 0;
+    cluster(rails, /*byU=*/true, u0, u1, vspan, railLow, railHigh, rlCov, rhCov);
+    cluster(rims, /*byU=*/false, v0, v1, uspan, rimLow, rimHigh, mlCov, mhCov);
+    if (railLow.empty() || railHigh.empty() || rimLow.empty() ||
+        rimHigh.empty()) {
+        return false;
+    }
+    // Each rail chain must climb most of the band height and each rim chain
+    // most of the wrap — a clean rectangle. 0.7 is permissive vs the open
+    // band's 0.9 so a wandering rail still qualifies.
+    if (rlCov < 0.7 || rhCov < 0.7 || mlCov < 0.7 || mhCov < 0.7) return false;
+
+    // The rails must bracket the u-extremes and the rims the v-extremes, so
+    // this is the outer rectangle (not two mid-band rings mistaken for rims).
+    auto meanKey = [](const std::vector<int>& chain,
+                      const std::vector<SideE>& src, bool byU) {
+        double s = 0;
+        int n = 0;
+        for (int eid : chain) {
+            for (const SideE& e : src) {
+                if (e.eid == eid) {
+                    s += byU ? e.meanU : e.meanV;
+                    ++n;
+                }
+            }
+        }
+        return n ? s / n : 0.0;
+    };
+    const double railLoU = meanKey(railLow, rails, true);
+    const double railHiU = meanKey(railHigh, rails, true);
+    const double rimLoV = meanKey(rimLow, rims, false);
+    const double rimHiV = meanKey(rimHigh, rims, false);
+    if (std::abs(railLoU - u0) > 0.2 * uspan ||
+        std::abs(railHiU - u1) > 0.2 * uspan ||
+        std::abs(rimLoV - v0) > 0.2 * vspan ||
+        std::abs(rimHiV - v1) > 0.2 * vspan) {
+        return false;
+    }
+
+    plan.kind = MesherKind::RevolutionStrip;
+    plan.coonsSides[0] = rimLow;    // v-low rim → grid row 0 (columns around)
+    plan.coonsSides[1] = rimHigh;   // v-high rim → grid row nv
+    plan.coonsSides[2] = railLow;   // u-low rail → grid column 0 (rows up)
+    plan.coonsSides[3] = railHigh;  // u-high rail → grid column nu
+    plan.uEdges = rimLow;           // rims drive the column (radial) count
+    plan.uEdges.insert(plan.uEdges.end(), rimHigh.begin(), rimHigh.end());
+    plan.vEdges = railLow;          // rails drive the row (axial) count
+    plan.vEdges.insert(plan.vEdges.end(), railHigh.begin(), railHigh.end());
+    plan.constrains = true;
     return true;
 }
 
@@ -7486,6 +7646,31 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         return plan;
     }
 
+    // A tall curved wall strip (a barrel split into vertical panels) is a
+    // clean UV rectangle a Coons patch also accepts — but Coons meshes it
+    // with gridU/gridV and treats it as a generic patch, so a user's
+    // radial/axial (the revolution-surface density controls) does NOTHING to
+    // it. When the user HAS expressed that intent — an explicit per-face
+    // radial or axial differing from the model default — route the strip to
+    // the revolution grid instead, where radial = columns around and axial =
+    // rows up, giving clean horizontal rings the density dials actually
+    // drive. Gated on the explicit override (the same "differ-from-default"
+    // pin test solveDensity uses), so a defaulted face keeps its Coons route
+    // and default output stays byte-for-byte identical.
+    {
+        const FaceMeshSettings& dfl2 = settings.defaults;
+        const bool revDensityIntent =
+            settings.perFace.count(fid) &&
+            (s.radial != dfl2.radial || s.axial != dfl2.axial);
+        if (revDensityIntent && planRevolutionStrip(face, surf, model, plan)) {
+            dbg("plan face %d: revolution strip (density intent; rims %zu+%zu, "
+                "rails %zu+%zu)",
+                fid, plan.coonsSides[0].size(), plan.coonsSides[1].size(),
+                plan.coonsSides[2].size(), plan.coonsSides[3].size());
+            return plan;
+        }
+    }
+
     // Four-sided freeform/trimmed faces get a structured Coons grid; the
     // across-the-blend direction of a fillet strip is whichever side pair
     // is shorter in 3D.
@@ -7541,6 +7726,12 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             return plan;
         }
     }
+
+    // (An open revolution wall strip with density intent is diverted to the
+    // revolution grid ABOVE, before Coons — a strip that reaches here has no
+    // such intent, so it keeps its historical route and default output stays
+    // byte-for-byte identical. See the density-intent block before the Coons
+    // patch.)
 
     // Two-tip bands (crescents, lunes, tangent strips): coons wants four
     // corners and the webs fan these — the rail ladder pairs the two
@@ -7984,6 +8175,41 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                     }
                 }
             }
+        } else if (plan.kind == MesherKind::RevolutionStrip) {
+            // Open revolution wall strip: the two RIM arcs (uEdges) are the
+            // columns-around and the two RAILS (vEdges) the rows-up. Each rim
+            // arc proposes only its WRAP SHARE of `radial` (radial = divisions
+            // per FULL turn), exactly like the open band — so a barrel split
+            // into N strips proposes radial/N per arc, and the co-circular
+            // sibling arcs + the shared cap rim sum to `radial` around the
+            // circle rather than radial-per-arc (which over-densifies the cap
+            // rim into folds). Rails take axial as the row floor.
+            const TopoDS_Face stripFace = TopoDS::Face(model.faces(fid));
+            for (int e : plan.uEdges) {
+                if (s.adaptive) {
+                    proposeSet({e}, 1, 1, true, s, overridden);
+                    continue;
+                }
+                double f, l;
+                Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(
+                    TopoDS::Edge(model.edges(e)), stripFace, f, l);
+                double eu0 = 1e300, eu1 = -1e300;
+                if (!pc.IsNull()) {
+                    for (int k = 0; k <= 8; ++k) {
+                        const double uu = pc->Value(f + (l - f) * k / 8.0).X();
+                        eu0 = std::min(eu0, uu);
+                        eu1 = std::max(eu1, uu);
+                    }
+                }
+                const double frac =
+                    eu1 > eu0 ? (eu1 - eu0) / (2.0 * M_PI) : 0.0;
+                propose({e},
+                        std::max(1, int(std::lround(std::max(3, s.radial) *
+                                                    frac))),
+                        overridden);
+            }
+            proposeSet(plan.vEdges, std::max(1, s.axial), std::max(1, s.axial),
+                       s.adaptive, s, overridden);
         } else if (plan.kind == MesherKind::AnnulusRing) {
             // Both loops are rings; they solve independently (their own
             // neighbours usually drive them).
@@ -10292,6 +10518,229 @@ bool meshDomeCap(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     }
     dbg("domecap face %d: nAz=%d nLat=%d azimV=%d flip=%d", faceId, nAz, nLat,
         azimIsV ? 1 : 0, flip ? 1 : 0);
+    return true;
+}
+
+// Mesh an OPEN revolution wall strip (planRevolutionStrip) as a clean
+// horizontal-ring quad grid: constant-v rows × constant-u columns on the true
+// surface. The four side chains — two rims (v-extremes, columns) and two rails
+// (u-extremes, rows) — are sampled at their solved edge counts, so every
+// boundary vertex is an exact edge sample and welds to the neighbours
+// bit-for-bit (watertight). The interior is a transfinite (bilinearly-blended
+// Coons) map of the boundary (u,v) PARAMETERS, evaluated through surf.Value —
+// so interior rows follow constant-v rings and columns constant-u meridians,
+// no matter how the rails wander. On any structural doubt (a chain that won't
+// weld, opposite sides that disagree in sample count, a corner that doesn't
+// close) it returns false and the caller demotes to the contract floor, which
+// is watertight by construction.
+bool meshRevolutionStrip(const TopoDS_Face& face,
+                         const BRepAdaptor_Surface& surf, const Model& model,
+                         const FacePlan& plan, const std::vector<int>& solvedEdge,
+                         int faceId, int nu, int nv, MeshBuilder& out,
+                         const PinnedEdges* pins) {
+    const double weld = 1e-4 + BRep_Tool::Tolerance(face);
+    struct SP {
+        gp_Pnt p;
+        double u, v;
+    };
+    // Sample one side chain end-to-end, honouring per-edge pins/solved counts,
+    // recording both the exact 3D point and its surface (u,v) param. Pieces
+    // weld by 3D endpoint proximity, exactly like the annulus C-ring sampler.
+    auto sampleSide = [&](const std::vector<int>& edges,
+                          int fallbackN) -> std::vector<SP> {
+        std::vector<std::vector<SP>> pieces;
+        for (int eid : edges) {
+            const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
+            double f2, l2, f3, l3;
+            Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(e, face, f2, l2);
+            Handle(Geom_Curve) c3 = BRep_Tool::Curve(e, f3, l3);
+            if (pc.IsNull() || c3.IsNull()) return {};
+            int n = (eid >= 1 && eid < int(solvedEdge.size())) ? solvedEdge[eid]
+                                                               : 0;
+            if (n < 1) n = std::max(1, fallbackN);
+            const bool rev = e.Orientation() == TopAbs_REVERSED;
+            const double ph = closedEdgePhase(e, model);
+            std::vector<SP> pc3;
+            for (double t : edgeSampleFractions(eid, n, ph, rev,
+                                                /*includeLast=*/true, pins,
+                                                &model)) {
+                gp_Pnt2d uv = pc->Value(f2 + (l2 - f2) * t);
+                pc3.push_back({c3->Value(f3 + (l3 - f3) * t), uv.X(), uv.Y()});
+            }
+            if (pc3.size() < 2) return {};
+            pieces.push_back(std::move(pc3));
+        }
+        if (pieces.empty()) return {};
+        std::vector<SP> chain = pieces[0];
+        std::vector<char> used(pieces.size(), 0);
+        used[0] = 1;
+        bool progress = true;
+        while (progress) {
+            progress = false;
+            for (size_t k = 0; k < pieces.size(); ++k) {
+                if (used[k]) continue;
+                std::vector<SP> pv = pieces[k];
+                if (chain.back().p.Distance(pv.front().p) < weld) {
+                    chain.insert(chain.end(), pv.begin() + 1, pv.end());
+                } else if (chain.back().p.Distance(pv.back().p) < weld) {
+                    std::reverse(pv.begin(), pv.end());
+                    chain.insert(chain.end(), pv.begin() + 1, pv.end());
+                } else if (chain.front().p.Distance(pv.back().p) < weld) {
+                    chain.insert(chain.begin(), pv.begin(), pv.end() - 1);
+                } else if (chain.front().p.Distance(pv.front().p) < weld) {
+                    std::reverse(pv.begin(), pv.end());
+                    chain.insert(chain.begin(), pv.begin(), pv.end() - 1);
+                } else {
+                    continue;
+                }
+                used[k] = 1;
+                progress = true;
+            }
+        }
+        for (char u : used) {
+            if (!u) return {};  // disconnected chain
+        }
+        return chain;
+    };
+
+    std::vector<SP> rimLo = sampleSide(plan.coonsSides[0], std::max(1, nu));
+    std::vector<SP> rimHi = sampleSide(plan.coonsSides[1], std::max(1, nu));
+    std::vector<SP> railLo = sampleSide(plan.coonsSides[2], std::max(1, nv));
+    std::vector<SP> railHi = sampleSide(plan.coonsSides[3], std::max(1, nv));
+    if (rimLo.size() < 2 || rimHi.size() < 2 || railLo.size() < 2 ||
+        railHi.size() < 2) {
+        return false;
+    }
+    // Orient the rims to ascending u (columns run u0→u1) and the rails to
+    // ascending v (rows run v0→v1). The strip never wraps, so a plain param
+    // compare is unambiguous.
+    auto orientAsc = [](std::vector<SP>& s, bool byU) {
+        const double a = byU ? s.front().u : s.front().v;
+        const double b = byU ? s.back().u : s.back().v;
+        if (a > b) std::reverse(s.begin(), s.end());
+    };
+    orientAsc(rimLo, /*byU=*/true);
+    orientAsc(rimHi, /*byU=*/true);
+    orientAsc(railLo, /*byU=*/false);
+    orientAsc(railHi, /*byU=*/false);
+
+    // Opposite sides must agree in sample count for a rectangular grid; a
+    // multi-edge chain whose solved counts don't line up falls back safely.
+    const int M = int(rimLo.size());   // columns + 1
+    const int N = int(railLo.size());  // rows + 1
+    if (int(rimHi.size()) != M || int(railHi.size()) != N) return false;
+    if (M < 2 || N < 2) return false;
+    nu = M - 1;
+    nv = N - 1;
+
+    // The four corners are shared edge samples and must coincide, or the sides
+    // don't form a closed rectangle (mis-clustered chains). rimLo runs u0→u1
+    // at v0; railLo runs v0→v1 at u0; etc.
+    auto cornerOk = [&](const SP& a, const SP& b) {
+        return a.p.Distance(b.p) <= std::max(1e-6, 50 * weld);
+    };
+    if (!cornerOk(rimLo.front(), railLo.front()) ||
+        !cornerOk(rimLo.back(), railHi.front()) ||
+        !cornerOk(rimHi.front(), railLo.back()) ||
+        !cornerOk(rimHi.back(), railHi.back())) {
+        return false;
+    }
+
+    // Transfinite-blended parameter grid. Boundary nodes keep their exact 3D
+    // points (weld contract); interior nodes evaluate surf.Value at the
+    // blended (u,v). ring[j] is grid row j (v), each with M column entries.
+    const double u00 = rimLo.front().u, uv00 = rimLo.front().v;
+    const double u10 = rimLo.back().u, v10 = rimLo.back().v;
+    const double u01 = rimHi.front().u, v01 = rimHi.front().v;
+    const double u11 = rimHi.back().u, v11 = rimHi.back().v;
+    std::vector<std::vector<uint32_t>> ring(N, std::vector<uint32_t>(M));
+    for (int j = 0; j < N; ++j) {
+        const double w = double(j) / nv;
+        for (int i = 0; i < M; ++i) {
+            const double s = double(i) / nu;
+            gp_Pnt p;
+            double uu, vv;
+            if (j == 0) {
+                p = rimLo[i].p;
+                uu = rimLo[i].u;
+                vv = rimLo[i].v;
+            } else if (j == nv) {
+                p = rimHi[i].p;
+                uu = rimHi[i].u;
+                vv = rimHi[i].v;
+            } else if (i == 0) {
+                p = railLo[j].p;
+                uu = railLo[j].u;
+                vv = railLo[j].v;
+            } else if (i == nu) {
+                p = railHi[j].p;
+                uu = railHi[j].u;
+                vv = railHi[j].v;
+            } else {
+                // Bilinearly-blended Coons interpolation of the params.
+                const double bu = (1 - w) * rimLo[i].u + w * rimHi[i].u;
+                const double bv = (1 - w) * rimLo[i].v + w * rimHi[i].v;
+                const double lu = (1 - s) * railLo[j].u + s * railHi[j].u;
+                const double lv = (1 - s) * railLo[j].v + s * railHi[j].v;
+                const double cu = (1 - s) * (1 - w) * u00 + s * (1 - w) * u10 +
+                                  (1 - s) * w * u01 + s * w * u11;
+                const double cv = (1 - s) * (1 - w) * uv00 + s * (1 - w) * v10 +
+                                  (1 - s) * w * v01 + s * w * v11;
+                uu = bu + lu - cu;
+                vv = bv + lv - cv;
+                p = surf.Value(uu, vv);
+            }
+            ring[j][i] = out.addVertex(p, {faceId, uu, vv});
+        }
+    }
+
+    // Winding: pick the single flip that makes the emitted cells agree with
+    // orient*(du×dv) (foldedPolys' rule), sampled where the surface normal is
+    // well defined — exactly like meshDomeCap.
+    bool flip = false;
+    {
+        const double orient = face.Orientation() == TopAbs_REVERSED ? -1.0 : 1.0;
+        // A representative interior-ish param: the centre of the first cell.
+        const double su = 0.5 / nu, sw = 0.5 / nv;
+        const double bu = (1 - sw) * rimLo.front().u + sw * rimHi.front().u;
+        const double uu =
+            bu + ((1 - su) * railLo[0].u + su * railHi[0].u) -
+            ((1 - su) * (1 - sw) * u00 + su * (1 - sw) * u10);
+        const double bv = (1 - sw) * rimLo.front().v + sw * rimHi.front().v;
+        const double vv =
+            bv + ((1 - su) * railLo[0].v + su * railHi[0].v) -
+            ((1 - su) * (1 - sw) * uv00 + su * (1 - sw) * v10);
+        gp_Pnt sp;
+        gp_Vec du, dv;
+        surf.D1(uu, vv, sp, du, dv);
+        gp_Vec sn = du.Crossed(dv);
+        if (sn.Magnitude() > 1e-14) {
+            sn *= orient;
+            const std::array<uint32_t, 4> q{ring[0][0], ring[0][1], ring[1][1],
+                                            ring[1][0]};
+            gp_Vec nw(0, 0, 0);
+            for (int i = 0; i < 4; ++i) {
+                const auto& A = out.mesh().vertices[q[i]];
+                const auto& B = out.mesh().vertices[q[(i + 1) % 4]];
+                nw += gp_Vec((A[1] - B[1]) * (A[2] + B[2]),
+                             (A[2] - B[2]) * (A[0] + B[0]),
+                             (A[0] - B[0]) * (A[1] + B[1]));
+            }
+            if (nw.Dot(sn) < 0) flip = true;
+        }
+    }
+
+    for (int j = 0; j < nv; ++j) {
+        for (int i = 0; i < nu; ++i) {
+            std::vector<uint32_t> quad{ring[j][i], ring[j][i + 1],
+                                       ring[j + 1][i + 1], ring[j + 1][i]};
+            quad.erase(std::unique(quad.begin(), quad.end()), quad.end());
+            if (quad.size() > 1 && quad.front() == quad.back()) quad.pop_back();
+            if (quad.size() < 3) continue;
+            out.addPolygon(std::move(quad), faceId, flip);
+        }
+    }
+    dbg("revstrip face %d: nu=%d nv=%d flip=%d", faceId, nu, nv, flip ? 1 : 0);
     return true;
 }
 
@@ -12769,6 +13218,26 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 counts[fid] = {solved(plan.uEdges, s.radial),
                                solved(plan.vEdges, s.radial), 0};
                 break;
+            case MesherKind::RevolutionStrip: {
+                // Columns = total samples along one rim chain (rims drive the
+                // radial count); rows = total samples along one rail chain
+                // (rails drive the axial count). Summed over the chain's edges
+                // exactly as the mesher samples them, so the grid matches.
+                auto chainTotal = [&](const std::vector<int>& chain,
+                                      int fallback) {
+                    int t = 0;
+                    for (int e : chain) {
+                        if (e >= 1 && e < int(solvedEdge.size())) {
+                            t += std::max(1, solvedEdge[e]);
+                        }
+                    }
+                    return std::max(t, fallback);
+                };
+                counts[fid] = {chainTotal(plan.coonsSides[0], std::max(3, s.radial)),
+                               chainTotal(plan.coonsSides[2], std::max(1, s.axial)),
+                               0};
+                break;
+            }
             case MesherKind::DomeCap: {
                 // Meridian count = total base-loop samples (the base rim's
                 // edges solve like a revolution rim); latitude ring count =
@@ -12800,6 +13269,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         const bool isRev = plan.kind == MesherKind::RevolutionGrid ||
                            plan.kind == MesherKind::DiskCap ||
                            plan.kind == MesherKind::DomeCap ||
+                           plan.kind == MesherKind::RevolutionStrip ||
                            plan.kind == MesherKind::AnnulusRing;
         const int reqU = isRev ? s.radial : s.gridU;
         dbg("face %d %s: solved nu=%d nv=%d (requested %s=%d axial=%d)%s", fid,
@@ -13416,6 +13886,16 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 if (!meshRailLadder(face, model, fid, solvedEdge, s.radial,
                                     out)) {
                     demote(fid, face, surf, s, "rail ladder failed");
+                }
+                break;
+            case MesherKind::RevolutionStrip:
+                // Clean horizontal-ring quad grid; on any structural doubt it
+                // falls back to the contract floor (exact borders, watertight
+                // by construction), so a strip the grid can't express never
+                // leaks.
+                if (!meshRevolutionStrip(face, surf, model, plan, solvedEdge,
+                                         fid, nu, nv, out, &pinnedEdge)) {
+                    demote(fid, face, surf, s, "revolution strip failed");
                 }
                 break;
             case MesherKind::QuadDominant:
