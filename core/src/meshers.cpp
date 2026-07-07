@@ -10737,6 +10737,194 @@ void emitClosedRimStripArc(MeshBuilder& out, int faceId, bool flip,
     }
 }
 
+// Merge one OPEN smooth arc of a ribbon: lo run L[0..nl-1], hi run H[0..nh-1],
+// endpoints already paired (L[0]~H[0], L[nl-1]~H[nh-1]). Walks both by
+// cumulative arc fraction along the segment and, at each step, spends one edge
+// of the locally sparser side while absorbing the run of the denser side into
+// a single polygon: quads where the densities match, evenly grouped n-gons
+// where they differ, no stray triangles. Winding: lo forward, hi backward.
+static void emitRibbonSegment(MeshBuilder& out, int faceId, bool flip,
+                              const std::vector<uint32_t>& L,
+                              const std::vector<gp_Pnt>& LP,
+                              const std::vector<uint32_t>& H,
+                              const std::vector<gp_Pnt>& HP) {
+    const int nl = int(L.size()), nh = int(H.size());
+    if (nl < 2 || nh < 2) return;
+    auto cum = [](const std::vector<gp_Pnt>& P) {
+        std::vector<double> c(P.size(), 0.0);
+        for (size_t i = 1; i < P.size(); ++i)
+            c[i] = c[i - 1] + P[i - 1].Distance(P[i]);
+        const double per = c.back() > 1e-12 ? c.back() : 1.0;
+        for (double& x : c) x /= per;
+        return c;  // c[0]=0, c[nl-1]=1
+    };
+    const std::vector<double> fL = cum(LP), fH = cum(HP);
+    const double tol = 0.5 / std::max(nl, nh);
+    int ia = 0, ib = 0, guard = 0;
+    while ((ia < nl - 1 || ib < nh - 1) && guard++ < 2 * (nl + nh) + 8) {
+        const int aStart = ia, bStart = ib;
+        const bool aCan = ia < nl - 1, bCan = ib < nh - 1;
+        if (aCan && bCan) {
+            const double nfa = fL[ia + 1], nfb = fH[ib + 1];
+            if (nfa >= nfb - tol && nfb >= nfa - tol) {
+                ia++; ib++;  // aligned -> quad
+            } else if (nfa < nfb) {
+                // lo denser: spend one hi edge, absorb the lo run to it.
+                ib++;
+                while (ia < nl - 1 && fL[ia + 1] <= nfb + tol) ia++;
+            } else {
+                // hi denser: spend one lo edge, absorb the hi run to it.
+                ia++;
+                while (ib < nh - 1 && fH[ib + 1] <= nfa + tol) ib++;
+            }
+        } else if (aCan) {
+            ia = nl - 1;
+        } else {
+            ib = nh - 1;
+        }
+        std::vector<uint32_t> poly;
+        poly.reserve((ia - aStart) + (ib - bStart) + 2);
+        for (int s = aStart; s <= ia; ++s) poly.push_back(L[s]);
+        for (int s = ib; s >= bStart; --s) poly.push_back(H[s]);
+        poly.erase(std::unique(poly.begin(), poly.end()), poly.end());
+        if (poly.size() > 1 && poly.front() == poly.back()) poly.pop_back();
+        if (poly.size() >= 3) out.addPolygon(std::move(poly), faceId, flip);
+    }
+}
+
+// Symmetric ribbon between two closed rings whose sampling density varies
+// LOCALLY (the foam notch is sampled FINER than the uniform shoulder along its
+// rounded floor, yet COARSER along its flat top) and which BOTH carry the same
+// near-vertical WALLS. A single sparse->dense assignment (emitClosedRimStripArc)
+// can only group the denser ring into the sparser one's edges; where the
+// nominally-sparse ring is the locally denser one it collapses into stray
+// triangles/folded slivers. Here the caller supplies each ring's wall edge
+// indices (`wL`/`wH`, found from the u,v profile where a plain 3D length test
+// can't tell a wall from a wide flat-top chord); the walls are paired
+// one-to-one (a clean vertical quad each) and the smooth arcs BETWEEN walls are
+// merged by arc fraction. Pairing walls explicitly keeps them aligned even when
+// the two loops' total perimeters differ (which, under a pure global
+// arc-fraction walk, drifts the walls out of step and folds a cell across one
+// at high column counts). `loI`/`hiI` are the two rings in the same rotational
+// sense; winding matches the body lattice (lo forward, hi backward).
+void emitClosedRibbonMerge(MeshBuilder& out, int faceId, bool flip,
+                           const std::vector<uint32_t>& loI,
+                           const std::vector<gp_Pnt>& loP,
+                           const std::vector<uint32_t>& hiI,
+                           const std::vector<gp_Pnt>& hiP,
+                           const std::vector<int>& wL,
+                           const std::vector<int>& wH) {
+    const int na = int(loI.size()), nb = int(hiI.size());
+    if (na < 3 || nb < 3) return;
+
+    // Fall back to a plain global arc-fraction walk when the walls don't match
+    // up (or there are none) — a smooth ribbon that path handles cleanly.
+    auto globalMerge = [&]() {
+        auto cumFrac = [](const std::vector<gp_Pnt>& P) {
+            const int n = int(P.size());
+            std::vector<double> c(n + 1, 0.0);
+            for (int i = 1; i <= n; ++i)
+                c[i] = c[i - 1] + P[i - 1].Distance(P[i % n]);
+            const double per = c[n] > 1e-12 ? c[n] : 1.0;
+            for (double& x : c) x /= per;
+            return c;
+        };
+        const std::vector<double> ca = cumFrac(loP), cb = cumFrac(hiP);
+        int a0 = 0;
+        double best = 1e300;
+        for (int i = 0; i < na; ++i) {
+            const double d = loP[i].Distance(hiP[0]);
+            if (d < best) { best = d; a0 = i; }
+        }
+        auto fa = [&](int s) {
+            int idx = a0 + s;
+            double turns = 0;
+            while (idx >= na) { idx -= na; turns += 1.0; }
+            return ca[idx] + turns - ca[a0];
+        };
+        auto fb = [&](int s) { return cb[s]; };
+        const double tol = 0.5 / std::max(na, nb);
+        int ia = 0, ib = 0, guard = 0;
+        while ((ia < na || ib < nb) && guard++ < 2 * (na + nb) + 8) {
+            const int aStart = ia, bStart = ib;
+            const bool aCan = ia < na, bCan = ib < nb;
+            if (aCan && bCan) {
+                const double nfa = fa(ia + 1), nfb = fb(ib + 1);
+                if (nfa >= nfb - tol && nfb >= nfa - tol) {
+                    ia++; ib++;
+                } else if (nfa < nfb) {
+                    ib++;
+                    while (ia < na && fa(ia + 1) <= fb(ib) + tol) ia++;
+                } else {
+                    ia++;
+                    while (ib < nb && fb(ib + 1) <= fa(ia) + tol) ib++;
+                }
+            } else if (aCan) {
+                ia = na;
+            } else {
+                ib = nb;
+            }
+            std::vector<uint32_t> poly;
+            for (int s = aStart; s <= ia; ++s) poly.push_back(loI[(a0 + s) % na]);
+            for (int s = ib; s >= bStart; --s) poly.push_back(hiI[s % nb]);
+            poly.erase(std::unique(poly.begin(), poly.end()), poly.end());
+            if (poly.size() > 1 && poly.front() == poly.back()) poly.pop_back();
+            if (poly.size() >= 3) out.addPolygon(std::move(poly), faceId, flip);
+        }
+    };
+    if (wL.empty() || wL.size() != wH.size()) {
+        globalMerge();
+        return;
+    }
+    const int W = int(wL.size());
+    // Correspond the two rings' walls: rotate the hi wall list so hi wall r
+    // pairs with the lo wall nearest in 3D (by the wall edge's midpoint),
+    // preserving cyclic order.
+    auto wallMid = [](const std::vector<gp_Pnt>& P, int i) {
+        return gp_Pnt((P[i].XYZ() + P[(i + 1) % P.size()].XYZ()) / 2.0);
+    };
+    int rot = 0;
+    double bestSum = 1e300;
+    for (int r = 0; r < W; ++r) {
+        double sum = 0;
+        for (int k = 0; k < W; ++k)
+            sum += wallMid(loP, wL[k]).Distance(wallMid(hiP, wH[(k + r) % W]));
+        if (sum < bestSum) { bestSum = sum; rot = r; }
+    }
+    // Emit each wall as its own quad, and merge the smooth arc that follows it
+    // (up to the next wall) as an open segment.
+    for (int k = 0; k < W; ++k) {
+        const int lw = wL[k];
+        const int hw = wH[(k + rot) % W];
+        // Wall quad: lo bottom->top, hi top->bottom (lo forward, hi backward).
+        {
+            std::vector<uint32_t> quad = {loI[lw], loI[(lw + 1) % na],
+                                          hiI[(hw + 1) % nb], hiI[hw]};
+            quad.erase(std::unique(quad.begin(), quad.end()), quad.end());
+            if (quad.size() > 1 && quad.front() == quad.back()) quad.pop_back();
+            if (quad.size() >= 3) out.addPolygon(std::move(quad), faceId, flip);
+        }
+        // Smooth arc from this wall's top to the next wall's bottom.
+        const int lwNext = wL[(k + 1) % W];
+        const int hwNext = wH[(k + 1 + rot) % W];
+        std::vector<uint32_t> L;
+        std::vector<gp_Pnt> LP;
+        for (int i = (lw + 1) % na;; i = (i + 1) % na) {
+            L.push_back(loI[i]);
+            LP.push_back(loP[i]);
+            if (i == lwNext) break;
+        }
+        std::vector<uint32_t> H;
+        std::vector<gp_Pnt> HP;
+        for (int j = (hw + 1) % nb;; j = (j + 1) % nb) {
+            H.push_back(hiI[j]);
+            HP.push_back(hiP[j]);
+            if (j == hwNext) break;
+        }
+        emitRibbonSegment(out, faceId, flip, L, LP, H, HP);
+    }
+}
+
 // Mesh a tall mismatched two-rim revolution band the ANNULUS way (modelled on
 // meshAnnulusCRing). The strip reconcile in meshRevolutionGrid drives the
 // interior off the SPARSE rim and bridges the dense rim with one full-height
@@ -10792,18 +10980,113 @@ bool meshRevolutionAnnulusBody(const BRepAdaptor_Surface& surf, int faceId,
         colU[i] = colU[i - 1] + d;
     }
 
-    // Notch v-profile v(u): the sparse rim's height as a function of azimuth,
-    // wrapped and sorted so a dense column can read the notch shape at its own
-    // azimuth. The vertical notch WALLS show up as a steep local slope here.
-    std::vector<std::pair<double, double>> prof;
-    prof.reserve(notchRim.size());
-    for (const RevRimPt& r : notchRim) {
-        double uw = r.u - period * std::floor((r.u - u0) / period);
-        prof.push_back({uw, r.v});
+    // Does the notch rim carry NEAR-VERTICAL WALLS that the uniform shoulder
+    // can't sample one-to-one? A wall is two consecutive rim samples whose
+    // azimuthal gap is far smaller than a shoulder column's spacing but whose
+    // v-jump is a fair fraction of the band — the foam barrel's notch leaps
+    // ~46 in v over ~0 azimuth. Only THAT pathology needs the wall-aware
+    // profile + symmetric reduction below; a smoothly scalloped notch (every
+    // other annulus body: nasty_cheese's shallow dishes, weldment's chamfer
+    // ring) reconciles cleanly the ordinary way and MUST stay byte-identical.
+    const double shoulderStep = period / nu;
+    double minNotchGap = 1e300, maxNotchVJump = 0;
+    for (size_t i = 0; i < notchRim.size(); ++i) {
+        const RevRimPt& a = notchRim[i];
+        const RevRimPt& b = notchRim[(i + 1) % notchRim.size()];
+        double du = b.u - a.u;
+        du -= period * std::round(du / period);
+        const double dv = std::abs(b.v - a.v);
+        if (std::abs(du) < 0.5 * shoulderStep) {
+            minNotchGap = std::min(minNotchGap, std::abs(du));
+            maxNotchVJump = std::max(maxNotchVJump, dv);
+        }
     }
-    std::sort(prof.begin(), prof.end());
+    const bool notchHasWalls =
+        minNotchGap < 0.5 * shoulderStep && maxNotchVJump > 0.15 * notchRange;
+    // How far is the notch OVERSAMPLED past the uniform shoulder? Count the
+    // most rim samples that fall inside any single shoulder-column-wide
+    // azimuth window. 1-2 is an ordinary rim (or a lone wall pair) the classic
+    // arc-fraction strip reconciles cleanly; >=3 means a genuinely finer-
+    // sampled arc (the foam notch's rounded floor packs 5 per column) that the
+    // classic strip collapses into folded slivers. Only a notch that BOTH
+    // carries a steep wall AND is oversampled that far needs the wall-aware
+    // symmetric reduction; everything else stays byte-identical.
+    int maxInWin = 0;
+    {
+        std::vector<double> nuw;
+        nuw.reserve(notchRim.size());
+        for (const RevRimPt& r : notchRim)
+            nuw.push_back(r.u - period * std::floor((r.u - u0) / period));
+        for (double c : nuw) {
+            int cnt = 0;
+            for (double x : nuw) {
+                double d = x - c;
+                d -= period * std::round(d / period);
+                if (std::abs(d) <= shoulderStep) ++cnt;
+            }
+            maxInWin = std::max(maxInWin, cnt);
+        }
+    }
+    const bool useSymmetric = notchHasWalls && maxInWin >= 3;
+
+    // Notch v-profile v(u): the sparse rim's height as a function of azimuth,
+    // so a dense column can read the notch shape at its own azimuth. When the
+    // notch carries near-vertical walls it is built by UNWRAPPING the rim in
+    // WIRE (loop) order rather than u-sorting the samples: a wall is two
+    // samples that share a u but jump ~46 in v; a u-sort tie-breaks that pair
+    // by v, and where the LOWER sample sorts ahead of the upper one the
+    // piecewise-linear notchVAt ramps from the previous top sample down across
+    // the whole azimuthal gap — smearing one wall into a long diagonal (the
+    // fold's root cause). Walking the loop keeps each wall a zero-width
+    // (u-constant) step so both walls stay SHARP. Without walls the classic
+    // u-sort is kept verbatim so every other annulus body is byte-identical.
+    std::vector<std::pair<double, double>> prof;
+    prof.reserve(notchRim.size() + 1);
+    double profLo = 0, profHi = 0;
+    if (useSymmetric) {
+        double uAcc =
+            notchRim[0].u - period * std::floor((notchRim[0].u - u0) / period);
+        prof.push_back({uAcc, notchRim[0].v});
+        for (size_t i = 1; i < notchRim.size(); ++i) {
+            double d = notchRim[i].u - notchRim[i - 1].u;
+            d -= period * std::round(d / period);  // shortest step
+            uAcc += d;
+            prof.push_back({uAcc, notchRim[i].v});
+        }
+        // Normalise to overall-increasing u (reverse a clockwise wire).
+        if (prof.size() >= 2 && prof.back().first < prof.front().first) {
+            std::reverse(prof.begin(), prof.end());
+        }
+        profLo = prof.front().first;
+        profHi = prof.back().first;
+    } else {
+        for (const RevRimPt& r : notchRim) {
+            double uw = r.u - period * std::floor((r.u - u0) / period);
+            prof.push_back({uw, r.v});
+        }
+        std::sort(prof.begin(), prof.end());
+    }
     auto notchVAt = [&](double u) -> double {
         if (prof.size() == 1) return prof[0].second;
+        if (useSymmetric) {
+            // Loop-order profile: bring u into [profLo, profLo + period).
+            double uu = u - period * std::floor((u - profLo) / period);
+            double ua, va, ub, vb;
+            if (uu <= profHi) {
+                size_t hi = 0;
+                while (hi < prof.size() && prof[hi].first < uu) ++hi;
+                if (hi == 0) hi = 1;
+                ua = prof[hi - 1].first; va = prof[hi - 1].second;
+                ub = prof[hi].first;     vb = prof[hi].second;
+            } else {
+                ua = profHi;          va = prof.back().second;
+                ub = profLo + period; vb = prof.front().second;
+            }
+            const double s = ub - ua;
+            const double t = s > 1e-12 ? (uu - ua) / s : 0.0;
+            return va + (vb - va) * std::clamp(t, 0.0, 1.0);
+        }
+        // Classic u-sorted profile (unchanged).
         double uu = u - period * std::floor((u - u0) / period);
         size_t hi = 0;
         while (hi < prof.size() && prof[hi].first < uu) ++hi;
@@ -10885,11 +11168,39 @@ bool meshRevolutionAnnulusBody(const BRepAdaptor_Surface& surf, int faceId,
             out.addVertex(notchRim[i].p, {faceId, notchRim[i].u, notchRim[i].v});
     }
 
-    // One short reduction band from the profiled shoulder (dense count) to the
-    // notch rim (sparse count), paired by ARC FRACTION so the notch's vertical
-    // walls pair one-to-one (no folded slivers). Winding matches the lattice
+    // One short reduction band from the profiled shoulder (dense, uniform
+    // count) to the notch rim (sparse, non-uniform count). For a WALLED notch
+    // (foam) a SYMMETRIC arc-fraction merge groups whichever ring is locally
+    // denser into the other's edges, so the notch's finely-sampled floor and
+    // its coarse flat top both reconcile as evenly grouped n-gons (no stray
+    // triangles) and its near-vertical walls pair one-to-one (no folded
+    // slivers). A smoothly scalloped notch keeps the classic arc-fraction
+    // strip verbatim (byte-identical to before). Winding matches the lattice
     // (the notch on the high side is the upper row).
-    if (denseBelow) {
+    if (useSymmetric) {
+        // Wall edges from the u,v profile: a jump in v across one edge of a
+        // fair fraction of the band. The shoulder's walls are the columns that
+        // straddle the notch's own walls (topV steps there); the notch's walls
+        // are its near-vertical rim segments. A 3D length test can't find the
+        // notch walls (its wide flat-top chords are as long), so pass them
+        // explicitly. Both rings carry the same 2 walls (mirrored).
+        const double vWall = 0.4 * notchRange;
+        std::vector<int> shoulderWalls, notchWalls;
+        for (int i = 0; i < nu; ++i)
+            if (std::abs(topV[(i + 1) % nu] - topV[i]) > vWall)
+                shoulderWalls.push_back(i);
+        for (size_t j = 0; j < notchRim.size(); ++j)
+            if (std::abs(notchRim[(j + 1) % notchRim.size()].v -
+                         notchRim[j].v) > vWall)
+                notchWalls.push_back(int(j));
+        if (denseBelow) {
+            emitClosedRibbonMerge(out, faceId, flip, shoulder, shoulderP,
+                                  notchId, notchP, shoulderWalls, notchWalls);
+        } else {
+            emitClosedRibbonMerge(out, faceId, flip, notchId, notchP, shoulder,
+                                  shoulderP, notchWalls, shoulderWalls);
+        }
+    } else if (denseBelow) {
         emitClosedRimStripArc(out, faceId, flip, shoulder, shoulderP, notchId,
                               notchP);
     } else {
