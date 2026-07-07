@@ -182,6 +182,14 @@ enum class MesherKind {
                      // corner turns), matched station-by-station, and laddered
                      // into an even quad flow, with the end caps (incl. notches)
                      // webbed locally instead of a global transfinite blend.
+    DomeCap,         // spherical / dome cap: a single-outer-wire revolution-
+                     // like surface (often a bspline) that bulges from a base
+                     // loop to a single pole. Meshes as a UV-sphere hemisphere
+                     // — concentric latitude rings + straight meridians that
+                     // converge to a pole fan — instead of a spiralling Coons
+                     // grid. Works on squashed/ellipsoidal domes: the rings and
+                     // meridians follow the true surface, they just aren't
+                     // perfect circles.
 };
 
 const char* mesherKindName(MesherKind k);
