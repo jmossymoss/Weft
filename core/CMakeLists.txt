@@ -27,6 +27,9 @@ add_library(weft_core
   src/io/step_reader.cpp
   src/io/iges_reader.cpp
   src/io/brep_reader.cpp
+  # --- Stage B: writer registry (mesh + B-rep writers) ---
+  src/io/mesh_writers.cpp
+  src/io/occ_writers.cpp
 )
 
 target_include_directories(weft_core
