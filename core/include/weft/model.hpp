@@ -17,6 +17,7 @@
 #include <TopTools_IndexedMapOfShape.hxx>
 #endif
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -33,6 +34,16 @@ using ShapeMap = TopTools_IndexedMapOfShape;
 using ShapeList = TopTools_ListOfShape;
 using EdgeFaceMap = TopTools_IndexedDataMapOfShapeListOfShape;
 #endif
+
+// A compact node in the imported assembly tree (for the glTF node graph /
+// OBJ object grouping). Populated only when the source carried real
+// hierarchy; a flat model leaves Model::assembly empty.
+struct AssemblyNode {
+    std::string name;
+    int solidId = -1;                    // 1-based index into Model.solids; -1 = grouping node
+    std::array<double, 16> transform{};  // absolute, column-major, mm (identity if leaf)
+    std::vector<int> children;           // indices into Model.assembly
+};
 
 // A loaded B-rep with stable integer IDs for faces and edges.
 //
@@ -51,6 +62,18 @@ struct Model {
     // the transfer session, so Plasticity object names survive to export.
     ShapeMap solids;
     std::vector<std::string> solidNames;
+
+    // --- NEW import metadata (all optional; empty when the source carried
+    // none). Read by nobody in the retopo/mesh pipeline; purely additive so
+    // exporters can preserve source appearance/structure. ---
+    std::vector<std::array<float, 3>> faceColors;   // parallel to faces (FaceId-1), linear RGB
+    std::vector<char> faceHasColor;                 // parallel; 0 = unset (don't trust black)
+    std::vector<std::array<float, 3>> solidColors;  // parallel to solids
+    std::vector<char> solidHasColor;
+    std::vector<std::string> solidLayers;     // parallel to solids ("" = none)
+    std::vector<std::string> solidMaterials;  // parallel to solids ("" = none)
+    std::vector<AssemblyNode> assembly;       // roots first; empty = flat model
+    double lengthUnitMm = 1.0;                // file's declared length unit, in mm
 
     int faceCount() const { return faces.Extent(); }
     int edgeCount() const { return edges.Extent(); }
