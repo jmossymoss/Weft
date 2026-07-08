@@ -499,7 +499,43 @@ bool meshRevolutionWall(FacePart& part, const Model& model, const Analysis& an,
 
     const EdgeSamples& a = cache[rims[0]];
     const EdgeSamples& b = cache[rims[1]];
-    if (a.pts.size() != b.pts.size()) return false;  // unequal rims -> floor
+    if (a.pts.size() < 3 || b.pts.size() < 3) return false;
+
+    // Unequal rim counts (e.g. a cone/frustum with one rim pinned): the rims
+    // can't lerp 1:1, so bridge them into one absorbing band — the decoupled
+    // thesis (the loop bridge proven fold-free by the spike). Orient both rings
+    // CCW about the axis first so the fraction bridge pairs by azimuth.
+    if (a.pts.size() != b.pts.size()) {
+        BRepAdaptor_Surface bs(part.face);
+        gp_Ax1 bx;
+        if (bs.GetType() == GeomAbs_Cylinder) bx = bs.Cylinder().Axis();
+        else if (bs.GetType() == GeomAbs_Cone) bx = bs.Cone().Axis();
+        else return false;
+        const P3 bo{bx.Location().X(), bx.Location().Y(), bx.Location().Z()};
+        const P3 bd{bx.Direction().X(), bx.Direction().Y(), bx.Direction().Z()};
+        P3 br = std::abs(bd[2]) < 0.9 ? P3{0, 0, 1} : P3{1, 0, 0};
+        P3 bX = cross(br, bd);
+        bX = mul(bX, 1.0 / std::max(1e-12, len(bX)));
+        P3 bY = cross(bd, bX);
+        auto ccw = [&](std::vector<P3> r) {
+            if (r.size() < 2) return r;
+            auto az = [&](const P3& p) {
+                P3 q = sub(p, bo);
+                return std::atan2(dot(q, bY), dot(q, bX));
+            };
+            double d = az(r[1]) - az(r[0]);
+            while (d > M_PI) d -= 2 * M_PI;
+            while (d < -M_PI) d += 2 * M_PI;
+            if (d < 0) std::reverse(r.begin(), r.end());
+            return r;
+        };
+        std::vector<uint32_t> loR, hiR;
+        for (const P3& p : ccw(a.pts)) loR.push_back(part.addV(p));
+        for (const P3& p : ccw(b.pts)) hiR.push_back(part.addV(p));
+        bridgeLoops(part, loR, hiR, true);
+        kind = MesherKind::RevolutionGrid;
+        return true;
+    }
     const int nu = (int)a.pts.size();
     if (nu < 3) return false;
 
