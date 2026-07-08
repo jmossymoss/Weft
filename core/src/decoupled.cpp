@@ -852,7 +852,13 @@ bool meshFullPeriodic(FacePart& part, const FaceMeshSettings& fs,
 // inner (hole) loop into the outer loop with a doubled-vertex keyhole, then
 // hands the single ring to the proven ear-clipper (mesh.cpp). Quality is a
 // floor; real interior meshers (UV-coons) replace it in later increments.
-void meshFloor(FacePart& part, const std::vector<Loop>& loops) {
+// `geom` supplies the coordinates for all geometric decisions (outer pick,
+// keyhole visibility, triangulation) while polygons emit the REAL vertex ids.
+// Pass part.verts to triangulate in a 3D plane (flat faces) or per-vertex UV
+// (from the anchors) to triangulate in the surface parametrization (curved
+// faces / walls with holes), which a 3D-plane projection would mangle.
+void meshFloor(FacePart& part, const std::vector<Loop>& loops,
+               const std::vector<P3>& geom) {
     if (loops.empty()) return;
     // Outer loop = the one enclosing the most area (Newell magnitude), NOT the
     // most vertices: a plate's rectangular border has few samples (straight
@@ -860,7 +866,7 @@ void meshFloor(FacePart& part, const std::vector<Loop>& loops) {
     size_t outer = 0;
     double outerA = -1;
     for (size_t i = 0; i < loops.size(); ++i) {
-        double a = len(newell(part.verts, loops[i].verts));
+        double a = len(newell(geom, loops[i].verts));
         if (a > outerA) { outerA = a; outer = i; }
     }
     std::vector<uint32_t> ring = loops[outer].verts;
@@ -869,7 +875,7 @@ void meshFloor(FacePart& part, const std::vector<Loop>& loops) {
     // Project everything to the outer loop's dominant plane once, so the
     // visibility test that keeps a keyhole bridge from crossing a loop edge
     // (and folding the ear-clip) is a clean 2D check.
-    P3 nrm = newell(part.verts, ring);
+    P3 nrm = newell(geom, ring);
     if (len(nrm) < 1e-14) return;
     nrm = mul(nrm, 1.0 / len(nrm));
     P3 refA = std::abs(nrm[2]) < 0.9 ? P3{0, 0, 1} : P3{1, 0, 0};
@@ -877,7 +883,7 @@ void meshFloor(FacePart& part, const std::vector<Loop>& loops) {
     ex = mul(ex, 1.0 / std::max(1e-12, len(ex)));
     P3 ey = cross(nrm, ex);
     auto uv = [&](uint32_t v) {
-        return std::array<double, 2>{dot(part.verts[v], ex), dot(part.verts[v], ey)};
+        return std::array<double, 2>{dot(geom[v], ex), dot(geom[v], ey)};
     };
     // Proper segment intersection (open segments; shared endpoints allowed).
     auto crosses = [&](std::array<double, 2> a, std::array<double, 2> b,
@@ -907,8 +913,7 @@ void meshFloor(FacePart& part, const std::vector<Loop>& loops) {
         return false;
     };
     auto d2 = [&](uint32_t a, uint32_t b) {
-        return dot(sub(part.verts[a], part.verts[b]),
-                   sub(part.verts[a], part.verts[b]));
+        return dot(sub(geom[a], geom[b]), sub(geom[a], geom[b]));
     };
     for (size_t li = 0; li < loops.size(); ++li) {
         if (li == outer) continue;
@@ -943,8 +948,44 @@ void meshFloor(FacePart& part, const std::vector<Loop>& loops) {
         for (size_t k = bri; k < ring.size(); ++k) nr.push_back(ring[k]);
         ring.swap(nr);
     }
-    for (const auto& t : triangulatePoly(part.verts, ring))
+    for (const auto& t : triangulatePoly(geom, ring))
         part.addPoly({ring[t[0]], ring[t[1]], ring[t[2]]});
+}
+
+// Freeform faces (bspline / bezier / general revolution / extrusion / offset)
+// have no periodic seam and a strongly non-planar boundary, so triangulating in
+// their surface UV beats a 3D-plane projection. Analytic types keep the plane
+// (flats are planar; cyl/cone/sphere/torus are periodic and their UV seam would
+// break the ear-clip).
+bool freeformFloor(SurfaceType t) {
+    return t == SurfaceType::BSpline || t == SurfaceType::Bezier ||
+           t == SurfaceType::Revolution || t == SurfaceType::Extrusion ||
+           t == SurfaceType::Offset || t == SurfaceType::Other;
+}
+
+// Choose the floor's working coordinates. Freeform faces triangulate in their
+// surface UV — taken from the per-vertex anchors — so a bspline patch conforms
+// instead of collapsing under a 3D-plane projection. Bail to the 3D vertices
+// when the UV is unusable: a full-period seam wrap (the loop spans ~2pi in u, so
+// the flat UV is an annulus, not a disk) or missing/degenerate anchors.
+void meshFloorAuto(FacePart& part, const std::vector<Loop>& loops,
+                   bool useUV) {
+    if (loops.empty()) return;
+    if (!useUV) { meshFloor(part, loops, part.verts); return; }
+    std::vector<P3> uvp(part.verts.size(), P3{0, 0, 0});
+    double umin = 1e300, umax = -1e300, vmin = 1e300, vmax = -1e300;
+    bool haveUV = part.anchors.size() == part.verts.size();
+    for (size_t i = 0; i < part.anchors.size() && haveUV; ++i) {
+        uvp[i] = {part.anchors[i].u, part.anchors[i].v, 0};
+        umin = std::min(umin, part.anchors[i].u);
+        umax = std::max(umax, part.anchors[i].u);
+        vmin = std::min(vmin, part.anchors[i].v);
+        vmax = std::max(vmax, part.anchors[i].v);
+    }
+    const bool degenerate = !haveUV || (umax - umin) < 1e-9 ||
+                            (vmax - vmin) < 1e-9;
+    const bool seamWrap = (umax - umin) > 1.9 * M_PI;  // annulus, not a disk
+    meshFloor(part, loops, (degenerate || seamWrap) ? part.verts : uvp);
 }
 
 // ---- global winding consistency -------------------------------------------
@@ -1105,12 +1146,15 @@ PolyMesh meshDecoupled(const Model& model, const Analysis& analysis,
                     ok = (bridgeLoops(part, loops[o].verts, loops[1 - o].verts,
                                       true),
                           true);
-                if (!ok) meshFloor(part, loops);
+                if (!ok)
+                    meshFloorAuto(part, loops, freeformFloor(fi.type));
                 kind = MesherKind::AnnulusRing;
             } else {
-                // Multi-hole plates and everything else: the keyhole floor
-                // (best-effort watertight triangle web).
-                meshFloor(part, loops);
+                // Multi-hole plates, walls with bore holes, curved patches, and
+                // everything else: the floor, triangulated in surface UV for
+                // curved faces (a bore ring / torus band / bspline patch) and
+                // in a 3D plane for flats.
+                meshFloorAuto(part, loops, freeformFloor(fi.type));
                 kind = MesherKind::Fallback;
             }
         }

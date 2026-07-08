@@ -52,7 +52,18 @@ to the floor. barrel 118p/112t -> 66p/28t; a 270-deg wedge solid is a watertight
 pure-quad wall (new `testDecoupled` case). Hero models gained quads / lost tris
 (flaregun 2769t->2293t, foam +450 quads) with no new leaks.
 
-## Increment 4+ — remaining leaks map exactly to unported meshers (do next)
+## Increment 4a (LANDED) — freeform floor triangulates in surface UV
+`meshFloor` is parameterized by a coordinate array; `meshFloorAuto` feeds it the
+per-vertex anchors' (u,v) for freeform faces (bspline/bezier/revolution/
+extrusion/offset/other) so a curved patch conforms in its own parametrization
+instead of collapsing under a 3D-plane projection. Guards bail to the 3D verts
+on a full-period seam wrap (u-span > 1.9pi) or degenerate anchors. Analytic +
+planar faces keep the 3D plane. No new opens; non-manifold edges dropped
+(flaregun 26->16, foam 66->46, teleporter 52->32). The remaining OPENS are the
+analytic-periodic / planar-multi-hole floor (below), the genuine trimmed-surface
+problem — a proper constrained triangulation or the specific hard meshers.
+
+## Increment 4b+ — remaining leaks map exactly to unported meshers (do next)
 Run `weft mesh <f> --decoupled --validate`. Current leaks:
 - REVOLUTION WALL WITH INTERIOR HOLES (slotted 99 opens): a cylinder wall with
   bores cutting through it (interior closed-circle loops) — the old
