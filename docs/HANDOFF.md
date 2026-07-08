@@ -29,19 +29,16 @@ fail to weld; +`WEFT_DC_CONTRACT2=1` for per-edge detail). `WEFT_FACE_KINDS=1` =
 per-face mesher dump. ctest = `tests/test_pipeline.cpp::testDecoupled`.
 
 NEXT (in priority order):
-1. FREEFORM UV-COONS interior (quality, not opens): grid bspline patches as quad
-   grids instead of the tri floor — the floor path is meshFloorAuto (surface UV,
-   pcurve-based, seam-unwrapped) in decoupled.cpp. This is the dominant remaining
-   quality gap (the hero models' large fold/tri counts are freeform floors).
-2. SUBDIVIDED-RIM notch walls (generalization, opens): meshRimNotchWall requires
-   the un-notched rim to be ONE closed-circle edge. A wall whose base rim is split
-   into arcs (a boolean-cut base) is rejected -> floor. Generalize by
-   reconstructing the rim from the shared edges at one v-extreme (design-review
-   spec is in the increment-9 notes). Confirm it actually appears in the corpus
-   before investing — flaregun (the original target) is already watertight.
-3. Decide whether to raise the default decoupled weld for imports (production
+1. FREEFORM UV-COONS interior (quality, not opens): grid 4-sided bspline patches as
+   quad grids instead of the tri floor — the floor path is meshFloorAuto (surface
+   UV, pcurve-based, seam-unwrapped) in decoupled.cpp. This is THE dominant
+   remaining quality gap: bspline faces on the tri floor DOMINATE (flaregun 82,
+   foam 128, teleporter 215), and ~most are 4-EDGE curved quad patches (flaregun
+   65/82, teleporter 151/215) — perfect Coons/transfinite targets. (Increment 10
+   already cleared the cyl/cone floor walls.)
+2. Decide whether to raise the default decoupled weld for imports (production
    keeps 1e-6 + relies on --weld, so leaving it is consistent).
-4. Then: port the app/CLI to prefer the decoupled path, and A/B the two meshers.
+3. Then: port the app/CLI to prefer the decoupled path, and A/B the two meshers.
 
 ---
 
@@ -210,6 +207,26 @@ weldment 3009->766, unterlaf 862->246, 2827056 72->2). testDecoupled asserts
 notched watertight + fold-free. The design was adversarially reviewed before
 coding; the review's split-at-vNotch quad grid and subdivided-base-rim
 reconstruction are the queued follow-ups (see START HERE next steps).
+
+## Increment 10 (LANDED) — subdivided rims + down-run hardening
+Generalized meshRimNotchWall from "one closed-circle rim + a notch chain" to any
+full-wrap cyl/cone wall whose boundary is TWO encircling rings joined by the
+periodic seam. Instead of picking a single closed circle, it SPLITS the outer wire
+at the seam edge(s) (the true periodic seam, BRep_Tool::IsClosed) into two runs of
+shared edges; each run builds into a ring (a lone closed circle is a ring; an open
+arc-chain closes at the seam), gated by the same splice/closure coincidence checks.
+The ring with the larger axial spread is the notched one (hi), so bridgeByAzimuth's
+side-drop handling applies; the flatter one is the base rim (lo). This catches
+boolean-cut walls whose rims are arcs, not circles -- a very common class (35-121
+such faces per hero model were landing on the floor). Also added the symmetric
+DOWN-run branch in bridgeByAzimuth (the increment-9 verifier's recommended
+hardening): a notch-entry drop is fanned from the current lo column BEFORE the quad
+tie-break, so a quad can't pair lo past the drop azimuth and leave a backward-wound
+sliver. Results vs increment 9 (no open/nm regressions anywhere): nasty_cheese
+139nm/1298f -> 2nm/329f (!), 1797609in 4nm/8f -> 0nm/5f, mohne 2nm/26f -> 1nm/19f,
+weldment 76o/17nm -> 73o/16nm; fixtures unchanged. Same rollback gates keep it a
+pure improvement -- a non-band face fails the sweep/splice/self-check and takes the
+floor.
 
 DEFINITIVE DIAGNOSIS (via the new WEFT_DC_CONTRACT verifier, which checks that
 every shared-edge sample lands on a welded vertex used by >=2 faces):

@@ -472,13 +472,21 @@ void bridgeByAzimuth(FacePart& part, const std::vector<uint32_t>& lo,
         // same azimuth. A run going UP in height exits a notch, so its full-height
         // material is AHEAD — advance lo past the run first (webbing the bottom to
         // the run's low end), then fan the drop from the right column, else the
-        // corner triangle slivers inward. A DOWN run (entering a notch) fans from
-        // the current lo column, which is already on its full-height side.
+        // corner triangle slivers inward.
         if (canHi && (AH[b + 1] - AH[b]) < 1e-7 && HH[b + 1] > HH[b] && canLo) {
             while (a < N && AL[a] < AH[b] - 1e-9) {
                 part.addPoly({L[a], L[a + 1], H[b]});
                 ++a;
             }
+            part.addPoly({L[a], H[b + 1], H[b]});
+            ++b;
+            continue;
+        }
+        // A DOWN run (entering a notch): the full-height material is BEHIND, so fan
+        // the drop from the current lo column. Handled explicitly (before the quad
+        // tie-break below) so a quad can't first pair lo past the drop azimuth and
+        // leave a backward-wound corner sliver.
+        if (canHi && (AH[b + 1] - AH[b]) < 1e-7 && HH[b + 1] < HH[b] && canLo) {
             part.addPoly({L[a], H[b + 1], H[b]});
             ++b;
             continue;
@@ -1336,14 +1344,17 @@ bool meshRevolutionWallInsert(FacePart& part, const Model& model,
     return true;
 }
 
-// ---- rim-open notch wall --------------------------------------------------
-// A full-wrap cylinder/cone WALL with ONE full closed-circle rim and an OPPOSITE
-// rim cut by a rectangular NOTCH open to that rim (the flaregun face-81 class). In
-// UV it is the rectangle [0,2pi]x[hLo,hHi] minus [u0,u1]x[vNotch,hHi]; it encircles
-// the axis (full u-wrap) so the seam-unwrap floor bails and its 3D projection
-// self-overlaps. Bridge the full rim to the notched upper boundary chain paired by
-// azimuth (the notch dip is absorbed as several samples at one azimuth). GATED on a
-// watertight self-check so a face that isn't a clean rim+notch band rolls back.
+// ---- encircling two-rim wall (rims + rim-open notches) --------------------
+// A full-wrap cylinder/cone WALL whose boundary is TWO encircling rings joined by
+// the periodic seam: the classic rim-open NOTCH (one full rim + an opposite rim
+// cut by a slot, the flaregun face-81 class), but also a plain band whose rims are
+// SUBDIVIDED into arcs (a boolean-cut wall) or a base rim that is not one closed
+// circle. Such a face encircles the axis (full u-wrap) so the seam-unwrap floor
+// bails and its 3D projection self-overlaps. Split the outer wire at the seam into
+// the two rim rings, then bridge them paired by AZIMUTH (a notch dip is absorbed as
+// several samples at one azimuth). GATED on splice/closure coincidence + a
+// watertight self-check + a fold gate, so a face that isn't a clean two-rim band
+// rolls back to the floor -- a pure improvement.
 bool meshRimNotchWall(FacePart& part, const Model& model, const SampleCache& cache,
                       double weldTol, MesherKind& kind) {
     BRepAdaptor_Surface surf(part.face);
@@ -1360,60 +1371,79 @@ bool meshRimNotchWall(FacePart& part, const Model& model, const SampleCache& cac
     for (TopExp_Explorer wx(part.face, TopAbs_WIRE); wx.More(); wx.Next()) ++wireCount;
     if (wireCount != 1) return false;
 
-    // Walk the outer wire: the un-notched rim is the single closed circle; seam
-    // edges are non-shared; the notch chain is the shared, non-closed remainder.
-    int rimEid = -1, rimCount = 0;
-    std::vector<std::pair<int, bool>> chain;  // (eid, reversed-in-wire)
+    // Split the outer wire at its seam edge(s) into contiguous runs of SHARED
+    // edges. A full-wrap wall's boundary is two rings (the notched top + the base
+    // rim) joined by the periodic seam; each run is one ring. Splitting at the seam
+    // (rather than picking a single closed-circle rim) generalizes to a base rim
+    // SUBDIVIDED into arcs -- the common boolean-cut wall.
+    struct Run { std::vector<std::pair<int, bool>> edges; };  // (eid, reversed)
+    std::vector<Run> runs;
+    bool inRun = false, startedInRun = false, first = true;
     for (BRepTools_WireExplorer we(BRepTools::OuterWire(part.face), part.face);
          we.More(); we.Next()) {
         const TopoDS_Edge ed = we.Current();
         int eid = model.edges.FindIndex(ed);
         if (eid < 1 || eid >= (int)cache.size() || !cache[eid].valid) continue;
-        if (cache[eid].closed) { rimEid = eid; ++rimCount; continue; }
         int nf = 0;
         if (model.edgeToFaces.Contains(ed))
             for (const TopoDS_Shape& s : model.edgeToFaces.FindFromKey(ed)) {
                 int f2 = model.faces.FindIndex(s);
                 if (f2 >= 1 && f2 != part.faceId) ++nf;
             }
-        if (nf == 0) {
-            // A non-shared edge is fine ONLY if it is the true periodic seam
-            // (both its sides are this face). A genuine naked / mis-registered
-            // edge must NOT be swallowed: bridging across the gap it leaves would
-            // chord a phantom edge over the cut-away. Bail to the floor instead.
-            if (BRep_Tool::IsClosed(ed, part.face)) continue;
-            return false;
+        const bool isSeam = (nf == 0);
+        if (first) { startedInRun = !isSeam; first = false; }
+        if (isSeam) {
+            // A non-shared edge breaks a run only if it is the true periodic seam;
+            // a genuine naked / mis-registered edge would be chorded over -> bail.
+            if (!BRep_Tool::IsClosed(ed, part.face)) return false;
+            inRun = false;
+            continue;
         }
-        chain.push_back({eid, we.Orientation() == TopAbs_REVERSED});
+        if (!inRun) { runs.push_back({}); inRun = true; }
+        runs.back().edges.push_back({eid, we.Orientation() == TopAbs_REVERSED});
     }
-    if (rimCount != 1 || chain.size() < 2) return false;
+    // The wire is cyclic: if it neither started nor ended on a seam, the last run
+    // wraps into the first (the last run's edges precede the first's).
+    if (runs.size() >= 2 && startedInRun && inRun) {
+        auto tail = runs.back().edges;
+        runs.pop_back();
+        runs.front().edges.insert(runs.front().edges.begin(), tail.begin(), tail.end());
+    }
+    if (runs.size() != 2) return false;
 
-    // Upper boundary ring: concatenate the chain edges in wire order (each edge's
-    // cache samples, reversed per its wire orientation). The chain is contiguous
-    // (WireExplorer order) and its two ends meet at the seam (u=0 == u=2pi), so it
-    // closes in 3D. Every splice and the final closure MUST coincide within the
-    // weld tolerance; a jump means a swallowed gap -> bail (no phantom chord).
-    std::vector<P3> hiP;
-    for (const auto& [eid, rev] : chain) {
-        std::vector<P3> pts = cache[eid].pts;
-        if (rev) std::reverse(pts.begin(), pts.end());
-        if (!hiP.empty()) {
-            if (len(sub(hiP.back(), pts.front())) > weldTol) return false;
-            pts.erase(pts.begin());  // dedup the shared splice vertex
+    // Build a run's edges into a closed 3D ring: a single closed-circle edge is
+    // already a ring; an open chain closes at the seam (its ends coincide in 3D).
+    // Every internal splice + the closure must coincide within the weld tolerance
+    // (else a swallowed gap would chord a phantom edge -> bail).
+    auto buildRing = [&](const Run& run, std::vector<P3>& out) -> bool {
+        out.clear();
+        if (run.edges.size() == 1 && cache[run.edges[0].first].closed) {
+            out = cache[run.edges[0].first].pts;
+        } else {
+            for (const auto& [eid, rev] : run.edges) {
+                std::vector<P3> pts = cache[eid].pts;
+                if (rev) std::reverse(pts.begin(), pts.end());
+                if (!out.empty()) {
+                    if (len(sub(out.back(), pts.front())) > weldTol) return false;
+                    pts.erase(pts.begin());  // dedup the shared splice vertex
+                }
+                for (const P3& p : pts) out.push_back(p);
+            }
+            if (out.size() < 4 || len(sub(out.front(), out.back())) > weldTol)
+                return false;
+            out.pop_back();  // drop the closure-coincident endpoint
         }
-        for (const P3& p : pts) hiP.push_back(p);
-    }
-    if (hiP.size() < 4 || len(sub(hiP.front(), hiP.back())) > weldTol) return false;
-    hiP.pop_back();  // drop the closure-coincident endpoint
-    // The rim ring is a closed circle (no duplicate endpoint) but dedup defensively
-    // so a coincident sample can't leave a zero-length rim edge / sliver cell.
-    std::vector<P3> loP;
-    for (const P3& p : cache[rimEid].pts)
-        if (loP.empty() || len(sub(loP.back(), p)) > weldTol) loP.push_back(p);
-    while (loP.size() > 1 && len(sub(loP.front(), loP.back())) < weldTol) loP.pop_back();
-    if (loP.size() < 3 || hiP.size() < 3) return false;
+        std::vector<P3> d;  // dedup coincident samples (no zero-length ring edge)
+        for (const P3& p : out)
+            if (d.empty() || len(sub(d.back(), p)) > weldTol) d.push_back(p);
+        while (d.size() > 1 && len(sub(d.front(), d.back())) < weldTol) d.pop_back();
+        out.swap(d);
+        return out.size() >= 3;
+    };
+    std::vector<P3> ringA, ringB;
+    if (!buildRing(runs[0], ringA) || !buildRing(runs[1], ringB)) return false;
 
-    // Axis frame + azimuth.
+    // Axis frame + azimuth + axial height.
     const P3 O{ax.Location().X(), ax.Location().Y(), ax.Location().Z()};
     const P3 D{ax.Direction().X(), ax.Direction().Y(), ax.Direction().Z()};
     P3 ref = std::abs(D[2]) < 0.9 ? P3{0, 0, 1} : P3{1, 0, 0};
@@ -1435,15 +1465,22 @@ bool meshRimNotchWall(FacePart& part, const Model& model, const SampleCache& cac
         }
         return t;
     };
-    // Both the un-notched rim and the notch chain must encircle the axis (the
-    // chain still sweeps a full turn even though it dips in v). A segment or a
-    // non-encircling face fails here and falls to the floor.
-    if (std::abs(std::abs(sweep(loP)) - 2 * M_PI) > 0.5) return false;
-    if (std::abs(std::abs(sweep(hiP)) - 2 * M_PI) > 0.5) return false;
+    auto hgt = [&](const P3& p) { return dot(sub(p, O), D); };
+    // Both rings must encircle the axis (a notched ring still sweeps a full turn
+    // even though it dips in v). A segment / non-encircling face fails here.
+    if (std::abs(std::abs(sweep(ringA)) - 2 * M_PI) > 0.5) return false;
+    if (std::abs(std::abs(sweep(ringB)) - 2 * M_PI) > 0.5) return false;
+    // hi = the ring with the larger axial spread (the notched one), so the side
+    // drops land in bridgeByAzimuth's run handling; lo = the flatter base rim.
+    auto spread = [&](const std::vector<P3>& r) {
+        double lo = 1e300, hi = -1e300;
+        for (const P3& p : r) { double h = hgt(p); lo = std::min(lo, h); hi = std::max(hi, h); }
+        return hi - lo;
+    };
+    std::vector<P3> loP = ringA, hiP = ringB;
+    if (spread(ringA) > spread(ringB)) { loP = ringB; hiP = ringA; }
     if (sweep(loP) < 0) std::reverse(loP.begin(), loP.end());  // both CCW
     if (sweep(hiP) < 0) std::reverse(hiP.begin(), hiP.end());
-
-    auto hgt = [&](const P3& p) { return dot(sub(p, O), D); };
     std::vector<uint32_t> lo, hi;
     std::vector<double> pL, pH, hLo, hHi;
     for (const P3& p : loP) {
