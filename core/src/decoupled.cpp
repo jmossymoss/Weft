@@ -44,6 +44,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <map>
 #include <vector>
 
@@ -451,7 +453,9 @@ std::vector<Loop> faceLoops(FacePart& part, const Model& model,
 bool meshRevolutionWall(FacePart& part, const Model& model, const Analysis& an,
                         const EdgeCounts& ec, const SampleCache& cache,
                         const FaceMeshSettings& fs, MesherKind& kind) {
-    // Collect closed-circle rim edges of this face.
+    // Collect closed rim edges of this face (the insert runs first and claims
+    // any wall that actually has interior holes, so a plain 2-rim grid here can
+    // never cover a hole).
     std::vector<int> rims;
     const FaceInfo& fi = an.faces[part.faceId - 1];
     for (int eid : fi.edgeIds) {
@@ -713,6 +717,301 @@ bool meshPartialRevolutionWall(FacePart& part, const Model& model,
         for (int iu = 0; iu < nu; ++iu)
             part.addPoly({g[iv][iu], g[iv][iu + 1], g[iv + 1][iu + 1],
                           g[iv + 1][iu]});
+    kind = MesherKind::RevolutionGrid;
+    return true;
+}
+
+// Walk each wire of a face into an ordered ring of 3D points from the shared
+// cache (no part mutation).
+std::vector<std::vector<P3>> wireLoopsP3(const Model& model,
+                                         const TopoDS_Face& face,
+                                         const SampleCache& cache) {
+    std::vector<std::vector<P3>> out;
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        const TopoDS_Wire w = TopoDS::Wire(wx.Current());
+        std::vector<P3> loop;
+        for (BRepTools_WireExplorer we(w, face); we.More(); we.Next()) {
+            int eid = model.edges.FindIndex(we.Current());
+            if (eid < 1 || eid >= (int)cache.size() || !cache[eid].valid) continue;
+            std::vector<P3> pts = cache[eid].pts;
+            if (we.Orientation() == TopAbs_REVERSED)
+                std::reverse(pts.begin(), pts.end());
+            size_t start = loop.empty() ? 0 : 1;
+            for (size_t k = start; k < pts.size(); ++k) loop.push_back(pts[k]);
+        }
+        while (loop.size() > 1 && len(sub(loop.front(), loop.back())) < 1e-7)
+            loop.pop_back();
+        if (loop.size() >= 3) out.push_back(std::move(loop));
+    }
+    return out;
+}
+
+// A cyl/cone band whose two rims are multi-edge closed LOOPS (a boolean-cut
+// bore, whose rims are intersection curves rather than single circle edges).
+// Both rims must encircle the axis; align their start azimuths and bridge them
+// into one band (quads where the counts line up, grouped n-gons where they
+// don't) — the rulings lie on the surface, so no twist.
+bool meshRevolutionBandLoops(FacePart& part, const Model& model,
+                             const SampleCache& cache, MesherKind& kind) {
+    BRepAdaptor_Surface surf(part.face);
+    gp_Ax1 ax;
+    if (surf.GetType() == GeomAbs_Cylinder) ax = surf.Cylinder().Axis();
+    else if (surf.GetType() == GeomAbs_Cone) ax = surf.Cone().Axis();
+    else return false;
+    std::vector<std::vector<P3>> loops = wireLoopsP3(model, part.face, cache);
+    if (loops.size() != 2) return false;
+    const P3 O{ax.Location().X(), ax.Location().Y(), ax.Location().Z()};
+    const P3 D{ax.Direction().X(), ax.Direction().Y(), ax.Direction().Z()};
+    P3 ref = std::abs(D[2]) < 0.9 ? P3{0, 0, 1} : P3{1, 0, 0};
+    P3 X0 = cross(ref, D);
+    X0 = mul(X0, 1.0 / std::max(1e-12, len(X0)));
+    P3 Y0 = cross(D, X0);
+    auto azim = [&](const P3& p) {
+        P3 r = sub(p, O);
+        return std::atan2(dot(r, Y0), dot(r, X0));
+    };
+    // Total signed azimuth swept ~ +/-2pi means the loop encircles the axis.
+    auto sweep = [&](const std::vector<P3>& r) {
+        double t = 0;
+        for (size_t i = 0; i < r.size(); ++i) {
+            double d = azim(r[(i + 1) % r.size()]) - azim(r[i]);
+            while (d > M_PI) d -= 2 * M_PI;
+            while (d < -M_PI) d += 2 * M_PI;
+            t += d;
+        }
+        return t;
+    };
+    double sa = sweep(loops[0]), sb = sweep(loops[1]);
+    if (std::abs(std::abs(sa) - 2 * M_PI) > 0.6 ||
+        std::abs(std::abs(sb) - 2 * M_PI) > 0.6)
+        return false;  // not both full rims
+    std::vector<P3> A = loops[0], B = loops[1];
+    if (sa < 0) std::reverse(A.begin(), A.end());   // both CCW
+    if (sb < 0) std::reverse(B.begin(), B.end());
+    // Rotate B so B[0] shares A[0]'s azimuth -> fraction pairing follows azimuth.
+    double a0 = azim(A[0]);
+    int rot = 0;
+    double bd = 1e300;
+    for (int i = 0; i < (int)B.size(); ++i) {
+        double d = std::fmod(std::abs(azim(B[i]) - a0), 2 * M_PI);
+        if (d > M_PI) d = 2 * M_PI - d;
+        if (d < bd) { bd = d; rot = i; }
+    }
+    std::rotate(B.begin(), B.begin() + rot, B.end());
+    std::vector<uint32_t> ra, rb;
+    for (const P3& p : A) ra.push_back(part.addV(p));
+    for (const P3& p : B) rb.push_back(part.addV(p));
+    bridgeLoops(part, ra, rb, true);
+    kind = MesherKind::RevolutionGrid;
+    return true;
+}
+
+// ---- full revolution wall with interior bore holes ------------------------
+// A full cylinder/cone wall whose two main rims (top/bottom) enclose K interior
+// closed-circle holes (bores punched through). Grid the wall as u-wrapped rings
+// with v-rows placed to BRACKET each hole, punch the cells each hole covers, and
+// bridge the resulting staircase to the hole's exact rim samples (from the
+// cache, so the bore wall welds). Requires equal-count main rims and holes that
+// occupy disjoint cell blocks; otherwise bails to the floor.
+bool meshRevolutionWallInsert(FacePart& part, const Model& model,
+                              const SampleCache& cache, const FaceInfo& fi,
+                              MesherKind& kind) {
+    BRepAdaptor_Surface surf(part.face);
+    const GeomAbs_SurfaceType st = surf.GetType();
+    gp_Ax1 ax;
+    if (st == GeomAbs_Cylinder) ax = surf.Cylinder().Axis();
+    else if (st == GeomAbs_Cone) ax = surf.Cone().Axis();
+    else return false;
+    double umin, umax, vmin, vmax;
+    BRepTools::UVBounds(part.face, umin, umax, vmin, vmax);
+    if (umax - umin < 2 * M_PI - 1e-6) return false;  // partial handled elsewhere
+
+    const P3 O{ax.Location().X(), ax.Location().Y(), ax.Location().Z()};
+    const P3 D{ax.Direction().X(), ax.Direction().Y(), ax.Direction().Z()};
+    P3 ref = std::abs(D[2]) < 0.9 ? P3{0, 0, 1} : P3{1, 0, 0};
+    P3 X0 = cross(ref, D);
+    X0 = mul(X0, 1.0 / std::max(1e-12, len(X0)));
+    P3 Y0 = cross(D, X0);
+    auto azim = [&](const P3& p) {
+        P3 r = sub(p, O);
+        return std::atan2(dot(r, Y0), dot(r, X0));
+    };
+    auto hgt = [&](const P3& p) { return dot(sub(p, O), D); };
+
+    auto ccw = [&](std::vector<P3> r) {
+        if (r.size() < 2) return r;
+        double d = azim(r[1]) - azim(r[0]);
+        while (d > M_PI) d -= 2 * M_PI;
+        while (d < -M_PI) d += 2 * M_PI;
+        if (d < 0) std::reverse(r.begin(), r.end());
+        return r;
+    };
+    // Main rims = the two closed-CIRCLE edges at extreme mean height (bore rims
+    // are intersection curves, not circles, so this picks the true top/bottom).
+    struct Ring { std::vector<P3> pts; double h; };
+    std::vector<Ring> circles;
+    for (int eid : fi.edgeIds) {
+        if (eid < 1 || eid >= (int)cache.size() || !cache[eid].valid) continue;
+        if (!cache[eid].closed) continue;
+        const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
+        double f, l;
+        Handle(Geom_Curve) c3 = BRep_Tool::Curve(e, f, l);
+        if (c3.IsNull()) continue;
+        GeomAdaptor_Curve gac(c3, f, l);
+        if (gac.GetType() != GeomAbs_Circle) continue;
+        double hm = 0;
+        for (const P3& p : cache[eid].pts) hm += hgt(p);
+        circles.push_back({cache[eid].pts, hm / cache[eid].pts.size()});
+    }
+    if ((int)circles.size() < 2) return false;
+    int loI = 0, hiI = 0;
+    for (int i = 1; i < (int)circles.size(); ++i) {
+        if (circles[i].h < circles[loI].h) loI = i;
+        if (circles[i].h > circles[hiI].h) hiI = i;
+    }
+    if (loI == hiI) return false;
+    std::vector<P3> mLo = ccw(circles[loI].pts), mHi = ccw(circles[hiI].pts);
+    const int nu = (int)mLo.size();
+    if (nu < 6 || (int)mHi.size() != nu) return false;
+    const double hLo = circles[loI].h, hHi = circles[hiI].h;
+    if (hHi - hLo < 1e-9) return false;
+
+    // Hole loops = every wire except the outer, sampled from the shared cache
+    // (so the bore wall welds). Circular closed edges at interior height (not a
+    // main rim) also count.
+    std::vector<std::vector<P3>> holeLoops;
+    const TopoDS_Wire outerW = BRepTools::OuterWire(part.face);
+    for (TopExp_Explorer wx(part.face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        const TopoDS_Wire w = TopoDS::Wire(wx.Current());
+        if (w.IsSame(outerW)) continue;
+        std::vector<P3> loop;
+        for (BRepTools_WireExplorer we(w, part.face); we.More(); we.Next()) {
+            int eid = model.edges.FindIndex(we.Current());
+            if (eid < 1 || eid >= (int)cache.size() || !cache[eid].valid) continue;
+            std::vector<P3> pts = cache[eid].pts;
+            if (we.Orientation() == TopAbs_REVERSED)
+                std::reverse(pts.begin(), pts.end());
+            size_t start = loop.empty() ? 0 : 1;
+            for (size_t k = start; k < pts.size(); ++k) loop.push_back(pts[k]);
+        }
+        while (loop.size() > 1 && len(sub(loop.front(), loop.back())) < 1e-9)
+            loop.pop_back();
+        if (loop.size() >= 3) holeLoops.push_back(std::move(loop));
+    }
+    if (holeLoops.empty()) return false;
+
+    // Holes and their (column-range, height-range) footprints.
+    struct Hole { std::vector<P3> ring; double h0, h1; int c0, c1; };
+    std::vector<Hole> holes;
+    // Grid column azimuths from the bottom main rim.
+    std::vector<double> colAz(nu);
+    for (int i = 0; i < nu; ++i) colAz[i] = azim(mLo[i]);
+    auto nearestCol = [&](double az) {
+        int best = 0;
+        double bd = 1e300;
+        for (int i = 0; i < nu; ++i) {
+            double d = std::fmod(std::abs(az - colAz[i]), 2 * M_PI);
+            if (d > M_PI) d = 2 * M_PI - d;
+            if (d < bd) { bd = d; best = i; }
+        }
+        return best;
+    };
+    std::vector<double> rowH{hLo, hHi};
+    for (auto& loop : holeLoops) {
+        Hole h;
+        h.ring = loop;
+        h.h0 = 1e300; h.h1 = -1e300;
+        std::vector<int> cols;
+        for (const P3& p : h.ring) {
+            double z = hgt(p);
+            h.h0 = std::min(h.h0, z); h.h1 = std::max(h.h1, z);
+            cols.push_back(nearestCol(azim(p)));
+        }
+        if (h.h0 <= hLo + 1e-6 || h.h1 >= hHi - 1e-6) return false;  // touches a rim
+        // Contiguous column span (mod nu): pick the rotation with the smallest
+        // spread so a seam-straddling hole stays contiguous.
+        std::sort(cols.begin(), cols.end());
+        cols.erase(std::unique(cols.begin(), cols.end()), cols.end());
+        int bestStart = 0, bestSpan = nu;
+        for (int s = 0; s < (int)cols.size(); ++s) {
+            int lo = cols[s], hi = cols[(s + (int)cols.size() - 1) % cols.size()];
+            int span = (hi - lo + nu) % nu;
+            if (span < bestSpan) { bestSpan = span; bestStart = s; }
+        }
+        h.c0 = cols[bestStart];
+        h.c1 = (h.c0 + bestSpan) % nu;
+        rowH.push_back(h.h0);
+        rowH.push_back(h.h1);
+        holes.push_back(std::move(h));
+    }
+    if (holes.empty()) return false;
+
+    std::sort(rowH.begin(), rowH.end());
+    rowH.erase(std::unique(rowH.begin(), rowH.end(),
+                           [](double a, double b) { return std::abs(a - b) < 1e-6; }),
+               rowH.end());
+    const int nv = (int)rowH.size() - 1;
+    if (nv < 1) return false;
+    auto rowAt = [&](double h) {
+        int best = 0;
+        for (int j = 0; j < (int)rowH.size(); ++j)
+            if (std::abs(rowH[j] - h) < std::abs(rowH[best] - h)) best = j;
+        return best;
+    };
+
+    // Grid rings by height fraction; rulings lie on the cyl/cone.
+    std::vector<std::vector<uint32_t>> g(nv + 1, std::vector<uint32_t>(nu));
+    for (int j = 0; j <= nv; ++j) {
+        double t = (rowH[j] - hLo) / (hHi - hLo);
+        for (int i = 0; i < nu; ++i)
+            g[j][i] = part.addV(lerp(mLo[i], mHi[i], t));
+    }
+    // Mark deleted cells (cell (j,i) spans rows j..j+1, cols i..i+1 mod nu).
+    std::vector<std::vector<char>> dead(nv, std::vector<char>(nu, 0));
+    for (const Hole& h : holes) {
+        int r0 = rowAt(h.h0), r1 = rowAt(h.h1);
+        if (r1 <= r0) return false;
+        for (int j = r0; j < r1; ++j)
+            for (int c = h.c0;; c = (c + 1) % nu) {
+                if (dead[j][c]) return false;  // holes overlap -> bail
+                dead[j][c] = 1;
+                if (c == h.c1) break;
+            }
+    }
+    for (int j = 0; j < nv; ++j)
+        for (int i = 0; i < nu; ++i) {
+            if (dead[j][i]) continue;
+            int ni = (i + 1) % nu;
+            part.addPoly({g[j][i], g[j][ni], g[j + 1][ni], g[j + 1][i]});
+        }
+    // Web each hole: the perimeter of its deleted block bridges to the ring.
+    for (const Hole& h : holes) {
+        int r0 = rowAt(h.h0), r1 = rowAt(h.h1);
+        std::vector<uint32_t> stair;
+        // bottom edge L->R
+        for (int c = h.c0;; c = (c + 1) % nu) {
+            stair.push_back(g[r0][c]);
+            if (c == h.c1) break;
+        }
+        stair.push_back(g[r0][(h.c1 + 1) % nu]);
+        // right edge up
+        for (int j = r0 + 1; j <= r1; ++j) stair.push_back(g[j][(h.c1 + 1) % nu]);
+        // top edge R->L
+        for (int c = (h.c1 + 1) % nu;; c = (c + nu - 1) % nu) {
+            stair.push_back(g[r1][c]);
+            if (c == h.c0) break;
+        }
+        // left edge down
+        for (int j = r1 - 1; j > r0; --j) stair.push_back(g[j][h.c0]);
+        // dedup consecutive
+        std::vector<uint32_t> s2;
+        for (uint32_t v : stair)
+            if (s2.empty() || s2.back() != v) s2.push_back(v);
+        while (s2.size() > 1 && s2.front() == s2.back()) s2.pop_back();
+        std::vector<uint32_t> ring;
+        for (const P3& p : ccw(h.ring)) ring.push_back(part.addV(p));
+        if (s2.size() >= 3 && ring.size() >= 3) bridgeLoops(part, s2, ring, true);
+    }
     kind = MesherKind::RevolutionGrid;
     return true;
 }
@@ -1185,9 +1484,15 @@ PolyMesh meshDecoupled(const Model& model, const Analysis& analysis,
 
         bool done = false;
         if (fi.type == SurfaceType::Cylinder || fi.type == SurfaceType::Cone) {
-            done = meshRevolutionWall(part, model, analysis, ec, cache, fs, kind);
+            // Insert first: it only succeeds when the wall really has interior
+            // holes, so plain walls/bores fall through to the grid meshers.
+            done = meshRevolutionWallInsert(part, model, cache, fi, kind);
+            if (!done)
+                done = meshRevolutionWall(part, model, analysis, ec, cache, fs, kind);
             if (!done)
                 done = meshPartialRevolutionWall(part, model, ec, cache, fi, kind);
+            if (!done)
+                done = meshRevolutionBandLoops(part, model, cache, kind);
         } else if (fi.type == SurfaceType::Sphere ||
                    fi.type == SurfaceType::Torus) {
             done = meshFullPeriodic(part, fs, kind);
