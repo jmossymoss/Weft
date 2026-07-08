@@ -1658,6 +1658,15 @@ void testDecoupled() {
         CHECK(m.polygonCount() > 0);
         foldFree(shape);  // fold-free by the detector's own definition
     }
+    // bossfillet (torus fillet ring) and slotted (boolean-cut bore walls) are
+    // one-wire periodic bands the seam-band mesher reconstructs into two rims;
+    // both must weld watertight (consistent winding).
+    for (const char* shape : {"bossfillet", "slotted"}) {
+        weft::PolyMesh m = meshOf(shape, gs);
+        if (!isWatertight(m))
+            std::printf("   NOT watertight: %s\n", shape);
+        CHECK(isWatertight(m));
+    }
 
     // A plain cylinder is the canonical result: nu wall quads (nu==rim==radial)
     // plus two n-gon caps, quad-dominant, zero tris.

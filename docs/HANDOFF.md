@@ -95,9 +95,27 @@ meshRevolutionBandLoops (bridges the two shared rim loops from the cache).
 Hero-model opens collapsed: flaregun 515->64, teleporter 1455->673, foam
 959->620; bossfillet 64->7.
 
-## CURRENT STATE (2026-07-08, --decoupled): opens down 60-88%, floor is the wall
-flaregun 64 open, foam 620, teleporter 673. Fixtures: 12/15 fully watertight;
-notched 7o/3nm, slotted 0o/9nm, bossfillet 7o.
+## CURRENT STATE (2026-07-08, --decoupled): flaregun WATERTIGHT, 14/15 fixtures
+flaregun 0 open (was 515), foam 620, teleporter 654. Fixtures: 14/15 fully
+watertight -- only notched (7o/3nm, rim-notch) remains; slotted and bossfillet
+are now CLEAN via the seam band (below).
+
+## Increment 8 (LANDED) — seam band closes encircling annuli
+meshSeamBand: a periodic face (torus fillet ring, boolean-cut cylinder bore
+wall) whose boundary is ONE wire encircling the seam is an annular band, not a
+disk. Reconstruct the two rims from the EDGE structure -- a rim edge's pcurve
+runs along the encircling axis A, a seam edge runs across it; group u-varying
+edges by their B-midpoint into two rims -- sample each rim from the shared cache
+keeping ON-CURVE order (so every ring edge is a real B-rep segment), order the
+edges by azimuth (uv[A] mod period), and bridgeLoops closed. Gated three ways so
+it is a PURE improvement: (1) a rim must wind >0.75*period (segments stay on the
+floor), (2) a COVERAGE check -- every shared boundary edge's samples must land on
+a rim, else a misclassified face would drop a shared edge, (3) a WATERTIGHT
+self-check -- the band cells must be 2-manifold with exactly the two rims as
+boundary, else roll back. Runs after meshRevolutionBandLoops for cyl/cone/
+sphere/torus. flaregun 64->0 opens; slotted 9nm->0; bossfillet 7o->0; foam/
+teleporter improved (their remaining encirclers are non-clean and correctly
+rejected to the floor). testDecoupled now asserts bossfillet + slotted watertight.
 
 DEFINITIVE DIAGNOSIS (via the new WEFT_DC_CONTRACT verifier, which checks that
 every shared-edge sample lands on a welded vertex used by >=2 faces):

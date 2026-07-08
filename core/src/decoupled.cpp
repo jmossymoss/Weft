@@ -849,6 +849,170 @@ bool meshRevolutionBandLoops(FacePart& part, const Model& model,
     return true;
 }
 
+// A periodic surface (torus fillet ring, boolean-cut cylinder) whose boundary is
+// ONE wire that encircles the seam is an annular band, not a disk. Reconstruct
+// its two rims from the EDGE structure — a rim edge's pcurve runs along the
+// encircling axis A, a seam edge runs across it — sampling each rim from the
+// shared cache and ordering it by parametric azimuth (uv[A] mod period, since
+// the two rims are the same circle at different pcurve u-offsets). Bridge the
+// rims closed, GATED on a watertight self-check so a face that isn't a clean
+// two-rim band rolls back and falls through to the floor.
+bool meshSeamBand(FacePart& part, const Model& model, const SampleCache& cache,
+                  const FaceInfo& fi) {
+    BRepAdaptor_Surface surf(part.face);
+    const double uPer = surf.IsUPeriodic() ? surf.UPeriod() : 0.0;
+    const double vPer = surf.IsVPeriodic() ? surf.VPeriod() : 0.0;
+    if (uPer <= 0 && vPer <= 0) return false;
+
+    struct EInfo { int eid; double da, db, bmid; };
+    // First pass with A=u to measure spans, decide the encircling axis.
+    auto pcOf = [&](int eid, double& f, double& l) {
+        const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
+        return BRep_Tool::CurveOnSurface(e, part.face, f, l);
+    };
+    double sumdu = 0, sumdv = 0;
+    std::vector<int> eids;
+    for (int eid : fi.edgeIds) {
+        if (eid < 1 || eid >= (int)cache.size() || !cache[eid].valid) continue;
+        double f, l;
+        Handle(Geom2d_Curve) pc = pcOf(eid, f, l);
+        if (pc.IsNull()) return false;
+        gp_Pnt2d p0 = pc->Value(f), p1 = pc->Value(l);
+        sumdu += std::abs(p1.X() - p0.X());
+        sumdv += std::abs(p1.Y() - p0.Y());
+        eids.push_back(eid);
+    }
+    if (eids.size() < 2) return false;
+    const int A = sumdu >= sumdv ? 0 : 1;      // encircling axis (0=u,1=v)
+    const double per = A == 0 ? uPer : vPer;
+    if (per <= 0) return false;
+
+    // Rim edges span primarily along A; group them into two clusters by their
+    // midpoint in the other coordinate B.
+    double maxA = 0, bmin = 1e300, bmax = -1e300;
+    std::vector<EInfo> rims;
+    for (int eid : eids) {
+        double f, l;
+        Handle(Geom2d_Curve) pc = pcOf(eid, f, l);
+        if (pc.IsNull()) continue;
+        gp_Pnt2d p0 = pc->Value(f), p1 = pc->Value(l), pm = pc->Value(0.5 * (f + l));
+        double da = A == 0 ? std::abs(p1.X() - p0.X()) : std::abs(p1.Y() - p0.Y());
+        double db = A == 0 ? std::abs(p1.Y() - p0.Y()) : std::abs(p1.X() - p0.X());
+        double bmid = A == 0 ? pm.Y() : pm.X();
+        maxA = std::max(maxA, da);
+        if (da > db) {  // a rim (runs along A), not a seam
+            rims.push_back({eid, da, db, bmid});
+            bmin = std::min(bmin, bmid);
+            bmax = std::max(bmax, bmid);
+        }
+    }
+    if (rims.size() < 2 || bmax - bmin < 1e-6) return false;
+    // Only a genuine full-ring encircler qualifies: a rim must wind most of the
+    // period. A segment (rails + end-caps) has short rim spans and would leak
+    // its end-caps here, so it belongs on the floor.
+    if (maxA < 0.75 * per) return false;
+    const double bmed = 0.5 * (bmin + bmax);
+
+    // Sample a rim cluster (edges with bmid on one side) into a ring. Each
+    // edge's samples keep their ON-CURVE order (so every ring edge is a real
+    // B-rep segment that welds with the neighbour); only the EDGES are ordered
+    // relative to each other by azimuth. Shared endpoints dedup by position.
+    auto buildRim = [&](bool hiSide) -> std::vector<uint32_t> {
+        struct RE { double azi; std::vector<uint32_t> vids; };
+        std::vector<RE> res;
+        std::map<std::array<long long, 3>, uint32_t> dedup;
+        auto vfor = [&](const P3& p) {
+            std::array<long long, 3> key{llround(p[0] * 1e5), llround(p[1] * 1e5),
+                                         llround(p[2] * 1e5)};
+            auto it = dedup.find(key);
+            if (it != dedup.end()) return it->second;
+            uint32_t v = part.addV(p);
+            dedup[key] = v;
+            return v;
+        };
+        auto aziAt = [&](Handle(Geom2d_Curve) pc, double param) {
+            gp_Pnt2d q = pc->Value(param);
+            double a = std::fmod(A == 0 ? q.X() : q.Y(), per);
+            return a < 0 ? a + per : a;
+        };
+        for (const EInfo& r : rims) {
+            if ((r.bmid >= bmed) != hiSide) continue;
+            double f, l;
+            Handle(Geom2d_Curve) pc = pcOf(r.eid, f, l);
+            if (pc.IsNull()) continue;
+            const EdgeSamples& s = cache[r.eid];
+            RE re;
+            for (const P3& p : s.pts) re.vids.push_back(vfor(p));
+            double a0 = aziAt(pc, s.param.front()), a1 = aziAt(pc, s.param.back());
+            double d = a1 - a0;
+            while (d > per / 2) d -= per;
+            while (d < -per / 2) d += per;
+            if (d < 0) { std::reverse(re.vids.begin(), re.vids.end()); a0 = a1; }
+            re.azi = a0;
+            res.push_back(std::move(re));
+        }
+        std::sort(res.begin(), res.end(),
+                  [](const RE& x, const RE& y) { return x.azi < y.azi; });
+        std::vector<uint32_t> ring;
+        for (const RE& re : res)
+            for (uint32_t v : re.vids)
+                if (ring.empty() || ring.back() != v) ring.push_back(v);
+        while (ring.size() > 1 && ring.front() == ring.back()) ring.pop_back();
+        return ring;
+    };
+    std::vector<uint32_t> ra = buildRim(false), rb = buildRim(true);
+    if (ra.size() < 3 || rb.size() < 3) return false;
+
+    // Coverage check: every SHARED boundary edge must be fully represented in
+    // the two rims (its samples all land on rim vertices). If the classification
+    // dropped a shared edge (a segment's end-cap mistaken for a seam), reject so
+    // the face falls to the floor -- this keeps the band a pure improvement.
+    auto pkey = [](const P3& p) {
+        return std::array<long long, 3>{llround(p[0] * 1e5), llround(p[1] * 1e5),
+                                        llround(p[2] * 1e5)};
+    };
+    std::set<std::array<long long, 3>> rimPos;
+    for (uint32_t v : ra) rimPos.insert(pkey(part.verts[v]));
+    for (uint32_t v : rb) rimPos.insert(pkey(part.verts[v]));
+    for (int eid : fi.edgeIds) {
+        if (eid < 1 || eid >= (int)cache.size() || !cache[eid].valid) continue;
+        const TopoDS_Shape& e = model.edges(eid);
+        int nf = 0;
+        if (model.edgeToFaces.Contains(e))
+            for (const TopoDS_Shape& sh : model.edgeToFaces.FindFromKey(e)) {
+                int f2 = model.faces.FindIndex(sh);
+                if (f2 >= 1 && f2 != part.faceId) ++nf;
+            }
+        if (nf == 0) continue;  // internal seam edge: not required in the rims
+        for (const P3& p : cache[eid].pts)
+            if (!rimPos.count(pkey(p))) return false;  // shared edge dropped
+    }
+
+    const size_t pBase = part.polys.size();
+    bridgeLoops(part, ra, rb, /*closed=*/true);
+    // Watertight self-check: band cells must be 2-manifold with exactly the two
+    // rim rings as boundary; otherwise roll back and let the floor try.
+    std::map<std::pair<uint32_t, uint32_t>, int> use;
+    for (size_t p = pBase; p < part.polys.size(); ++p) {
+        const auto& poly = part.polys[p];
+        for (size_t i = 0; i < poly.size(); ++i) {
+            uint32_t a = poly[i], b = poly[(i + 1) % poly.size()];
+            use[a < b ? std::make_pair(a, b) : std::make_pair(b, a)]++;
+        }
+    }
+    int once = 0;
+    bool bad = part.polys.size() == pBase;
+    for (const auto& [e, c] : use) {
+        if (c > 2) bad = true;
+        if (c == 1) ++once;
+    }
+    if (bad || once != (int)(ra.size() + rb.size())) {
+        part.polys.resize(pBase);
+        return false;
+    }
+    return true;
+}
+
 // ---- full revolution wall with interior bore holes ------------------------
 // A full cylinder/cone wall whose two main rims (top/bottom) enclose K interior
 // closed-circle holes (bores punched through). Grid the wall as u-wrapped rings
@@ -1646,11 +1810,15 @@ PolyMesh meshDecoupled(const Model& model, const Analysis& analysis,
                 done = meshPartialRevolutionWall(part, model, ec, cache, fi, kind);
             if (!done)
                 done = meshRevolutionBandLoops(part, model, cache, kind);
+            if (!done && (done = meshSeamBand(part, model, cache, fi)))
+                kind = MesherKind::RevolutionGrid;
         } else if (fi.type == SurfaceType::Sphere ||
                    fi.type == SurfaceType::Torus) {
             done = meshFullPeriodic(part, model, fi, fs, kind);
             if (!done)  // a band/zone patch: bridge its two shared rim loops
                 done = meshRevolutionBandLoops(part, model, cache, kind);
+            if (!done && (done = meshSeamBand(part, model, cache, fi)))
+                kind = MesherKind::RevolutionGrid;
         }
         if (!done) {
             std::map<std::array<double, 3>, uint32_t> dedup;
