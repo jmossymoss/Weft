@@ -496,6 +496,20 @@ bool meshRevolutionWall(FacePart& part, const Model& model, const Analysis& an,
     if (rims.size() == 1) {
         BRepAdaptor_Surface surf(part.face);
         if (surf.GetType() != GeomAbs_Cone) return false;
+        // A true cone reaches its apex; a FRUSTUM with a subdivided far rim has
+        // extra curved edges (arcs). Only the rim + straight seams (+ the
+        // degenerate apex) may be present -- else bail so the seam band
+        // reconstructs both rims from their arcs.
+        for (int eid : fi.edgeIds) {
+            if (eid == rims[0] || eid < 1 || eid > model.edgeCount()) continue;
+            const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
+            if (BRep_Tool::Degenerated(e)) continue;
+            double f, l;
+            Handle(Geom_Curve) c3 = BRep_Tool::Curve(e, f, l);
+            if (c3.IsNull()) continue;
+            GeomAdaptor_Curve gac(c3, f, l);
+            if (gac.GetType() != GeomAbs_Line) return false;
+        }
         const EdgeSamples& r = cache[rims[0]];
         const int nu = (int)r.pts.size();
         if (nu < 3) return false;
