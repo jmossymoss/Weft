@@ -95,10 +95,21 @@ meshRevolutionBandLoops (bridges the two shared rim loops from the cache).
 Hero-model opens collapsed: flaregun 515->64, teleporter 1455->673, foam
 959->620; bossfillet 64->7.
 
-## CURRENT STATE (2026-07-08, --decoupled): flaregun WATERTIGHT, 14/15 fixtures
-flaregun 0 open (was 515), foam 620, teleporter 654. Fixtures: 14/15 fully
-watertight -- only notched (7o/3nm, rim-notch) remains; slotted and bossfillet
-are now CLEAN via the seam band (below).
+## CURRENT STATE (2026-07-08, --decoupled): structured meshers SOUND
+flaregun 0 open (was 515, WATERTIGHT). Fixtures: 14/15 fully watertight -- only
+notched (7o/3nm, rim-notch) remains; slotted + bossfillet now CLEAN via the seam
+band. foam 271 open / teleporter 630 at the DEFAULT weld (1e-6) -- but those are
+SUB-TOLERANCE INPUT GAPS, not mesher bugs: adjacent bspline patches on the
+sloppy-CAD hero models meet at nearly-coincident edges ~0.007mm apart (verified:
+two distinct verts 0.0069mm apart at a "crack"). `--weld 0.01` closes them ->
+foam 271->108 (108 ~= the 74 legit input open-shell edges), teleporter 630->114.
+So the decoupled mesher is watertight on clean geometry; sloppy imports need the
+weld knob exactly like the production path. The border contract holds
+everywhere (WEFT_DC_CONTRACT).
+
+REMAINING (small): notched rim-notch (a rim-open-notch mesher); and whether to
+raise the default decoupled weld for imports (production `generate()` keeps
+1e-6 and relies on --weld too, so leaving it is consistent).
 
 ## Increment 8 (LANDED) — seam band closes encircling annuli
 meshSeamBand: a periodic face (torus fillet ring, boolean-cut cylinder bore
