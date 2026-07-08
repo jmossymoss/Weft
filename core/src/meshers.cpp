@@ -14739,8 +14739,37 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         }
     }
     dbg("generate: meshing on %u thread(s), %d cached", threads, cacheHits);
+    // Isolate a face whose mesher THROWS (a degenerate manual count, an OCCT
+    // assertion) so it can't take the whole model's mesh down with it — the
+    // app then keeps every other face and the user can adjust or undo the one
+    // edit that broke this face, instead of losing the entire result. The
+    // throwing face's partial output is cleared and it falls back to the plain
+    // contract/OCCT triangulation, which always builds; if even that throws,
+    // the face is left empty (a local hole) rather than aborting the run.
+    auto meshFaceGuarded = [&](int fid) {
+        try {
+            meshFace(fid);
+            return;
+        } catch (const std::exception& e) {
+            dbg("mesh face %d: mesher threw (%s) -> isolate + fallback", fid,
+                e.what());
+        } catch (...) {
+            dbg("mesh face %d: mesher threw -> isolate + fallback", fid);
+        }
+        parts[fid] = PolyMesh();
+        try {
+            const TopoDS_Face face = TopoDS::Face(model.faces(fid));
+            BRepAdaptor_Surface surf(face);
+            FaceMeshSettings s = settings.forFace(fid);
+            s.cellCap = faceCellCap[fid];
+            demote(fid, face, surf, s, "mesher threw");
+        } catch (...) {
+            parts[fid] = PolyMesh();  // fallback threw too: leave it empty
+            dbg("mesh face %d: fallback threw too -> left empty", fid);
+        }
+    };
     auto meshFaceCached = [&](int fid) {
-        if (!cached[fid]) meshFace(fid);
+        if (!cached[fid]) meshFaceGuarded(fid);
         if (settings.progressFaces) {
             settings.progressFaces->fetch_add(1, std::memory_order_relaxed);
         }
