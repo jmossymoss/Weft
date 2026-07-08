@@ -13608,6 +13608,29 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 // strip instead.
                 const auto& small = tLo < tHi ? lo : hi;
                 if (small.size() != 1) continue;
+                // A rim split into MANY edges is a castellated boolean rim
+                // (foam's top ring: 74 feature arcs, each a short bspline
+                // intersection curve the freeform chord gate over-samples),
+                // not a genuine few-way T-junction. Raising the lone clean
+                // opposite rim to that inflated sum shatters the whole band
+                // into one spanning column per feature arc — exactly the
+                // "segment loops to support the booleans" pathology. In game
+                // topology, leave the clean rim clean and let the transition
+                // strip carry the mismatch. (A real T-junction splits a rim
+                // into a handful of arcs, so the threshold stays well clear.)
+                // Skip only the castellated-boolean-rim pathology: the heavy
+                // rim is split into MANY short arcs (>=24) AND its total dwarfs
+                // the clean rim (>=8x) because those arcs are bspline boolean
+                // cuts the freeform chord gate over-samples. A genuine few-way
+                // T-junction (a handful of arcs, totals within a small factor)
+                // still equalizes so its thin transition strip can't fold.
+                const auto& large = tLo < tHi ? hi : lo;
+                const long heavy = std::max(tLo, tHi);
+                const long light = std::max<long>(1, std::min(tLo, tHi));
+                if (settings.defaults.minimal && large.size() >= 24 &&
+                    heavy >= 8 * light) {
+                    continue;
+                }
                 // A user-pinned ring never gets raised behind their
                 // back — the mismatch stays visible (strip or floor).
                 if (density.pinnedRoots.count(
