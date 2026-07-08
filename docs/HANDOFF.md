@@ -95,24 +95,38 @@ meshRevolutionBandLoops (bridges the two shared rim loops from the cache).
 Hero-model opens collapsed: flaregun 515->64, teleporter 1455->673, foam
 959->620; bossfillet 64->7.
 
-## CURRENT STATE (2026-07-08, --decoupled): opens down 60-88%
+## CURRENT STATE (2026-07-08, --decoupled): opens down 60-88%, floor is the wall
 flaregun 64 open, foam 620, teleporter 673. Fixtures: 12/15 fully watertight;
-notched 7o/3nm (rim-notch TODO), slotted 0o/9nm (bore walls), bossfillet 7o.
-ALL remaining opens now trace to the FLOOR (fallback-tri) on complex curved/
-trimmed faces: the floor covers all its ring verts (triangulatePoly fans the
-remainder) but a self-overlapping projection leaves the *neighbour's* shared
-edge uncovered, so the open is attributed to the clean n-gon/disk-cap/annulus
-next to a leaky floor face. The remaining work:
-- ROBUST FLOOR (the §7.1 hard problem, biggest opens win): a real constrained
-  triangulation (CDT) in UV that never self-overlaps, replacing meshFloor's
-  ear-clip. Closes most of foam/teleporter at once.
+notched 7o/3nm, slotted 0o/9nm, bossfillet 7o.
+
+DEFINITIVE DIAGNOSIS (via the new WEFT_DC_CONTRACT verifier, which checks that
+every shared-edge sample lands on a welded vertex used by >=2 faces):
+- The STRUCTURED meshers are SOUND. flaregun has ZERO border-contract
+  violations; foam/teleporter violations are dominated by fallback-tri. Don't
+  keep re-checking the grid meshers -- the border contract holds.
+- EVERY remaining open is the FLOOR (fallback-tri) triangulating a face whose
+  UV/3D projection SELF-INTERSECTS. Confirmed root case: a torus fillet SEGMENT
+  whose u-range wraps the seam (flaregun face 104) falls back to a 3D projection
+  that self-overlaps -> 6 opens + 1 nm. Exact pcurve UV (landed) does NOT fix it
+  because the seam-wrapping loop is non-simple in the flat UV rectangle.
+
+THE ONE REMAINING PIECE (biggest opens win, §7.1 hard problem): a robust
+SEAM-AWARE constrained triangulation for the floor, replacing meshFloor's
+ear-clip. It must (a) UNWRAP the periodic seam (cut the u=0 line so a wrapping
+torus/cyl/sphere patch becomes a simple disk), and (b) never self-overlap (a
+real CDT, not ear-clip-with-fan-remainder). This closes most of foam/teleporter
+AND flaregun's fillet segments at once. Everything else is bounded:
 - RIM-OPEN NOTCH (notched 7o): full/partial wall with a rim-open notch.
 - BOOLEAN-CUT BORE WALLS (slotted 9nm): a full cylinder whose rims are arcs
-  split by the seam — reassemble the 2 rim rings from the arcs.
+  split by the seam -- reassemble the 2 rim rings from the arcs (the band mesher
+  needs 2 wires; these bores are 1 wire).
 - FREEFORM UV-coons interior (quality, not opens): grid bspline patches as
   quads instead of the tri floor.
-`WEFT_FACE_KINDS=1 weft mesh ... --decoupled` dumps the per-face mesher (which
-kind owns each leak).
+
+DIAGNOSTICS: `WEFT_FACE_KINDS=1` dumps the per-face mesher; `WEFT_DC_CONTRACT=1`
+reports border-contract violations by mesher pair; add `WEFT_DC_CONTRACT2=1` for
+per-edge detail. The floor path is meshFloorAuto -> meshFloor / meshPlanarMultiHole
+in core/src/decoupled.cpp.
 
 Everything below is the PRIOR campaign (meshers.cpp `generate()` path), still the
 production mesher and still valid history. The decoupled core will grow to
