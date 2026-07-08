@@ -1,21 +1,27 @@
 # START HERE — next session (short handoff, 2026-07-08)
 
 WHERE WE ARE. The decoupled-core rewrite is a real OCCT mesher: `weft mesh <f>
---decoupled`, all in `core/src/decoupled.cpp` (~1900 lines), additive/opt-in
-(production `generate()` untouched). 14 commits landed this session on branch
-`rewrite/decoupled-core`. The structured meshers are SOUND — the border contract
-holds everywhere. flaregun is watertight (0 opens); 14/15 fixtures fully
-watertight (only `notched` leaks). foam/teleporter's remaining opens are
-SUB-TOLERANCE INPUT GAPS (~0.007mm imprint artifacts in the sloppy CAD) + input
-open-shells, not mesher bugs — `--weld 0.01` closes them (foam 271->108,
-teleporter 630->114). Full increment log + diagnosis is in "ACTIVE DIRECTION"
-and the increment sections below.
+--decoupled`, all in `core/src/decoupled.cpp` (~2150 lines), additive/opt-in
+(production `generate()` untouched). The structured meshers are SOUND — the
+border contract holds everywhere. flaregun is watertight (0 opens); ALL 15
+fixtures now fully watertight — `notched` was closed this session by the
+rim-notch wall mesher (increment 9), quad-dominant + 0 folds. That mesher also
+turned out to be a big corpus win: the rim-open-notch (a cyl/bore whose rim is
+cut by a slot) is a very common mechanical primitive, so opens/non-manifold
+dropped across the whole STEP corpus with NO regressions (default weld:
+4pinplug 12/7->0/0, 2827056 154/100->4/0, weldment 258/71->76/17, mohne
+80/29->4/2, unterlaf 21/13->11/1, 1797609in 20/21->0/4, teleporter 630/77->539/18,
+foam 271/30->257/27; flaregun/iso/nasty/angle/as1 unchanged). foam/teleporter's
+remaining opens are still SUB-TOLERANCE INPUT GAPS (~0.007mm imprint artifacts in
+the sloppy CAD) closed by `--weld 0.01` (now foam 94, teleporter 27). Full
+increment log is in "ACTIVE DIRECTION" and the increment sections below.
 
 STANDING CONSTRAINTS. Commit as `Jordan Moss <jordan.moss@live.co.uk>`, NO AI
-attribution anywhere (no Co-Authored-By/Claude trailers, no PR footer, no
-`claude/` branch names). User's STEP models live in `tests/STEP_Examples/`
-(foam, teleporter, flaregun are committed). Build: `./build.sh` (full+ctest) or
-`cmake --build build --target weft weft_tests -j4`.
+attribution anywhere (no Co-Authored-By/Claude trailers, no PR footer). User's
+STEP models live in `tests/STEP_Examples/` (foam, teleporter, flaregun are
+committed). Build: `./build.sh` (full+ctest) or `cmake --build build --target
+weft weft_tests -j4`. (Headless build note: the app needs GLFW's X11/wayland dev
+packages + libtbb-dev; `-DGLFW_BUILD_WAYLAND=OFF` avoids wayland-scanner.)
 
 VERIFY / DIAGNOSE. `weft mesh <f> --decoupled --validate` (opens/nm/winding/
 folds). `WEFT_DC_CONTRACT=1` = border-contract verifier (which mesher pairs
@@ -23,11 +29,16 @@ fail to weld; +`WEFT_DC_CONTRACT2=1` for per-edge detail). `WEFT_FACE_KINDS=1` =
 per-face mesher dump. ctest = `tests/test_pipeline.cpp::testDecoupled`.
 
 NEXT (in priority order):
-1. `notched` rim-open-notch — the one remaining clean mesher gap (7 opens on one
-   fixture): a full/partial wall whose rim is cut by a notch open to the border.
-2. FREEFORM UV-COONS interior (quality, not opens): grid bspline patches as quad
+1. FREEFORM UV-COONS interior (quality, not opens): grid bspline patches as quad
    grids instead of the tri floor — the floor path is meshFloorAuto (surface UV,
-   pcurve-based, seam-unwrapped) in decoupled.cpp.
+   pcurve-based, seam-unwrapped) in decoupled.cpp. This is the dominant remaining
+   quality gap (the hero models' large fold/tri counts are freeform floors).
+2. SUBDIVIDED-RIM notch walls (generalization, opens): meshRimNotchWall requires
+   the un-notched rim to be ONE closed-circle edge. A wall whose base rim is split
+   into arcs (a boolean-cut base) is rejected -> floor. Generalize by
+   reconstructing the rim from the shared edges at one v-extreme (design-review
+   spec is in the increment-9 notes). Confirm it actually appears in the corpus
+   before investing — flaregun (the original target) is already watertight.
 3. Decide whether to raise the default decoupled weld for imports (production
    keeps 1e-6 + relies on --weld, so leaving it is consistent).
 4. Then: port the app/CLI to prefer the decoupled path, and A/B the two meshers.
@@ -163,6 +174,42 @@ boundary, else roll back. Runs after meshRevolutionBandLoops for cyl/cone/
 sphere/torus. flaregun 64->0 opens; slotted 9nm->0; bossfillet 7o->0; foam/
 teleporter improved (their remaining encirclers are non-clean and correctly
 rejected to the floor). testDecoupled now asserts bossfillet + slotted watertight.
+
+## Increment 9 (LANDED) — rim-open notch walls (biggest corpus win yet)
+meshRimNotchWall + bridgeByAzimuth. A full-wrap cyl/cone WALL with ONE full
+closed-circle rim and an OPPOSITE rim cut by a NOTCH open to that rim (the
+flaregun face-81 class / any slot cut through a rim). In UV it is the rectangle
+[0,2pi]x[hLo,hHi] MINUS [u0,u1]x[vNotch,hHi]; it ENCIRCLES the axis so the
+seam-unwrap floor bails and its 3D projection self-overlaps (notched: 7o/3nm/4f).
+Fix: walk the outer wire -> the un-notched rim (single closed circle) is the `lo`
+ring; the shared, non-closed chain edges (top arcs + side drops + notch floor),
+concatenated in wire order, form the `hi` ring (its two ends meet at the seam so
+it closes in 3D and dips into the notch). Bridge lo->hi paired by AZIMUTH (not
+index fraction, which folds at the notch dip) via bridgeByAzimuth: unwrap both to
+monotone azimuth, merge-stitch (quads where they advance together, triangles
+across a dip). Side drops (consecutive hi samples at one azimuth) are absorbed as
+fans; an UP drop (exiting a notch) advances lo past the mouth FIRST so its corner
+triangle fans from the full-height side (else it slivers inward -- the one fold we
+chased down). Made a PURE improvement by four gates that roll back to the floor:
+(1) exactly one outer wire + one closed-circle rim + a shared non-closed chain;
+(2) naked-edge guard -- a non-shared edge is skipped only if BRep_Tool::IsClosed
+(the true periodic seam), else bail (don't swallow a gap and chord across it);
+(3) splice/closure coincidence within max(weld,1e-6) at every chain join (no
+phantom chord over the cut-away); (4) span guard in the bridge (a non-monotone hi
+ring -- dovetail slot, or seam inside the mouth -- unwraps past one period ->
+bail) + a topological 2-manifold self-check + an azimuth-extent fold gate (a cell
+spanning >=pi is a fold the normal-vote misses). NB a per-cell normal-vote fold
+gate was tried and REVERTED: seam-ambiguous anchor projection gave valid bands
+spurious mixed signs and rolled clean walls back to the leaky floor (unterlaf
+folds 246->862). Results (default weld, decoupled --validate): notched
+7o/3nm/4f->0/0/0 (quad-dominant); corpus-wide with NO regressions -- 4pinplug
+12/7->0/0, 2827056 154/100->4/0, weldment 258/71->76/17, mohne 80/29->4/2,
+unterlaf 21/13->11/1, 1797609in 20/21->0/4, teleporter 630/77->539/18, foam
+271/30->257/27 (only foam gains 46 folds, out of a corpus fold drop of thousands:
+weldment 3009->766, unterlaf 862->246, 2827056 72->2). testDecoupled asserts
+notched watertight + fold-free. The design was adversarially reviewed before
+coding; the review's split-at-vNotch quad grid and subdivided-base-rim
+reconstruction are the queued follow-ups (see START HERE next steps).
 
 DEFINITIVE DIAGNOSIS (via the new WEFT_DC_CONTRACT verifier, which checks that
 every shared-edge sample lands on a welded vertex used by >=2 faces):
