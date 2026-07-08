@@ -1,3 +1,101 @@
+# CONTINUATION — branch claude/handoff-continuation-zvaa0u (2026-07-08)
+
+This branch works the **production** `generate()` path (`core/src/meshers.cpp`),
+judged by VISUAL render in `weft_app` with adaptive density ON (`--profile cad`
+== the app default). NOT the decoupled-core rewrite the START-HERE section below
+describes — that is a separate effort. Governing principle (user, verbatim):
+"the order of priority is primitive shapes first, then all the arc stuff. so
+Cylinder > sphere > hemisphere > Box > torus > Curves > interior faces." Cut
+features FOLLOW primitives; they must not drive the mesh or span the primitive
+with extra loops — "allow the ngon from those edges and not span them down".
+
+HOW TO WORK IT. Render headless: `xvfb-run -a ./build/app/weft_app
+tests/STEP_Examples/flaregun.stp --select N --yaw Y --pitch P --screenshot
+out.png` (camera auto-frames the selected face). Core debug prints go to
+`/root/.local/state/weft/weft_debug.log` (dbg(); the app wires
+setGenerateDebugLog). Corpus check: `./build/cli/weft mesh <f> -o /tmp/x.obj
+--profile cad --validate` (open/nm, winding, tris). Build: `cmake --build build
+--target weft_app weft weft_tests -j4`. ALWAYS visually inspect before deciding —
+CLI metrics alone mislead (the user's standing instruction). Commit trailers on
+this branch: `Co-Authored-By: Claude Opus 4.8` + `Claude-Session:` (see existing
+commits; the "no AI attribution" note further down is from the OTHER branches).
+
+LANDED this branch (production path, visual-quality campaign):
+- ffaea79  carry boolean cutouts on curved faces as local n-gons (foam boss).
+- 2ec300e  don't equalize a clean rim up to a castellated boolean rim.
+- 534d37f  collapse castellated boolean rims to simple density.
+- 47536fb  primitive-priority density: a near-circular boolean-cut bspline arc
+  whose neighbours are all analytic + none a fillet + near-constant curvature
+  takes the CIRCLE chord fraction (0.2) not the freeform 0.05, so cut arcs stop
+  over-sampling ~4x and shattering foam's top ring. FILLET / freeform-surface /
+  varying-curvature guards keep flaregun's fillets + grip from folding.
+- 28359b4  per-face exception isolation (meshFaceGuarded): a face that THROWS
+  demotes to the fallback floor instead of aborting the whole parallel mesh —
+  fixes the user's "a broken face can't be undone/fixed".
+- (this session) barrel open-band notch cap — below.
+
+## Barrel "extra edge" (flaregun faces 43/50) — FIXED this session
+User pointed (red arrow) at a vertical edge sprouting up the barrel above a
+slot: "a cut is driving edges across the primitive." The barrel (cylinder
+r=14.219, wrap 0.924) meshes via `meshRevolutionOpenBand` ("open revolution
+band", ~line 8945; plan routes there in `tryOpenBand` ~7427). It has 12 UNIFORM
+columns driven by the clean plain TOP rim (correct — the primitive drives them)
+and 3 bottom-rim notch REGIONS (castellation cuts). Two of them (regions 0,2)
+are NARROW slots (u-width ~0.06 < one 0.083 column step) that each STRADDLE a
+single uniform column (col3 sits inside slot u[0.199,0.260]; col9 inside
+[0.740,0.801]). That straddled column is truncated at the notch feature row
+(~38% height) and then SPROUTS full-height to the top rim = the "extra edge".
+
+ROOT CAUSE is a real constraint knot, not a plain bug: (a) the cylinder needs
+uniform columns for roundness; (b) a column landing inside a notch cannot run
+below the notch (no surface there); (c) the top rim is SHARED (the passPlain
+contract) so every column-TOP sample must still exist or the neighbour cap face
+fans to fill the resulting T-junction.
+
+FIX (in `meshRevolutionOpenBand`, kill-switch `WEFT_NO_CAP`): for a region that
+is single-interior (`colR==colL+2`) AND narrow (`slotU1-slotU0 <= uspan/nu`),
+CAP the straddled interior column — `colKeys[c] = {keyTop}` only. That keeps its
+shared rim-TOP sample but drops the vertical run. The lattice then BRIDGES the
+two bounding columns directly (loop steps over capped cols) and the capped
+column's rim top rides the bridge band's TOP edge as an n-gon corner, so the
+shared rim's sample count is intact (no neighbour fan). The notch web already
+tiles everything below the feature row and is unchanged (it just skips the
+vertex-less capped column). Result: the span above each narrow slot is ONE clean
+n-gon panel, no sprout.
+
+THREE dead ends first (do NOT repeat — all rendered WORSE, visually confirmed):
+1. Keep the capped column's FOOT at the feature row (pentagon with a bottom
+   mid-vertex) → ear-clips into long diagonal fans.
+2. Drop the capped column ENTIRELY (no vertex at all) → clean quad above, BUT it
+   drops the shared rim-top sample, so neighbour faces re-triangulate the
+   T-junction (+126 tris, big fans on the barrel's cap neighbour). THE TRAP:
+   passPlain makes the top rim contractual — you may never drop a rim sample.
+3. The WORKING version differs from (2) only by keeping `{keyTop}` and threading
+   it onto the bridge's top edge.
+
+VERIFICATION (cap vs `WEFT_NO_CAP`, `weft mesh --profile cad --validate`): ONLY
+flaregun changes (5365→5357 polys, 5164→5156 quads; 11 tris unchanged;
+watertight 0/0; winding consistent). Every OTHER corpus model byte-identical
+(2827056, weldment, teleporter, nasty_cheese, mohne, unterlaf, iso14649, angle1,
+as1_pe, 4pinplug, 1797609in; foam stays 73o/2nm = its pre-existing sub-tolerance
+input gaps). Pipeline ctest passes. Visually confirmed at yaw160 pitch0 (the
+user's exact view): sprout edges above both narrow slots gone, barrel above each
+notch is a clean n-gon; the WIDE shallow notch (region 1, cols 4-7) correctly
+KEEPS its columns (not single-interior, not narrow — heuristic leaves it alone).
+
+TRADE-OFF / JUDGEMENT CALL for the next session: capping widens the panel above
+a deep narrow slot to 2 columns (~55°), so roundness there is carried by that
+flat n-gon span. Acceptable under the user's primitive-first priority and it is
+what they literally asked for ("allow the ngon … don't span them down"), but if
+the flat reads badly on a hero render the escape hatch is `WEFT_NO_CAP=1`
+(restores the sprout). This needs the USER's eye on a fresh build to ratify.
+
+NOT DONE (lower priority, separate): face 503 (foam drum wedge — a cut cylinder
+over-tessellated, ~73 vs ~12 segments). The user's earlier screenshots were on
+OLD builds; they should PULL + REBUILD before re-judging any of the above.
+
+---
+
 # START HERE — next session (short handoff, 2026-07-08)
 
 WHERE WE ARE. The decoupled-core rewrite is a real OCCT mesher: `weft mesh <f>
