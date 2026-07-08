@@ -26,9 +26,11 @@
 #include <BRep_Tool.hxx>
 #include <GCPnts_UniformAbscissa.hxx>
 #include <GeomAPI_ProjectPointOnSurf.hxx>
+#include <Geom2d_Curve.hxx>
 #include <GeomAdaptor_Curve.hxx>
 #include <Geom_Curve.hxx>
 #include <Geom_Surface.hxx>
+#include <gp_Pnt2d.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
@@ -102,8 +104,9 @@ double ringAnchorAngle(const gp_Circ& circ) {
 
 // ---- edge sampling (the border contract) ----------------------------------
 struct EdgeSamples {
-    std::vector<P3> pts;  // forward order (param f->l)
-    bool closed = false;  // full loop by itself (a circle): pts is a ring
+    std::vector<P3> pts;        // forward order (param f->l)
+    std::vector<double> param;  // the edge parameter at each pt (for pcurve UV)
+    bool closed = false;        // full loop by itself (a circle): pts is a ring
     bool valid = false;
 };
 
@@ -131,8 +134,12 @@ EdgeSamples sampleEdge(const Model& model, int eid, int n) {
         const gp_Circ circ = gac.Circle();
         const double a0 = ringAnchorAngle(circ);
         s.pts.reserve(n);
-        for (int k = 0; k < n; ++k)
-            s.pts.push_back(toP3(c3->Value(a0 + 2.0 * M_PI * k / n)));
+        s.param.reserve(n);
+        for (int k = 0; k < n; ++k) {
+            const double t = a0 + 2.0 * M_PI * k / n;
+            s.pts.push_back(toP3(c3->Value(t)));
+            s.param.push_back(t);
+        }
         s.closed = true;
         s.valid = true;
         return s;
@@ -154,7 +161,11 @@ EdgeSamples sampleEdge(const Model& model, int eid, int n) {
         }
     }
     s.pts.reserve(frac.size());
-    for (double t : frac) s.pts.push_back(toP3(c3->Value(f + span * t)));
+    s.param.reserve(frac.size());
+    for (double t : frac) {
+        s.pts.push_back(toP3(c3->Value(f + span * t)));
+        s.param.push_back(f + span * t);
+    }
     s.closed = false;
     s.valid = true;
     return s;
@@ -391,7 +402,9 @@ void bridgeLoops(FacePart& part, const std::vector<uint32_t>& O,
 // Walk each wire in face-local order, sampling every edge at its solved count
 // from the shared cache; concatenate into an ordered ring of local vertices.
 struct Loop {
-    std::vector<uint32_t> verts;  // local indices into part.verts
+    std::vector<uint32_t> verts;               // local indices into part.verts
+    std::vector<std::array<double, 2>> uv;     // pcurve (u,v) parallel to verts;
+                                               // NaN where no pcurve exists
 };
 
 // Cache: eid -> forward samples at the solved count. Shared so both faces
@@ -427,22 +440,35 @@ std::vector<Loop> faceLoops(FacePart& part, const Model& model,
             const EdgeSamples& es = cache[eid];
             if (!es.valid || es.pts.empty()) continue;
             std::vector<P3> pts = es.pts;
-            if (we.Orientation() == TopAbs_REVERSED)
+            std::vector<double> prm = es.param;
+            if (we.Orientation() == TopAbs_REVERSED) {
                 std::reverse(pts.begin(), pts.end());
-            if (es.closed) {
-                // Whole loop is this one circle.
-                for (const P3& p : pts) loop.verts.push_back(vertFor(p));
-            } else {
-                // Append, dropping the shared first endpoint (previous edge's
-                // last). vertFor dedups it to the same id regardless.
-                size_t start = loop.verts.empty() ? 0 : 1;
-                for (size_t i = start; i < pts.size(); ++i)
-                    loop.verts.push_back(vertFor(pts[i]));
+                std::reverse(prm.begin(), prm.end());
+            }
+            // The edge's 2D pcurve ON THIS FACE gives the EXACT (u,v) of each
+            // sample (it shares the edge parameter with the 3D curve) — the
+            // true trim boundary, unlike an ambiguous point projection.
+            double pf, pl;
+            Handle(Geom2d_Curve) pc =
+                BRep_Tool::CurveOnSurface(edge, part.face, pf, pl);
+            auto uvAt = [&](size_t i) -> std::array<double, 2> {
+                if (!pc.IsNull() && i < prm.size()) {
+                    gp_Pnt2d q = pc->Value(prm[i]);
+                    return {q.X(), q.Y()};
+                }
+                return {std::nan(""), std::nan("")};
+            };
+            const size_t start = (es.closed || loop.verts.empty()) ? 0 : 1;
+            for (size_t i = start; i < pts.size(); ++i) {
+                loop.verts.push_back(vertFor(pts[i]));
+                loop.uv.push_back(uvAt(i));
             }
         }
         // Close: drop trailing vert if it equals the first (open-edge loop).
-        while (loop.verts.size() > 1 && loop.verts.front() == loop.verts.back())
+        while (loop.verts.size() > 1 && loop.verts.front() == loop.verts.back()) {
             loop.verts.pop_back();
+            loop.uv.pop_back();
+        }
         if (loop.verts.size() >= 3) loops.push_back(std::move(loop));
     }
     return loops;
@@ -791,7 +817,18 @@ bool meshRevolutionBandLoops(FacePart& part, const Model& model,
     if (std::abs(std::abs(sa) - 2 * M_PI) > 0.6 ||
         std::abs(std::abs(sb) - 2 * M_PI) > 0.6)
         return false;  // not both full rims
-    std::vector<P3> A = loops[0], B = loops[1];
+    // Drop consecutive near-duplicate points (a subdivided rim can leave a tiny
+    // segment); otherwise bridgeLoops emits a degenerate cell that addPoly
+    // drops, leaving a gap in the band.
+    auto dedup = [](std::vector<P3> r) {
+        std::vector<P3> o;
+        for (const P3& p : r)
+            if (o.empty() || len(sub(o.back(), p)) > 1e-7) o.push_back(p);
+        while (o.size() > 1 && len(sub(o.front(), o.back())) < 1e-7) o.pop_back();
+        return o;
+    };
+    std::vector<P3> A = dedup(loops[0]), B = dedup(loops[1]);
+    if (A.size() < 3 || B.size() < 3) return false;
     if (sa < 0) std::reverse(A.begin(), A.end());   // both CCW
     if (sb < 0) std::reverse(B.begin(), B.end());
     // Rotate B so B[0] shares A[0]'s azimuth -> fraction pairing follows azimuth.
@@ -1366,10 +1403,11 @@ bool freeformFloor(SurfaceType t) {
 }
 
 // Choose the floor's working coordinates. Freeform faces triangulate in their
-// surface UV — taken from the per-vertex anchors — so a bspline patch conforms
-// instead of collapsing under a 3D-plane projection. Bail to the 3D vertices
-// when the UV is unusable: a full-period seam wrap (the loop spans ~2pi in u, so
-// the flat UV is an annulus, not a disk) or missing/degenerate anchors.
+// surface UV — taken from the loops' exact pcurve (u,v) — so a bspline patch
+// conforms to its true trim boundary instead of collapsing under a 3D-plane
+// projection (or a self-intersecting point-projection). Bail to the 3D vertices
+// when the UV is unusable: a full-period seam wrap (u spans ~2pi, so the flat UV
+// is an annulus not a disk), or a missing pcurve on any loop vertex.
 void meshFloorAuto(FacePart& part, const std::vector<Loop>& loops,
                    bool useUV) {
     if (loops.empty()) return;
@@ -1378,13 +1416,18 @@ void meshFloorAuto(FacePart& part, const std::vector<Loop>& loops,
     if (useUV) {
         uvp.assign(part.verts.size(), P3{0, 0, 0});
         double umin = 1e300, umax = -1e300, vmin = 1e300, vmax = -1e300;
-        bool haveUV = part.anchors.size() == part.verts.size();
-        for (size_t i = 0; i < part.anchors.size() && haveUV; ++i) {
-            uvp[i] = {part.anchors[i].u, part.anchors[i].v, 0};
-            umin = std::min(umin, part.anchors[i].u);
-            umax = std::max(umax, part.anchors[i].u);
-            vmin = std::min(vmin, part.anchors[i].v);
-            vmax = std::max(vmax, part.anchors[i].v);
+        bool haveUV = true;
+        for (const Loop& lp : loops) {
+            for (size_t k = 0; k < lp.verts.size(); ++k) {
+                const auto& q = lp.uv[k];
+                if (std::isnan(q[0]) || std::isnan(q[1])) { haveUV = false; break; }
+                uvp[lp.verts[k]] = {q[0], q[1], 0};
+                umin = std::min(umin, q[0]);
+                umax = std::max(umax, q[0]);
+                vmin = std::min(vmin, q[1]);
+                vmax = std::max(vmax, q[1]);
+            }
+            if (!haveUV) break;
         }
         const bool degenerate = !haveUV || (umax - umin) < 1e-9 ||
                                 (vmax - vmin) < 1e-9;
@@ -1593,9 +1636,10 @@ PolyMesh meshDecoupled(const Model& model, const Analysis& analysis,
                 kind = MesherKind::AnnulusRing;
             } else {
                 // Walls with bore holes, curved patches, and everything else:
-                // the floor, triangulated in surface UV for freeform faces
-                // (a bspline patch) and in a 3D plane otherwise.
-                meshFloorAuto(part, loops, freeformFloor(fi.type));
+                // the floor, triangulated in exact pcurve UV (a valid face's UV
+                // trim boundary is simple, so no self-overlap) for any non-flat
+                // surface; flats stay in their exact 3D plane.
+                meshFloorAuto(part, loops, fi.type != SurfaceType::Plane);
                 kind = MesherKind::Fallback;
             }
         }
