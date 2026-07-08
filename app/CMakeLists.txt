@@ -62,6 +62,15 @@ endif()
 
 add_executable(weft_app main.cpp ${WEFT_BACKEND_SRC})
 
+# When ON, the app starts on the decoupled-core mesher (the Topology toggle and
+# the --decoupled flag still switch at runtime). build.sh / build.bat ask about
+# this interactively and pass -DWEFT_DECOUPLED_DEFAULT accordingly.
+option(WEFT_DECOUPLED_DEFAULT "Default the app to the decoupled mesher" OFF)
+if(WEFT_DECOUPLED_DEFAULT)
+  target_compile_definitions(weft_app PRIVATE WEFT_DECOUPLED_DEFAULT=1)
+  message(STATUS "weft_app: decoupled mesher is the DEFAULT this build")
+endif()
+
 target_include_directories(weft_app PRIVATE
   ${WEFT_IMGUI_INC}
   ${WEFT_IMGUI_INC}/backends

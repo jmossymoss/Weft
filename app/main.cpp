@@ -617,8 +617,13 @@ struct App {
     // Which mesher the worker runs: the production global-solve generate() or the
     // decoupled-core meshDecoupled() (per-edge counts, no global solve). Toggled in
     // the Recipe panel; snapshotted into genDecoupled like the settings/ops so a
-    // live toggle can't race the worker.
+    // live toggle can't race the worker. The startup default is baked in at build
+    // time: build.sh/build.bat ask, and -DWEFT_DECOUPLED_DEFAULT flips it here.
+#ifdef WEFT_DECOUPLED_DEFAULT
+    bool useDecoupled = true;
+#else
     bool useDecoupled = false;
+#endif
     bool genDecoupled = false;
     weft::PolyMesh genMesh;
     weft::GenerationReport genReport;
@@ -4261,7 +4266,9 @@ int main(int argc, char** argv) {
 
     App app;
     app.livePath = gDataDir + "/weft_live.obj";
-    app.useDecoupled = startDecoupled;  // --decoupled: start on the decoupled core
+    // --decoupled forces the decoupled core on; the build-time default
+    // (WEFT_DECOUPLED_DEFAULT) sets the initial state otherwise.
+    if (startDecoupled) app.useDecoupled = true;
     if (!startModel.empty()) loadModel(app, startModel);
     else loadFixture(app, startFixture);
     app.cam.yaw = startYaw;

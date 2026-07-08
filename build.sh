@@ -15,13 +15,37 @@ say() { echo "$@" | tee -a "$LOG"; }
 
 BUILD_TYPE=Release
 CHECK_DEPS=1
+DECOUPLED=""   # ""=ask/env, ON/OFF=explicit; bakes the app's default mesher
 for a in "$@"; do
     case "$a" in
-        --no-deps) CHECK_DEPS=0 ;;
-        --debug)   BUILD_TYPE=RelWithDebInfo ;;
-        *) say "unknown option: $a (expected --no-deps / --debug)"; exit 1 ;;
+        --no-deps)      CHECK_DEPS=0 ;;
+        --debug)        BUILD_TYPE=RelWithDebInfo ;;
+        --decoupled)    DECOUPLED=ON ;;
+        --no-decoupled) DECOUPLED=OFF ;;
+        *) say "unknown option: $a (expected --no-deps / --debug / --decoupled / --no-decoupled)"; exit 1 ;;
     esac
 done
+
+# Which mesher should the built app start on? ON = the decoupled core (rim-notch /
+# subdivided-rim walls + freeform Coons quad grids); the Topology toggle still
+# switches at runtime either way. Resolve from the flag, then WEFT_DECOUPLED, then
+# an interactive prompt; non-interactive builds (CI) default to OFF.
+if [ -z "$DECOUPLED" ]; then
+    case "${WEFT_DECOUPLED:-}" in
+        1|on|ON|yes|YES|y|Y|true)   DECOUPLED=ON ;;
+        0|off|OFF|no|NO|n|N|false)  DECOUPLED=OFF ;;
+        *)
+            if [ -t 0 ]; then
+                printf '\nUse the DECOUPLED mesher as the default in this build? [y/N] '
+                read -r _ans || _ans=""
+                case "$_ans" in [yY]*) DECOUPLED=ON ;; *) DECOUPLED=OFF ;; esac
+            else
+                DECOUPLED=OFF
+            fi
+            ;;
+    esac
+fi
+say "  Mesher default for this build: $([ "$DECOUPLED" = ON ] && echo 'DECOUPLED core' || echo 'production generate()')"
 
 say "========================================"
 say " Weft builder for Linux ($BUILD_TYPE)"
@@ -73,8 +97,9 @@ fi
 # ---------------------------------------------------------------
 say "[2/3] Configuring + compiling..."
 cmake -B build -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+      -DWEFT_DECOUPLED_DEFAULT="$DECOUPLED" \
       ${CMAKE_PREFIX_PATH:+-DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH"} \
-      2>&1 | tee -a "$LOG" | grep -E "OCCT|weft_app|error" || true
+      2>&1 | tee -a "$LOG" | grep -E "OCCT|weft_app|decoupled|error" || true
 JOBS=$(nproc 2>/dev/null || echo 4)
 if ! cmake --build build -j"$JOBS" 2>&1 | tee -a "$LOG" | grep -E "error|Built target"; then
     say "  Build failed — see build_log.txt for the first error."

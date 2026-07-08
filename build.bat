@@ -134,6 +134,34 @@ echo   GLFW and ImGui are fetched and built from source automatically
 echo   during configure ^(needs internet the first time^), so the
 echo   interactive weft_app.exe builds with no extra installs.
 
+REM ---------------------------------------------------------------
+REM Which mesher should the built app START on? ON = the decoupled core
+REM (rim-notch / subdivided-rim walls + freeform Coons quad grids). The
+REM Topology toggle still switches at runtime either way. Resolve from a
+REM --decoupled / --no-decoupled arg, then the WEFT_DECOUPLED env var, then
+REM an interactive prompt.
+REM ---------------------------------------------------------------
+set "DECOUPLED="
+if /i "%~1"=="--decoupled"    set "DECOUPLED=ON"
+if /i "%~1"=="--no-decoupled" set "DECOUPLED=OFF"
+if not defined DECOUPLED if defined WEFT_DECOUPLED (
+    set "DECOUPLED=OFF"
+    if /i "%WEFT_DECOUPLED%"=="1"    set "DECOUPLED=ON"
+    if /i "%WEFT_DECOUPLED%"=="on"   set "DECOUPLED=ON"
+    if /i "%WEFT_DECOUPLED%"=="yes"  set "DECOUPLED=ON"
+    if /i "%WEFT_DECOUPLED%"=="true" set "DECOUPLED=ON"
+)
+if not defined DECOUPLED (
+    echo.
+    set "ANS="
+    set /p "ANS=Use the DECOUPLED mesher as the default in this build? [y/N] "
+    set "DECOUPLED=OFF"
+    if /i "!ANS!"=="y"   set "DECOUPLED=ON"
+    if /i "!ANS!"=="yes" set "DECOUPLED=ON"
+)
+echo   Mesher default for this build: !DECOUPLED!
+echo Mesher default: !DECOUPLED! >> "%LOG%"
+
 echo.
 echo ========================================
 echo  Configuring
@@ -143,6 +171,7 @@ echo.
 REM Use the VS generator: CMake locates the compiler through the VS
 REM installation itself, so we never need cl.exe on PATH or vcvars.
 cmake -B build -G "Visual Studio 17 2022" -A x64 ^
+    -DWEFT_DECOUPLED_DEFAULT=!DECOUPLED! ^
     -DCMAKE_PREFIX_PATH="!OCCT_DIR!" ^
     -DOCCT_SEARCH_PATH="!OCCT_DIR!"
 if %errorLevel% neq 0 (
@@ -288,6 +317,8 @@ echo   run from anywhere, no PATH setup needed^):
 echo.
 echo   CLI:  build\bin\Release\weft.exe
 echo   App:  build\bin\Release\weft_app.exe   ^(if GUI deps were found^)
+echo.
+echo   App starts on the !DECOUPLED! mesher ^(toggle it live in the Topology panel^).
 echo.
 echo   Try it:
 echo     build\bin\Release\weft.exe fixture demo.step --shape demo

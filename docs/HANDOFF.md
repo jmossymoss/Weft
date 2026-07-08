@@ -39,13 +39,17 @@ NEXT (in priority order):
 2. Decide whether to raise the default decoupled weld for imports (production
    keeps 1e-6 + relies on --weld, so leaving it is consistent).
 3. A/B is now WIRED (was: port the app/CLI to prefer decoupled). The app has a
-   "decoupled core (experimental)" toggle in the Topology panel (or launch with
-   `weft_app --decoupled`); the worker branches generate()/meshDecoupled() on a
-   snapshotted flag. CLI opt-in is `weft mesh --decoupled`; build_decoupled.sh/.bat
-   build + run it in one step. DEFAULT is still production generate() everywhere —
-   flipping the default (and deciding whether the app should remember the toggle in
-   the recipe) is the remaining call. The decoupled mesher is COMPILED by the
-   default build.sh/build.bat regardless; it is just opt-in at runtime.
+   "decoupled core (experimental)" toggle in the Topology panel; the worker branches
+   generate()/meshDecoupled() on a snapshotted flag. The build scripts now ASK which
+   mesher the app should START on: build.sh/build.bat prompt (or honour
+   WEFT_DECOUPLED / a --decoupled|--no-decoupled arg) and pass
+   -DWEFT_DECOUPLED_DEFAULT, which bakes the app's initial `useDecoupled`. Runtime
+   overrides remain: the Topology checkbox, `weft_app --decoupled`, and the CLI
+   `weft mesh --decoupled` (build_decoupled.sh/.bat build + run that in one step).
+   Global DEFAULT (no answer / non-interactive / production build) is still
+   generate() everywhere. Remaining call: whether to flip the shipped default to
+   decoupled and whether the app should remember the toggle in saved recipes. The
+   decoupled mesher is COMPILED by every build regardless.
 
 ---
 
