@@ -74,27 +74,45 @@ path. Quality win on holed plates: foam tris 4117->2789 & nm 46->16; flaregun
 tris 2293->1905 & nm 16->12 (holed planar faces were tri floors, now clean
 n-gons). New 2-bore-plate testDecoupled case.
 
-## Increment 5+ — remaining leaks map exactly to unported meshers (do next)
-Run `weft mesh <f> --decoupled --validate`. The OPENS are unchanged by 4a/4b
-(they are not planar) — they come from the curved-face floor failures below.
-- REVOLUTION WALL WITH INTERIOR HOLES (slotted 99 opens): a cylinder wall with
-  bores cutting through it (interior closed-circle loops) — the old
-  meshRevolutionInsert: grid the wall, drop cells the holes cover, web the
-  staircase to each hole's exact rim samples. meshRevolutionWall bails (it sees
-  >2 closed rims). This is the biggest slotted/hero-model win.
-- RIM-OPEN NOTCH (notched 7 opens): a full/partial wall whose rim is cut by a
-  notch open to the border — old meshRevolutionRimNotch.
-- TORUS partial (bossfillet 64 opens): partial-torus fillet rings; not ruled, so
-  the interior needs surf.Value (or coons), not the cyl/cone lerp.
-- MULTI-HOLE plates (3+ loops): extend the two-bridge decomposition to k holes.
-- UNEQUAL revolution rims: bridge the mismatch (the spike proves it).
-- FREEFORM UV-coons interior (hero-model bsplines): floor gives tris. Port a
-  UV-grid/coons interior gridded at the face's own count + bridged borders.
-- SHARED-BORDER periodic surfaces: meshFullPeriodic ignores the edge cache, so
-  a sphere/torus PATCH adjacent to other faces won't weld (fine standalone).
-Hero-model baseline under --decoupled (regression tracking): flaregun
-3043p/515 open, foam 6084p/959 open, teleporter 4901p/1455 open — every open is
-one of the above unported meshers, not a border-contract violation.
+## Increment 5 (LANDED) — bridge unequal revolution rims
+meshRevolutionWall bridges the two closed rims (CCW-oriented) instead of bailing
+when their counts differ (cone/frustum with a pinned rim).
+
+## Increment 6 (LANDED) — revolution wall with interior bore holes
+meshRevolutionWallInsert: main rims = the 2 extreme-height closed CIRCLE edges;
+holes = the inner wires (bore rims are intersection curves, not circles). Grid
+u-wrapped rings with v-rows bracketing each hole, punch the covered cells, bridge
+the staircase to each hole's exact rim samples. Runs before meshRevolutionWall.
+Also meshRevolutionBandLoops for cyl/cone/torus/sphere bands whose rims are
+multi-edge loops. slotted opens 99 -> 0 (residual: boolean-cut bore walls whose
+rims are split by the seam still floor -> 9 nm).
+
+## Increment 7 (LANDED) — weld shared-border periodic patches (BIGGEST win)
+meshFullPeriodic gridded any full-u sphere/torus from surf.Value, ignoring shared
+edges — so a torus FILLET BAND leaked both rims. Now it bails when the face has
+any shared edge (a patch, not a complete surface) and routes to
+meshRevolutionBandLoops (bridges the two shared rim loops from the cache).
+Hero-model opens collapsed: flaregun 515->64, teleporter 1455->673, foam
+959->620; bossfillet 64->7.
+
+## CURRENT STATE (2026-07-08, --decoupled): opens down 60-88%
+flaregun 64 open, foam 620, teleporter 673. Fixtures: 12/15 fully watertight;
+notched 7o/3nm (rim-notch TODO), slotted 0o/9nm (bore walls), bossfillet 7o.
+ALL remaining opens now trace to the FLOOR (fallback-tri) on complex curved/
+trimmed faces: the floor covers all its ring verts (triangulatePoly fans the
+remainder) but a self-overlapping projection leaves the *neighbour's* shared
+edge uncovered, so the open is attributed to the clean n-gon/disk-cap/annulus
+next to a leaky floor face. The remaining work:
+- ROBUST FLOOR (the §7.1 hard problem, biggest opens win): a real constrained
+  triangulation (CDT) in UV that never self-overlaps, replacing meshFloor's
+  ear-clip. Closes most of foam/teleporter at once.
+- RIM-OPEN NOTCH (notched 7o): full/partial wall with a rim-open notch.
+- BOOLEAN-CUT BORE WALLS (slotted 9nm): a full cylinder whose rims are arcs
+  split by the seam — reassemble the 2 rim rings from the arcs.
+- FREEFORM UV-coons interior (quality, not opens): grid bspline patches as
+  quads instead of the tri floor.
+`WEFT_FACE_KINDS=1 weft mesh ... --decoupled` dumps the per-face mesher (which
+kind owns each leak).
 
 Everything below is the PRIOR campaign (meshers.cpp `generate()` path), still the
 production mesher and still valid history. The decoupled core will grow to
