@@ -398,6 +398,113 @@ void bridgeLoops(FacePart& part, const std::vector<uint32_t>& O,
     }
 }
 
+// ---- azimuth-paired ring bridge -------------------------------------------
+// Bridge two CLOSED rings that are both ordered CCW about a shared axis, pairing
+// by AZIMUTH rather than index fraction (bridgeLoops). This matters when one ring
+// "dips" — a notch, where several consecutive samples share one azimuth (a
+// vertical side drop) — because fraction pairing would twist the rulings and fold
+// the cells there. The rings may be at different / varying heights; the surface is
+// ruled (cyl/cone) so azimuth-monotone cells lie on it without folding. Emits
+// quads where the two rings advance together in azimuth and triangles across a dip
+// or a count mismatch. `pL`/`pH` are the per-vertex azimuths in [0,2pi); `hL`/`hH`
+// are the per-vertex axis heights (to orient side-drop fans on the full-height
+// side of a notch, else one corner slivers inward).
+void bridgeByAzimuth(FacePart& part, const std::vector<uint32_t>& lo,
+                     const std::vector<double>& pL, const std::vector<double>& hL,
+                     const std::vector<uint32_t>& hi,
+                     const std::vector<double>& pH, const std::vector<double>& hH) {
+    const int N = (int)lo.size(), M = (int)hi.size();
+    if (N < 2 || M < 2 || (int)pL.size() != N || (int)pH.size() != M) return;
+    auto angDist = [](double x, double y) {
+        double d = std::fmod(std::abs(x - y), 2 * M_PI);
+        return d > M_PI ? 2 * M_PI - d : d;
+    };
+    // Start lo at index 0; start hi at the vertex nearest lo[0]'s azimuth so the
+    // two unwrapped sequences overlap.
+    int s0 = 0;
+    double best = 1e300;
+    for (int k = 0; k < M; ++k) {
+        double d = angDist(pH[k], pL[0]);
+        if (d < best) { best = d; s0 = k; }
+    }
+    // Unwrap each ring into a monotone-increasing azimuth sequence of length n+1
+    // (wrapping back to the start + 2pi); the height array rides along.
+    auto unwrap = [](const std::vector<uint32_t>& v, const std::vector<double>& p,
+                     const std::vector<double>& h, int s, std::vector<uint32_t>& V,
+                     std::vector<double>& A, std::vector<double>& Hh) {
+        const int n = (int)v.size();
+        V.resize(n + 1);
+        A.resize(n + 1);
+        Hh.resize(n + 1);
+        for (int k = 0; k <= n; ++k) { V[k] = v[(s + k) % n]; Hh[k] = h[(s + k) % n]; }
+        A[0] = p[s];
+        for (int k = 1; k <= n; ++k) {
+            double a = p[(s + k) % n];
+            // Advance by whole periods only on a genuine backward step; the -1e-9
+            // slack keeps a numerically-flat side-drop tie from spuriously adding
+            // a period (which would blow the span guard below).
+            while (a < A[k - 1] - 1e-9) a += 2 * M_PI;
+            A[k] = a;
+        }
+    };
+    std::vector<uint32_t> L, H;
+    std::vector<double> AL, AH, HL, HH;
+    unwrap(lo, pL, hL, 0, L, AL, HL);
+    unwrap(hi, pH, hH, s0, H, AH, HH);
+    // Shift AH by whole periods so its start is within pi of AL's start.
+    double shift = 0;
+    while (AH[0] + shift < AL[0] - M_PI) shift += 2 * M_PI;
+    while (AH[0] + shift > AL[0] + M_PI) shift -= 2 * M_PI;
+    for (double& a : AH) a += shift;
+    // A cyclic-monotone ring unwraps to exactly one period; an interior backtrack
+    // (a non-monotone hi ring — a dovetail slot, or the seam inside the notch
+    // mouth) injects an extra period. Bail so the caller rolls back to the floor
+    // instead of emitting a ~2pi cell that fills the cut-away region.
+    if (AL[N] - AL[0] > 2 * M_PI + 1e-6 || AH[M] - AH[0] > 2 * M_PI + 1e-6) return;
+
+    int a = 0, b = 0, guard = 0;
+    const int maxg = 4 * (N + M) + 8;
+    while ((a < N || b < M) && guard++ < maxg) {
+        const bool canLo = a < N, canHi = b < M;
+        const double nl = canLo ? AL[a + 1] : 1e300;
+        const double nh = canHi ? AH[b + 1] : 1e300;
+        // A vertical run in hi (a notch side drop): consecutive hi samples at the
+        // same azimuth. A run going UP in height exits a notch, so its full-height
+        // material is AHEAD — advance lo past the run first (webbing the bottom to
+        // the run's low end), then fan the drop from the right column, else the
+        // corner triangle slivers inward.
+        if (canHi && (AH[b + 1] - AH[b]) < 1e-7 && HH[b + 1] > HH[b] && canLo) {
+            while (a < N && AL[a] < AH[b] - 1e-9) {
+                part.addPoly({L[a], L[a + 1], H[b]});
+                ++a;
+            }
+            part.addPoly({L[a], H[b + 1], H[b]});
+            ++b;
+            continue;
+        }
+        // A DOWN run (entering a notch): the full-height material is BEHIND, so fan
+        // the drop from the current lo column. Handled explicitly (before the quad
+        // tie-break below) so a quad can't first pair lo past the drop azimuth and
+        // leave a backward-wound corner sliver.
+        if (canHi && (AH[b + 1] - AH[b]) < 1e-7 && HH[b + 1] < HH[b] && canLo) {
+            part.addPoly({L[a], H[b + 1], H[b]});
+            ++b;
+            continue;
+        }
+        const bool hiRun = canHi && (AH[b + 1] - AH[b]) < 1e-7;
+        if (canLo && canHi && !hiRun) {
+            const double gapL = AL[a + 1] - AL[a], gapH = AH[b + 1] - AH[b];
+            if (std::abs(nl - nh) <= 0.5 * std::min(gapL, gapH)) {
+                part.addPoly({L[a], L[a + 1], H[b + 1], H[b]});
+                ++a; ++b;
+                continue;
+            }
+        }
+        if (!canHi || (canLo && nl <= nh)) { part.addPoly({L[a], L[a + 1], H[b]}); ++a; }
+        else { part.addPoly({L[a], H[b + 1], H[b]}); ++b; }
+    }
+}
+
 // ---- face boundary loops (outer + holes) ----------------------------------
 // Walk each wire in face-local order, sampling every edge at its solved count
 // from the shared cache; concatenate into an ordered ring of local vertices.
@@ -1237,6 +1344,197 @@ bool meshRevolutionWallInsert(FacePart& part, const Model& model,
     return true;
 }
 
+// ---- encircling two-rim wall (rims + rim-open notches) --------------------
+// A full-wrap cylinder/cone WALL whose boundary is TWO encircling rings joined by
+// the periodic seam: the classic rim-open NOTCH (one full rim + an opposite rim
+// cut by a slot, the flaregun face-81 class), but also a plain band whose rims are
+// SUBDIVIDED into arcs (a boolean-cut wall) or a base rim that is not one closed
+// circle. Such a face encircles the axis (full u-wrap) so the seam-unwrap floor
+// bails and its 3D projection self-overlaps. Split the outer wire at the seam into
+// the two rim rings, then bridge them paired by AZIMUTH (a notch dip is absorbed as
+// several samples at one azimuth). GATED on splice/closure coincidence + a
+// watertight self-check + a fold gate, so a face that isn't a clean two-rim band
+// rolls back to the floor -- a pure improvement.
+bool meshRimNotchWall(FacePart& part, const Model& model, const SampleCache& cache,
+                      double weldTol, MesherKind& kind) {
+    BRepAdaptor_Surface surf(part.face);
+    gp_Ax1 ax;
+    if (surf.GetType() == GeomAbs_Cylinder) ax = surf.Cylinder().Axis();
+    else if (surf.GetType() == GeomAbs_Cone) ax = surf.Cone().Axis();
+    else return false;
+    double umin, umax, vmin, vmax;
+    BRepTools::UVBounds(part.face, umin, umax, vmin, vmax);
+    if (umax - umin < 2 * M_PI - 1e-6) return false;  // must encircle (full wrap)
+
+    // Exactly one outer wire (interior holes are the insert mesher's job).
+    int wireCount = 0;
+    for (TopExp_Explorer wx(part.face, TopAbs_WIRE); wx.More(); wx.Next()) ++wireCount;
+    if (wireCount != 1) return false;
+
+    // Split the outer wire at its seam edge(s) into contiguous runs of SHARED
+    // edges. A full-wrap wall's boundary is two rings (the notched top + the base
+    // rim) joined by the periodic seam; each run is one ring. Splitting at the seam
+    // (rather than picking a single closed-circle rim) generalizes to a base rim
+    // SUBDIVIDED into arcs -- the common boolean-cut wall.
+    struct Run { std::vector<std::pair<int, bool>> edges; };  // (eid, reversed)
+    std::vector<Run> runs;
+    bool inRun = false, startedInRun = false, first = true;
+    for (BRepTools_WireExplorer we(BRepTools::OuterWire(part.face), part.face);
+         we.More(); we.Next()) {
+        const TopoDS_Edge ed = we.Current();
+        int eid = model.edges.FindIndex(ed);
+        if (eid < 1 || eid >= (int)cache.size() || !cache[eid].valid) continue;
+        int nf = 0;
+        if (model.edgeToFaces.Contains(ed))
+            for (const TopoDS_Shape& s : model.edgeToFaces.FindFromKey(ed)) {
+                int f2 = model.faces.FindIndex(s);
+                if (f2 >= 1 && f2 != part.faceId) ++nf;
+            }
+        const bool isSeam = (nf == 0);
+        if (first) { startedInRun = !isSeam; first = false; }
+        if (isSeam) {
+            // A non-shared edge breaks a run only if it is the true periodic seam;
+            // a genuine naked / mis-registered edge would be chorded over -> bail.
+            if (!BRep_Tool::IsClosed(ed, part.face)) return false;
+            inRun = false;
+            continue;
+        }
+        if (!inRun) { runs.push_back({}); inRun = true; }
+        runs.back().edges.push_back({eid, we.Orientation() == TopAbs_REVERSED});
+    }
+    // The wire is cyclic: if it neither started nor ended on a seam, the last run
+    // wraps into the first (the last run's edges precede the first's).
+    if (runs.size() >= 2 && startedInRun && inRun) {
+        auto tail = runs.back().edges;
+        runs.pop_back();
+        runs.front().edges.insert(runs.front().edges.begin(), tail.begin(), tail.end());
+    }
+    if (runs.size() != 2) return false;
+
+    // Build a run's edges into a closed 3D ring: a single closed-circle edge is
+    // already a ring; an open chain closes at the seam (its ends coincide in 3D).
+    // Every internal splice + the closure must coincide within the weld tolerance
+    // (else a swallowed gap would chord a phantom edge -> bail).
+    auto buildRing = [&](const Run& run, std::vector<P3>& out) -> bool {
+        out.clear();
+        if (run.edges.size() == 1 && cache[run.edges[0].first].closed) {
+            out = cache[run.edges[0].first].pts;
+        } else {
+            for (const auto& [eid, rev] : run.edges) {
+                std::vector<P3> pts = cache[eid].pts;
+                if (rev) std::reverse(pts.begin(), pts.end());
+                if (!out.empty()) {
+                    if (len(sub(out.back(), pts.front())) > weldTol) return false;
+                    pts.erase(pts.begin());  // dedup the shared splice vertex
+                }
+                for (const P3& p : pts) out.push_back(p);
+            }
+            if (out.size() < 4 || len(sub(out.front(), out.back())) > weldTol)
+                return false;
+            out.pop_back();  // drop the closure-coincident endpoint
+        }
+        std::vector<P3> d;  // dedup coincident samples (no zero-length ring edge)
+        for (const P3& p : out)
+            if (d.empty() || len(sub(d.back(), p)) > weldTol) d.push_back(p);
+        while (d.size() > 1 && len(sub(d.front(), d.back())) < weldTol) d.pop_back();
+        out.swap(d);
+        return out.size() >= 3;
+    };
+    std::vector<P3> ringA, ringB;
+    if (!buildRing(runs[0], ringA) || !buildRing(runs[1], ringB)) return false;
+
+    // Axis frame + azimuth + axial height.
+    const P3 O{ax.Location().X(), ax.Location().Y(), ax.Location().Z()};
+    const P3 D{ax.Direction().X(), ax.Direction().Y(), ax.Direction().Z()};
+    P3 ref = std::abs(D[2]) < 0.9 ? P3{0, 0, 1} : P3{1, 0, 0};
+    P3 X0 = cross(ref, D);
+    X0 = mul(X0, 1.0 / std::max(1e-12, len(X0)));
+    P3 Y0 = cross(D, X0);
+    auto az01 = [&](const P3& p) {
+        P3 r = sub(p, O);
+        double a = std::atan2(dot(r, Y0), dot(r, X0));
+        return a < 0 ? a + 2 * M_PI : a;
+    };
+    auto sweep = [&](const std::vector<P3>& r) {
+        double t = 0;
+        for (size_t i = 0; i < r.size(); ++i) {
+            double d = az01(r[(i + 1) % r.size()]) - az01(r[i]);
+            while (d > M_PI) d -= 2 * M_PI;
+            while (d < -M_PI) d += 2 * M_PI;
+            t += d;
+        }
+        return t;
+    };
+    auto hgt = [&](const P3& p) { return dot(sub(p, O), D); };
+    // Both rings must encircle the axis (a notched ring still sweeps a full turn
+    // even though it dips in v). A segment / non-encircling face fails here.
+    if (std::abs(std::abs(sweep(ringA)) - 2 * M_PI) > 0.5) return false;
+    if (std::abs(std::abs(sweep(ringB)) - 2 * M_PI) > 0.5) return false;
+    // hi = the ring with the larger axial spread (the notched one), so the side
+    // drops land in bridgeByAzimuth's run handling; lo = the flatter base rim.
+    auto spread = [&](const std::vector<P3>& r) {
+        double lo = 1e300, hi = -1e300;
+        for (const P3& p : r) { double h = hgt(p); lo = std::min(lo, h); hi = std::max(hi, h); }
+        return hi - lo;
+    };
+    std::vector<P3> loP = ringA, hiP = ringB;
+    if (spread(ringA) > spread(ringB)) { loP = ringB; hiP = ringA; }
+    if (sweep(loP) < 0) std::reverse(loP.begin(), loP.end());  // both CCW
+    if (sweep(hiP) < 0) std::reverse(hiP.begin(), hiP.end());
+    std::vector<uint32_t> lo, hi;
+    std::vector<double> pL, pH, hLo, hHi;
+    for (const P3& p : loP) {
+        lo.push_back(part.addV(p)); pL.push_back(az01(p)); hLo.push_back(hgt(p));
+    }
+    for (const P3& p : hiP) {
+        hi.push_back(part.addV(p)); pH.push_back(az01(p)); hHi.push_back(hgt(p));
+    }
+
+    const size_t base = part.polys.size();
+    bridgeByAzimuth(part, lo, pL, hLo, hi, pH, hHi);
+
+    // Watertight self-check: band cells 2-manifold with boundary exactly the two
+    // rings (|lo|+|hi| edges used once); else roll back so the floor tries.
+    std::map<std::pair<uint32_t, uint32_t>, int> use;
+    for (size_t p = base; p < part.polys.size(); ++p) {
+        const auto& poly = part.polys[p];
+        for (size_t i = 0; i < poly.size(); ++i) {
+            uint32_t x = poly[i], y = poly[(i + 1) % poly.size()];
+            use[x < y ? std::make_pair(x, y) : std::make_pair(y, x)]++;
+        }
+    }
+    int once = 0;
+    bool bad = part.polys.size() == base;
+    for (const auto& [e, c] : use) {
+        if (c > 2) bad = true;
+        if (c == 1) ++once;
+    }
+    if (bad || once != (int)(lo.size() + hi.size())) {
+        part.polys.resize(base);
+        return false;
+    }
+    // Geometric fold gate: on a ruled surface a fold IS a cell that spans more
+    // than a half-turn in azimuth (a monotone bridge never makes one; a phantom
+    // ~2pi fill cell does — and its Newell normal still matches the surface, so a
+    // material-normal vote can't see it). A per-cell normal-vote gate was tried
+    // and rejected: seam-ambiguous anchor projection gives valid bands spurious
+    // mixed signs, so it wrongly rolled clean walls back to the leaky floor.
+    for (size_t p = base; p < part.polys.size(); ++p) {
+        std::vector<double> azs;
+        for (uint32_t v : part.polys[p]) azs.push_back(az01(part.verts[v]));
+        std::sort(azs.begin(), azs.end());
+        double maxGap = azs.front() + 2 * M_PI - azs.back();
+        for (size_t i = 1; i < azs.size(); ++i)
+            maxGap = std::max(maxGap, azs[i] - azs[i - 1]);
+        if (2 * M_PI - maxGap >= M_PI) {
+            part.polys.resize(base);
+            return false;
+        }
+    }
+    kind = MesherKind::RevolutionGrid;
+    return true;
+}
+
 // ---- planar plate with K holes: bridge decomposition ----------------------
 // A flat face with holes. Cutting each hole with TWO non-crossing bridges turns
 // a polygon-with-one-hole into two SIMPLE (hole-free) polygons; with several
@@ -1466,6 +1764,198 @@ bool meshFullPeriodic(FacePart& part, const Model& model, const FaceInfo& fi,
 
 // ---- boundary floor (keyhole-bridged loops -> triangulatePoly) ------------
 // Watertight for any face: uses ONLY the shared border samples. Bridges every
+// ---- freeform Coons quad grid (4-sided bspline/freeform patch) ------------
+// A single-wire freeform patch with exactly 4 boundary edges is a curved quad;
+// mesh it as a STRUCTURED quad grid (transfinite / Coons interpolation) instead of
+// the triangle floor. The four borders ARE the shared cache samples (border
+// contract, for free -- reuse the ids faceLoops already welded); only the strict
+// interior is computed, by blending the four boundary pcurve-(u,v) arrays (the
+// Coons boolean sum) and evaluating the real surface, so interior nodes sit exactly
+// on the trimmed surface. v1 handles the matched-count case (opposite sides equal
+// counts -> a pure tensor grid, no bridges); mismatched patches fall to the floor.
+// Gated by a watertight self-check + a UV signed-area fold gate (which cannot
+// false-positive: it is the true parametric map of a seam-free disk), so any patch
+// it can't cleanly grid rolls back and the floor takes it -- a pure improvement.
+bool meshFreeformCoons(FacePart& part, const Model& model, const SampleCache& cache,
+                       const std::vector<Loop>& loops, MesherKind& kind) {
+    if (part.surf.IsNull() || loops.size() != 1) return false;
+    const Loop& L = loops[0];
+    const int ring = (int)L.verts.size();
+    if (ring < 4) return false;
+
+    // Per-edge sample counts along the outer wire: exactly 4 real sides for v1.
+    std::vector<int> n;
+    for (BRepTools_WireExplorer we(BRepTools::OuterWire(part.face), part.face);
+         we.More(); we.Next()) {
+        int eid = model.edges.FindIndex(we.Current());
+        if (eid < 1 || eid >= (int)cache.size() || !cache[eid].valid) return false;
+        n.push_back((int)cache[eid].pts.size());
+    }
+    if (n.size() != 4) return false;
+    // faceLoops keeps edge 0 whole and drops each later edge's shared first point,
+    // then pops the trailing wrap dup: ring == sum(n) - 4. If the spatial dedup
+    // merged anything else the indexing below is invalid -> reject.
+    if (ring != n[0] + n[1] + n[2] + n[3] - 4) return false;
+    // v1 fast path: opposite sides share a count (a clean tensor grid, no bridge).
+    if (n[0] != n[2] || n[1] != n[3]) return false;
+    const int nu = n[0] - 1, nv = n[1] - 1;
+    if (nu < 1 || nv < 1) return false;
+    // Corner ring indices (c0..c3) and a wrap-safe ring accessor.
+    const int c0 = 0, c1 = n[0] - 1, c2 = c1 + (n[1] - 1), c3 = c2 + (n[2] - 1);
+    auto RV = [&](int k) { return L.verts[((k % ring) + ring) % ring]; };
+    auto RUV = [&](int k) { return L.uv[((k % ring) + ring) % ring]; };
+
+    // Border vertex id + its pcurve UV at grid node (i in 0..nu, j in 0..nv). The
+    // four sides in wire order are B=side0 (v=0), R=side1 (u=1), side2 (v=1, walked
+    // C2->C3 so the top row reads it reversed), side3 (u=0, walked C3->C0 so the
+    // left column reads it reversed).
+    auto bId = [&](int i) { return RV(c0 + i); };                 // bottom row
+    auto rId = [&](int j) { return RV(c1 + j); };                 // right col
+    auto tId = [&](int i) { return RV(c2 + (nu - i)); };          // top row
+    auto lId = [&](int j) { return RV(c3 + (nv - j)); };          // left col
+    auto bUV = [&](int i) { return RUV(c0 + i); };
+    auto rUV = [&](int j) { return RUV(c1 + j); };
+    auto tUV = [&](int i) { return RUV(c2 + (nu - i)); };
+    auto lUV = [&](int j) { return RUV(c3 + (nv - j)); };
+    // Corners must be spatially distinct (a degenerate side collapses the grid).
+    if (RV(c0) == RV(c1) || RV(c1) == RV(c2) || RV(c2) == RV(c3) ||
+        RV(c3) == RV(c0))
+        return false;
+
+    // Continuous UV chart: unwrap every border UV toward the first corner across a
+    // periodic seam; bail if any UV is missing or the chart encircles the seam.
+    BRepAdaptor_Surface bs(part.face);
+    const double uPer = bs.IsUPeriodic() ? bs.UPeriod() : 0.0;
+    const double vPer = bs.IsVPeriodic() ? bs.VPeriod() : 0.0;
+    auto uw = [](double x, double ref, double per) {
+        if (per <= 0) return x;
+        while (x - ref > per * 0.5) x -= per;
+        while (ref - x > per * 0.5) x += per;
+        return x;
+    };
+    std::array<double, 2> uv00 = bUV(0);
+    if (std::isnan(uv00[0]) || std::isnan(uv00[1])) return false;
+    double umn = uv00[0], umx = uv00[0], vmn = uv00[1], vmx = uv00[1];
+    auto chart = [&](std::array<double, 2> q) -> std::array<double, 2> {
+        q[0] = uw(q[0], uv00[0], uPer);
+        q[1] = uw(q[1], uv00[1], vPer);
+        umn = std::min(umn, q[0]); umx = std::max(umx, q[0]);
+        vmn = std::min(vmn, q[1]); vmx = std::max(vmx, q[1]);
+        return q;
+    };
+    // Collect the four border UV arrays (in-chart).
+    std::vector<std::array<double, 2>> Buv(nu + 1), Tuv(nu + 1), Luv(nv + 1),
+        Ruv(nv + 1);
+    bool haveUV = true;
+    auto grab = [&](std::array<double, 2> q, std::array<double, 2>& out) {
+        if (std::isnan(q[0]) || std::isnan(q[1])) { haveUV = false; return; }
+        out = chart(q);
+    };
+    for (int i = 0; i <= nu; ++i) { grab(bUV(i), Buv[i]); grab(tUV(i), Tuv[i]); }
+    for (int j = 0; j <= nv; ++j) { grab(lUV(j), Luv[j]); grab(rUV(j), Ruv[j]); }
+    if (!haveUV) return false;  // (3D-bilinear fallback is a later extension)
+    if ((uPer > 0 && umx - umn > uPer * 0.9) ||
+        (vPer > 0 && vmx - vmn > vPer * 0.9))
+        return false;  // seam-encircling: not a simple disk
+
+    const size_t vBase = part.verts.size(), pBase = part.polys.size();
+    // Grid node ids + the UV used for each node (border = pcurve, interior = blend).
+    std::vector<std::vector<uint32_t>> g(nv + 1, std::vector<uint32_t>(nu + 1));
+    std::vector<std::vector<std::array<double, 2>>> guv(
+        nv + 1, std::vector<std::array<double, 2>>(nu + 1));
+    const auto c00 = Buv[0], c10 = Buv[nu], c11 = Tuv[nu], c01 = Tuv[0];
+    for (int j = 0; j <= nv; ++j)
+        for (int i = 0; i <= nu; ++i) {
+            if (j == 0) { g[j][i] = bId(i); guv[j][i] = Buv[i]; continue; }
+            if (j == nv) { g[j][i] = tId(i); guv[j][i] = Tuv[i]; continue; }
+            if (i == 0) { g[j][i] = lId(j); guv[j][i] = Luv[j]; continue; }
+            if (i == nu) { g[j][i] = rId(j); guv[j][i] = Ruv[j]; continue; }
+            const double s = double(i) / nu, t = double(j) / nv;
+            std::array<double, 2> uv;
+            for (int d = 0; d < 2; ++d)
+                uv[d] = (1 - t) * Buv[i][d] + t * Tuv[i][d] + (1 - s) * Luv[j][d] +
+                        s * Ruv[j][d] -
+                        ((1 - s) * (1 - t) * c00[d] + s * (1 - t) * c10[d] +
+                         s * t * c11[d] + (1 - s) * t * c01[d]);
+            gp_Pnt p = part.surf->Value(uv[0], uv[1]);
+            g[j][i] = part.addV(P3{p.X(), p.Y(), p.Z()});
+            guv[j][i] = uv;
+        }
+    for (int j = 0; j < nv; ++j)
+        for (int i = 0; i < nu; ++i)
+            part.addPoly({g[j][i], g[j][i + 1], g[j + 1][i + 1], g[j + 1][i]});
+
+    auto rollback = [&]() {
+        part.polys.resize(pBase);
+        part.verts.resize(vBase);
+        part.anchors.resize(vBase);
+        return false;
+    };
+    // Watertight self-check: 2-manifold with exactly the 2*nu+2*nv perimeter edges
+    // used once.
+    std::map<std::pair<uint32_t, uint32_t>, int> use;
+    for (size_t p = pBase; p < part.polys.size(); ++p) {
+        const auto& poly = part.polys[p];
+        for (size_t k = 0; k < poly.size(); ++k) {
+            uint32_t x = poly[k], y = poly[(k + 1) % poly.size()];
+            use[x < y ? std::make_pair(x, y) : std::make_pair(y, x)]++;
+        }
+    }
+    int once = 0;
+    for (const auto& [e, c] : use) {
+        if (c > 2) return rollback();
+        if (c == 1) ++once;
+    }
+    if (once != 2 * nu + 2 * nv) return rollback();
+    // Fold gate: every cell must keep the SAME winding sign in the patch's own UV
+    // (the true parametric map of a seam-free disk -- a valid patch is monotone, so
+    // this cannot false-positive; a fold/overlap flips or collapses a cell).
+    double refSign = 0;
+    for (int j = 0; j < nv; ++j)
+        for (int i = 0; i < nu; ++i) {
+            const std::array<double, 2> q[4] = {guv[j][i], guv[j][i + 1],
+                                                guv[j + 1][i + 1], guv[j + 1][i]};
+            double A = 0;
+            for (int k = 0; k < 4; ++k) {
+                const auto& a = q[k];
+                const auto& b = q[(k + 1) % 4];
+                A += a[0] * b[1] - b[0] * a[1];
+            }
+            if (std::abs(A) < 1e-12) return rollback();
+            if (refSign != 0 && A * refSign < 0) return rollback();
+            refSign = A;
+        }
+    // 3D-fold backstop: a quad can be UV-monotone yet fold in 3D (a saddle patch
+    // whose flat cell spans too much curvature). Reject the grid if any cell's
+    // Newell normal opposes the surface normal at its own anchors -- the same vote
+    // foldedPolys judges by, so the kept grid is fold-free by that detector or the
+    // floor takes the face.
+    const double os = part.face.Orientation() == TopAbs_REVERSED ? -1.0 : 1.0;
+    for (size_t p = pBase; p < part.polys.size(); ++p) {
+        const auto& poly = part.polys[p];
+        P3 nn = newell(part.verts, poly);
+        const double nl = len(nn);
+        if (nl < 1e-14) return rollback();
+        int votes = 0;
+        for (uint32_t vi : poly) {
+            const Anchor& an = part.anchors[vi];
+            gp_Pnt sp;
+            gp_Vec du, dv;
+            part.surf->D1(an.u, an.v, sp, du, dv);
+            gp_Vec sn = du.Crossed(dv);
+            const double sl = sn.Magnitude();
+            if (sl < 1e-14) continue;
+            const double d =
+                os * (sn.X() * nn[0] + sn.Y() * nn[1] + sn.Z() * nn[2]) / (sl * nl);
+            if (d > 0.1) ++votes;
+            else if (d < -0.1) --votes;
+        }
+        if (votes < 0) return rollback();
+    }
+    kind = MesherKind::CoonsGrid;
+    return true;
+}
+
 // inner (hole) loop into the outer loop with a doubled-vertex keyhole, then
 // hands the single ring to the proven ear-clipper (mesh.cpp). Quality is a
 // floor; real interior meshers (UV-coons) replace it in later increments.
@@ -1703,6 +2193,17 @@ void meshFloorAuto(FacePart& part, const std::vector<Loop>& loops,
 void orientMeshConsistent(PolyMesh& mesh, const Model& model) {
     const size_t nP = mesh.polygons.size();
     if (!nP) return;
+    // Lazily-cached per-face surface (the component sign vote hits many cells).
+    std::vector<Handle(Geom_Surface)> surfCache(model.faceCount() + 1);
+    std::vector<char> surfDone(model.faceCount() + 1, 0);
+    auto surfOf = [&](int fid) -> Handle(Geom_Surface) {
+        if (fid < 1 || fid > model.faceCount()) return Handle(Geom_Surface)();
+        if (!surfDone[fid]) {
+            surfCache[fid] = BRep_Tool::Surface(TopoDS::Face(model.faces(fid)));
+            surfDone[fid] = 1;
+        }
+        return surfCache[fid];
+    };
     // Undirected edge -> polygons that use it (manifold edges only).
     std::map<std::pair<uint32_t, uint32_t>, std::vector<int>> edgePolys;
     for (size_t p = 0; p < nP; ++p) {
@@ -1747,43 +2248,47 @@ void orientMeshConsistent(PolyMesh& mesh, const Model& model) {
                 stack.push_back(q);
             }
         }
-        // Fix the component's global sign against the B-rep: the largest cell
-        // votes its Newell normal against its face's material normal.
-        int ref = comp[0];
-        double refArea = -1;
+        // Fix the component's global sign against the B-rep. Flipping the whole
+        // component flips every cell's fold status, so the fold-minimising choice
+        // is a per-cell COUNT majority (matching foldedPolys: Newell vs the surface
+        // normal at each cell's own-face vertex anchors) -- NOT a single largest
+        // cell (a big curved Coons quad's flat-normal vote is unreliable) and NOT an
+        // area-weighted sum (a few big cells outvote many small correct ones).
+        int folded = 0, tested = 0;
         for (int p : comp) {
-            P3 n = newell(mesh.vertices, mesh.polygons[p]);
-            double a = len(n);
-            if (a > refArea) { refArea = a; ref = p; }
-        }
-        const int fid = ref < (int)mesh.polygonFaceId.size()
-                            ? mesh.polygonFaceId[ref] : 0;
-        if (fid >= 1 && fid <= model.faceCount()) {
-            const TopoDS_Face face = TopoDS::Face(model.faces(fid));
-            Handle(Geom_Surface) surf = BRep_Tool::Surface(face);
-            const auto& poly = mesh.polygons[ref];
-            P3 c{0, 0, 0};
-            for (uint32_t v : poly) c = add(c, mesh.vertices[v]);
-            c = mul(c, 1.0 / poly.size());
-            if (!surf.IsNull()) {
-                GeomAPI_ProjectPointOnSurf proj(gp_Pnt(c[0], c[1], c[2]), surf);
-                if (proj.IsDone() && proj.NbPoints() >= 1) {
-                    double u, v;
-                    proj.LowerDistanceParameters(u, v);
-                    gp_Pnt sp;
-                    gp_Vec du, dv;
-                    surf->D1(u, v, sp, du, dv);
-                    gp_Vec sn = du.Crossed(dv);
-                    if (face.Orientation() == TopAbs_REVERSED) sn.Reverse();
-                    P3 nn = newell(mesh.vertices, poly);
-                    if (sn.Magnitude() > 1e-14 &&
-                        (sn.X() * nn[0] + sn.Y() * nn[1] + sn.Z() * nn[2]) < 0)
-                        for (int p : comp)
-                            std::reverse(mesh.polygons[p].begin(),
-                                         mesh.polygons[p].end());
-                }
+            const int fid = p < (int)mesh.polygonFaceId.size()
+                                ? mesh.polygonFaceId[p] : 0;
+            if (fid < 1 || fid > model.faceCount()) continue;
+            const auto& poly = mesh.polygons[p];
+            P3 nn = newell(mesh.vertices, poly);
+            const double nl = len(nn);
+            if (nl < 1e-14) continue;
+            Handle(Geom_Surface) surf = surfOf(fid);
+            if (surf.IsNull()) continue;
+            const double os =
+                model.faces(fid).Orientation() == TopAbs_REVERSED ? -1.0 : 1.0;
+            int votes = 0;
+            for (uint32_t vi : poly) {
+                if (vi >= mesh.anchors.size()) continue;
+                const Anchor& an = mesh.anchors[vi];
+                if (an.faceId != fid) continue;
+                gp_Pnt sp;
+                gp_Vec du, dv;
+                surf->D1(an.u, an.v, sp, du, dv);
+                gp_Vec sn = du.Crossed(dv);
+                const double sl = sn.Magnitude();
+                if (sl < 1e-14) continue;
+                const double d =
+                    os * (sn.X() * nn[0] + sn.Y() * nn[1] + sn.Z() * nn[2]) /
+                    (sl * nl);
+                if (d > 0.1) ++votes;
+                else if (d < -0.1) --votes;
             }
+            if (votes != 0) { ++tested; if (votes < 0) ++folded; }
         }
+        if (folded * 2 > tested)  // majority of cells inverted -> flip the component
+            for (int p : comp)
+                std::reverse(mesh.polygons[p].begin(), mesh.polygons[p].end());
     }
 }
 
@@ -1826,6 +2331,9 @@ PolyMesh meshDecoupled(const Model& model, const Analysis& analysis,
                 done = meshRevolutionBandLoops(part, model, cache, kind);
             if (!done && (done = meshSeamBand(part, model, cache, fi)))
                 kind = MesherKind::RevolutionGrid;
+            if (!done)
+                done = meshRimNotchWall(part, model, cache,
+                                        std::max(settings.weldTolerance, 1e-6), kind);
         } else if (fi.type == SurfaceType::Sphere ||
                    fi.type == SurfaceType::Torus) {
             done = meshFullPeriodic(part, model, fi, fs, kind);
@@ -1872,6 +2380,10 @@ PolyMesh meshDecoupled(const Model& model, const Analysis& analysis,
                                ? 0 : 1;
                 bridgeLoops(part, loops[o].verts, loops[1 - o].verts, true);
                 kind = MesherKind::AnnulusRing;
+            } else if (freeformFloor(fi.type) && loops.size() == 1 &&
+                       meshFreeformCoons(part, model, cache, loops, kind)) {
+                // A 4-sided freeform patch: a structured Coons quad grid instead
+                // of the tri floor (kind = CoonsGrid set inside on success).
             } else {
                 // Walls with bore holes, curved patches, and everything else:
                 // the floor, triangulated in exact pcurve UV (a valid face's UV

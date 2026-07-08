@@ -1660,12 +1660,32 @@ void testDecoupled() {
     }
     // bossfillet (torus fillet ring) and slotted (boolean-cut bore walls) are
     // one-wire periodic bands the seam-band mesher reconstructs into two rims;
-    // both must weld watertight (consistent winding).
-    for (const char* shape : {"bossfillet", "slotted"}) {
+    // notched is a full-wrap wall with a rim-open notch that the rim-notch mesher
+    // bridges (full rim -> notched upper chain, paired by azimuth). All must weld
+    // watertight (consistent winding).
+    for (const char* shape : {"bossfillet", "slotted", "notched"}) {
         weft::PolyMesh m = meshOf(shape, gs);
         if (!isWatertight(m))
             std::printf("   NOT watertight: %s\n", shape);
         CHECK(isWatertight(m));
+    }
+    // The rim-notch wall is quad-dominant and fold-free (the azimuth bridge fans
+    // each notch side drop from its full-height side, so no corner slivers inward).
+    foldFree("notched");
+
+    // The freeform ribbon (a bent bspline strip) meshes as a pure Coons quad grid
+    // instead of the triangle floor: watertight, fold-free, ALL quads.
+    {
+        weft::GenerationReport rep;
+        weft::PolyMesh m = meshOf("ribbon", gs, &rep);
+        CHECK(isWatertight(m));
+        CHECK_EQ(m.countTris(), (size_t)0);
+        CHECK(m.countQuads() > 0);
+        int coons = 0;
+        for (const auto& [fid, k] : rep.faceMesher)
+            if (k == weft::MesherKind::CoonsGrid) ++coons;
+        CHECK(coons > 0);
+        foldFree("ribbon");
     }
 
     // A plain cylinder is the canonical result: nu wall quads (nu==rim==radial)
