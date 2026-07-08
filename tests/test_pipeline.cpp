@@ -1673,6 +1673,21 @@ void testDecoupled() {
     // each notch side drop from its full-height side, so no corner slivers inward).
     foldFree("notched");
 
+    // The freeform ribbon (a bent bspline strip) meshes as a pure Coons quad grid
+    // instead of the triangle floor: watertight, fold-free, ALL quads.
+    {
+        weft::GenerationReport rep;
+        weft::PolyMesh m = meshOf("ribbon", gs, &rep);
+        CHECK(isWatertight(m));
+        CHECK_EQ(m.countTris(), (size_t)0);
+        CHECK(m.countQuads() > 0);
+        int coons = 0;
+        for (const auto& [fid, k] : rep.faceMesher)
+            if (k == weft::MesherKind::CoonsGrid) ++coons;
+        CHECK(coons > 0);
+        foldFree("ribbon");
+    }
+
     // A plain cylinder is the canonical result: nu wall quads (nu==rim==radial)
     // plus two n-gon caps, quad-dominant, zero tris.
     {

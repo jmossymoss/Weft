@@ -29,16 +29,19 @@ fail to weld; +`WEFT_DC_CONTRACT2=1` for per-edge detail). `WEFT_FACE_KINDS=1` =
 per-face mesher dump. ctest = `tests/test_pipeline.cpp::testDecoupled`.
 
 NEXT (in priority order):
-1. FREEFORM UV-COONS interior (quality, not opens): grid 4-sided bspline patches as
-   quad grids instead of the tri floor — the floor path is meshFloorAuto (surface
-   UV, pcurve-based, seam-unwrapped) in decoupled.cpp. This is THE dominant
-   remaining quality gap: bspline faces on the tri floor DOMINATE (flaregun 82,
-   foam 128, teleporter 215), and ~most are 4-EDGE curved quad patches (flaregun
-   65/82, teleporter 151/215) — perfect Coons/transfinite targets. (Increment 10
-   already cleared the cyl/cone floor walls.)
+1. FREEFORM COONS, remaining cases (quality): increment 11 landed the MATCHED-count
+   4-edge fast path (meshFreeformCoons -> pure tensor quad grid; ribbon is now all
+   quads, flaregun quads 569->972). Still on the tri floor and worth grabbing:
+   (a) the MISMATCHED opposite-count 4-edge patches (~a third of them) via the
+   general path (inset interior block + one bridgeLoops frame — the design spec is
+   in the increment-11 notes); (b) 3/5/6-edge patches via UV-side-label corner
+   recovery. The floor path is meshFloorAuto in decoupled.cpp.
 2. Decide whether to raise the default decoupled weld for imports (production
    keeps 1e-6 + relies on --weld, so leaving it is consistent).
 3. Then: port the app/CLI to prefer the decoupled path, and A/B the two meshers.
+   (NB: the decoupled mesher is COMPILED by the default build.sh/build.bat but is
+   OPT-IN at runtime — only `weft mesh --decoupled` uses it; plain `weft mesh` and
+   the app still use production generate(). This step makes it the default.)
 
 ---
 
@@ -227,6 +230,37 @@ sliver. Results vs increment 9 (no open/nm regressions anywhere): nasty_cheese
 weldment 76o/17nm -> 73o/16nm; fixtures unchanged. Same rollback gates keep it a
 pure improvement -- a non-band face fails the sweep/splice/self-check and takes the
 floor.
+
+## Increment 11 (LANDED) — freeform Coons quad grids + robust winding vote
+Two changes that together kill the "triangle soup" on freeform faces.
+(a) meshFreeformCoons: a single-wire freeform (bspline/bezier/...) patch with
+exactly 4 boundary edges is a curved quad -> mesh it as a STRUCTURED quad grid
+(transfinite Coons) instead of the tri floor. The four borders ARE the shared
+cache samples (reuse the ids faceLoops already welded -> border contract for free);
+only the strict interior is computed, by blending the four boundary pcurve-(u,v)
+arrays (the Coons boolean sum) and evaluating part.surf->Value, so interior nodes
+sit exactly on the trimmed surface. v1 = the MATCHED-count fast path (opposite
+sides equal counts -> a pure tensor grid, zero bridges); mismatched / non-4-edge
+patches fall to the floor. Gated by a watertight self-check + a UV signed-area fold
+gate (the true parametric map of a seam-free disk, so it cannot false-positive) + a
+3D normal-vote backstop. Bspline 4-edge opposite-equal patches are the majority
+(flaregun 42/80 freeform-floor faces, teleporter 129/233, foam 81/134).
+(b) orientMeshConsistent winding fix: the global per-component sign was chosen by
+the SINGLE LARGEST cell + a centroid re-projection. A big curved Coons quad became
+that reference and its flat Newell vs one surface sample voted backwards, flipping
+whole components INWARD (every cell then reads as a fold). Replaced with a per-cell
+COUNT majority (foldedPolys' own anchor vote) -- flipping a component flips every
+cell's fold status, so minimising the fold COUNT is exactly a cell-count majority
+(NOT area-weighted: a few big cells must not outvote many small correct ones; NOT
+one cell). A latent bug the larger quads exposed; the fix helps EVERY model.
+Results vs increment 10 (no open regressions; nm improved): flaregun folds
+1109->72 & quads 569->972, foam folds 386->312 & quads 1698->2244 & nm 26->19,
+teleporter folds 285->248 & quads 1021->1306, weldment folds 776->540 (no Coons
+faces there -- pure winding-vote win), ribbon/ribbonnotch 8f->0f. ribbon is now a
+pure 26-quad Coons grid (was tri soup); testDecoupled asserts it watertight +
+all-quads + fold-free via CoonsGrid. NEXT for Coons: the mismatched-count general
+path (inset interior block + one bridgeLoops frame) and the 3/5/6-edge corner
+recovery (label border verts by UV-rectangle side, cut at transitions).
 
 DEFINITIVE DIAGNOSIS (via the new WEFT_DC_CONTRACT verifier, which checks that
 every shared-edge sample lands on a welded vertex used by >=2 faces):
