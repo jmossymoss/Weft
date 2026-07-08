@@ -63,8 +63,20 @@ planar faces keep the 3D plane. No new opens; non-manifold edges dropped
 analytic-periodic / planar-multi-hole floor (below), the genuine trimmed-surface
 problem — a proper constrained triangulation or the specific hard meshers.
 
-## Increment 4b+ — remaining leaks map exactly to unported meshers (do next)
-Run `weft mesh <f> --decoupled --validate`. Current leaks:
+## Increment 4b (LANDED) — multi-hole plate decomposition
+`meshPlanarMultiHole` generalizes the single-hole two-bridge to K holes: each
+hole splits its containing polygon with two non-crossing bridges (clear of the
+polygon, that hole, AND every other hole), remaining holes are redistributed by
+point-in-polygon containment, so a K-holed flat face becomes K+1 simple n-gons
+with real shared edges. All-or-nothing: bails to the floor if a hole can't be
+bridged. Planar 2+-loop faces route here (kind PlateWeb); hole/boss use the same
+path. Quality win on holed plates: foam tris 4117->2789 & nm 46->16; flaregun
+tris 2293->1905 & nm 16->12 (holed planar faces were tri floors, now clean
+n-gons). New 2-bore-plate testDecoupled case.
+
+## Increment 5+ — remaining leaks map exactly to unported meshers (do next)
+Run `weft mesh <f> --decoupled --validate`. The OPENS are unchanged by 4a/4b
+(they are not planar) — they come from the curved-face floor failures below.
 - REVOLUTION WALL WITH INTERIOR HOLES (slotted 99 opens): a cylinder wall with
   bores cutting through it (interior closed-circle loops) — the old
   meshRevolutionInsert: grid the wall, drop cells the holes cover, web the

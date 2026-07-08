@@ -1746,6 +1746,41 @@ void testDecoupled() {
         CHECK(wallQuads > 0);
         CHECK_EQ(wallTris, (size_t)0);
     }
+
+    // Multi-hole plate: a bar with TWO bores. Each holed face decomposes into
+    // simple n-gons (K+1 of them, no tris) via non-crossing bridges, and the
+    // whole solid welds watertight.
+    {
+        TopoDS_Shape plate = BRepPrimAPI_MakeBox(60.0, 30.0, 5.0).Shape();
+        for (double x : {18.0, 42.0}) {
+            TopoDS_Shape bore =
+                BRepPrimAPI_MakeCylinder(
+                    gp_Ax2(gp_Pnt(x, 15.0, -1.0), gp_Dir(0, 0, 1)), 5.0, 7.0)
+                    .Shape();
+            plate = BRepAlgoAPI_Cut(plate, bore).Shape();
+        }
+        std::string p = tmpPath("weft_dc_multihole.step");
+        weft::writeStep(plate, p);
+        weft::Model model = weft::loadStep(p);
+        weft::Analysis a = weft::analyze(model);
+        weft::GenerationReport rep;
+        weft::PolyMesh m =
+            weft::meshDecoupled(model, a, weft::GenerationSettings{}, &rep);
+        CHECK(isWatertight(m));
+        size_t nf = 0;
+        for (uint8_t f : weft::foldedPolys(model, m)) nf += f;
+        CHECK_EQ(nf, (size_t)0);
+        // The two two-holed plate faces mesh as PlateWeb with zero triangles.
+        int webFaces = 0;
+        for (const auto& [fid, kind] : rep.faceMesher) {
+            if (kind != weft::MesherKind::PlateWeb) continue;
+            ++webFaces;
+            for (size_t pi = 0; pi < m.polygons.size(); ++pi)
+                if (m.polygonFaceId[pi] == fid)
+                    CHECK(m.polygons[pi].size() >= 4);  // n-gons, no tris
+        }
+        CHECK_EQ(webFaces, 2);  // top and bottom of the bar
+    }
 }
 
 int main() {

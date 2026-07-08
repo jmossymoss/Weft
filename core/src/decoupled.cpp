@@ -681,18 +681,17 @@ bool meshPartialRevolutionWall(FacePart& part, const Model& model,
     return true;
 }
 
-// ---- planar plate with one hole: two-bridge decomposition -----------------
-// A flat face with one hole. A coarse outer (a rectangle's straight edges
-// sample to one segment each) bridged to a fine circular hole tangles under
-// index-fraction pairing, so instead cut the annulus with TWO non-crossing
-// bridges into two SIMPLE (hole-free) polygons and emit each as one n-gon (the
-// engine triangulates n-gons; no ear-clip-over-hole to fold). Watertight for
-// any count ratio — the codebase's own doctrine for holed panels.
-bool meshPlanarAnnulus(FacePart& part, std::vector<uint32_t> O,
-                       std::vector<uint32_t> H) {
-    const int N = (int)O.size();
-    int M = (int)H.size();
-    if (N < 3 || M < 3) return false;
+// ---- planar plate with K holes: bridge decomposition ----------------------
+// A flat face with holes. Cutting each hole with TWO non-crossing bridges turns
+// a polygon-with-one-hole into two SIMPLE (hole-free) polygons; with several
+// holes, each hole splits the polygon that contains it and the remaining holes
+// are redistributed by containment, so a K-holed plate becomes K+1 simple
+// n-gons with real shared edges (the codebase's doctrine — no ear-clip-over-
+// keyhole to fold; watertight for any count ratio). All-or-nothing: if any hole
+// can't find a clear pair of bridges the whole face bails to the floor.
+bool meshPlanarMultiHole(FacePart& part, std::vector<uint32_t> O,
+                         std::vector<std::vector<uint32_t>> holes) {
+    if (O.size() < 3 || holes.empty()) return false;
     P3 nrm = newell(part.verts, O);
     if (len(nrm) < 1e-14) return false;
     nrm = mul(nrm, 1.0 / len(nrm));
@@ -701,7 +700,8 @@ bool meshPlanarAnnulus(FacePart& part, std::vector<uint32_t> O,
     ex = mul(ex, 1.0 / std::max(1e-12, len(ex)));
     P3 ey = cross(nrm, ex);
     auto uv = [&](uint32_t v) {
-        return std::array<double, 2>{dot(part.verts[v], ex), dot(part.verts[v], ey)};
+        return std::array<double, 2>{dot(part.verts[v], ex),
+                                     dot(part.verts[v], ey)};
     };
     auto sArea = [&](const std::vector<uint32_t>& L) {
         double s = 0;
@@ -711,9 +711,9 @@ bool meshPlanarAnnulus(FacePart& part, std::vector<uint32_t> O,
         }
         return s;
     };
-    // Outer must be CCW (positive) in this frame; the hole CW (opposite).
-    if (sArea(O) < 0) std::reverse(O.begin(), O.end());
-    if (sArea(H) > 0) std::reverse(H.begin(), H.end());
+    if (sArea(O) < 0) std::reverse(O.begin(), O.end());  // outer CCW
+    for (auto& H : holes)
+        if (sArea(H) > 0) std::reverse(H.begin(), H.end());  // holes CW
     auto seg = [&](std::array<double, 2> a, std::array<double, 2> b,
                    std::array<double, 2> c, std::array<double, 2> d) {
         auto o = [](std::array<double, 2> p, std::array<double, 2> q,
@@ -724,50 +724,32 @@ bool meshPlanarAnnulus(FacePart& part, std::vector<uint32_t> O,
         int o1 = o(a, b, c), o2 = o(a, b, d), o3 = o(c, d, a), o4 = o(c, d, b);
         return o1 != o2 && o3 != o4 && o1 && o2 && o3 && o4;
     };
-    // A bridge O[oi]-H[hi] is valid if it crosses no loop edge (endpoints
-    // excepted) and, optionally, avoids a second reserved bridge.
-    auto clear = [&](int oi, int hi, int oi2, int hi2) {
-        auto A = uv(O[oi]), B = uv(H[hi]);
-        for (int k = 0; k < N; ++k) {
-            if (k == oi || (k + 1) % N == oi) continue;
-            if (seg(A, B, uv(O[k]), uv(O[(k + 1) % N]))) return false;
+    auto hitsLoop = [&](std::array<double, 2> A, std::array<double, 2> B,
+                        uint32_t sa, uint32_t sb, const std::vector<uint32_t>& L) {
+        for (size_t k = 0; k < L.size(); ++k) {
+            uint32_t p = L[k], q = L[(k + 1) % L.size()];
+            if (p == sa || q == sa || p == sb || q == sb) continue;
+            if (seg(A, B, uv(p), uv(q))) return true;
         }
-        for (int k = 0; k < M; ++k) {
-            if (k == hi || (k + 1) % M == hi) continue;
-            if (seg(A, B, uv(H[k]), uv(H[(k + 1) % M]))) return false;
-        }
-        if (oi2 >= 0 && seg(A, B, uv(O[oi2]), uv(H[hi2]))) return false;
-        return true;
+        return false;
     };
-    auto d2 = [&](uint32_t a, uint32_t b) {
-        return dot(sub(part.verts[a], part.verts[b]),
-                   sub(part.verts[a], part.verts[b]));
+    auto centroidUV = [&](const std::vector<uint32_t>& L) {
+        std::array<double, 2> c{0, 0};
+        for (uint32_t v : L) { auto p = uv(v); c[0] += p[0]; c[1] += p[1]; }
+        c[0] /= L.size(); c[1] /= L.size();
+        return c;
     };
-    // Bridge 1: shortest clear pair.
-    int oA = -1, hA = -1;
-    double bd = 1e300;
-    for (int i = 0; i < N; ++i)
-        for (int j = 0; j < M; ++j) {
-            double d = d2(O[i], H[j]);
-            if (d < bd && clear(i, j, -1, -1)) { bd = d; oA = i; hA = j; }
+    auto inPoly = [&](std::array<double, 2> pt, const std::vector<uint32_t>& L) {
+        bool in = false;
+        for (size_t i = 0, j = L.size() - 1; i < L.size(); j = i++) {
+            auto a = uv(L[i]), b = uv(L[j]);
+            if (((a[1] > pt[1]) != (b[1] > pt[1])) &&
+                (pt[0] < (b[0] - a[0]) * (pt[1] - a[1]) / (b[1] - a[1]) + a[0]))
+                in = !in;
         }
-    if (oA < 0) return false;
-    // Bridge 2: hole vertex roughly opposite hA, shortest clear outer that does
-    // not cross bridge 1.
-    int oB = -1, hB = -1;
-    bd = 1e300;
-    for (int dj = M / 4; dj <= 3 * M / 4; ++dj) {
-        int j = (hA + dj) % M;
-        if (j == hA) continue;
-        for (int i = 0; i < N; ++i) {
-            if (i == oA) continue;
-            double d = d2(O[i], H[j]);
-            if (d < bd && clear(i, j, oA, hA)) { bd = d; oB = i; hB = j; }
-        }
-    }
-    if (oB < 0) return false;
-    // Two simple polygons: outer forward + hole forward, split at the bridges.
-    auto arc = [&](const std::vector<uint32_t>& L, int from, int to) {
+        return in;
+    };
+    auto arcOf = [&](const std::vector<uint32_t>& L, int from, int to) {
         std::vector<uint32_t> s;
         int n = (int)L.size();
         for (int k = from;; k = (k + 1) % n) {
@@ -776,12 +758,68 @@ bool meshPlanarAnnulus(FacePart& part, std::vector<uint32_t> O,
         }
         return s;
     };
-    std::vector<uint32_t> p1 = arc(O, oA, oB);
-    for (uint32_t v : arc(H, hB, hA)) p1.push_back(v);
-    std::vector<uint32_t> p2 = arc(O, oB, oA);
-    for (uint32_t v : arc(H, hA, hB)) p2.push_back(v);
-    part.addPoly(std::move(p1));
-    part.addPoly(std::move(p2));
+    auto d2 = [&](uint32_t a, uint32_t b) {
+        return dot(sub(part.verts[a], part.verts[b]),
+                   sub(part.verts[a], part.verts[b]));
+    };
+
+    struct Work { std::vector<uint32_t> poly; std::vector<int> hs; };
+    std::vector<int> all(holes.size());
+    for (int i = 0; i < (int)holes.size(); ++i) all[i] = i;
+    std::vector<Work> stack{{O, all}};
+    std::vector<std::vector<uint32_t>> out;
+    int guard = 0;
+    while (!stack.empty()) {
+        if (guard++ > 4 * (int)holes.size() + 8) return false;
+        Work w = std::move(stack.back());
+        stack.pop_back();
+        if (w.hs.empty()) { out.push_back(std::move(w.poly)); continue; }
+        const int hidx = w.hs[0];
+        std::vector<uint32_t>& H = holes[hidx];
+        const int N = (int)w.poly.size(), M = (int)H.size();
+        // Bridges must clear the polygon, this hole, AND every other hole in w.
+        auto clear = [&](int pi, int hi, int pi2, int hi2) {
+            auto A = uv(w.poly[pi]), B = uv(H[hi]);
+            if (hitsLoop(A, B, w.poly[pi], H[hi], w.poly)) return false;
+            for (int oh : w.hs)
+                if (hitsLoop(A, B, w.poly[pi], H[hi], holes[oh])) return false;
+            if (pi2 >= 0 && seg(A, B, uv(w.poly[pi2]), uv(H[hi2]))) return false;
+            return true;
+        };
+        int pA = -1, hA = -1;
+        double bd = 1e300;
+        for (int i = 0; i < N; ++i)
+            for (int j = 0; j < M; ++j) {
+                double d = d2(w.poly[i], H[j]);
+                if (d < bd && clear(i, j, -1, -1)) { bd = d; pA = i; hA = j; }
+            }
+        if (pA < 0) return false;
+        int pB = -1, hB = -1;
+        bd = 1e300;
+        for (int dj = M / 4; dj <= 3 * M / 4; ++dj) {
+            int j = (hA + dj) % M;
+            if (j == hA) continue;
+            for (int i = 0; i < N; ++i) {
+                if (i == pA) continue;
+                double d = d2(w.poly[i], H[j]);
+                if (d < bd && clear(i, j, pA, hA)) { bd = d; pB = i; hB = j; }
+            }
+        }
+        if (pB < 0) return false;
+        std::vector<uint32_t> p1 = arcOf(w.poly, pA, pB);
+        for (uint32_t v : arcOf(H, hB, hA)) p1.push_back(v);
+        std::vector<uint32_t> p2 = arcOf(w.poly, pB, pA);
+        for (uint32_t v : arcOf(H, hA, hB)) p2.push_back(v);
+        Work w1{std::move(p1), {}}, w2{std::move(p2), {}};
+        for (size_t k = 1; k < w.hs.size(); ++k) {
+            int oh = w.hs[k];
+            if (inPoly(centroidUV(holes[oh]), w1.poly)) w1.hs.push_back(oh);
+            else w2.hs.push_back(oh);
+        }
+        stack.push_back(std::move(w1));
+        stack.push_back(std::move(w2));
+    }
+    for (auto& p : out) part.addPoly(std::move(p));
     return true;
 }
 
@@ -1129,31 +1167,36 @@ PolyMesh meshDecoupled(const Model& model, const Analysis& analysis,
                 kind = loops[0].verts.size() > 4 && fi.edgeIds.size() == 1
                            ? MesherKind::DiskCap
                            : MesherKind::MinimalNGon;
+            } else if (fi.type == SurfaceType::Plane && loops.size() >= 2) {
+                // Flat plate with K holes: bridge-decompose into K+1 simple
+                // n-gons; fall back to the floor if a hole can't be bridged.
+                size_t o = 0;
+                double oa = -1;
+                for (size_t i = 0; i < loops.size(); ++i) {
+                    double a = len(newell(part.verts, loops[i].verts));
+                    if (a > oa) { oa = a; o = i; }
+                }
+                std::vector<std::vector<uint32_t>> hs;
+                for (size_t i = 0; i < loops.size(); ++i)
+                    if (i != o) hs.push_back(loops[i].verts);
+                if (meshPlanarMultiHole(part, loops[o].verts, hs))
+                    kind = MesherKind::PlateWeb;
+                else {
+                    meshFloorAuto(part, loops, false);
+                    kind = MesherKind::Fallback;
+                }
             } else if (loops.size() == 2) {
+                // Non-planar annular band (washer / fillet ring): the proven
+                // fraction bridge gives clean quads.
                 size_t o = len(newell(part.verts, loops[0].verts)) >=
                                    len(newell(part.verts, loops[1].verts))
                                ? 0 : 1;
-                bool ok = false;
-                if (fi.type == SurfaceType::Plane)
-                    // Planar plate-with-one-hole: two-bridge decomposition
-                    // into two simple n-gons (falls back to the floor if no
-                    // clear pair of bridges exists).
-                    ok = meshPlanarAnnulus(part, loops[o].verts,
-                                           loops[1 - o].verts);
-                else
-                    // Non-planar annular band (washer / fillet ring): the
-                    // proven fraction bridge gives clean quads.
-                    ok = (bridgeLoops(part, loops[o].verts, loops[1 - o].verts,
-                                      true),
-                          true);
-                if (!ok)
-                    meshFloorAuto(part, loops, freeformFloor(fi.type));
+                bridgeLoops(part, loops[o].verts, loops[1 - o].verts, true);
                 kind = MesherKind::AnnulusRing;
             } else {
-                // Multi-hole plates, walls with bore holes, curved patches, and
-                // everything else: the floor, triangulated in surface UV for
-                // curved faces (a bore ring / torus band / bspline patch) and
-                // in a 3D plane for flats.
+                // Walls with bore holes, curved patches, and everything else:
+                // the floor, triangulated in surface UV for freeform faces
+                // (a bspline patch) and in a 3D plane otherwise.
                 meshFloorAuto(part, loops, freeformFloor(fi.type));
                 kind = MesherKind::Fallback;
             }
