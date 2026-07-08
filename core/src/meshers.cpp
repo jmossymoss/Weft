@@ -3193,9 +3193,11 @@ bool planPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
 // with ZERO interior vertices — the flattest topology that still welds.
 bool planMinimalPlanar(const TopoDS_Face& face,
                        const BRepAdaptor_Surface& surf, const Model& model,
-                       FacePlan& plan) {
+                       FacePlan& plan, bool requirePlane = true) {
     FacePlan probe;
-    if (!collectPlanarLoops(face, surf, model, probe)) return false;
+    if (!collectPlanarLoops(face, surf, model, probe, requirePlane)) {
+        return false;
+    }
     plan.loops = std::move(probe.loops);
     plan.uEdges = std::move(probe.uEdges);
     plan.constrains = true;
@@ -7605,6 +7607,30 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         dbg("plan face %d: sliver fillet r=%.4g (< %.4g) -> minimal n-gon",
             fid, info.radius, 1.5 * s.chordTolerance);
         return plan;
+    }
+
+    // Game topology (plan §1): a curved face carrying a boolean CUTOUT hole
+    // ships as a single boundary n-gon with each cutout as a LOCAL bridged
+    // hole (zero interior verts, no spanning support loops) instead of a
+    // revolution/ladder grid whose columns are shattered into one span per
+    // cutout rim edge. Only when minimal (game) mode is on AND the face
+    // carries a real interior cutout wire (>1 wire) — a clean structural
+    // wall (single wire) keeps its revolution/coons route and its curvature.
+    // The minimal web is UV-2D and surface-type agnostic; if the hole-bridge
+    // ear-clip can't build (e.g. a periodic seam self-crosses) it returns
+    // false and the face falls through to its normal route untouched.
+    if (s.minimal) {
+        int wireCount = 0;
+        for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+            ++wireCount;
+        }
+        if (wireCount > 1 &&
+            planMinimalPlanar(face, surf, model, plan, /*requirePlane=*/false)) {
+            dbg("plan face %d: curved cutout -> minimal n-gon (%d wires, "
+                "local holes)",
+                fid, wireCount);
+            return plan;
+        }
     }
 
     // revCovers is NOT required: a pipe-saddle band legitimately fails
