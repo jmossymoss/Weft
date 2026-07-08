@@ -7,6 +7,7 @@
 #include "weft/fixture.hpp"
 #include "weft/mesh.hpp"
 #include "weft/meshers.hpp"
+#include "weft/decoupled.hpp"
 #include "weft/model.hpp"
 #include "weft/export_fbx.hpp"
 #include "weft/export_gltf.hpp"
@@ -69,6 +70,9 @@ void usage() {
         "                      restores grid flats)\n"
         "    --adaptive        curvature-driven border counts (the CAD profile;\n"
         "                      big arcs get more segments, straights get 1)\n"
+        "    --decoupled       experimental decoupled-core mesher: every face\n"
+        "                      meshes its interior at its own count, shared\n"
+        "                      edges are sampled once, no global density solve\n"
 "    --flat-quads      dense grids on flat faces too (default: flats\n"
         "                      are boundary n-gons/webs; quads go to curves)\n"
         "    --quads           route flat plates through the quad-fill grid\n"
@@ -201,6 +205,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     std::string recipeOut;
     bool validate = validateOnly;
     bool noNormals = false;
+    bool decoupled = false;
     std::vector<double> lods;
     weft::ObjExportOptions objOpts;
     weft::Recipe recipe;
@@ -228,6 +233,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         else if (a == "--quads") gs.defaults.quadDominant = true;
         else if (a == "--flat-quads") gs.defaults.minimal = false;
         else if (a == "--adaptive") gs.defaults.adaptive = true;
+        else if (a == "--decoupled") decoupled = true;
         else if (a == "--density") {
             // One dial re-budgets the whole model: scales every
             // solved count (adaptive ones too) before the group
@@ -401,7 +407,9 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     }
 
     weft::GenerationReport report;
-    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    weft::PolyMesh mesh = decoupled
+                              ? weft::meshDecoupled(model, analysis, gs, &report)
+                              : weft::generate(model, analysis, gs, &report);
     weft::applyOps(mesh, model, recipe.ops);
     if (!output.empty()) {
         exportMesh(mesh, output);

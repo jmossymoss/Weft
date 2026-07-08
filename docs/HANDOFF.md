@@ -1,3 +1,66 @@
+# ACTIVE DIRECTION (2026-07-08): decoupled-core rewrite
+
+Branch `rewrite/decoupled-core` (PR #25). This supersedes the incremental
+meshers.cpp campaign below for new work. The bet, de-risked by two standalone
+spikes (`core/spike/{seam_bridge,decoupled_face}.cpp`, 12/12 + 7/7 green):
+faces couple ONLY through per-edge sample counts. Every shared B-rep edge is
+sampled ONCE at a count that is a pure input (per-edge pin / per-face
+radial+axial / geometry default); both incident faces read the same 3D points,
+so they weld with NO global density solve and NO ripple. Each face meshes its
+interior at its own count; the loop bridge absorbs interior↔border mismatches.
+
+## Increment 1 (LANDED this session) — real OCCT core scaffold
+New module `core/src/decoupled.cpp` (+ `core/include/weft/decoupled.hpp`),
+`weft::meshDecoupled(model, analysis, settings, report)`, wired to the CLI as
+`weft mesh --decoupled` (reuses GenerationSettings: radial/axial → revolution
+interior, gridU/gridV → planar, perEdge → pins). Reuses `weldVertices` +
+`triangulatePoly` + `validateMesh`. Additive and fully opt-in — `generate()` is
+untouched. Test `testDecoupled` in test_pipeline.cpp; ctest green.
+
+Pipeline: (1) solveEdgeCounts — per-edge count from geometry (full circle→
+radial, arc→proportional, line→1, freeform→curvature) + revolution rim/side
+proposals + perEdge pins. (2) sampleEdge — each edge's OWN 3D curve, arc-length
+for freeform / phase-anchored ring for closed circles (coaxial rings share
+column angles), N segments→N+1 pts. (3) per-face interior: meshRevolutionWall
+(full cylinder/cone — azimuth-ALIGNED rim rings lerped into a grid, cone apex
+collapse), meshFullPeriodic (full sphere/torus UV grid, v≥3 rings for a torus
+tube), planar single-loop → boundary n-gon, non-planar 2-loop → bridgeLoops,
+else keyhole floor. (4) weld per solid. (5) orientMeshConsistent — global
+flood-fill winding pass (per-face orient isn't a global guarantee).
+
+VERIFIED CLEAN (watertight + consistent winding + 0 fold): cylinder, box, cone,
+sphere, torus, fillet — and demo/barrel/ribbon/ribbonnotch. Cylinder = 16 wall
+quads + 2 n-gon caps (the Plasticity-parity target).
+
+## Increment 2+ — the leaks map exactly to unported meshers (do next)
+Run `weft mesh <f> --decoupled --validate`. Current leaks are all NOT-YET-
+PORTED cases falling to the floor:
+- PLATE-WEB (planar plate-with-hole): the keyhole floor leaves ~1 nm on
+  hole/boss (ear-clip fold on coarse-rectangle-outer vs fine-hole). The fix is
+  a clean quad collar around each hole (ring-junction / simple 2-bridge
+  decomposition into k+1 simple n-gons) — the handoff's own doctrine. This is
+  the biggest immediate quality win and unblocks most real plates.
+- PARTIAL REVOLUTION walls (slotted 99 opens, bossfillet 64, notched 7): partial
+  cylinders/cones/tori (open-u bands, rim notches). Port the open-band / rim-
+  notch logic to the decoupled model (side edges are shared v-borders; the seam
+  is internal). meshRevolutionWall currently requires 2 full closed rims.
+- UNEQUAL revolution rims: meshRevolutionWall bails to floor when the two rims
+  solve to different counts — bridge the mismatch (the decoupled thesis; the
+  spike already proves it). Needed for cones/frustums under per-edge pins.
+- FREEFORM UV-coons interior (hero-model bsplines): floor gives tris. Port a
+  UV-grid/coons interior gridded at the face's own count + bridged borders.
+- SHARED-BORDER periodic surfaces: meshFullPeriodic ignores the edge cache, so
+  a sphere/torus PATCH adjacent to other faces won't weld (fine standalone).
+Hero-model baseline under --decoupled (for regression tracking): flaregun
+3429p/515 open, foam 6706p/959 open, teleporter 5373p/1455 open — every open is
+one of the above unported meshers, not a border-contract violation.
+
+Everything below is the PRIOR campaign (meshers.cpp `generate()` path), still the
+production mesher and still valid history. The decoupled core will grow to
+replace it; until then both coexist.
+
+---
+
 # Session handoff — Plasticity-parity topology campaign
 
 Read this first in a fresh session, then continue the plan below.

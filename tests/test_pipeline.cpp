@@ -3,6 +3,7 @@
 // prints and exits non-zero on failure so CTest reports it.
 
 #include "weft/analysis.hpp"
+#include "weft/decoupled.hpp"
 #include "weft/edit.hpp"
 #include "weft/fixture.hpp"
 #include "weft/mesh.hpp"
@@ -1619,7 +1620,104 @@ void testWeldVerts() {
     CHECK(std::abs(loaded.ops[0].weldPoints[1][0] - lastPos[0]) < 1e-9);
 }
 
+// Decoupled mesher (rewrite/decoupled-core): the analytic backbone must be
+// watertight, fold-free, and quad-dominant WITHOUT a global density solve —
+// each face samples every shared edge once at a per-edge count and meshes its
+// interior independently. Also checks per-face count control flows through.
+void testDecoupled() {
+    std::printf("-- decoupled core (analytic backbone) --\n");
+    auto meshOf = [&](const char* shape, weft::GenerationSettings gs,
+                      weft::GenerationReport* rep = nullptr) {
+        std::string path = tmpPath(std::string("weft_dc_") + shape + ".step");
+        weft::writeStep(weft::makeFixture(shape), path);
+        weft::Model model = weft::loadStep(path);
+        weft::Analysis a = weft::analyze(model);
+        return weft::meshDecoupled(model, a, gs, rep);
+    };
+    auto foldFree = [&](const char* shape) {
+        std::string path = tmpPath(std::string("weft_dc_") + shape + ".step");
+        weft::Model model = weft::loadStep(path);
+        weft::Analysis a = weft::analyze(model);
+        weft::PolyMesh m = weft::meshDecoupled(model, a, weft::GenerationSettings{});
+        size_t nf = 0;
+        for (uint8_t f : weft::foldedPolys(model, m)) nf += f;
+        CHECK_EQ(nf, (size_t)0);
+    };
+    weft::GenerationSettings gs;  // defaults: radial 16, axial 1
+
+    // The analytic backbone welds watertight (consistent winding) with no
+    // global density solve — the whole point of the decoupled model. (Planar
+    // plate-with-hole faces ship on the keyhole floor for now; the clean quad
+    // collar / plate-web is the next increment, so hole/boss aren't asserted
+    // watertight here — only that they produce output.)
+    for (const char* shape :
+         {"cylinder", "box", "cone", "sphere", "torus", "fillet"}) {
+        weft::PolyMesh m = meshOf(shape, gs);
+        if (!isWatertight(m))
+            std::printf("   NOT watertight: %s\n", shape);
+        CHECK(isWatertight(m));
+        CHECK(m.polygonCount() > 0);
+        foldFree(shape);  // fold-free by the detector's own definition
+    }
+    for (const char* shape : {"hole", "boss"})
+        CHECK(meshOf(shape, gs).polygonCount() > 0);
+
+    // A plain cylinder is the canonical result: nu wall quads (nu==rim==radial)
+    // plus two n-gon caps, quad-dominant, zero tris.
+    {
+        weft::PolyMesh m = meshOf("cylinder", gs);
+        CHECK_EQ(m.countQuads(), (size_t)16 * 1);  // radial 16 x axial 1
+        CHECK_EQ(m.countNgons(), (size_t)2);       // the two caps
+        CHECK_EQ(m.countTris(), (size_t)0);
+    }
+
+    // Per-face count control is a pure input: cranking the wall's radial +
+    // axial re-meshes ONLY that grid (no ripple through a global solve), and
+    // the caps follow the shared rim count so the solid stays watertight.
+    {
+        weft::Model model =
+            [&] {
+                std::string p = tmpPath("weft_dc_cyl2.step");
+                weft::writeStep(weft::makeFixture("cylinder"), p);
+                return weft::loadStep(p);
+            }();
+        weft::Analysis a = weft::analyze(model);
+        int side = 0;
+        for (const auto& f : a.faces)
+            if (f.type == weft::SurfaceType::Cylinder) side = f.id;
+        weft::GenerationSettings g2;
+        g2.perFace[side] = g2.defaults;
+        g2.perFace[side].radial = 24;
+        g2.perFace[side].axial = 3;
+        weft::PolyMesh m = weft::meshDecoupled(model, a, g2);
+        CHECK_EQ(m.countQuads(), (size_t)24 * 3);
+        CHECK(isWatertight(m));
+    }
+
+    // Per-edge pins are pure inputs that flow straight to the sampled count.
+    // (Pinning ONE rim would make the wall's two rims unequal — the mismatch
+    // the loop bridge is meant to absorb; that revolution-band bridge is a
+    // later increment, so here both rims are pinned equally to keep the wall a
+    // plain grid.)
+    {
+        std::string p = tmpPath("weft_dc_cylpin.step");
+        weft::writeStep(weft::makeFixture("cylinder"), p);
+        weft::Model model = weft::loadStep(p);
+        weft::Analysis a = weft::analyze(model);
+        weft::GenerationSettings g3;
+        for (const auto& e : a.edges)
+            if (e.faceIds.size() == 2) g3.perEdge[e.id] = 20;
+        weft::GenerationReport rep;
+        weft::PolyMesh m = weft::meshDecoupled(model, a, g3, &rep);
+        for (const auto& [eid, n] : g3.perEdge)
+            CHECK_EQ(rep.edgeDivisions[eid], 20);
+        CHECK_EQ(m.countQuads(), (size_t)20 * 1);  // 20 wall quads (axial 1)
+        CHECK(isWatertight(m));
+    }
+}
+
 int main() {
+    RUN(testDecoupled);
     RUN(testCylinder);
     RUN(testBox);
     RUN(testCone);
