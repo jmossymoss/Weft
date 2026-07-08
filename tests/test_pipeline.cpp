@@ -1711,6 +1711,41 @@ void testDecoupled() {
         CHECK_EQ(m.countQuads(), (size_t)20 * 1);  // 20 wall quads (axial 1)
         CHECK(isWatertight(m));
     }
+
+    // Partial-revolution wall: a 270-degree wedge solid. Its curved wall is a
+    // partial cylinder (two rim arcs + two straight sides) — the open-u band
+    // that meshes as a structured quad grid welding on all four borders, no
+    // global solve. The solid stays watertight.
+    {
+        TopoDS_Shape wedge =
+            BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)),
+                                     10.0, 20.0, 1.5 * M_PI)
+                .Shape();
+        std::string p = tmpPath("weft_dc_wedge.step");
+        weft::writeStep(wedge, p);
+        weft::Model model = weft::loadStep(p);
+        weft::Analysis a = weft::analyze(model);
+        weft::GenerationReport rep;
+        weft::PolyMesh m = weft::meshDecoupled(model, a, weft::GenerationSettings{}, &rep);
+        CHECK(isWatertight(m));
+        size_t nf = 0;
+        for (uint8_t f : weft::foldedPolys(model, m)) nf += f;
+        CHECK_EQ(nf, (size_t)0);
+        // The partial cylinder wall is a revolution grid of pure quads.
+        int wall = 0;
+        for (const auto& f : a.faces)
+            if (f.type == weft::SurfaceType::Cylinder) wall = f.id;
+        CHECK(wall > 0);
+        CHECK(rep.faceMesher[wall] == weft::MesherKind::RevolutionGrid);
+        size_t wallTris = 0, wallQuads = 0;
+        for (size_t pi = 0; pi < m.polygons.size(); ++pi) {
+            if (m.polygonFaceId[pi] != wall) continue;
+            if (m.polygons[pi].size() == 3) ++wallTris;
+            else if (m.polygons[pi].size() == 4) ++wallQuads;
+        }
+        CHECK(wallQuads > 0);
+        CHECK_EQ(wallTris, (size_t)0);
+    }
 }
 
 int main() {

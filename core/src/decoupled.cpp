@@ -573,6 +573,114 @@ bool meshRevolutionWall(FacePart& part, const Model& model, const Analysis& an,
     return true;
 }
 
+// ---- partial revolution wall (open-u cylinder / cone band) ----------------
+// A partial wrap (< 360 deg) has an OPEN boundary: two rim ARCS (top + bottom)
+// and two straight SIDE lines. Rulings between the two arcs lie exactly on a
+// cylinder/cone, and the straight sides are uniform lines that coincide with
+// those rulings, so a structured grid (arcs azimuth-aligned then lerped, side
+// columns taken from the side edges' shared samples) welds on all four borders.
+// Requires exactly 2 arcs + 2 lines with matched counts; anything else (slots,
+// notches, curved sides, tori) bails to the floor.
+bool meshPartialRevolutionWall(FacePart& part, const Model& model,
+                               const EdgeCounts& ec, const SampleCache& cache,
+                               const FaceInfo& fi, MesherKind& kind) {
+    BRepAdaptor_Surface surf(part.face);
+    const GeomAbs_SurfaceType st = surf.GetType();
+    gp_Ax1 ax;
+    if (st == GeomAbs_Cylinder) ax = surf.Cylinder().Axis();
+    else if (st == GeomAbs_Cone) ax = surf.Cone().Axis();
+    else return false;
+    double umin, umax, vmin, vmax;
+    BRepTools::UVBounds(part.face, umin, umax, vmin, vmax);
+    if (umax - umin >= 2 * M_PI - 1e-6) return false;  // full wrap: closed path
+
+    // Classify boundary edges by curve type: open arcs vs straight lines.
+    std::vector<int> arcs, lines;
+    for (int eid : fi.edgeIds) {
+        if (eid < 1 || eid >= (int)cache.size() || !cache[eid].valid) continue;
+        const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
+        double f, l;
+        Handle(Geom_Curve) c3 = BRep_Tool::Curve(e, f, l);
+        if (c3.IsNull()) continue;
+        GeomAdaptor_Curve gac(c3, f, l);
+        if (gac.GetType() == GeomAbs_Circle && !cache[eid].closed)
+            arcs.push_back(eid);
+        else if (gac.GetType() == GeomAbs_Line)
+            lines.push_back(eid);
+        else
+            return false;  // unclassifiable border -> floor
+    }
+    if (arcs.size() != 2 || lines.size() != 2) return false;
+
+    const P3 O{ax.Location().X(), ax.Location().Y(), ax.Location().Z()};
+    const P3 D{ax.Direction().X(), ax.Direction().Y(), ax.Direction().Z()};
+    P3 ref = std::abs(D[2]) < 0.9 ? P3{0, 0, 1} : P3{1, 0, 0};
+    P3 X0 = cross(ref, D);
+    X0 = mul(X0, 1.0 / std::max(1e-12, len(X0)));
+    P3 Y0 = cross(D, X0);
+    auto azim = [&](const P3& p) {
+        P3 r = sub(p, O);
+        return std::atan2(dot(r, Y0), dot(r, X0));
+    };
+    auto height = [&](const std::vector<P3>& pts) {
+        double h = 0;
+        for (const P3& p : pts) h += dot(sub(p, O), D);
+        return h / pts.size();
+    };
+    // Orient an arc so index 0->1 goes CCW (increasing azimuth): both arcs then
+    // start at the same (umin) end and share azimuth per index.
+    auto orientCCW = [&](std::vector<P3> pts) {
+        if (pts.size() < 2) return pts;
+        double d = azim(pts[1]) - azim(pts[0]);
+        while (d > M_PI) d -= 2 * M_PI;
+        while (d < -M_PI) d += 2 * M_PI;
+        if (d < 0) std::reverse(pts.begin(), pts.end());
+        return pts;
+    };
+    std::vector<P3> a0 = orientCCW(cache[arcs[0]].pts);
+    std::vector<P3> a1 = orientCCW(cache[arcs[1]].pts);
+    std::vector<P3> bot = height(a0) <= height(a1) ? a0 : a1;
+    std::vector<P3> top = height(a0) <= height(a1) ? a1 : a0;
+    const int nu = (int)bot.size() - 1;
+    if ((int)top.size() - 1 != nu || nu < 1) return false;
+
+    // Side edges: match each to the arc end whose corner it shares.
+    auto d2 = [&](const P3& a, const P3& b) { return dot(sub(a, b), sub(a, b)); };
+    auto sideFrom = [&](const P3& lo, const P3& hi) -> std::vector<P3> {
+        for (int eid : lines) {
+            std::vector<P3> s = cache[eid].pts;
+            if (s.size() < 2) continue;
+            bool fwd = d2(s.front(), lo) < 1e-10 && d2(s.back(), hi) < 1e-10;
+            bool rev = d2(s.back(), lo) < 1e-10 && d2(s.front(), hi) < 1e-10;
+            if (rev) std::reverse(s.begin(), s.end());
+            if (fwd || rev) return s;
+        }
+        return {};
+    };
+    std::vector<P3> left = sideFrom(bot.front(), top.front());
+    std::vector<P3> right = sideFrom(bot.back(), top.back());
+    const int nv = (int)left.size() - 1;
+    if (nv < 1 || (int)right.size() - 1 != nv) return false;
+
+    std::vector<std::vector<uint32_t>> g(nv + 1, std::vector<uint32_t>(nu + 1));
+    for (int iv = 0; iv <= nv; ++iv)
+        for (int iu = 0; iu <= nu; ++iu) {
+            P3 p;
+            if (iv == 0) p = bot[iu];
+            else if (iv == nv) p = top[iu];
+            else if (iu == 0) p = left[iv];
+            else if (iu == nu) p = right[iv];
+            else p = lerp(bot[iu], top[iu], double(iv) / nv);
+            g[iv][iu] = part.addV(p);
+        }
+    for (int iv = 0; iv < nv; ++iv)
+        for (int iu = 0; iu < nu; ++iu)
+            part.addPoly({g[iv][iu], g[iv][iu + 1], g[iv + 1][iu + 1],
+                          g[iv + 1][iu]});
+    kind = MesherKind::RevolutionGrid;
+    return true;
+}
+
 // ---- planar plate with one hole: two-bridge decomposition -----------------
 // A flat face with one hole. A coarse outer (a rectangle's straight edges
 // sample to one segment each) bridged to a fine circular hole tangles under
@@ -963,6 +1071,8 @@ PolyMesh meshDecoupled(const Model& model, const Analysis& analysis,
         bool done = false;
         if (fi.type == SurfaceType::Cylinder || fi.type == SurfaceType::Cone) {
             done = meshRevolutionWall(part, model, analysis, ec, cache, fs, kind);
+            if (!done)
+                done = meshPartialRevolutionWall(part, model, ec, cache, fi, kind);
         } else if (fi.type == SurfaceType::Sphere ||
                    fi.type == SurfaceType::Torus) {
             done = meshFullPeriodic(part, fs, kind);

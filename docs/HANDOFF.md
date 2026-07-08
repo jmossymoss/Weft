@@ -41,24 +41,36 @@ watertight + consistent winding + 0 fold + quad-dominant; both promoted into the
 strict `testDecoupled` list. Non-planar 2-loop bands still take `bridgeLoops`;
 3+-loop plates still take the keyhole floor (multi-hole decomposition TODO).
 
-## Increment 3+ — the remaining leaks map exactly to unported meshers (do next)
-Run `weft mesh <f> --decoupled --validate`. Current leaks are all NOT-YET-
-PORTED cases falling to the floor:
-- MULTI-HOLE plates (3+ loops): extend the two-bridge decomposition to k holes
-  (k+1 simple n-gons) instead of the keyhole floor.
-- PARTIAL REVOLUTION walls (slotted 99 opens, bossfillet 64, notched 7): partial
-  cylinders/cones/tori (open-u bands, rim notches). Port the open-band / rim-
-  notch logic to the decoupled model (side edges are shared v-borders; the seam
-  is internal). meshRevolutionWall currently requires 2 full closed rims.
-- UNEQUAL revolution rims: meshRevolutionWall bails to floor when the two rims
-  solve to different counts — bridge the mismatch (the decoupled thesis; the
-  spike already proves it). Needed for cones/frustums under per-edge pins.
+## Increment 3 (LANDED) — partial-revolution walls (open-u cyl/cone bands)
+`meshPartialRevolutionWall`: a partial-wrap cylinder/cone wall (< 360 deg) is
+classified into two rim ARCS + two straight SIDE lines by curve type; the arcs
+are azimuth-oriented (index 0->1 CCW so both share azimuth per column) and the
+interior is lerped between them (rulings lie exactly on a cyl/cone), with side
+columns taken from the side edges' shared samples so all four borders weld. Only
+a clean 2-arc/2-line boundary with matched counts qualifies; anything else bails
+to the floor. barrel 118p/112t -> 66p/28t; a 270-deg wedge solid is a watertight
+pure-quad wall (new `testDecoupled` case). Hero models gained quads / lost tris
+(flaregun 2769t->2293t, foam +450 quads) with no new leaks.
+
+## Increment 4+ — remaining leaks map exactly to unported meshers (do next)
+Run `weft mesh <f> --decoupled --validate`. Current leaks:
+- REVOLUTION WALL WITH INTERIOR HOLES (slotted 99 opens): a cylinder wall with
+  bores cutting through it (interior closed-circle loops) — the old
+  meshRevolutionInsert: grid the wall, drop cells the holes cover, web the
+  staircase to each hole's exact rim samples. meshRevolutionWall bails (it sees
+  >2 closed rims). This is the biggest slotted/hero-model win.
+- RIM-OPEN NOTCH (notched 7 opens): a full/partial wall whose rim is cut by a
+  notch open to the border — old meshRevolutionRimNotch.
+- TORUS partial (bossfillet 64 opens): partial-torus fillet rings; not ruled, so
+  the interior needs surf.Value (or coons), not the cyl/cone lerp.
+- MULTI-HOLE plates (3+ loops): extend the two-bridge decomposition to k holes.
+- UNEQUAL revolution rims: bridge the mismatch (the spike proves it).
 - FREEFORM UV-coons interior (hero-model bsplines): floor gives tris. Port a
   UV-grid/coons interior gridded at the face's own count + bridged borders.
 - SHARED-BORDER periodic surfaces: meshFullPeriodic ignores the edge cache, so
   a sphere/torus PATCH adjacent to other faces won't weld (fine standalone).
-Hero-model baseline under --decoupled (for regression tracking): flaregun
-3429p/515 open, foam 6706p/959 open, teleporter 5373p/1455 open — every open is
+Hero-model baseline under --decoupled (regression tracking): flaregun
+3043p/515 open, foam 6084p/959 open, teleporter 4901p/1455 open — every open is
 one of the above unported meshers, not a border-contract violation.
 
 Everything below is the PRIOR campaign (meshers.cpp `generate()` path), still the
