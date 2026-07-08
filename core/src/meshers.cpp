@@ -8098,11 +8098,72 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                     // total turn ducks the angle tolerance still reads
                     // as blatantly faceted at one span.
                     const GeomAbs_CurveType ct = c.GetType();
-                    const double frac = (ct == GeomAbs_Line ||
-                                         ct == GeomAbs_Circle ||
-                                         ct == GeomAbs_Ellipse)
-                                            ? 0.2
-                                            : 0.05;
+                    // Primitive-priority density (the user's ordering:
+                    // cylinder/sphere/box/torus drive the count; curves and
+                    // interior boolean cuts follow). A bspline/bezier edge
+                    // that is a near-circular boolean-cut arc between PRIMITIVE
+                    // analytic faces — and none of them a FILLET, which sets
+                    // its own support-loop density and folds if starved — is a
+                    // circle in disguise. Give it the circle fraction so the
+                    // cut arcs stop over-sampling and the clean primitive
+                    // drives the ring (foam's top ring). A freeform SURFACE
+                    // (a grip) or a fillet on the edge keeps the tight 0.5%
+                    // gate; a varying machined profile fails the constant-
+                    // curvature test and keeps it too.
+                    bool primitiveDriven = false;
+                    if ((ct == GeomAbs_BSplineCurve ||
+                         ct == GeomAbs_BezierCurve) &&
+                        model.edgeToFaces.Contains(edge)) {
+                        primitiveDriven = true;
+                        for (TopTools_ListIteratorOfListOfShape fit(
+                                 model.edgeToFaces.FindFromKey(edge));
+                             fit.More(); fit.Next()) {
+                            const TopoDS_Face f2 = TopoDS::Face(fit.Value());
+                            const GeomAbs_SurfaceType st =
+                                BRepAdaptor_Surface(f2).GetType();
+                            const bool analytic =
+                                st == GeomAbs_Plane || st == GeomAbs_Cylinder ||
+                                st == GeomAbs_Cone || st == GeomAbs_Sphere ||
+                                st == GeomAbs_Torus;
+                            const auto pit =
+                                plans.find(model.faces.FindIndex(f2));
+                            const bool fillet =
+                                pit != plans.end() && pit->second.isFillet;
+                            if (!analytic || fillet) {
+                                primitiveDriven = false;
+                                break;
+                            }
+                        }
+                        if (primitiveDriven) {
+                            double kmin = 1e300, kmax = 0;
+                            for (int i = 0; i < 5; ++i) {
+                                const double t = c.FirstParameter() +
+                                                 (c.LastParameter() -
+                                                  c.FirstParameter()) *
+                                                     i / 4.0;
+                                gp_Pnt P;
+                                gp_Vec D1, D2;
+                                c.D2(t, P, D1, D2);
+                                const double d1 = D1.Magnitude();
+                                if (d1 < 1e-9) {
+                                    kmax = 0;
+                                    break;
+                                }
+                                const double k = D1.Crossed(D2).Magnitude() /
+                                                 (d1 * d1 * d1);
+                                kmin = std::min(kmin, k);
+                                kmax = std::max(kmax, k);
+                            }
+                            if (!(kmax > 1e-9 && kmax < 2.0 * kmin)) {
+                                primitiveDriven = false;
+                            }
+                        }
+                    }
+                    const double frac =
+                        (ct == GeomAbs_Line || ct == GeomAbs_Circle ||
+                         ct == GeomAbs_Ellipse || primitiveDriven)
+                            ? 0.2
+                            : 0.05;
                     chord = std::max(chord * frac * extent, 1e-9);
                 }
                 try {
