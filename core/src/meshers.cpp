@@ -13575,6 +13575,20 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 }
             }
         };
+        // Lower a whole shared-edge group to a simple-density target (never
+        // below 1). Used to collapse a castellated boolean rim's freeform
+        // over-sampling to clean spans; the group is shared only with
+        // analytic body strips, which mesh exactly at low counts.
+        auto capGroup = [&](int eid, int target) {
+            target = std::max(1, target);
+            const int root = density.groups.find(eid);
+            for (int e = 1; e <= model.edgeCount(); ++e) {
+                if (density.groups.find(e) == root &&
+                    solvedEdge[e] > target) {
+                    solvedEdge[e] = target;
+                }
+            }
+        };
         for (int pass = 0; pass < 16; ++pass) {
             bool changed = false;
             for (const auto& [fid, plan] : plans) {
@@ -13629,6 +13643,21 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 const long light = std::max<long>(1, std::min(tLo, tHi));
                 if (settings.defaults.minimal && large.size() >= 24 &&
                     heavy >= 8 * light) {
+                    // Collapse the castellated rim's over-sampled arcs to
+                    // simple density (each short analytic-boundary arc needs
+                    // ~1 segment), so the band meshes as clean spans instead
+                    // of one spanning column per arc. Shared only with the
+                    // analytic body strips, which stay exact at count 1;
+                    // user-pinned rings keep their explicit count.
+                    for (int e : large) {
+                        if (density.pinnedRoots.count(density.groups.find(e))) {
+                            continue;
+                        }
+                        if (solvedEdge[e] > 1) {
+                            capGroup(e, 1);
+                            changed = true;
+                        }
+                    }
                     continue;
                 }
                 // A user-pinned ring never gets raised behind their
