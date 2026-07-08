@@ -755,9 +755,13 @@ bool meshRevolutionBandLoops(FacePart& part, const Model& model,
                              const SampleCache& cache, MesherKind& kind) {
     BRepAdaptor_Surface surf(part.face);
     gp_Ax1 ax;
-    if (surf.GetType() == GeomAbs_Cylinder) ax = surf.Cylinder().Axis();
-    else if (surf.GetType() == GeomAbs_Cone) ax = surf.Cone().Axis();
-    else return false;
+    switch (surf.GetType()) {
+        case GeomAbs_Cylinder: ax = surf.Cylinder().Axis(); break;
+        case GeomAbs_Cone: ax = surf.Cone().Axis(); break;
+        case GeomAbs_Torus: ax = surf.Torus().Axis(); break;
+        case GeomAbs_Sphere: ax = surf.Sphere().Position().Axis(); break;
+        default: return false;
+    }
     std::vector<std::vector<P3>> loops = wireLoopsP3(model, part.face, cache);
     if (loops.size() != 2) return false;
     const P3 O{ax.Location().X(), ax.Location().Y(), ax.Location().Z()};
@@ -1164,11 +1168,23 @@ bool meshPlanarMultiHole(FacePart& part, std::vector<uint32_t> O,
 // every ring means adjacent rings share u by construction (no twist). u wraps;
 // v wraps on a torus and collapses to poles on a sphere. Trimmed patches
 // (u-span < full period) fall through to the floor.
-bool meshFullPeriodic(FacePart& part, const FaceMeshSettings& fs,
-                      MesherKind& kind) {
+bool meshFullPeriodic(FacePart& part, const Model& model, const FaceInfo& fi,
+                      const FaceMeshSettings& fs, MesherKind& kind) {
     BRepAdaptor_Surface surf(part.face);
     const GeomAbs_SurfaceType st = surf.GetType();
     if (st != GeomAbs_Sphere && st != GeomAbs_Torus) return false;
+    // Only a COMPLETE closed surface grids straight from surf.Value; a patch
+    // (sphere zone, torus fillet band) has shared boundary edges whose samples
+    // must come from the cache, so route it to the band mesher instead.
+    for (int eid : fi.edgeIds) {
+        if (eid < 1 || eid > model.edgeCount()) continue;
+        const TopoDS_Shape& e = model.edges(eid);
+        if (!model.edgeToFaces.Contains(e)) continue;
+        for (const TopoDS_Shape& s : model.edgeToFaces.FindFromKey(e)) {
+            int f2 = model.faces.FindIndex(s);
+            if (f2 >= 1 && f2 != part.faceId) return false;  // shared -> patch
+        }
+    }
     double umin, umax, vmin, vmax;
     BRepTools::UVBounds(part.face, umin, umax, vmin, vmax);
     if ((umax - umin) < 2 * M_PI - 1e-6) return false;  // trimmed -> floor
@@ -1495,7 +1511,9 @@ PolyMesh meshDecoupled(const Model& model, const Analysis& analysis,
                 done = meshRevolutionBandLoops(part, model, cache, kind);
         } else if (fi.type == SurfaceType::Sphere ||
                    fi.type == SurfaceType::Torus) {
-            done = meshFullPeriodic(part, fs, kind);
+            done = meshFullPeriodic(part, model, fi, fs, kind);
+            if (!done)  // a band/zone patch: bridge its two shared rim loops
+                done = meshRevolutionBandLoops(part, model, cache, kind);
         }
         if (!done) {
             std::map<std::array<double, 3>, uint32_t> dedup;

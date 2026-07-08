@@ -16,6 +16,7 @@
 #include "weft/validate.hpp"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <algorithm>
@@ -448,7 +449,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         std::printf("%s", weft::formatReport(vr).c_str());
         if (!vr.watertight()) return 1;
     }
-    if (report.faceMesher.size() <= 48) {
+    if (report.faceMesher.size() <= 48 || std::getenv("WEFT_FACE_KINDS")) {
         for (const auto& [fid, kind] : report.faceMesher) {
             std::printf("  face #%-3d %s\n", fid, weft::mesherKindName(kind));
         }
