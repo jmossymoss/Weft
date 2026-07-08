@@ -47,6 +47,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <map>
+#include <set>
+#include <string>
 #include <vector>
 
 namespace weft {
@@ -1028,10 +1030,16 @@ bool meshRevolutionWallInsert(FacePart& part, const Model& model,
 // n-gons with real shared edges (the codebase's doctrine — no ear-clip-over-
 // keyhole to fold; watertight for any count ratio). All-or-nothing: if any hole
 // can't find a clear pair of bridges the whole face bails to the floor.
+// `geom` supplies the 2D projection coordinates (part.verts for a flat face,
+// per-vertex UV for a curved face). With `triangulate`, each simple output
+// polygon is ear-clipped (reliable — they carry no holes) instead of emitted as
+// an n-gon: that makes this a robust curved-face FLOOR (bridge-decompose, then
+// triangulate) with none of the keyhole ear-clip's self-overlap.
 bool meshPlanarMultiHole(FacePart& part, std::vector<uint32_t> O,
-                         std::vector<std::vector<uint32_t>> holes) {
+                         std::vector<std::vector<uint32_t>> holes,
+                         const std::vector<P3>& geom, bool triangulate) {
     if (O.size() < 3 || holes.empty()) return false;
-    P3 nrm = newell(part.verts, O);
+    P3 nrm = newell(geom, O);
     if (len(nrm) < 1e-14) return false;
     nrm = mul(nrm, 1.0 / len(nrm));
     P3 refA = std::abs(nrm[2]) < 0.9 ? P3{0, 0, 1} : P3{1, 0, 0};
@@ -1039,8 +1047,7 @@ bool meshPlanarMultiHole(FacePart& part, std::vector<uint32_t> O,
     ex = mul(ex, 1.0 / std::max(1e-12, len(ex)));
     P3 ey = cross(nrm, ex);
     auto uv = [&](uint32_t v) {
-        return std::array<double, 2>{dot(part.verts[v], ex),
-                                     dot(part.verts[v], ey)};
+        return std::array<double, 2>{dot(geom[v], ex), dot(geom[v], ey)};
     };
     auto sArea = [&](const std::vector<uint32_t>& L) {
         double s = 0;
@@ -1158,7 +1165,13 @@ bool meshPlanarMultiHole(FacePart& part, std::vector<uint32_t> O,
         stack.push_back(std::move(w1));
         stack.push_back(std::move(w2));
     }
-    for (auto& p : out) part.addPoly(std::move(p));
+    for (auto& p : out) {
+        if (triangulate)
+            for (const auto& t : triangulatePoly(geom, p))
+                part.addPoly({p[t[0]], p[t[1]], p[t[2]]});
+        else
+            part.addPoly(std::move(p));
+    }
     return true;
 }
 
@@ -1360,21 +1373,46 @@ bool freeformFloor(SurfaceType t) {
 void meshFloorAuto(FacePart& part, const std::vector<Loop>& loops,
                    bool useUV) {
     if (loops.empty()) return;
-    if (!useUV) { meshFloor(part, loops, part.verts); return; }
-    std::vector<P3> uvp(part.verts.size(), P3{0, 0, 0});
-    double umin = 1e300, umax = -1e300, vmin = 1e300, vmax = -1e300;
-    bool haveUV = part.anchors.size() == part.verts.size();
-    for (size_t i = 0; i < part.anchors.size() && haveUV; ++i) {
-        uvp[i] = {part.anchors[i].u, part.anchors[i].v, 0};
-        umin = std::min(umin, part.anchors[i].u);
-        umax = std::max(umax, part.anchors[i].u);
-        vmin = std::min(vmin, part.anchors[i].v);
-        vmax = std::max(vmax, part.anchors[i].v);
+    std::vector<P3> uvp;
+    bool wantUV = useUV;
+    if (useUV) {
+        uvp.assign(part.verts.size(), P3{0, 0, 0});
+        double umin = 1e300, umax = -1e300, vmin = 1e300, vmax = -1e300;
+        bool haveUV = part.anchors.size() == part.verts.size();
+        for (size_t i = 0; i < part.anchors.size() && haveUV; ++i) {
+            uvp[i] = {part.anchors[i].u, part.anchors[i].v, 0};
+            umin = std::min(umin, part.anchors[i].u);
+            umax = std::max(umax, part.anchors[i].u);
+            vmin = std::min(vmin, part.anchors[i].v);
+            vmax = std::max(vmax, part.anchors[i].v);
+        }
+        const bool degenerate = !haveUV || (umax - umin) < 1e-9 ||
+                                (vmax - vmin) < 1e-9;
+        const bool seamWrap = (umax - umin) > 1.9 * M_PI;  // annulus, not a disk
+        if (degenerate || seamWrap) wantUV = false;
     }
-    const bool degenerate = !haveUV || (umax - umin) < 1e-9 ||
-                            (vmax - vmin) < 1e-9;
-    const bool seamWrap = (umax - umin) > 1.9 * M_PI;  // annulus, not a disk
-    meshFloor(part, loops, (degenerate || seamWrap) ? part.verts : uvp);
+    const std::vector<P3>& geom = wantUV ? uvp : part.verts;
+    // Outer = the max-area loop; a single loop triangulates directly (reliable),
+    // multiple loops bridge-decompose into simple polygons then triangulate —
+    // no keyhole ear-clip, so no self-overlap.
+    size_t o = 0;
+    double oa = -1;
+    for (size_t i = 0; i < loops.size(); ++i) {
+        double a = len(newell(geom, loops[i].verts));
+        if (a > oa) { oa = a; o = i; }
+    }
+    if (loops[o].verts.size() < 3) return;
+    if (loops.size() == 1) {
+        const auto& r = loops[o].verts;
+        for (const auto& t : triangulatePoly(geom, r))
+            part.addPoly({r[t[0]], r[t[1]], r[t[2]]});
+        return;
+    }
+    std::vector<std::vector<uint32_t>> hs;
+    for (size_t i = 0; i < loops.size(); ++i)
+        if (i != o) hs.push_back(loops[i].verts);
+    if (!meshPlanarMultiHole(part, loops[o].verts, hs, geom, /*triangulate=*/true))
+        meshFloor(part, loops, geom);  // keyhole fallback if bridges fail
 }
 
 // ---- global winding consistency -------------------------------------------
@@ -1538,7 +1576,8 @@ PolyMesh meshDecoupled(const Model& model, const Analysis& analysis,
                 std::vector<std::vector<uint32_t>> hs;
                 for (size_t i = 0; i < loops.size(); ++i)
                     if (i != o) hs.push_back(loops[i].verts);
-                if (meshPlanarMultiHole(part, loops[o].verts, hs))
+                if (meshPlanarMultiHole(part, loops[o].verts, hs, part.verts,
+                                        /*triangulate=*/false))
                     kind = MesherKind::PlateWeb;
                 else {
                     meshFloorAuto(part, loops, false);
@@ -1609,6 +1648,66 @@ PolyMesh meshDecoupled(const Model& model, const Analysis& analysis,
     // Consistent winding across faces (game-engine normals): the per-face
     // material-normal orient() is a good seed but not a global guarantee.
     orientMeshConsistent(mesh, model);
+
+    // Border-contract verifier (env-gated): every sample of an edge shared by
+    // two real faces must land on a welded vertex used by >= 2 faces. Reports
+    // which mesher pairs fail to weld.
+    if (std::getenv("WEFT_DC_CONTRACT")) {
+        auto key = [](const P3& p) {
+            return std::array<long long, 3>{llround(p[0] * 1e5),
+                                            llround(p[1] * 1e5),
+                                            llround(p[2] * 1e5)};
+        };
+        std::map<std::array<long long, 3>, uint32_t> pos;
+        for (uint32_t v = 0; v < mesh.vertices.size(); ++v)
+            pos.emplace(key(mesh.vertices[v]), v);
+        std::vector<std::set<int>> vf(mesh.vertices.size());
+        for (size_t p = 0; p < mesh.polygons.size(); ++p)
+            for (uint32_t v : mesh.polygons[p]) vf[v].insert(mesh.polygonFaceId[p]);
+        int bad = 0;
+        std::map<std::pair<std::string, std::string>, int> pairs;
+        for (int eid = 1; eid <= model.edgeCount(); ++eid) {
+            if (eid >= (int)cache.size() || !cache[eid].valid) continue;
+            const TopoDS_Shape& e = model.edges(eid);
+            if (!model.edgeToFaces.Contains(e)) continue;
+            std::set<int> fset;
+            for (const TopoDS_Shape& s : model.edgeToFaces.FindFromKey(e)) {
+                int f2 = model.faces.FindIndex(s);
+                if (f2 >= 1 && !settings.forFace(f2).exclude) fset.insert(f2);
+            }
+            if (fset.size() < 2) continue;  // input boundary or self-seam
+            std::vector<int> fs(fset.begin(), fset.end());
+            for (const P3& sp : cache[eid].pts) {
+                auto it = pos.find(key(sp));
+                int uses = it == pos.end() ? 0 : (int)vf[it->second].size();
+                if (uses < 2) {
+                    ++bad;
+                    auto nm = [&](int f) {
+                        return kinds.count(f) ? mesherKindName(kinds[f]) : "?";
+                    };
+                    std::string k0 = nm(fs[0]), k1 = nm(fs[1]);
+                    if (k0 > k1) std::swap(k0, k1);
+                    if (bad <= 5 && std::getenv("WEFT_DC_CONTRACT2")) {
+                        std::string ub;
+                        if (it != pos.end())
+                            for (int f : vf[it->second]) ub += " " + std::to_string(f);
+                        std::fprintf(stderr,
+                                     "  eid=%d f=%d,%d(%s,%s) sample(%.2f,%.2f,%.2f) "
+                                     "vert=%s usedBy:%s\n",
+                                     eid, fs[0], fs[1], nm(fs[0]), nm(fs[1]),
+                                     sp[0], sp[1], sp[2],
+                                     it == pos.end() ? "MISSING" : "found", ub.c_str());
+                    }
+                    pairs[{k0, k1}]++;
+                    break;
+                }
+            }
+        }
+        std::fprintf(stderr, "[contract] %d shared edges not fully welded\n", bad);
+        for (auto& [k, c] : pairs)
+            std::fprintf(stderr, "  %-16s <-> %-16s : %d\n", k.first.c_str(),
+                         k.second.c_str(), c);
+    }
 
     if (report) {
         report->faceMesher = kinds;
