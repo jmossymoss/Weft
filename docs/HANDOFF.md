@@ -38,10 +38,14 @@ NEXT (in priority order):
    recovery. The floor path is meshFloorAuto in decoupled.cpp.
 2. Decide whether to raise the default decoupled weld for imports (production
    keeps 1e-6 + relies on --weld, so leaving it is consistent).
-3. Then: port the app/CLI to prefer the decoupled path, and A/B the two meshers.
-   (NB: the decoupled mesher is COMPILED by the default build.sh/build.bat but is
-   OPT-IN at runtime — only `weft mesh --decoupled` uses it; plain `weft mesh` and
-   the app still use production generate(). This step makes it the default.)
+3. A/B is now WIRED (was: port the app/CLI to prefer decoupled). The app has a
+   "decoupled core (experimental)" toggle in the Topology panel (or launch with
+   `weft_app --decoupled`); the worker branches generate()/meshDecoupled() on a
+   snapshotted flag. CLI opt-in is `weft mesh --decoupled`; build_decoupled.sh/.bat
+   build + run it in one step. DEFAULT is still production generate() everywhere —
+   flipping the default (and deciding whether the app should remember the toggle in
+   the recipe) is the remaining call. The decoupled mesher is COMPILED by the
+   default build.sh/build.bat regardless; it is just opt-in at runtime.
 
 ---
 
