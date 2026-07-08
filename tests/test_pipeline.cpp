@@ -1645,13 +1645,12 @@ void testDecoupled() {
     };
     weft::GenerationSettings gs;  // defaults: radial 16, axial 1
 
-    // The analytic backbone welds watertight (consistent winding) with no
-    // global density solve — the whole point of the decoupled model. (Planar
-    // plate-with-hole faces ship on the keyhole floor for now; the clean quad
-    // collar / plate-web is the next increment, so hole/boss aren't asserted
-    // watertight here — only that they produce output.)
-    for (const char* shape :
-         {"cylinder", "box", "cone", "sphere", "torus", "fillet"}) {
+    // The analytic backbone plus plate-with-hole all weld watertight (with
+    // consistent winding) and fold-free WITHOUT a global density solve — the
+    // whole point of the decoupled model. hole/boss exercise the two-bridge
+    // plate decomposition (each holed plate = two simple n-gons).
+    for (const char* shape : {"cylinder", "box", "cone", "sphere", "torus",
+                              "fillet", "hole", "boss"}) {
         weft::PolyMesh m = meshOf(shape, gs);
         if (!isWatertight(m))
             std::printf("   NOT watertight: %s\n", shape);
@@ -1659,8 +1658,6 @@ void testDecoupled() {
         CHECK(m.polygonCount() > 0);
         foldFree(shape);  // fold-free by the detector's own definition
     }
-    for (const char* shape : {"hole", "boss"})
-        CHECK(meshOf(shape, gs).polygonCount() > 0);
 
     // A plain cylinder is the canonical result: nu wall quads (nu==rim==radial)
     // plus two n-gon caps, quad-dominant, zero tris.

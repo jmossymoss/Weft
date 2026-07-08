@@ -32,14 +32,20 @@ VERIFIED CLEAN (watertight + consistent winding + 0 fold): cylinder, box, cone,
 sphere, torus, fillet — and demo/barrel/ribbon/ribbonnotch. Cylinder = 16 wall
 quads + 2 n-gon caps (the Plasticity-parity target).
 
-## Increment 2+ — the leaks map exactly to unported meshers (do next)
+## Increment 2 (LANDED) — plate-web (planar plate-with-hole)
+`meshPlanarAnnulus`: a flat face with one hole is cut by TWO non-crossing,
+visibility-checked bridges into two SIMPLE n-gons (each emitted whole; the
+engine triangulates n-gons — no ear-clip-over-keyhole to fold). Robust for any
+count ratio (coarse rectangle outer vs fine circular hole). hole/boss now
+watertight + consistent winding + 0 fold + quad-dominant; both promoted into the
+strict `testDecoupled` list. Non-planar 2-loop bands still take `bridgeLoops`;
+3+-loop plates still take the keyhole floor (multi-hole decomposition TODO).
+
+## Increment 3+ — the remaining leaks map exactly to unported meshers (do next)
 Run `weft mesh <f> --decoupled --validate`. Current leaks are all NOT-YET-
 PORTED cases falling to the floor:
-- PLATE-WEB (planar plate-with-hole): the keyhole floor leaves ~1 nm on
-  hole/boss (ear-clip fold on coarse-rectangle-outer vs fine-hole). The fix is
-  a clean quad collar around each hole (ring-junction / simple 2-bridge
-  decomposition into k+1 simple n-gons) — the handoff's own doctrine. This is
-  the biggest immediate quality win and unblocks most real plates.
+- MULTI-HOLE plates (3+ loops): extend the two-bridge decomposition to k holes
+  (k+1 simple n-gons) instead of the keyhole floor.
 - PARTIAL REVOLUTION walls (slotted 99 opens, bossfillet 64, notched 7): partial
   cylinders/cones/tori (open-u bands, rim notches). Port the open-band / rim-
   notch logic to the decoupled model (side edges are shared v-borders; the seam
