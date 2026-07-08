@@ -1,3 +1,39 @@
+# START HERE — next session (short handoff, 2026-07-08)
+
+WHERE WE ARE. The decoupled-core rewrite is a real OCCT mesher: `weft mesh <f>
+--decoupled`, all in `core/src/decoupled.cpp` (~1900 lines), additive/opt-in
+(production `generate()` untouched). 14 commits landed this session on branch
+`rewrite/decoupled-core`. The structured meshers are SOUND — the border contract
+holds everywhere. flaregun is watertight (0 opens); 14/15 fixtures fully
+watertight (only `notched` leaks). foam/teleporter's remaining opens are
+SUB-TOLERANCE INPUT GAPS (~0.007mm imprint artifacts in the sloppy CAD) + input
+open-shells, not mesher bugs — `--weld 0.01` closes them (foam 271->108,
+teleporter 630->114). Full increment log + diagnosis is in "ACTIVE DIRECTION"
+and the increment sections below.
+
+STANDING CONSTRAINTS. Commit as `Jordan Moss <jordan.moss@live.co.uk>`, NO AI
+attribution anywhere (no Co-Authored-By/Claude trailers, no PR footer, no
+`claude/` branch names). User's STEP models live in `tests/STEP_Examples/`
+(foam, teleporter, flaregun are committed). Build: `./build.sh` (full+ctest) or
+`cmake --build build --target weft weft_tests -j4`.
+
+VERIFY / DIAGNOSE. `weft mesh <f> --decoupled --validate` (opens/nm/winding/
+folds). `WEFT_DC_CONTRACT=1` = border-contract verifier (which mesher pairs
+fail to weld; +`WEFT_DC_CONTRACT2=1` for per-edge detail). `WEFT_FACE_KINDS=1` =
+per-face mesher dump. ctest = `tests/test_pipeline.cpp::testDecoupled`.
+
+NEXT (in priority order):
+1. `notched` rim-open-notch — the one remaining clean mesher gap (7 opens on one
+   fixture): a full/partial wall whose rim is cut by a notch open to the border.
+2. FREEFORM UV-COONS interior (quality, not opens): grid bspline patches as quad
+   grids instead of the tri floor — the floor path is meshFloorAuto (surface UV,
+   pcurve-based, seam-unwrapped) in decoupled.cpp.
+3. Decide whether to raise the default decoupled weld for imports (production
+   keeps 1e-6 + relies on --weld, so leaving it is consistent).
+4. Then: port the app/CLI to prefer the decoupled path, and A/B the two meshers.
+
+---
+
 # ACTIVE DIRECTION (2026-07-08): decoupled-core rewrite
 
 Branch `rewrite/decoupled-core` (PR #25). This supersedes the incremental
