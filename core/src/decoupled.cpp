@@ -1406,8 +1406,8 @@ bool freeformFloor(SurfaceType t) {
 // surface UV — taken from the loops' exact pcurve (u,v) — so a bspline patch
 // conforms to its true trim boundary instead of collapsing under a 3D-plane
 // projection (or a self-intersecting point-projection). Bail to the 3D vertices
-// when the UV is unusable: a full-period seam wrap (u spans ~2pi, so the flat UV
-// is an annulus not a disk), or a missing pcurve on any loop vertex.
+// when the UV is unusable: missing pcurves, or a genuine annulus (a single loop
+// encircling the seam), which is bridged as a band instead.
 void meshFloorAuto(FacePart& part, const std::vector<Loop>& loops,
                    bool useUV) {
     if (loops.empty()) return;
@@ -1415,24 +1415,80 @@ void meshFloorAuto(FacePart& part, const std::vector<Loop>& loops,
     bool wantUV = useUV;
     if (useUV) {
         uvp.assign(part.verts.size(), P3{0, 0, 0});
-        double umin = 1e300, umax = -1e300, vmin = 1e300, vmax = -1e300;
+        BRepAdaptor_Surface bs(part.face);
+        const double uPer = bs.IsUPeriodic() ? bs.UPeriod() : 0.0;
+        const double vPer = bs.IsVPeriodic() ? bs.VPeriod() : 0.0;
+        // Unwrap each loop so a boundary that crosses the periodic seam stays
+        // continuous (a torus fillet segment straddling u=0 becomes a simple
+        // loop instead of a torn one), then shift each hole loop by whole
+        // periods to sit near the outer loop.
+        auto unwrap = [](double x, double ref, double per) {
+            if (per <= 0) return x;
+            while (x - ref > per * 0.5) x -= per;
+            while (ref - x > per * 0.5) x += per;
+            return x;
+        };
+        struct UL { std::vector<std::array<double, 2>> uv; std::array<double, 2> mean; double area; };
+        std::vector<UL> uls;
         bool haveUV = true;
         for (const Loop& lp : loops) {
+            UL ul;
+            ul.uv.resize(lp.verts.size());
+            double su = 0, sv = 0;
             for (size_t k = 0; k < lp.verts.size(); ++k) {
-                const auto& q = lp.uv[k];
+                auto q = lp.uv[k];
                 if (std::isnan(q[0]) || std::isnan(q[1])) { haveUV = false; break; }
-                uvp[lp.verts[k]] = {q[0], q[1], 0};
-                umin = std::min(umin, q[0]);
-                umax = std::max(umax, q[0]);
-                vmin = std::min(vmin, q[1]);
-                vmax = std::max(vmax, q[1]);
+                if (k > 0) {
+                    q[0] = unwrap(q[0], ul.uv[k - 1][0], uPer);
+                    q[1] = unwrap(q[1], ul.uv[k - 1][1], vPer);
+                }
+                ul.uv[k] = q;
+                su += q[0];
+                sv += q[1];
             }
             if (!haveUV) break;
+            ul.mean = {su / ul.uv.size(), sv / ul.uv.size()};
+            double a = 0;
+            const int n = (int)ul.uv.size();
+            for (int i = 0; i < n; ++i) {
+                const auto& p = ul.uv[i];
+                const auto& r = ul.uv[(i + 1) % n];
+                a += p[0] * r[1] - r[0] * p[1];
+            }
+            ul.area = a;
+            uls.push_back(std::move(ul));
         }
-        const bool degenerate = !haveUV || (umax - umin) < 1e-9 ||
-                                (vmax - vmin) < 1e-9;
-        const bool seamWrap = (umax - umin) > 1.9 * M_PI;  // annulus, not a disk
-        if (degenerate || seamWrap) wantUV = false;
+        if (haveUV) {
+            size_t oi = 0;
+            for (size_t i = 1; i < uls.size(); ++i)
+                if (std::abs(uls[i].area) > std::abs(uls[oi].area)) oi = i;
+            double umin = 1e300, umax = -1e300, vmin = 1e300, vmax = -1e300;
+            for (size_t i = 0; i < uls.size(); ++i) {
+                double du = 0, dv = 0;
+                if (i != oi) {
+                    du = unwrap(uls[i].mean[0], uls[oi].mean[0], uPer) - uls[i].mean[0];
+                    dv = unwrap(uls[i].mean[1], uls[oi].mean[1], vPer) - uls[i].mean[1];
+                }
+                for (size_t k = 0; k < uls[i].uv.size(); ++k) {
+                    double u = uls[i].uv[k][0] + du, v = uls[i].uv[k][1] + dv;
+                    uvp[loops[i].verts[k]] = {u, v, 0};
+                    umin = std::min(umin, u); umax = std::max(umax, u);
+                    vmin = std::min(vmin, v); vmax = std::max(vmax, v);
+                }
+            }
+            // If even after unwrapping the outer spans a whole period, it truly
+            // encircles the seam (an annulus, not a disk) -> the flat UV can't be
+            // one simple polygon; fall back to the 3D projection.
+            const bool encU = uPer > 0 && umax - umin > uPer * 0.9;
+            const bool encV = vPer > 0 && vmax - vmin > vPer * 0.9;
+            // A single loop encircling the seam is a genuine annulus (not a flat
+            // disk); the flat UV can't be one simple polygon, so fall back to the
+            // 3D projection. (A dedicated band mesher for these is the next piece
+            // -- see docs/HANDOFF.md.)
+            if (umax - umin < 1e-9 || vmax - vmin < 1e-9 || encU || encV)
+                haveUV = false;
+        }
+        if (!haveUV) wantUV = false;
     }
     const std::vector<P3>& geom = wantUV ? uvp : part.verts;
     // Outer = the max-area loop; a single loop triangulates directly (reliable),

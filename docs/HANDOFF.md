@@ -110,12 +110,31 @@ every shared-edge sample lands on a welded vertex used by >=2 faces):
   that self-overlaps -> 6 opens + 1 nm. Exact pcurve UV (landed) does NOT fix it
   because the seam-wrapping loop is non-simple in the flat UV rectangle.
 
-THE ONE REMAINING PIECE (biggest opens win, §7.1 hard problem): a robust
-SEAM-AWARE constrained triangulation for the floor, replacing meshFloor's
-ear-clip. It must (a) UNWRAP the periodic seam (cut the u=0 line so a wrapping
-torus/cyl/sphere patch becomes a simple disk), and (b) never self-overlap (a
-real CDT, not ear-clip-with-fan-remainder). This closes most of foam/teleporter
-AND flaregun's fillet segments at once. Everything else is bounded:
+SEAM-AWARE FLOOR (landed the foundation): the floor now (a) reads exact pcurve
+(u,v) and (b) UNWRAPS the periodic seam so a seam-CROSSING patch stays a simple
+loop. This correctly handles non-encircling seam faces. It splits the remaining
+leaks cleanly in two:
+- NON-encircling seam faces: fixed (unwrap -> simple UV -> clean triangulation).
+- ENCIRCLING faces (a SINGLE loop that winds a full period in u or v): these are
+  the actual remaining leakers -- and they are NOT disks, they are ANNULAR BANDS
+  (a full-ring fillet whose two rims + connecting seam are ONE wire). foam's 18 /
+  teleporter's 44 / flaregun's 9 encircling faces account for ~ALL remaining
+  opens (each leaks ~2*radial). They fall back to the 3D floor and self-overlap.
+
+THE ONE REMAINING PIECE (biggest opens win): a reliable ENCIRCLING-BAND mesher.
+Concept: extract the two rims (classify loop points by the non-encircling coord
+into the two B-extremes; the in-between points are the seam edges), order each by
+azimuth (uv[A] mod period -- NB the two rims are the SAME circle but pcurve gives
+them DIFFERENT u-offsets, e.g. face 104 rimA u in [1.05,6.94], rimB in [1.05,
+-4.84], so you MUST pair by u-mod-period, not raw u), then bridgeLoops closed.
+TWO attempts this session (crossing-split; classify+sort+bridge) both made opens
+WORSE -- the rims don't cleanly close over the seam gap and not every encircling
+face is a clean 2-rim annulus, so a naive `return true` replaces a bad floor with
+a worse band. Do it with a WATERTIGHT SELF-CHECK: mesh the band into a temp,
+validate its own edges are 2-manifold, and only keep it if clean (else fall to
+3D) -- that makes it a pure improvement. This is meshRevolutionBandLoops applied
+to 1-wire faces; that function already handles the 2-wire case.
+Everything else is bounded:
 - RIM-OPEN NOTCH (notched 7o): full/partial wall with a rim-open notch.
 - BOOLEAN-CUT BORE WALLS (slotted 9nm): a full cylinder whose rims are arcs
   split by the seam -- reassemble the 2 rim rings from the arcs (the band mesher
