@@ -32,67 +32,62 @@ LANDED this branch (production path, visual-quality campaign):
 - 28359b4  per-face exception isolation (meshFaceGuarded): a face that THROWS
   demotes to the fallback floor instead of aborting the whole parallel mesh —
   fixes the user's "a broken face can't be undone/fixed".
-- (this session) barrel open-band notch cap — below.
 
-## Barrel "extra edge" (flaregun faces 43/50) — FIXED this session
-User pointed (red arrow) at a vertical edge sprouting up the barrel above a
-slot: "a cut is driving edges across the primitive." The barrel (cylinder
-r=14.219, wrap 0.924) meshes via `meshRevolutionOpenBand` ("open revolution
-band", ~line 8945; plan routes there in `tryOpenBand` ~7427). It has 12 UNIFORM
-columns driven by the clean plain TOP rim (correct — the primitive drives them)
-and 3 bottom-rim notch REGIONS (castellation cuts). Two of them (regions 0,2)
-are NARROW slots (u-width ~0.06 < one 0.083 column step) that each STRADDLE a
-single uniform column (col3 sits inside slot u[0.199,0.260]; col9 inside
-[0.740,0.801]). That straddled column is truncated at the notch feature row
-(~38% height) and then SPROUTS full-height to the top rim = the "extra edge".
+The barrel "extra edge" work this session did NOT land a fix — the one attempt
+(commit c07880a) targeted the wrong edge and was reverted (commit history keeps
+c07880a + its revert). The CORRECT, still-open target is documented below.
 
-ROOT CAUSE is a real constraint knot, not a plain bug: (a) the cylinder needs
-uniform columns for roundness; (b) a column landing inside a notch cannot run
-below the notch (no surface there); (c) the top rim is SHARED (the passPlain
-contract) so every column-TOP sample must still exist or the neighbour cap face
-fans to fill the resulting T-junction.
+## Barrel "extra edge" (flaregun faces 43/50) — TARGET CORRECTED, still OPEN
+The barrel (cylinder r=14.219, wrap 0.924) meshes via `meshRevolutionOpenBand`
+("open revolution band", ~line 8945; plan routes there in `tryOpenBand` ~7427).
+12 UNIFORM columns driven by the clean plain TOP rim (correct — the primitive
+drives them), 3 bottom-rim notch REGIONS (castellation cuts, reaching up to
+~38%). Debug the structure with a temporary dbg dump in the mesher; regions
+carry colL/colR/rowKey/slotU0/slotU1.
 
-FIX (in `meshRevolutionOpenBand`, kill-switch `WEFT_NO_CAP`): for a region that
-is single-interior (`colR==colL+2`) AND narrow (`slotU1-slotU0 <= uspan/nu`),
-CAP the straddled interior column — `colKeys[c] = {keyTop}` only. That keeps its
-shared rim-TOP sample but drops the vertical run. The lattice then BRIDGES the
-two bounding columns directly (loop steps over capped cols) and the capped
-column's rim top rides the bridge band's TOP edge as an n-gon corner, so the
-shared rim's sample count is intact (no neighbour fan). The notch web already
-tiles everything below the feature row and is unchanged (it just skips the
-vertex-less capped column). Result: the span above each narrow slot is ONE clean
-n-gon panel, no sprout.
+WHAT THE USER ACTUALLY WANTS (confirmed via a labelled A–E render + direct
+answer — do not re-guess this): the "extra edges" are the **HORIZONTAL
+transition rings** the notch machinery lays across the barrel, NOT any vertical
+column. On the labelled render the user picked **B** (the horizontal ring at the
+slot-top / notch feature-row level) and **C** (the horizontal transition ring(s)
+near the bottom where the barrel meets the block). These horizontal rings cut
+across the CLEAN columns and "break the nice clean rim and full spans" — the
+user's verbatim complaint. The user wants clean FULL-HEIGHT vertical columns
+(top rim → bottom rim) with the notches carved as LOCAL n-gons, and NO
+full-circumference horizontal band added just because notches exist.
 
-THREE dead ends first (do NOT repeat — all rendered WORSE, visually confirmed):
-1. Keep the capped column's FOOT at the feature row (pentagon with a bottom
-   mid-vertex) → ear-clips into long diagonal fans.
-2. Drop the capped column ENTIRELY (no vertex at all) → clean quad above, BUT it
-   drops the shared rim-top sample, so neighbour faces re-triangulate the
-   T-junction (+126 tris, big fans on the barrel's cap neighbour). THE TRAP:
-   passPlain makes the top rim contractual — you may never drop a rim sample.
-3. The WORKING version differs from (2) only by keeping `{keyTop}` and threading
-   it onto the bridge's top edge.
+WHERE THE RINGS COME FROM (the actionable lead): the bottom ring (C) is the
+`cutStrip` / `wBot` row (~line 9636 `if (cutStrip)`), emitted only when
+`passCut == false`. `passCut` is true when the cut chain's samples already land
+exactly on the column azimuths, in which case the strip COLLAPSES and columns
+run straight to the rim (see the comment ~line 9029: "a pinned far-rim arc
+carries the band's column azimuths, so the rim samples land ON the columns and
+the bottom transition strip collapses to quads"). Here passCut is false because
+the notches make the cut chain non-uniform — so the notch (a cut) is forcing a
+full-width strip across the whole primitive, which is EXACTLY the user's
+"a cut is driving edges across the primitive." FIX DIRECTION: pin the CLEAN
+segments of the cut rim (the arcs between notches) to the column azimuths so the
+columns run full-height to the bottom rim on every clean segment, and confine the
+strip/web to the notch mouths only. B (the feature-row ring) is the notch's own
+top row — keep it LOCAL to the notch columns (it should not read as a ring
+spanning clean columns); if it currently spans wider than the notch, that is the
+second half of the fix. Net goal: away from a notch, a column is one unbroken
+top→bottom span; at a notch, only those columns carry the local carve.
 
-VERIFICATION (cap vs `WEFT_NO_CAP`, `weft mesh --profile cad --validate`): ONLY
-flaregun changes (5365→5357 polys, 5164→5156 quads; 11 tris unchanged;
-watertight 0/0; winding consistent). Every OTHER corpus model byte-identical
-(2827056, weldment, teleporter, nasty_cheese, mohne, unterlaf, iso14649, angle1,
-as1_pe, 4pinplug, 1797609in; foam stays 73o/2nm = its pre-existing sub-tolerance
-input gaps). Pipeline ctest passes. Visually confirmed at yaw160 pitch0 (the
-user's exact view): sprout edges above both narrow slots gone, barrel above each
-notch is a clean n-gon; the WIDE shallow notch (region 1, cols 4-7) correctly
-KEEPS its columns (not single-interior, not narrow — heuristic leaves it alone).
-
-TRADE-OFF / JUDGEMENT CALL for the next session: capping widens the panel above
-a deep narrow slot to 2 columns (~55°), so roundness there is carried by that
-flat n-gon span. Acceptable under the user's primitive-first priority and it is
-what they literally asked for ("allow the ngon … don't span them down"), but if
-the flat reads badly on a hero render the escape hatch is `WEFT_NO_CAP=1`
-(restores the sprout). This needs the USER's eye on a fresh build to ratify.
+REVERTED THIS SESSION: an earlier commit (c07880a) capped the single uniform
+column a NARROW notch straddles (removing the vertical "sprout" above the slot).
+That was the WRONG edge — the user confirmed "you removed the wrong edge" and
+"it's the same." The code change was reverted; only this note remains. Do NOT
+resurrect the cap: the vertical sprout is a *necessary* consequence (a column
+landing inside a rim-open notch cannot run below it, and the top rim sample is
+contractual under passPlain), and the user does not object to it — they object
+to the HORIZONTAL rings B/C. If you ever do revisit capping, the dead ends were:
+foot-at-feature-row → diagonal fans; drop-column-entirely → drops the shared
+rim-top sample → neighbour re-triangulates (+126 tris). But again: not the ask.
 
 NOT DONE (lower priority, separate): face 503 (foam drum wedge — a cut cylinder
 over-tessellated, ~73 vs ~12 segments). The user's earlier screenshots were on
-OLD builds; they should PULL + REBUILD before re-judging any of the above.
+OLD builds; they should PULL + REBUILD before re-judging.
 
 ---
 

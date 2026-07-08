@@ -9182,7 +9182,6 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
         double wTop = 0;
         double rowfW = 0;
         int rowKey = -1;
-        double slotU0 = 0, slotU1 = 0;  // the notch's true pcurve u-span
     };
     std::vector<Region> regions;
     // WAVE mode: castellation the lattice cannot cut (it reaches the
@@ -9220,8 +9219,6 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
             if (cR < nu && uk[cR] - bu1 < 0.3 * (uk[cR] - uk[cR - 1])) ++cR;
             r.colL = cL;
             r.colR = cR;
-            r.slotU0 = bu0;
-            r.slotU1 = bu1;
             regions.push_back(r);
         }
     }
@@ -9349,40 +9346,12 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
     for (int j = 1; j < nv; ++j) keyAx.push_back(addRow(j * wspan / nv));
     for (Region& r : regions) r.rowKey = addRow(r.rowfW);
 
-    // A slender notch that straddles a single uniform column would otherwise
-    // sprout that column full-height above its feature row — a stray edge
-    // splitting the clean cylinder (the user's "extra edge"). Cap it AT the
-    // feature row instead: the span above the notch rides as one n-gon
-    // between the two bounding columns, and the cylinder's other columns
-    // still carry the roundness. Only single-interior narrow notches qualify
-    // (the notch is narrower than one column step, so the straddled column is
-    // truly redundant); a wide opening keeps its columns to tessellate it.
-    static const bool noCap = getenv("WEFT_NO_CAP");
-    std::vector<int> capRow(nu + 1, -1);  // interior col -> region rowKey
-    if (!noCap) {
-        for (const Region& r : regions) {
-            if (r.colR - r.colL != 2) continue;
-            if (r.slotU1 - r.slotU0 > uspan / std::max(1, nu)) continue;
-            capRow[r.colL + 1] = r.rowKey;
-        }
-    }
-
     // Per-column row keys. Columns strictly inside a region start at its
     // feature row (the cells below are the boolean cut); its bounding
     // columns carry the feature row as an extra vertex their outward
     // cells absorb as n-gons.
     std::vector<std::vector<int>> colKeys(nu + 1);
     for (int c = 1; c < nu; ++c) {
-        // A capped column keeps ONLY its rim-top vertex (the shared plain-rim
-        // sample the neighbour also emits — dropping it would crack the rim
-        // and fan the neighbour). It rides the bridge span's top edge as an
-        // n-gon corner; it never runs down as a vertical column, so no stray
-        // edge splits the cylinder. The notch web spans its two bounding
-        // columns below the feature row.
-        if (capRow[c] >= 0) {
-            colKeys[c] = {keyTop};
-            continue;
-        }
         int floorKey = keyBot;
         // Region boundary columns suppress axial rows under their
         // feature row when the rows form a LONG comb: collinear
@@ -9510,21 +9479,10 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
     // Lattice cells: per column pair, bands at the rows BOTH columns
     // carry; one-sided feature rows ride along as extra ring verts (the
     // n-gon absorbers). Cells inside a region's box below its feature
-    // row simply never exist — that is the boolean cut. Capped columns are
-    // bridged over: the left/right KEPT columns pair directly and the capped
-    // columns' rim tops inject onto the TOP edge of the bridge band as n-gon
-    // corners (keeping the shared rim's sample count), so the whole span above
-    // the notch is one n-gon with no sprouted column. The notch web still
-    // tiles everything below the feature row.
-    for (int c = 1; c + 1 < nu;) {
-        int cR = c + 1;
-        while (cR < nu - 1 && capRow[cR] >= 0) ++cR;
-        int capKey = -1;  // shared feature row of the bridged capped cols
-        for (int m = c + 1; m < cR; ++m) {
-            if (capRow[m] >= 0) capKey = capRow[m];
-        }
+    // row simply never exist — that is the boolean cut.
+    for (int c = 1; c + 1 < nu; ++c) {
         const std::vector<int>& L = colKeys[c];
-        const std::vector<int>& R = colKeys[cR];
+        const std::vector<int>& R = colKeys[c + 1];
         std::vector<int> common;
         for (int k : L) {
             if (std::find(R.begin(), R.end(), k) != R.end()) {
@@ -9532,26 +9490,15 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
             }
         }
         for (size_t b = 0; b + 1 < common.size(); ++b) {
-            // Bridged pair: skip bands below the capped feature row — that is
-            // the notch, owned by the web. The band at/above it is one clean
-            // quad spanning the two bounding columns (the n-gon absorber).
-            if (capKey >= 0 && rowW[common[b]] < rowW[capKey] - 1e-9) continue;
             const double wA = rowW[common[b]], wB = rowW[common[b + 1]];
-            std::vector<uint32_t> ring{vid[c][common[b]]};
-            ring.push_back(vid[cR][common[b]]);
+            std::vector<uint32_t> ring{vid[c][common[b]],
+                                       vid[c + 1][common[b]]};
             for (int k : R) {
                 if (rowW[k] > wA + 1e-12 && rowW[k] < wB - 1e-12) {
-                    ring.push_back(vid[cR][k]);
+                    ring.push_back(vid[c + 1][k]);
                 }
             }
-            ring.push_back(vid[cR][common[b + 1]]);
-            // Capped columns' rim tops ride the top edge (high-u to low-u) as
-            // n-gon corners, keeping the shared rim's sample count intact.
-            if (capKey >= 0 && common[b + 1] == keyTop) {
-                for (int m = cR - 1; m > c; --m) {
-                    if (capRow[m] >= 0) ring.push_back(vid[m][keyTop]);
-                }
-            }
+            ring.push_back(vid[c + 1][common[b + 1]]);
             ring.push_back(vid[c][common[b + 1]]);
             for (auto it = L.rbegin(); it != L.rend(); ++it) {
                 if (rowW[*it] > wA + 1e-12 && rowW[*it] < wB - 1e-12) {
@@ -9560,7 +9507,6 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
             }
             emitRing(std::move(ring));
         }
-        c = cR;
     }
     // Side cells: one band per side segment (the side's contract steps),
     // the inner column's rows absorbed as ring verts. The bottom/top
@@ -9764,7 +9710,6 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
             }
         }
         for (int c = r.colL + 1; c <= r.colR - 1; ++c) {
-            if (capRow[c] >= 0) continue;  // no vertex: bounding cols span it
             pushOut(vid[c][r.rowKey], uk[c], rowW[r.rowKey]);
         }
         for (auto it = colKeys[r.colR].rbegin();
@@ -9834,7 +9779,6 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
             }
         }
         for (int c = r.colR - 1; c >= r.colL; --c) {
-            if (capRow[c] >= 0) continue;  // capped: no vertex to push
             push(vid[c][r.rowKey], uk[c], rowW[r.rowKey]);
         }
         for (auto it = colKeys[r.colL].rbegin();
