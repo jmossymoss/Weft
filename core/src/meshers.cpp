@@ -8283,10 +8283,9 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                          ct == GeomAbs_BezierCurve) &&
                         model.edgeToFaces.Contains(edge)) {
                         primitiveDriven = true;
-                        for (TopTools_ListIteratorOfListOfShape fit(
-                                 model.edgeToFaces.FindFromKey(edge));
-                             fit.More(); fit.Next()) {
-                            const TopoDS_Face f2 = TopoDS::Face(fit.Value());
+                        for (const TopoDS_Shape& fs :
+                             model.edgeToFaces.FindFromKey(edge)) {
+                            const TopoDS_Face f2 = TopoDS::Face(fs);
                             const GeomAbs_SurfaceType st =
                                 BRepAdaptor_Surface(f2).GetType();
                             const bool analytic =
