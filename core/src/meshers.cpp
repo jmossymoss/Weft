@@ -9182,6 +9182,7 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
         double wTop = 0;
         double rowfW = 0;
         int rowKey = -1;
+        double slotU0 = 0, slotU1 = 0;  // the notch's true pcurve u-span
     };
     std::vector<Region> regions;
     // WAVE mode: castellation the lattice cannot cut (it reaches the
@@ -9219,6 +9220,8 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
             if (cR < nu && uk[cR] - bu1 < 0.3 * (uk[cR] - uk[cR - 1])) ++cR;
             r.colL = cL;
             r.colR = cR;
+            r.slotU0 = bu0;
+            r.slotU1 = bu1;
             regions.push_back(r);
         }
     }
@@ -9235,6 +9238,7 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
                 merged.back().colR = std::max(merged.back().colR, r.colR);
                 merged.back().iB = r.iB;
                 merged.back().wTop = std::max(merged.back().wTop, r.wTop);
+                merged.back().slotU1 = std::max(merged.back().slotU1, r.slotU1);
             } else {
                 merged.push_back(r);
             }
@@ -9283,10 +9287,75 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
     }
     nv = sideCount(sideLo);
 
+    // Partial passCut ("rim-grounded"): the fillet flow-through usually pins
+    // the CUT rim's CLEAN arcs (between notches) to the column azimuths, so
+    // away from a notch the columns already land on the rim. When every
+    // non-notch column has an aligned cut sample, the bottom transition strip
+    // is a redundant ring wrapped across the whole primitive — exactly the
+    // user's "a cut driving edges across the primitive". Ground the columns
+    // straight on the rim and drop the strip; only the notch mouths keep their
+    // local webs, so away from a notch every column is one unbroken span.
+    // A column is IN a notch when its azimuth falls in that notch's true u-span
+    // (slotU0..slotU1) — those never ground, they belong to the web. Every
+    // OTHER column is on the clean rim and grounds onto its nearest CLEAN-RIM
+    // (hug) sample. Using the true span (not a distance tolerance) is what lets
+    // the match be loose enough to absorb the fillet flow-through's rounding
+    // without a column snapping onto the notch-edge sample next door.
+    auto notchInterior = [&](int c) {
+        const double m = 0.1 * uspan / std::max(3, nu);
+        for (const Region& r : regions) {
+            if (uk[c] > r.slotU0 - m && uk[c] < r.slotU1 + m) return true;
+        }
+        return false;
+    };
+    std::vector<int> colToCut(nu + 1, -1);
+    {
+        std::vector<char> cutHug(cut.s.size(), 0);
+        for (size_t p = 0; p < cut.hug.size(); ++p) {
+            if (!cut.hug[p]) continue;
+            for (int i = cut.pieceFirst[p]; i <= cut.pieceLast[p]; ++i) {
+                if (i >= 0 && i < int(cutHug.size())) cutHug[i] = 1;
+            }
+        }
+        const double uTol = 0.3 * uspan / std::max(3, nu);
+        for (int c = 1; c < nu; ++c) {
+            if (notchInterior(c)) continue;
+            double best = uTol;
+            for (size_t i = 0; i < cut.s.size(); ++i) {
+                if (!cutHug[i]) continue;
+                const double d = std::abs(cut.s[i].u - uk[c]);
+                if (d < best) {
+                    best = d;
+                    colToCut[c] = int(i);
+                }
+            }
+        }
+    }
+    auto colInterior = [&](int c) {
+        for (const Region& r : regions) {
+            if (r.colL < c && c < r.colR) return true;
+        }
+        return false;
+    };
+    bool rimGrounded = !passCut && !waveCut && !getenv("WEFT_NO_GROUND");
+    for (int c = 1; c < nu && rimGrounded; ++c) {
+        if (!colInterior(c) && colToCut[c] < 0) rimGrounded = false;
+    }
+    if (rimGrounded) {
+        // The sliver-expansion pulled some region boundaries onto GROUNDED
+        // columns; tighten each region back off them so it bounds only the
+        // truly-cut (un-grounded) interior, and the grounded columns run
+        // full-height to the rim instead of being webbed as notch interior.
+        for (Region& r : regions) {
+            while (r.colL + 1 < r.colR && colToCut[r.colL + 1] >= 0) ++r.colL;
+            while (r.colR - 1 > r.colL && colToCut[r.colR - 1] >= 0) --r.colR;
+        }
+    }
+
     // Row table (w space). Feature rows sit just past each castellation
     // top; the strip rows hug the rims so the columns stay straight for
     // (nearly) the whole height.
-    const bool cutStrip = !passCut;
+    const bool cutStrip = !passCut && !rimGrounded;
     const bool plainStrip = !passPlain;
     double minRowf = 1e300;
     for (Region& r : regions) {
@@ -9416,6 +9485,10 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
                 vid[c][key] = plainIds[c];
             } else if (key == keyBot && passCut) {
                 vid[c][key] = cutIds[c];
+            } else if (key == keyBot && rimGrounded && colToCut[c] >= 0) {
+                // Reuse the aligned cut-rim sample so the column welds to the
+                // rim with no strip and no duplicate vertex.
+                vid[c][key] = cutIds[colToCut[c]];
             } else {
                 const double vv = vOf(rowW[key]);
                 vid[c][key] =

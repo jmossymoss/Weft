@@ -33,11 +33,12 @@ LANDED this branch (production path, visual-quality campaign):
   demotes to the fallback floor instead of aborting the whole parallel mesh —
   fixes the user's "a broken face can't be undone/fixed".
 
-The barrel "extra edge" work this session did NOT land a fix — the one attempt
-(commit c07880a) targeted the wrong edge and was reverted (commit history keeps
-c07880a + its revert). The CORRECT, still-open target is documented below.
+The barrel "extra edge" — ring C (the bottom transition strip) is now FIXED
+(rim-grounded columns); ring B (the notch feature-row) is still open. Details
+below. (History: commit c07880a capped the WRONG edge and was reverted; the
+rim-grounding fix is the one that landed.)
 
-## Barrel "extra edge" (flaregun faces 43/50) — TARGET CORRECTED, still OPEN
+## Barrel "extra edge" (flaregun faces 43/50) — C FIXED, B still open
 The barrel (cylinder r=14.219, wrap 0.924) meshes via `meshRevolutionOpenBand`
 ("open revolution band", ~line 8945; plan routes there in `tryOpenBand` ~7427).
 12 UNIFORM columns driven by the clean plain TOP rim (correct — the primitive
@@ -56,23 +57,39 @@ user's verbatim complaint. The user wants clean FULL-HEIGHT vertical columns
 (top rim → bottom rim) with the notches carved as LOCAL n-gons, and NO
 full-circumference horizontal band added just because notches exist.
 
-WHERE THE RINGS COME FROM (the actionable lead): the bottom ring (C) is the
-`cutStrip` / `wBot` row (~line 9636 `if (cutStrip)`), emitted only when
-`passCut == false`. `passCut` is true when the cut chain's samples already land
-exactly on the column azimuths, in which case the strip COLLAPSES and columns
-run straight to the rim (see the comment ~line 9029: "a pinned far-rim arc
-carries the band's column azimuths, so the rim samples land ON the columns and
-the bottom transition strip collapses to quads"). Here passCut is false because
-the notches make the cut chain non-uniform — so the notch (a cut) is forcing a
-full-width strip across the whole primitive, which is EXACTLY the user's
-"a cut is driving edges across the primitive." FIX DIRECTION: pin the CLEAN
-segments of the cut rim (the arcs between notches) to the column azimuths so the
-columns run full-height to the bottom rim on every clean segment, and confine the
-strip/web to the notch mouths only. B (the feature-row ring) is the notch's own
-top row — keep it LOCAL to the notch columns (it should not read as a ring
-spanning clean columns); if it currently spans wider than the notch, that is the
-second half of the fix. Net goal: away from a notch, a column is one unbroken
-top→bottom span; at a notch, only those columns carry the local carve.
+RING C — FIXED (rim-grounded columns, `meshRevolutionOpenBand`). The bottom ring
+was the `cutStrip`/`wBot` row, emitted whenever `passCut == false`. passCut is a
+GLOBAL all-or-nothing flag (needs the cut chain to be one clean hug piece with
+exactly nu samples), so any notch flips it false and forces a full-width strip
+across the whole primitive — a cut driving an edge across the cylinder. The
+KEY OBSERVATION (dump it: WEFT_BAND_DEBUG was the temp instrument): the fillet
+flow-through ALREADY pins the CUT rim's clean arcs to the column azimuths, so
+away from a notch every column already has a rim sample at its azimuth. The fix
+("rim-grounded", partial passCut): a column NOT inside any notch's true u-span
+(slotU0..slotU1) grounds onto its nearest CLEAN-RIM (hug) sample; when every such
+column grounds, drop the strip (`cutStrip = !passCut && !rimGrounded`), reuse the
+hug sample as the column's keyBot vertex (no dup, welds to the neighbour), and
+tighten each region off the grounded columns the sliver-expansion absorbed.
+GOTCHAS that cost iterations (all fixed, don't reintroduce): (1) match only HUG
+samples, or a column grounds onto a notch WALL BASE (also at w~0) and folds the
+web onto the lattice; (2) gate on the notch's TRUE span, not a distance tol, so
+the match can be loose enough for the flow-through's ~0.001-frac rounding without
+a column snapping onto the notch-EDGE sample next door (that dup-directed-edge
+demotes the face to OCCT fallback = the "triangulation" the user flagged); (3)
+region merge must carry slotU1. Verified: flaregun both barrel halves grounded,
+watertight 0/0, winding consistent, tris 11 (NO fallback), chord dev unchanged
+1.13, 10 fewer polys; every other corpus model byte-identical. Kill-switch
+WEFT_NO_GROUND.
+
+RING B — STILL OPEN. B is the notch's own feature-row (the horizontal edge at the
+notch top, ~38% up for the deep notches; region.rowKey). It is LOCAL to each
+notch (spans that notch's colL..colR), but the user marked it too. Removing it
+means the columns/arch rise from the notch top with no horizontal row — entangled
+with the "sprout" column that rises from it (col 3 for region 0). This is the
+harder half; the sprout is topologically forced (a column inside a rim-open notch
+can't run below it, and its rim-top sample is contractual under passPlain), so B
+may not be cleanly removable without accepting either a flat n-gon above the notch
+or a different notch-top tessellation. Needs the user's eye on options.
 
 REVERTED THIS SESSION: an earlier commit (c07880a) capped the single uniform
 column a NARROW notch straddles (removing the vertical "sprout" above the slot).
