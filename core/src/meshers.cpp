@@ -4338,7 +4338,11 @@ bool samplePlanarRings(const TopoDS_Face& face, const Model& model,
             }
             ring.uv = std::move(chain.uv);
             ring.p = std::move(chain.p);
-            if (ring.uv.size() < 3) return false;
+            if (ring.uv.size() < 3) {
+                dbg("planar rings: hand-chained ring only %zu verts",
+                    ring.uv.size());
+                return false;
+            }
             rings.push_back(std::move(ring));
             continue;
         }
@@ -4372,12 +4376,19 @@ bool samplePlanarRings(const TopoDS_Face& face, const Model& model,
                 ring.p.push_back(c3->Value(f3 + (l3 - f3) * t));
             }
         }
-        if (ring.uv.size() < 3) return false;
+        if (ring.uv.size() < 3) {
+            dbg("planar rings: wire ring only %zu verts", ring.uv.size());
+            return false;
+        }
         rings.push_back(std::move(ring));
     }
     for (PlanarRing& r : rings) {
         double a = planarRingArea(r);
-        if (std::abs(a) < 1e-14) return false;
+        if (std::abs(a) < 1e-14) {
+            dbg("planar rings: ring area %.3g degenerate (%zu verts)", a,
+                r.uv.size());
+            return false;
+        }
         if (r.isOuter != (a > 0)) {
             std::reverse(r.uv.begin(), r.uv.end());
             std::reverse(r.p.begin(), r.p.end());
@@ -14582,6 +14593,102 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             }
         }
     }
+    // Annulus containment floor: on a plate with holes, the outer ring's
+    // chords cut INSIDE the true boundary — if a chord sags deeper than
+    // the clearance to a hole, the sampled hole protrudes through the
+    // sampled outer polygon and no web can triangulate it (a thin
+    // annular plate whose hole ring densified through a neighbour's
+    // radial edit while the outer ring stayed coarse demoted to raw
+    // triangulation exactly this way). Raise each outer edge until its
+    // sag stays under half the clearance. Hole rings need nothing: a
+    // hole's chords sag INTO the hole, away from the outer boundary.
+    for (int fid = 1; fid <= model.faceCount(); ++fid) {
+        const TopoDS_Face face = TopoDS::Face(model.faces(fid));
+        int wireCount = 0;
+        for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+            ++wireCount;
+        }
+        if (wireCount < 2) continue;
+        const TopoDS_Wire outerW = BRepTools::OuterWire(face);
+        if (outerW.IsNull()) continue;
+        // Clearance: nearest approach between the outer wire and any
+        // hole wire, sampled coarsely (exact enough for a floor).
+        std::vector<gp_Pnt> outPts, holePts;
+        auto sampleWirePts = [&](const TopoDS_Shape& w,
+                                 std::vector<gp_Pnt>& pts) {
+            for (TopExp_Explorer ex(w, TopAbs_EDGE); ex.More(); ex.Next()) {
+                const TopoDS_Edge e = TopoDS::Edge(ex.Current());
+                if (BRep_Tool::Degenerated(e)) continue;
+                double f, l;
+                if (BRep_Tool::Curve(e, f, l).IsNull()) continue;
+                BRepAdaptor_Curve c(e);
+                for (int k = 0; k <= 16; ++k) {
+                    pts.push_back(c.Value(f + (l - f) * k / 16.0));
+                }
+            }
+        };
+        for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+            if (wx.Current().IsSame(outerW)) {
+                sampleWirePts(wx.Current(), outPts);
+            } else {
+                sampleWirePts(wx.Current(), holePts);
+            }
+        }
+        if (outPts.empty() || holePts.empty()) continue;
+        double gap2 = 1e300;
+        for (const gp_Pnt& p : outPts) {
+            for (const gp_Pnt& q : holePts) {
+                gap2 = std::min(gap2, p.SquareDistance(q));
+            }
+        }
+        const double allow = 0.5 * std::sqrt(gap2);
+        if (!(allow > 1e-9)) continue;
+        for (TopExp_Explorer ex(outerW, TopAbs_EDGE); ex.More(); ex.Next()) {
+            const TopoDS_Edge e = TopoDS::Edge(ex.Current());
+            if (BRep_Tool::Degenerated(e)) continue;
+            const int eid = model.edges.FindIndex(e);
+            if (eid < 1) continue;
+            if (settings.perEdge.count(eid)) continue;
+            const int root = density.groups.find(eid);
+            if (density.pinnedRoots.count(root)) continue;
+            double f, l;
+            Handle(Geom_Curve) c3 = BRep_Tool::Curve(e, f, l);
+            if (c3.IsNull()) continue;
+            GeomAdaptor_Curve gc(c3, f, l);
+            if (gc.GetType() == GeomAbs_Line) continue;
+            int n = std::max(1, solvedEdge[eid]);
+            auto sagOk = [&](int nn) {
+                for (int k = 0; k < nn; ++k) {
+                    const double t0 = f + (l - f) * k / double(nn);
+                    const double t1 = f + (l - f) * (k + 1) / double(nn);
+                    const gp_Pnt a = gc.Value(t0), b = gc.Value(t1);
+                    const gp_Pnt m = gc.Value(0.5 * (t0 + t1));
+                    const gp_Pnt c(0.5 * (a.X() + b.X()),
+                                   0.5 * (a.Y() + b.Y()),
+                                   0.5 * (a.Z() + b.Z()));
+                    if (m.Distance(c) > allow) return false;
+                }
+                return true;
+            };
+            int target = n;
+            while (target < 256 && !sagOk(target)) target *= 2;
+            target = std::min(target, 256);
+            if (target <= n) continue;
+            dbg("density: face %d outer edge %d sag floor %d -> %d "
+                "(clearance %.3g)",
+                fid, eid, n, target, allow);
+            auto git = density.groupCount.find(root);
+            if (git != density.groupCount.end() && git->second < target) {
+                git->second = target;
+            }
+            for (int e2 = 1; e2 <= model.edgeCount(); ++e2) {
+                if (density.groups.find(e2) == root &&
+                    solvedEdge[e2] < target) {
+                    solvedEdge[e2] = target;
+                }
+            }
+        }
+    }
     // Revolution rim SUM constraint: when a T-junction splits one rim of
     // a closed band into k edges while the other stays a full circle,
     // the totals must agree or the band needs a transition strip — and
@@ -14948,15 +15055,19 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 cacheKey[fid] += "c" + std::to_string(solvedEdge[eid]);
             }
         }
-        if (plan.kind == MesherKind::CoonsGrid) {
-            // The corner stub edge is discovered at mesh time (it is in
-            // no plan list); key every border edge's count instead.
-            for (TopExp_Explorer ex(model.faces(fid), TopAbs_EDGE);
-                 ex.More(); ex.Next()) {
-                int eid = model.edges.FindIndex(ex.Current());
-                if (eid >= 1 && eid < int(solvedEdge.size())) {
-                    cacheKey[fid] += "e" + std::to_string(solvedEdge[eid]);
-                }
+        // Key EVERY border edge's solved count, for every kind: any
+        // mesher that walks its wires (minimal n-gons, plate webs, the
+        // floors) consumes counts that live in no plan list, and a
+        // density edit that reaches such an edge through group
+        // propagation must re-mesh the face — a stale part against a
+        // re-meshed neighbour is an open seam (observed: a mohne radial
+        // edit under the sweep's warm cache leaked exactly the edited
+        // count per side).
+        for (TopExp_Explorer ex(model.faces(fid), TopAbs_EDGE); ex.More();
+             ex.Next()) {
+            int eid = model.edges.FindIndex(ex.Current());
+            if (eid >= 1 && eid < int(solvedEdge.size())) {
+                cacheKey[fid] += "e" + std::to_string(solvedEdge[eid]);
             }
         }
     }
