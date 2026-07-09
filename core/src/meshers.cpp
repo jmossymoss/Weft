@@ -14648,9 +14648,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             if (BRep_Tool::Degenerated(e)) continue;
             const int eid = model.edges.FindIndex(e);
             if (eid < 1) continue;
-            if (settings.perEdge.count(eid)) continue;
+            // Unlike the other floors this one overrides pins too: an
+            // explicit count that makes the sampled hole protrude
+            // through the sampled outer boundary cannot be honoured —
+            // no web can triangulate that region, and the only escapes
+            // are raw triangulation or an open seam. Overrides are
+            // clamped before they can break a neighbour (the plan's
+            // override-safety rule); the raise is logged.
             const int root = density.groups.find(eid);
-            if (density.pinnedRoots.count(root)) continue;
             double f, l;
             Handle(Geom_Curve) c3 = BRep_Tool::Curve(e, f, l);
             if (c3.IsNull()) continue;
