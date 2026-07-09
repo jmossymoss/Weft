@@ -4168,7 +4168,6 @@ int main(int argc, char** argv) {
     bool startDecoupled = false;
     float startYaw = 0.9f, startPitch = 0.5f;
     bool demoLoopCut = false;
-    std::vector<std::pair<int, std::string>> startFaceOverrides;  // FID:spec
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--screenshot" && i + 1 < argc) screenshotPath = argv[++i];
@@ -4182,13 +4181,6 @@ int main(int argc, char** argv) {
         else if (a == "--smooth") startSmooth = true;
         else if (a == "--decoupled") startDecoupled = true;
         else if (a == "--mode" && i + 1 < argc) startMode = std::stoi(argv[++i]);
-        else if (a == "--faceradial" && i + 1 < argc) {  // FID:spec, screenshot testing
-            std::string spec = argv[++i];
-            size_t c = spec.find(':');
-            if (c != std::string::npos)
-                startFaceOverrides.emplace_back(std::stoi(spec.substr(0, c)),
-                                                spec.substr(c + 1));
-        }
         else startModel = a;
     }
 
@@ -4297,15 +4289,6 @@ int main(int argc, char** argv) {
     }
     if (startMode >= 1 && startMode <= 6) {
         setSelectMode(app, SelectMode(startMode - 1));
-    }
-    if (!startFaceOverrides.empty() && app.hasModel) {
-        for (const auto& [fid, spec] : startFaceOverrides) {
-            weft::FaceMeshSettings s = app.recipe.settings.defaults;
-            weft::applySettingsList(s, spec);
-            app.recipe.settings.perFace[fid] = s;
-        }
-        regenerate(app);
-        rebuildBuffers(app);
     }
     if (startSelect > 0 && startSelect <= app.model.faceCount()) {
         app.selFaces = {startSelect};
