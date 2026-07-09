@@ -1,5 +1,49 @@
 # Weft — MVP Plan
 
+> **Progress (2026-07-09 session).** Phase 0 is done and most of Phase 1:
+>
+> - **P0.2 ✅ Universal watertightness.** foam was leaking through 4
+>   OFFSET_SURFACE faces OCCT drops at translation (881 declared, 877
+>   transferred) — the importer now caps the resulting boundary loops of
+>   nearly-closed shells with real B-rep faces and sews them in (authored
+>   sheet bodies like tork are exempt by their open-edge fraction). Its
+>   2 non-manifold edges were a zero-width slit (de-slit pass splits the
+>   doubled traversal) and a twin-edge lens (micro nm-segment collapse).
+>   Every corpus model is watertight 0/0 at both profiles; tork (broken
+>   source, artist's verdict) still meshes without crashing.
+> - **P0.3 ✅ Platform-stable counts.** All adaptive/floor counts now come
+>   from `stableDeflectionCount` — a closed-form per-uniform-interval
+>   scan (tangent-angle turn + midpoint sag) instead of OCCT's
+>   iterative `GCPnts_TangentialDeflection`, whose data-dependent
+>   branches flipped on MSVC libm ulps. Floors now apply through the
+>   density groups (per-edge floors were silently breaking group
+>   equality), and conform leaves already-welded seams alone.
+> - **P1.1 ✅ Interior cutouts on curved walls.** A partial-wrap wall
+>   with a slot/hole routes to the open revolution band and boolean-cuts
+>   the wire out of its straight full-height columns: per-column rows at
+>   the cut's v-extents (no full-width band), covered cells deleted, the
+>   cavity laddered to the wire's exact contract samples by polar angle
+>   — grouped quads/n-gons, no fans. barrel fixture: 86 tris -> 0,
+>   watertight, 0 folds; new `drilled` fixture (round hole) clean from
+>   day one. Stepped/castellated rims keep their coons route (barrel2).
+> - **P1.3 mostly ✅ Density-edit safety.** The sweep harness (below)
+>   found and fixed: the annulus containment floor (a holed plate's
+>   outer ring must out-resolve its clearance or no web can triangulate
+>   it) and full per-face cache keys (a stale part against a re-meshed
+>   neighbour leaked exactly the edited count). flaregun/mohne/unterlaf/
+>   fixtures sweep clean.
+> - **Harness ✅.** `tools/corpus_gate.sh` (watertight + no-raw-demotion
+>   + golden count diff over all fixtures and corpus models, both
+>   profiles) and `weft sweep` (adversarial per-face radial sweep
+>   through the generation cache). `GenerationReport::faceBuild` +
+>   the CLI's `demoted:` line make every demotion visible (P0.1's
+>   reporting half); raw-OCCT demotions are gate failures.
+> - **P0.1 status:** 0 fallback-tri at default corpus-wide; density
+>   sweeps green on every model verified so far. Known cosmetic residue:
+>   flaregun's grip ribbon (face 131) webs ~66 tris at the *default*
+>   profile (cad profile: 11 tris total) — the ribbon-sweep cap webbing
+>   is count-sensitive; a quality item, not a correctness one.
+
 ## 1. What this software is for
 
 Weft turns a **Plasticity CAD export (STEP / B-rep)** into a **clean, watertight,

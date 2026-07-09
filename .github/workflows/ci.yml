@@ -1,0 +1,53 @@
+# Cross-platform CI (MVP plan P0.3): the pipeline suite must pass
+# identically on Linux and Windows — determinism is a feature. The Linux
+# job also runs the fixture half of the corpus gate (fast, no committed
+# models needed beyond the repo).
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install OCCT
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libocct-foundation-dev libocct-modeling-data-dev \
+            libocct-modeling-algorithms-dev libocct-data-exchange-dev \
+            libocct-ocaf-dev libocct-visualization-dev ninja-build
+      - name: Configure + build
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j"$(nproc)"
+      - name: Pipeline tests
+        run: ctest --test-dir build --output-on-failure
+      - name: Corpus gate
+        run: tools/corpus_gate.sh
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install OCCT (vcpkg, cached)
+        uses: johnwason/vcpkg-action@v6
+        with:
+          pkgs: opencascade
+          triplet: x64-windows-release
+          token: ${{ github.token }}
+          github-binarycache: true
+      - name: Configure + build
+        shell: pwsh
+        run: |
+          cmake -B build `
+            -DCMAKE_TOOLCHAIN_FILE="$env:GITHUB_WORKSPACE/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-release `
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release -j 4
+      - name: Pipeline tests
+        shell: pwsh
+        run: ctest --test-dir build -C Release --output-on-failure
