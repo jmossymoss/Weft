@@ -289,6 +289,8 @@ echo.
 echo   CLI:  build\bin\Release\weft.exe
 echo   App:  build\bin\Release\weft_app.exe   ^(if GUI deps were found^)
 echo.
+echo   App starts on the !DECOUPLED! mesher ^(toggle it live in the Topology panel^).
+echo.
 echo   Try it:
 echo     build\bin\Release\weft.exe fixture demo.step --shape demo
 echo     build\bin\Release\weft.exe mesh demo.step -o demo.obj --radial 12

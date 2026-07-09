@@ -2377,7 +2377,8 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
 double wireElongation(const TopoDS_Wire& wire);  // defined with plate-web
 
 bool isGeometricallyFlat(const TopoDS_Face& face,
-                         const BRepAdaptor_Surface& surf);  // defined below
+                         const BRepAdaptor_Surface& surf,
+                         double flatFrac = 1e-3);  // defined below
 
 bool planAnnulus(const TopoDS_Face& face, const Model& model, FacePlan& plan,
                  bool requireRing) {
@@ -2967,7 +2968,7 @@ bool meshAnnulusCRing(const TopoDS_Face& face, const Model& model, int faceId,
 // the surface type. Sample a grid over the UV bounds and measure the
 // spread along the average normal.
 bool isGeometricallyFlat(const TopoDS_Face& face,
-                         const BRepAdaptor_Surface& surf) {
+                         const BRepAdaptor_Surface& surf, double flatFrac) {
     if (surf.GetType() == GeomAbs_Plane) return true;
     double u0, u1, v0, v1;
     BRepTools::UVBounds(face, u0, u1, v0, v1);
@@ -3010,10 +3011,11 @@ bool isGeometricallyFlat(const TopoDS_Face& face,
         }
     }
     if (getenv("WEFT_FLAT_DEBUG")) {
-        dbg("flat? dev=%g diag=%g -> %d", hi - lo, diag,
-            hi - lo < std::max(1e-6, 1e-3 * diag) ? 1 : 0);
+        dbg("flat? dev=%g diag=%g frac=%.4f -> %d", hi - lo, diag,
+            diag > 1e-9 ? (hi - lo) / diag : 0.0,
+            hi - lo < std::max(1e-6, flatFrac * diag) ? 1 : 0);
     }
-    return hi - lo < std::max(1e-6, 1e-3 * diag);
+    return hi - lo < std::max(1e-6, flatFrac * diag);
 }
 
 double wireElongation(const TopoDS_Wire& wire);  // defined below
@@ -3193,9 +3195,11 @@ bool planPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
 // with ZERO interior vertices — the flattest topology that still welds.
 bool planMinimalPlanar(const TopoDS_Face& face,
                        const BRepAdaptor_Surface& surf, const Model& model,
-                       FacePlan& plan) {
+                       FacePlan& plan, bool requirePlane = true) {
     FacePlan probe;
-    if (!collectPlanarLoops(face, surf, model, probe)) return false;
+    if (!collectPlanarLoops(face, surf, model, probe, requirePlane)) {
+        return false;
+    }
     plan.loops = std::move(probe.loops);
     plan.uEdges = std::move(probe.uEdges);
     plan.constrains = true;
@@ -7607,6 +7611,39 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         return plan;
     }
 
+    // Game topology (plan §1): a curved face carrying a boolean CUTOUT hole
+    // ships as a single boundary n-gon with each cutout as a LOCAL bridged
+    // hole (zero interior verts, no spanning support loops) instead of a
+    // revolution/ladder grid whose columns are shattered into one span per
+    // cutout rim edge. Only when minimal (game) mode is on AND the face
+    // carries a real interior cutout wire (>1 wire) — a clean structural
+    // wall (single wire) keeps its revolution/coons route and its curvature.
+    // The minimal web is UV-2D and surface-type agnostic; if the hole-bridge
+    // ear-clip can't build (e.g. a periodic seam self-crosses) it returns
+    // false and the face falls through to its normal route untouched.
+    if (s.minimal) {
+        int wireCount = 0;
+        for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+            ++wireCount;
+        }
+        // A CYLINDER wall that actually wraps must NOT flatten to an n-gon
+        // (the user's primitive-first order: a slotted barrel is a cylinder
+        // with a local cutout, not a flat panel) — it keeps its curvature on
+        // the revolution / coons path below. A nearly-flat cylinder ring, and
+        // any shallow cone/bspline (foam's dished spray-can rings), still
+        // collapse. Only a CURVED cylinder is excluded from the grab.
+        const bool curvedCyl =
+            surf.GetType() == GeomAbs_Cylinder &&
+            !isGeometricallyFlat(face, surf, /*flatFrac=*/0.08);
+        if (wireCount > 1 && !curvedCyl &&
+            planMinimalPlanar(face, surf, model, plan, /*requirePlane=*/false)) {
+            dbg("plan face %d: curved cutout -> minimal n-gon (%d wires, "
+                "local holes)",
+                fid, wireCount);
+            return plan;
+        }
+    }
+
     // revCovers is NOT required: a pipe-saddle band legitimately fails
     // fixed-v coverage — edgesHugRimsOrInserts checks between-chain
     // coverage itself, so wavy-rim bands loft instead of falling to a
@@ -7917,6 +7954,163 @@ struct DensitySolution {
     }
 };
 
+// A revolution band and the fillets/bands it blends into carry ONE column
+// count across every shared rim (columns run barrel -> fillet -> fillet ->
+// sibling band unbroken). So a per-face radial override on ONE band must reach
+// the whole connected blend group: densify a band alone and its blends meet a
+// sparser neighbour whose structured mesher (rail-ladder / revolution grid)
+// can't reconcile the two rail counts and demotes to OCCT triangulation — the
+// "a set mesher must never fall back" break. From each overridden band, collect
+// the barrel unit two ways — walk the TANGENT blend network (through smooth
+// fillet chains, stopping at but including sibling bands) and add each band's
+// one-hop column-edge blend neighbours (the sharp-attached rounded corners) —
+// then stamp the same radial override on every face reached. No-op when nothing
+// is overridden, so the default corpus is untouched.
+void propagateBandRadialToBlendGroup(const Analysis& analysis,
+                                     const std::map<int, FacePlan>& plans,
+                                     GenerationSettings& settings) {
+    const FaceMeshSettings& dfl = settings.defaults;
+    auto isColumnMesher = [](MesherKind k) {
+        return k == MesherKind::RevolutionGrid || k == MesherKind::CoonsGrid ||
+               k == MesherKind::RailLadder || k == MesherKind::RibbonSweep;
+    };
+    auto isBand = [&](int fid) {
+        auto it = plans.find(fid);
+        return it != plans.end() &&
+               it->second.kind == MesherKind::RevolutionGrid &&
+               !it->second.bandSides.empty();
+    };
+    // The face's COLUMN-carrying edges: the ones whose solved count a radial
+    // change moves (uEdges + both rims). A neighbour sharing one of these
+    // feels the count change and must follow, or its rails disagree and its
+    // mesher falls back. The band SIDES (row count) are deliberately excluded.
+    auto columnEdges = [&](int fid) -> std::vector<int> {
+        std::vector<int> es;
+        auto it = plans.find(fid);
+        if (it == plans.end()) return es;
+        const FacePlan& p = it->second;
+        es.insert(es.end(), p.uEdges.begin(), p.uEdges.end());
+        es.insert(es.end(), p.rimLow.begin(), p.rimLow.end());
+        es.insert(es.end(), p.rimHigh.begin(), p.rimHigh.end());
+        return es;
+    };
+    // Explicit radial override on a face (differs from the model default).
+    auto radialOverride = [&](int fid) -> int {
+        auto it = settings.perFace.find(fid);
+        if (it == settings.perFace.end() || it->second.radial == dfl.radial) {
+            return 0;
+        }
+        return it->second.radial;
+    };
+    std::vector<std::pair<int, int>> seeds;  // (band fid, radial)
+    for (const auto& [fid, plan] : plans) {
+        if (!isBand(fid)) continue;
+        const int R = radialOverride(fid);
+        if (R > 0) seeds.push_back({fid, R});
+    }
+    if (seeds.empty()) return;  // default path: nothing to propagate
+
+    auto isBlendFillet = [&](int fid) {
+        auto it = plans.find(fid);
+        if (it == plans.end()) return false;
+        const MesherKind k = it->second.kind;
+        return k == MesherKind::RailLadder || k == MesherKind::RibbonSweep ||
+               k == MesherKind::CoonsGrid;
+    };
+    std::map<int, int> target;     // grouped face -> radial the group carries
+    std::map<int, int> driverPin;  // band driver edge -> forced column count
+    for (const auto& [seedFid, R] : seeds) {
+        std::set<int> group{seedFid};
+        std::vector<int> frontier{seedFid};
+        // Walk the TANGENT blend network: bands join their coaxial siblings
+        // through smooth fillet chains (the barrel's two walls meet through
+        // rounded tori). Expand through blends, stop at (but include) sibling
+        // bands so the group stays the barrel unit and never runs the whole
+        // coaxial stack.
+        while (!frontier.empty()) {
+            const int f = frontier.back();
+            frontier.pop_back();
+            if (f != seedFid && isBand(f)) continue;
+            if (f < 1 || f > int(analysis.faces.size())) continue;
+            for (int eid : analysis.faces[f - 1].edgeIds) {
+                if (eid < 1 || eid > int(analysis.edges.size())) continue;
+                if (analysis.edges[eid - 1].convexity != EdgeConvexity::Smooth) {
+                    continue;
+                }
+                for (int nf : analysis.edges[eid - 1].faceIds) {
+                    if (nf == f || group.count(nf)) continue;
+                    auto it = plans.find(nf);
+                    if (it == plans.end() || !isColumnMesher(it->second.kind)) {
+                        continue;
+                    }
+                    group.insert(nf);
+                    frontier.push_back(nf);
+                }
+            }
+        }
+        // A band also shares its RIM count with the little rounded corners that
+        // sit on it across a SHARP edge (r=3 fillet cylinders meshed as rail
+        // ladders). They aren't tangent, so the smooth walk misses them, yet a
+        // rim-count bump breaks their ladder — pull in each band's one-hop
+        // column-edge blend neighbours (no further expansion, so the group
+        // can't leak down the next feature's blend chain).
+        std::vector<int> bands;
+        for (int g : group)
+            if (isBand(g)) bands.push_back(g);
+        for (int b : bands) {
+            for (int eid : columnEdges(b)) {
+                if (eid < 1 || eid > int(analysis.edges.size())) continue;
+                for (int nf : analysis.edges[eid - 1].faceIds) {
+                    if (nf != b && isBlendFillet(nf)) group.insert(nf);
+                }
+            }
+        }
+        for (int g : group) {
+            auto it = target.find(g);
+            target[g] = it == target.end() ? R : std::max(it->second, R);
+        }
+        // The grouped bands share ONE column count, not just one radial: their
+        // wrap fractions differ slightly (0.924 vs 0.927), so radial*wrap can
+        // round to DIFFERENT nu (18 vs 19 at radial 20) and the pinned cut rims
+        // then disagree edge-for-edge and a band fails its border contract.
+        // Force every band's driver to the group's max round(radial*wrap).
+        int commonNu = 0;
+        for (int b : bands) {
+            const double wrap = plans.find(b)->second.bandWrapFrac;
+            commonNu = std::max(
+                commonNu, std::max(3, int(std::lround(std::max(3, R) * wrap))));
+        }
+        for (int b : bands) {
+            const int drv = plans.find(b)->second.bandDriver;
+            if (drv >= 1) {
+                auto it = driverPin.find(drv);
+                driverPin[drv] =
+                    it == driverPin.end() ? commonNu
+                                          : std::max(it->second, commonNu);
+            }
+        }
+        dbg("blend-group: band %d radial %d propagated to %zu faces", seedFid,
+            R, group.size());
+    }
+    // Stamp each grouped face with the larger of its own explicit radial and
+    // the group target, so a lone override reaches its whole group whether it
+    // raises OR lowers the count (the seed and its blends stay equal either
+    // way) while a user who set several faces keeps the highest.
+    for (const auto& [g, R] : target) {
+        const int keep = radialOverride(g);  // this face's own explicit radial
+        FaceMeshSettings& s = settings.perFace.count(g)
+                                  ? settings.perFace[g]
+                                  : (settings.perFace[g] = dfl);
+        s.radial = std::max(R, keep);
+    }
+    for (const auto& [e, c] : driverPin) {
+        auto it = settings.perEdge.find(e);
+        settings.perEdge[e] = it == settings.perEdge.end()
+                                  ? c
+                                  : std::max(it->second, c);
+    }
+}
+
 DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                              const GenerationSettings& settings) {
     DensitySolution sol(model.edgeCount());
@@ -8072,11 +8266,71 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                     // total turn ducks the angle tolerance still reads
                     // as blatantly faceted at one span.
                     const GeomAbs_CurveType ct = c.GetType();
-                    const double frac = (ct == GeomAbs_Line ||
-                                         ct == GeomAbs_Circle ||
-                                         ct == GeomAbs_Ellipse)
-                                            ? 0.2
-                                            : 0.05;
+                    // Primitive-priority density (the user's ordering:
+                    // cylinder/sphere/box/torus drive the count; curves and
+                    // interior boolean cuts follow). A bspline/bezier edge
+                    // that is a near-circular boolean-cut arc between PRIMITIVE
+                    // analytic faces — and none of them a FILLET, which sets
+                    // its own support-loop density and folds if starved — is a
+                    // circle in disguise. Give it the circle fraction so the
+                    // cut arcs stop over-sampling and the clean primitive
+                    // drives the ring (foam's top ring). A freeform SURFACE
+                    // (a grip) or a fillet on the edge keeps the tight 0.5%
+                    // gate; a varying machined profile fails the constant-
+                    // curvature test and keeps it too.
+                    bool primitiveDriven = false;
+                    if ((ct == GeomAbs_BSplineCurve ||
+                         ct == GeomAbs_BezierCurve) &&
+                        model.edgeToFaces.Contains(edge)) {
+                        primitiveDriven = true;
+                        for (const TopoDS_Shape& fs :
+                             model.edgeToFaces.FindFromKey(edge)) {
+                            const TopoDS_Face f2 = TopoDS::Face(fs);
+                            const GeomAbs_SurfaceType st =
+                                BRepAdaptor_Surface(f2).GetType();
+                            const bool analytic =
+                                st == GeomAbs_Plane || st == GeomAbs_Cylinder ||
+                                st == GeomAbs_Cone || st == GeomAbs_Sphere ||
+                                st == GeomAbs_Torus;
+                            const auto pit =
+                                plans.find(model.faces.FindIndex(f2));
+                            const bool fillet =
+                                pit != plans.end() && pit->second.isFillet;
+                            if (!analytic || fillet) {
+                                primitiveDriven = false;
+                                break;
+                            }
+                        }
+                        if (primitiveDriven) {
+                            double kmin = 1e300, kmax = 0;
+                            for (int i = 0; i < 5; ++i) {
+                                const double t = c.FirstParameter() +
+                                                 (c.LastParameter() -
+                                                  c.FirstParameter()) *
+                                                     i / 4.0;
+                                gp_Pnt P;
+                                gp_Vec D1, D2;
+                                c.D2(t, P, D1, D2);
+                                const double d1 = D1.Magnitude();
+                                if (d1 < 1e-9) {
+                                    kmax = 0;
+                                    break;
+                                }
+                                const double k = D1.Crossed(D2).Magnitude() /
+                                                 (d1 * d1 * d1);
+                                kmin = std::min(kmin, k);
+                                kmax = std::max(kmax, k);
+                            }
+                            if (!(kmax > 1e-9 && kmax < 2.0 * kmin)) {
+                                primitiveDriven = false;
+                            }
+                        }
+                    }
+                    const double frac =
+                        (ct == GeomAbs_Line || ct == GeomAbs_Circle ||
+                         ct == GeomAbs_Ellipse || primitiveDriven)
+                            ? 0.2
+                            : 0.05;
                     chord = std::max(chord * frac * extent, 1e-9);
                 }
                 try {
@@ -8267,10 +8521,16 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                 const TopoDS_Face bandFace =
                     TopoDS::Face(model.faces(fid));
                 for (int e : plan.uEdges) {
-                    if (s.adaptive) {
-                        proposeSet({e}, 1, 1, true, s, overridden);
-                        continue;
-                    }
+                    // The edge's wrap fraction -> its share of the radial dial.
+                    // This is BOTH the flat-mode count AND the authoritative
+                    // count a typed radial pins: with adaptive ON, a per-face
+                    // count sets curCountOverride, and proposeSet then uses this
+                    // flat value verbatim — so it must be the real wrap-scaled
+                    // number, never the old `1` placeholder (that pinned the
+                    // driver rim to 1, collapsed nu to 3, and dropped the band
+                    // to the contract floor — the "ring came back" / triangle
+                    // soup at radial 20+). Adaptive-with-no-override still
+                    // follows curvature through proposeSet.
                     double f, l;
                     Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(
                         TopoDS::Edge(model.edges(e)), bandFace, f, l);
@@ -8285,10 +8545,9 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                     }
                     const double frac =
                         eu1 > eu0 ? (eu1 - eu0) / (2.0 * M_PI) : 0.0;
-                    propose({e},
-                            std::max(1, int(std::lround(
-                                            std::max(3, s.radial) * frac))),
-                            overridden);
+                    const int flat = std::max(
+                        1, int(std::lround(std::max(3, s.radial) * frac)));
+                    proposeSet({e}, flat, 1, s.adaptive, s, overridden);
                 }
             } else if (!plan.linkRims && plan.uEdges.size() == 2) {
                 // Unlinked rims: each ring solves on its own (pin per-edge
@@ -8568,12 +8827,16 @@ void pinCastellatedRims(const Model& model,
 // rail-to-rail until the next revolution face, pinning every cross-rail arc
 // to the band's column azimuths (the arc endpoints stay the castellation
 // corners). The band's bottom transition strip then degenerates to quads and
-// the barrel columns run straight into and through the blends. Count-matched
-// (interior columns == solved count - 1) so nothing cascades; a rail whose
-// column count doesn't match its solved count is left uniform.
+// the barrel columns run straight into and through the blends. The chain's
+// ENTRY rail (a band cut arc) fixes the column set the whole chain carries so
+// a fillet's two rails always take equal counts (an arc catching more columns
+// than its solved count raises that count instead of bailing, so the cut rim
+// keeps grounding as radial climbs); a column landing right on a notch corner
+// is skipped so the cut rim never gets a near-duplicate sample; only a rail
+// catching FEWER columns than its own subdivisions is left uniform.
 void pinFilletChains(const Model& model,
                      const std::map<int, FacePlan>& plans,
-                     const std::vector<int>& solvedEdge, PinnedEdges& pins) {
+                     std::vector<int>& solvedEdge, PinnedEdges& pins) {
     // Azimuth about a revolution axis (loc O, unit dir D), with an in-plane
     // reference frame (r1, r2).
     auto frameOf = [](const gp_Ax1& ax, gp_Vec& r1, gp_Vec& r2) {
@@ -8622,17 +8885,20 @@ void pinFilletChains(const Model& model,
         }
         return rails;
     };
-    // Project the band columns onto one arc edge and pin it, keeping the
-    // count equal to the edge's solved count (else leave it uniform).
+    // Project a set of column azimuths onto one arc edge and pin it. Returns
+    // the SUBSET of column azimuths that actually landed on the arc (empty if
+    // the arc was left unpinned) so the chain walk can pin a fillet's opposite
+    // rail to the identical columns.
     auto pinArc = [&](int eid, const std::vector<double>& cols,
-                      const gp_Pnt& o, const gp_Vec& r1, const gp_Vec& r2) {
-        if (eid < 1 || eid >= int(pins.size()) || !pins[eid].empty()) return;
+                      const gp_Pnt& o, const gp_Vec& r1,
+                      const gp_Vec& r2) -> std::vector<double> {
+        if (eid < 1 || eid >= int(pins.size()) || !pins[eid].empty()) return {};
         const int want = eid < int(solvedEdge.size()) ? solvedEdge[eid] : 0;
-        if (want < 2) return;
+        if (want < 2) return {};
         const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
         double f, l;
         Handle(Geom_Curve) c = BRep_Tool::Curve(e, f, l);
-        if (c.IsNull()) return;
+        if (c.IsNull()) return {};
         const int NS = 64;
         std::vector<double> aSeq(NS + 1);
         double aPrev = 0;
@@ -8645,7 +8911,8 @@ void pinFilletChains(const Model& model,
         }
         const double aLo = std::min(aSeq.front(), aSeq.back());
         const double aHi = std::max(aSeq.front(), aSeq.back());
-        std::vector<double> fr{0.0};
+        // Raw interior hits: (t along arc, source column azimuth).
+        std::vector<std::pair<double, double>> hit;
         for (double col : cols) {
             for (int kk = -1; kk <= 1; ++kk) {
                 const double a = col + kk * 2 * M_PI;
@@ -8658,18 +8925,39 @@ void pinFilletChains(const Model& model,
                         break;
                     }
                 }
-                if (t > 1e-6 && t < 1 - 1e-6) fr.push_back(t);
+                if (t > 1e-6 && t < 1 - 1e-6) hit.push_back({t, col});
             }
         }
+        std::sort(hit.begin(), hit.end());
+        // A column that lands within ~30% of a sample spacing of a notch corner
+        // (t=0/1) or of the previous column would put a near-coincident sample
+        // on the cut rim, whose zero-length edge takes the band non-manifold at
+        // that exact count. Drop it (that lone column just isn't grounded).
+        const double minGap = hit.empty() ? 1.0 : 0.3 / double(hit.size() + 1);
+        std::vector<double> fr{0.0};
+        std::vector<double> accepted;
+        double last = 0.0;
+        for (const auto& [t, col] : hit) {
+            if (t < minGap || t > 1.0 - minGap || t < last + minGap) continue;
+            fr.push_back(t);
+            accepted.push_back(col);
+            last = t;
+        }
         fr.push_back(1.0);
-        std::sort(fr.begin(), fr.end());
-        fr.erase(std::unique(fr.begin(), fr.end(),
-                             [](double a, double b) {
-                                 return std::abs(a - b) < 1e-9;
-                             }),
-                 fr.end());
-        if (int(fr.size()) - 1 != want) return;  // count mismatch: no cascade
+        const int got = int(fr.size()) - 1;
+        // Pin at the columns that actually cross this arc even when that
+        // exceeds the arc's solved count: the band's cut rim then samples ON
+        // every column and grounds at any radial (the ring stays gone as the
+        // count climbs). A DEFICIT (got < want) still bails — pinning a
+        // near-tangent rail sparse would starve the neighbour blend.
+        if (got < want) return {};
+        // Raise the arc's solved count to the pinned column count so the
+        // neighbour blend's interior grid matches its now-denser border (else
+        // the coons demotes to a zippered strip of triangles at that seam).
+        if (got > want) solvedEdge[eid] = got;
         pins[eid] = std::move(fr);
+        std::sort(accepted.begin(), accepted.end());
+        return accepted;
     };
     auto faceAcross = [&](int eid, int notFid, MesherKind wantKind) {
         const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
@@ -8718,11 +9006,17 @@ void pinFilletChains(const Model& model,
             int cur = rimEid;
             int prevFid = fid;
             std::set<int> seen;
+            // The band cut-rim arc (the chain's entry) fixes which columns the
+            // whole chain carries; every downstream fillet rail pins to that
+            // SAME set so a fillet's two rails never disagree in count (a
+            // mismatch there demotes the coons to a strip of triangles).
+            std::vector<double> chainCols = cols;
             while (cur >= 1 && !seen.count(cur)) {
                 seen.insert(cur);
                 const int F = faceAcross(cur, prevFid, MesherKind::CoonsGrid);
                 if (F < 1) break;  // reached a non-coons neighbour
-                pinArc(cur, cols, o, r1, r2);
+                std::vector<double> acc = pinArc(cur, chainCols, o, r1, r2);
+                if (!acc.empty()) chainCols = std::move(acc);
                 // The blend's OPPOSITE rail continues the chain.
                 std::vector<int> rails = railsOf(F, ax, o, r1, r2);
                 int nxt = 0;
@@ -8730,7 +9024,7 @@ void pinFilletChains(const Model& model,
                     if (e2 != cur) { nxt = e2; break; }
                 }
                 if (nxt < 1) break;
-                pinArc(nxt, cols, o, r1, r2);
+                pinArc(nxt, chainCols, o, r1, r2);
                 prevFid = F;
                 cur = nxt;
             }
@@ -9095,6 +9389,7 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
         double wTop = 0;
         double rowfW = 0;
         int rowKey = -1;
+        double slotU0 = 0, slotU1 = 0;  // the notch's true pcurve u-span
     };
     std::vector<Region> regions;
     // WAVE mode: castellation the lattice cannot cut (it reaches the
@@ -9132,6 +9427,8 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
             if (cR < nu && uk[cR] - bu1 < 0.3 * (uk[cR] - uk[cR - 1])) ++cR;
             r.colL = cL;
             r.colR = cR;
+            r.slotU0 = bu0;
+            r.slotU1 = bu1;
             regions.push_back(r);
         }
     }
@@ -9148,6 +9445,7 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
                 merged.back().colR = std::max(merged.back().colR, r.colR);
                 merged.back().iB = r.iB;
                 merged.back().wTop = std::max(merged.back().wTop, r.wTop);
+                merged.back().slotU1 = std::max(merged.back().slotU1, r.slotU1);
             } else {
                 merged.push_back(r);
             }
@@ -9196,10 +9494,75 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
     }
     nv = sideCount(sideLo);
 
+    // Partial passCut ("rim-grounded"): the fillet flow-through usually pins
+    // the CUT rim's CLEAN arcs (between notches) to the column azimuths, so
+    // away from a notch the columns already land on the rim. When every
+    // non-notch column has an aligned cut sample, the bottom transition strip
+    // is a redundant ring wrapped across the whole primitive — exactly the
+    // user's "a cut driving edges across the primitive". Ground the columns
+    // straight on the rim and drop the strip; only the notch mouths keep their
+    // local webs, so away from a notch every column is one unbroken span.
+    // A column is IN a notch when its azimuth falls in that notch's true u-span
+    // (slotU0..slotU1) — those never ground, they belong to the web. Every
+    // OTHER column is on the clean rim and grounds onto its nearest CLEAN-RIM
+    // (hug) sample. Using the true span (not a distance tolerance) is what lets
+    // the match be loose enough to absorb the fillet flow-through's rounding
+    // without a column snapping onto the notch-edge sample next door.
+    auto notchInterior = [&](int c) {
+        const double m = 0.1 * uspan / std::max(3, nu);
+        for (const Region& r : regions) {
+            if (uk[c] > r.slotU0 - m && uk[c] < r.slotU1 + m) return true;
+        }
+        return false;
+    };
+    std::vector<int> colToCut(nu + 1, -1);
+    {
+        std::vector<char> cutHug(cut.s.size(), 0);
+        for (size_t p = 0; p < cut.hug.size(); ++p) {
+            if (!cut.hug[p]) continue;
+            for (int i = cut.pieceFirst[p]; i <= cut.pieceLast[p]; ++i) {
+                if (i >= 0 && i < int(cutHug.size())) cutHug[i] = 1;
+            }
+        }
+        const double uTol = 0.3 * uspan / std::max(3, nu);
+        for (int c = 1; c < nu; ++c) {
+            if (notchInterior(c)) continue;
+            double best = uTol;
+            for (size_t i = 0; i < cut.s.size(); ++i) {
+                if (!cutHug[i]) continue;
+                const double d = std::abs(cut.s[i].u - uk[c]);
+                if (d < best) {
+                    best = d;
+                    colToCut[c] = int(i);
+                }
+            }
+        }
+    }
+    auto colInterior = [&](int c) {
+        for (const Region& r : regions) {
+            if (r.colL < c && c < r.colR) return true;
+        }
+        return false;
+    };
+    bool rimGrounded = !passCut && !waveCut && !getenv("WEFT_NO_GROUND");
+    for (int c = 1; c < nu && rimGrounded; ++c) {
+        if (!colInterior(c) && colToCut[c] < 0) rimGrounded = false;
+    }
+    if (rimGrounded) {
+        // The sliver-expansion pulled some region boundaries onto GROUNDED
+        // columns; tighten each region back off them so it bounds only the
+        // truly-cut (un-grounded) interior, and the grounded columns run
+        // full-height to the rim instead of being webbed as notch interior.
+        for (Region& r : regions) {
+            while (r.colL + 1 < r.colR && colToCut[r.colL + 1] >= 0) ++r.colL;
+            while (r.colR - 1 > r.colL && colToCut[r.colR - 1] >= 0) --r.colR;
+        }
+    }
+
     // Row table (w space). Feature rows sit just past each castellation
     // top; the strip rows hug the rims so the columns stay straight for
     // (nearly) the whole height.
-    const bool cutStrip = !passCut;
+    const bool cutStrip = !passCut && !rimGrounded;
     const bool plainStrip = !passPlain;
     double minRowf = 1e300;
     for (Region& r : regions) {
@@ -9329,6 +9692,10 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
                 vid[c][key] = plainIds[c];
             } else if (key == keyBot && passCut) {
                 vid[c][key] = cutIds[c];
+            } else if (key == keyBot && rimGrounded && colToCut[c] >= 0) {
+                // Reuse the aligned cut-rim sample so the column welds to the
+                // rim with no strip and no duplicate vertex.
+                vid[c][key] = cutIds[colToCut[c]];
             } else {
                 const double vv = vOf(rowW[key]);
                 vid[c][key] =
@@ -13483,8 +13850,12 @@ int outerWireSolvedTotal(const TopoDS_Face& face, const Model& model,
 }  // namespace
 
 PolyMesh generate(const Model& model, const Analysis& analysis,
-                  const GenerationSettings& settings, GenerationReport* report,
+                  const GenerationSettings& settingsIn, GenerationReport* report,
                   GenerationCache* cache) {
+    // Local mutable copy: a per-face radial override on a revolution band is
+    // propagated across its connected blend group (below) so the whole barrel
+    // densifies as one unit instead of stranding a neighbour at the old count.
+    GenerationSettings settings = settingsIn;
     dbg("generate: begin (%d faces, %d edges, parallel=%d, conform=%d)",
         model.faceCount(), model.edgeCount(), settings.parallelMeshing ? 1 : 0,
         settings.conformBorders ? 1 : 0);
@@ -13500,6 +13871,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         plans.emplace(fid, std::move(plan));
     }
     dbg("generate: plans done");
+
+    propagateBandRadialToBlendGroup(analysis, plans, settings);
 
     DensitySolution density = solveDensity(model, plans, settings);
     // Flat per-edge count table: lets meshers consume per-edge counts from
@@ -13549,6 +13922,20 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 }
             }
         };
+        // Lower a whole shared-edge group to a simple-density target (never
+        // below 1). Used to collapse a castellated boolean rim's freeform
+        // over-sampling to clean spans; the group is shared only with
+        // analytic body strips, which mesh exactly at low counts.
+        auto capGroup = [&](int eid, int target) {
+            target = std::max(1, target);
+            const int root = density.groups.find(eid);
+            for (int e = 1; e <= model.edgeCount(); ++e) {
+                if (density.groups.find(e) == root &&
+                    solvedEdge[e] > target) {
+                    solvedEdge[e] = target;
+                }
+            }
+        };
         for (int pass = 0; pass < 16; ++pass) {
             bool changed = false;
             for (const auto& [fid, plan] : plans) {
@@ -13582,6 +13969,44 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 // strip instead.
                 const auto& small = tLo < tHi ? lo : hi;
                 if (small.size() != 1) continue;
+                // A rim split into MANY edges is a castellated boolean rim
+                // (foam's top ring: 74 feature arcs, each a short bspline
+                // intersection curve the freeform chord gate over-samples),
+                // not a genuine few-way T-junction. Raising the lone clean
+                // opposite rim to that inflated sum shatters the whole band
+                // into one spanning column per feature arc — exactly the
+                // "segment loops to support the booleans" pathology. In game
+                // topology, leave the clean rim clean and let the transition
+                // strip carry the mismatch. (A real T-junction splits a rim
+                // into a handful of arcs, so the threshold stays well clear.)
+                // Skip only the castellated-boolean-rim pathology: the heavy
+                // rim is split into MANY short arcs (>=24) AND its total dwarfs
+                // the clean rim (>=8x) because those arcs are bspline boolean
+                // cuts the freeform chord gate over-samples. A genuine few-way
+                // T-junction (a handful of arcs, totals within a small factor)
+                // still equalizes so its thin transition strip can't fold.
+                const auto& large = tLo < tHi ? hi : lo;
+                const long heavy = std::max(tLo, tHi);
+                const long light = std::max<long>(1, std::min(tLo, tHi));
+                if (settings.defaults.minimal && large.size() >= 24 &&
+                    heavy >= 8 * light) {
+                    // Collapse the castellated rim's over-sampled arcs to
+                    // simple density (each short analytic-boundary arc needs
+                    // ~1 segment), so the band meshes as clean spans instead
+                    // of one spanning column per arc. Shared only with the
+                    // analytic body strips, which stay exact at count 1;
+                    // user-pinned rings keep their explicit count.
+                    for (int e : large) {
+                        if (density.pinnedRoots.count(density.groups.find(e))) {
+                            continue;
+                        }
+                        if (solvedEdge[e] > 1) {
+                            capGroup(e, 1);
+                            changed = true;
+                        }
+                    }
+                    continue;
+                }
                 // A user-pinned ring never gets raised behind their
                 // back — the mismatch stays visible (strip or floor).
                 if (density.pinnedRoots.count(
@@ -14600,8 +15025,37 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         }
     }
     dbg("generate: meshing on %u thread(s), %d cached", threads, cacheHits);
+    // Isolate a face whose mesher THROWS (a degenerate manual count, an OCCT
+    // assertion) so it can't take the whole model's mesh down with it — the
+    // app then keeps every other face and the user can adjust or undo the one
+    // edit that broke this face, instead of losing the entire result. The
+    // throwing face's partial output is cleared and it falls back to the plain
+    // contract/OCCT triangulation, which always builds; if even that throws,
+    // the face is left empty (a local hole) rather than aborting the run.
+    auto meshFaceGuarded = [&](int fid) {
+        try {
+            meshFace(fid);
+            return;
+        } catch (const std::exception& e) {
+            dbg("mesh face %d: mesher threw (%s) -> isolate + fallback", fid,
+                e.what());
+        } catch (...) {
+            dbg("mesh face %d: mesher threw -> isolate + fallback", fid);
+        }
+        parts[fid] = PolyMesh();
+        try {
+            const TopoDS_Face face = TopoDS::Face(model.faces(fid));
+            BRepAdaptor_Surface surf(face);
+            FaceMeshSettings s = settings.forFace(fid);
+            s.cellCap = faceCellCap[fid];
+            demote(fid, face, surf, s, "mesher threw");
+        } catch (...) {
+            parts[fid] = PolyMesh();  // fallback threw too: leave it empty
+            dbg("mesh face %d: fallback threw too -> left empty", fid);
+        }
+    };
     auto meshFaceCached = [&](int fid) {
-        if (!cached[fid]) meshFace(fid);
+        if (!cached[fid]) meshFaceGuarded(fid);
         if (settings.progressFaces) {
             settings.progressFaces->fetch_add(1, std::memory_order_relaxed);
         }

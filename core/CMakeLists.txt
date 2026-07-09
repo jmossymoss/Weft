@@ -8,7 +8,6 @@ add_library(weft_core
   src/analysis.cpp
   src/mesh.cpp
   src/meshers.cpp
-  src/decoupled.cpp
   src/edit.cpp
   src/recipe.cpp
   src/remap.cpp

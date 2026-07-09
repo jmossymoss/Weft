@@ -17,8 +17,8 @@ BUILD_TYPE=Release
 CHECK_DEPS=1
 for a in "$@"; do
     case "$a" in
-        --no-deps) CHECK_DEPS=0 ;;
-        --debug)   BUILD_TYPE=RelWithDebInfo ;;
+        --no-deps)      CHECK_DEPS=0 ;;
+        --debug)        BUILD_TYPE=RelWithDebInfo ;;
         *) say "unknown option: $a (expected --no-deps / --debug)"; exit 1 ;;
     esac
 done

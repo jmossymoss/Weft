@@ -1,3 +1,160 @@
+# CONTINUATION — branch claude/handoff-continuation-zvaa0u (2026-07-08)
+
+This branch works the **production** `generate()` path (`core/src/meshers.cpp`),
+judged by VISUAL render in `weft_app` with adaptive density ON (`--profile cad`
+== the app default). NOT the decoupled-core rewrite the START-HERE section below
+describes — that is a separate effort. Governing principle (user, verbatim):
+"the order of priority is primitive shapes first, then all the arc stuff. so
+Cylinder > sphere > hemisphere > Box > torus > Curves > interior faces." Cut
+features FOLLOW primitives; they must not drive the mesh or span the primitive
+with extra loops — "allow the ngon from those edges and not span them down".
+
+HOW TO WORK IT. Render headless: `xvfb-run -a ./build/app/weft_app
+tests/STEP_Examples/flaregun.stp --select N --yaw Y --pitch P --screenshot
+out.png` (camera auto-frames the selected face). Core debug prints go to
+`/root/.local/state/weft/weft_debug.log` (dbg(); the app wires
+setGenerateDebugLog). Corpus check: `./build/cli/weft mesh <f> -o /tmp/x.obj
+--profile cad --validate` (open/nm, winding, tris). Build: `cmake --build build
+--target weft_app weft weft_tests -j4`. ALWAYS visually inspect before deciding —
+CLI metrics alone mislead (the user's standing instruction). Commit trailers on
+this branch: `Co-Authored-By: Claude Opus 4.8` + `Claude-Session:` (see existing
+commits; the "no AI attribution" note further down is from the OTHER branches).
+
+LANDED this branch (production path, visual-quality campaign):
+- ffaea79  carry boolean cutouts on curved faces as local n-gons (foam boss).
+- 2ec300e  don't equalize a clean rim up to a castellated boolean rim.
+- 534d37f  collapse castellated boolean rims to simple density.
+- 47536fb  primitive-priority density: a near-circular boolean-cut bspline arc
+  whose neighbours are all analytic + none a fillet + near-constant curvature
+  takes the CIRCLE chord fraction (0.2) not the freeform 0.05, so cut arcs stop
+  over-sampling ~4x and shattering foam's top ring. FILLET / freeform-surface /
+  varying-curvature guards keep flaregun's fillets + grip from folding.
+- 28359b4  per-face exception isolation (meshFaceGuarded): a face that THROWS
+  demotes to the fallback floor instead of aborting the whole parallel mesh —
+  fixes the user's "a broken face can't be undone/fixed".
+
+The barrel "extra edge" — ring C (the bottom transition strip) is now FIXED
+(rim-grounded columns); ring B (the notch feature-row) is still open. Details
+below. (History: commit c07880a capped the WRONG edge and was reverted; the
+rim-grounding fix is the one that landed.)
+
+## Barrel "extra edge" (flaregun faces 43/50) — C FIXED, B still open
+The barrel (cylinder r=14.219, wrap 0.924) meshes via `meshRevolutionOpenBand`
+("open revolution band", ~line 8945; plan routes there in `tryOpenBand` ~7427).
+12 UNIFORM columns driven by the clean plain TOP rim (correct — the primitive
+drives them), 3 bottom-rim notch REGIONS (castellation cuts, reaching up to
+~38%). Debug the structure with a temporary dbg dump in the mesher; regions
+carry colL/colR/rowKey/slotU0/slotU1.
+
+WHAT THE USER ACTUALLY WANTS (confirmed via a labelled A–E render + direct
+answer — do not re-guess this): the "extra edges" are the **HORIZONTAL
+transition rings** the notch machinery lays across the barrel, NOT any vertical
+column. On the labelled render the user picked **B** (the horizontal ring at the
+slot-top / notch feature-row level) and **C** (the horizontal transition ring(s)
+near the bottom where the barrel meets the block). These horizontal rings cut
+across the CLEAN columns and "break the nice clean rim and full spans" — the
+user's verbatim complaint. The user wants clean FULL-HEIGHT vertical columns
+(top rim → bottom rim) with the notches carved as LOCAL n-gons, and NO
+full-circumference horizontal band added just because notches exist.
+
+RING C — FIXED (rim-grounded columns, `meshRevolutionOpenBand`). The bottom ring
+was the `cutStrip`/`wBot` row, emitted whenever `passCut == false`. passCut is a
+GLOBAL all-or-nothing flag (needs the cut chain to be one clean hug piece with
+exactly nu samples), so any notch flips it false and forces a full-width strip
+across the whole primitive — a cut driving an edge across the cylinder. The
+KEY OBSERVATION (dump it: WEFT_BAND_DEBUG was the temp instrument): the fillet
+flow-through ALREADY pins the CUT rim's clean arcs to the column azimuths, so
+away from a notch every column already has a rim sample at its azimuth. The fix
+("rim-grounded", partial passCut): a column NOT inside any notch's true u-span
+(slotU0..slotU1) grounds onto its nearest CLEAN-RIM (hug) sample; when every such
+column grounds, drop the strip (`cutStrip = !passCut && !rimGrounded`), reuse the
+hug sample as the column's keyBot vertex (no dup, welds to the neighbour), and
+tighten each region off the grounded columns the sliver-expansion absorbed.
+GOTCHAS that cost iterations (all fixed, don't reintroduce): (1) match only HUG
+samples, or a column grounds onto a notch WALL BASE (also at w~0) and folds the
+web onto the lattice; (2) gate on the notch's TRUE span, not a distance tol, so
+the match can be loose enough for the flow-through's ~0.001-frac rounding without
+a column snapping onto the notch-EDGE sample next door (that dup-directed-edge
+demotes the face to OCCT fallback = the "triangulation" the user flagged); (3)
+region merge must carry slotU1. Verified: flaregun both barrel halves grounded,
+watertight 0/0, winding consistent, tris 11 (NO fallback), chord dev unchanged
+1.13, 10 fewer polys; every other corpus model byte-identical. Kill-switch
+WEFT_NO_GROUND.
+
+DENSITY CHANGES NO LONGER BREAK NEIGHBOURS (`propagateBandRadialToBlendGroup`,
+~line 7957). The barrel is TWO stacked bands (43 r=14.2, 50 r=14.8) joined
+through blend fillets; the columns run 43 -> fillets -> 50 as one flow carrying
+ONE count across every shared rim. So bumping ONE band's radial and leaving the
+rest at the old count made the dense band meet a sparser blend whose structured
+mesher (rail-ladder on the r=3 corner fillets 48/64, revolution-grid on the
+sibling band 50) couldn't reconcile the two rail counts and DEMOTED TO OCCT
+TRIANGULATION — the user's "no mesher should fall back to another type" break.
+The fix propagates a band's explicit radial override across its connected blend
+group BEFORE the density solve (so the whole barrel densifies as one unit): from
+each overridden band, (a) walk the TANGENT blend network through smooth fillet
+chains, stopping at but including sibling bands, and (b) add each band's one-hop
+column-edge (uEdges+rims) blend neighbours to catch the sharp-attached rounded
+corners the tangent walk misses. Stamp the group target (max of seed radials, or
+a lone override up OR down) on every reached face. It ALSO pins every grouped
+band's driver edge to ONE column count (`driverPin` -> settings.perEdge): the
+bands' wrap fractions differ slightly (0.924 vs 0.927), so radial*wrap can round
+to DIFFERENT nu (18 vs 19 at radial 20) and the pinned cut rims would disagree
+edge-for-edge and fail a border contract. NO-OP when nothing is overridden, so
+the whole default corpus stays byte-identical. Verified: bumping flaregun band 43
+alone densifies the whole barrel — 0 fallbacks and watertight at radial 8..48;
+nasty_cheese (6-face group) and unterlaf (4-face group) bands stay watertight with
+no over-spread (group stays local — 4-20 faces out of ~1700). Repro a per-face
+bump visually: `weft_app <f> --faceradial 43:radial=24 --select 43 --screenshot
+out.png`. NOTE: low tri count does NOT prove the ring is gone — the transition
+strip is QUADS; confirm visually or via the openband grounding debug.
+
+RING C AT HIGH DENSITY — FIXED (`pinFilletChains`/`pinArc`, ~line 8807). The
+rim-grounding above only holds while every column has a cut-rim sample at its
+azimuth, which `pinArc` supplies by pinning the cut arcs to the columns. It used
+to BAIL whenever an arc caught more columns than its own solved count, so a
+per-face radial bump left the cut rim unpinned, grounding failed, and RING C came
+back. Now it pins at the columns that actually cross the arc even past the solved
+count (raising `solvedEdge[arc]` to match so the neighbour blend's interior grid
+stays consistent — else the coons zippers to triangles), and the chain's ENTRY
+rail fixes the column SET so a fillet's two rails always agree (`chainCols`). The
+trap that made this a dead end for a whole session: at some counts a column lands
+right on a NOTCH CORNER (an arc endpoint), so the pin adds a cut-rim sample
+near-coincident with the corner sample -> a zero-length edge -> the band goes
+non-manifold and demotes at radial 20/28/32 in BOTH grounded and strip modes (the
+grounding was NOT the culprit, the pin was). Cure: `pinArc` drops any column
+landing within ~30% of a sample spacing of an arc endpoint or its neighbour
+(`minGap`), so the cut rim never gets a near-duplicate. Combined with the
+driver-count pin above, bumping flaregun band 43 now grounds clean at EVERY radial
+8..48 — 0 fallbacks, watertight, clean full-height columns, tris 11-15 (only the
+tight RING B notch rows remain at the base). Default corpus byte-identical.
+
+RING B — STILL OPEN. B is the notch's own feature-row (the horizontal edge at the
+notch top, ~38% up for the deep notches; region.rowKey). It is LOCAL to each
+notch (spans that notch's colL..colR), but the user marked it too. Removing it
+means the columns/arch rise from the notch top with no horizontal row — entangled
+with the "sprout" column that rises from it (col 3 for region 0). This is the
+harder half; the sprout is topologically forced (a column inside a rim-open notch
+can't run below it, and its rim-top sample is contractual under passPlain), so B
+may not be cleanly removable without accepting either a flat n-gon above the notch
+or a different notch-top tessellation. Needs the user's eye on options.
+
+REVERTED THIS SESSION: an earlier commit (c07880a) capped the single uniform
+column a NARROW notch straddles (removing the vertical "sprout" above the slot).
+That was the WRONG edge — the user confirmed "you removed the wrong edge" and
+"it's the same." The code change was reverted; only this note remains. Do NOT
+resurrect the cap: the vertical sprout is a *necessary* consequence (a column
+landing inside a rim-open notch cannot run below it, and the top rim sample is
+contractual under passPlain), and the user does not object to it — they object
+to the HORIZONTAL rings B/C. If you ever do revisit capping, the dead ends were:
+foot-at-feature-row → diagonal fans; drop-column-entirely → drops the shared
+rim-top sample → neighbour re-triangulates (+126 tris). But again: not the ask.
+
+NOT DONE (lower priority, separate): face 503 (foam drum wedge — a cut cylinder
+over-tessellated, ~73 vs ~12 segments). The user's earlier screenshots were on
+OLD builds; they should PULL + REBUILD before re-judging.
+
+---
+
 # START HERE — next session (short handoff, 2026-07-08)
 
 WHERE WE ARE. The decoupled-core rewrite is a real OCCT mesher: `weft mesh <f>
@@ -38,10 +195,18 @@ NEXT (in priority order):
    recovery. The floor path is meshFloorAuto in decoupled.cpp.
 2. Decide whether to raise the default decoupled weld for imports (production
    keeps 1e-6 + relies on --weld, so leaving it is consistent).
-3. Then: port the app/CLI to prefer the decoupled path, and A/B the two meshers.
-   (NB: the decoupled mesher is COMPILED by the default build.sh/build.bat but is
-   OPT-IN at runtime — only `weft mesh --decoupled` uses it; plain `weft mesh` and
-   the app still use production generate(). This step makes it the default.)
+3. A/B is now WIRED (was: port the app/CLI to prefer decoupled). The app has a
+   "decoupled core (experimental)" toggle in the Topology panel; the worker branches
+   generate()/meshDecoupled() on a snapshotted flag. The build scripts now ASK which
+   mesher the app should START on: build.sh/build.bat prompt (or honour
+   WEFT_DECOUPLED / a --decoupled|--no-decoupled arg) and pass
+   -DWEFT_DECOUPLED_DEFAULT, which bakes the app's initial `useDecoupled`. Runtime
+   overrides remain: the Topology checkbox, `weft_app --decoupled`, and the CLI
+   `weft mesh --decoupled` (build_decoupled.sh/.bat build + run that in one step).
+   Global DEFAULT (no answer / non-interactive / production build) is still
+   generate() everywhere. Remaining call: whether to flip the shipped default to
+   decoupled and whether the app should remember the toggle in saved recipes. The
+   decoupled mesher is COMPILED by every build regardless.
 
 ---
 
