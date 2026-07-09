@@ -13904,6 +13904,43 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         } catch (const Standard_Failure&) {
         }
     }
+    // Wire floor: a closed wire sampled at fewer than 3 border vertices
+    // cannot bound any polygon — a 2-edge planar face (the reconstructed
+    // caps on translator-dropped holes, lens faces in sloppy CAD) whose
+    // near-straight edges each solve to 1 otherwise collapses to a 2-gon
+    // and demotes to raw triangulation. Raise the wire's longest
+    // unpinned edge until the wire can close; both bordering faces read
+    // the same solved count, so the border contract holds.
+    for (int fid = 1; fid <= model.faceCount(); ++fid) {
+        for (TopExp_Explorer wx(model.faces(fid), TopAbs_WIRE); wx.More();
+             wx.Next()) {
+            int total = 0;
+            int bumpEid = 0;
+            double bumpLen = -1.0;
+            for (TopExp_Explorer ex(wx.Current(), TopAbs_EDGE); ex.More();
+                 ex.Next()) {
+                const TopoDS_Edge e = TopoDS::Edge(ex.Current());
+                if (BRep_Tool::Degenerated(e)) continue;
+                const int eid = model.edges.FindIndex(e);
+                if (eid < 1) continue;
+                total += std::max(0, solvedEdge[eid]);
+                if (settings.perEdge.count(eid)) continue;
+                double cf, cl;
+                if (BRep_Tool::Curve(e, cf, cl).IsNull()) continue;
+                BRepAdaptor_Curve c(e);
+                const double len = GCPnts_AbscissaPoint::Length(c);
+                if (len > bumpLen) {
+                    bumpLen = len;
+                    bumpEid = eid;
+                }
+            }
+            if (total == 0 || total >= 3 || bumpEid == 0) continue;
+            dbg("density: wire on face %d totals %d samples, edge %d "
+                "raised by %d",
+                fid, total, bumpEid, 3 - total);
+            solvedEdge[bumpEid] += 3 - total;
+        }
+    }
     // Revolution rim SUM constraint: when a T-junction splits one rim of
     // a closed band into k edges while the other stays a full circle,
     // the totals must agree or the band needs a transition strip — and
@@ -15180,6 +15217,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 plan.kind == MesherKind::Fallback && fallbackQuads
                     ? MesherKind::QuadDominant
                     : plan.kind;
+            if (!s.exclude) {
+                report->faceBuild[fid] = parts[fid].polygons.empty()
+                                             ? -1
+                                             : int(fellBack[fid]);
+            }
             if (plan.kind == MesherKind::RevolutionGrid &&
                 plan.uEdges.size() == 2) {
                 report->faceRims[fid] = {plan.uEdges[0], plan.uEdges[1]};
@@ -15489,6 +15531,171 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             dbg("generate: %zu folded polygons dropped", drop.size());
         }
     }
+
+    // De-slit: the micro-edge collapse zips a sliver strip's two rails
+    // onto one welded segment, and a plate whose boundary WRAPS the
+    // zero-width notch then walks that segment twice in opposite
+    // directions inside one polygon. With the two flanking walls also on
+    // the segment it counts 4 uses — non-manifold. Splitting the polygon
+    // at the doubled segment into its two lobes removes both traversals
+    // and leaves exactly the two wall uses: 2-manifold. Only that exact
+    // situation is touched (two anti-parallel traversals in ONE polygon,
+    // total use 4) — keyhole bridges (2 uses, both in the polygon) and
+    // contact sandwiches (4 uses across different polygons) pass through
+    // untouched.
+    for (int pass = 0; pass < 4; ++pass) {
+        std::map<std::pair<uint32_t, uint32_t>, int> use;
+        for (const auto& poly : mesh.polygons) {
+            for (size_t i = 0; i < poly.size(); ++i) {
+                uint32_t a = poly[i], b = poly[(i + 1) % poly.size()];
+                if (a > b) std::swap(a, b);
+                ++use[{a, b}];
+            }
+        }
+        size_t split = 0;
+        // A segment is consumed by the first polygon split on it — the
+        // use counts are stale within a pass.
+        std::set<std::pair<uint32_t, uint32_t>> consumed;
+        const size_t nPolys = mesh.polygons.size();
+        for (size_t p = 0; p < nPolys; ++p) {
+            const auto poly = mesh.polygons[p];  // copy: p may be replaced
+            const size_t n = poly.size();
+            if (n < 6) continue;
+            // First doubled anti-parallel segment with 4 total uses.
+            size_t i1 = n, i2 = n;
+            for (size_t i = 0; i < n && i1 == n; ++i) {
+                const uint32_t u = poly[i], v = poly[(i + 1) % n];
+                if (u == v) continue;
+                for (size_t j = i + 1; j < n; ++j) {
+                    if (poly[j] == v && poly[(j + 1) % n] == u) {
+                        uint32_t a = u, b = v;
+                        if (a > b) std::swap(a, b);
+                        if (use[{a, b}] == 4 && !consumed.count({a, b})) {
+                            i1 = i;
+                            i2 = j;
+                            consumed.insert({a, b});
+                        }
+                        break;
+                    }
+                }
+            }
+            if (i1 == n) continue;
+            // Lobe A: poly[i1+1 .. i2] walks v .. v — drop the closing
+            // duplicate. Lobe B: poly[i2+1 .. i1] walks u .. u likewise.
+            auto lobe = [&](size_t from, size_t to) {
+                std::vector<uint32_t> out;
+                for (size_t k = from; ; k = (k + 1) % n) {
+                    out.push_back(poly[k]);
+                    if (k == to) break;
+                }
+                while (out.size() > 1 && out.front() == out.back()) {
+                    out.pop_back();
+                }
+                return out;
+            };
+            std::vector<uint32_t> lobeA = lobe((i1 + 1) % n, i2);
+            std::vector<uint32_t> lobeB = lobe((i2 + 1) % n, i1);
+            const int fid = mesh.polygonFaceId[p];
+            bool first = true;
+            for (auto& l : {lobeA, lobeB}) {
+                if (l.size() < 3) continue;
+                if (first) {
+                    mesh.polygons[p] = l;
+                    first = false;
+                } else {
+                    mesh.polygons.push_back(l);
+                    mesh.polygonFaceId.push_back(fid);
+                }
+            }
+            if (first) {
+                // Both lobes degenerate: the polygon was pure slit.
+                mesh.polygons[p].clear();
+            }
+            ++split;
+        }
+        if (!split) break;
+        std::vector<std::vector<uint32_t>> polys;
+        std::vector<int> polyFace;
+        polys.reserve(mesh.polygons.size());
+        polyFace.reserve(mesh.polygons.size());
+        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+            if (mesh.polygons[p].size() < 3) continue;
+            polys.push_back(std::move(mesh.polygons[p]));
+            polyFace.push_back(mesh.polygonFaceId[p]);
+        }
+        mesh.polygons = std::move(polys);
+        mesh.polygonFaceId = std::move(polyFace);
+        dbg("generate: de-slit pass %d split %zu polygon(s)", pass, split);
+    }
+
+    // Non-manifold micro-segment collapse: twin border edges (two
+    // near-coincident B-rep edges between the SAME two faces — a
+    // hairline lens of imprint dirt) make both faces span the lens, so a
+    // cross-lens rung where their samples coincide collects 4 polygons.
+    // The rung is far below the model's feature size; fusing its two
+    // vertices removes it with a sub-visible (half-rung) move and the
+    // four quads become triangles around the fused vertex. Only edges
+    // that are ALREADY non-manifold and shorter than the micro tolerance
+    // are touched, so clean geometry is never altered.
+    {
+        Bnd_Box bb;
+        BRepBndLib::Add(model.shape, bb);
+        const double microTol = 5e-4 * std::sqrt(bb.SquareExtent());
+        for (int pass = 0; pass < 4; ++pass) {
+            std::map<std::pair<uint32_t, uint32_t>, int> use;
+            for (const auto& poly : mesh.polygons) {
+                for (size_t i = 0; i < poly.size(); ++i) {
+                    uint32_t a = poly[i], b = poly[(i + 1) % poly.size()];
+                    if (a > b) std::swap(a, b);
+                    ++use[{a, b}];
+                }
+            }
+            std::map<uint32_t, uint32_t> fuse;
+            for (const auto& [e, count] : use) {
+                if (count <= 2) continue;
+                if (fuse.count(e.first) || fuse.count(e.second)) continue;
+                const auto& A = mesh.vertices[e.first];
+                const auto& B = mesh.vertices[e.second];
+                const double dx = A[0] - B[0], dy = A[1] - B[1],
+                             dz = A[2] - B[2];
+                if (dx * dx + dy * dy + dz * dz >= microTol * microTol) {
+                    continue;
+                }
+                fuse[e.second] = e.first;
+                mesh.vertices[e.first] = {0.5 * (A[0] + B[0]),
+                                          0.5 * (A[1] + B[1]),
+                                          0.5 * (A[2] + B[2])};
+            }
+            if (fuse.empty()) break;
+            std::vector<std::vector<uint32_t>> polys;
+            std::vector<int> polyFace;
+            polys.reserve(mesh.polygons.size());
+            polyFace.reserve(mesh.polygons.size());
+            for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+                std::vector<uint32_t> mapped;
+                mapped.reserve(mesh.polygons[p].size());
+                for (uint32_t v : mesh.polygons[p]) {
+                    auto it = fuse.find(v);
+                    const uint32_t m = it == fuse.end() ? v : it->second;
+                    if (mapped.empty() || mapped.back() != m) {
+                        mapped.push_back(m);
+                    }
+                }
+                while (mapped.size() > 1 && mapped.front() == mapped.back()) {
+                    mapped.pop_back();
+                }
+                if (mapped.size() < 3) continue;
+                polys.push_back(std::move(mapped));
+                polyFace.push_back(mesh.polygonFaceId[p]);
+            }
+            mesh.polygons = std::move(polys);
+            mesh.polygonFaceId = std::move(polyFace);
+            dbg("generate: micro nm-segment pass %d fused %zu vertex "
+                "pair(s)",
+                pass, fuse.size());
+        }
+    }
+
     dbg("generate: done (%zu verts, %zu polys)", mesh.vertexCount(),
         mesh.polygonCount());
     return mesh;

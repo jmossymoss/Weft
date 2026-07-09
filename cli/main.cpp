@@ -49,6 +49,12 @@ void usage() {
         "      import then export with no retopo: B-rep->B-rep serializes the\n"
         "      shape (step/iges/brep); B-rep->mesh tessellates (obj/glb/stl/fbx)\n"
         "\n"
+        "  weft sweep <in.step> [--profile cad] [--radials 8,16,24,...]\n"
+        "      adversarial density harness: bump every revolution-family\n"
+        "      face's radial through the list, re-validating each result —\n"
+        "      an edit must never open a seam, demote a face to raw\n"
+        "      triangulation, or leave one empty; exits 1 on any failure\n"
+        "\n"
         "  weft mesh <in.step> -o <out.obj|out.glb|out.stl|out.fbx> [options]\n"
         "      generate topology and export OBJ (groups carry face IDs)\n"
         "    --radial N        divisions around cylinders/caps (default 16)\n"
@@ -454,6 +460,22 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
             std::printf("  %6d x %s\n", count, name.c_str());
         }
     }
+    // Build honesty: the kinds above show the PLAN; say when a face's
+    // planned mesher couldn't build (contract floor keeps exact borders,
+    // raw triangulation is the tri-soup last resort, empty is a hole).
+    {
+        int floor = 0, raw = 0, empty = 0;
+        for (const auto& [fid, how] : report.faceBuild) {
+            if (how == 2) ++floor;
+            if (how == 1) ++raw;
+            if (how == -1) ++empty;
+        }
+        if (floor || raw || empty) {
+            std::printf("  demoted: %d to contract floor, %d to raw "
+                        "triangulation, %d emitted nothing\n",
+                        floor, raw, empty);
+        }
+    }
     if (!report.edgeDivisions.empty()) {
         std::printf("  density-matched edges:");
         for (const auto& [eid, div] : report.edgeDivisions) {
@@ -462,6 +484,128 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         std::printf("\n");
     }
     return 0;
+}
+
+// weft sweep — the adversarial density harness (MVP plan §8 / P0.1):
+// meshes the model at its base settings, then bumps every curved /
+// revolution face's radial through a sweep of counts, re-validating each
+// time. The per-face override must never open a seam, never demote any
+// face to raw triangulation, and never leave a face empty. The
+// generation cache keeps each iteration to the faces the edit touches.
+int cmdSweep(const std::vector<std::string>& args) {
+    if (args.empty()) { usage(); return 2; }
+    std::string input = args[0];
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    std::vector<int> radials = {8, 16, 24, 32, 40, 48};
+    bool verbose = false;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& a = args[i];
+        if (a == "--profile" && i + 1 < args.size()) {
+            const std::string p = args[++i];
+            if (p == "cad") {
+                gs.defaults.adaptive = true;
+                gs.defaults.relativeDeviation = true;
+            } else if (p != "dense") {
+                throw std::runtime_error("unknown profile: " + p);
+            }
+        } else if (a == "--radials" && i + 1 < args.size()) {
+            radials.clear();
+            std::string list = args[++i];
+            for (size_t pos = 0; pos < list.size();) {
+                size_t comma = list.find(',', pos);
+                if (comma == std::string::npos) comma = list.size();
+                radials.push_back(std::stoi(list.substr(pos, comma - pos)));
+                pos = comma + 1;
+            }
+        } else if (a == "--verbose") {
+            verbose = true;
+        } else {
+            throw std::runtime_error("unknown option: " + a);
+        }
+    }
+
+    weft::Model model = weft::loadStep(input);
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationCache cache;
+    weft::GenerationReport baseRep;
+    weft::PolyMesh baseMesh =
+        weft::generate(model, analysis, gs, &baseRep, &cache);
+    {
+        weft::ValidationReport vr = weft::validateMesh(baseMesh, &model);
+        const size_t expected = vr.openEdgesOnInputBoundary;
+        if (vr.openEdges != expected || vr.nonManifoldEdges != 0) {
+            std::printf("BASE not watertight: %zu open (%zu input-boundary), "
+                        "%zu non-manifold\n",
+                        vr.openEdges, expected, vr.nonManifoldEdges);
+            return 1;
+        }
+    }
+
+    // Sweep candidates: every face meshed as a revolution family or a
+    // coons/rail strip on a curved surface — the faces radial edits hit.
+    std::vector<int> candidates;
+    for (const auto& [fid, kind] : baseRep.faceMesher) {
+        const bool revFamily = kind == weft::MesherKind::RevolutionGrid ||
+                               kind == weft::MesherKind::DomeCap ||
+                               kind == weft::MesherKind::AnnulusRing;
+        if (revFamily) candidates.push_back(fid);
+    }
+    std::printf("%s: sweeping %zu face(s) x %zu radial(s)\n", input.c_str(),
+                candidates.size(), radials.size());
+
+    int failures = 0;
+    size_t runs = 0;
+    for (int fid : candidates) {
+        for (int r : radials) {
+            weft::GenerationSettings s = gs;
+            weft::FaceMeshSettings f = gs.defaults;
+            f.radial = r;
+            s.perFace[fid] = f;
+            weft::GenerationReport rep;
+            weft::PolyMesh mesh;
+            try {
+                mesh = weft::generate(model, analysis, s, &rep, &cache);
+            } catch (const std::exception& e) {
+                std::printf("FAIL face %d radial %d: generate threw (%s)\n",
+                            fid, r, e.what());
+                ++failures;
+                continue;
+            }
+            ++runs;
+            weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+            const size_t expected = vr.openEdgesOnInputBoundary;
+            std::string bad;
+            if (vr.openEdges != expected || vr.nonManifoldEdges != 0) {
+                bad += " open=" + std::to_string(vr.openEdges) +
+                       "/nm=" + std::to_string(vr.nonManifoldEdges);
+            }
+            int raw = 0, empty = 0;
+            for (const auto& [f2, how] : rep.faceBuild) {
+                if (how == 1) ++raw;
+                if (how == -1) ++empty;
+            }
+            int baseRaw = 0;
+            for (const auto& [f2, how] : baseRep.faceBuild) {
+                if (how == 1) ++baseRaw;
+            }
+            if (raw > baseRaw) {
+                bad += " raw-demotions=" + std::to_string(raw) + " (base " +
+                       std::to_string(baseRaw) + ")";
+            }
+            if (empty) bad += " empty=" + std::to_string(empty);
+            if (!bad.empty()) {
+                std::printf("FAIL face %d radial %d:%s\n", fid, r,
+                            bad.c_str());
+                ++failures;
+            } else if (verbose) {
+                std::printf("ok   face %d radial %d (%zu polys)\n", fid, r,
+                            mesh.polygonCount());
+            }
+        }
+    }
+    std::printf("sweep: %zu runs, %d failure(s)\n", runs, failures);
+    return failures ? 1 : 0;
 }
 
 }  // namespace
@@ -476,6 +620,7 @@ int main(int argc, char** argv) {
         if (cmd == "convert") return cmdConvert(args);
         if (cmd == "mesh") return cmdMesh(args);
         if (cmd == "validate") return cmdMesh(args, /*validateOnly=*/true);
+        if (cmd == "sweep") return cmdSweep(args);
         usage();
         return 2;
     } catch (const std::exception& e) {

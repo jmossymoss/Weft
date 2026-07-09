@@ -201,6 +201,16 @@ std::vector<double> clusteredParams(int divisions, double hold);
 
 struct GenerationReport {
     std::map<int, MesherKind> faceMesher;  // FaceId -> strategy used
+    // FaceId -> how the face was actually built: 0 = its planned mesher,
+    // 1 = raw OCCT triangulation (the tri-soup last resort), 2 = the
+    // contract floor (exact borders, quad-paired web), -1 = the face
+    // emitted no polygons at all (a hole in the output). Excluded faces
+    // are not listed. faceMesher alone can't tell a contract-floor
+    // demotion from a clean build (the floor keeps the planned kind so
+    // conform treats its exact borders as authority) — the
+    // never-fall-back gate (MVP P0.1) reads this map instead: 1 and -1
+    // are failures, 2 is a visible graceful floor.
+    std::map<int, int> faceBuild;
     // EdgeId -> solved subdivision count, for edges that took part in
     // density matching. Adjacent faces sharing an edge agree on this count.
     std::map<int, int> edgeDivisions;
