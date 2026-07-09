@@ -8354,10 +8354,16 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                 const TopoDS_Face bandFace =
                     TopoDS::Face(model.faces(fid));
                 for (int e : plan.uEdges) {
-                    if (s.adaptive) {
-                        proposeSet({e}, 1, 1, true, s, overridden);
-                        continue;
-                    }
+                    // The edge's wrap fraction -> its share of the radial dial.
+                    // This is BOTH the flat-mode count AND the authoritative
+                    // count a typed radial pins: with adaptive ON, a per-face
+                    // count sets curCountOverride, and proposeSet then uses this
+                    // flat value verbatim — so it must be the real wrap-scaled
+                    // number, never the old `1` placeholder (that pinned the
+                    // driver rim to 1, collapsed nu to 3, and dropped the band
+                    // to the contract floor — the "ring came back" / triangle
+                    // soup at radial 20+). Adaptive-with-no-override still
+                    // follows curvature through proposeSet.
                     double f, l;
                     Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(
                         TopoDS::Edge(model.edges(e)), bandFace, f, l);
@@ -8372,10 +8378,9 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                     }
                     const double frac =
                         eu1 > eu0 ? (eu1 - eu0) / (2.0 * M_PI) : 0.0;
-                    propose({e},
-                            std::max(1, int(std::lround(
-                                            std::max(3, s.radial) * frac))),
-                            overridden);
+                    const int flat = std::max(
+                        1, int(std::lround(std::max(3, s.radial) * frac)));
+                    proposeSet({e}, flat, 1, s.adaptive, s, overridden);
                 }
             } else if (!plan.linkRims && plan.uEdges.size() == 2) {
                 // Unlinked rims: each ring solves on its own (pin per-edge
