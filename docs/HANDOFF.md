@@ -81,6 +81,30 @@ watertight 0/0, winding consistent, tris 11 (NO fallback), chord dev unchanged
 1.13, 10 fewer polys; every other corpus model byte-identical. Kill-switch
 WEFT_NO_GROUND.
 
+RING C ROBUST TO DENSITY CHANGES (`pinFilletChains`, ~line 8677). The grounding
+above only holds while every driver column has a cut-rim sample at its azimuth,
+which came from `pinArc` pinning the cut arcs to the columns. But `pinArc` used
+to BAIL whenever an arc caught more columns than its own solved count (the
+"count mismatch: no cascade" guard), so as soon as a per-face radial bump pushed
+the driver past the arc's solve, the cut rim stopped grounding and RING C came
+back (user: "as soon as counts change it comes back"). Fix: pin at the columns
+that actually cross the arc even when that EXCEEDS the solved count, raising
+`solvedEdge[arc]` to match so the neighbour blend's interior grid stays
+consistent (else the coons zippers to triangles). The trap: a fillet's two rails
+span slightly different azimuths, so at some counts one rail catches one more
+column than the other → asymmetric counts → coons demote (was +72 tris at
+DEFAULT). Cure: the chain's ENTRY rail (a band cut arc) fixes the column SET and
+every downstream rail pins to that same set (`chainCols`), so both rails of every
+fillet always agree. Verified: whole corpus byte-identical at default; flaregun
+both halves ground and stay watertight with clean full-height columns at radial
+18/22/24/26; nasty_cheese + unterlaf bands watertight across radial. STILL
+IMPERFECT: at radial 20/28/32 the TWO stacked barrel bands (43 wrap 0.924, 50
+wrap 0.927) round to DIFFERENT column counts (e.g. 18 vs 19), and their shared
+fillet region skews/demotes where the counts disagree — a separate "two connected
+bands need one shared count" problem, not the grounding. Repro any per-face
+radial visually with `weft_app <f> --faceradial 43:radial=24 --faceradial
+50:radial=24 --select 43 --screenshot out.png`.
+
 RING B — STILL OPEN. B is the notch's own feature-row (the horizontal edge at the
 notch top, ~38% up for the deep notches; region.rowKey). It is LOCAL to each
 notch (spans that notch's colL..colR), but the user marked it too. Removing it
