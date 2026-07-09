@@ -14,7 +14,6 @@
 #include <IMeshTools_Parameters.hxx>
 #include <Extrema_ExtPC.hxx>
 #include <GCPnts_AbscissaPoint.hxx>
-#include <GCPnts_TangentialDeflection.hxx>
 #include <GCPnts_UniformAbscissa.hxx>
 #include <GeomAdaptor_Curve.hxx>
 #include <Standard_Failure.hxx>
@@ -116,6 +115,131 @@ const char* mesherKindName(MesherKind k) {
 }
 
 namespace {
+
+// Platform-stable tangential-deflection count (MVP P0.3 determinism).
+// OCCT's GCPnts_TangentialDeflection is an iterative subdivider whose
+// data-dependent branches flip on last-ulp libm differences — the same
+// model tessellated on MSVC and glibc could disagree by one segment,
+// and the downstream topology then diverged per platform (the five
+// Windows pipeline failures). Derive the count in closed form instead.
+//
+// The border contract samples every edge at UNIFORM curve parameters,
+// so the right criterion is per-uniform-interval, not total: find the
+// smallest N such that each of the N parameter intervals turns at most
+// angTol (turn = integral of curvature x arc length, accumulated over
+// 33 fixed samples) and sags at most chordTol (the sagitta of an arc
+// turning dT over chord dS is ~ dT*dS/8). Curvature concentrated in one
+// bend raises N the way the old subdivider did, but the computation is
+// a fixed-order arithmetic scan — a last-ulp perturbation only matters
+// when an interval lands within the epsilon slack of its tolerance,
+// which the comparisons absorb.
+int stableDeflectionCount(const Adaptor3d_Curve& c, double angTol,
+                          double chordTol) {
+    const double f = c.FirstParameter(), l = c.LastParameter();
+    if (!(l > f)) return 1;
+    constexpr int kSamples = 33;
+    // Positions plus cumulative arc length S and turning angle T at the
+    // fixed samples. The turn between samples is the angle between their
+    // unit tangents — bounded by pi per gap, exact on conics, and immune
+    // to the curvature spikes that make an integral of k*ds explode when
+    // a micro-fillet lands between two samples.
+    gp_Pnt P[kSamples];
+    double S[kSamples] = {0}, T[kSamples] = {0};
+    bool have[kSamples] = {false};
+    gp_Vec prevDir;
+    bool prevDirOk = false;
+    bool prevOk = false;
+    for (int i = 0; i < kSamples; ++i) {
+        const double t = f + (l - f) * i / double(kSamples - 1);
+        gp_Vec dir;
+        bool dirOk = false;
+        bool ok = true;
+        try {
+            gp_Vec D1;
+            c.D1(t, P[i], D1);
+            if (D1.Magnitude() > 1e-12) {
+                dir = D1.Normalized();
+                dirOk = true;
+            }
+        } catch (const Standard_Failure&) {
+            try {
+                P[i] = c.Value(t);
+            } catch (const Standard_Failure&) {
+                ok = false;
+            }
+        }
+        if (i > 0) {
+            S[i] = S[i - 1];
+            T[i] = T[i - 1];
+            if (!ok) P[i] = P[i - 1];
+        }
+        have[i] = ok;
+        if (!ok) continue;
+        if (prevOk) {
+            S[i] = S[i - 1] + P[i].Distance(P[i - 1]);
+            if (dirOk && prevDirOk) {
+                T[i] = T[i - 1] + prevDir.Angle(dir);
+            }
+        }
+        if (dirOk) {
+            prevDir = dir;
+            prevDirOk = true;
+        }
+        prevOk = true;
+    }
+    const double aTol = std::max(angTol, 1e-3) * (1.0 + 1e-9);
+    const double cTol = std::max(chordTol, 1e-12) * (1.0 + 1e-9);
+    // Piecewise-linear reads at fraction x.
+    auto at = [&](const double* A, double x) {
+        const double u = x * (kSamples - 1);
+        const int i = std::min(kSamples - 2, std::max(0, int(u)));
+        return A[i] + (A[i + 1] - A[i]) * (u - i);
+    };
+    auto pAt = [&](double x) {
+        const double u = x * (kSamples - 1);
+        const int i = std::min(kSamples - 2, std::max(0, int(u)));
+        const double w = u - i;
+        return gp_Pnt(P[i].X() + (P[i + 1].X() - P[i].X()) * w,
+                      P[i].Y() + (P[i + 1].Y() - P[i].Y()) * w,
+                      P[i].Z() + (P[i + 1].Z() - P[i].Z()) * w);
+    };
+    for (int n = 1; n < 256; ++n) {
+        // Below the sampling resolution nothing can be said (and a true
+        // tangent kink between two samples would otherwise fail every n
+        // and drive the loop to the cap), so intervals no wider than one
+        // sample gap pass by construction.
+        const bool subSample = n >= kSamples - 1;
+        bool ok = true;
+        for (int i = 0; i < n && ok; ++i) {
+            const double x0 = i / double(n), x1 = (i + 1) / double(n);
+            const double dT = at(T, x1) - at(T, x0);
+            if (!subSample && dT > aTol) {
+                ok = false;
+                break;
+            }
+            // Chord deviation of this interval, probed at the interval's
+            // parametric midpoint — the same single-probe semantics the
+            // old subdivider used, so counts stay in its regime. The
+            // probe reads the piecewise-linear polyline, so intervals
+            // finer than the sampling resolution sag zero by
+            // construction (nothing can be said below it anyway).
+            {
+                const gp_Pnt A = pAt(x0), B = pAt(x1);
+                const gp_Pnt M = pAt(0.5 * (x0 + x1));
+                gp_Vec ab(A, B);
+                const double ab2 = ab.SquareMagnitude();
+                gp_Vec am(A, M);
+                double w = ab2 > 1e-24 ? am.Dot(ab) / ab2 : 0.0;
+                w = std::clamp(w, 0.0, 1.0);
+                const gp_Pnt Q(A.X() + ab.X() * w, A.Y() + ab.Y() * w,
+                               A.Z() + ab.Z() * w);
+                if (M.Distance(Q) > cTol) ok = false;
+            }
+        }
+        if (ok) return n;
+    }
+    return 256;
+}
 
 class MeshBuilder {
 public:
@@ -6696,8 +6820,8 @@ bool meshQuadFill(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                 }
                 const double ang =
                     std::max(1.0, fs.angleToleranceDeg) * M_PI / 180.0;
-                GCPnts_TangentialDeflection td(gc, ang, chord, 2);
-                return std::clamp(td.NbPoints() - 1, 1, 256);
+                return std::clamp(stableDeflectionCount(gc, ang, chord), 1,
+                                  256);
             } catch (const Standard_Failure&) {
                 return 0;
             }
@@ -8334,8 +8458,8 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                     chord = std::max(chord * frac * extent, 1e-9);
                 }
                 try {
-                    GCPnts_TangentialDeflection td(c, ang, chord, 2);
-                    n = std::clamp(td.NbPoints() - 1, 1, 256);
+                    n = std::clamp(stableDeflectionCount(c, ang, chord), 1,
+                                   256);
                 } catch (const Standard_Failure&) {
                 }
                 // Closed edges (full circles) keep a sane ring floor.
@@ -13462,6 +13586,36 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
             dbg("conform: face %d edge %d: %zu movers, %zu targets", fid,
                 eid, movers.size(), targets.size());
             if (targets.size() < 2) continue;
+            // Already-welded seam: every mover sits on some target
+            // (both faces sampled this edge at the same solved count,
+            // so their borders are bit-identical). The loose capture
+            // can still catch EXTRA targets on adjacent edges, and
+            // pairing against those drags matched verts off the seam —
+            // tearing a junction that was already exact. Nothing to
+            // conform here.
+            {
+                const double wtol =
+                    std::max(1e-6, settings.weldTolerance);
+                bool aligned = true;
+                for (const auto& [v, t] : movers) {
+                    const auto& mv = mesh.vertices[v];
+                    bool onTarget = false;
+                    for (const auto& tg : targets) {
+                        const auto& tv = mesh.vertices[tg.vert];
+                        const double dx = mv[0] - tv[0], dy = mv[1] - tv[1],
+                                     dz = mv[2] - tv[2];
+                        if (dx * dx + dy * dy + dz * dz < wtol * wtol) {
+                            onTarget = true;
+                            break;
+                        }
+                    }
+                    if (!onTarget) {
+                        aligned = false;
+                        break;
+                    }
+                }
+                if (aligned) continue;
+            }
             // Seam authority: only the sparser side conforms; the denser
             // (or equal-count lower-id) side keeps its chain.
             if (freeformSeam &&
@@ -13875,21 +14029,27 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     propagateBandRadialToBlendGroup(analysis, plans, settings);
 
     DensitySolution density = solveDensity(model, plans, settings);
-    // Flat per-edge count table: lets meshers consume per-edge counts from
-    // worker threads (union-find lookups path-compress, so countFor can't
-    // run concurrently).
-    std::vector<int> solvedEdge(model.edgeCount() + 1, 0);
+    // Curvature floor, every mode: a curved edge solved below its turn
+    // angle collapses to chords — observed as two bracket-bend
+    // quarter-pipes flattening into the SAME plane strip and weld-fusing
+    // non-manifold. One segment per ~60 degrees of turn is the least
+    // that keeps distinct geometry distinct; explicit counts (per-edge
+    // pins AND per-face overrides) win outright — 16 radial segments
+    // means exactly 16.
+    //
+    // The floor is applied per density GROUP, not per edge: raising one
+    // member of a matched group above its siblings breaks the equality
+    // the meshers rely on (two faces then sample the same border at
+    // different counts — an open seam by construction). Groups that
+    // carry a solved count take the raise through groupCount so
+    // countFor readers (the per-face count tables) agree with the flat
+    // solvedEdge table below; proposal-less groups keep countFor's
+    // fallback semantics and are floored uniformly in the table only.
+    std::map<int, int> floorOfRoot;
     for (int eid = 1; eid <= model.edgeCount(); ++eid) {
-        solvedEdge[eid] = density.countFor(eid, 0);
-        // Curvature floor, every mode: a curved edge solved below its
-        // turn angle collapses to chords — observed as two bracket-bend
-        // quarter-pipes flattening into the SAME plane strip and weld-
-        // fusing non-manifold. One segment per ~60 degrees of turn is
-        // the least that keeps distinct geometry distinct; explicit
-        // counts (per-edge pins AND per-face overrides) win outright —
-        // 16 radial segments means exactly 16.
         if (settings.perEdge.count(eid)) continue;
-        if (density.pinnedRoots.count(density.groups.find(eid))) continue;
+        const int root = density.groups.find(eid);
+        if (density.pinnedRoots.count(root)) continue;
         const TopoDS_Edge E = TopoDS::Edge(model.edges(eid));
         if (BRep_Tool::Degenerated(E)) continue;
         double f, l;
@@ -13898,10 +14058,28 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         GeomAdaptor_Curve gc(c3, f, l);
         if (gc.GetType() == GeomAbs_Line) continue;
         try {
-            GCPnts_TangentialDeflection td(gc, M_PI / 3.0, 1e6, 2);
-            const int floorN = std::clamp(td.NbPoints() - 1, 1, 32);
-            if (solvedEdge[eid] < floorN) solvedEdge[eid] = floorN;
+            const int floorN =
+                std::clamp(stableDeflectionCount(gc, M_PI / 3.0, 1e6), 1, 32);
+            auto [it, inserted] = floorOfRoot.try_emplace(root, floorN);
+            if (!inserted && it->second < floorN) it->second = floorN;
         } catch (const Standard_Failure&) {
+        }
+    }
+    for (const auto& [root, floorN] : floorOfRoot) {
+        auto it = density.groupCount.find(root);
+        if (it != density.groupCount.end() && it->second < floorN) {
+            it->second = floorN;
+        }
+    }
+    // Flat per-edge count table: lets meshers consume per-edge counts from
+    // worker threads (union-find lookups path-compress, so countFor can't
+    // run concurrently).
+    std::vector<int> solvedEdge(model.edgeCount() + 1, 0);
+    for (int eid = 1; eid <= model.edgeCount(); ++eid) {
+        solvedEdge[eid] = density.countFor(eid, 0);
+        auto it = floorOfRoot.find(density.groups.find(eid));
+        if (it != floorOfRoot.end() && solvedEdge[eid] < it->second) {
+            solvedEdge[eid] = it->second;  // proposal-less group: uniform
         }
     }
     // Wire floor: a closed wire sampled at fewer than 3 border vertices
@@ -13909,8 +14087,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     // caps on translator-dropped holes, lens faces in sloppy CAD) whose
     // near-straight edges each solve to 1 otherwise collapses to a 2-gon
     // and demotes to raw triangulation. Raise the wire's longest
-    // unpinned edge until the wire can close; both bordering faces read
-    // the same solved count, so the border contract holds.
+    // unpinned edge until the wire can close — through its whole density
+    // group, so both bordering faces read the same count everywhere.
     for (int fid = 1; fid <= model.faceCount(); ++fid) {
         for (TopExp_Explorer wx(model.faces(fid), TopAbs_WIRE); wx.More();
              wx.Next()) {
@@ -13925,6 +14103,9 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 if (eid < 1) continue;
                 total += std::max(0, solvedEdge[eid]);
                 if (settings.perEdge.count(eid)) continue;
+                if (density.pinnedRoots.count(density.groups.find(eid))) {
+                    continue;
+                }
                 double cf, cl;
                 if (BRep_Tool::Curve(e, cf, cl).IsNull()) continue;
                 BRepAdaptor_Curve c(e);
@@ -13938,7 +14119,17 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             dbg("density: wire on face %d totals %d samples, edge %d "
                 "raised by %d",
                 fid, total, bumpEid, 3 - total);
-            solvedEdge[bumpEid] += 3 - total;
+            const int target = solvedEdge[bumpEid] + 3 - total;
+            const int root = density.groups.find(bumpEid);
+            auto it = density.groupCount.find(root);
+            if (it != density.groupCount.end() && it->second < target) {
+                it->second = target;
+            }
+            for (int e = 1; e <= model.edgeCount(); ++e) {
+                if (density.groups.find(e) == root && solvedEdge[e] < target) {
+                    solvedEdge[e] = target;
+                }
+            }
         }
     }
     // Revolution rim SUM constraint: when a T-junction splits one rim of
