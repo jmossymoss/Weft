@@ -648,10 +648,13 @@ bool edgesHugRimsOrInserts(const TopoDS_Face& face,
 // Partial-wrap revolution band: an analytic periodic surface trimmed
 // short of the full period, bounded by exactly two full-height u-iso
 // side edges (a barrel wall that stops at 92% of the circle). The sides
-// are the band's u extremes; everything else on the wire — however
-// castellated — is a rim chain. Interior wires keep their own paths
-// (coons cutout handles a partial wrap around a slot), so only
-// single-wire faces qualify.
+// are the band's u extremes; everything else on that wire — however
+// castellated — is a rim chain. Additional wires are interior cutouts
+// (slots and holes through the wall) that edgesHugRimsOrInserts
+// classifies; they mesh as boolean-cut inserts, so they no longer
+// disqualify the band (the old coons-cutout route fanned the slot ends
+// across the primitive). A side-like edge on a cutout wire (a slot as
+// tall as the wall) still rejects — that geometry is not a band.
 bool openBandSides(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                    const Model& model, std::vector<int>& sides) {
     sides.clear();
@@ -662,39 +665,46 @@ bool openBandSides(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         default: return false;  // spheres/tori: poles and v-wrap instead
     }
     if (surf.IsUClosed() || surf.IsVClosed()) return false;
-    int wireCount = 0;
-    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
-        ++wireCount;
-    }
-    if (wireCount != 1) return false;
     const double uspan = std::max(
         1e-12, surf.LastUParameter() - surf.FirstUParameter());
     const double vspan = std::max(
         1e-12, surf.LastVParameter() - surf.FirstVParameter());
-    for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
-        const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
-        if (BRep_Tool::Degenerated(edge)) continue;
-        if (BRep_Tool::IsClosed(edge, face)) return false;  // seam
-        double f, l;
-        Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(edge, face, f, l);
-        if (pc.IsNull()) return false;
-        double umin = 1e300, umax = -1e300, vmin = 1e300, vmax = -1e300;
-        for (int k = 0; k <= 8; ++k) {
-            gp_Pnt2d uv = pc->Value(f + (l - f) * k / 8.0);
-            umin = std::min(umin, uv.X());
-            umax = std::max(umax, uv.X());
-            vmin = std::min(vmin, uv.Y());
-            vmax = std::max(vmax, uv.Y());
+    int outerWires = 0;
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        std::vector<int> wireSides;
+        for (TopExp_Explorer ex(wx.Current(), TopAbs_EDGE); ex.More();
+             ex.Next()) {
+            const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+            if (BRep_Tool::Degenerated(edge)) continue;
+            if (BRep_Tool::IsClosed(edge, face)) return false;  // seam
+            double f, l;
+            Handle(Geom2d_Curve) pc =
+                BRep_Tool::CurveOnSurface(edge, face, f, l);
+            if (pc.IsNull()) return false;
+            double umin = 1e300, umax = -1e300, vmin = 1e300, vmax = -1e300;
+            for (int k = 0; k <= 8; ++k) {
+                gp_Pnt2d uv = pc->Value(f + (l - f) * k / 8.0);
+                umin = std::min(umin, uv.X());
+                umax = std::max(umax, uv.X());
+                vmin = std::min(vmin, uv.Y());
+                vmax = std::max(vmax, uv.Y());
+            }
+            // A side spans (nearly) the whole band height at one u; a
+            // notch wall is u-iso too but stops at the notch arch.
+            if (umax - umin < 0.02 * uspan && vmax - vmin >= 0.9 * vspan) {
+                const int eid = model.edges.FindIndex(edge);
+                if (eid < 1) return false;
+                wireSides.push_back(eid);
+            }
         }
-        // A side spans (nearly) the whole band height at one u; a notch
-        // wall is u-iso too but stops at the notch arch.
-        if (umax - umin < 0.02 * uspan && vmax - vmin >= 0.9 * vspan) {
-            const int eid = model.edges.FindIndex(edge);
-            if (eid < 1) return false;
-            sides.push_back(eid);
+        if (wireSides.size() == 2) {
+            ++outerWires;
+            sides = wireSides;
+        } else if (!wireSides.empty()) {
+            return false;
         }
     }
-    return sides.size() == 2;
+    return outerWires == 1 && sides.size() == 2;
 }
 
 // Full-wrap castellated rim: a u-closed straight-ruling band (cylinder or
@@ -7554,15 +7564,53 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         std::vector<int> sides;
         std::vector<std::vector<int>> inserts;
         if (!openBandSides(face, surf, model, sides) ||
-            !edgesHugRimsOrInserts(face, surf, model, inserts, &sides) ||
-            !inserts.empty()) {
+            !edgesHugRimsOrInserts(face, surf, model, inserts, &sides)) {
             return false;
         }
+        // Strictly-interior wires (a slot or hole through the wall) mesh
+        // as boolean-cut inserts: straight full-height columns with the
+        // covered cells deleted and the cutout webbed as a local collar,
+        // instead of the coons cutout that fanned the slot ends.
+        plan.insertWires = std::move(inserts);
         plan.bandSides = std::move(sides);
         finishRevolution();
         if (plan.rimLow.empty() || plan.rimHigh.empty()) {
             plan = FacePlan();  // chains failed: keep the default route
             return false;
+        }
+        // The boolean-cut insert path needs CLEAN flat rims: a stepped
+        // or castellated rim would entangle its transition machinery
+        // with the cutout rows, and the mesher would fail to the floor —
+        // worse than the coons cutout those walls take today. Gate at
+        // plan time so they keep their existing route.
+        if (!plan.insertWires.empty()) {
+            const double vspanG = std::max(
+                1e-12, surf.LastVParameter() - surf.FirstVParameter());
+            for (const std::vector<int>* rim :
+                 {&plan.rimLow, &plan.rimHigh}) {
+                for (int eid : *rim) {
+                    const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
+                    if (BRep_Tool::Degenerated(e)) continue;
+                    double f, l;
+                    Handle(Geom2d_Curve) pc =
+                        BRep_Tool::CurveOnSurface(e, face, f, l);
+                    if (pc.IsNull()) {
+                        plan = FacePlan();
+                        return false;
+                    }
+                    double ev0 = 1e300, ev1 = -1e300;
+                    for (int k = 0; k <= 8; ++k) {
+                        const double vv =
+                            pc->Value(f + (l - f) * k / 8.0).Y();
+                        ev0 = std::min(ev0, vv);
+                        ev1 = std::max(ev1, vv);
+                    }
+                    if (ev1 - ev0 > 0.02 * vspanG) {
+                        plan = FacePlan();  // rim not flat: keep coons
+                        return false;
+                    }
+                }
+            }
         }
         const double uspanB = std::max(
             1e-12, surf.LastUParameter() - surf.FirstUParameter());
@@ -7898,6 +7946,22 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         dbg("plan face %d: dome cap (base %zu edges, meridian %zu)", fid,
             plan.uEdges.size(), plan.vEdges.size());
         return plan;
+    }
+
+    // Primitive-priority (the artist's rule: cylinder > curves >
+    // interior faces): a PARTIAL-WRAP revolution wall carrying interior
+    // cutout wires (a slot or hole through the wall) is a primitive
+    // first and a cutout second — route it to the open band's
+    // boolean-cut insert path BEFORE coons can claim it as a cutout
+    // patch, which fans the slot ends and lays full-width rows across
+    // the primitive. Single-wire walls keep their existing order
+    // (coons/ladder first) byte-for-byte.
+    {
+        int wireCount = 0;
+        for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+            ++wireCount;
+        }
+        if (wireCount > 1 && tryOpenBand()) return plan;
     }
 
     // Four-sided freeform/trimmed faces get a structured Coons grid; the
@@ -9280,7 +9344,9 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
                             const std::vector<int>& solvedEdge, int faceId,
                             int nu, int nv, const std::vector<int>& sides,
                             MeshBuilder& out,
-                            const PinnedEdges* pins = nullptr) {
+                            const PinnedEdges* pins = nullptr,
+                            const std::vector<std::vector<int>>*
+                                insertWires = nullptr) {
     if (sides.size() != 2 || surf.IsVClosed() || surf.IsUClosed()) {
         return false;
     }
@@ -9290,17 +9356,71 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
     const double uspan = std::max(1e-12, u1 - u0);
     const double wspan = std::max(1e-12, v1 - v0);
 
-    // The single wire's cycle with face-local edge instances (the model
+    // Interior cutout wires (a slot/hole through the wall) become
+    // boolean-cut boxes: lattice cells they cover are deleted and the
+    // cavity is webbed to the wire's exact contract samples, so the
+    // columns stay straight and full-height (a cut FOLLOWS the
+    // primitive; it never drives rows across it). Boxes must sit
+    // strictly inside the band or the cavity would eat a border.
+    struct IBox {
+        double bu0 = 1e300, bu1 = -1e300;
+        double bv0 = 1e300, bv1 = -1e300;
+        const std::vector<int>* wire = nullptr;
+        int rowLo = -1, rowHi = -1;  // slot-extent row keys
+        int colL = -1, colR = -1;    // kept columns bracketing the cut
+    };
+    std::vector<IBox> iboxes;
+    if (insertWires) {
+        for (const auto& w : *insertWires) {
+            if (w.empty()) return false;
+            IBox b;
+            b.wire = &w;
+            for (int eid : w) {
+                if (eid < 1 || eid > model.edges.Extent()) return false;
+                const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+                double f2, l2;
+                Handle(Geom2d_Curve) pc =
+                    BRep_Tool::CurveOnSurface(edge, face, f2, l2);
+                if (pc.IsNull()) return false;
+                const int n = std::max(
+                    16, eid < int(solvedEdge.size()) ? solvedEdge[eid] : 1);
+                for (int k = 0; k <= n; ++k) {
+                    gp_Pnt2d uv = pc->Value(f2 + (l2 - f2) * k / double(n));
+                    b.bu0 = std::min(b.bu0, uv.X());
+                    b.bu1 = std::max(b.bu1, uv.X());
+                    b.bv0 = std::min(b.bv0, uv.Y());
+                    b.bv1 = std::max(b.bv1, uv.Y());
+                }
+            }
+            if (!(b.bu1 > b.bu0) || !(b.bv1 > b.bv0)) return false;
+            if (b.bu0 <= u0 + 0.02 * uspan || b.bu1 >= u1 - 0.02 * uspan ||
+                b.bv0 <= v0 + 0.02 * wspan || b.bv1 >= v1 - 0.02 * wspan) {
+                return false;  // not strictly interior
+            }
+            iboxes.push_back(b);
+        }
+    }
+
+    // The outer wire's cycle with face-local edge instances (the model
     // map's copies lose the orientation the sample direction needs).
+    // With interior cutout wires present, the outer wire is the one
+    // carrying the two side edges.
     std::vector<std::pair<int, TopoDS_Edge>> order;
     for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        std::vector<std::pair<int, TopoDS_Edge>> cand;
+        bool hasSide = false;
         for (BRepTools_WireExplorer we(TopoDS::Wire(wx.Current()), face);
              we.More(); we.Next()) {
             if (BRep_Tool::Degenerated(we.Current())) continue;
             const int eid = model.edges.FindIndex(we.Current());
-            if (eid >= 1) order.push_back({eid, we.Current()});
+            if (eid < 1) continue;
+            cand.push_back({eid, we.Current()});
+            if (eid == sides[0] || eid == sides[1]) hasSide = true;
         }
-        break;
+        if (hasSide) {
+            order = std::move(cand);
+            break;
+        }
     }
     const int sA = sides[0], sB = sides[1];
     int ia = -1, ib = -1;
@@ -9745,6 +9865,30 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
     std::vector<int> keyAx;
     for (int j = 1; j < nv; ++j) keyAx.push_back(addRow(j * wspan / nv));
     for (Region& r : regions) r.rowKey = addRow(r.rowfW);
+    // Interior cutouts: rows exactly at each box's v-extents (carried
+    // only by the columns the box touches — no full-width band across
+    // the primitive), and the kept columns bracketing the cut. The cut
+    // must stay clear of the rim strips, the sides, and any
+    // castellation region — anything more entangled falls back.
+    if (!iboxes.empty() && (!regions.empty() || waveCut)) return false;
+    for (IBox& b : iboxes) {
+        const double wA = wOf(b.bv0), wB = wOf(b.bv1);
+        b.rowLo = addRow(std::min(wA, wB));
+        b.rowHi = addRow(std::max(wA, wB));
+        if (b.rowLo == b.rowHi) return false;
+        if (rowW[b.rowLo] < rowW[keyBot] - 1e-12 ||
+            rowW[b.rowHi] > rowW[keyTop] + 1e-12) {
+            return false;  // cut reaches into a rim strip
+        }
+        b.colL = -1;
+        for (int c = 0; c < nu; ++c) {
+            const bool covers = uk[c + 1] > b.bu0 + 1e-12 * uspan &&
+                                uk[c] < b.bu1 - 1e-12 * uspan;
+            if (covers && b.colL < 0) b.colL = c;
+            if (covers) b.colR = c + 1;
+        }
+        if (b.colL < 1 || b.colR > nu - 1) return false;
+    }
 
     // Per-column row keys. Columns strictly inside a region start at its
     // feature row (the cells below are the boolean cut); its bounding
@@ -9788,6 +9932,15 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
         }
         for (const Region& r : regions) {
             if (c == r.colL || c == r.colR) ks.push_back(r.rowKey);
+        }
+        // Columns touched by an interior cutout carry its extent rows;
+        // the first column outside the cut absorbs them as n-gon
+        // corners — the local collar.
+        for (const IBox& b : iboxes) {
+            if (c >= b.colL && c <= b.colR) {
+                ks.push_back(b.rowLo);
+                ks.push_back(b.rowHi);
+            }
         }
         std::sort(ks.begin(), ks.end(),
                   [&](int a, int b) { return rowW[a] < rowW[b]; });
@@ -9883,7 +10036,19 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
     // Lattice cells: per column pair, bands at the rows BOTH columns
     // carry; one-sided feature rows ride along as extra ring verts (the
     // n-gon absorbers). Cells inside a region's box below its feature
-    // row simply never exist — that is the boolean cut.
+    // row simply never exist — that is the boolean cut. Cells covered
+    // by an interior cutout box are cut the same way; the cavity webs
+    // to the wire's contract samples afterwards.
+    auto cellCut = [&](int c, double wA, double wB) {
+        for (const IBox& b : iboxes) {
+            if (c >= b.colL && c + 1 <= b.colR &&
+                wA >= rowW[b.rowLo] - 1e-12 &&
+                wB <= rowW[b.rowHi] + 1e-12) {
+                return true;
+            }
+        }
+        return false;
+    };
     for (int c = 1; c + 1 < nu; ++c) {
         const std::vector<int>& L = colKeys[c];
         const std::vector<int>& R = colKeys[c + 1];
@@ -9895,6 +10060,7 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
         }
         for (size_t b = 0; b + 1 < common.size(); ++b) {
             const double wA = rowW[common[b]], wB = rowW[common[b + 1]];
+            if (cellCut(c, wA, wB)) continue;
             std::vector<uint32_t> ring{vid[c][common[b]],
                                        vid[c + 1][common[b]]};
             for (int k : R) {
@@ -10209,10 +10375,294 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
         if (emitted + 2 < ring.size()) return false;
     }
 
+    // Interior cutout webs: the deleted cells leave one open directed
+    // ring per box inside the local build; splice the wire's exact
+    // contract samples into it as a keyhole and ear-clip. The web is the
+    // LOCAL collar — the bridge edges are interior (used twice, once per
+    // flanking triangle), and the wire samples weld to the slot wall
+    // faces by construction (they sample the same 3D curves at the same
+    // solved counts).
+    if (!iboxes.empty()) {
+        std::map<std::pair<uint32_t, uint32_t>, int> dir;
+        for (const auto& poly : local.polygons) {
+            for (size_t i = 0; i < poly.size(); ++i) {
+                ++dir[{poly[i], poly[(i + 1) % poly.size()]}];
+            }
+        }
+        std::map<uint32_t, uint32_t> next;
+        for (const auto& [e, n] : dir) {
+            if (n != 1 || dir.count({e.second, e.first})) continue;
+            if (next.count(e.first)) return false;  // ambiguous boundary
+            next[e.first] = e.second;
+        }
+        std::vector<std::vector<uint32_t>> loops;
+        {
+            std::set<uint32_t> visited;
+            for (const auto& [a, b] : next) {
+                if (visited.count(a)) continue;
+                std::vector<uint32_t> loop{a};
+                visited.insert(a);
+                uint32_t cur = b;
+                bool closed = false;
+                for (size_t guard = 0; guard <= next.size(); ++guard) {
+                    if (cur == a) {
+                        closed = true;
+                        break;
+                    }
+                    auto it = next.find(cur);
+                    if (it == next.end()) break;
+                    loop.push_back(cur);
+                    visited.insert(cur);
+                    cur = it->second;
+                }
+                if (closed && loop.size() >= 3) {
+                    loops.push_back(std::move(loop));
+                }
+            }
+        }
+        const double du = uspan / nu;
+        for (const IBox& b : iboxes) {
+            // The cavity loop: the closed boundary ring whose UV bbox
+            // fits inside the cut's column/row bracket (the band's own
+            // outer boundary spans the whole face and never matches).
+            const double lu0 = uk[b.colL] - 0.5 * du;
+            const double lu1 = uk[b.colR] + 0.5 * du;
+            const double bvA =
+                std::min(vOf(rowW[b.rowLo]), vOf(rowW[b.rowHi]));
+            const double bvB =
+                std::max(vOf(rowW[b.rowLo]), vOf(rowW[b.rowHi]));
+            const double vPad = 0.02 * wspan;
+            int li = -1;
+            for (size_t i = 0; i < loops.size(); ++i) {
+                double x0 = 1e300, x1 = -1e300, y0 = 1e300, y1 = -1e300;
+                for (uint32_t v : loops[i]) {
+                    const Anchor& an = local.anchors[v];
+                    x0 = std::min(x0, an.u);
+                    x1 = std::max(x1, an.u);
+                    y0 = std::min(y0, an.v);
+                    y1 = std::max(y1, an.v);
+                }
+                if (x0 >= lu0 && x1 <= lu1 && y0 >= bvA - vPad &&
+                    y1 <= bvB + vPad) {
+                    if (li >= 0) return false;  // two rings in one box
+                    li = int(i);
+                }
+            }
+            if (li < 0) return false;
+            std::vector<uint32_t> cav = loops[li];
+            // The boundary chain (walked in the survivors' stored
+            // direction) reversed is the direction the collar must
+            // traverse the cavity edges — each shared edge then carries
+            // exactly one collar polygon against one lattice polygon.
+            std::reverse(cav.begin(), cav.end());
+
+            // The wire's contract samples, chained into one closed ring.
+            struct HP {
+                gp_Pnt p;
+                double u, v;
+            };
+            std::vector<std::vector<HP>> pieces;
+            for (int eid : *b.wire) {
+                const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+                double f2, l2, f3, l3;
+                Handle(Geom2d_Curve) pc =
+                    BRep_Tool::CurveOnSurface(edge, face, f2, l2);
+                Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, f3, l3);
+                if (pc.IsNull() || c3.IsNull()) return false;
+                const int n =
+                    eid < int(solvedEdge.size())
+                        ? std::max(1, solvedEdge[eid])
+                        : 1;
+                std::vector<HP> pts;
+                for (double tt : edgeSampleFractions(eid, n, 0.0, false,
+                                                     /*includeLast=*/true,
+                                                     pins, &model)) {
+                    gp_Pnt2d uv = pc->Value(f2 + tt * (l2 - f2));
+                    pts.push_back({c3->Value(f3 + tt * (l3 - f3)), uv.X(),
+                                   uv.Y()});
+                }
+                if (pts.size() < 2) return false;
+                pieces.push_back(std::move(pts));
+            }
+            std::vector<HP> hole = pieces[0];
+            {
+                std::vector<char> used(pieces.size(), 0);
+                used[0] = 1;
+                for (size_t step = 1; step < pieces.size(); ++step) {
+                    const gp_Pnt cur = hole.back().p;
+                    double best = 1e300;
+                    size_t bj = 0;
+                    bool rev = false;
+                    for (size_t j = 0; j < pieces.size(); ++j) {
+                        if (used[j]) continue;
+                        const double dF =
+                            cur.Distance(pieces[j].front().p);
+                        const double dB = cur.Distance(pieces[j].back().p);
+                        if (dF < best) {
+                            best = dF;
+                            bj = j;
+                            rev = false;
+                        }
+                        if (dB < best) {
+                            best = dB;
+                            bj = j;
+                            rev = true;
+                        }
+                    }
+                    std::vector<HP>& pj = pieces[bj];
+                    if (rev) std::reverse(pj.begin(), pj.end());
+                    hole.insert(hole.end(), pj.begin() + 1, pj.end());
+                    used[bj] = 1;
+                }
+                double perim = 0;
+                for (size_t i = 1; i < hole.size(); ++i) {
+                    perim += hole[i - 1].p.Distance(hole[i].p);
+                }
+                if (hole.size() < 4 ||
+                    hole.front().p.Distance(hole.back().p) >
+                        0.05 * std::max(perim, 1e-9)) {
+                    return false;  // the wire didn't close
+                }
+                hole.pop_back();
+            }
+            // Collar ladder between the two closed rings: both must wind
+            // the SAME way — a rung then traverses the cavity edge
+            // forward and the hole edge backward, manifold on both.
+            auto areaCav = [&]() {
+                double a = 0;
+                for (size_t i = 0; i < cav.size(); ++i) {
+                    const Anchor& p = local.anchors[cav[i]];
+                    const Anchor& q =
+                        local.anchors[cav[(i + 1) % cav.size()]];
+                    a += p.u * rScale * q.v - q.u * rScale * p.v;
+                }
+                return a;
+            };
+            auto areaHole = [&]() {
+                double a = 0;
+                for (size_t i = 0; i < hole.size(); ++i) {
+                    const HP& p = hole[i];
+                    const HP& q = hole[(i + 1) % hole.size()];
+                    a += p.u * rScale * q.v - q.u * rScale * p.v;
+                }
+                return a;
+            };
+            if (areaCav() * areaHole() < 0) {
+                std::reverse(hole.begin(), hole.end());
+            }
+            std::vector<uint32_t> hid(hole.size());
+            for (size_t i = 0; i < hole.size(); ++i) {
+                hid[i] = wb.addVertex(hole[i].p,
+                                      {faceId, hole[i].u, hole[i].v});
+            }
+            // Align the ring starts at the nearest pair, then zip by
+            // arc fraction — quads where the two rings advance together,
+            // triangles where one is denser (the ring counts are
+            // independent: the cavity follows the lattice, the hole
+            // follows the wire's solved counts).
+            size_t ci = 0, hj = 0;
+            {
+                double best = 1e300;
+                for (size_t i = 0; i < cav.size(); ++i) {
+                    const Anchor& an = local.anchors[cav[i]];
+                    for (size_t j = 0; j < hole.size(); ++j) {
+                        const double dx = (an.u - hole[j].u) * rScale;
+                        const double dy = an.v - hole[j].v;
+                        const double d2 = dx * dx + dy * dy;
+                        if (d2 < best) {
+                            best = d2;
+                            ci = i;
+                            hj = j;
+                        }
+                    }
+                }
+            }
+            const size_t nc = cav.size(), nh = hole.size();
+            auto C = [&](size_t k) { return cav[(ci + k) % nc]; };
+            auto H = [&](size_t k) { return hid[(hj + k) % nh]; };
+            // Pair the rings by POLAR ANGLE around the cutout centroid —
+            // both encircle it in the same direction, so angle pairing
+            // is monotone and twist-free where arc-length fractions
+            // distort (a rectangle cavity ring against a round hole
+            // spends very different fractions per turn).
+            double cx = 0, cy = 0;
+            for (const HP& h : hole) {
+                cx += h.u * rScale;
+                cy += h.v;
+            }
+            cx /= double(nh);
+            cy /= double(nh);
+            auto unwrap = [&](std::vector<double>& a) {
+                for (size_t k = 1; k < a.size(); ++k) {
+                    while (a[k] - a[k - 1] > M_PI) a[k] -= 2.0 * M_PI;
+                    while (a[k] - a[k - 1] < -M_PI) a[k] += 2.0 * M_PI;
+                }
+            };
+            std::vector<double> tc(nc + 1), th(nh + 1);
+            for (size_t k = 0; k <= nc; ++k) {
+                const Anchor& a = local.anchors[C(k % nc)];
+                tc[k] = std::atan2(a.v - cy, a.u * rScale - cx);
+            }
+            for (size_t k = 0; k <= nh; ++k) {
+                const HP& h = hole[(hj + k) % nh];
+                th[k] = std::atan2(h.v - cy, h.u * rScale - cx);
+            }
+            unwrap(tc);
+            unwrap(th);
+            // Both rings sweep one full turn the same way; anything else
+            // is a geometry the collar cannot express.
+            if (std::abs(std::abs(tc[nc] - tc[0]) - 2.0 * M_PI) > 0.5 ||
+                std::abs(std::abs(th[nh] - th[0]) - 2.0 * M_PI) > 0.5 ||
+                (tc[nc] - tc[0]) * (th[nh] - th[0]) < 0) {
+                return false;
+            }
+            // Attach each sparse cavity vertex to the nearest dense hole
+            // sample (monotone by unwrapped angle), then emit ONE cell
+            // per cavity segment carrying every hole sample in its span
+            // — a quad or a grouped n-gon, never a triangle fan (the
+            // notch webs' absorption pattern).
+            const double dir = tc[nc] > tc[0] ? 1.0 : -1.0;
+            auto off = [&](double h, double c) {
+                // angular offset h-c, wrapped to the nearest turn
+                double d = (h - c) * dir;
+                while (d > M_PI) d -= 2.0 * M_PI;
+                while (d < -M_PI) d += 2.0 * M_PI;
+                return std::abs(d);
+            };
+            std::vector<size_t> mp(nc + 1);
+            mp[0] = 0;
+            mp[nc] = nh;
+            for (size_t k = 1; k < nc; ++k) {
+                size_t j = mp[k - 1];
+                while (j + 1 < nh &&
+                       off(th[j + 1], tc[k]) <= off(th[j], tc[k])) {
+                    ++j;
+                }
+                mp[k] = j;
+            }
+            for (size_t k = 0; k < nc; ++k) {
+                std::vector<uint32_t> cell{C(k), C(k + 1)};
+                for (size_t j = mp[k + 1]; j-- > mp[k];) {
+                    cell.push_back(H(j + 1));
+                }
+                cell.push_back(H(mp[k]));
+                cell.erase(std::unique(cell.begin(), cell.end()),
+                           cell.end());
+                while (cell.size() > 1 && cell.front() == cell.back()) {
+                    cell.pop_back();
+                }
+                if (cell.size() < 3) continue;
+                wb.addPolygon(std::move(cell), faceId, false);
+            }
+            dbg("openband face %d insert collar: cav=%zu hole=%zu", faceId,
+                nc, nh);
+        }
+    }
+
     dbg("openband face %d: cols=%d rows=%d regions=%zu passCut=%d "
-        "passPlain=%d polys=%zu",
+        "passPlain=%d inserts=%zu polys=%zu",
         faceId, nu, nv, regions.size(), passCut ? 1 : 0, passPlain ? 1 : 0,
-        local.polygons.size());
+        iboxes.size(), local.polygons.size());
     // Everything validated: splat the local result into the builder.
     std::vector<uint32_t> outMap(local.vertices.size());
     for (uint32_t i = 0; i < local.vertices.size(); ++i) {
@@ -14786,6 +15236,20 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                                 fid, nu, nv, out,
                                                 &pinnedEdge)) {
                         demote(fid, face, surf, s, "rim notch failed");
+                    }
+                } else if (!plan.insertWires.empty() &&
+                           !plan.bandSides.empty()) {
+                    // Partial-wrap wall with interior cutouts: straight
+                    // columns, covered cells deleted, cutouts webbed as
+                    // local collars.
+                    if (!meshRevolutionOpenBand(face, surf, model,
+                                                plan.uEdges, solvedEdge,
+                                                fid, nu, nv,
+                                                plan.bandSides, out,
+                                                &pinnedEdge,
+                                                &plan.insertWires)) {
+                        demote(fid, face, surf, s,
+                               "open band insert failed");
                     }
                 } else if (!plan.insertWires.empty()) {
                     // Before the taper branch: a taper never cuts the

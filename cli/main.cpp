@@ -33,7 +33,7 @@ void usage() {
         "usage:\n"
         "  weft fixture <out.step> [--shape cylinder|box|cone|sphere|torus|\n"
         "                                    fillet|hole|demo|boss|notched|\n"
-        "                                    slotted|barrel|bossfillet|ribbon|\n"
+        "                                    slotted|barrel|drilled|bossfillet|ribbon|\n"
         "                                    ribbonnotch]\n"
         "      generate a test STEP file from OCCT primitives\n"
         "\n"

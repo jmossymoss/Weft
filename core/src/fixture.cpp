@@ -126,6 +126,24 @@ TopoDS_Shape makeFixture(const std::string& name) {
                 .Shape();
         return BRepAlgoAPI_Cut(cut, slot).Shape();
     }
+    if (name == "drilled") {
+        // A round bolt hole through a partial-wrap wall — the most
+        // common real cutout (vents, bores, mounting holes). The wall
+        // must keep straight full-height columns with the hole carved
+        // as a local collar, not fan across the primitive.
+        gp_Ax2 axis(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1));
+        TopoDS_Shape tube = BRepAlgoAPI_Cut(
+            BRepPrimAPI_MakeCylinder(axis, 12.0, 60.0).Shape(),
+            BRepPrimAPI_MakeCylinder(axis, 9.0, 60.0).Shape());
+        TopoDS_Shape sector =
+            BRepPrimAPI_MakeBox(gp_Pnt(0.0, 0.0, -1.0),
+                                gp_Pnt(30.0, 30.0, 61.0))
+                .Shape();
+        TopoDS_Shape cut = BRepAlgoAPI_Cut(tube, sector).Shape();
+        gp_Ax2 hAx(gp_Pnt(-14.0, 0.0, 30.0), gp_Dir(1, 0, 0));
+        TopoDS_Shape hole = BRepPrimAPI_MakeCylinder(hAx, 4.0, 6.0).Shape();
+        return BRepAlgoAPI_Cut(cut, hole).Shape();
+    }
     if (name == "barrel2") {
         // The realistic barrel wall: partial wrap, a capsule slot through
         // the wall AND a step interrupting the top rim — the outer wire

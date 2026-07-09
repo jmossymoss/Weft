@@ -20,8 +20,10 @@ notched cad 35 quads, 0 tris, 8 n-gons
 notched default 42 quads, 0 tris, 9 n-gons
 slotted cad 182 quads, 200 tris, 4 n-gons
 slotted default 208 quads, 176 tris, 4 n-gons
-barrel cad 230 quads, 86 tris, 12 n-gons
-barrel default 178 quads, 48 tris, 12 n-gons
+barrel cad 131 quads, 0 tris, 16 n-gons
+barrel default 104 quads, 0 tris, 10 n-gons
+drilled cad 66 quads, 0 tris, 15 n-gons
+drilled default 95 quads, 0 tris, 12 n-gons
 bossfillet cad 70 quads, 0 tris, 3 n-gons
 bossfillet default 53 quads, 0 tris, 3 n-gons
 ribbon cad 50 quads, 0 tris, 0 n-gons

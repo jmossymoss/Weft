@@ -25,7 +25,7 @@ UPDATE=0
 [ "${1:-}" = "--update" ] && UPDATE=1
 
 FIXTURES="cylinder box cone sphere torus fillet hole demo boss notched \
-          slotted barrel bossfillet ribbon ribbonnotch"
+          slotted barrel drilled bossfillet ribbon ribbonnotch"
 FAIL=0
 : > "$OUT/counts.txt"
 
