@@ -5,8 +5,13 @@
 #include "weft/io/system.hpp"
 
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_Sewing.hxx>
+#include <BRepFill_Filling.hxx>
 #include <BRepTools_History.hxx>
+#include <BRep_Tool.hxx>
+#include <GeomAbs_Shape.hxx>
 #include <IFSelect_ReturnStatus.hxx>
 #include <STEPControl_Writer.hxx>
 #include <ShapeBuild_ReShape.hxx>
@@ -15,11 +20,17 @@
 #include <TopAbs_ShapeEnum.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Edge.hxx>
+#include <TopoDS_Face.hxx>
+#include <TopoDS_Vertex.hxx>
+#include <TopoDS_Wire.hxx>
 
 #include <memory>
 #include <stdexcept>
+#include <vector>
 
 namespace weft {
 
@@ -94,6 +105,127 @@ static Handle(BRepTools_History) historyOfReShape(const TopoDS_Shape& before,
     return h;
 }
 
+// Count a shape's open-shell edges: non-degenerate edges bordering fewer
+// than two faces. The watertightness gate for the capping pass below.
+static int countOpenShellEdges(const TopoDS_Shape& shape) {
+    TopTools_IndexedDataMapOfShapeListOfShape e2f;
+    TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, e2f);
+    int open = 0;
+    for (int i = 1; i <= e2f.Extent(); ++i) {
+        const TopoDS_Edge& e = TopoDS::Edge(e2f.FindKey(i));
+        if (BRep_Tool::Degenerated(e)) continue;
+        if (e2f(i).Extent() < 2) ++open;
+    }
+    return open;
+}
+
+// Reconstruct faces the translator dropped. A STEP solid whose
+// OFFSET_SURFACE (or other exotic) faces fail to build arrives as a
+// nearly-closed shell with holes — every hole a CLOSED loop of boundary
+// edges (foam: 881 faces declared, 877 transferred, 3 loops). No sewing
+// tolerance can close a hole whose face does not exist, so every mesh of
+// the model leaks exactly there. Cap each loop with a real B-rep face
+// (planar when the loop is planar, a filling patch otherwise) and sew it
+// in, so the border contract makes the caps watertight like any face.
+//
+// Authored sheet bodies must NOT be capped: a shell that is mostly
+// boundary (tork: 51-89% of its edges open) is an open surface model by
+// design. Broken solids are nearly closed (foam: 1.7-28.6%), so the pass
+// only treats shells less than one third open.
+static TopoDS_Shape capDroppedFaces(const TopoDS_Shape& shape,
+                                    Handle(BRepTools_History)& outHist) {
+    std::vector<TopoDS_Shape> caps;
+    for (TopExp_Explorer sx(shape, TopAbs_SHELL); sx.More(); sx.Next()) {
+        TopTools_IndexedDataMapOfShapeListOfShape e2f;
+        TopExp::MapShapesAndAncestors(sx.Current(), TopAbs_EDGE, TopAbs_FACE,
+                                      e2f);
+        std::vector<TopoDS_Edge> boundary;
+        int total = 0;
+        for (int i = 1; i <= e2f.Extent(); ++i) {
+            const TopoDS_Edge& e = TopoDS::Edge(e2f.FindKey(i));
+            if (BRep_Tool::Degenerated(e)) continue;
+            ++total;
+            if (e2f(i).Extent() < 2) boundary.push_back(e);
+        }
+        if (boundary.empty() || int(boundary.size()) * 3 >= total) continue;
+
+        // Chain the boundary edges into loops by shared vertices.
+        std::vector<char> used(boundary.size(), 0);
+        for (size_t s = 0; s < boundary.size(); ++s) {
+            if (used[s]) continue;
+            std::vector<TopoDS_Edge> loop{boundary[s]};
+            used[s] = 1;
+            TopoDS_Vertex v0, cur;
+            TopExp::Vertices(boundary[s], v0, cur);
+            if (v0.IsNull() || cur.IsNull()) continue;
+            // A single closed-curve edge (unify merges a hole's rim into
+            // one periodic edge) is already a complete loop.
+            bool closed = v0.IsSame(cur);
+            while (!closed && loop.size() < 64) {
+                bool advanced = false;
+                for (size_t j = 0; j < boundary.size(); ++j) {
+                    if (used[j]) continue;
+                    TopoDS_Vertex a, b;
+                    TopExp::Vertices(boundary[j], a, b);
+                    if (a.IsNull() || b.IsNull()) continue;
+                    if (a.IsSame(cur) || b.IsSame(cur)) {
+                        cur = a.IsSame(cur) ? b : a;
+                        loop.push_back(boundary[j]);
+                        used[j] = 1;
+                        advanced = true;
+                        break;
+                    }
+                }
+                if (!advanced) break;
+                closed = cur.IsSame(v0);
+            }
+            if (!closed) continue;
+
+            try {
+                BRepBuilderAPI_MakeWire mw;
+                for (const TopoDS_Edge& e : loop) mw.Add(e);
+                if (!mw.IsDone()) continue;
+                const TopoDS_Wire wire = mw.Wire();
+                TopoDS_Face cap;
+                {
+                    // A planar loop takes an exact planar cap.
+                    BRepBuilderAPI_MakeFace mf(wire, Standard_True);
+                    if (mf.IsDone()) cap = mf.Face();
+                }
+                if (cap.IsNull()) {
+                    BRepFill_Filling fill;
+                    for (const TopoDS_Edge& e : loop) {
+                        fill.Add(e, GeomAbs_C0);
+                    }
+                    fill.Build();
+                    if (fill.IsDone()) cap = fill.Face();
+                }
+                if (!cap.IsNull()) caps.push_back(cap);
+            } catch (const Standard_Failure&) {
+                // A loop the filler can't express stays open — honest
+                // output beats a corrupt patch.
+            }
+        }
+    }
+    if (caps.empty()) return shape;
+
+    const int before = countOpenShellEdges(shape);
+    try {
+        TopoDS_Shape preSew = shape;
+        BRepBuilderAPI_Sewing sew(1e-4);
+        sew.Add(shape);
+        for (const TopoDS_Shape& c : caps) sew.Add(c);
+        sew.Perform();
+        TopoDS_Shape sewn = sew.SewedShape();
+        if (!sewn.IsNull() && countOpenShellEdges(sewn) < before) {
+            outHist->Merge(historyOfSewing(preSew, sew));
+            return sewn;
+        }
+    } catch (const Standard_Failure&) {
+    }
+    return shape;
+}
+
 TopoDS_Shape healWithHistory(const TopoDS_Shape& input, Handle(BRepTools_History)& outHist) {
     outHist = new BRepTools_History();
     TopoDS_Shape shape = input;
@@ -155,6 +287,10 @@ TopoDS_Shape healWithHistory(const TopoDS_Shape& input, Handle(BRepTools_History
         if (!unify.Shape().IsNull()) shape = unify.Shape();
         if (!unify.History().IsNull()) outHist->Merge(unify.History());
     }
+
+    // Cap holes left by faces the translator dropped (nearly-closed
+    // shells only; authored sheet bodies keep their boundary).
+    shape = capDroppedFaces(shape, outHist);
 
     return shape;
 }
