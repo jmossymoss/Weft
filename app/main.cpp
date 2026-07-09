@@ -2833,7 +2833,12 @@ static bool settingsEditor(weft::FaceMeshSettings& s,
             }
         }
     }
-    if (all || isFillet) {
+    // Fillet loops / hold only feed the CoonsGrid / PlanarGrid fillet
+    // meshers (they set the across-the-blend count and its crease
+    // clustering). A fillet that meshes as a revolution grid, ribbon, etc.
+    // ignores them — so only surface them where they actually do something,
+    // not on every face the classifier merely tagged [fillet].
+    if (all || (isFillet && (k == MK::CoonsGrid || k == MK::PlanarGrid))) {
         if (all) ImGui::TextDisabled("fillets / blends");
         ch |= ImGui::DragInt("fillet loops", &s.filletLoops, 0.2f, 1, 64);
         hover({kFilletFaces});
