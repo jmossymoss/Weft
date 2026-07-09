@@ -2377,7 +2377,8 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
 double wireElongation(const TopoDS_Wire& wire);  // defined with plate-web
 
 bool isGeometricallyFlat(const TopoDS_Face& face,
-                         const BRepAdaptor_Surface& surf);  // defined below
+                         const BRepAdaptor_Surface& surf,
+                         double flatFrac = 1e-3);  // defined below
 
 bool planAnnulus(const TopoDS_Face& face, const Model& model, FacePlan& plan,
                  bool requireRing) {
@@ -2967,7 +2968,7 @@ bool meshAnnulusCRing(const TopoDS_Face& face, const Model& model, int faceId,
 // the surface type. Sample a grid over the UV bounds and measure the
 // spread along the average normal.
 bool isGeometricallyFlat(const TopoDS_Face& face,
-                         const BRepAdaptor_Surface& surf) {
+                         const BRepAdaptor_Surface& surf, double flatFrac) {
     if (surf.GetType() == GeomAbs_Plane) return true;
     double u0, u1, v0, v1;
     BRepTools::UVBounds(face, u0, u1, v0, v1);
@@ -3010,10 +3011,11 @@ bool isGeometricallyFlat(const TopoDS_Face& face,
         }
     }
     if (getenv("WEFT_FLAT_DEBUG")) {
-        dbg("flat? dev=%g diag=%g -> %d", hi - lo, diag,
-            hi - lo < std::max(1e-6, 1e-3 * diag) ? 1 : 0);
+        dbg("flat? dev=%g diag=%g frac=%.4f -> %d", hi - lo, diag,
+            diag > 1e-9 ? (hi - lo) / diag : 0.0,
+            hi - lo < std::max(1e-6, flatFrac * diag) ? 1 : 0);
     }
-    return hi - lo < std::max(1e-6, 1e-3 * diag);
+    return hi - lo < std::max(1e-6, flatFrac * diag);
 }
 
 double wireElongation(const TopoDS_Wire& wire);  // defined below
@@ -7624,7 +7626,16 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
             ++wireCount;
         }
-        if (wireCount > 1 &&
+        // A CYLINDER wall that actually wraps must NOT flatten to an n-gon
+        // (the user's primitive-first order: a slotted barrel is a cylinder
+        // with a local cutout, not a flat panel) — it keeps its curvature on
+        // the revolution / coons path below. A nearly-flat cylinder ring, and
+        // any shallow cone/bspline (foam's dished spray-can rings), still
+        // collapse. Only a CURVED cylinder is excluded from the grab.
+        const bool curvedCyl =
+            surf.GetType() == GeomAbs_Cylinder &&
+            !isGeometricallyFlat(face, surf, /*flatFrac=*/0.08);
+        if (wireCount > 1 && !curvedCyl &&
             planMinimalPlanar(face, surf, model, plan, /*requirePlane=*/false)) {
             dbg("plan face %d: curved cutout -> minimal n-gon (%d wires, "
                 "local holes)",
