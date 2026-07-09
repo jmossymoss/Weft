@@ -8017,7 +8017,8 @@ void propagateBandRadialToBlendGroup(const Analysis& analysis,
         return k == MesherKind::RailLadder || k == MesherKind::RibbonSweep ||
                k == MesherKind::CoonsGrid;
     };
-    std::map<int, int> target;  // grouped face -> radial the group should carry
+    std::map<int, int> target;     // grouped face -> radial the group carries
+    std::map<int, int> driverPin;  // band driver edge -> forced column count
     for (const auto& [seedFid, R] : seeds) {
         std::set<int> group{seedFid};
         std::vector<int> frontier{seedFid};
@@ -8068,6 +8069,26 @@ void propagateBandRadialToBlendGroup(const Analysis& analysis,
             auto it = target.find(g);
             target[g] = it == target.end() ? R : std::max(it->second, R);
         }
+        // The grouped bands share ONE column count, not just one radial: their
+        // wrap fractions differ slightly (0.924 vs 0.927), so radial*wrap can
+        // round to DIFFERENT nu (18 vs 19 at radial 20) and the pinned cut rims
+        // then disagree edge-for-edge and a band fails its border contract.
+        // Force every band's driver to the group's max round(radial*wrap).
+        int commonNu = 0;
+        for (int b : bands) {
+            const double wrap = plans.find(b)->second.bandWrapFrac;
+            commonNu = std::max(
+                commonNu, std::max(3, int(std::lround(std::max(3, R) * wrap))));
+        }
+        for (int b : bands) {
+            const int drv = plans.find(b)->second.bandDriver;
+            if (drv >= 1) {
+                auto it = driverPin.find(drv);
+                driverPin[drv] =
+                    it == driverPin.end() ? commonNu
+                                          : std::max(it->second, commonNu);
+            }
+        }
         dbg("blend-group: band %d radial %d propagated to %zu faces", seedFid,
             R, group.size());
     }
@@ -8081,6 +8102,12 @@ void propagateBandRadialToBlendGroup(const Analysis& analysis,
                                   ? settings.perFace[g]
                                   : (settings.perFace[g] = dfl);
         s.radial = std::max(R, keep);
+    }
+    for (const auto& [e, c] : driverPin) {
+        auto it = settings.perEdge.find(e);
+        settings.perEdge[e] = it == settings.perEdge.end()
+                                  ? c
+                                  : std::max(it->second, c);
     }
 }
 
@@ -8801,12 +8828,16 @@ void pinCastellatedRims(const Model& model,
 // rail-to-rail until the next revolution face, pinning every cross-rail arc
 // to the band's column azimuths (the arc endpoints stay the castellation
 // corners). The band's bottom transition strip then degenerates to quads and
-// the barrel columns run straight into and through the blends. Count-matched
-// (interior columns == solved count - 1) so nothing cascades; a rail whose
-// column count doesn't match its solved count is left uniform.
+// the barrel columns run straight into and through the blends. The chain's
+// ENTRY rail (a band cut arc) fixes the column set the whole chain carries so
+// a fillet's two rails always take equal counts (an arc catching more columns
+// than its solved count raises that count instead of bailing, so the cut rim
+// keeps grounding as radial climbs); a column landing right on a notch corner
+// is skipped so the cut rim never gets a near-duplicate sample; only a rail
+// catching FEWER columns than its own subdivisions is left uniform.
 void pinFilletChains(const Model& model,
                      const std::map<int, FacePlan>& plans,
-                     const std::vector<int>& solvedEdge, PinnedEdges& pins) {
+                     std::vector<int>& solvedEdge, PinnedEdges& pins) {
     // Azimuth about a revolution axis (loc O, unit dir D), with an in-plane
     // reference frame (r1, r2).
     auto frameOf = [](const gp_Ax1& ax, gp_Vec& r1, gp_Vec& r2) {
@@ -8855,17 +8886,20 @@ void pinFilletChains(const Model& model,
         }
         return rails;
     };
-    // Project the band columns onto one arc edge and pin it, keeping the
-    // count equal to the edge's solved count (else leave it uniform).
+    // Project a set of column azimuths onto one arc edge and pin it. Returns
+    // the SUBSET of column azimuths that actually landed on the arc (empty if
+    // the arc was left unpinned) so the chain walk can pin a fillet's opposite
+    // rail to the identical columns.
     auto pinArc = [&](int eid, const std::vector<double>& cols,
-                      const gp_Pnt& o, const gp_Vec& r1, const gp_Vec& r2) {
-        if (eid < 1 || eid >= int(pins.size()) || !pins[eid].empty()) return;
+                      const gp_Pnt& o, const gp_Vec& r1,
+                      const gp_Vec& r2) -> std::vector<double> {
+        if (eid < 1 || eid >= int(pins.size()) || !pins[eid].empty()) return {};
         const int want = eid < int(solvedEdge.size()) ? solvedEdge[eid] : 0;
-        if (want < 2) return;
+        if (want < 2) return {};
         const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
         double f, l;
         Handle(Geom_Curve) c = BRep_Tool::Curve(e, f, l);
-        if (c.IsNull()) return;
+        if (c.IsNull()) return {};
         const int NS = 64;
         std::vector<double> aSeq(NS + 1);
         double aPrev = 0;
@@ -8878,7 +8912,8 @@ void pinFilletChains(const Model& model,
         }
         const double aLo = std::min(aSeq.front(), aSeq.back());
         const double aHi = std::max(aSeq.front(), aSeq.back());
-        std::vector<double> fr{0.0};
+        // Raw interior hits: (t along arc, source column azimuth).
+        std::vector<std::pair<double, double>> hit;
         for (double col : cols) {
             for (int kk = -1; kk <= 1; ++kk) {
                 const double a = col + kk * 2 * M_PI;
@@ -8891,18 +8926,39 @@ void pinFilletChains(const Model& model,
                         break;
                     }
                 }
-                if (t > 1e-6 && t < 1 - 1e-6) fr.push_back(t);
+                if (t > 1e-6 && t < 1 - 1e-6) hit.push_back({t, col});
             }
         }
+        std::sort(hit.begin(), hit.end());
+        // A column that lands within ~30% of a sample spacing of a notch corner
+        // (t=0/1) or of the previous column would put a near-coincident sample
+        // on the cut rim, whose zero-length edge takes the band non-manifold at
+        // that exact count. Drop it (that lone column just isn't grounded).
+        const double minGap = hit.empty() ? 1.0 : 0.3 / double(hit.size() + 1);
+        std::vector<double> fr{0.0};
+        std::vector<double> accepted;
+        double last = 0.0;
+        for (const auto& [t, col] : hit) {
+            if (t < minGap || t > 1.0 - minGap || t < last + minGap) continue;
+            fr.push_back(t);
+            accepted.push_back(col);
+            last = t;
+        }
         fr.push_back(1.0);
-        std::sort(fr.begin(), fr.end());
-        fr.erase(std::unique(fr.begin(), fr.end(),
-                             [](double a, double b) {
-                                 return std::abs(a - b) < 1e-9;
-                             }),
-                 fr.end());
-        if (int(fr.size()) - 1 != want) return;  // count mismatch: no cascade
+        const int got = int(fr.size()) - 1;
+        // Pin at the columns that actually cross this arc even when that
+        // exceeds the arc's solved count: the band's cut rim then samples ON
+        // every column and grounds at any radial (the ring stays gone as the
+        // count climbs). A DEFICIT (got < want) still bails — pinning a
+        // near-tangent rail sparse would starve the neighbour blend.
+        if (got < want) return {};
+        // Raise the arc's solved count to the pinned column count so the
+        // neighbour blend's interior grid matches its now-denser border (else
+        // the coons demotes to a zippered strip of triangles at that seam).
+        if (got > want) solvedEdge[eid] = got;
         pins[eid] = std::move(fr);
+        std::sort(accepted.begin(), accepted.end());
+        return accepted;
     };
     auto faceAcross = [&](int eid, int notFid, MesherKind wantKind) {
         const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
@@ -8951,11 +9007,17 @@ void pinFilletChains(const Model& model,
             int cur = rimEid;
             int prevFid = fid;
             std::set<int> seen;
+            // The band cut-rim arc (the chain's entry) fixes which columns the
+            // whole chain carries; every downstream fillet rail pins to that
+            // SAME set so a fillet's two rails never disagree in count (a
+            // mismatch there demotes the coons to a strip of triangles).
+            std::vector<double> chainCols = cols;
             while (cur >= 1 && !seen.count(cur)) {
                 seen.insert(cur);
                 const int F = faceAcross(cur, prevFid, MesherKind::CoonsGrid);
                 if (F < 1) break;  // reached a non-coons neighbour
-                pinArc(cur, cols, o, r1, r2);
+                std::vector<double> acc = pinArc(cur, chainCols, o, r1, r2);
+                if (!acc.empty()) chainCols = std::move(acc);
                 // The blend's OPPOSITE rail continues the chain.
                 std::vector<int> rails = railsOf(F, ax, o, r1, r2);
                 int nxt = 0;
@@ -8963,7 +9025,7 @@ void pinFilletChains(const Model& model,
                     if (e2 != cur) { nxt = e2; break; }
                 }
                 if (nxt < 1) break;
-                pinArc(nxt, cols, o, r1, r2);
+                pinArc(nxt, chainCols, o, r1, r2);
                 prevFid = F;
                 cur = nxt;
             }

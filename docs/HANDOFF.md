@@ -89,23 +89,44 @@ rest at the old count made the dense band meet a sparser blend whose structured
 mesher (rail-ladder on the r=3 corner fillets 48/64, revolution-grid on the
 sibling band 50) couldn't reconcile the two rail counts and DEMOTED TO OCCT
 TRIANGULATION — the user's "no mesher should fall back to another type" break.
-(Dead end, reverted: making pinArc pin the cut arcs past their solved count kept
-the ring gone at higher radial but pushed the raised count onto the sibling's
-shared rim and triggered exactly this fallback — see the revert of 7a259e7.) The
-fix propagates a band's explicit radial override across its connected blend group
-BEFORE the density solve (so the whole barrel densifies as one unit): from each
-overridden band, (a) walk the TANGENT blend network through smooth fillet chains,
-stopping at but including sibling bands, and (b) add each band's one-hop
+The fix propagates a band's explicit radial override across its connected blend
+group BEFORE the density solve (so the whole barrel densifies as one unit): from
+each overridden band, (a) walk the TANGENT blend network through smooth fillet
+chains, stopping at but including sibling bands, and (b) add each band's one-hop
 column-edge (uEdges+rims) blend neighbours to catch the sharp-attached rounded
 corners the tangent walk misses. Stamp the group target (max of seed radials, or
-a lone override up OR down) on every reached face. NO-OP when nothing is
-overridden, so the whole default corpus stays byte-identical. Verified: bumping
-flaregun band 43 alone now densifies the whole barrel — 0 fallbacks and watertight
-at radial 8/12/16..40, ring stays gone (tris 11), clean full-height columns on
-BOTH halves; nasty_cheese (6-face group) and unterlaf (4-face group) bands stay
-watertight with no over-spread (group stays local — 4-20 faces out of ~1700).
-Repro a per-face bump visually: `weft_app <f> --faceradial 43:radial=24 --select
-43 --screenshot out.png`.
+a lone override up OR down) on every reached face. It ALSO pins every grouped
+band's driver edge to ONE column count (`driverPin` -> settings.perEdge): the
+bands' wrap fractions differ slightly (0.924 vs 0.927), so radial*wrap can round
+to DIFFERENT nu (18 vs 19 at radial 20) and the pinned cut rims would disagree
+edge-for-edge and fail a border contract. NO-OP when nothing is overridden, so
+the whole default corpus stays byte-identical. Verified: bumping flaregun band 43
+alone densifies the whole barrel — 0 fallbacks and watertight at radial 8..48;
+nasty_cheese (6-face group) and unterlaf (4-face group) bands stay watertight with
+no over-spread (group stays local — 4-20 faces out of ~1700). Repro a per-face
+bump visually: `weft_app <f> --faceradial 43:radial=24 --select 43 --screenshot
+out.png`. NOTE: low tri count does NOT prove the ring is gone — the transition
+strip is QUADS; confirm visually or via the openband grounding debug.
+
+RING C AT HIGH DENSITY — FIXED (`pinFilletChains`/`pinArc`, ~line 8807). The
+rim-grounding above only holds while every column has a cut-rim sample at its
+azimuth, which `pinArc` supplies by pinning the cut arcs to the columns. It used
+to BAIL whenever an arc caught more columns than its own solved count, so a
+per-face radial bump left the cut rim unpinned, grounding failed, and RING C came
+back. Now it pins at the columns that actually cross the arc even past the solved
+count (raising `solvedEdge[arc]` to match so the neighbour blend's interior grid
+stays consistent — else the coons zippers to triangles), and the chain's ENTRY
+rail fixes the column SET so a fillet's two rails always agree (`chainCols`). The
+trap that made this a dead end for a whole session: at some counts a column lands
+right on a NOTCH CORNER (an arc endpoint), so the pin adds a cut-rim sample
+near-coincident with the corner sample -> a zero-length edge -> the band goes
+non-manifold and demotes at radial 20/28/32 in BOTH grounded and strip modes (the
+grounding was NOT the culprit, the pin was). Cure: `pinArc` drops any column
+landing within ~30% of a sample spacing of an arc endpoint or its neighbour
+(`minGap`), so the cut rim never gets a near-duplicate. Combined with the
+driver-count pin above, bumping flaregun band 43 now grounds clean at EVERY radial
+8..48 — 0 fallbacks, watertight, clean full-height columns, tris 11-15 (only the
+tight RING B notch rows remain at the base). Default corpus byte-identical.
 
 RING B — STILL OPEN. B is the notch's own feature-row (the horizontal edge at the
 notch top, ~38% up for the deep notches; region.rowKey). It is LOCAL to each
