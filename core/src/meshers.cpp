@@ -7954,6 +7954,136 @@ struct DensitySolution {
     }
 };
 
+// A revolution band and the fillets/bands it blends into carry ONE column
+// count across every shared rim (columns run barrel -> fillet -> fillet ->
+// sibling band unbroken). So a per-face radial override on ONE band must reach
+// the whole connected blend group: densify a band alone and its blends meet a
+// sparser neighbour whose structured mesher (rail-ladder / revolution grid)
+// can't reconcile the two rail counts and demotes to OCCT triangulation — the
+// "a set mesher must never fall back" break. From each overridden band, collect
+// the barrel unit two ways — walk the TANGENT blend network (through smooth
+// fillet chains, stopping at but including sibling bands) and add each band's
+// one-hop column-edge blend neighbours (the sharp-attached rounded corners) —
+// then stamp the same radial override on every face reached. No-op when nothing
+// is overridden, so the default corpus is untouched.
+void propagateBandRadialToBlendGroup(const Analysis& analysis,
+                                     const std::map<int, FacePlan>& plans,
+                                     GenerationSettings& settings) {
+    const FaceMeshSettings& dfl = settings.defaults;
+    auto isColumnMesher = [](MesherKind k) {
+        return k == MesherKind::RevolutionGrid || k == MesherKind::CoonsGrid ||
+               k == MesherKind::RailLadder || k == MesherKind::RibbonSweep;
+    };
+    auto isBand = [&](int fid) {
+        auto it = plans.find(fid);
+        return it != plans.end() &&
+               it->second.kind == MesherKind::RevolutionGrid &&
+               !it->second.bandSides.empty();
+    };
+    // The face's COLUMN-carrying edges: the ones whose solved count a radial
+    // change moves (uEdges + both rims). A neighbour sharing one of these
+    // feels the count change and must follow, or its rails disagree and its
+    // mesher falls back. The band SIDES (row count) are deliberately excluded.
+    auto columnEdges = [&](int fid) -> std::vector<int> {
+        std::vector<int> es;
+        auto it = plans.find(fid);
+        if (it == plans.end()) return es;
+        const FacePlan& p = it->second;
+        es.insert(es.end(), p.uEdges.begin(), p.uEdges.end());
+        es.insert(es.end(), p.rimLow.begin(), p.rimLow.end());
+        es.insert(es.end(), p.rimHigh.begin(), p.rimHigh.end());
+        return es;
+    };
+    // Explicit radial override on a face (differs from the model default).
+    auto radialOverride = [&](int fid) -> int {
+        auto it = settings.perFace.find(fid);
+        if (it == settings.perFace.end() || it->second.radial == dfl.radial) {
+            return 0;
+        }
+        return it->second.radial;
+    };
+    std::vector<std::pair<int, int>> seeds;  // (band fid, radial)
+    for (const auto& [fid, plan] : plans) {
+        if (!isBand(fid)) continue;
+        const int R = radialOverride(fid);
+        if (R > 0) seeds.push_back({fid, R});
+    }
+    if (seeds.empty()) return;  // default path: nothing to propagate
+
+    auto isBlendFillet = [&](int fid) {
+        auto it = plans.find(fid);
+        if (it == plans.end()) return false;
+        const MesherKind k = it->second.kind;
+        return k == MesherKind::RailLadder || k == MesherKind::RibbonSweep ||
+               k == MesherKind::CoonsGrid;
+    };
+    std::map<int, int> target;  // grouped face -> radial the group should carry
+    for (const auto& [seedFid, R] : seeds) {
+        std::set<int> group{seedFid};
+        std::vector<int> frontier{seedFid};
+        // Walk the TANGENT blend network: bands join their coaxial siblings
+        // through smooth fillet chains (the barrel's two walls meet through
+        // rounded tori). Expand through blends, stop at (but include) sibling
+        // bands so the group stays the barrel unit and never runs the whole
+        // coaxial stack.
+        while (!frontier.empty()) {
+            const int f = frontier.back();
+            frontier.pop_back();
+            if (f != seedFid && isBand(f)) continue;
+            if (f < 1 || f > int(analysis.faces.size())) continue;
+            for (int eid : analysis.faces[f - 1].edgeIds) {
+                if (eid < 1 || eid > int(analysis.edges.size())) continue;
+                if (analysis.edges[eid - 1].convexity != EdgeConvexity::Smooth) {
+                    continue;
+                }
+                for (int nf : analysis.edges[eid - 1].faceIds) {
+                    if (nf == f || group.count(nf)) continue;
+                    auto it = plans.find(nf);
+                    if (it == plans.end() || !isColumnMesher(it->second.kind)) {
+                        continue;
+                    }
+                    group.insert(nf);
+                    frontier.push_back(nf);
+                }
+            }
+        }
+        // A band also shares its RIM count with the little rounded corners that
+        // sit on it across a SHARP edge (r=3 fillet cylinders meshed as rail
+        // ladders). They aren't tangent, so the smooth walk misses them, yet a
+        // rim-count bump breaks their ladder — pull in each band's one-hop
+        // column-edge blend neighbours (no further expansion, so the group
+        // can't leak down the next feature's blend chain).
+        std::vector<int> bands;
+        for (int g : group)
+            if (isBand(g)) bands.push_back(g);
+        for (int b : bands) {
+            for (int eid : columnEdges(b)) {
+                if (eid < 1 || eid > int(analysis.edges.size())) continue;
+                for (int nf : analysis.edges[eid - 1].faceIds) {
+                    if (nf != b && isBlendFillet(nf)) group.insert(nf);
+                }
+            }
+        }
+        for (int g : group) {
+            auto it = target.find(g);
+            target[g] = it == target.end() ? R : std::max(it->second, R);
+        }
+        dbg("blend-group: band %d radial %d propagated to %zu faces", seedFid,
+            R, group.size());
+    }
+    // Stamp each grouped face with the larger of its own explicit radial and
+    // the group target, so a lone override reaches its whole group whether it
+    // raises OR lowers the count (the seed and its blends stay equal either
+    // way) while a user who set several faces keeps the highest.
+    for (const auto& [g, R] : target) {
+        const int keep = radialOverride(g);  // this face's own explicit radial
+        FaceMeshSettings& s = settings.perFace.count(g)
+                                  ? settings.perFace[g]
+                                  : (settings.perFace[g] = dfl);
+        s.radial = std::max(R, keep);
+    }
+}
+
 DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                              const GenerationSettings& settings) {
     DensitySolution sol(model.edgeCount());
@@ -13659,8 +13789,12 @@ int outerWireSolvedTotal(const TopoDS_Face& face, const Model& model,
 }  // namespace
 
 PolyMesh generate(const Model& model, const Analysis& analysis,
-                  const GenerationSettings& settings, GenerationReport* report,
+                  const GenerationSettings& settingsIn, GenerationReport* report,
                   GenerationCache* cache) {
+    // Local mutable copy: a per-face radial override on a revolution band is
+    // propagated across its connected blend group (below) so the whole barrel
+    // densifies as one unit instead of stranding a neighbour at the old count.
+    GenerationSettings settings = settingsIn;
     dbg("generate: begin (%d faces, %d edges, parallel=%d, conform=%d)",
         model.faceCount(), model.edgeCount(), settings.parallelMeshing ? 1 : 0,
         settings.conformBorders ? 1 : 0);
@@ -13676,6 +13810,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         plans.emplace(fid, std::move(plan));
     }
     dbg("generate: plans done");
+
+    propagateBandRadialToBlendGroup(analysis, plans, settings);
 
     DensitySolution density = solveDensity(model, plans, settings);
     // Flat per-edge count table: lets meshers consume per-edge counts from

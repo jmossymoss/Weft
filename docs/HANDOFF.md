@@ -81,6 +81,32 @@ watertight 0/0, winding consistent, tris 11 (NO fallback), chord dev unchanged
 1.13, 10 fewer polys; every other corpus model byte-identical. Kill-switch
 WEFT_NO_GROUND.
 
+DENSITY CHANGES NO LONGER BREAK NEIGHBOURS (`propagateBandRadialToBlendGroup`,
+~line 7957). The barrel is TWO stacked bands (43 r=14.2, 50 r=14.8) joined
+through blend fillets; the columns run 43 -> fillets -> 50 as one flow carrying
+ONE count across every shared rim. So bumping ONE band's radial and leaving the
+rest at the old count made the dense band meet a sparser blend whose structured
+mesher (rail-ladder on the r=3 corner fillets 48/64, revolution-grid on the
+sibling band 50) couldn't reconcile the two rail counts and DEMOTED TO OCCT
+TRIANGULATION — the user's "no mesher should fall back to another type" break.
+(Dead end, reverted: making pinArc pin the cut arcs past their solved count kept
+the ring gone at higher radial but pushed the raised count onto the sibling's
+shared rim and triggered exactly this fallback — see the revert of 7a259e7.) The
+fix propagates a band's explicit radial override across its connected blend group
+BEFORE the density solve (so the whole barrel densifies as one unit): from each
+overridden band, (a) walk the TANGENT blend network through smooth fillet chains,
+stopping at but including sibling bands, and (b) add each band's one-hop
+column-edge (uEdges+rims) blend neighbours to catch the sharp-attached rounded
+corners the tangent walk misses. Stamp the group target (max of seed radials, or
+a lone override up OR down) on every reached face. NO-OP when nothing is
+overridden, so the whole default corpus stays byte-identical. Verified: bumping
+flaregun band 43 alone now densifies the whole barrel — 0 fallbacks and watertight
+at radial 8/12/16..40, ring stays gone (tris 11), clean full-height columns on
+BOTH halves; nasty_cheese (6-face group) and unterlaf (4-face group) bands stay
+watertight with no over-spread (group stays local — 4-20 faces out of ~1700).
+Repro a per-face bump visually: `weft_app <f> --faceradial 43:radial=24 --select
+43 --screenshot out.png`.
+
 RING B — STILL OPEN. B is the notch's own feature-row (the horizontal edge at the
 notch top, ~38% up for the deep notches; region.rowKey). It is LOCAL to each
 notch (spans that notch's colL..colR), but the user marked it too. Removing it
