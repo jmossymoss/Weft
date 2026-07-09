@@ -38,7 +38,6 @@
 #include <TopoDS_Wire.hxx>
 
 #include "weft/analysis.hpp"
-#include "weft/decoupled.hpp"
 #include "weft/edit.hpp"
 #include "weft/export_fbx.hpp"
 #include "weft/export_gltf.hpp"
@@ -614,17 +613,6 @@ struct App {
     double genStartTime = 0.0;
     weft::GenerationSettings genSettings;
     std::vector<weft::ManualOp> genOps;  // worker's frozen ops snapshot  // worker's frozen snapshot
-    // Which mesher the worker runs: the production global-solve generate() or the
-    // decoupled-core meshDecoupled() (per-edge counts, no global solve). Toggled in
-    // the Recipe panel; snapshotted into genDecoupled like the settings/ops so a
-    // live toggle can't race the worker. The startup default is baked in at build
-    // time: build.sh/build.bat ask, and -DWEFT_DECOUPLED_DEFAULT flips it here.
-#ifdef WEFT_DECOUPLED_DEFAULT
-    bool useDecoupled = true;
-#else
-    bool useDecoupled = false;
-#endif
-    bool genDecoupled = false;
     weft::PolyMesh genMesh;
     weft::GenerationReport genReport;
     std::string genError;
@@ -999,7 +987,6 @@ static void startGenerate(App& app) {
     // (weld, undo, grab drags) and a live read is a use-after-free
     // in the worker.
     app.genOps = app.recipe.ops;
-    app.genDecoupled = app.useDecoupled;
     app.genProgress = 0;
     app.genTotal = app.model.faceCount();
     app.genSettings.progressFaces = &app.genProgress;
@@ -1013,11 +1000,8 @@ static void startGenerate(App& app) {
         try {
             weft::GenerationReport report;
             weft::PolyMesh mesh =
-                a->genDecoupled
-                    ? weft::meshDecoupled(a->model, a->analysis, a->genSettings,
-                                          &report)
-                    : weft::generate(a->model, a->analysis, a->genSettings,
-                                     &report, &a->genCache);
+                weft::generate(a->model, a->analysis, a->genSettings,
+                               &report, &a->genCache);
             weft::applyOps(mesh, a->model, a->genOps);
             a->genMesh = std::move(mesh);
             a->genReport = std::move(report);
@@ -3803,22 +3787,6 @@ static void drawUi(App& app) {
 
     if (app.hasModel &&
         ImGui::CollapsingHeader("Topology", ImGuiTreeNodeFlags_DefaultOpen)) {
-        // Which mesher builds the topology: the production global-solve path
-        // (generate) or the decoupled core (meshDecoupled -- per-edge sample
-        // counts, no global density solve). A live toggle rebuilds; the choice is
-        // per-session, not stored in the recipe.
-        if (ImGui::Checkbox("decoupled core (experimental)", &app.useDecoupled))
-            app.dirty = true;
-        ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip(
-                "Per-edge sample counts, no global density solve.\n"
-                "Every shared edge is sampled once; both faces read the same\n"
-                "points, so they weld with no ripple. Rim-notch / subdivided-rim\n"
-                "walls and freeform 4-sided patches mesh as clean quad grids.\n"
-                "Off = the production generate() path.");
-        ImGui::Separator();
         ImGui::Text("%zu verts   %zu polys", app.mesh.vertexCount(),
                     app.mesh.polygonCount());
         ImGui::Text("%zu quads  %zu tris  %zu n-gons", app.mesh.countQuads(),
@@ -4165,7 +4133,6 @@ int main(int argc, char** argv) {
     std::string screenshotPath, startModel, startFixture = "demo";
     int startSelect = 0, startMode = 0;
     bool startQuality = false, startMatcap = false, startSmooth = false;
-    bool startDecoupled = false;
     float startYaw = 0.9f, startPitch = 0.5f;
     bool demoLoopCut = false;
     std::vector<std::pair<int, std::string>> startFaceOverrides;  // FID:spec
@@ -4180,7 +4147,6 @@ int main(int argc, char** argv) {
         else if (a == "--quality") startQuality = true;
         else if (a == "--matcap") startMatcap = true;
         else if (a == "--smooth") startSmooth = true;
-        else if (a == "--decoupled") startDecoupled = true;
         else if (a == "--mode" && i + 1 < argc) startMode = std::stoi(argv[++i]);
         else if (a == "--faceradial" && i + 1 < argc) {  // FID:spec, screenshot testing
             std::string spec = argv[++i];
@@ -4279,9 +4245,6 @@ int main(int argc, char** argv) {
 
     App app;
     app.livePath = gDataDir + "/weft_live.obj";
-    // --decoupled forces the decoupled core on; the build-time default
-    // (WEFT_DECOUPLED_DEFAULT) sets the initial state otherwise.
-    if (startDecoupled) app.useDecoupled = true;
     if (!startModel.empty()) loadModel(app, startModel);
     else loadFixture(app, startFixture);
     app.cam.yaw = startYaw;
