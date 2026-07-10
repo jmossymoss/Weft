@@ -29,13 +29,16 @@
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepTools.hxx>
 #include <BRep_Tool.hxx>
+#include <GeomAPI_ProjectPointOnSurf.hxx>
 #include <Geom_Circle.hxx>
 #include <Geom_Curve.hxx>
+#include <Geom_Surface.hxx>
 #include <GeomAbs_SurfaceType.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Wire.hxx>
+#include <gp_Vec.hxx>
 
 #include "weft/analysis.hpp"
 #include "weft/edit.hpp"
@@ -600,6 +603,13 @@ struct App {
     // meeting under the angle shade smooth, harder creases stay sharp.
     bool smoothShade = true;
     float smoothAngleDeg = 30.0f;
+    // Viewer shading with exact CAD surface normals per (vertex, face) —
+    // the MoI lesson: shading stops depending on tessellation, so coarse
+    // or count-mismatched cylinders never band in the viewport. Verts
+    // without a usable normal (poles, manual-op geometry) fall back to
+    // the smoothing-angle average. Cache cleared per regenerate.
+    bool exactNormals = true;
+    std::map<uint64_t, std::array<float, 3>> exactNormalCache;
     // Keybinds help panel (collapsed to a bottom-left prompt by default).
     bool showKeybinds = false;
     // Async regenerate: the mesh builds on a worker thread so the UI
@@ -789,9 +799,79 @@ static void rebuildBuffers(App& app) {
         if (sl < 1e-20f) return {pn[0] / pl, pn[1] / pl, pn[2] / pl};
         return {sx / sl, sy / sl, sz / sl};
     };
+    // Exact CAD corner normals: the true surface normal of the polygon's
+    // face at each vertex — anchors give (u,v) for free; border verts
+    // anchored to the neighbouring face project once and cache. Shading
+    // then reads from the SURFACE, not the tessellation, so a coarse or
+    // count-mismatched cylinder stack cannot band in the viewport (the
+    // exporters already write these; this is viewer parity).
+    std::map<int, BRepAdaptor_Surface> surfCache;
+    auto exactCorner = [&](uint32_t vert, int fid,
+                           std::array<float, 3>& out) -> bool {
+        if (!app.exactNormals || !app.hasModel || fid < 1 ||
+            fid > app.model.faceCount() || vert >= m.anchors.size()) {
+            return false;
+        }
+        const uint64_t key = (uint64_t(vert) << 32) | uint32_t(fid);
+        auto it = app.exactNormalCache.find(key);
+        if (it == app.exactNormalCache.end()) {
+            std::array<float, 3> n{0, 0, 0};  // zero = no unique normal
+            try {
+                const TopoDS_Face face =
+                    TopoDS::Face(app.model.faces(fid));
+                auto sit = surfCache.find(fid);
+                if (sit == surfCache.end()) {
+                    sit = surfCache.emplace(fid, BRepAdaptor_Surface(face))
+                              .first;
+                }
+                double u = 0, v = 0;
+                bool have = false;
+                const weft::Anchor& a = m.anchors[vert];
+                if (a.faceId == fid) {
+                    u = a.u;
+                    v = a.v;
+                    have = true;
+                } else {
+                    Handle(Geom_Surface) hs = BRep_Tool::Surface(face);
+                    if (!hs.IsNull()) {
+                        gp_Pnt p(m.vertices[vert][0], m.vertices[vert][1],
+                                 m.vertices[vert][2]);
+                        GeomAPI_ProjectPointOnSurf proj(p, hs);
+                        if (proj.NbPoints() >= 1) {
+                            proj.LowerDistanceParameters(u, v);
+                            have = true;
+                        }
+                    }
+                }
+                if (have) {
+                    gp_Pnt p;
+                    gp_Vec du, dv;
+                    sit->second.D1(u, v, p, du, dv);
+                    gp_Vec nn = du.Crossed(dv);
+                    if (nn.Magnitude() > 1e-14) {
+                        nn.Normalize();
+                        if (face.Orientation() == TopAbs_REVERSED) {
+                            nn.Reverse();
+                        }
+                        n = {float(nn.X()), float(nn.Y()), float(nn.Z())};
+                    }
+                }
+            } catch (const Standard_Failure&) {
+            }
+            it = app.exactNormalCache.emplace(key, n).first;
+        }
+        out = it->second;
+        return out[0] != 0.0f || out[1] != 0.0f || out[2] != 0.0f;
+    };
     auto pushN = [&](std::vector<float>& v, size_t polyIdx, uint32_t vert) {
         if (!app.smoothShade) {
             v.insert(v.end(), {0.0f, 0.0f, 0.0f});
+            return;
+        }
+        std::array<float, 3> en;
+        if (polyIdx < m.polygonFaceId.size() &&
+            exactCorner(vert, m.polygonFaceId[polyIdx], en)) {
+            v.insert(v.end(), {en[0], en[1], en[2]});
             return;
         }
         const auto n = cornerNormal(polyIdx, vert);
@@ -1032,6 +1112,7 @@ static void finishGenerate(App& app) {
     {
         app.mesh = std::move(app.genMesh);
         app.report = std::move(app.genReport);
+        app.exactNormalCache.clear();  // vert indices died with the mesh
         app.selPolys.clear();  // mesh indices died with the old mesh
         app.selVerts.clear();
         app.selVertOrder.clear();
@@ -4419,6 +4500,15 @@ static void drawUi(App& app) {
             if (ImGui::SliderFloat("smooth angle", &app.smoothAngleDeg, 0.0f,
                                    180.0f, "%.0f deg")) {
                 rebuildBuffers(app);
+            }
+            if (ImGui::Checkbox("CAD-exact normals", &app.exactNormals)) {
+                rebuildBuffers(app);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "shade with the true surface normal at each corner\n"
+                    "(coarse cylinders stop banding; matches the OBJ/glTF\n"
+                    "export). Off = smoothing-angle averages only.");
             }
         }
         ImGui::TextDisabled("overlays: viewport corner popover");
