@@ -15993,8 +15993,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 GeomAPI_ProjectPointOnSurf proj;
                 proj.Init(gp_Pnt(0, 0, 0), S);
                 const bool rev = face.Orientation() == TopAbs_REVERSED;
+                // Inverted-cell census of ANY candidate part for this
+                // face — the planned build and self-heal candidates are
+                // judged by the same ruler.
+                auto invertedCells = [&](const PolyMesh& part)
+                    -> std::pair<int, int> {
                 int inverted = 0, tested = 0;
-                const PolyMesh& part = parts[fid];
                 for (const auto& poly : part.polygons) {
                     if (poly.size() < 3) continue;
                     gp_XYZ nw(0, 0, 0), cen(0, 0, 0);
@@ -16053,11 +16057,49 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     ++tested;
                     if (gp_Vec(nw).Dot(n) < 0) ++inverted;
                 }
+                return {tested, inverted};
+                };
+                const auto [tested, inverted] = invertedCells(parts[fid]);
                 if (tested >= 8 && inverted * 4 > tested) {
                     dbg("mesh face %d: fold check failed (%d/%d inverted, "
                         "%s)",
                         fid, inverted, tested, mesherKindName(plan.kind));
                     demote(fid, face, surf, s, "fold check failed");
+                } else if (inverted > 0 && tested >= 8) {
+                    // Self-heal tournament: a FEW folded cells sit below
+                    // the demote threshold, ship broken, and stay broken
+                    // — the artist's report. Build the contract floor as
+                    // a CANDIDATE at the same exact borders (identical
+                    // welds), and keep whichever part folds less. Only a
+                    // strictly better candidate swaps in, so this can
+                    // never regress a face.
+                    FaceMeshSettings fsT = s;
+                    const double dscT =
+                        std::clamp(settings.densityScale, 0.05, 20.0);
+                    if (dscT != 1.0) {
+                        fsT.chordTolerance /= dscT * dscT;
+                        fsT.angleToleranceDeg = std::clamp(
+                            fsT.angleToleranceDeg / dscT, 1.0, 60.0);
+                    }
+                    PolyMesh cand;
+                    MeshBuilder cb(cand);
+                    const bool built = meshContractFallback(
+                        face, model, fid, solvedEdge, s.radial, cb, &fsT,
+                        angleSplit);
+                    if (built && borderContractViolation(fid, cand) == 0) {
+                        const auto [ctested, cinverted] =
+                            invertedCells(cand);
+                        (void)ctested;
+                        if (cinverted < inverted) {
+                            dbg("mesh face %d: self-heal — %d folded "
+                                "cell(s) on %s, floor folds %d, floor "
+                                "kept",
+                                fid, inverted, mesherKindName(plan.kind),
+                                cinverted);
+                            parts[fid] = std::move(cand);
+                            fellBack[fid] = 2;  // exact borders: authority
+                        }
+                    }
                 }
             }
         }
