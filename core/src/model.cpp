@@ -13,6 +13,7 @@
 #include <BRep_Tool.hxx>
 #include <GeomAbs_Shape.hxx>
 #include <IFSelect_ReturnStatus.hxx>
+#include <ShapeProcess.hxx>
 #include <STEPControl_Writer.hxx>
 #include <ShapeBuild_ReShape.hxx>
 #include <ShapeFix_Shape.hxx>
@@ -313,8 +314,16 @@ Model loadStep(const std::string& path) {
 
 void writeStep(const TopoDS_Shape& shape, const std::string& path) {
     STEPControl_Writer writer;
-    writer.Transfer(shape, STEPControl_AsIs);
-    if (writer.Write(path.c_str()) != IFSelect_RetDone) {
+    // STEPCAFControl_Controller::Init() changes which process-global ToSTEP
+    // operations a later writer sees.  Pin the standard OCCT STEP operations
+    // explicitly so fixtures serialize identically no matter what this process
+    // imported earlier (an apex cone otherwise loses its lateral face).
+    ShapeProcess::OperationsFlags processFlags;
+    processFlags.set(ShapeProcess::SplitCommonVertex);
+    processFlags.set(ShapeProcess::DirectFaces);
+    writer.SetShapeProcessFlags(processFlags);
+    if (writer.Transfer(shape, STEPControl_AsIs) != IFSelect_RetDone ||
+        writer.Write(path.c_str()) != IFSelect_RetDone) {
         throw std::runtime_error("failed to write STEP file: " + path);
     }
 }

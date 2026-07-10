@@ -6137,10 +6137,12 @@ int main(int argc, char** argv) {
         }
 
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-        glfwSwapBuffers(window);
 
         // Screenshots wait for the async mesh: an empty viewport is not
-        // the model (automated visual checks depend on this).
+        // the model (automated visual checks depend on this). Read the
+        // freshly-rendered BACK buffer before swapping: reading GL_BACK after
+        // glfwSwapBuffers captures the previous frame, which was commonly the
+        // "welding + conforming" progress card rather than the finished mesh.
         if (!screenshotPath.empty() && ++frame >= 4 &&
             !(app.hasModel && (app.genBusy || app.genReady))) {
             std::vector<unsigned char> px(size_t(fbw) * fbh * 3);
@@ -6151,6 +6153,7 @@ int main(int argc, char** argv) {
             std::printf("wrote %s\n", screenshotPath.c_str());
             break;
         }
+        glfwSwapBuffers(window);
     }
 
     ImGui_ImplOpenGL3_Shutdown();

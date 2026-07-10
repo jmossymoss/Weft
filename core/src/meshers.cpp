@@ -14752,7 +14752,20 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     // 0.008-wide teleporter sliver pitched to 24 stations handed the
     // coons untangler 15 inverted cells it couldn't recover).
     double modelDiag = 0.0;
-    {
+    bool needsStripPitch = false;
+    for (const auto& [fid, plan] : plans) {
+        const bool stripKind = plan.kind == MesherKind::RibbonSweep ||
+                               plan.kind == MesherKind::RailLadder ||
+                               plan.kind == MesherKind::CoonsGrid;
+        if (stripKind && plan.constrains && settings.forFace(fid).adaptive) {
+            needsStripPitch = true;
+            break;
+        }
+    }
+    // BRepBndLib::Add can populate OCCT triangulation caches. Do not even
+    // query the box when the non-adaptive profile will skip every pitch floor:
+    // merely warming that cache changed later fallback output on complex parts.
+    if (needsStripPitch) {
         Bnd_Box bb;
         BRepBndLib::Add(model.shape, bb);
         if (!bb.IsVoid()) {
@@ -14831,63 +14844,114 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     // pitch) skews the patch: the grid absorbs the mismatch as diagonal
     // cells and folds (unterlaf's 310-long wall chains folded 2 cells
     // per face exactly this way). Re-balance by raising the lighter
-    // side's longest unpinned edge until the sums meet again. Raises
-    // are monotone and capped, so the fixpoint terminates.
-    for (int pass = 0; pass < 16; ++pass) {
-        bool changed = false;
-        for (const auto& [fid, plan] : plans) {
-            if (plan.kind != MesherKind::CoonsGrid) continue;
-            for (int pr = 0; pr < 2; ++pr) {
-                const auto& A = plan.coonsSides[pr];
-                const auto& B = plan.coonsSides[pr + 2];
-                if (A.empty() || B.empty()) continue;
-                if (A.size() == 1 && B.size() == 1) continue;  // grouped
-                long tA = 0, tB = 0;
-                for (int e : A) tA += std::max(0, solvedEdge[e]);
-                for (int e : B) tB += std::max(0, solvedEdge[e]);
-                if (tA == tB || tA == 0 || tB == 0) continue;
-                const auto& light = tA < tB ? A : B;
-                const long deficit = std::labs(tA - tB);
-                int bumpEid = 0;
-                double bumpLen = -1.0;
-                for (int e : light) {
-                    if (settings.perEdge.count(e)) continue;
-                    if (density.pinnedRoots.count(density.groups.find(e))) {
-                        continue;
-                    }
-                    const TopoDS_Edge E = TopoDS::Edge(model.edges(e));
-                    if (BRep_Tool::Degenerated(E)) continue;
-                    double cf, cl;
-                    if (BRep_Tool::Curve(E, cf, cl).IsNull()) continue;
-                    BRepAdaptor_Curve c(E);
-                    const double len = GCPnts_AbscissaPoint::Length(c);
-                    if (len > bumpLen) {
-                        bumpLen = len;
-                        bumpEid = e;
-                    }
-                }
-                if (bumpEid == 0) continue;
-                const int target = std::min<long>(
-                    256, solvedEdge[bumpEid] + deficit);
-                if (target <= solvedEdge[bumpEid]) continue;
-                dbg("density: face %d coons chain sum %ld != %ld, edge %d "
-                    "raised to %d",
-                    fid, tA, tB, bumpEid, target);
-                const int root = density.groups.find(bumpEid);
-                auto git = density.groupCount.find(root);
-                if (git != density.groupCount.end() && git->second < target) {
-                    git->second = target;
-                }
-                for (int e2 = 1; e2 <= model.edgeCount(); ++e2) {
-                    if (density.groups.find(e2) == root &&
-                        solvedEdge[e2] < target) {
-                        solvedEdge[e2] = target;
-                    }
-                }
-                changed = true;
+    // side's longest unpinned edge until the sums meet again. The constraint
+    // graph is not always consistent: several faces can share the same groups
+    // in a cycle with a fixed offset (nasty_cheese has a four-face +10 cycle).
+    // Monotone raises then pump that cycle on every pass and make the topology
+    // dramatically worse. Treat the repair as a transaction: keep it only if
+    // the complete graph reaches a fixpoint; otherwise restore the safe
+    // post-floor counts and let the existing local transition strips absorb
+    // the mismatches.
+    bool hasAdaptiveFaces = false;
+    for (int fid = 1; fid <= model.faceCount(); ++fid) {
+        if (settings.forFace(fid).adaptive) {
+            hasAdaptiveFaces = true;
+            break;
+        }
+    }
+    if (hasAdaptiveFaces) {
+        const std::vector<int> beforeChainRepair = solvedEdge;
+        const auto groupCountBeforeChainRepair = density.groupCount;
+        int brepOpenEdges = 0;
+        int brepEdges = 0;
+        for (int eid = 1; eid <= model.edgeCount(); ++eid) {
+            const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+            if (BRep_Tool::Degenerated(edge)) continue;
+            ++brepEdges;
+            if (!model.edgeToFaces.Contains(edge) ||
+                model.edgeToFaces.FindFromKey(edge).Extent() < 2) {
+                ++brepOpenEdges;
             }
         }
-        if (!changed) break;
+        // A mostly-open authored sheet (tork: 833/1226 naked B-rep edges) has
+        // no closed-solid flow to equalize globally. Raising its shared groups
+        // only distorts already-broken patches, so leave its local strip
+        // transitions alone just as the importer's dropped-face cap does.
+        const bool chainRepairEligible =
+            brepEdges > 0 && brepOpenEdges * 3 < brepEdges;
+        bool chainRepairConverged = !chainRepairEligible;
+        if (!chainRepairEligible) {
+            dbg("density: chained-coons sum repair skipped on open sheet "
+                "(%d/%d naked B-rep edges)",
+                brepOpenEdges, brepEdges);
+        }
+        for (int pass = 0; pass < (chainRepairEligible ? 16 : 0); ++pass) {
+            bool changed = false;
+            for (const auto& [fid, plan] : plans) {
+                if (plan.kind != MesherKind::CoonsGrid) continue;
+                for (int pr = 0; pr < 2; ++pr) {
+                    const auto& A = plan.coonsSides[pr];
+                    const auto& B = plan.coonsSides[pr + 2];
+                    if (A.empty() || B.empty()) continue;
+                    if (A.size() == 1 && B.size() == 1) continue;  // grouped
+                    long tA = 0, tB = 0;
+                    for (int e : A) tA += std::max(0, solvedEdge[e]);
+                    for (int e : B) tB += std::max(0, solvedEdge[e]);
+                    if (tA == tB || tA == 0 || tB == 0) continue;
+                    const auto& light = tA < tB ? A : B;
+                    const long deficit = std::labs(tA - tB);
+                    int bumpEid = 0;
+                    double bumpLen = -1.0;
+                    for (int e : light) {
+                        if (settings.perEdge.count(e)) continue;
+                        if (density.pinnedRoots.count(
+                                density.groups.find(e))) {
+                            continue;
+                        }
+                        const TopoDS_Edge E = TopoDS::Edge(model.edges(e));
+                        if (BRep_Tool::Degenerated(E)) continue;
+                        double cf, cl;
+                        if (BRep_Tool::Curve(E, cf, cl).IsNull()) continue;
+                        BRepAdaptor_Curve c(E);
+                        const double len = GCPnts_AbscissaPoint::Length(c);
+                        if (len > bumpLen) {
+                            bumpLen = len;
+                            bumpEid = e;
+                        }
+                    }
+                    if (bumpEid == 0) continue;
+                    const int target = std::min<long>(
+                        256, solvedEdge[bumpEid] + deficit);
+                    if (target <= solvedEdge[bumpEid]) continue;
+                    dbg("density: face %d coons chain sum %ld != %ld, "
+                        "edge %d raised to %d",
+                        fid, tA, tB, bumpEid, target);
+                    const int root = density.groups.find(bumpEid);
+                    auto git = density.groupCount.find(root);
+                    if (git != density.groupCount.end() &&
+                        git->second < target) {
+                        git->second = target;
+                    }
+                    for (int e2 = 1; e2 <= model.edgeCount(); ++e2) {
+                        if (density.groups.find(e2) == root &&
+                            solvedEdge[e2] < target) {
+                            solvedEdge[e2] = target;
+                        }
+                    }
+                    changed = true;
+                }
+            }
+            if (!changed) {
+                chainRepairConverged = true;
+                break;
+            }
+        }
+        if (!chainRepairConverged) {
+            solvedEdge = beforeChainRepair;
+            density.groupCount = groupCountBeforeChainRepair;
+            dbg("density: chained-coons sum repair did not converge; "
+                "rolled back transaction");
+        }
     }
     // Revolution rim SUM constraint: when a T-junction splits one rim of
     // a closed band into k edges while the other stays a full circle,

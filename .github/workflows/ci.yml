@@ -51,3 +51,8 @@ jobs:
       - name: Pipeline tests
         shell: pwsh
         run: ctest --test-dir build -C Release --output-on-failure
+      - name: Corpus invariants
+        shell: bash
+        run: |
+          WEFT=build/bin/Release/weft.exe \
+            tools/corpus_gate.sh --no-golden
