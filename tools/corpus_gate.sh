@@ -54,6 +54,14 @@ run_one() { # name file profile-args profile-tag watertight-required
     local stats
     stats=$(grep -Eo '[0-9]+ quads, [0-9]+ tris, [0-9]+ n-gons' "$log" | head -1)
     echo "$name $tag $stats" >> "$OUT/counts.txt"
+    # Never-fall-back census (P0.1): no face may PLAN as fallback-tri /
+    # quad-dominant on a sound source. Broken sources (wt=no, tork) are
+    # exempt here exactly as they are for watertightness — their point
+    # is "mesh without crashing", not topology quality.
+    if [ "$wt" = yes ] && grep -q "x fallback-tri\|x quad-dominant" "$log"; then
+        echo "FAIL $name [$tag]: fallback-tri faces present"
+        FAIL=1
+    fi
     local demo
     demo=$(grep "demoted:" "$log" || true)
     if [ -n "$demo" ] && ! echo "$demo" | grep -q "0 to raw triangulation, 0 emitted nothing"; then

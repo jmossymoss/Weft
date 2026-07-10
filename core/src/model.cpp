@@ -314,14 +314,19 @@ Model loadStep(const std::string& path) {
 
 void writeStep(const TopoDS_Shape& shape, const std::string& path) {
     STEPControl_Writer writer;
+#if OCC_VERSION_HEX >= 0x070800
     // STEPCAFControl_Controller::Init() changes which process-global ToSTEP
     // operations a later writer sees.  Pin the standard OCCT STEP operations
     // explicitly so fixtures serialize identically no matter what this process
     // imported earlier (an apex cone otherwise loses its lateral face).
+    // SetShapeProcessFlags is an OCCT >= 7.8 API; pre-7.8 writers have no
+    // per-writer override (and the sequence-dependent export was only seen
+    // on the 7.8+ vcpkg builds).
     ShapeProcess::OperationsFlags processFlags;
     processFlags.set(ShapeProcess::SplitCommonVertex);
     processFlags.set(ShapeProcess::DirectFaces);
     writer.SetShapeProcessFlags(processFlags);
+#endif
     if (writer.Transfer(shape, STEPControl_AsIs) != IFSelect_RetDone ||
         writer.Write(path.c_str()) != IFSelect_RetDone) {
         throw std::runtime_error("failed to write STEP file: " + path);
