@@ -14747,6 +14747,20 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             if (eid >= 1) pitchFragileRoots.insert(density.groups.find(eid));
         }
     }
+    // Hairline gauge: strips narrower than 0.1% of the model are seam
+    // shims, not visible flow — rungs there are pure pathology (a
+    // 0.008-wide teleporter sliver pitched to 24 stations handed the
+    // coons untangler 15 inverted cells it couldn't recover).
+    double modelDiag = 0.0;
+    {
+        Bnd_Box bb;
+        BRepBndLib::Add(model.shape, bb);
+        if (!bb.IsVoid()) {
+            double x0, y0, z0, x1, y1, z1;
+            bb.Get(x0, y0, z0, x1, y1, z1);
+            modelDiag = gp_Pnt(x0, y0, z0).Distance(gp_Pnt(x1, y1, z1));
+        }
+    }
     for (const auto& [fid, plan] : plans) {
         const bool stripKind = plan.kind == MesherKind::RibbonSweep ||
                                plan.kind == MesherKind::RailLadder ||
@@ -14769,6 +14783,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         const double w = 2.0 * area / perim;      // strip width estimate
         const double along = 0.5 * perim - w;     // strip length estimate
         if (!(w > 1e-9) || along < 3.0 * w) continue;  // not a strip
+        if (w < 1e-3 * modelDiag) continue;            // hairline shim
         // Rung pitch: one station per 2 strip-widths, riding the density
         // dial like every adaptive proposal. (1.5 was tried and pushed a
         // neighbour band past its contract; 2.0 keeps every planned
@@ -14808,6 +14823,71 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 }
             }
         }
+    }
+    // Chained-coons SUM repair: opposite chained sides of a coons patch
+    // match by SUM of their per-edge counts — an equality the solver's
+    // chain pass establishes BEFORE the floors above run. Any post-solve
+    // raise on a chain member (curvature floor, containment, the strip
+    // pitch) skews the patch: the grid absorbs the mismatch as diagonal
+    // cells and folds (unterlaf's 310-long wall chains folded 2 cells
+    // per face exactly this way). Re-balance by raising the lighter
+    // side's longest unpinned edge until the sums meet again. Raises
+    // are monotone and capped, so the fixpoint terminates.
+    for (int pass = 0; pass < 16; ++pass) {
+        bool changed = false;
+        for (const auto& [fid, plan] : plans) {
+            if (plan.kind != MesherKind::CoonsGrid) continue;
+            for (int pr = 0; pr < 2; ++pr) {
+                const auto& A = plan.coonsSides[pr];
+                const auto& B = plan.coonsSides[pr + 2];
+                if (A.empty() || B.empty()) continue;
+                if (A.size() == 1 && B.size() == 1) continue;  // grouped
+                long tA = 0, tB = 0;
+                for (int e : A) tA += std::max(0, solvedEdge[e]);
+                for (int e : B) tB += std::max(0, solvedEdge[e]);
+                if (tA == tB || tA == 0 || tB == 0) continue;
+                const auto& light = tA < tB ? A : B;
+                const long deficit = std::labs(tA - tB);
+                int bumpEid = 0;
+                double bumpLen = -1.0;
+                for (int e : light) {
+                    if (settings.perEdge.count(e)) continue;
+                    if (density.pinnedRoots.count(density.groups.find(e))) {
+                        continue;
+                    }
+                    const TopoDS_Edge E = TopoDS::Edge(model.edges(e));
+                    if (BRep_Tool::Degenerated(E)) continue;
+                    double cf, cl;
+                    if (BRep_Tool::Curve(E, cf, cl).IsNull()) continue;
+                    BRepAdaptor_Curve c(E);
+                    const double len = GCPnts_AbscissaPoint::Length(c);
+                    if (len > bumpLen) {
+                        bumpLen = len;
+                        bumpEid = e;
+                    }
+                }
+                if (bumpEid == 0) continue;
+                const int target = std::min<long>(
+                    256, solvedEdge[bumpEid] + deficit);
+                if (target <= solvedEdge[bumpEid]) continue;
+                dbg("density: face %d coons chain sum %ld != %ld, edge %d "
+                    "raised to %d",
+                    fid, tA, tB, bumpEid, target);
+                const int root = density.groups.find(bumpEid);
+                auto git = density.groupCount.find(root);
+                if (git != density.groupCount.end() && git->second < target) {
+                    git->second = target;
+                }
+                for (int e2 = 1; e2 <= model.edgeCount(); ++e2) {
+                    if (density.groups.find(e2) == root &&
+                        solvedEdge[e2] < target) {
+                        solvedEdge[e2] = target;
+                    }
+                }
+                changed = true;
+            }
+        }
+        if (!changed) break;
     }
     // Revolution rim SUM constraint: when a T-junction splits one rim of
     // a closed band into k edges while the other stays a full circle,
