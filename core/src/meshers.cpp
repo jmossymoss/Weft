@@ -14604,6 +14604,279 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
 // lets chains of absorbed verts close multi-vert gaps one layer at a
 // time. This pass is the contract that will let neighbouring faces
 // disagree on border counts (strips vs fillet rings).
+// Seam-twin fusion (decoupled seams, pre-stitch): two faces sampling a
+// shared edge at the SAME curve params can still emit DISTINCT vertices
+// — each side's lattice evaluates its border its own way, and the two
+// samples of one contract point land a few percent of a pitch apart:
+// past the weld, with nothing "between" for the stitcher to splice
+// (nasty_cheese walls: both sides at t = 0, 0.113, 0.423, 0.733, 1 with
+// interior verts 0.05 apart — 4 permanently open segments per face
+// pair). Those twins ARE the same contract point; fusing them is the
+// weld's semantic with a param-aware, seam-scoped tolerance the global
+// weld could never afford. Pairs must be cross-side, mutually nearest
+// in param, and within a small fraction of the local pitch in both
+// param and 3D before they merge (union-find, lowest index wins).
+void fuseSeamTwins(PolyMesh& mesh, const Model& model, double weldTol) {
+    // Per-face boundary segments and vertex pitch (longest incident
+    // boundary segment) — same qualification scaffolding as the
+    // stitcher, rebuilt here because fusion must happen BEFORE the
+    // stitcher reads the mesh.
+    std::map<int, std::vector<size_t>> facePolys;
+    for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+        if (mesh.polygonFaceId[p] > 0) {
+            facePolys[mesh.polygonFaceId[p]].push_back(p);
+        }
+    }
+    std::map<int, std::map<uint32_t, double>> facePitch;
+    for (const auto& [fid, polys] : facePolys) {
+        std::map<std::pair<uint32_t, uint32_t>, int> cnt;
+        for (size_t p : polys) {
+            const auto& poly = mesh.polygons[p];
+            for (size_t i = 0; i < poly.size(); ++i) {
+                uint32_t a = poly[i], b = poly[(i + 1) % poly.size()];
+                if (a > b) std::swap(a, b);
+                ++cnt[{a, b}];
+            }
+        }
+        auto& pitch = facePitch[fid];
+        for (const auto& [seg, c] : cnt) {
+            if (c != 1) continue;
+            const auto& A = mesh.vertices[seg.first];
+            const auto& B = mesh.vertices[seg.second];
+            const double dx = A[0] - B[0], dy = A[1] - B[1],
+                         dz = A[2] - B[2];
+            const double len = std::sqrt(dx * dx + dy * dy + dz * dz);
+            // SHORTEST incident segment, not longest: fusion's scale
+            // must respect the nearest distinct feature, and on a
+            // hairline strip that is the strip's own width (max-pitch
+            // fused foam's twin rails together — the across segment is
+            // the honest bound; twins sit at a few PERCENT of a pitch).
+            for (uint32_t v : {seg.first, seg.second}) {
+                auto [it, fresh] = pitch.try_emplace(v, len);
+                if (!fresh && len < it->second) it->second = len;
+            }
+        }
+    }
+    double lo[3] = {1e300, 1e300, 1e300}, hi[3] = {-1e300, -1e300, -1e300};
+    for (const auto& v : mesh.vertices) {
+        for (int c = 0; c < 3; ++c) {
+            lo[c] = std::min(lo[c], v[c]);
+            hi[c] = std::max(hi[c], v[c]);
+        }
+    }
+    const double diag = std::sqrt((hi[0] - lo[0]) * (hi[0] - lo[0]) +
+                                  (hi[1] - lo[1]) * (hi[1] - lo[1]) +
+                                  (hi[2] - lo[2]) * (hi[2] - lo[2]));
+    const double tolCap = 0.01 * diag;
+    // Dense polylines of every edge curve + per-face HOME attribution —
+    // the same relative gate the stitcher uses. Without it, a hairline
+    // strip's FAR rail qualified as "on" the near rail's curve (0.077
+    // apart under a 0.24 band) and fused with the neighbour's twins
+    // across the gap, collapsing the strip into 3-owner edges.
+    constexpr int kSeg = 96;
+    std::vector<std::vector<gp_Pnt>> curvePl(model.edgeCount() + 1);
+    std::vector<double> curveLenAll(model.edgeCount() + 1, 0.0);
+    for (int eid = 1; eid <= model.edgeCount(); ++eid) {
+        const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+        if (BRep_Tool::Degenerated(edge)) continue;
+        double cf, cl;
+        Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, cf, cl);
+        if (c3.IsNull()) continue;
+        auto& pl = curvePl[eid];
+        pl.reserve(kSeg + 1);
+        for (int k = 0; k <= kSeg; ++k) {
+            pl.push_back(c3->Value(cf + (cl - cf) * k / double(kSeg)));
+            if (k) curveLenAll[eid] += pl[k].Distance(pl[k - 1]);
+        }
+    }
+    auto distToCurve = [&](const std::array<double, 3>& v, int eid) {
+        const auto& pl = curvePl[eid];
+        double best = 1e300;
+        for (size_t k = 0; k + 1 < pl.size(); ++k) {
+            const gp_XYZ a = pl[k].XYZ(), b = pl[k + 1].XYZ();
+            const gp_XYZ ab = b - a;
+            const gp_XYZ av(v[0] - a.X(), v[1] - a.Y(), v[2] - a.Z());
+            const double ll = ab.SquareModulus();
+            double t = ll > 1e-30 ? av.Dot(ab) / ll : 0.0;
+            t = std::clamp(t, 0.0, 1.0);
+            const gp_XYZ q = a + ab * t;
+            const double d2 = gp_XYZ(v[0] - q.X(), v[1] - q.Y(), v[2] - q.Z())
+                                  .SquareModulus();
+            if (d2 < best) best = d2;
+        }
+        return std::sqrt(best);
+    };
+    std::map<int, std::map<uint32_t, double>> faceHome;
+    for (const auto& [fid, polysUnused] : facePolys) {
+        (void)polysUnused;
+        std::vector<int> eids;
+        for (TopExp_Explorer ex(model.faces(fid), TopAbs_EDGE); ex.More();
+             ex.Next()) {
+            const int eid = model.edges.FindIndex(ex.Current());
+            if (eid >= 1 && !curvePl[eid].empty()) eids.push_back(eid);
+        }
+        if (eids.empty()) continue;
+        auto& home = faceHome[fid];
+        for (const auto& [v, pitchUnused] : facePitch[fid]) {
+            (void)pitchUnused;
+            double dh = 1e300;
+            for (int eid : eids) {
+                dh = std::min(dh, distToCurve(mesh.vertices[v], eid));
+            }
+            home[v] = dh;
+        }
+    }
+    // Union-find over fused twins.
+    std::map<uint32_t, uint32_t> parent;
+    std::function<uint32_t(uint32_t)> find = [&](uint32_t v) -> uint32_t {
+        auto it = parent.find(v);
+        if (it == parent.end() || it->second == v) return v;
+        return it->second = find(it->second);
+    };
+    auto unite = [&](uint32_t a, uint32_t b) {
+        a = find(a);
+        b = find(b);
+        if (a == b) return;
+        if (b < a) std::swap(a, b);
+        parent[b] = a;
+    };
+    int fused = 0;
+    for (int eid = 1; eid <= model.edgeCount(); ++eid) {
+        const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+        if (BRep_Tool::Degenerated(edge)) continue;
+        if (!model.edgeToFaces.Contains(edge)) continue;
+        const auto& owners = model.edgeToFaces.FindFromKey(edge);
+        if (owners.Extent() != 2) continue;
+        const int fA = model.faces.FindIndex(owners.First());
+        const int fB = model.faces.FindIndex(owners.Last());
+        if (fA < 1 || fB < 1 || fA == fB) continue;
+        if (curvePl[eid].empty()) continue;
+        const std::vector<gp_Pnt>& cp = curvePl[eid];
+        const double clen = curveLenAll[eid];
+        if (clen < 1e-9) continue;
+        const bool closedCurve =
+            cp.front().Distance(cp.back()) <= std::max(weldTol, 1e-7 * clen);
+        auto paramOf = [&](const std::array<double, 3>& v, double tol,
+                           double& tOut) {
+            const double tol2 = tol * tol;
+            double best = tol2;
+            bool hit = false;
+            for (int k = 0; k < kSeg; ++k) {
+                const gp_XYZ a = cp[k].XYZ(), b = cp[k + 1].XYZ();
+                const gp_XYZ ab = b - a;
+                const gp_XYZ av(v[0] - a.X(), v[1] - a.Y(), v[2] - a.Z());
+                const double ll = ab.SquareModulus();
+                double t = ll > 1e-30 ? av.Dot(ab) / ll : 0.0;
+                t = std::clamp(t, 0.0, 1.0);
+                const gp_XYZ q = a + ab * t;
+                const double d2 =
+                    gp_XYZ(v[0] - q.X(), v[1] - q.Y(), v[2] - q.Z())
+                        .SquareModulus();
+                if (d2 < best) {
+                    best = d2;
+                    tOut = (k + t) / double(kSeg);
+                    hit = true;
+                }
+            }
+            return hit;
+        };
+        // Collect each side's on-curve boundary verts (band + cap only —
+        // fusion's own mutual-nearest + twin-distance rules are the
+        // contamination gate here).
+        struct SideVert {
+            uint32_t v;
+            double t;
+            double pitch;
+        };
+        std::array<std::vector<SideVert>, 2> side;
+        const int fids[2] = {fA, fB};
+        for (int s2 = 0; s2 < 2; ++s2) {
+            auto pit = facePitch.find(fids[s2]);
+            if (pit == facePitch.end()) continue;
+            const auto& home = faceHome[fids[s2]];
+            for (const auto& [v, pv] : pit->second) {
+                const double tolV =
+                    std::max(weldTol * 4.0, std::min(tolCap, 0.25 * pv));
+                double t;
+                if (!paramOf(mesh.vertices[find(v)], tolV, t)) continue;
+                // Home gate (same as the stitcher): this curve must be
+                // (nearly) the vertex's nearest among its face's own
+                // curves.
+                auto hit = home.find(v);
+                if (hit != home.end()) {
+                    const double d = distToCurve(mesh.vertices[v], eid);
+                    const double slack = std::max(
+                        weldTol * 4.0,
+                        std::max(0.5 * hit->second, 0.05 * pv));
+                    if (d > hit->second + slack) continue;
+                }
+                side[s2].push_back({v, t, pv});
+            }
+        }
+        if (side[0].empty() || side[1].empty()) continue;
+        // Cross-side twins: mutually nearest in param, within a small
+        // fraction of the local pitch in param AND in 3D.
+        auto paramDist = [&](double a, double b) {
+            double d = std::abs(a - b);
+            if (closedCurve) d = std::min(d, 1.0 - d);
+            return d * clen;
+        };
+        auto nearestIn = [&](const std::vector<SideVert>& vs, double t) {
+            int best = -1;
+            double bd = 1e300;
+            for (size_t i = 0; i < vs.size(); ++i) {
+                const double d = paramDist(vs[i].t, t);
+                if (d < bd) {
+                    bd = d;
+                    best = int(i);
+                }
+            }
+            return best;
+        };
+        for (const SideVert& a : side[0]) {
+            const int jb = nearestIn(side[1], a.t);
+            if (jb < 0) continue;
+            const SideVert& b = side[1][jb];
+            if (find(a.v) == find(b.v)) continue;  // already one vertex
+            const int ja = nearestIn(side[0], b.t);
+            if (ja < 0 || side[0][ja].v != a.v) continue;  // not mutual
+            const double pMin = std::max(1e-12, std::min(a.pitch, b.pitch));
+            if (paramDist(a.t, b.t) > 0.15 * pMin) continue;
+            const auto& P = mesh.vertices[find(a.v)];
+            const auto& Q = mesh.vertices[find(b.v)];
+            const double dx = P[0] - Q[0], dy = P[1] - Q[1],
+                         dz = P[2] - Q[2];
+            if (dx * dx + dy * dy + dz * dz > 0.0625 * pMin * pMin) {
+                continue;  // > 25% of pitch apart: not the same point
+            }
+            unite(a.v, b.v);
+            ++fused;
+        }
+    }
+    if (parent.empty()) return;
+    // Apply the remap; collapse consecutive repeats a merge created.
+    for (auto& poly : mesh.polygons) {
+        for (uint32_t& v : poly) v = find(v);
+        poly.erase(std::unique(poly.begin(), poly.end()), poly.end());
+        while (poly.size() > 1 && poly.front() == poly.back()) {
+            poly.pop_back();
+        }
+    }
+    // Drop polygons a fusion degenerated below a triangle.
+    size_t w = 0;
+    for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+        if (mesh.polygons[p].size() < 3) continue;
+        if (w != p) {
+            mesh.polygons[w] = std::move(mesh.polygons[p]);
+            mesh.polygonFaceId[w] = mesh.polygonFaceId[p];
+        }
+        ++w;
+    }
+    mesh.polygons.resize(w);
+    mesh.polygonFaceId.resize(w);
+    dbg("stitch: fused %d seam twin pair(s)", fused);
+}
+
 // Decoupled-seams stitcher: the curve-guided T-junction closer. For every
 // B-rep edge shared by exactly two faces, both sides' border vertices are
 // located ON the edge curve (by proximity to a dense polyline of it),
@@ -17309,8 +17582,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     if (settings.decoupleSeams && !std::getenv("WEFT_NO_STITCH")) {
         // The curve-guided stitcher: every 2-owner B-rep edge's two sides
         // merge onto one parameter-sorted vertex chain, closing the seams
-        // the decoupled counts left open. WEFT_NO_STITCH is the diagnosis
-        // kill-switch (decoupled meshing without the closer).
+        // the decoupled counts left open. Twin fusion first: two samples
+        // of the same contract point (same edge, same param, a hair
+        // apart) must become one vertex or the stitcher has nothing to
+        // splice. WEFT_NO_STITCH / WEFT_NO_FUSE are the diagnosis
+        // kill-switches.
+        if (!std::getenv("WEFT_NO_FUSE")) {
+            fuseSeamTwins(mesh, model, weldGlobal);
+        }
         stitchSeams(mesh, model, weldGlobal);
     }
 
