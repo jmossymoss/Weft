@@ -1,5 +1,73 @@
 # Weft — MVP Plan
 
+> **Stitch campaign update (2026-07-10, late session).** The decoupled
+> seams path is nearly watertight corpus-wide. Scoreboard at cad
+> `--stitch`: **10/14 watertight 0/0** (flaregun, foam, unterlaf,
+> iso14649, 1797609in, 2827056, 4pinplug, angle1, as1_pe, + fixtures);
+> weldment 67o/3nm, nasty_cheese 40o/1nm, teleporter 20o/0nm, mohne
+> 10o/1nm; tork exempt. Started from flaregun 6/10, foam 43/16,
+> nasty 1615, teleporter 132. Default path byte-stable throughout
+> (corpus gate PASS on every commit). Landed, each root-caused on a
+> reproduced defect (3 commits):
+>
+> - **stitchSeams hardening**: pitch-scaled on-curve tolerances (25% of
+>   the vertex's own boundary pitch, absolute cap 1% of model diagonal
+>   on vertex acceptance only), HOME attribution (a vertex may only
+>   join a seam chain for (nearly) the nearest of its face's own
+>   curves), two topological guards (never splice into a segment both
+>   faces traverse; never insert a vertex a face already has), closed-
+>   curve wrap fix (the chord midpoint's param picks the true arc),
+>   end-gated corner slack (the pitch floor only near an open curve's
+>   ends), insertion bookkeeping (spliced verts join the side set).
+> - **fuseSeamTwins** (new pass, runs before stitchSeams): two faces
+>   sampling a shared edge at the SAME params can emit distinct verts a
+>   few % of a pitch apart — past the weld, nothing to splice. Twins
+>   (cross-side, mutually nearest in param, within 15% pitch in param /
+>   25% in 3D) merge by union-find. Pitch scale = SHORTEST incident
+>   segment; home-gated like the stitcher (both learned from hairline
+>   strips whose rails otherwise fuse).
+> - **Pure uniform lattices** (artist demand #1, full-wrap bands):
+>   under stitch, meshRevolutionGrid with mismatched rims no longer
+>   bails or builds transition strips — it emits a pure nu x nv lattice
+>   at its own solved count; rim rows = rim chains resampled at the
+>   column azimuths PLUS every B-rep edge junction (corners are
+>   contract points; they also keep every rim segment within ONE edge,
+>   per-edge stitchable). Non-column corners ride boundary cells as
+>   extra vertices.
+> - **Failure floors**: meshRevolutionGrid's return is now checked
+>   (was silently ignored — irreconcilable bands shipped as HOLES),
+>   and under stitch an empty part still demotes to the contract floor
+>   (nasty shipped 45 drill walls as holes = 1615 opens).
+>
+> **Remaining residual classes (diagnosed, not yet fixed):**
+> 1. Borders genuinely 0.2–1.5 off their B-rep curves — decimated /
+>    conform-moved borders from the emitting meshers (nasty faces
+>    6/8/44 against e.g. edge 46: endpoint 1.53 off a 6.2 curve;
+>    teleporter faces 300/301/304 up to 1.1 off). Fix the emitters,
+>    not the stitcher tolerances.
+> 2. weldment 67o/3nm — assembly; partially the same class, needs the
+>    per-face breakdown (probe86).
+> 3. Multi-edge-spanning chords on coarse borders (flaregun ribbon
+>    face 55 class was fixed for revolution rims via corner emission;
+>    ribbons/coons rails may still span corners elsewhere).
+>
+> **Tooling for the next session:** WEFT_NO_STITCH / WEFT_NO_FUSE
+> kill-switches; WEFT_STITCH_DEBUG=1 logs every insertion;
+> WEFT_STITCH_EID=<eid> traces per-vertex accept/reject with reasons
+> for one edge; probes 86 (defect classifier: every open/nm edge with
+> owners, nearest curve, distances), 87 (face/edge context), 88
+> (per-face build state), 89 (build census stitch vs default);
+> tools/probes/relink86.sh — RELINK AFTER EVERY CORE REBUILD, static
+> probes lie. Visual check in the loop: `xvfb-run -a
+> ./build/app/weft_app <f> --stitch --screenshot out.png` (app binary
+> also needs rebuilding — it statically links core).
+>
+> **Still open for the stitch flip:** the open revolution band's
+> transition strips / rim hug rows under stitch (partial wraps);
+> ribbon/rail meshers at their own counts (verify none still demote
+> over rail disagreements); then the remaining residuals above, full
+> corpus + sweep + golden/visual passes, and flip stitch to default.
+
 > **NEXT SESSION — the artist's two standing demands (2026-07-10):**
 >
 > 1. **NO ABSORBER BANDS, ANYWHERE.** Stated five times. The decoupled-
