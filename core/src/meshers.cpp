@@ -14956,7 +14956,9 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             break;
         }
     }
-    if (hasAdaptiveFaces) {
+    // Decoupled-seams experiment: skip the global sum repair entirely and
+    // let the post-weld unionSeams splice absorb chain mismatches.
+    if (hasAdaptiveFaces && !settings.decoupleSeams) {
         const std::vector<int> beforeChainRepair = solvedEdge;
         const auto groupCountBeforeChainRepair = density.groupCount;
         int brepOpenEdges = 0;
@@ -15057,7 +15059,9 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     // lunes. Raise the lighter rim (through its whole density group, so
     // stacked bands and cones follow) until the totals meet. Raises are
     // monotone and capped, so the fixpoint terminates.
-    {
+    // (Skipped under the decoupled-seams experiment: the mismatch then
+    // surfaces at the weld and unionSeams splices it.)
+    if (!settings.decoupleSeams) {
         auto raiseGroup = [&](int eid, int target) {
             target = std::min(target, 256);
             const int root = density.groups.find(eid);

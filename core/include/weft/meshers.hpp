@@ -131,6 +131,13 @@ struct GenerationSettings {
     // threads or the freeform border-conformity pass to bisect problems.
     bool parallelMeshing = true;
     bool conformBorders = true;
+    // EXPERIMENT (decoupled seams): skip the global count-equalization
+    // repairs (chained-coons sum repair, revolution rim SUM constraint)
+    // and let the post-weld unionSeams splice reconcile mismatched
+    // borders by inserting the denser side's verts into the coarser
+    // polygons (quad -> n-gon at the seam). Off by default; the CLI's
+    // --stitch flag turns it on for corpus experiments.
+    bool decoupleSeams = false;
     // Live progress for UIs: incremented once per meshed face when set
     // (non-owning; the pointee must outlive the generate call).
     std::atomic<int>* progressFaces = nullptr;

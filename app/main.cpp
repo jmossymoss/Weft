@@ -4586,6 +4586,17 @@ static void drawUi(App& app) {
                 app.recipe.settings.conformBorders = conform;
                 markDirty(app);
             }
+            bool stitch = app.recipe.settings.decoupleSeams;
+            if (ImGui::Checkbox("decoupled seams (stitch)", &stitch)) {
+                app.recipe.settings.decoupleSeams = stitch;
+                markDirty(app);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "EXPERIMENT: skip global count equalization; the\n"
+                    "post-weld splice reconciles mismatched seams with\n"
+                    "n-gons instead of forced counts / absorber strips.");
+            }
             static bool coreTrace = true;
             if (ImGui::Checkbox("core trace in log", &coreTrace)) {
                 weft::setGenerateDebugLog(coreTrace ? gDebugLog : nullptr);
@@ -4642,7 +4653,7 @@ int main(int argc, char** argv) {
     int startSelect = 0, startMode = 0;
     bool startQuality = false, startMatcap = false, startSmooth = false;
     float startYaw = 0.9f, startPitch = 0.5f;
-    bool demoLoopCut = false;
+    bool demoLoopCut = false, startStitch = false;
     std::vector<std::pair<int, std::string>> startFaceOverrides;  // FID:spec
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -4652,6 +4663,7 @@ int main(int argc, char** argv) {
         else if (a == "--yaw" && i + 1 < argc) startYaw = std::stof(argv[++i]);
         else if (a == "--pitch" && i + 1 < argc) startPitch = std::stof(argv[++i]);
         else if (a == "--loopcut") demoLoopCut = true;  // screenshot testing
+        else if (a == "--stitch") startStitch = true;   // screenshot testing
         else if (a == "--quality") startQuality = true;
         else if (a == "--matcap") startMatcap = true;
         else if (a == "--smooth") startSmooth = true;
@@ -4755,6 +4767,12 @@ int main(int argc, char** argv) {
     app.livePath = gDataDir + "/weft_live.obj";
     if (!startModel.empty()) loadModel(app, startModel);
     else loadFixture(app, startFixture);
+    if (startStitch && app.hasModel) {
+        // After the load (which resets the recipe): flip the experiment
+        // on and rebuild synchronously so the screenshot shows it.
+        app.recipe.settings.decoupleSeams = true;
+        regenerate(app);
+    }
     app.cam.yaw = startYaw;
     app.cam.pitch = startPitch;
     if (startQuality) {
