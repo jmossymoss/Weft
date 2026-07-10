@@ -1,5 +1,39 @@
 # Weft — MVP Plan
 
+> **Handoff (2026-07-10, self-heal session).** Banding, the ChatGPT
+> hardening pass, and "meshes can't fix themselves":
+>
+> - **ChatGPT pass verified** (`87d45bc`): the transactional
+>   chained-coons repair is sound (fold claims reproduce on Linux) and
+>   is kept. Two fixes on top (`0b46b8c`): writeStep's ShapeProcess pin
+>   is OCCT>=7.8-only — version-guarded, the Linux 7.6 build was broken;
+>   the gate's never-fall-back census was dropped rather than exempted —
+>   restored with the tork (wt=no) exemption.
+> - **Self-heal tournament** (`78a8745`, `8a4e710`): any face whose
+>   build has inverted cells now competes against a contract-floor
+>   candidate at the SAME exact borders; the better part wins, so a swap
+>   can never regress. Corpus folds at cad: nasty_cheese 11→0,
+>   teleporter 1→0, weldment 14→1, tork 16→2, all else 0, everything
+>   watertight. The census unwraps periodic u AND v (a torus's v-seam
+>   read as folded and got needlessly healed — caught by ctest).
+> - **Banding solved as shading** (`e889118`): the barrel's "banding"
+>   that came and went with segment counts was tessellation-dependent
+>   *viewer* shading. The viewport now shades every corner with the
+>   exact CAD surface normal (anchors' u,v; per-mesh cache) — the MoI
+>   lesson, and the same normals the exporters already write. Display >
+>   CAD-exact normals toggles it.
+> - **MoI research note:** MoI meshes the natural UV grid with n-gons at
+>   trim boundaries and ships CAD vertex normals — architecturally what
+>   Weft already does, minus Weft's cross-face density matching (MoI
+>   accepts cracks; Weft welds). No architecture change warranted; the
+>   normals lesson is applied.
+> - **Goldens refreshed, gate PASS**, pipeline ctest green. Open items:
+>   weldment's 1 fold + tork's 2 (below-floor candidates also fold
+>   there); nasty_cheese trades 2763 tris for its healed folds — a
+>   denser-candidate tournament (quad-fill / re-solved counts) is the
+>   next quality lever; full `weft sweep` acceptance not re-run since
+>   the tournament landed.
+
 > **Handoff (2026-07-10, fillet-flow session).** In response to the
 > artist's fillet-flow report (uneven/missing cross rungs along fillet
 > strips, diagonal zigzag transitions, the trigger-slot strip reading as
