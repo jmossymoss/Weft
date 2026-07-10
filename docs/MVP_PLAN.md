@@ -1,5 +1,33 @@
 # Weft — MVP Plan
 
+> **NEXT SESSION — the artist's two standing demands (2026-07-10):**
+>
+> 1. **NO ABSORBER BANDS, ANYWHERE.** Stated five times. The decoupled-
+>    seams experiment (`--stitch`, `decoupleSeams`) killed the global
+>    equalizers, but the PER-FACE absorber machinery still exists: the
+>    open band's transition strips / rim hug rows, and meshers that
+>    demote when rails disagree (ribbon-sweep fell to the floor under
+>    stitch). The work: under stitch, every revolution band emits a PURE
+>    uniform lattice (rim chains sampled at the lattice's own column
+>    positions), strips/hug rows deleted, border contract relaxed for
+>    those rims, and unionSeams closes the seams. Ribbon/rail meshers
+>    likewise build at their own counts instead of demoting. Then flip
+>    stitch to default with full corpus + sweep + golden/visual passes.
+> 2. **foam's can body must mesh as a revolution cylinder.** The body is
+>    an OFFSET_SURFACE bspline — geometrically a surface of revolution,
+>    typed freeform, so it takes coons patchwork (411 coons faces on
+>    foam) instead of columns. Detect bspline surfaces of revolution
+>    (constant radius about a fitted axis, probe-grid test, memoized in
+>    GenerationCache like revolutionCovers) and route them through the
+>    revolution machinery. Primary acceptance models: flaregun and foam,
+>    judged in Blender, not the viewer.
+>
+> Stitch experiment numbers (cad, watertight, 0 folds): flaregun
+> 7995q/50t/182n vs default 8530q/176t/154n — the absorber tris are the
+> difference; foam/teleporter/nasty trade n-gons at seams; fixture count
+> sweeps clean with equalizers OFF. Toggles: CLI `--stitch`, app Debug >
+> decoupled seams, app `--stitch` for screenshots.
+
 > **Handoff (2026-07-10, self-heal session).** Banding, the ChatGPT
 > hardening pass, and "meshes can't fix themselves":
 >
