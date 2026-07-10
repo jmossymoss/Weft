@@ -22,6 +22,18 @@
 >    revolution machinery. Primary acceptance models: flaregun and foam,
 >    judged in Blender, not the viewer.
 >
+> **Stitch progress this session:** the per-face absorber strips are
+> GONE under `--stitch` (coons deficit rails emit the lattice's own
+> resampled border, no transition strips; border-contract postcondition
+> relaxed so nothing demotes over a seam mismatch), and a curve-guided
+> stitcher (`stitchSeams`) closes seams by parameter-sorted vertex
+> insertion on every 2-owner B-rep edge. Residual at cad: flaregun 6
+> open / 10 non-manifold (was 742/1400 with the naive splice), foam
+> 43/16. NEXT: diagnose the residuals (suspects: 3+-owner edges are
+> skipped, freeform off-curve borders beyond the 0.4%-of-curve
+> tolerance, seams whose faces share BOTH endpoints only), then the
+> foam revolution detection. Default path byte-stable throughout.
+>
 > Stitch experiment numbers (cad, watertight, 0 folds): flaregun
 > 7995q/50t/182n vs default 8530q/176t/154n — the absorber tris are the
 > difference; foam/teleporter/nasty trade n-gons at seams; fixture count

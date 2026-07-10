@@ -67,6 +67,14 @@ static std::mutex gDebugMutex;
 
 void setGenerateDebugLog(std::FILE* f) { gDebugLog = f; }
 
+// Decoupled-seams experiment (GenerationSettings::decoupleSeams), visible
+// to the deep mesher internals without threading a parameter through
+// every signature: set once at generate() entry, read by the coons body
+// (emit the lattice's own rail instead of a natural-rail transition
+// strip). One generate() runs at a time per process today; the worker
+// threads of that run all read the same value.
+static std::atomic<bool> gStitchMode{false};
+
 static void dbg(const char* fmt, ...) {
     if (!gDebugLog) return;
     std::lock_guard<std::mutex> lock(gDebugMutex);
@@ -1943,7 +1951,18 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
     std::vector<BPt> natBottom, natTop;  // natural deficit rails
     if (bottom.size() != top.size() && bottom.size() >= 2 &&
         top.size() >= 2) {
-        if (bottom.size() < top.size()) {
+        if (gStitchMode.load(std::memory_order_relaxed)) {
+            // Decoupled seams: NO transition strip — the lattice's own
+            // arc-uniform resampling of the deficit rail IS the emitted
+            // border (points on the rail curve via surface eval). The
+            // neighbour samples the shared edge at its own count; the
+            // post-weld splice reconciles the two as seam n-gons.
+            if (bottom.size() < top.size()) {
+                bottom = resample(bottom, top.size());
+            } else {
+                top = resample(top, bottom.size());
+            }
+        } else if (bottom.size() < top.size()) {
             natBottom = bottom;
             bottom = resample(natBottom, top.size());
         } else {
@@ -14405,6 +14424,187 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
 // lets chains of absorbed verts close multi-vert gaps one layer at a
 // time. This pass is the contract that will let neighbouring faces
 // disagree on border counts (strips vs fillet rings).
+// Decoupled-seams stitcher: the curve-guided T-junction closer. For every
+// B-rep edge shared by exactly two faces, both sides' border vertices are
+// located ON the edge curve (by proximity to a dense polyline of it),
+// merged into one parameter-sorted chain, and each side's border polygon
+// segments gain the union vertices they are missing (a quad with one
+// inserted vertex becomes a 5-gon). Both sides then traverse the exact
+// same vertex chain, so the seam is watertight REGARDLESS of what counts
+// each face meshed at — the load-bearing pass of the decoupled-seams
+// architecture, replacing forced count equality. Geometry never moves:
+// only polygon connectivity gains vertices that already exist.
+void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
+    // face -> polygon indices (only 2-owner edges are stitched).
+    std::map<int, std::vector<size_t>> facePolys;
+    for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+        if (mesh.polygonFaceId[p] > 0) {
+            facePolys[mesh.polygonFaceId[p]].push_back(p);
+        }
+    }
+    // Per-face BOUNDARY segments (undirected within-face count of 1):
+    // only these may stitch — interior verts that merely pass near a
+    // border curve must never be swallowed into a seam chain.
+    std::map<int, std::set<std::pair<uint32_t, uint32_t>>> faceBoundary;
+    for (const auto& [fid, polys] : facePolys) {
+        std::map<std::pair<uint32_t, uint32_t>, int> cnt;
+        for (size_t p : polys) {
+            const auto& poly = mesh.polygons[p];
+            for (size_t i = 0; i < poly.size(); ++i) {
+                uint32_t a = poly[i], b = poly[(i + 1) % poly.size()];
+                if (a > b) std::swap(a, b);
+                ++cnt[{a, b}];
+            }
+        }
+        auto& bset = faceBoundary[fid];
+        for (const auto& [seg, c] : cnt) {
+            if (c == 1) bset.insert(seg);
+        }
+    }
+    int spliced = 0;
+    for (int eid = 1; eid <= model.edgeCount(); ++eid) {
+        const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+        if (BRep_Tool::Degenerated(edge)) continue;
+        if (!model.edgeToFaces.Contains(edge)) continue;
+        const TopTools_ListOfShape& owners =
+            model.edgeToFaces.FindFromKey(edge);
+        if (owners.Extent() != 2) continue;
+        const int fA = model.faces.FindIndex(owners.First());
+        const int fB = model.faces.FindIndex(owners.Last());
+        if (fA < 1 || fB < 1 || fA == fB) continue;
+        double cf, cl;
+        Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, cf, cl);
+        if (c3.IsNull()) continue;
+        // Dense polyline of the curve for nearest-point parameterization.
+        constexpr int kSeg = 96;
+        std::array<gp_Pnt, kSeg + 1> cp;
+        double clen = 0;
+        for (int k = 0; k <= kSeg; ++k) {
+            cp[k] = c3->Value(cf + (cl - cf) * k / double(kSeg));
+            if (k) clen += cp[k].Distance(cp[k - 1]);
+        }
+        if (clen < 1e-9) continue;
+        // On-curve tolerance: loose enough for lattice rails whose UV
+        // interpolation strays a hair off the exact curve, tight enough
+        // not to swallow interior verts one cell away.
+        const double tol = std::max(weldTol * 4.0, 0.004 * clen);
+        const double tol2 = tol * tol;
+        auto paramOf = [&](const std::array<double, 3>& v, double& tOut) {
+            double best = tol2;
+            bool hit = false;
+            for (int k = 0; k < kSeg; ++k) {
+                const gp_XYZ a = cp[k].XYZ(), b = cp[k + 1].XYZ();
+                const gp_XYZ ab = b - a;
+                const gp_XYZ av(v[0] - a.X(), v[1] - a.Y(), v[2] - a.Z());
+                const double ll = ab.SquareModulus();
+                double t = ll > 1e-30 ? av.Dot(ab) / ll : 0.0;
+                t = std::clamp(t, 0.0, 1.0);
+                const gp_XYZ q = a + ab * t;
+                const double d2 =
+                    gp_XYZ(v[0] - q.X(), v[1] - q.Y(), v[2] - q.Z())
+                        .SquareModulus();
+                if (d2 < best) {
+                    best = d2;
+                    tOut = (k + t) / double(kSeg);
+                    hit = true;
+                }
+            }
+            return hit;
+        };
+        // Each side's on-curve verts, then the union chain.
+        std::map<uint32_t, double> tOf;  // vert -> curve param (union)
+        std::array<std::set<uint32_t>, 2> sideVerts;
+        const int fids[2] = {fA, fB};
+        for (int s2 = 0; s2 < 2; ++s2) {
+            auto bit = faceBoundary.find(fids[s2]);
+            if (bit == faceBoundary.end()) continue;
+            std::set<uint32_t> seen;
+            for (const auto& [a, b] : bit->second) {
+                for (uint32_t v : {a, b}) {
+                    if (!seen.insert(v).second) continue;
+                    double t;
+                    if (paramOf(mesh.vertices[v], t)) {
+                        sideVerts[s2].insert(v);
+                        tOf[v] = t;
+                    }
+                }
+            }
+        }
+        if (sideVerts[0].empty() || sideVerts[1].empty()) continue;
+        // Already agreeing (welded shared chain)? Nothing to do.
+        if (sideVerts[0] == sideVerts[1]) continue;
+        std::vector<std::pair<double, uint32_t>> chain;
+        for (const auto& [v, t] : tOf) chain.push_back({t, v});
+        std::sort(chain.begin(), chain.end());
+        // Insert missing union verts into each side's border segments.
+        for (int s2 = 0; s2 < 2; ++s2) {
+            auto it = facePolys.find(fids[s2]);
+            if (it == facePolys.end()) continue;
+            const auto& bset = faceBoundary[fids[s2]];
+            for (size_t p : it->second) {
+                auto& poly = mesh.polygons[p];
+                for (size_t i = 0; i < poly.size(); ++i) {
+                    const uint32_t a = poly[i];
+                    const uint32_t b = poly[(i + 1) % poly.size()];
+                    if (!sideVerts[s2].count(a) || !sideVerts[s2].count(b)) {
+                        continue;
+                    }
+                    // Only true BOUNDARY segments stitch — a diagonal or
+                    // interior chord between two on-curve verts is not a
+                    // seam.
+                    if (!bset.count({std::min(a, b), std::max(a, b)})) {
+                        continue;
+                    }
+                    double ta = tOf[a], tb = tOf[b];
+                    if (std::abs(ta - tb) < 1e-12) continue;
+                    // The chord must LIE on the curve (not a cap corner
+                    // whose two endpoints merely touch it).
+                    const auto& A = mesh.vertices[a];
+                    const auto& B = mesh.vertices[b];
+                    std::array<double, 3> mid{(A[0] + B[0]) / 2,
+                                              (A[1] + B[1]) / 2,
+                                              (A[2] + B[2]) / 2};
+                    double tm;
+                    if (!paramOf(mid, tm)) continue;
+                    const bool fwd = tb > ta;
+                    std::vector<uint32_t> ins;
+                    auto nearVert = [&](uint32_t v, uint32_t w) {
+                        const auto& P = mesh.vertices[v];
+                        const auto& Q = mesh.vertices[w];
+                        const double dx = P[0] - Q[0], dy = P[1] - Q[1],
+                                     dz = P[2] - Q[2];
+                        return dx * dx + dy * dy + dz * dz <
+                               weldTol * weldTol * 4.0;
+                    };
+                    for (const auto& [t, v] : chain) {
+                        if (v == a || v == b) continue;
+                        if (t <= std::min(ta, tb) + 1e-12 ||
+                            t >= std::max(ta, tb) - 1e-12) {
+                            continue;
+                        }
+                        // A chain vert coincident with the segment's own
+                        // endpoints (or the previous insertion) is the
+                        // weld's near-duplicate — inserting it would
+                        // traverse a zero-length seam segment twice.
+                        if (nearVert(v, a) || nearVert(v, b)) continue;
+                        if (!ins.empty() && nearVert(v, ins.back())) {
+                            continue;
+                        }
+                        ins.push_back(v);
+                    }
+                    if (ins.empty()) continue;
+                    if (!fwd) std::reverse(ins.begin(), ins.end());
+                    poly.insert(poly.begin() + i + 1, ins.begin(),
+                                ins.end());
+                    spliced += int(ins.size());
+                    i += ins.size();  // continue after the insertion
+                }
+            }
+        }
+    }
+    if (spliced) dbg("stitch: %d seam vertex insertion(s)", spliced);
+}
+
 void unionSeams(PolyMesh& mesh, const Model& model, double weldTol) {
     (void)model;
     int total = 0;
@@ -14603,6 +14803,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         plans.emplace(fid, std::move(plan));
     }
     dbg("generate: plans done");
+    gStitchMode.store(settings.decoupleSeams, std::memory_order_relaxed);
 
     propagateBandRadialToBlendGroup(analysis, plans, settings);
 
@@ -16070,7 +16271,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         // VISIBLY — a silent contract break is a guaranteed open seam
         // after the weld. Fallback parts are exempt (they are the
         // floor's floor), as are deliberate clustered fillet holds.
-        if (!fellBack[fid] && plan.kind != MesherKind::Fallback &&
+        // Under decoupled seams the contract is no longer the law: faces
+        // sample their borders at their own counts and the post-weld
+        // splice closes the seams, so a mismatch is not a defect and
+        // must not demote (that is what dumped the ribbon sweep onto
+        // the floor in the first stitch experiment).
+        if (!settings.decoupleSeams && !fellBack[fid] &&
+            plan.kind != MesherKind::Fallback &&
             plan.kind != MesherKind::QuadDominant &&
             !(plan.isFillet && s.filletHold > 0.0)) {
             const int bad = borderContractViolation(fid, parts[fid]);
@@ -16657,6 +16864,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         // Post-weld: borders share ids now, so an open edge with an exact
         // complement path is a REAL T-junction, never a pre-weld ghost.
         unionSeams(mesh, model, weldGlobal);
+    }
+    if (settings.decoupleSeams) {
+        // The curve-guided stitcher: every 2-owner B-rep edge's two sides
+        // merge onto one parameter-sorted vertex chain, closing the seams
+        // the decoupled counts left open.
+        stitchSeams(mesh, model, weldGlobal);
     }
 
     // Fold cleanup: a directed edge traversed twice WITHIN one face means
