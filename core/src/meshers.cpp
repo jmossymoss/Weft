@@ -6396,9 +6396,16 @@ bool meshContractFallback(const TopoDS_Face& face, const Model& model,
                           int faceId, const std::vector<int>& solvedEdge,
                           int radialDefault, MeshBuilder& out,
                           const FaceMeshSettings* refine = nullptr,
-                          bool angleSplit = false) {
+                          bool angleSplit = false,
+                          const PinnedEdges* pins = nullptr) {
     std::vector<PlanarRing> rings;
-    if (!samplePlanarRings(face, model, solvedEdge, radialDefault, rings)) {
+    // Pins matter: the contract checker (and every neighbour) samples a
+    // pinned edge at its explicit pin positions, not uniform steps — a
+    // floor that samples uniformly misses them by a hair and "violates"
+    // its own contract (the notched fixture's radial-23/46/51/69 raw
+    // demotions were exactly this).
+    if (!samplePlanarRings(face, model, solvedEdge, radialDefault, rings,
+                           pins)) {
         dbg("contract floor %d: ring sampling failed", faceId);
         return false;
     }
@@ -7877,7 +7884,12 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // default route and default output stays byte-identical.
     if (settings.perFace.count(fid)) {
         const FaceMeshSettings& dfl = settings.defaults;
-        if (s.radial != dfl.radial) {
+        // FLAT rings only: a radial override on a curved slotted wall
+        // (the barrel fixture's cylinder, a sleeve with a slot) must not
+        // yank the face out of its revolution/open-band route into
+        // washer spokes — that meshed the wall as an inverted bowtie fan
+        // the moment any non-default radial was set.
+        if (surf.GetType() == GeomAbs_Plane && s.radial != dfl.radial) {
             // An explicit radial on a flat ring: mesh it as radial spokes
             // (open C-ring or full washer), not a boundary n-gon. Solve
             // pins the shared rim group to `radial`, so the neighbour rims
@@ -10943,6 +10955,14 @@ bool meshRevolutionRimNotch(const TopoDS_Face& face,
     // (pinned), and the single-span walls carry only the two corner edges,
     // so the neighbour annulus / floor / wall faces weld bit-identically.
     if (basePinned) {
+        // Attempted as a transaction: a count whose columns miss the
+        // notch corners cannot take the clean cut, and that must NOT
+        // fail the whole face (radial 23/46/51/69 on the notched
+        // fixture demoted exactly this way) — the generic strip path
+        // below absorbs any misalignment, and the pieces already sample
+        // pinned edges at their pin positions so borders stay exact.
+        const int colL0 = colL, colR0 = colR;
+        const bool cleanCut = [&]() -> bool {
         const double snapU = 0.02 * (period / nu);
         const double tolV2 = 0.05 * vspan;
         const double vFloor = vOf(wTop);
@@ -11062,6 +11082,12 @@ bool meshRevolutionRimNotch(const TopoDS_Face& face,
             out.addPolygon(std::move(mapped), faceId, false);
         }
         return true;
+        }();
+        if (cleanCut) return true;
+        colL = colL0;
+        colR = colR0;
+        dbg("rimnotch face %d: pinned cut misaligned at nu=%d, strip path",
+            faceId, nu);
     }
 
     // ---- Rows in w. Feature row just past the notch depth; a thin strip
@@ -15536,7 +15562,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             MeshBuilder retry(parts[fid]);
             const bool built = meshContractFallback(face, model, fid,
                                                     solvedEdge, s.radial,
-                                                    retry, &fsD, angleSplitD);
+                                                    retry, &fsD, angleSplitD,
+                                                    &pinnedEdge);
             const int floorBad =
                 built ? borderContractViolation(fid, parts[fid]) : -1;
             if (built && floorBad == 0) {
@@ -15930,7 +15957,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     MeshBuilder retryFloor(parts[fid]);
                     if (meshContractFallback(face, model, fid, solvedEdge,
                                              s.radial, retryFloor, &fs,
-                                             angleSplit) &&
+                                             angleSplit, &pinnedEdge) &&
                         borderContractViolation(fid, parts[fid]) == 0) {
                         fellBack[fid] = 2;  // exact borders: authority
                         break;
@@ -16100,7 +16127,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     MeshBuilder cb(cand);
                     const bool built = meshContractFallback(
                         face, model, fid, solvedEdge, s.radial, cb, &fsT,
-                        angleSplit);
+                        angleSplit, &pinnedEdge);
                     if (built && borderContractViolation(fid, cand) == 0) {
                         const auto [ctested, cinverted] =
                             invertedCells(cand);
