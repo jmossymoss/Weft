@@ -12475,6 +12475,15 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
                 double d = R[k % n].u - R[k - 1].u;
                 d -= period * std::round(d / period);
                 if (d < -1e-6 * period) return row;  // doubles back
+                // An iso-azimuth run (same u, real v step) is a slit or
+                // notch SIDE bundled into the rim chain, not rim
+                // material — v-interpolated columns would span the gap
+                // and the line border would never be emitted (nasty
+                // face 6: full-height slit lines, 4 permanent opens).
+                if (std::abs(d) < 1e-6 * period &&
+                    std::abs(R[k % n].v - R[k - 1].v) > 0.02 * vspan) {
+                    return row;
+                }
                 uu[k] = uu[k - 1] + std::max(0.0, d);
             }
             // Must wind exactly one full turn to be a closed ring.
@@ -14359,6 +14368,31 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
             dbg("conform: face %d edge %d: %zu movers, %zu targets", fid,
                 eid, movers.size(), targets.size());
             if (targets.size() < 2) continue;
+            // Decoupled seams: conform must never work from an
+            // INCOMPLETE target set. Stitch-mode resampled rims sit a
+            // hair off the exact curve, so the tight target projection
+            // captures only their corner verts and conform pulls a
+            // solved ring down onto 2 points (mohne's hole caved to a
+            // triangle). Completeness test: recount the neighbour's
+            // verts with a loose (4x) band — if the tight set missed a
+            // real fraction of them, the neighbour's border is off-
+            // curve by stitch design, and the seam belongs to the
+            // stitcher. (A complete-but-small set is legitimate: a
+            // sloppy freeform border decimating onto a coarse analytic
+            // contract keeps working — 1797609in needs exactly that.)
+            if (gStitchMode.load(std::memory_order_relaxed) &&
+                (analyticNb || freeformSeam)) {
+                size_t loose = 0;
+                const double tolLoose =
+                    std::max(tolTarget * 4.0, 0.03 * edgeLen);
+                for (size_t v = range[nfid][0]; v < range[nfid][1]; ++v) {
+                    double t;
+                    if (project(uint32_t(v), tolLoose, &t)) {
+                        ++loose;
+                    }
+                }
+                if (targets.size() * 5 < loose * 4) continue;
+            }
             // Already-welded seam: every mover sits on some target
             // (both faces sampled this edge at the same solved count,
             // so their borders are bit-identical). The loose capture
@@ -15201,13 +15235,38 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
                     std::array<double, 3> mid{(A[0] + B[0]) / 2,
                                               (A[1] + B[1]) / 2,
                                               (A[2] + B[2]) / 2};
+                    // A chord whose two endpoints sit AT the open
+                    // curve's own terminals IS the whole edge (minimal
+                    // n-gon plates take one segment per B-rep edge) —
+                    // no midpoint test can vouch for it (a half-circle
+                    // chord's sagitta is 50% of the chord), and none is
+                    // needed: terminal-to-terminal leaves no ambiguity
+                    // about which span to stitch.
+                    double tm = 0.5 * (ta + tb);
+                    bool fullEdge = false;
+                    if (!isClosedPl) {
+                        const double eTol =
+                            std::max(weldTol * 8.0, 1e-5 * clen);
+                        auto near3 = [&](const std::array<double, 3>& P,
+                                         const gp_Pnt& Q) {
+                            const double dx = P[0] - Q.X(),
+                                         dy = P[1] - Q.Y(),
+                                         dz = P[2] - Q.Z();
+                            return dx * dx + dy * dy + dz * dz <
+                                   eTol * eTol;
+                        };
+                        fullEdge = (near3(A, cp.front()) &&
+                                    near3(B, cp.back())) ||
+                                   (near3(A, cp.back()) &&
+                                    near3(B, cp.front()));
+                    }
                     // No tolCap here: a coarse ring's 27-unit chord has a
                     // 3-unit sagitta (legit, > any absolute cap), and the
                     // contamination gate is the ENDPOINT vetting above —
                     // a chord can't reach this test unless both ends
                     // passed the capped band + home checks.
-                    double tm;
-                    if (!paramOf(mid,
+                    if (!fullEdge &&
+                        !paramOf(mid,
                                  std::max(weldTol * 4.0, 0.35 * chordLen),
                                  tm)) {
                         if (traceEid) {
