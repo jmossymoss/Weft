@@ -14053,7 +14053,11 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
             // can still catch EXTRA targets on adjacent edges, and
             // pairing against those drags matched verts off the seam —
             // tearing a junction that was already exact. Nothing to
-            // conform here.
+            // conform here. Known limitation: a raw-OCCT part whose
+            // only border verts are the edge ENDPOINTS also reads as
+            // aligned and skips the insertion splice — reachable only
+            // when both floor retries failed (no corpus instance); the
+            // seam absorber still gets a shot at such gaps.
             {
                 const double wtol =
                     std::max(1e-6, settings.weldTolerance);

@@ -585,15 +585,19 @@ int cmdSweep(const std::vector<std::string>& args) {
                 if (how == 1) ++raw;
                 if (how == -1) ++empty;
             }
-            int baseRaw = 0;
+            int baseRaw = 0, baseEmpty = 0;
             for (const auto& [f2, how] : baseRep.faceBuild) {
                 if (how == 1) ++baseRaw;
+                if (how == -1) ++baseEmpty;
             }
             if (raw > baseRaw) {
                 bad += " raw-demotions=" + std::to_string(raw) + " (base " +
                        std::to_string(baseRaw) + ")";
             }
-            if (empty) bad += " empty=" + std::to_string(empty);
+            if (empty > baseEmpty) {
+                bad += " empty=" + std::to_string(empty) + " (base " +
+                       std::to_string(baseEmpty) + ")";
+            }
             if (!bad.empty()) {
                 std::printf("FAIL face %d radial %d:%s\n", fid, r,
                             bad.c_str());

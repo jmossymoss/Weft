@@ -32,10 +32,12 @@ FAIL=0
 run_one() { # name file profile-args profile-tag watertight-required
     local name=$1 file=$2 args=$3 tag=$4 wt=$5
     local log="$OUT/$name-$tag.log"
-    if ! timeout 1200 "$WEFT" mesh "$file" -o "$OUT/$name-$tag.obj" \
-            $args --validate > "$log" 2>&1; then
+    timeout 1200 "$WEFT" mesh "$file" -o "$OUT/$name-$tag.obj" \
+            $args --validate > "$log" 2>&1
+    local rc=$?
+    if [ "$rc" != 0 ]; then
         if [ "$wt" = yes ]; then
-            echo "FAIL $name [$tag]: exit $? (see $log)"
+            echo "FAIL $name [$tag]: exit $rc (see $log)"
             grep -E "watertight|error" "$log" | head -3 | sed 's/^/    /'
             FAIL=1
         fi
