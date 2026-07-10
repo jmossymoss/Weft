@@ -8736,6 +8736,52 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                        overridden);
             proposeSet(plan.vEdges, std::max(3, s.radial), 3, s.adaptive, s,
                        overridden);
+        } else if (plan.kind == MesherKind::RailLadder &&
+                   [&]() -> bool {
+                       // Rail-ladder blend strips lying ON a revolution
+                       // surface: 'radial' means divisions per FULL TURN
+                       // (that's what the blend-group propagation stamps
+                       // band-wide), so each outline edge takes its arc
+                       // share — exactly like an open band's rim edges.
+                       // The verbatim value pinned a 5.9-long junction
+                       // arc at radial=50 and wrapped the flaregun
+                       // sleeve in a dense absorber band. Freeform
+                       // strips (grip rails) return false and keep the
+                       // verbatim rail-count semantics below.
+                       const TopoDS_Face rf = TopoDS::Face(model.faces(fid));
+                       BRepAdaptor_Surface rs(rf);
+                       const GeomAbs_SurfaceType rt = rs.GetType();
+                       if (rt != GeomAbs_Cylinder && rt != GeomAbs_Cone &&
+                           rt != GeomAbs_Torus) {
+                           return false;
+                       }
+                       for (int e : plan.uEdges) {
+                           double f, l;
+                           Handle(Geom2d_Curve) pc =
+                               BRep_Tool::CurveOnSurface(
+                                   TopoDS::Edge(model.edges(e)), rf, f, l);
+                           double eu0 = 1e300, eu1 = -1e300;
+                           if (!pc.IsNull()) {
+                               for (int k = 0; k <= 8; ++k) {
+                                   const double uu =
+                                       pc->Value(f + (l - f) * k / 8.0)
+                                           .X();
+                                   eu0 = std::min(eu0, uu);
+                                   eu1 = std::max(eu1, uu);
+                               }
+                           }
+                           const double frac =
+                               eu1 > eu0 ? (eu1 - eu0) / (2.0 * M_PI)
+                                         : 0.0;
+                           const int flat = std::max(
+                               1, int(std::lround(std::max(3, s.radial) *
+                                                  frac)));
+                           proposeSet({e}, flat, 1, s.adaptive, s,
+                                      overridden);
+                       }
+                       return true;
+                   }()) {
+            // proposals already emitted per arc share above
         } else {  // revolution sides and disk caps subdivide rings radially
             if (!plan.bandSides.empty()) {
                 // Open band: each rim edge proposes its own count and

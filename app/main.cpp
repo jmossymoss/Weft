@@ -2939,11 +2939,21 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
         ch |= ImGui::Checkbox("relative deviation", &s.relativeDeviation);
         hover({kAllKinds});
     }
+    // While adaptive drives, the count boxes show the LIVE solved values
+    // (what the mesh on screen actually uses), not the stale manual
+    // numbers underneath — and a drag starts FROM the live value, flips
+    // to manual, and keeps it as the starting point.
+    const std::array<int, 2> liveN =
+        s.adaptive ? faceSolvedCounts(app, app.activeFace)
+                   : std::array<int, 2>{0, 0};
     if (revolved) {
         // Typing a count IS choosing manual density for this face —
         // same rule as the wheel — otherwise the number displays while
         // adaptive keeps driving and they never match.
-        if (ImGui::DragInt("radial", &s.radial, 0.2f, 3, 256)) {
+        int radialShown =
+            s.adaptive && liveN[0] > 0 ? liveN[0] : s.radial;
+        if (ImGui::DragInt("radial", &radialShown, 0.2f, 3, 256)) {
+            s.radial = radialShown;
             ch = true;
             // Manual only where radial IS the density; on plate-web /
             // quad-fill it merely seeds loop shares and killing
@@ -2958,7 +2968,10 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
                int(MK::AnnulusRing), int(MK::PlateWeb), int(MK::QuadFill),
                int(MK::RibbonSweep), int(MK::RailLadder), int(MK::DomeCap)});
         if (k == MK::RevolutionGrid || k == MK::DomeCap) {
-            if (ImGui::DragInt("axial", &s.axial, 0.2f, 1, 256)) {
+            int axialShown =
+                s.adaptive && liveN[1] > 0 ? liveN[1] : s.axial;
+            if (ImGui::DragInt("axial", &axialShown, 0.2f, 1, 256)) {
+                s.axial = axialShown;
                 ch = true;
                 s.adaptive = false;
             }
@@ -3000,7 +3013,9 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
         hover({int(MK::PlateWeb), int(MK::QuadFill), int(MK::MinimalNGon)});
     }
     if (grid) {
-        if (ImGui::DragInt("grid u", &s.gridU, 0.2f, 1, 256)) {
+        int gridUShown = s.adaptive && liveN[0] > 0 ? liveN[0] : s.gridU;
+        if (ImGui::DragInt("grid u", &gridUShown, 0.2f, 1, 256)) {
+            s.gridU = gridUShown;
             ch = true;
             // Coons floors coexist with adaptive borders — no flip.
             if (k == MK::PlanarGrid || k == MK::RingJunction) {
@@ -3009,7 +3024,9 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
         }
         hover({int(MK::PlanarGrid), int(MK::CoonsGrid),
                int(MK::RingJunction)});
-        if (ImGui::DragInt("grid v", &s.gridV, 0.2f, 1, 256)) {
+        int gridVShown = s.adaptive && liveN[1] > 0 ? liveN[1] : s.gridV;
+        if (ImGui::DragInt("grid v", &gridVShown, 0.2f, 1, 256)) {
+            s.gridV = gridVShown;
             ch = true;
             if (k == MK::PlanarGrid || k == MK::RingJunction) {
                 s.adaptive = false;

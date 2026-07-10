@@ -49,7 +49,7 @@ iso14649-demo default 601 quads, 2 tris, 79 n-gons
 mohne cad 1215 quads, 44 tris, 138 n-gons
 mohne default 1189 quads, 30 tris, 136 n-gons
 nasty_cheese cad 9268 quads, 2763 tris, 281 n-gons
-nasty_cheese default 6803 quads, 3705 tris, 512 n-gons
+nasty_cheese default 6779 quads, 3705 tris, 512 n-gons
 teleporter cad 17970 quads, 616 tris, 473 n-gons
 teleporter default 4238 quads, 762 tris, 485 n-gons
 tork cad 9399 quads, 861 tris, 158 n-gons
@@ -57,4 +57,4 @@ tork default 1886 quads, 1313 tris, 63 n-gons
 unterlaf cad 1294 quads, 574 tris, 176 n-gons
 unterlaf default 4834 quads, 6061 tris, 103 n-gons
 weldment_asm_solid cad 12631 quads, 526 tris, 1187 n-gons
-weldment_asm_solid default 15885 quads, 2303 tris, 1833 n-gons
+weldment_asm_solid default 15861 quads, 2303 tris, 1833 n-gons
