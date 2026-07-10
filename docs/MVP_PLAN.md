@@ -1,5 +1,48 @@
 # Weft — MVP Plan
 
+> **Handoff (2026-07-10, fillet-flow session).** In response to the
+> artist's fillet-flow report (uneven/missing cross rungs along fillet
+> strips, diagonal zigzag transitions, the trigger-slot strip reading as
+> uncut slats):
+>
+> - **Landed (3 commits, `ec8b9f2`/`dd63460`):** a *strip pitch floor*
+>   in the density solve — strip-planned faces (coons strips, ribbon
+>   sweeps, rail ladders, aspect ≥ 3) floor every outline edge to one
+>   station per 2 strip-widths (w = 2A/L), so rungs march evenly by arc
+>   length across large regions; adaptive faces only, so the flat-count
+>   `default` profile is byte-identical. Hardened by: fragile-rim skip
+>   (open-band/castellated rims can't take raised straight edges), a
+>   hairline gauge (strips < 0.1% of model diagonal are seam shims —
+>   skipped), a 24-station cap per edge, and a **chained-coons SUM
+>   repair** fixpoint — post-solve floors were breaking the chain-pass
+>   sum equality and skewing patches into diagonal absorption + folds
+>   (this also fixed 8 pre-existing teleporter folds; it is the
+>   "rail-chain sum equalization" lever, landed).
+> - **Verified:** flaregun cad watertight, 0 demotions, 0 folds (was 1);
+>   guard ribbon/fillet chains/slot lip show even rungs (matches the
+>   artist's blue-tick drawings); teleporter 9→1 folds; unterlaf 0
+>   folds; visual passes on foam/teleporter/unterlaf/mohne renders.
+>   Note: the reported face #326 "cutout" has NO interior wire — the
+>   pinch was the old build's 2-station slats; routes to coons with even
+>   rungs now.
+> - **Loose ends for the next session:**
+>   1. `tools/golden_counts.txt` NOT yet refreshed — cad rows moved on
+>      ~11 models (defaults all byte-identical), so the corpus gate and
+>      CI are red on the branch tip until `tools/corpus_gate.sh
+>      --update` is run after the remaining checks.
+>   2. Fold spot-checks outstanding: nasty_cheese 10→11 (+1) and tork
+>      10→16 (+6, broken source, gate-exempt) at cad — diagnose or
+>      accept before the golden refresh. Re-run the full fold table
+>      (`for f in tests/STEP_Examples/*.stp; ... --validate | grep
+>      folded`) against the chain-sum-repair build, since the +1/+6 were
+>      measured BEFORE the repair landed and may have changed.
+>   3. Full corpus gate + `weft sweep` acceptance not re-run since the
+>      chain-sum repair; pipeline ctest suite not re-run this session.
+>   4. Visual verify the remaining movers at cad (angle1, iso14649-demo,
+>      4pinplug, 2827056, nasty_cheese) per the corpus rule.
+>   5. Pitch constant is 2.0 widths (1.5 tripped a neighbour band's
+>      contract); artist may want per-family tuning via the new app tabs.
+
 > **Progress (2026-07-09 session).** Phase 0 is done and most of Phase 1:
 >
 > - **P0.2 ✅ Universal watertightness.** foam was leaking through 4
