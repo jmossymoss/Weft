@@ -14466,8 +14466,10 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
         const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
         if (BRep_Tool::Degenerated(edge)) continue;
         if (!model.edgeToFaces.Contains(edge)) continue;
-        const TopTools_ListOfShape& owners =
-            model.edgeToFaces.FindFromKey(edge);
+        // `auto`, not the named list type: TopTools_ListOfShape is only
+        // transitively declared on some OCCT header layouts (MSVC/vcpkg
+        // 7.8 broke on the explicit name).
+        const auto& owners = model.edgeToFaces.FindFromKey(edge);
         if (owners.Extent() != 2) continue;
         const int fA = model.faces.FindIndex(owners.First());
         const int fB = model.faces.FindIndex(owners.Last());
