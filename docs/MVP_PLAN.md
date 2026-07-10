@@ -26,23 +26,36 @@
 >   — grouped quads/n-gons, no fans. barrel fixture: 86 tris -> 0,
 >   watertight, 0 folds; new `drilled` fixture (round hole) clean from
 >   day one. Stepped/castellated rims keep their coons route (barrel2).
-> - **P1.3 mostly ✅ Density-edit safety.** The sweep harness (below)
->   found and fixed: the annulus containment floor (a holed plate's
->   outer ring must out-resolve its clearance or no web can triangulate
->   it) and full per-face cache keys (a stale part against a re-meshed
->   neighbour leaked exactly the edited count). flaregun/mohne/unterlaf/
->   fixtures sweep clean.
+> - **P1.3 ✅ Density-edit safety.** The sweep harness (below) found
+>   and fixed: the annulus containment floor (a holed plate's outer
+>   ring must out-resolve its clearance or no web can triangulate it)
+>   and full per-face cache keys (a stale part against a re-meshed
+>   neighbour leaked exactly the edited count). Definitive acceptance:
+>   **7,950 per-face radial-sweep runs (radial 8..48, warm cache)
+>   across all 13 corpus models, 0 failures.**
 > - **Harness ✅.** `tools/corpus_gate.sh` (watertight + no-raw-demotion
 >   + golden count diff over all fixtures and corpus models, both
 >   profiles) and `weft sweep` (adversarial per-face radial sweep
 >   through the generation cache). `GenerationReport::faceBuild` +
 >   the CLI's `demoted:` line make every demotion visible (P0.1's
 >   reporting half); raw-OCCT demotions are gate failures.
-> - **P0.1 status:** 0 fallback-tri at default corpus-wide; density
->   sweeps green on every model verified so far. Known cosmetic residue:
->   flaregun's grip ribbon (face 131) webs ~66 tris at the *default*
->   profile (cad profile: 11 tris total) — the ribbon-sweep cap webbing
->   is count-sensitive; a quality item, not a correctness one.
+> - **P0.1 ✅:** 0 fallback-tri at default corpus-wide; the full-corpus
+>   density sweep above is the never-fall-back evidence (no raw
+>   demotions or empties above any model's base at any count). Known
+>   cosmetic residue: flaregun's grip ribbon (face 131) absorbs its
+>   rail-chain mismatch as transition tris at the *default* profile
+>   (cad profile: clean quad ladder + one pentagon cap) — a quality
+>   item, not a correctness one (future lever: rail-chain sum
+>   equalization in the density solve).
+> - **Interactivity overhaul (app).** One `effectiveKind` resolver links
+>   every parameter surface to the face's real mesher (forced choice
+>   wins); the async dropped-edit bug is fixed (only startGenerate
+>   clears `dirty`, so edits and undos made during a run always coalesce
+>   into a follow-up pass); build health is visible everywhere
+>   (emitted-nothing faces: Topology callout + select button, outliner
+>   tag, panel warnings); global defaults sit in per-family tabs
+>   (freeform / cylinders / fillets / ribbons / rings / flat faces)
+>   with hover-to-highlight.
 
 ## 1. What this software is for
 
