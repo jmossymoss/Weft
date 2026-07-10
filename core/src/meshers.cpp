@@ -5924,10 +5924,26 @@ bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
             area += p.X() * q.Y() - q.X() * p.Y();
         }
         if (area < 0) std::reverse(ring.begin(), ring.end());
+        // triangulateWeb can refuse a tiny cap whose UV ring is nearly
+        // degenerate (rail ends crowd the corner). A small cap is better
+        // topology as ONE n-gon cell anyway — the artist's rule: allow
+        // the n-gon, don't fan it — so keep the ids and emit that when
+        // the web says no.
+        std::vector<uint32_t> ids;
+        for (const WebPoint& wp : ring) {
+            if (ids.empty() || ids.back() != wp.vert) ids.push_back(wp.vert);
+        }
+        while (ids.size() > 1 && ids.front() == ids.back()) ids.pop_back();
         const bool okw = triangulateWeb(std::move(ring), {}, faceId,
                                         reverseAll, out);
         dbg("ribbon face %d: cap web (%s) %zu pts -> %s", faceId,
             nearCap ? "near" : "far", poly.size(), okw ? "ok" : "FAIL");
+        if (!okw && ids.size() >= 3 && ids.size() <= 8) {
+            out.addPolygon(std::move(ids), faceId, reverseAll);
+            dbg("ribbon face %d: cap (%s) closed as one n-gon", faceId,
+                nearCap ? "near" : "far");
+            return true;
+        }
         return okw;
     };
     auto closeCap = [&](bool nearCap, bool simple, bool flat,
