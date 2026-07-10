@@ -12350,6 +12350,11 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
         gp_Pnt p;
     };
     std::vector<RimPt> rim[2];
+    // Chain indices that are B-rep edge JUNCTIONS (each edge's first
+    // sample). Under decoupled seams these are contract points — three
+    // faces meet at a rim corner, so the pure lattice must emit them
+    // even when its own column count skips past.
+    std::array<std::set<size_t>, 2> rimCorner;
     // Rim rows are built in WIRE CHAIN ORDER, not sorted by u: a
     // countersunk bore's rim is arcs joined by short v-steps, and a
     // u-sort interleaves the step samples between arc samples — the
@@ -12382,6 +12387,7 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
         if (n < 1) n = nu;
         const bool rev = edge.Orientation() == TopAbs_REVERSED;
         const double ph = closedEdgePhase(edge, model);
+        rimCorner[side].insert(rim[side].size());
         for (double t : edgeSampleFractions(eid, n, ph, rev,
                                             /*includeLast=*/false, nullptr,
                                             &model)) {
@@ -12426,9 +12432,183 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
             d -= period * std::round(d / period);
             turn += d;
         }
-        if (turn < 0) std::reverse(rim[k].begin(), rim[k].end());
+        if (turn < 0) {
+            std::reverse(rim[k].begin(), rim[k].end());
+            std::set<size_t> flipped;
+            for (size_t c : rimCorner[k]) {
+                flipped.insert(rim[k].size() - 1 - c);
+            }
+            rimCorner[k] = std::move(flipped);
+        }
     }
 
+    // Decoupled seams, mismatched rims: NO transition strips, NO
+    // irreconcilable bail — the band emits a PURE uniform lattice at its
+    // own solved count. Rim rows are the rim chains resampled at the
+    // lattice's nu column azimuths, PLUS every B-rep edge junction
+    // (corner) on the chain: corners are contract points (three faces
+    // meet there) and they partition the row so every emitted rim
+    // segment lies within ONE B-rep edge — which is what lets the
+    // post-weld stitcher close each seam against the neighbours' own
+    // counts. Non-column corners ride inside the boundary cells as
+    // extra polygon vertices (quad -> 5-gon, the absorption pattern).
+    // Only u-monotone rims that wind one full period qualify — a rim
+    // that doubles back in azimuth keeps the strict machinery below.
+    if (gStitchMode.load(std::memory_order_relaxed) && !vWrap && !vRows &&
+        rim[0].size() >= 3 && rim[1].size() >= 3 &&
+        rim[0].size() != rim[1].size()) {
+        struct StitchRow {
+            std::vector<uint32_t> col;    // one vertex per lattice column
+            std::vector<double> colV;     // that vertex's v (for columns)
+            // Non-column corner verts per column gap, ascending azimuth.
+            std::vector<std::vector<uint32_t>> extra;
+            bool ok = false;
+        };
+        const double phase = rim[0].front().u;
+        auto buildRow = [&](const std::vector<RimPt>& R,
+                            const std::set<size_t>& corners) -> StitchRow {
+            StitchRow row;
+            const size_t n = R.size();
+            std::vector<double> uu(n + 1);
+            uu[0] = R[0].u;
+            for (size_t k = 1; k <= n; ++k) {
+                double d = R[k % n].u - R[k - 1].u;
+                d -= period * std::round(d / period);
+                if (d < -1e-6 * period) return row;  // doubles back
+                uu[k] = uu[k - 1] + std::max(0.0, d);
+            }
+            // Must wind exactly one full turn to be a closed ring.
+            if (std::abs(uu[n] - uu[0] - period) > 0.05 * period) {
+                return row;
+            }
+            // Column azimuths in this chain's unwrapped frame.
+            std::vector<double> cu(nu);
+            for (int i = 0; i < nu; ++i) {
+                double t = phase + period * i / double(nu);
+                cu[i] = uu[0] +
+                        std::fmod(t - uu[0] + 4.0 * period, period);
+            }
+            // Nearest corner to each column (circular distance): within
+            // the snap band the corner BECOMES the column vertex, so no
+            // sliver edge separates them.
+            const double snap = 0.15 * period / double(nu);
+            std::vector<int> colCorner(nu, -1);
+            std::vector<char> consumed(n, 0);
+            for (int i = 0; i < nu; ++i) {
+                double best = snap;
+                for (size_t c : corners) {
+                    double d = std::abs(uu[c] - cu[i]);
+                    d = std::min(d, period - std::min(d, period));
+                    if (d < best) {
+                        best = d;
+                        colCorner[i] = int(c);
+                    }
+                }
+                if (colCorner[i] >= 0) consumed[colCorner[i]] = 1;
+            }
+            row.col.resize(nu);
+            row.colV.resize(nu);
+            for (int i = 0; i < nu; ++i) {
+                if (colCorner[i] >= 0) {
+                    const RimPt& C = R[colCorner[i]];
+                    row.col[i] = out.addVertex(C.p, {faceId, C.u, C.v});
+                    row.colV[i] = C.v;
+                    continue;
+                }
+                const double target = cu[i];
+                size_t k = std::upper_bound(uu.begin(), uu.end(), target) -
+                           uu.begin();
+                k = std::clamp<size_t>(k, 1, n);
+                const RimPt& A = R[k - 1];
+                const RimPt& B = R[k % n];
+                const double span = std::max(1e-12, uu[k] - uu[k - 1]);
+                const double t =
+                    std::clamp((target - uu[k - 1]) / span, 0.0, 1.0);
+                const double vI = A.v + t * (B.v - A.v);
+                double uI = target;
+                uI -= period *
+                      std::floor((uI - surf.FirstUParameter()) / period);
+                const gp_Pnt p = surf.Value(uI, vI);
+                row.col[i] = out.addVertex(p, {faceId, uI, vI});
+                row.colV[i] = vI;
+            }
+            // Remaining corners ride the cell whose azimuth gap holds
+            // them.
+            row.extra.assign(nu, {});
+            std::vector<std::pair<double, size_t>> loose;
+            for (size_t c : corners) {
+                if (!consumed[c]) loose.push_back({uu[c], c});
+            }
+            std::sort(loose.begin(), loose.end());
+            for (const auto& [ucRaw, c] : loose) {
+                // Shift into [cu[0], cu[0] + period).
+                const double uc =
+                    cu[0] +
+                    std::fmod(ucRaw - cu[0] + 4.0 * period, period);
+                int gap = int((uc - cu[0]) / (period / double(nu)));
+                gap = std::clamp(gap, 0, nu - 1);
+                const RimPt& C = R[c];
+                row.extra[gap].push_back(
+                    out.addVertex(C.p, {faceId, C.u, C.v}));
+            }
+            row.ok = true;
+            return row;
+        };
+        StitchRow lo = buildRow(rim[0], rimCorner[0]);
+        StitchRow hi = lo.ok ? buildRow(rim[1], rimCorner[1]) : StitchRow{};
+        if (lo.ok && hi.ok) {
+            dbg("revgrid face %d: stitch pure lattice nu=%d nv=%d "
+                "(rim rows at column azimuths + %zu/%zu corners)",
+                faceId, nu, nv, rimCorner[0].size(), rimCorner[1].size());
+            // Interior rings between the two rim rows, columns straight
+            // in azimuth, v lerped between the rims' column profiles.
+            std::vector<std::vector<uint32_t>> ringS(nv + 1);
+            ringS[0] = lo.col;
+            ringS[nv] = hi.col;
+            for (int j = 1; j < nv; ++j) {
+                ringS[j].resize(nu);
+                const double w = double(j) / double(nv);
+                for (int i = 0; i < nu; ++i) {
+                    double uI = phase + period * i / double(nu);
+                    uI -= period * std::floor(
+                                       (uI - surf.FirstUParameter()) /
+                                       period);
+                    const double vI =
+                        lo.colV[i] + (hi.colV[i] - lo.colV[i]) * w;
+                    ringS[j][i] =
+                        out.addVertex(surf.Value(uI, vI), {faceId, uI, vI});
+                }
+            }
+            for (int j = 0; j < nv; ++j) {
+                for (int i = 0; i < nu; ++i) {
+                    const int i2 = (i + 1) % nu;
+                    std::vector<uint32_t> poly;
+                    poly.push_back(ringS[j][i]);
+                    if (j == 0) {
+                        for (uint32_t v : lo.extra[i]) poly.push_back(v);
+                    }
+                    poly.push_back(ringS[j][i2]);
+                    poly.push_back(ringS[j + 1][i2]);
+                    if (j == nv - 1) {
+                        const auto& ex = hi.extra[i];
+                        for (auto it = ex.rbegin(); it != ex.rend(); ++it) {
+                            poly.push_back(*it);
+                        }
+                    }
+                    poly.push_back(ringS[j + 1][i]);
+                    poly.erase(std::unique(poly.begin(), poly.end()),
+                               poly.end());
+                    if (poly.size() > 1 && poly.front() == poly.back()) {
+                        poly.pop_back();
+                    }
+                    if (poly.size() < 3) continue;
+                    out.addPolygon(std::move(poly), faceId, flip);
+                }
+            }
+            if (built) *built = {nu, nv};
+            return true;
+        }
+    }
     // The rim samples OWN the border contract — they are what the
     // neighbouring faces emit on the shared edges, and a border row may
     // never be re-spaced (doctrine). When the rims disagree with the
@@ -14444,8 +14624,12 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
     }
     // Per-face BOUNDARY segments (undirected within-face count of 1):
     // only these may stitch — interior verts that merely pass near a
-    // border curve must never be swallowed into a seam chain.
+    // border curve must never be swallowed into a seam chain. Alongside,
+    // each boundary vertex's longest incident boundary segment: the
+    // vertex's own sampling pitch, which scales its on-curve acceptance
+    // tolerance below.
     std::map<int, std::set<std::pair<uint32_t, uint32_t>>> faceBoundary;
+    std::map<int, std::map<uint32_t, double>> facePitch;
     for (const auto& [fid, polys] : facePolys) {
         std::map<std::pair<uint32_t, uint32_t>, int> cnt;
         for (size_t p : polys) {
@@ -14457,8 +14641,100 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
             }
         }
         auto& bset = faceBoundary[fid];
+        auto& pitch = facePitch[fid];
         for (const auto& [seg, c] : cnt) {
-            if (c == 1) bset.insert(seg);
+            if (c != 1) continue;
+            bset.insert(seg);
+            const auto& A = mesh.vertices[seg.first];
+            const auto& B = mesh.vertices[seg.second];
+            const double dx = A[0] - B[0], dy = A[1] - B[1],
+                         dz = A[2] - B[2];
+            const double len = std::sqrt(dx * dx + dy * dy + dz * dz);
+            for (uint32_t v : {seg.first, seg.second}) {
+                auto [it, fresh] = pitch.try_emplace(v, len);
+                if (!fresh && len > it->second) it->second = len;
+            }
+        }
+    }
+    // Absolute drift ceiling: pitch-relative tolerances collapse when a
+    // border's pitch exceeds the feature scale (a ribbon's 99-unit chord
+    // put its 15% band over the OPPOSITE rail 6.7 away and swallowed it).
+    // Real off-curve drift is resampling sagitta — foam's coarse can rim
+    // sags 1.2 (0.5% of its diagonal) off its curve at pitch 7 — while
+    // the swallowed ribbon rail sat 6.7 away (4.5% of flaregun's
+    // diagonal). 1% of the diagonal separates the two.
+    double lo[3] = {1e300, 1e300, 1e300}, hi[3] = {-1e300, -1e300, -1e300};
+    for (const auto& v : mesh.vertices) {
+        for (int c = 0; c < 3; ++c) {
+            lo[c] = std::min(lo[c], v[c]);
+            hi[c] = std::max(hi[c], v[c]);
+        }
+    }
+    const double diag = std::sqrt((hi[0] - lo[0]) * (hi[0] - lo[0]) +
+                                  (hi[1] - lo[1]) * (hi[1] - lo[1]) +
+                                  (hi[2] - lo[2]) * (hi[2] - lo[2]));
+    const double tolCap = 0.01 * diag;
+    // Dense polylines of every edge curve, sampled once: the stitch loop
+    // parameterizes against them, and the HOME attribution below compares
+    // a vertex's distance to each of its face's own curves.
+    constexpr int kSeg = 96;
+    std::vector<std::vector<gp_Pnt>> curvePl(model.edgeCount() + 1);
+    std::vector<double> curveLen(model.edgeCount() + 1, 0.0);
+    for (int eid = 1; eid <= model.edgeCount(); ++eid) {
+        const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+        if (BRep_Tool::Degenerated(edge)) continue;
+        double cf, cl;
+        Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, cf, cl);
+        if (c3.IsNull()) continue;
+        auto& pl = curvePl[eid];
+        pl.reserve(kSeg + 1);
+        for (int k = 0; k <= kSeg; ++k) {
+            pl.push_back(c3->Value(cf + (cl - cf) * k / double(kSeg)));
+            if (k) curveLen[eid] += pl[k].Distance(pl[k - 1]);
+        }
+    }
+    auto distToCurve = [&](const std::array<double, 3>& v, int eid) {
+        const auto& pl = curvePl[eid];
+        double best = 1e300;
+        for (size_t k = 0; k + 1 < pl.size(); ++k) {
+            const gp_XYZ a = pl[k].XYZ(), b = pl[k + 1].XYZ();
+            const gp_XYZ ab = b - a;
+            const gp_XYZ av(v[0] - a.X(), v[1] - a.Y(), v[2] - a.Z());
+            const double ll = ab.SquareModulus();
+            double t = ll > 1e-30 ? av.Dot(ab) / ll : 0.0;
+            t = std::clamp(t, 0.0, 1.0);
+            const gp_XYZ q = a + ab * t;
+            const double d2 = gp_XYZ(v[0] - q.X(), v[1] - q.Y(), v[2] - q.Z())
+                                  .SquareModulus();
+            if (d2 < best) best = d2;
+        }
+        return std::sqrt(best);
+    };
+    // HOME attribution: for each face, every boundary vertex's distance to
+    // the NEAREST of the face's own edge curves. A vertex may only join a
+    // seam chain for a curve it is (nearly) closest to — the relative test
+    // that absolute tolerances cannot express. This is what keeps a
+    // hairline fillet strip's twin rail (foam: parallel lines 0.136 apart
+    // against ~0.28 resampling drift) from being swallowed into the wrong
+    // seam.
+    std::map<int, std::map<uint32_t, double>> faceHome;
+    for (const auto& [fid, polysUnused] : facePolys) {
+        (void)polysUnused;
+        std::vector<int> eids;
+        for (TopExp_Explorer ex(model.faces(fid), TopAbs_EDGE); ex.More();
+             ex.Next()) {
+            const int eid = model.edges.FindIndex(ex.Current());
+            if (eid >= 1 && !curvePl[eid].empty()) eids.push_back(eid);
+        }
+        if (eids.empty()) continue;
+        auto& home = faceHome[fid];
+        for (const auto& [v, pitchUnused] : facePitch[fid]) {
+            (void)pitchUnused;
+            double dh = 1e300;
+            for (int eid : eids) {
+                dh = std::min(dh, distToCurve(mesh.vertices[v], eid));
+            }
+            home[v] = dh;
         }
     }
     int spliced = 0;
@@ -14474,24 +14750,26 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
         const int fA = model.faces.FindIndex(owners.First());
         const int fB = model.faces.FindIndex(owners.Last());
         if (fA < 1 || fB < 1 || fA == fB) continue;
-        double cf, cl;
-        Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, cf, cl);
-        if (c3.IsNull()) continue;
-        // Dense polyline of the curve for nearest-point parameterization.
-        constexpr int kSeg = 96;
-        std::array<gp_Pnt, kSeg + 1> cp;
-        double clen = 0;
-        for (int k = 0; k <= kSeg; ++k) {
-            cp[k] = c3->Value(cf + (cl - cf) * k / double(kSeg));
-            if (k) clen += cp[k].Distance(cp[k - 1]);
-        }
+        if (curvePl[eid].empty()) continue;
+        const std::vector<gp_Pnt>& cp = curvePl[eid];
+        const double clen = curveLen[eid];
         if (clen < 1e-9) continue;
-        // On-curve tolerance: loose enough for lattice rails whose UV
-        // interpolation strays a hair off the exact curve, tight enough
-        // not to swallow interior verts one cell away.
-        const double tol = std::max(weldTol * 4.0, 0.004 * clen);
-        const double tol2 = tol * tol;
-        auto paramOf = [&](const std::array<double, 3>& v, double& tOut) {
+        // On-curve tolerance: PITCH-scaled, not curve-length-scaled. A
+        // lattice-resampled border vertex strays off the exact curve by
+        // the sagitta of its own sampling pitch (~turn/8 of a segment's
+        // turn angle, <= ~13% at the 60 deg/segment curvature floor) plus
+        // whatever the input's own curve/surface disagreement adds
+        // (teleporter carries borders ~19% of pitch off their curve) —
+        // while a foreign border vertex one cell away sits a FULL pitch
+        // off. 25% of the vertex's own pitch admits the real drift; the
+        // HOME attribution + already-closed-segment guards carry the
+        // contamination defense. (The old 0.4%-of-curve-length tolerance
+        // failed both ways: too tight for coarse rims on short edges, and
+        // on a long edge it grew past the cell size and swallowed
+        // neighbouring seams' verts near corners.)
+        auto paramOf = [&](const std::array<double, 3>& v, double tol,
+                           double& tOut) {
+            const double tol2 = tol * tol;
             double best = tol2;
             bool hit = false;
             for (int k = 0; k < kSeg; ++k) {
@@ -14514,23 +14792,66 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
             return hit;
         };
         // Each side's on-curve verts, then the union chain.
+        const char* dbgEidEnv = std::getenv("WEFT_STITCH_EID");
+        const bool traceEid = dbgEidEnv && std::atoi(dbgEidEnv) == eid;
         std::map<uint32_t, double> tOf;  // vert -> curve param (union)
         std::array<std::set<uint32_t>, 2> sideVerts;
         const int fids[2] = {fA, fB};
         for (int s2 = 0; s2 < 2; ++s2) {
             auto bit = faceBoundary.find(fids[s2]);
             if (bit == faceBoundary.end()) continue;
+            const auto& pitch = facePitch[fids[s2]];
+            const auto& home = faceHome[fids[s2]];
             std::set<uint32_t> seen;
             for (const auto& [a, b] : bit->second) {
                 for (uint32_t v : {a, b}) {
                     if (!seen.insert(v).second) continue;
+                    auto pit = pitch.find(v);
+                    const double pv =
+                        pit != pitch.end() ? pit->second : 0.0;
+                    const double tolV = std::max(
+                        weldTol * 4.0, std::min(tolCap, 0.25 * pv));
                     double t;
-                    if (paramOf(mesh.vertices[v], t)) {
-                        sideVerts[s2].insert(v);
-                        tOf[v] = t;
+                    if (!paramOf(mesh.vertices[v], tolV, t)) {
+                        if (traceEid) {
+                            dbg("stitch eid %d f%d v%u REJ band d=%.4g "
+                                "tolV=%.4g pitch=%.4g",
+                                eid, fids[s2], v,
+                                distToCurve(mesh.vertices[v], eid), tolV,
+                                pv);
+                        }
+                        continue;
                     }
+                    // Home test: this curve must be (nearly) the
+                    // vertex's nearest among its face's own curves.
+                    // The slack floor keeps true corner verts — which
+                    // sit a hair off BOTH adjacent curves — in both
+                    // chains, without readmitting a twin rail a real
+                    // fraction of a pitch away.
+                    auto hit = home.find(v);
+                    if (hit != home.end()) {
+                        const double d = distToCurve(mesh.vertices[v], eid);
+                        const double slack = std::max(
+                            weldTol * 4.0,
+                            std::max(0.5 * hit->second, 0.05 * pv));
+                        if (d > hit->second + slack) {
+                            if (traceEid) {
+                                dbg("stitch eid %d f%d v%u REJ home "
+                                    "d=%.4g dHome=%.4g slack=%.4g",
+                                    eid, fids[s2], v, d, hit->second,
+                                    slack);
+                            }
+                            continue;
+                        }
+                    }
+                    sideVerts[s2].insert(v);
+                    tOf[v] = t;
                 }
             }
+        }
+        if (traceEid) {
+            dbg("stitch eid %d: sides %zu/%zu (f%d/f%d)", eid,
+                sideVerts[0].size(), sideVerts[1].size(), fA, fB);
         }
         if (sideVerts[0].empty() || sideVerts[1].empty()) continue;
         // Already agreeing (welded shared chain)? Nothing to do.
@@ -14543,6 +14864,7 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
             auto it = facePolys.find(fids[s2]);
             if (it == facePolys.end()) continue;
             const auto& bset = faceBoundary[fids[s2]];
+            const auto& oset = faceBoundary[fids[1 - s2]];
             for (size_t p : it->second) {
                 auto& poly = mesh.polygons[p];
                 for (size_t i = 0; i < poly.size(); ++i) {
@@ -14554,22 +14876,78 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
                     // Only true BOUNDARY segments stitch — a diagonal or
                     // interior chord between two on-curve verts is not a
                     // seam.
-                    if (!bset.count({std::min(a, b), std::max(a, b)})) {
-                        continue;
-                    }
+                    const auto seg =
+                        std::make_pair(std::min(a, b), std::max(a, b));
+                    if (!bset.count(seg)) continue;
+                    // A segment the OTHER face also traverses is a seam
+                    // already closed — splicing a near-curve straggler
+                    // from a neighbouring border into it is how corner
+                    // contamination manufactured non-manifold edges.
+                    if (oset.count(seg)) continue;
                     double ta = tOf[a], tb = tOf[b];
                     if (std::abs(ta - tb) < 1e-12) continue;
                     // The chord must LIE on the curve (not a cap corner
-                    // whose two endpoints merely touch it).
+                    // whose two endpoints merely touch it): its midpoint
+                    // stands off by the chord's own sagitta — up to ~29%
+                    // of the chord at 120 deg of turn per segment on a
+                    // coarse ring — while a corner chord cutting across
+                    // the face sits far inside (and the home attribution
+                    // + owner + boundary-segment gates already screen
+                    // it).
                     const auto& A = mesh.vertices[a];
                     const auto& B = mesh.vertices[b];
+                    const double abx = A[0] - B[0], aby = A[1] - B[1],
+                                 abz = A[2] - B[2];
+                    const double chordLen =
+                        std::sqrt(abx * abx + aby * aby + abz * abz);
                     std::array<double, 3> mid{(A[0] + B[0]) / 2,
                                               (A[1] + B[1]) / 2,
                                               (A[2] + B[2]) / 2};
+                    // No tolCap here: a coarse ring's 27-unit chord has a
+                    // 3-unit sagitta (legit, > any absolute cap), and the
+                    // contamination gate is the ENDPOINT vetting above —
+                    // a chord can't reach this test unless both ends
+                    // passed the capped band + home checks.
                     double tm;
-                    if (!paramOf(mid, tm)) continue;
-                    const bool fwd = tb > ta;
-                    std::vector<uint32_t> ins;
+                    if (!paramOf(mid,
+                                 std::max(weldTol * 4.0, 0.35 * chordLen),
+                                 tm)) {
+                        if (traceEid) {
+                            dbg("stitch eid %d f%d seg v%u-v%u REJ mid "
+                                "dMid=%.4g chord=%.4g",
+                                eid, fids[s2], a, b,
+                                distToCurve(mid, eid), chordLen);
+                        }
+                        continue;
+                    }
+                    if (traceEid) {
+                        dbg("stitch eid %d f%d seg v%u-v%u ta=%.5f "
+                            "tb=%.5f",
+                            eid, fids[s2], a, b, ta, tb);
+                    }
+                    // Which verts lie between a and b? On a CLOSED curve
+                    // params wrap, so "between" is ambiguous — a segment
+                    // hugging the wrap point read as spanning the whole
+                    // circle and swallowed every vertex of the ring
+                    // (teleporter bores: one 4%-arc chord gained all 12
+                    // of the far side's verts). The chord MIDPOINT's
+                    // param (already located) picks the true arc: map
+                    // every param to r = (t - ta) mod 1 and walk toward
+                    // b on the side that contains the midpoint.
+                    const bool closedCurve =
+                        cp.front().Distance(cp.back()) <=
+                        std::max(weldTol, 1e-7 * clen);
+                    auto relOf = [&](double t) {
+                        double r = t - ta;
+                        r -= std::floor(r);
+                        return r;
+                    };
+                    const double rb = relOf(tb);
+                    const double rm = relOf(tm);
+                    // direct = walking a->b through ascending r covers
+                    // the chord's own arc (contains the midpoint).
+                    const bool direct = !closedCurve || rm <= rb;
+                    std::vector<uint32_t> ins;  // ascending r
                     auto nearVert = [&](uint32_t v, uint32_t w) {
                         const auto& P = mesh.vertices[v];
                         const auto& Q = mesh.vertices[w];
@@ -14580,8 +14958,23 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
                     };
                     for (const auto& [t, v] : chain) {
                         if (v == a || v == b) continue;
-                        if (t <= std::min(ta, tb) + 1e-12 ||
-                            t >= std::max(ta, tb) - 1e-12) {
+                        // A vertex this face's border ALREADY traverses
+                        // must never be inserted a second time — the
+                        // duplicate traversal is a non-manifold edge by
+                        // construction (the other corner-contamination
+                        // half).
+                        if (sideVerts[s2].count(v)) continue;
+                        if (closedCurve) {
+                            const double r = relOf(t);
+                            if (direct) {
+                                if (r <= 1e-12 || r >= rb - 1e-12) continue;
+                            } else {
+                                if (r <= rb + 1e-12 || r >= 1.0 - 1e-12) {
+                                    continue;
+                                }
+                            }
+                        } else if (t <= std::min(ta, tb) + 1e-12 ||
+                                   t >= std::max(ta, tb) - 1e-12) {
                             continue;
                         }
                         // A chain vert coincident with the segment's own
@@ -14589,13 +14982,42 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
                         // weld's near-duplicate — inserting it would
                         // traverse a zero-length seam segment twice.
                         if (nearVert(v, a) || nearVert(v, b)) continue;
-                        if (!ins.empty() && nearVert(v, ins.back())) {
-                            continue;
-                        }
                         ins.push_back(v);
                     }
                     if (ins.empty()) continue;
+                    // Order along the walk a->b. chain is sorted by raw
+                    // t; re-sort by r so a wrapped interval stays one
+                    // monotone run, then flip when the walk descends.
+                    std::sort(ins.begin(), ins.end(),
+                              [&](uint32_t x, uint32_t y) {
+                                  return (closedCurve ? relOf(tOf[x])
+                                                      : tOf[x]) <
+                                         (closedCurve ? relOf(tOf[y])
+                                                      : tOf[y]);
+                              });
+                    const bool fwd =
+                        closedCurve ? direct : tb > ta;
                     if (!fwd) std::reverse(ins.begin(), ins.end());
+                    // Drop weld-coincident neighbours in FINAL order.
+                    {
+                        std::vector<uint32_t> dedup;
+                        for (uint32_t v : ins) {
+                            if (!dedup.empty() && nearVert(v, dedup.back())) {
+                                continue;
+                            }
+                            dedup.push_back(v);
+                        }
+                        ins = std::move(dedup);
+                    }
+                    if (ins.empty()) continue;
+                    if (std::getenv("WEFT_STITCH_DEBUG")) {
+                        std::string s;
+                        for (uint32_t v : ins) {
+                            s += " v" + std::to_string(v);
+                        }
+                        dbg("stitch: eid %d face %d seg v%u-v%u gains%s",
+                            eid, fids[s2], a, b, s.c_str());
+                    }
                     poly.insert(poly.begin() + i + 1, ins.begin(),
                                 ins.end());
                     spliced += int(ins.size());
@@ -15975,11 +16397,17 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         demote(fid, face, surf, s, "open band failed");
                     }
                 } else {
-                    meshRevolutionGrid(
-                        face, surf, model, plan.uEdges, solvedEdge, fid, nu,
-                        nv, out, nullptr,
-                        plan.rimLow.empty() ? nullptr : &plan.rimLow,
-                        &builtCounts[fid]);
+                    if (!meshRevolutionGrid(
+                            face, surf, model, plan.uEdges, solvedEdge, fid,
+                            nu, nv, out, nullptr,
+                            plan.rimLow.empty() ? nullptr : &plan.rimLow,
+                            &builtCounts[fid])) {
+                        // Same floor the border-contract postcondition
+                        // used to reach — but explicit, so the relaxed
+                        // stitch mode can't ship the empty part as a
+                        // hole in the output.
+                        demote(fid, face, surf, s, "revolution grid failed");
+                    }
                 }
                 break;
             case MesherKind::DiskCap: {
@@ -16246,6 +16674,17 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 meshFallback(face, surf, fid, fs, retryFb);
                 break;
             }
+        }
+        // Under decoupled seams the border-contract postcondition below
+        // is relaxed — but a mesher that emitted NOTHING is a hole in
+        // the output, not a seam-count disagreement: it must still take
+        // the floor (nasty_cheese shipped 45 drill walls as holes, 1615
+        // open edges, before this net).
+        if (settings.decoupleSeams && !fellBack[fid] &&
+            plan.kind != MesherKind::Fallback &&
+            plan.kind != MesherKind::QuadDominant &&
+            parts[fid].polygons.empty()) {
+            demote(fid, face, surf, s, "emitted nothing");
         }
         // Safety net: any directed edge repeated inside one face's part is
         // degenerate topology (it would leak non-manifold edges into the
@@ -16867,10 +17306,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         // complement path is a REAL T-junction, never a pre-weld ghost.
         unionSeams(mesh, model, weldGlobal);
     }
-    if (settings.decoupleSeams) {
+    if (settings.decoupleSeams && !std::getenv("WEFT_NO_STITCH")) {
         // The curve-guided stitcher: every 2-owner B-rep edge's two sides
         // merge onto one parameter-sorted vertex chain, closing the seams
-        // the decoupled counts left open.
+        // the decoupled counts left open. WEFT_NO_STITCH is the diagnosis
+        // kill-switch (decoupled meshing without the closer).
         stitchSeams(mesh, model, weldGlobal);
     }
 
