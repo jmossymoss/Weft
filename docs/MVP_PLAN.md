@@ -2,11 +2,26 @@
 
 > **Stitch campaign update (2026-07-10, late session).** The decoupled
 > seams path is nearly watertight corpus-wide. Scoreboard at cad
-> `--stitch`: **10/14 watertight 0/0** (flaregun, foam, unterlaf,
-> iso14649, 1797609in, 2827056, 4pinplug, angle1, as1_pe, + fixtures);
-> weldment 67o/3nm, nasty_cheese 40o/1nm, teleporter 20o/0nm, mohne
-> 10o/1nm; tork exempt. Started from flaregun 6/10, foam 43/16,
-> nasty 1615, teleporter 132. Default path byte-stable throughout
+> `--stitch`: **11/14 watertight 0/0** (flaregun, foam, mohne,
+> 1797609in, unterlaf, iso14649, 2827056, 4pinplug, angle1, as1_pe +
+> fixtures); nasty_cheese 11o/0nm, teleporter 20o/0nm, weldment
+> 37o/3nm; tork exempt. Started from flaregun 6/10, foam 43/16,
+> nasty 1615, teleporter 132. Second-round fixes: pure-lattice bails
+> on slit/notch rim chains (iso-azimuth runs are not rim material),
+> full-edge chords bypass the midpoint test (a minimal plate's
+> half-circle chord has 50% sagitta; terminal-to-terminal is
+> unambiguous), conform under stitch is COMPLETENESS-gated (tight
+> targets vs a loose pitch-scaled recount — mohne's 11-vert hole ring
+> was collapsing onto 2 corner targets; 1797609in's legitimate
+> freeform-onto-analytic decimation still runs), stitch vertex band
+> 25% -> 35% of pitch (coons rails drift past the sagitta model).
+> Remaining classes: micro-edge corner rings (nasty edge 699: a
+> 0.1-long chamfer edge sampled 3 segments by one side, 0 by the
+> other), and borders emitted 0.2-1.1 off-curve where the OPEN seam
+> is on the vert's home curve, not the misattributed nearest one
+> (teleporter faces 300/301/304/308/568, nasty face 125 vs edge 622
+> — probe86's nearest-edge column misleads there; trace the home
+> curve's own edge id instead). Default path byte-stable throughout
 > (corpus gate PASS on every commit). Landed, each root-caused on a
 > reproduced defect (3 commits):
 >

@@ -15132,8 +15132,14 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
                     auto pmt = pitchMin.find(v);
                     const double pvMin =
                         pmt != pitchMin.end() ? pmt->second : 0.0;
+                    // 35%: coons rails' UV-interpolated resampling on
+                    // curved bsplines drifts past the sagitta model
+                    // (teleporter face 301: 27% of pitch off its rail
+                    // curve). Foreign verts still sit a FULL pitch off;
+                    // home attribution + the closed-segment guards are
+                    // the real contamination defense.
                     const double tolV = std::max(
-                        weldTol * 4.0, std::min(tolCap, 0.25 * pv));
+                        weldTol * 4.0, std::min(tolCap, 0.35 * pv));
                     double t;
                     if (!paramOf(mesh.vertices[v], tolV, t)) {
                         if (traceEid) {
