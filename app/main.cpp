@@ -1185,6 +1185,12 @@ static void frameModel(App& app) {
 
 static void loadModel(App& app, const std::string& path) {
     logLine("load: %s", path.c_str());
+    // The worker reads model/analysis/genCache for its whole run — drain
+    // any in-flight generate before replacing them under it.
+    while (app.genBusy && !app.genReady) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    if (app.genReady) finishGenerate(app);
     try {
         app.model = weft::loadStep(path);
         app.analysis = weft::analyze(app.model);
@@ -1199,6 +1205,10 @@ static void loadModel(App& app, const std::string& path) {
         app.activeFace = 0;
         app.undoStack.clear();
         app.genCache.clear();
+        // The old model's report must not outlive it: its face ids and
+        // build-health flags would render (and be clickable) against the
+        // new model until the first async run lands.
+        app.report = weft::GenerationReport();
         app.recipe = {};
         // New sessions solve curvature adaptively (deviation/angle drive
         // each edge's count); saved recipes bring their own flag back.
@@ -1242,6 +1252,12 @@ static void loadModel(App& app, const std::string& path) {
 // same mapping. The undo stack refers to old ids, so it resets.
 static void reloadModel(App& app) {
     logLine("hot-reload: %s", app.sourcePath.c_str());
+    // Same rule as loadModel: never swap the model out from under a
+    // running worker (the file watcher can fire mid-run).
+    while (app.genBusy && !app.genReady) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    if (app.genReady) finishGenerate(app);
     try {
         weft::Model fresh = weft::loadStep(app.sourcePath);
         weft::Analysis freshAnalysis = weft::analyze(fresh);
@@ -1889,9 +1905,17 @@ static void adjustFaceDensity(App& app, bool secondary, int steps) {
             app.activeFace);
     std::string hud;
     if (app.selFaces.empty()) {
-        hud = adjustFaceDensityOne(app, app.activeFace,
-                                   app.recipe.settings.defaults, secondary,
-                                   steps);
+        // No selection: nudge the global density scale. Nudging the
+        // DEFAULTS' counts here reads as harmless, but the count lambda
+        // flips adaptive off — so [ ] with nothing selected silently
+        // disabled curvature-adaptive density for the whole model.
+        app.recipe.settings.densityScale = std::clamp(
+            app.recipe.settings.densityScale * std::pow(1.06, double(steps)),
+            0.05, 20.0);
+        char buf[64];
+        std::snprintf(buf, sizeof buf, "density scale: %.2fx",
+                      app.recipe.settings.densityScale);
+        hud = buf;
     } else {
         for (int fid : app.selFaces) {
             auto it = app.recipe.settings.perFace.find(fid);
@@ -2756,8 +2780,10 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
                           k == MK::AnnulusRing || k == MK::PlateWeb ||
                           k == MK::QuadFill || k == MK::RibbonSweep ||
                           k == MK::RailLadder || k == MK::DomeCap;
-    const bool grid = k == MK::PlanarGrid || k == MK::MinimalNGon ||
-                      k == MK::RingJunction || k == MK::CoonsGrid;
+    // MinimalNGon is NOT a grid: it emits one boundary n-gon, so grid
+    // u/v would be dead knobs — its density lives in "boundary verts".
+    const bool grid = k == MK::PlanarGrid || k == MK::RingJunction ||
+                      k == MK::CoonsGrid;
     const bool freeform = k == MK::QuadDominant || k == MK::Fallback;
     bool ch = false;
 
@@ -2869,22 +2895,28 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
             // Concentric collar rings around each hole.
             ch |= ImGui::DragInt("junction rings", &s.junctionRings, 0.2f,
                                  1, 32);
+            hover({int(MK::RingJunction), int(MK::PlateWeb)});
             ch |= ImGui::Checkbox("square collars", &s.squareCollar);
+            hover({int(MK::PlateWeb)});
         }
-        if (k == MK::PlateWeb || k == MK::QuadFill || k == MK::MinimalNGon) {
-            // Total verts around the outer loop, length-distributed and
-            // pinned (drives the neighbouring walls' shared edges).
-            const int prevBoundary = s.boundary;
-            if (ImGui::DragInt("boundary verts (0=auto)", &s.boundary,
-                               0.2f, 0, 512)) {
-                if (prevBoundary == 0 && s.boundary > 0) {
-                    const int live =
-                        outerLoopSolvedTotal(app, app.activeFace);
-                    if (live > 0) s.boundary = std::max(s.boundary, live);
-                }
-                ch = true;
+    }
+    // Boundary totals stand alone: MinimalNGon isn't in the revolved set
+    // (nesting this inside it made the knob unreachable for exactly the
+    // mesher whose ONLY density control it is).
+    if (k == MK::PlateWeb || k == MK::QuadFill || k == MK::MinimalNGon) {
+        // Total verts around the outer loop, length-distributed and
+        // pinned (drives the neighbouring walls' shared edges).
+        const int prevBoundary = s.boundary;
+        if (ImGui::DragInt("boundary verts (0=auto)", &s.boundary,
+                           0.2f, 0, 512)) {
+            if (prevBoundary == 0 && s.boundary > 0) {
+                const int live =
+                    outerLoopSolvedTotal(app, app.activeFace);
+                if (live > 0) s.boundary = std::max(s.boundary, live);
             }
+            ch = true;
         }
+        hover({int(MK::PlateWeb), int(MK::QuadFill), int(MK::MinimalNGon)});
     }
     if (grid) {
         if (ImGui::DragInt("grid u", &s.gridU, 0.2f, 1, 256)) {
@@ -3008,8 +3040,13 @@ static void rimControls(App& app, int fid) {
 // right-click popup so the two can never drift apart: the effective kind
 // line (with forced / still-updating annotations), build health from the
 // report, the kind-gated editor, rim controls, and the override reset.
-// Requires app.activeFace > 0.
 static void drawActiveFaceSettings(App& app) {
+    // Guard the range, not just positivity: a stale id (report entries
+    // from a previous model) must never index analysis.faces.
+    if (app.activeFace <= 0 ||
+        app.activeFace > int(app.analysis.faces.size())) {
+        return;
+    }
     const weft::FaceInfo& f = app.analysis.faces[app.activeFace - 1];
     const weft::MesherKind kind = effectiveKind(app, app.activeFace);
     const bool forced =
@@ -3057,42 +3094,60 @@ static void drawActiveFaceSettings(App& app) {
     const bool changed =
         settingsEditor(app, edited, kind, f.isFillet, &adaptiveOffCheckbox);
     if (changed) {
-        auto applyTo = [&](int fid, weft::FaceMeshSettings& s) {
+        // The edit lands on the selection PLUS the displayed face: after
+        // an outliner deselect the panel still shows the active face, and
+        // an edit made under its heading must reach it — never fall
+        // through to the global defaults from a face-titled panel.
+        std::set<int> targets = app.selFaces;
+        targets.insert(app.activeFace);
+        // Boundary pin flipped on this frame: the editor seeded `edited`
+        // from the ACTIVE face's outer loop; other faces pin at their own
+        // solved totals below.
+        const bool boundaryPinned =
+            before.boundary == 0 && edited.boundary > 0;
+        for (int fid : targets) {
+            auto it = app.recipe.settings.perFace.find(fid);
+            if (it == app.recipe.settings.perFace.end()) {
+                it = app.recipe.settings.perFace
+                         .emplace(fid, app.recipe.settings.defaults)
+                         .first;
+            }
+            weft::FaceMeshSettings& s = it->second;
+            const bool wasAdaptive = s.adaptive;
             weft::FaceMeshSettings target = edited;
-            if (adaptiveOffCheckbox && fid != app.activeFace) {
-                // The count seeds the editor baked into `edited` came
-                // from the ACTIVE face's live mesh; this face seeds from
-                // its OWN solved counts below.
-                target.radial = before.radial;
-                target.gridU = before.gridU;
-                target.axial = before.axial;
-                target.gridV = before.gridV;
+            if (fid != app.activeFace) {
+                if (adaptiveOffCheckbox) {
+                    // The count seeds baked into `edited` came from the
+                    // ACTIVE face's live mesh; this face re-seeds from
+                    // its OWN solved counts below.
+                    target.radial = before.radial;
+                    target.gridU = before.gridU;
+                    target.axial = before.axial;
+                    target.gridV = before.gridV;
+                }
+                if (boundaryPinned) target.boundary = before.boundary;
             }
             applyChangedFields(before, target, s);
-            if (adaptiveOffCheckbox && fid != app.activeFace) {
-                const std::array<int, 2> live = faceSolvedCounts(app, fid);
-                if (live[0] > 0) {
-                    s.radial = std::max(s.radial, live[0]);
-                    s.gridU = std::max(s.gridU, live[0]);
+            if (fid != app.activeFace) {
+                // Re-seed only faces that were actually adaptive — a
+                // face already on manual counts keeps them (the report
+                // may lag fresh edits; don't resurrect old values).
+                if (adaptiveOffCheckbox && wasAdaptive) {
+                    const std::array<int, 2> live =
+                        faceSolvedCounts(app, fid);
+                    if (live[0] > 0) {
+                        s.radial = std::max(s.radial, live[0]);
+                        s.gridU = std::max(s.gridU, live[0]);
+                    }
+                    if (live[1] > 0) {
+                        s.axial = std::max(s.axial, live[1]);
+                        s.gridV = std::max(s.gridV, live[1]);
+                    }
                 }
-                if (live[1] > 0) {
-                    s.axial = std::max(s.axial, live[1]);
-                    s.gridV = std::max(s.gridV, live[1]);
+                if (boundaryPinned) {
+                    const int live = outerLoopSolvedTotal(app, fid);
+                    s.boundary = live > 0 ? live : edited.boundary;
                 }
-            }
-        };
-        if (app.selFaces.empty()) {
-            applyChangedFields(before, edited,
-                               app.recipe.settings.defaults);
-        } else {
-            for (int fid : app.selFaces) {
-                auto it = app.recipe.settings.perFace.find(fid);
-                if (it == app.recipe.settings.perFace.end()) {
-                    it = app.recipe.settings.perFace
-                             .emplace(fid, app.recipe.settings.defaults)
-                             .first;
-                }
-                applyTo(fid, it->second);
             }
         }
         markDirty(app);
@@ -3106,6 +3161,7 @@ static void drawActiveFaceSettings(App& app) {
         ImGui::TextDisabled("overridden");
         ImGui::SameLine();
         if (ImGui::SmallButton("clear override(s)")) {
+            app.recipe.settings.perFace.erase(app.activeFace);
             for (int fid : app.selFaces) {
                 app.recipe.settings.perFace.erase(fid);
             }
@@ -3130,8 +3186,24 @@ static void drawMesherDefaultTabs(App& app) {
     };
     constexpr int kAllKinds = -1, kFilletFaces = -2;
     // General knobs that feed every family stay above the tabs.
+    const bool prevAdaptive = d.adaptive;
     ch |= ImGui::Checkbox("adaptive density (curvature)", &d.adaptive);
     hover({kAllKinds});
+    // Leaving adaptive globally: seed the manual counts from the active
+    // face's live solve (same rule as the per-face editor) — otherwise
+    // the whole model collapses to the stale flat defaults.
+    if (prevAdaptive && !d.adaptive) {
+        const std::array<int, 2> live =
+            faceSolvedCounts(app, app.activeFace);
+        if (live[0] > 0) {
+            d.radial = std::max(d.radial, live[0]);
+            d.gridU = std::max(d.gridU, live[0]);
+        }
+        if (live[1] > 0) {
+            d.axial = std::max(d.axial, live[1]);
+            d.gridV = std::max(d.gridV, live[1]);
+        }
+    }
     if (!ImGui::BeginTabBar("##mesherdefaults",
                             ImGuiTabBarFlags_FittingPolicyScroll)) {
         if (ch) markDirty(app);
@@ -3594,7 +3666,8 @@ static void drawFacePopup(App& app) {
         app.openFacePopup = false;
     }
     if (!ImGui::BeginPopup("##facectx")) return;
-    if (app.activeFace <= 0) {
+    if (app.activeFace <= 0 ||
+        app.activeFace > int(app.analysis.faces.size())) {
         ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
         return;
@@ -4149,7 +4222,13 @@ static void drawUi(App& app) {
                     setSelectMode(app, SelectMode::Face);  // clears sel
                     app.selFaces.clear();
                     for (const auto& [fid, b] : app.report.faceBuild) {
-                        if (b == -1) app.selFaces.insert(fid);
+                        // Ids must belong to the CURRENT model — the
+                        // report can briefly be the previous model's
+                        // while its first async run is still meshing.
+                        if (b == -1 && fid >= 1 &&
+                            fid <= app.model.faceCount()) {
+                            app.selFaces.insert(fid);
+                        }
                     }
                     if (!app.selFaces.empty()) {
                         app.activeFace = *app.selFaces.begin();
@@ -4219,7 +4298,10 @@ static void drawUi(App& app) {
                 regenerate(app);
             }
             rebuildBuffers(app);
-            app.dirty = false;
+            // dirty is left alone: the sync regenerates cleared it when
+            // they snapshotted, and if the loop broke before running at
+            // all, a queued coalesced edit may still be pending — the
+            // same silent drop finishGenerate used to cause.
             app.undoStack.push_back(preFit);
             app.redoStack.clear();
             char buf[96];
@@ -4297,7 +4379,8 @@ static void drawUi(App& app) {
                     markDirty(app);
                 }
             }
-        } else if (app.activeFace <= 0) {
+        } else if (app.activeFace <= 0 ||
+                   app.activeFace > int(app.analysis.faces.size())) {
             ImGui::TextDisabled("click a face in the viewport");
         } else {
             const weft::FaceInfo& f = app.analysis.faces[app.activeFace - 1];
