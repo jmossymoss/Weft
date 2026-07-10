@@ -14801,13 +14801,16 @@ void fuseSeamTwins(PolyMesh& mesh, const Model& model, double weldTol) {
                 if (!paramOf(mesh.vertices[find(v)], tolV, t)) continue;
                 // Home gate (same as the stitcher): this curve must be
                 // (nearly) the vertex's nearest among its face's own
-                // curves.
+                // curves; the corner floor only near the curve's ends.
                 auto hit = home.find(v);
                 if (hit != home.end()) {
                     const double d = distToCurve(mesh.vertices[v], eid);
-                    const double slack = std::max(
-                        weldTol * 4.0,
-                        std::max(0.5 * hit->second, 0.05 * pv));
+                    const bool nearEnd =
+                        !closedCurve && (t * clen < 0.25 * pv ||
+                                         (1.0 - t) * clen < 0.25 * pv);
+                    double slack =
+                        std::max(weldTol * 4.0, 0.5 * hit->second);
+                    if (nearEnd) slack = std::max(slack, 0.05 * pv);
                     if (d > hit->second + slack) continue;
                 }
                 side[s2].push_back({v, t, pv});
@@ -14903,6 +14906,7 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
     // tolerance below.
     std::map<int, std::set<std::pair<uint32_t, uint32_t>>> faceBoundary;
     std::map<int, std::map<uint32_t, double>> facePitch;
+    std::map<int, std::map<uint32_t, double>> facePitchMin;
     for (const auto& [fid, polys] : facePolys) {
         std::map<std::pair<uint32_t, uint32_t>, int> cnt;
         for (size_t p : polys) {
@@ -14915,6 +14919,7 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
         }
         auto& bset = faceBoundary[fid];
         auto& pitch = facePitch[fid];
+        auto& pitchMin = facePitchMin[fid];
         for (const auto& [seg, c] : cnt) {
             if (c != 1) continue;
             bset.insert(seg);
@@ -14926,6 +14931,8 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
             for (uint32_t v : {seg.first, seg.second}) {
                 auto [it, fresh] = pitch.try_emplace(v, len);
                 if (!fresh && len > it->second) it->second = len;
+                auto [it2, fresh2] = pitchMin.try_emplace(v, len);
+                if (!fresh2 && len < it2->second) it2->second = len;
             }
         }
     }
@@ -15027,6 +15034,11 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
         const std::vector<gp_Pnt>& cp = curvePl[eid];
         const double clen = curveLen[eid];
         if (clen < 1e-9) continue;
+        // Closed ring: params wrap, and there are no ends for corner
+        // verts to live at.
+        const bool isClosedPl =
+            cp.front().Distance(cp.back()) <=
+            std::max(weldTol, 1e-7 * clen);
         // On-curve tolerance: PITCH-scaled, not curve-length-scaled. A
         // lattice-resampled border vertex strays off the exact curve by
         // the sagitta of its own sampling pitch (~turn/8 of a segment's
@@ -15074,6 +15086,7 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
             auto bit = faceBoundary.find(fids[s2]);
             if (bit == faceBoundary.end()) continue;
             const auto& pitch = facePitch[fids[s2]];
+            const auto& pitchMin = facePitchMin[fids[s2]];
             const auto& home = faceHome[fids[s2]];
             std::set<uint32_t> seen;
             for (const auto& [a, b] : bit->second) {
@@ -15082,6 +15095,9 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
                     auto pit = pitch.find(v);
                     const double pv =
                         pit != pitch.end() ? pit->second : 0.0;
+                    auto pmt = pitchMin.find(v);
+                    const double pvMin =
+                        pmt != pitchMin.end() ? pmt->second : 0.0;
                     const double tolV = std::max(
                         weldTol * 4.0, std::min(tolCap, 0.25 * pv));
                     double t;
@@ -15097,16 +15113,25 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
                     }
                     // Home test: this curve must be (nearly) the
                     // vertex's nearest among its face's own curves.
-                    // The slack floor keeps true corner verts — which
-                    // sit a hair off BOTH adjacent curves — in both
-                    // chains, without readmitting a twin rail a real
-                    // fraction of a pitch away.
+                    // The pitch-scaled slack floor exists ONLY for true
+                    // corner verts — which sit a hair off BOTH adjacent
+                    // curves — and corners live at the curve's ENDS, so
+                    // the floor is gated on end-proximity: an interior-
+                    // param vertex gets no floor (a chamfer ring's far
+                    // rim, one ring-width away at interior params,
+                    // otherwise rides any pitch-scaled floor in).
                     auto hit = home.find(v);
                     if (hit != home.end()) {
                         const double d = distToCurve(mesh.vertices[v], eid);
-                        const double slack = std::max(
-                            weldTol * 4.0,
-                            std::max(0.5 * hit->second, 0.05 * pv));
+                        const bool nearEnd =
+                            !isClosedPl &&
+                            (t * clen < 0.25 * pv ||
+                             (1.0 - t) * clen < 0.25 * pv);
+                        double slack = std::max(weldTol * 4.0,
+                                                0.5 * hit->second);
+                        if (nearEnd) {
+                            slack = std::max(slack, 0.05 * pv);
+                        }
                         if (d > hit->second + slack) {
                             if (traceEid) {
                                 dbg("stitch eid %d f%d v%u REJ home "
@@ -15207,9 +15232,7 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
                     // param (already located) picks the true arc: map
                     // every param to r = (t - ta) mod 1 and walk toward
                     // b on the side that contains the midpoint.
-                    const bool closedCurve =
-                        cp.front().Distance(cp.back()) <=
-                        std::max(weldTol, 1e-7 * clen);
+                    const bool closedCurve = isClosedPl;
                     auto relOf = [&](double t) {
                         double r = t - ta;
                         r -= std::floor(r);
@@ -15293,6 +15316,7 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
                     }
                     poly.insert(poly.begin() + i + 1, ins.begin(),
                                 ins.end());
+                    for (uint32_t v : ins) sideVerts[s2].insert(v);
                     spliced += int(ins.size());
                     i += ins.size();  // continue after the insertion
                 }
