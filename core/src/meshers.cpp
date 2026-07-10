@@ -16021,23 +16021,38 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     // normal and flagging perfectly good cells).
                     double pu = 0, pv = 0;
                     int anchored = 0;
-                    double u0ref = 0;
+                    double u0ref = 0, v0ref = 0;
                     const double uPeriod =
                         surf.IsUPeriodic() ? surf.UPeriod() : 0.0;
+                    // v unwraps too: on a doubly periodic surface (a
+                    // full torus) the v-seam cells otherwise average
+                    // across the wrap and read as inverted — false
+                    // positives that made the self-heal tournament trade
+                    // a perfect quad torus for a floor web.
+                    const double vPeriod =
+                        surf.IsVPeriodic() ? surf.VPeriod() : 0.0;
                     for (uint32_t vi : poly) {
                         const Anchor& an = part.anchors[vi];
                         if (an.faceId != fid) continue;
                         double au = an.u;
+                        double av = an.v;
                         if (anchored == 0) {
                             u0ref = au;
-                        } else if (uPeriod > 0) {
-                            // Unwrap seam-adjacent u onto the first
+                            v0ref = av;
+                        } else {
+                            // Unwrap seam-adjacent params onto the first
                             // vertex's branch.
-                            au -= uPeriod *
-                                  std::round((au - u0ref) / uPeriod);
+                            if (uPeriod > 0) {
+                                au -= uPeriod *
+                                      std::round((au - u0ref) / uPeriod);
+                            }
+                            if (vPeriod > 0) {
+                                av -= vPeriod *
+                                      std::round((av - v0ref) / vPeriod);
+                            }
                         }
                         pu += au;
-                        pv += an.v;
+                        pv += av;
                         ++anchored;
                     }
                     if (anchored == int(poly.size())) {
