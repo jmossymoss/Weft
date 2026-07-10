@@ -14714,6 +14714,101 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             }
         }
     }
+    // Strip pitch floor (adaptive only): a long thin strip — a fillet
+    // segment, a grip ribbon, a rail band — whose length direction is
+    // near-straight solves to 1-2 stations under curvature-adaptive
+    // counts and meshes as monster slats (observed 23:1 cells on the
+    // flaregun trigger strip: 10.3-long rails at 2 against half-circle
+    // caps at 7). Curvature is the wrong ruler along a strip: the rungs
+    // must march by ARC LENGTH relative to the strip's width, so the
+    // quad flow reads evenly along the whole feature — and, because
+    // every segment of a chained fillet applies the same width-derived
+    // pitch, rung spacing stays uniform across large regions instead of
+    // bunching at bends. Only strip-shaped plans (coons strips, ribbon
+    // sweeps, rail ladders) take the floor; width comes from the robust
+    // isoperimetric estimate w = 2A/L (exact for long rectangles), and
+    // every non-degenerate outline edge floors to ceil(len / (K*w)) —
+    // across-edges (len ~ w) floor to 1, a no-op. Explicit pins win;
+    // non-adaptive faces are the user's manual counts and stay alone,
+    // which also keeps the flat-count default profile byte-identical.
+    //
+    // Groups the pitch floor must not touch: open-band and castellated
+    // revolution rims emit their chain edges through strip/web passes
+    // that can't honour an arbitrary raised count — pitching a straight
+    // rim edge (which no other floor ever raises; the curvature floor
+    // skips lines) demoted two flaregun bands to the contract floor.
+    std::set<int> pitchFragileRoots;
+    for (const auto& [fid, plan] : plans) {
+        if (plan.kind != MesherKind::RevolutionGrid) continue;
+        if (plan.bandSides.empty() && !plan.castellated) continue;
+        for (TopExp_Explorer ex(model.faces(fid), TopAbs_EDGE); ex.More();
+             ex.Next()) {
+            const int eid = model.edges.FindIndex(ex.Current());
+            if (eid >= 1) pitchFragileRoots.insert(density.groups.find(eid));
+        }
+    }
+    for (const auto& [fid, plan] : plans) {
+        const bool stripKind = plan.kind == MesherKind::RibbonSweep ||
+                               plan.kind == MesherKind::RailLadder ||
+                               plan.kind == MesherKind::CoonsGrid;
+        if (!stripKind || !plan.constrains) continue;
+        if (!settings.forFace(fid).adaptive) continue;
+        const TopoDS_Face face = TopoDS::Face(model.faces(fid));
+        double area = 0, perim = 0;
+        try {
+            GProp_GProps sp;
+            BRepGProp::SurfaceProperties(face, sp);
+            area = sp.Mass();
+            GProp_GProps lp;
+            BRepGProp::LinearProperties(BRepTools::OuterWire(face), lp);
+            perim = lp.Mass();
+        } catch (const Standard_Failure&) {
+            continue;
+        }
+        if (!(area > 1e-12) || !(perim > 1e-9)) continue;
+        const double w = 2.0 * area / perim;      // strip width estimate
+        const double along = 0.5 * perim - w;     // strip length estimate
+        if (!(w > 1e-9) || along < 3.0 * w) continue;  // not a strip
+        // Rung pitch: one station per 2 strip-widths, riding the density
+        // dial like every adaptive proposal. (1.5 was tried and pushed a
+        // neighbour band past its contract; 2.0 keeps every planned
+        // mesher building while the flow already reads even.)
+        const double pitch =
+            2.0 * w / std::max(0.05, settings.densityScale);
+        for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+            const TopoDS_Edge e = TopoDS::Edge(ex.Current());
+            if (BRep_Tool::Degenerated(e)) continue;
+            const int eid = model.edges.FindIndex(e);
+            if (eid < 1 || settings.perEdge.count(eid)) continue;
+            const int root = density.groups.find(eid);
+            if (density.pinnedRoots.count(root)) continue;
+            if (pitchFragileRoots.count(root)) continue;
+            double cf, cl;
+            if (BRep_Tool::Curve(e, cf, cl).IsNull()) continue;
+            BRepAdaptor_Curve c(e);
+            const double len = GCPnts_AbscissaPoint::Length(c);
+            // Hairline slivers bound the rung count instead of exploding
+            // it: stations ~ len/width goes quadratic on a 0.1-wide rail
+            // (observed 56 rungs on a cosmetic sliver), so each edge is
+            // capped at 24 stations from this floor.
+            const int target = std::min(
+                24, int(std::ceil(len / std::max(1e-9, pitch))));
+            if (target <= solvedEdge[eid]) continue;
+            dbg("density: face %d strip edge %d pitch floor %d -> %d "
+                "(len %.3g, width %.3g)",
+                fid, eid, solvedEdge[eid], target, len, w);
+            auto git = density.groupCount.find(root);
+            if (git != density.groupCount.end() && git->second < target) {
+                git->second = target;
+            }
+            for (int e2 = 1; e2 <= model.edgeCount(); ++e2) {
+                if (density.groups.find(e2) == root &&
+                    solvedEdge[e2] < target) {
+                    solvedEdge[e2] = target;
+                }
+            }
+        }
+    }
     // Revolution rim SUM constraint: when a T-junction splits one rim of
     // a closed band into k edges while the other stays a full circle,
     // the totals must agree or the band needs a transition strip — and
