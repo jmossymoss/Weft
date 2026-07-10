@@ -41,9 +41,9 @@ angle1 default 81 quads, 0 tris, 14 n-gons
 as1_pe cad 393 quads, 0 tris, 76 n-gons
 as1_pe default 480 quads, 0 tris, 76 n-gons
 flaregun cad 8530 quads, 176 tris, 154 n-gons
-flaregun default 4502 quads, 569 tris, 170 n-gons
+flaregun default 4480 quads, 569 tris, 170 n-gons
 foam cad 13781 quads, 305 tris, 434 n-gons
-foam default 3600 quads, 386 tris, 307 n-gons
+foam default 3302 quads, 386 tris, 297 n-gons
 iso14649-demo cad 976 quads, 2 tris, 108 n-gons
 iso14649-demo default 601 quads, 2 tris, 79 n-gons
 mohne cad 1215 quads, 44 tris, 138 n-gons
