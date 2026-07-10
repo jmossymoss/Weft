@@ -13,6 +13,18 @@
 >    those rims, and unionSeams closes the seams. Ribbon/rail meshers
 >    likewise build at their own counts instead of demoting. Then flip
 >    stitch to default with full corpus + sweep + golden/visual passes.
+> 1b. **Dedicated fillet mesher (artist request, with screenshot).**
+>    Simple constant-radius fillets (slot-end quarter-rounds) mesh as
+>    coons grids with adaptive-driven loop spam — the strip pitch floor
+>    plus adaptive rail counts put 2-3x more rungs on a fillet than the
+>    wall columns it welds into (turning adaptive off removes them:
+>    both mechanisms are adaptive-gated). Build a FilletBand mesher:
+>    across = filletLoops profile arcs, along = INHERIT the shared
+>    rail's solved count so rungs land vertex-for-vertex on the
+>    neighbour walls by construction. Route constant-radius blend strips
+>    (analysis.isFillet + cylinder/torus surface) there before coons;
+>    also exempt fillet strips from the pitch floor (their pitch is the
+>    neighbour's, not width-derived).
 > 2. **foam's can body must mesh as a revolution cylinder.** The body is
 >    an OFFSET_SURFACE bspline — geometrically a surface of revolution,
 >    typed freeform, so it takes coons patchwork (411 coons faces on
