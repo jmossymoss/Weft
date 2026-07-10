@@ -8739,13 +8739,19 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
         } else if (plan.kind == MesherKind::RailLadder &&
                    [&]() -> bool {
                        // Rail-ladder blend strips lying ON a revolution
-                       // surface: 'radial' means divisions per FULL TURN
-                       // (that's what the blend-group propagation stamps
-                       // band-wide), so each outline edge takes its arc
-                       // share — exactly like an open band's rim edges.
-                       // The verbatim value pinned a 5.9-long junction
-                       // arc at radial=50 and wrapped the flaregun
-                       // sleeve in a dense absorber band. Freeform
+                       // surface (slot-end roundings, junction beads):
+                       // the radial that reaches them — usually stamped
+                       // band-wide by the blend-group propagation — is
+                       // counted around the NEIGHBOUR BAND's axis, not
+                       // this little cylinder's own turn. Pinning any
+                       // self-derived number on the shared arcs fought
+                       // the band's pitch and wrapped the flaregun
+                       // sleeve in a dense absorber band (verbatim 50
+                       // first, own-axis share 15 after). So: edges
+                       // shared with ANY revolution plan are the band's
+                       // to count — propose nothing; the rest take the
+                       // arc share of this surface's turn, UNPINNED, as
+                       // a proposal adaptive/neighbours may top. Freeform
                        // strips (grip rails) return false and keep the
                        // verbatim rail-count semantics below.
                        const TopoDS_Face rf = TopoDS::Face(model.faces(fid));
@@ -8755,7 +8761,26 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                            rt != GeomAbs_Torus) {
                            return false;
                        }
+                       auto sharedWithRevolution = [&](int e) {
+                           const TopoDS_Edge E =
+                               TopoDS::Edge(model.edges(e));
+                           if (!model.edgeToFaces.Contains(E)) return false;
+                           for (const TopoDS_Shape& fs :
+                                model.edgeToFaces.FindFromKey(E)) {
+                               const int nfid =
+                                   model.faces.FindIndex(fs);
+                               if (nfid == fid) continue;
+                               auto pit = plans.find(nfid);
+                               if (pit != plans.end() &&
+                                   pit->second.kind ==
+                                       MesherKind::RevolutionGrid) {
+                                   return true;
+                               }
+                           }
+                           return false;
+                       };
                        for (int e : plan.uEdges) {
+                           if (sharedWithRevolution(e)) continue;
                            double f, l;
                            Handle(Geom2d_Curve) pc =
                                BRep_Tool::CurveOnSurface(
@@ -8777,7 +8802,7 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                                1, int(std::lround(std::max(3, s.radial) *
                                                   frac)));
                            proposeSet({e}, flat, 1, s.adaptive, s,
-                                      overridden);
+                                      /*overridden=*/false);
                        }
                        return true;
                    }()) {
