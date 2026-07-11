@@ -558,6 +558,73 @@ TopoDS_Shape makeFixture(const std::string& name) {
             }
             solid = fillet.Shape();
         }
+        // Two ANGLED cylinders fused in and blended with LARGE fillets —
+        // the tilted-boss class real models carry (a leaning strut welded
+        // into a deck): the junction curve is a warped ellipse and the
+        // blend is a wide freeform-ish band, not a neat torus ring.
+        {
+            // Strut 1: leaning 30 deg toward +x at (95, 20).
+            gp_Dir tilt1(std::sin(M_PI / 6.0), 0.0, std::cos(M_PI / 6.0));
+            gp_Ax2 axA(gp_Pnt(95.0, 20.0, 8.0), tilt1);
+            TopoDS_Shape strutA =
+                BRepPrimAPI_MakeCylinder(axA, 6.0, 26.0).Shape();
+            solid = BRepAlgoAPI_Fuse(solid, strutA).Shape();
+            // Strut 2: leaning 40 deg toward -y at (58, 26), thicker.
+            gp_Dir tilt2(0.0, -std::sin(2.0 * M_PI / 9.0),
+                         std::cos(2.0 * M_PI / 9.0));
+            gp_Ax2 axC(gp_Pnt(58.0, 26.0, 8.0), tilt2);
+            TopoDS_Shape strutC =
+                BRepPrimAPI_MakeCylinder(axC, 5.0, 24.0).Shape();
+            solid = BRepAlgoAPI_Fuse(solid, strutC).Shape();
+            // Large blends where the struts meet the plate top: junction
+            // edges live near z=12 within reach of each strut's axis.
+            BRepFilletAPI_MakeFillet fillet(solid);
+            int added = 0;
+            for (TopExp_Explorer ex(solid, TopAbs_EDGE); ex.More();
+                 ex.Next()) {
+                const TopoDS_Edge e = TopoDS::Edge(ex.Current());
+                double f, l;
+                Handle(Geom_Curve) c = BRep_Tool::Curve(e, f, l);
+                if (c.IsNull()) continue;
+                gp_Pnt m = c->Value((f + l) / 2);
+                if (std::abs(m.Z() - 12.0) > 1.0) continue;
+                if (std::hypot(m.X() - 95.0, m.Y() - 20.0) < 11.0) {
+                    fillet.Add(4.0, e);
+                    ++added;
+                } else if (std::hypot(m.X() - 58.0, m.Y() - 26.0) < 10.0) {
+                    fillet.Add(3.5, e);
+                    ++added;
+                }
+            }
+            if (added) solid = fillet.Shape();
+        }
+        // Small fillets on two plate top edges (r=0.8 — the ordinary
+        // break-the-edge rounds most real models carry; distinct from
+        // both the hairline 0.15 and the large 3.5-4 blends).
+        {
+            BRepFilletAPI_MakeFillet fillet(solid);
+            int added = 0;
+            for (TopExp_Explorer ex(solid, TopAbs_EDGE); ex.More();
+                 ex.Next()) {
+                const TopoDS_Edge e = TopoDS::Edge(ex.Current());
+                double f, l;
+                Handle(Geom_Curve) c = BRep_Tool::Curve(e, f, l);
+                if (c.IsNull()) continue;
+                gp_Pnt a = c->Value(f), b = c->Value(l);
+                gp_Pnt m = c->Value((f + l) / 2);
+                const bool straight =
+                    std::abs((b.XYZ() - a.XYZ()).Modulus() -
+                             a.Distance(b)) < 1e-9;
+                if (!straight || std::abs(m.Z() - 12.0) > 1e-6) continue;
+                // Front (y=0) and right (x=120) top rims of the plate.
+                if (std::abs(m.Y()) < 1e-6 ||
+                    std::abs(m.X() - 120.0) < 1e-6) {
+                    fillet.Add(0.8, e);
+                    ++added;
+                }
+            }
+            if (added) solid = fillet.Shape();
+        }
         // Micro-chamfer on the plate corner at the origin.
         {
             BRepFilletAPI_MakeChamfer cham(solid);
