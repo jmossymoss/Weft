@@ -105,6 +105,30 @@
 > solve one shared column set across the group). probe92 dumps the
 > per-face adaptor closure/type census.
 
+> **Co-axial drums round (2026-07-11).** The REAL foam patchwork was
+> found and measured: probe94 ranks coons faces by area, and foam's top
+> offenders are typed-CYLINDER half/quarter drums (512/513 =
+> u=[pi/2,pi]+[pi,3pi/2] of one drum, 456/458 = two halves of another)
+> — co-axial segments split at meridians by booleans. They never reach
+> the open band because (a) coons runs first and can express any
+> 4-sided patch, and (b) the blend detector flags them isFillet (they
+> join tangentially). The fix — open-band-first for partial-wrap
+> revolution walls subtending >= 1 rad, with fillet-STRIP narrowness
+> (vSpan <= 1.8*radius) replacing the raw isFillet flag — is LANDED
+> BEHIND `WEFT_DRUM_BANDS=1` (default off): it reroutes 111 foam faces
+> to columns (13737 -> 10530 polys, watertight) but perturbs shared
+> counts so body face 183's revolution grid folds ONE cell and
+> self-heals to the floor web — a visible regression on the biggest
+> face. NEXT: root-cause that fold (RECDIAG on face 183, compare rim
+> chains with/without the env), then flip the gate on with full
+> corpus + visual passes. Cross-patch column alignment mostly comes
+> free from the border contract (shared rims sample identically).
+> NOTE the stale premise: today's foam has NO offset surfaces — the
+> body is typed cylinders (254 of them) + 130 genuinely-freeform
+> spray-head bsplines (probe93: ring-test deviations 5%, not
+> revolution segments). isGeometricClosedRevolution still covers
+> re-imports that DO arrive as offsets (canrev).
+
 > **NEXT SESSION — the artist's two standing demands (2026-07-10):**
 >
 > 1. **NO ABSORBER BANDS, ANYWHERE.** Stated five times. The decoupled-

@@ -8118,6 +8118,49 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         if (wireCount > 1 && tryOpenBand()) return plan;
     }
 
+    // Primitive-priority, single-wire drums: a partial-wrap cylinder /
+    // cone / revolution wall subtending a REAL arc is a primitive
+    // segment — booleans split drums at meridians all the time (foam's
+    // body carries half- and quarter-drum pairs like u=[0,pi] +
+    // u=[pi,2pi]). Coons can express a 4-sided segment, so these never
+    // reached the open band below and meshed as UV patches whose
+    // circumferential density ignores the radius — the artist's
+    // patchwork. Columns at azimuths is the doctrine (cylinder >
+    // curves); blend strips (fillets) keep their coons route, and
+    // tryOpenBand's own gates bail cleanly back to coons on any rim it
+    // cannot chain.
+    // EXPERIMENT (WEFT_DRUM_BANDS=1): measured on foam, 111 faces
+    // reroute coons -> open band (columns on every drum segment, polys
+    // 13737 -> 10530, watertight) BUT the reroute perturbs shared-edge
+    // counts enough that the body face 183's revolution grid folds a
+    // cell and self-heals to the floor web — a visible regression on
+    // the model's biggest face. Off by default until that fold is
+    // root-caused; flip the env to evaluate.
+    if (std::getenv("WEFT_DRUM_BANDS")) {
+        const GeomAbs_SurfaceType st = surf.GetType();
+        // The blend detector flags anything tangentially joined as a
+        // fillet — including foam's 48-tall half-drums. A real blend
+        // STRIP is narrow relative to its radius (a quarter-round is
+        // 1.57r across); only those keep the coons/fillet route.
+        const double vSpan3D =
+            surf.LastVParameter() - surf.FirstVParameter();
+        const bool filletStrip =
+            info.isFillet &&
+            (info.radius <= 1e-9 || vSpan3D <= 1.8 * info.radius);
+        if (!filletStrip &&
+            (st == GeomAbs_Cylinder || st == GeomAbs_Cone ||
+             st == GeomAbs_SurfaceOfRevolution) &&
+            !surf.IsUClosed() &&
+            surf.LastUParameter() - surf.FirstUParameter() >= 1.0) {
+            if (tryOpenBand()) {
+                dbg("plan face %d: partial drum -> open band", fid);
+                return plan;
+            }
+            dbg("plan face %d: drum open-band bail (span %.2f)", fid,
+                surf.LastUParameter() - surf.FirstUParameter());
+        }
+    }
+
     // Four-sided freeform/trimmed faces get a structured Coons grid; the
     // across-the-blend direction of a fillet strip is whichever side pair
     // is shorter in 3D.
