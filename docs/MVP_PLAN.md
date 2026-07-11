@@ -181,6 +181,21 @@
 > approximate (largest-remainder), and the redistribution must be
 > gated to strip-confined groups so it cannot ripple a whole model.
 
+> **Demo skirt "dissolving" (artist report 2026-07-11): diagnosed to
+> the face.** The two tilted-strut blend skirts on the demo are
+> v-CLOSED bspline rings (probe92: face 6 u=[0,36.4] vClosed=1, face
+> 18 u=[0,40.7] vClosed=1). The 30-deg skirt's coons builds; the
+> 40-deg skirt's coons FOLDS 14 cells and the self-heal correctly
+> keeps the contract floor — the 'dissolving' collar IS the floor web,
+> not a broken mesher. Rotation is ruled out empirically (probe97:
+> rotate 0-3 all still floor). THE FIX is the FilletBand closed-ring
+> case: a ring lattice for one-direction-closed blend bands — profile
+> rows x ring stations evaluated directly on the surface (the
+> transposed revolution lattice; rims sampled from the two boundary
+> loops at solved counts, interior rings at lerped parameters), which
+> is immune to transfinite warp folding by construction. Acceptance:
+> demo skirts both clean ring lattices; probe97 is the harness.
+
 > **NEXT SESSION — the artist's two standing demands (2026-07-10):**
 >
 > 1. **NO ABSORBER BANDS, ANYWHERE.** Stated five times. The decoupled-
