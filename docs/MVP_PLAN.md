@@ -129,6 +129,30 @@
 > revolution segments). isGeometricClosedRevolution still covers
 > re-imports that DO arrive as offsets (canrev).
 
+> **TOP PRIORITY (artist-flagged on the torture demo, 2026-07-11):
+> notched cylinders must be revolved cylinders.** torture faces 34
+> (muzzle outer wall) and 45 (bore wall) carry BOTH a rim-open notch
+> (the channel through the top rim) and an interior capsule-slot wire.
+> Each mechanism works alone; together they GUARANTEE the floor web —
+> the patchwork visible on the demo:
+> - the castellated route (meshRevolutionRimNotch) cannot emit interior
+>   wires -> border contract fails on the slot's side lines (e91/e106);
+> - the insert route (meshRevolutionInsert, now tried first for
+>   castellated+insert walls — dispatch reorder landed, neutral since
+>   both paths floored) builds its base grid through the notched-rim
+>   reconcile (13 plain vs 29 notched samples -> transition strip) and
+>   then fails: face 34's staircase bails, face 45 breaks contract on a
+>   top-rim arc (e96).
+> THE FIX (design): compose the two proven mechanisms — build the
+> RIM-NOTCH lattice first (pinned columns, notch boolean-cut, the
+> artist-approved topology), then run the insert carve on that lattice
+> (rows at each slot band's v-extents, covered cells deleted, cavity
+> laddered to the wire's contract samples — the meshRevolutionInsert
+> core, generalized to take an existing lattice instead of building
+> its own). Acceptance: torture faces 34/45 as clean columned walls,
+> notch as local rim n-gons, slot as a local collar; flaregun
+> unchanged; corpus gate + visual passes.
+
 > **NEXT SESSION — the artist's two standing demands (2026-07-10):**
 >
 > 1. **NO ABSORBER BANDS, ANYWHERE.** Stated five times. The decoupled-

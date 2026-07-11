@@ -16830,7 +16830,22 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         };
         switch (plan.kind) {
             case MesherKind::RevolutionGrid:
-                if (plan.castellated) {
+                if (plan.castellated && !plan.insertWires.empty()) {
+                    // A notched rim AND an interior slot on one wall
+                    // (torture's muzzle): the rim-notch mesher cannot
+                    // emit interior wires, so it was GUARANTEED to fail
+                    // the border contract and land on the floor web —
+                    // the patchwork the artist flagged. The insert path
+                    // owns interior wires and samples the notched rim
+                    // chain like any rim, so try it first; on failure
+                    // the same floor catches it, no worse than before.
+                    if (!meshRevolutionInsert(face, surf, model, plan,
+                                              solvedEdge, fid, nu, nv,
+                                              out)) {
+                        demote(fid, face, surf, s,
+                               "castellated insert failed");
+                    }
+                } else if (plan.castellated) {
                     // Full-wrap castellated rim: straight uniform lattice
                     // with the notch cut out and webbed.
                     if (!meshRevolutionRimNotch(face, surf, model,
