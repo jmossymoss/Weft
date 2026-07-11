@@ -8231,10 +8231,21 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                     fid);
             }
             // The rung-skew class: a long thin strip whose sides are
-            // CHAINS. Fillet bands are prime targets (the artist's
-            // grip-band report) — the sweep's arc-length station pairing
-            // is exactly 'rungs land on the wall columns'.
-            if (!plan.tryRibbonNotch && plan.insertWires.empty() &&
+            // CHAINS. REVERTED TO OPT-IN (WEFT_CHAIN_SWEEP=1): the
+            // sweep's arc-length re-pairing straightens the rungs but
+            // BREAKS STATION CONTINUITY — the neighbouring fillet
+            // strips' loops used to continue across the band through
+            // the coons lattice's station-k-to-station-k rungs, and
+            // under the sweep they dead-end into absorption triangles
+            // (artist verdict: flow beats perpendicularity). The real
+            // fix is upstream in the DENSITY SOLVE: align the two
+            // rails' station arc-fractions (per-piece counts
+            // distributed proportionally to arc within each chain, so
+            // matching stations sit at matching fractions and rungs
+            // are straight AND continuous) — the FilletBand
+            // prerequisite.
+            if (std::getenv("WEFT_CHAIN_SWEEP") &&
+                !plan.tryRibbonNotch && plan.insertWires.empty() &&
                 patch.chained()) {
                 auto chainLen = [&](int i) {
                     double L = 0;

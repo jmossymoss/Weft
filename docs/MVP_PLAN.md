@@ -163,6 +163,24 @@
 > notch as local rim n-gons, slot as a local collar; flaregun
 > unchanged; corpus gate + visual passes.
 
+> **Chained-strip skew: the REAL design (artist verdict 2026-07-11).**
+> The rail-sweep takeover for chained coons strips is REVERTED to
+> opt-in (WEFT_CHAIN_SWEEP=1): arc-length re-pairing straightens rungs
+> but breaks STATION CONTINUITY — the neighbouring fillet strips'
+> loops used to continue across the band through the coons lattice's
+> station-k-to-station-k rungs, and under the sweep they dead-end into
+> absorption triangles. Flow beats perpendicularity. The real fix is
+> in the DENSITY SOLVE, and it is the FilletBand prerequisite:
+> **align the two rails' station arc-fractions** — distribute each
+> chained rail's per-piece counts proportionally to arc length (and
+> nudge piece boundaries into agreement across the strip) so matching
+> stations sit at matching fractions; rungs are then straight AND
+> continuous with zero mesher changes. Constraints: per-edge counts
+> live in density groups (neighbours follow — fillet strips' across
+> pairing keeps them consistent), integer rounding means alignment is
+> approximate (largest-remainder), and the redistribution must be
+> gated to strip-confined groups so it cannot ripple a whole model.
+
 > **NEXT SESSION — the artist's two standing demands (2026-07-10):**
 >
 > 1. **NO ABSORBER BANDS, ANYWHERE.** Stated five times. The decoupled-
