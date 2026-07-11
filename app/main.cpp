@@ -3366,6 +3366,17 @@ static void drawMesherDefaultTabs(App& app) {
         hover({int(MK::DiskCap)});
         ImGui::EndTabItem();
     }
+    if (tab("coons grids", {int(MK::CoonsGrid)})) {
+        ImGui::TextDisabled("four-sided curved patches");
+        if (ImGui::DragInt("grid u", &d.gridU, 0.2f, 1, 256)) ch = true;
+        hover({int(MK::CoonsGrid)});
+        if (ImGui::DragInt("grid v", &d.gridV, 0.2f, 1, 256)) ch = true;
+        hover({int(MK::CoonsGrid)});
+        if (d.adaptive) {
+            ImGui::TextDisabled("adaptive ON: solved counts floor these");
+        }
+        ImGui::EndTabItem();
+    }
     if (tab("fillets", {kFilletFaces})) {
         ImGui::TextDisabled("blend chains (coons / planar fillets)");
         ch |= ImGui::DragInt("fillet loops", &d.filletLoops, 0.2f, 1, 64);

@@ -369,6 +369,12 @@ struct FacePlan {
     // solve). When the solve is too coarse for the cut to weld, the untouched
     // Coons plan carries the face exactly as before.
     bool tryRibbonNotch = false;
+    // Long thin CHAINED coons strip: chain pieces with unequal densities
+    // pair rung stations by piece fraction, not arc length, so every rung
+    // shears diagonally (the flaregun jacket / grip-band class). The rail
+    // sweep pairs stations by arc length; dispatch tries it first and
+    // keeps coons as the byte-identical fallback.
+    bool tryRibbonSweep = false;
 };
 
 // A genuine full revolution band's boundary consists only of its two
@@ -8223,6 +8229,37 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 plan.tryRibbonNotch = true;
                 dbg("plan face %d: coons + end-notch ribbon -> try sweep cut",
                     fid);
+            }
+            // The rung-skew class: a long thin strip whose sides are
+            // CHAINS. Fillet bands are prime targets (the artist's
+            // grip-band report) — the sweep's arc-length station pairing
+            // is exactly 'rungs land on the wall columns'.
+            if (!plan.tryRibbonNotch && plan.insertWires.empty() &&
+                patch.chained()) {
+                auto chainLen = [&](int i) {
+                    double L = 0;
+                    if (!patch.chain[i].empty()) {
+                        for (const auto& pce : patch.chain[i]) {
+                            BRepAdaptor_Curve c(
+                                TopoDS::Edge(model.edges(pce.edgeId)));
+                            L += GCPnts_AbscissaPoint::Length(c);
+                        }
+                    } else if (patch.edgeIds[i] > 0) {
+                        BRepAdaptor_Curve c(
+                            TopoDS::Edge(model.edges(patch.edgeIds[i])));
+                        L += GCPnts_AbscissaPoint::Length(c);
+                    }
+                    return L;
+                };
+                const double a = chainLen(0) + chainLen(2);
+                const double b = chainLen(1) + chainLen(3);
+                const double lo2 = std::min(a, b), hi2 = std::max(a, b);
+                if (lo2 > 1e-12 && hi2 / lo2 >= 3.0) {
+                    plan.tryRibbonSweep = true;
+                    dbg("plan face %d: chained strip (aspect %.1f) -> try "
+                        "rail sweep",
+                        fid, hi2 / lo2);
+                }
             }
             return plan;
         }
@@ -17057,15 +17094,120 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 // solve is too coarse for the pocket walls to weld single-row,
                 // the cut can't stand, so fall through to the untouched Coons
                 // plan (the historic result, byte-for-byte).
-                if (plan.tryRibbonNotch) {
+                if (plan.tryRibbonNotch || plan.tryRibbonSweep) {
                     PolyMesh tmp;
                     MeshBuilder rb(tmp);
+                    // The sweep must also not FOLD — a folded sweep that
+                    // passes the contract would later lose the self-heal
+                    // tournament to the FLOOR, which is worse than the
+                    // coons this transaction replaces. Newell vs the CAD
+                    // normal at the anchors' mean uv (strips are not
+                    // periodic charts, so no unwrap needed here).
+                    auto sweepFolds = [&]() {
+                        Handle(Geom_Surface) S2 = BRep_Tool::Surface(face);
+                        if (S2.IsNull()) return 0;
+                        const bool rev =
+                            face.Orientation() == TopAbs_REVERSED;
+                        int folds = 0;
+                        for (const auto& poly : tmp.polygons) {
+                            if (poly.size() < 3) continue;
+                            gp_XYZ nw(0, 0, 0);
+                            double mu = 0, mv = 0;
+                            int na = 0;
+                            for (size_t i = 0; i < poly.size(); ++i) {
+                                const auto& a2 = tmp.vertices[poly[i]];
+                                const auto& b2 =
+                                    tmp.vertices[poly[(i + 1) %
+                                                      poly.size()]];
+                                nw += gp_XYZ(
+                                    a2[1] * b2[2] - a2[2] * b2[1],
+                                    a2[2] * b2[0] - a2[0] * b2[2],
+                                    a2[0] * b2[1] - a2[1] * b2[0]);
+                                const Anchor& an = tmp.anchors[poly[i]];
+                                if (an.faceId == fid) {
+                                    mu += an.u;
+                                    mv += an.v;
+                                    ++na;
+                                }
+                            }
+                            if (!na || nw.Modulus() < 1e-16) continue;
+                            gp_Pnt P2;
+                            gp_Vec dU, dV;
+                            S2->D1(mu / na, mv / na, P2, dU, dV);
+                            gp_XYZ nS = dU.Crossed(dV).XYZ();
+                            if (rev) nS.Reverse();
+                            if (nS.Modulus() < 1e-16) continue;
+                            if (nw.Dot(nS) < 0) ++folds;
+                        }
+                        return folds;
+                    };
+                    // The sweep's border must also be the part's
+                    // BOUNDARY: a cap web that re-traverses the strip's
+                    // end border passes the contract (the samples appear
+                    // as polygon edges — twice) yet welds non-manifold
+                    // against the neighbour. Boundary length below the
+                    // solved border total betrays it.
+                    auto boundaryCovers = [&]() {
+                        // Face border polylines, coarsely sampled.
+                        std::vector<std::vector<gp_Pnt>> borders;
+                        for (TopExp_Explorer ex2(face, TopAbs_EDGE);
+                             ex2.More(); ex2.Next()) {
+                            const TopoDS_Edge e2 =
+                                TopoDS::Edge(ex2.Current());
+                            if (BRep_Tool::Degenerated(e2)) continue;
+                            double f2, l2;
+                            Handle(Geom_Curve) c3 =
+                                BRep_Tool::Curve(e2, f2, l2);
+                            if (c3.IsNull()) continue;
+                            auto& pl = borders.emplace_back();
+                            for (int k = 0; k <= 32; ++k) {
+                                pl.push_back(c3->Value(
+                                    f2 + (l2 - f2) * k / 32.0));
+                            }
+                        }
+                        std::map<std::pair<uint32_t, uint32_t>, int> cnt;
+                        for (const auto& poly : tmp.polygons) {
+                            for (size_t i = 0; i < poly.size(); ++i) {
+                                uint32_t a2 = poly[i];
+                                uint32_t b2 =
+                                    poly[(i + 1) % poly.size()];
+                                if (a2 > b2) std::swap(a2, b2);
+                                ++cnt[{a2, b2}];
+                            }
+                        }
+                        for (const auto& [seg, c] : cnt) {
+                            if (c < 2) continue;
+                            // Multi-use segment ON a border curve =
+                            // over-traversal (welds non-manifold).
+                            const auto& A2 = tmp.vertices[seg.first];
+                            const auto& B2 = tmp.vertices[seg.second];
+                            const gp_Pnt mid2((A2[0] + B2[0]) / 2,
+                                              (A2[1] + B2[1]) / 2,
+                                              (A2[2] + B2[2]) / 2);
+                            const double dx2 = A2[0] - B2[0],
+                                         dy2 = A2[1] - B2[1],
+                                         dz2 = A2[2] - B2[2];
+                            const double tol2 =
+                                0.1 * std::sqrt(dx2 * dx2 + dy2 * dy2 +
+                                                dz2 * dz2);
+                            for (const auto& pl : borders) {
+                                for (const gp_Pnt& q : pl) {
+                                    if (q.Distance(mid2) < tol2) {
+                                        return false;
+                                    }
+                                }
+                            }
+                        }
+                        return true;
+                    };
                     if (meshRibbonSweep(face, model, fid, solvedEdge, s.radial,
                                         rb) &&
-                        borderContractViolation(fid, tmp) == 0) {
+                        borderContractViolation(fid, tmp) == 0 &&
+                        sweepFolds() == 0 && boundaryCovers()) {
                         parts[fid] = std::move(tmp);
-                        dbg("mesh face %d: end-notch ribbon cut (over coons)",
-                            fid);
+                        dbg("mesh face %d: rail sweep (over coons)%s", fid,
+                            plan.tryRibbonNotch ? " [end-notch]"
+                                                : " [chained strip]");
                         break;
                     }
                     dbg("mesh face %d: ribbon cut unweldable -> coons", fid);

@@ -15,6 +15,7 @@
 #include <gp_Pnt.hxx>
 
 #include <cstdio>
+#include <cstdlib>
 #include <map>
 #include <set>
 #include <vector>
@@ -26,7 +27,7 @@ int main(int argc, char** argv) {
     gs.defaults.minimal = true;
     gs.defaults.adaptive = true;
     gs.defaults.relativeDeviation = true;
-    gs.decoupleSeams = true;
+    gs.decoupleSeams = std::getenv("NOSTITCHSET") ? false : true;
     weft::GenerationReport rep;
     weft::PolyMesh mesh = weft::generate(m, a, gs, &rep);
     weft::ValidationReport vr = weft::validateMesh(mesh, &m);
