@@ -131,6 +131,13 @@ struct GenerationSettings {
     // threads or the freeform border-conformity pass to bisect problems.
     bool parallelMeshing = true;
     bool conformBorders = true;
+    // EXPERIMENT (decoupled seams): skip the global count-equalization
+    // repairs (chained-coons sum repair, revolution rim SUM constraint)
+    // and let the post-weld unionSeams splice reconcile mismatched
+    // borders by inserting the denser side's verts into the coarser
+    // polygons (quad -> n-gon at the seam). Off by default; the CLI's
+    // --stitch flag turns it on for corpus experiments.
+    bool decoupleSeams = false;
     // Live progress for UIs: incremented once per meshed face when set
     // (non-owning; the pointee must outlive the generate call).
     std::atomic<int>* progressFaces = nullptr;
@@ -223,6 +230,13 @@ struct GenerationReport {
     // the value the face was already meshed at (no dead zone before a
     // manual count exceeds the adaptive floor).
     std::map<int, std::array<int, 2>> faceCounts;
+    // Blend strips (fillet Coons/planar grids): which patch axis the
+    // fillet-loops knob (the across-the-blend count) drives — 1 = the
+    // u/gridU axis, 2 = the v/gridV axis. On these faces "grid u" is
+    // always the ALONG count and "grid v" is inert (the solve remaps
+    // semantically), so UIs should present loops/along, not raw u/v.
+    // Absent for faces without across semantics.
+    std::map<int, int> faceAcross;
 };
 
 // Per-face mesh reuse across generate() calls: pass the same cache and
@@ -249,6 +263,7 @@ struct GenerationCache {
     // Geometry-only memos (settings-independent, per model): results of
     // the point-classifier probes planning runs on every face.
     std::map<int, bool> revolutionCovers;
+    std::map<int, bool> geomRevolution;
     std::map<int, bool> coonsValid;
     // Flat faces whose coons outline has a strong reflex bend (chevron
     // plates): geometry-only, planning may prefer quad-fill for them.
@@ -256,6 +271,7 @@ struct GenerationCache {
     void clear() {
         faces.clear();
         revolutionCovers.clear();
+        geomRevolution.clear();
         coonsValid.clear();
         coonsReflex.clear();
     }

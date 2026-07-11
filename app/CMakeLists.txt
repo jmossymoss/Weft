@@ -78,6 +78,9 @@ target_link_libraries(weft_app PRIVATE
 if(WIN32)
   # comdlg32: native open-file dialog. dbghelp: symbolized crash traces.
   target_link_libraries(weft_app PRIVATE comdlg32 dbghelp)
+  # Taskbar/Explorer icon for the .exe (weft.ico is generated from
+  # assets/weft_logo.png by tools/make_logo.py).
+  target_sources(weft_app PRIVATE weft.rc)
 endif()
 if(MSVC)
   # PDBs even in Release so the crash handler can name functions, and an
