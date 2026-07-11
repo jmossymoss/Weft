@@ -1,5 +1,28 @@
 # Weft — MVP Plan
 
+> **SEMANTIC STRIP KNOBS (artist report 2026-07-11, landed).** Coons
+> patch axes are wire-start-relative, so mirror-twin fillet strips
+> bound the SAME geometric direction to grid u on one twin and grid v
+> on the other (demo: edge round faces 2/4 = across v/u; slot blends
+> 10/14/15 vs 11), and a third face's arc rode fillet loops — three
+> knobs for one direction. Landed: the solve remaps on fillet
+> coons/planar strips (loops = ACROSS always, grid u = ALONG always,
+> grid v inert); report.faceAcross exposes the mapping; the planner
+> dbg-flags near-equal side pairs (across pick ambiguous); the app
+> shows "along the blend" + "across = fillet loops (patch u/v)" and
+> scrubs along/loops on the wheel axes. filletLoops was also removed
+> from the authoritative-count override trigger — a loops-only
+> override used to collapse the ALONG axis to gridU's default 1.
+> Byte-identical unoverridden (gate green, no golden motion), ctest
+> green, A/B verified on faces 2/4 (gridu=48 densifies along on BOTH
+> orientations; loops=6 keeps the adaptive along). probe103 dumps the
+> faceAcross table. Cosmetic residue: the "along" field's live seed
+> shows the REQUEST (1) on adaptive coons strips because faceCounts
+> carries the pre-solve table there — wire builtCounts through
+> meshCoonsGrid when it next gets attention. Non-fillet coons faces
+> still expose raw patch u/v (plates/panels; extend if artists hit
+> it).
+
 > **CO-AXIAL PATCH GROUPING (artist request, landed 2026-07-11): drum
 > bands are DEFAULT ON** (kill-switch WEFT_NO_DRUM_BANDS=1). What
 > landed, each piece root-caused on a reproduced defect:
