@@ -1,5 +1,50 @@
 # Weft — MVP Plan
 
+> **CO-AXIAL PATCH GROUPING (artist request, landed 2026-07-11): drum
+> bands are DEFAULT ON** (kill-switch WEFT_NO_DRUM_BANDS=1). What
+> landed, each piece root-caused on a reproduced defect:
+> 1. **Foam body face 183** (the patchwork the artist saw): a full-wrap
+>    cylinder whose top rim carries a seam-crossing BITE (notch walls =
+>    iso-azimuth sample runs). The strip-reconcile drove interior
+>    columns 1:1 off that rim — every stacked wall sample became a
+>    zero-width column, 7 folded cells, self-heal floor. Fix:
+>    `dedupeDriveRim` in meshRevolutionGrid — collapse iso-azimuth runs
+>    to one column per DISTINCT azimuth; the rim then bridges through
+>    emitClosedRimStrip, whose angle pairing strings each wall run into
+>    one absorber n-gon. CRITICALLY this is a FOLD-TRIGGERED REPAIR in
+>    the self-heal tournament (planned build -> dedupe rebuild -> floor,
+>    strictly-fewer-folds to swap): no static threshold separates rims
+>    that NEED it (183's walls) from rims the chained smoothing already
+>    handles (countersunk-bore v-steps, 1797609in face 62's micro spiral
+>    rim — an unconditional dedupe floored it and grew 91 tris).
+> 2. **Drum reroute gates**: under coupled seams a rerouted drum needs
+>    SINGLE-EDGE rims (multi-piece rims — foam face 826's quarter with
+>    3-edge chains — solve per-edge counts the band's columns can't
+>    honor without the stitcher; those keep coons). Fillet strips keep
+>    coons via wrap angle: a blend subtends <= ~1.9 rad (a box-edge
+>    quarter round's v is its AXIS, so the old v-span test misread it —
+>    caught by test_pipeline); only wide wraps (half-drums, pi+) are
+>    drum material.
+> 3. **Open-band 1:1 fixes**: rim equalization now includes single-edge
+>    open-band rims (each rim's group was driven by a different
+>    neighbour; unequal rims forced hair-thin hug-row bridges that
+>    folded on 16 shallow countersink quarters — all under the
+>    self-heal's 8-poly size gate). The openband nu floor max(3,..) ->
+>    max(2,..): flooring above the rims' solved count broke the
+>    passPlain/passCut 1:1 weld those rims were solved FOR.
+> 4. **Tooling**: WEFT_FOLD_DEBUG=1 dumps every inverted cell's uv +
+>    centroid from the census; probe101 = mesh-wide folded-poly census
+>    by face (the app's foldedPolys ruler — catches folds below the
+>    per-face census size gate); probe102 dumps one face's polygons
+>    with anchors.
+> Result: foam body + segments all clean co-axial column lattices,
+> corpus fold census 0 everywhere (foam, 1797609in, flaregun,
+> teleporter, nasty, mohne, weldment, 2827056, demo), foam cad
+> 9353q/303t -> 7432q/200t, 1797609in byte-close to baseline (784q/49t),
+> ctest + gate PASS after --update. Known-red unchanged: foam faces
+> 501/505/510/514 (quad-fill/ribbon pre-existing floors, task 2/4
+> residue).
+
 > **RADIUS-SCALED DENSITY LAW (artist request 2026-07-11, landed).**
 > The artist reported the demo reading INVERTED: the r=14 barrel at 13
 > radial segments while smaller booleaned struts sat at 29-32, plus

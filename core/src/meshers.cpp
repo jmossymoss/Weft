@@ -8135,35 +8135,53 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // curves); blend strips (fillets) keep their coons route, and
     // tryOpenBand's own gates bail cleanly back to coons on any rim it
     // cannot chain.
-    // EXPERIMENT (WEFT_DRUM_BANDS=1): measured on foam, 111 faces
-    // reroute coons -> open band (columns on every drum segment, polys
-    // 13737 -> 10530, watertight) BUT the reroute perturbs shared-edge
-    // counts enough that the body face 183's revolution grid folds a
-    // cell and self-heals to the floor web — a visible regression on
-    // the model's biggest face. Off by default until that fold is
-    // root-caused; flip the env to evaluate.
-    if (std::getenv("WEFT_DRUM_BANDS")) {
+    // DEFAULT ON since the co-axial grouping round (kill-switch
+    // WEFT_NO_DRUM_BANDS=1): the original blocker — the body face 183's
+    // revolution grid folding under the rerouted counts — was the
+    // stacked iso-azimuth rim samples of its top-rim bite, fixed in the
+    // strip reconcile (drive-rim azimuth dedupe). Under COUPLED seams
+    // the reroute additionally requires SINGLE-EDGE rims: the band's
+    // rim then shares its density group with the lattice columns and
+    // welds 1:1 by construction, while a multi-piece rim (a quarter
+    // drum whose rim chains three edges — foam face 826) solves
+    // per-edge counts the band's columns can't honor without the
+    // post-weld stitcher, so those keep their coons route.
+    if (!std::getenv("WEFT_NO_DRUM_BANDS")) {
         const GeomAbs_SurfaceType st = surf.GetType();
         // The blend detector flags anything tangentially joined as a
         // fillet — including foam's 48-tall half-drums. A real blend
         // STRIP is narrow relative to its radius (a quarter-round is
-        // 1.57r across); only those keep the coons/fillet route.
+        // 1.57r across) OR subtends at most ~109 degrees of wrap (edge
+        // rounds are quarter arcs plus tangent slack; a cylinder
+        // strip's v is its AXIS, so a long box-edge round fails the
+        // v-span test yet is still a blend — the fillet-loops knob must
+        // keep driving it). Only genuinely wide wraps (foam's
+        // half-drums, pi and up) leave the coons/fillet route.
         const double vSpan3D =
             surf.LastVParameter() - surf.FirstVParameter();
         const bool filletStrip =
             info.isFillet &&
-            (info.radius <= 1e-9 || vSpan3D <= 1.8 * info.radius);
+            (info.radius <= 1e-9 || vSpan3D <= 1.8 * info.radius ||
+             surf.LastUParameter() - surf.FirstUParameter() <= 1.9);
         if (!filletStrip &&
             (st == GeomAbs_Cylinder || st == GeomAbs_Cone ||
              st == GeomAbs_SurfaceOfRevolution) &&
             !surf.IsUClosed() &&
             surf.LastUParameter() - surf.FirstUParameter() >= 1.0) {
             if (tryOpenBand()) {
-                dbg("plan face %d: partial drum -> open band", fid);
-                return plan;
+                if (!gStitchMode.load() &&
+                    (plan.rimLow.size() != 1 || plan.rimHigh.size() != 1)) {
+                    dbg("plan face %d: drum multi-piece rims -> coons",
+                        fid);
+                    plan = FacePlan();
+                } else {
+                    dbg("plan face %d: partial drum -> open band", fid);
+                    return plan;
+                }
+            } else {
+                dbg("plan face %d: drum open-band bail (span %.2f)", fid,
+                    surf.LastUParameter() - surf.FirstUParameter());
             }
-            dbg("plan face %d: drum open-band bail (span %.2f)", fid,
-                surf.LastUParameter() - surf.FirstUParameter());
         }
     }
 
@@ -9649,7 +9667,12 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
     if (sides.size() != 2 || surf.IsVClosed() || surf.IsUClosed()) {
         return false;
     }
-    nu = std::max(3, nu);
+    // Respect the solve: nu == the plain rim's count is what lets the
+    // columns pass THROUGH the rim samples (passPlain/passCut below,
+    // a bridge-free 1:1 weld). The old max(3,...) floor broke exactly
+    // that on small drum segments — a quarter chamfer ring solved 2/2
+    // got 3 columns and a hair-thin hug-row bridge that folded.
+    nu = std::max(2, nu);
     const double u0 = surf.FirstUParameter(), u1 = surf.LastUParameter();
     const double v0 = surf.FirstVParameter(), v1 = surf.LastVParameter();
     const double uspan = std::max(1e-12, u1 - u0);
@@ -12548,7 +12571,8 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
                         int nu, int nv, MeshBuilder& out,
                         const std::vector<double>* vRowsOpt = nullptr,
                         const std::vector<int>* rimLowOpt = nullptr,
-                        std::array<int, 2>* built = nullptr) {
+                        std::array<int, 2>* built = nullptr,
+                        bool dedupeDriveRim = false) {
     nu = std::max(3, nu);
     nv = std::max(1, nv);
     const double v0 = surf.FirstVParameter();
@@ -12911,6 +12935,13 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
     double reconBandH = 0;     // band height (v0->v1 chord)
     double reconAzStep = 0;    // driving rim's mean azimuthal chord
     bool reconFrayStrip = false;  // the flat strip frays (needs row bump)
+    // Deduped drive-rim azimuths (set only when the drive rim carries
+    // ISO-AZIMUTH runs — notch walls whose samples stack at one angle).
+    // Interior columns then use one column per DISTINCT azimuth and the
+    // drive rim welds through the closed strip like the sparse rim,
+    // instead of a 1:1 index weld that turns every stacked run into
+    // zero-width folded columns (foam body face 183's top-rim bite).
+    std::vector<double> reconColU;
     // Which rim welds one-to-one to the interior (drives its azimuths). A
     // strip bridges the OTHER rim. A strip over a rim that JUMPS in v (the
     // foam body's mess-side rim leaps ~46 between adjacent samples) shears
@@ -13076,6 +13107,52 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
         // its v-jumps folds); with both flat, the denser rim drives.
         nu = driveSide >= 0 ? int(rim[driveSide].size())
                             : std::max(nRim0, nRim1);
+        // A drive rim with ISO-AZIMUTH runs (a notch bitten into the rim:
+        // wall samples stacked at one angle) cannot weld 1:1 — every
+        // stacked run becomes a zero-width column and the cells along it
+        // fold (foam face 183). Collapse runs to one interior column per
+        // DISTINCT azimuth; the drive rim then bridges through the closed
+        // strip below, whose angle pairing strings each wall run into one
+        // absorber n-gon at its own azimuth. Only engages when runs exist
+        // and the rim is not scalloped — every other reconcile keeps the
+        // 1:1 weld byte-identically.
+        if (driveSide >= 0 && dedupeDriveRim) {
+            // FOLD-TRIGGERED REPAIR, never a default route: the caller
+            // only sets dedupeDriveRim after the 1:1 weld actually
+            // folded (self-heal tournament). No static threshold can
+            // separate the two regimes — foam face 183's bite walls
+            // (3-7 stacked samples, 40% of the band) fold 1:1, while a
+            // countersunk bore's v-steps and a micro pin's spiral rim
+            // (1797609in face 62) weld 1:1 cleanly and only get WORSE
+            // deduped — so the tournament judges by result instead.
+            const std::vector<RimPt>& R = rim[driveSide];
+            const double azEps = 1e-6 * period;
+            std::vector<double> ded;
+            ded.reserve(R.size());
+            bool scalloped = false;
+            for (size_t i = 0; i < R.size(); ++i) {
+                if (ded.empty()) {
+                    ded.push_back(R[i].u);
+                    continue;
+                }
+                double d = R[i].u - R[i - 1].u;
+                d -= period * std::round(d / period);
+                if (d < -1e-7) {
+                    scalloped = true;
+                    break;
+                }
+                if (d <= azEps) continue;  // stacked wall sample
+                ded.push_back(ded.back() + d);
+            }
+            if (!scalloped && int(ded.size()) >= 8 &&
+                ded.size() < R.size()) {
+                reconColU = std::move(ded);
+                nu = int(reconColU.size());
+                dbg("revgrid face %d: drive rim %zu -> %d distinct "
+                    "azimuths (iso-azimuth runs strip-bridged)",
+                    faceId, R.size(), nu);
+            }
+        }
         // The strip design bridges EACH rim to an interior ring; with
         // nv==1 there is no interior and the two mismatched rims would
         // bridge directly, twisting where their samples don't line up.
@@ -13301,7 +13378,11 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
             }
         }
         colU.resize(nu);
-        if (denseSide >= 0 && int(rim[denseSide].size()) == nu) {
+        if (!reconColU.empty() && int(reconColU.size()) == nu) {
+            // Deduped drive-rim azimuths (iso-azimuth runs collapsed);
+            // already unwrapped monotone from the rim's first sample.
+            colU = reconColU;
+        } else if (denseSide >= 0 && int(rim[denseSide].size()) == nu) {
             // Dense-rim azimuths, unwrapped monotone from its first sample.
             const auto& R = rim[denseSide];
             colU[0] = R[0].u;
@@ -16726,21 +16807,44 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             bool changed = false;
             for (const auto& [fid, plan] : plans) {
                 if (plan.kind != MesherKind::RevolutionGrid) continue;
-                // Open bands never equalize: their columns come from
-                // the flat rim alone, and the castellated chain's total
-                // is absorbed by the bottom strip/webs — raising the
-                // plain rim to the chain's sum is what made the radial
-                // dial dead on partial barrel walls.
-                if (!plan.bandSides.empty()) continue;
                 // Full-wrap castellated rims are the closed-band analog:
                 // the plain rim drives the columns and the notch is
                 // boolean-cut, so raising the plain rim to the castellated
                 // total would only over-mesh (and re-arm the irreconcilable
-                // bail) — skip them exactly like open bands.
+                // bail) — skip them exactly like multi-edge open bands.
                 if (plan.castellated) continue;
                 const auto& lo = plan.rimLow;
                 const auto& hi = plan.rimHigh;
                 if (lo.empty() || hi.empty()) continue;
+                if (!plan.bandSides.empty()) {
+                    // Open bands with CHAINED rims never equalize: their
+                    // columns come from the flat rim alone and the
+                    // chain's total is absorbed by the strip/webs —
+                    // raising the plain rim to the chain's sum is what
+                    // made the radial dial dead on partial barrel walls.
+                    // But a rerouted DRUM (one edge per rim) welds its
+                    // columns to BOTH rims 1:1 — unequal rims force a
+                    // hair-thin hug-row bridge that folds on shallow
+                    // segments (foam's countersink quarters, 16 x 1-cell
+                    // folds under the census gate). Equalize those, and
+                    // let the raise chain through shared rims so stacked
+                    // co-axial segments carry continuous columns.
+                    if (lo.size() == 1 && hi.size() == 1) {
+                        const int a = solvedEdge[lo[0]];
+                        const int b = solvedEdge[hi[0]];
+                        const auto& small = a < b ? lo : hi;
+                        if (a != b &&
+                            !density.pinnedRoots.count(
+                                density.groups.find(small[0]))) {
+                            raiseGroup(small[0], std::max(a, b));
+                            changed = true;
+                            dbg("density: face %d drum rims %d/%d "
+                                "equalized",
+                                fid, a, b);
+                        }
+                    }
+                    continue;
+                }
                 if (lo.size() == 1 && hi.size() == 1) continue;
                 long tLo = 0, tHi = 0;
                 for (int e : lo) tLo += solvedEdge[e];
@@ -18043,7 +18147,15 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     if (n.Magnitude() < 1e-16) continue;
                     if (rev) n.Reverse();
                     ++tested;
-                    if (gp_Vec(nw).Dot(n) < 0) ++inverted;
+                    if (gp_Vec(nw).Dot(n) < 0) {
+                        ++inverted;
+                        if (std::getenv("WEFT_FOLD_DEBUG")) {
+                            dbg("fold f%d: %zu-gon uv=(%.4f,%.4f) "
+                                "cen=(%.3f,%.3f,%.3f)",
+                                fid, poly.size(), pu, pv, cen.X(), cen.Y(),
+                                cen.Z());
+                        }
+                    }
                 }
                 return {tested, inverted};
                 };
@@ -18061,31 +18173,68 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     // welds), and keep whichever part folds less. Only a
                     // strictly better candidate swaps in, so this can
                     // never regress a face.
-                    FaceMeshSettings fsT = s;
-                    const double dscT =
-                        std::clamp(settings.densityScale, 0.05, 20.0);
-                    if (dscT != 1.0) {
-                        fsT.chordTolerance /= dscT * dscT;
-                        fsT.angleToleranceDeg = std::clamp(
-                            fsT.angleToleranceDeg / dscT, 1.0, 60.0);
+                    int liveFolds = inverted;
+                    // A folding closed revolution band gets a structured
+                    // candidate FIRST: rebuild with the drive rim's
+                    // iso-azimuth runs collapsed to single columns (the
+                    // notch walls strip-bridged instead of welded 1:1 —
+                    // foam face 183's bite). Kept only when strictly
+                    // fewer folds at an exact contract, judged by the
+                    // same ruler as the floor below; the floor then only
+                    // wins if it beats THIS too. Structured columns beat
+                    // a web whenever both are clean.
+                    if (plan.kind == MesherKind::RevolutionGrid &&
+                        plan.bandSides.empty() && !plan.castellated) {
+                        PolyMesh cand2;
+                        MeshBuilder cb2(cand2);
+                        std::array<int, 2> bc2 = {-1, -1};
+                        if (meshRevolutionGrid(
+                                face, surf, model, plan.uEdges, solvedEdge,
+                                fid, nu, nv, cb2, nullptr,
+                                plan.rimLow.empty() ? nullptr
+                                                    : &plan.rimLow,
+                                &bc2, /*dedupeDriveRim=*/true) &&
+                            borderContractViolation(fid, cand2) == 0) {
+                            const auto [t2, i2] = invertedCells(cand2);
+                            (void)t2;
+                            if (i2 < liveFolds) {
+                                dbg("mesh face %d: self-heal — %d folded "
+                                    "-> %d with drive-rim dedupe",
+                                    fid, liveFolds, i2);
+                                parts[fid] = std::move(cand2);
+                                builtCounts[fid] = bc2;
+                                liveFolds = i2;
+                            }
+                        }
                     }
-                    PolyMesh cand;
-                    MeshBuilder cb(cand);
-                    const bool built = meshContractFallback(
-                        face, model, fid, solvedEdge, s.radial, cb, &fsT,
-                        angleSplit, &pinnedEdge);
-                    if (built && borderContractViolation(fid, cand) == 0) {
-                        const auto [ctested, cinverted] =
-                            invertedCells(cand);
-                        (void)ctested;
-                        if (cinverted < inverted) {
-                            dbg("mesh face %d: self-heal — %d folded "
-                                "cell(s) on %s, floor folds %d, floor "
-                                "kept",
-                                fid, inverted, mesherKindName(plan.kind),
-                                cinverted);
-                            parts[fid] = std::move(cand);
-                            fellBack[fid] = 2;  // exact borders: authority
+                    if (liveFolds > 0) {
+                        FaceMeshSettings fsT = s;
+                        const double dscT =
+                            std::clamp(settings.densityScale, 0.05, 20.0);
+                        if (dscT != 1.0) {
+                            fsT.chordTolerance /= dscT * dscT;
+                            fsT.angleToleranceDeg = std::clamp(
+                                fsT.angleToleranceDeg / dscT, 1.0, 60.0);
+                        }
+                        PolyMesh cand;
+                        MeshBuilder cb(cand);
+                        const bool built = meshContractFallback(
+                            face, model, fid, solvedEdge, s.radial, cb,
+                            &fsT, angleSplit, &pinnedEdge);
+                        if (built &&
+                            borderContractViolation(fid, cand) == 0) {
+                            const auto [ctested, cinverted] =
+                                invertedCells(cand);
+                            (void)ctested;
+                            if (cinverted < liveFolds) {
+                                dbg("mesh face %d: self-heal — %d folded "
+                                    "cell(s) on %s, floor folds %d, floor "
+                                    "kept",
+                                    fid, liveFolds,
+                                    mesherKindName(plan.kind), cinverted);
+                                parts[fid] = std::move(cand);
+                                fellBack[fid] = 2;  // exact borders
+                            }
                         }
                     }
                 }
