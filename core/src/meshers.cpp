@@ -8655,6 +8655,25 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
     // deflection sampling of its curve under the proposing face's chord +
     // angle tolerances — big arcs get more segments than small ones,
     // straight edges get 1. Memoized per (edge, tolerances) for this solve.
+    // Model diagonal for the relative-deviation law, computed on first
+    // use only: BRepBndLib::Add can warm OCCT triangulation caches and
+    // change later fallback output, so profiles that never take the
+    // relative path must never query the box.
+    double adDiag = -1.0;
+    auto adModelDiag = [&]() {
+        if (adDiag < 0) {
+            adDiag = 1e-9;
+            Bnd_Box bb;
+            BRepBndLib::Add(model.shape, bb);
+            if (!bb.IsVoid()) {
+                double x0, y0, z0, x1, y1, z1;
+                bb.Get(x0, y0, z0, x1, y1, z1);
+                adDiag = std::max(
+                    1e-9, gp_Pnt(x0, y0, z0).Distance(gp_Pnt(x1, y1, z1)));
+            }
+        }
+        return adDiag;
+    };
     std::map<std::tuple<int, long long, long long>, int> adCache;
     auto adaptiveCount = [&](int eid, const FaceMeshSettings& s) {
         auto key = std::make_tuple(
@@ -8674,107 +8693,71 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                     std::max(1.0, s.angleToleranceDeg) * M_PI / 180.0;
                 double chord = std::max(1e-9, s.chordTolerance);
                 if (s.relativeDeviation) {
-                    // Deviation RELATIVE to the feature: sagitta as a
-                    // fraction of the edge's own extent, so a 500mm bore
-                    // and a 5mm bore carry the SAME ring topology.
-                    // The 0.2 factor puts the 0.1 default at 2% of
-                    // extent: circles stay ANGLE-driven (a 28-degree
-                    // ring segment bulges only ~1.5%), while a long
-                    // gently-waving edge — 3-4% sagitta, total turn
-                    // under the angle tolerance — finally subdivides
-                    // instead of shipping as one straight span.
-                    const gp_Pnt pf = c.Value(c.FirstParameter());
-                    const gp_Pnt pl = c.Value(c.LastParameter());
-                    const gp_Pnt pm = c.Value(
-                        0.5 * (c.FirstParameter() + c.LastParameter()));
-                    // Midpoint term keeps closed edges honest: a full
-                    // circle's endpoints coincide but first-to-mid is
-                    // its diameter.
-                    const double extent = std::max(
-                        {pf.Distance(pl), pf.Distance(pm), 1e-6});
-                    // Constant-curvature edges (rings, arcs, bore lips)
-                    // stay ANGLE-driven — a 28-degree ring segment only
-                    // bulges ~1.5%, under the 2% gate. Freeform curves
-                    // get the tight 0.5% gate: a long gentle wave whose
-                    // total turn ducks the angle tolerance still reads
-                    // as blatantly faceted at one span.
-                    const GeomAbs_CurveType ct = c.GetType();
-                    // Primitive-priority density (the user's ordering:
-                    // cylinder/sphere/box/torus drive the count; curves and
-                    // interior boolean cuts follow). A bspline/bezier edge
-                    // that is a near-circular boolean-cut arc between PRIMITIVE
-                    // analytic faces — and none of them a FILLET, which sets
-                    // its own support-loop density and folds if starved — is a
-                    // circle in disguise. Give it the circle fraction so the
-                    // cut arcs stop over-sampling and the clean primitive
-                    // drives the ring (foam's top ring). A freeform SURFACE
-                    // (a grip) or a fillet on the edge keeps the tight 0.5%
-                    // gate; a varying machined profile fails the constant-
-                    // curvature test and keeps it too.
-                    bool primitiveDriven = false;
-                    if ((ct == GeomAbs_BSplineCurve ||
-                         ct == GeomAbs_BezierCurve) &&
-                        model.edgeToFaces.Contains(edge)) {
-                        primitiveDriven = true;
-                        for (const TopoDS_Shape& fs :
-                             model.edgeToFaces.FindFromKey(edge)) {
-                            const TopoDS_Face f2 = TopoDS::Face(fs);
-                            const GeomAbs_SurfaceType st =
-                                BRepAdaptor_Surface(f2).GetType();
-                            const bool analytic =
-                                st == GeomAbs_Plane || st == GeomAbs_Cylinder ||
-                                st == GeomAbs_Cone || st == GeomAbs_Sphere ||
-                                st == GeomAbs_Torus;
-                            const auto pit =
-                                plans.find(model.faces.FindIndex(f2));
-                            const bool fillet =
-                                pit != plans.end() && pit->second.isFillet;
-                            if (!analytic || fillet) {
-                                primitiveDriven = false;
-                                break;
-                            }
-                        }
-                        if (primitiveDriven) {
-                            double kmin = 1e300, kmax = 0;
-                            for (int i = 0; i < 5; ++i) {
-                                const double t = c.FirstParameter() +
-                                                 (c.LastParameter() -
-                                                  c.FirstParameter()) *
-                                                     i / 4.0;
-                                gp_Pnt P;
-                                gp_Vec D1, D2;
-                                c.D2(t, P, D1, D2);
-                                const double d1 = D1.Magnitude();
-                                if (d1 < 1e-9) {
-                                    kmax = 0;
-                                    break;
-                                }
-                                const double k = D1.Crossed(D2).Magnitude() /
-                                                 (d1 * d1 * d1);
-                                kmin = std::min(kmin, k);
-                                kmax = std::max(kmax, k);
-                            }
-                            if (!(kmax > 1e-9 && kmax < 2.0 * kmin)) {
-                                primitiveDriven = false;
-                            }
-                        }
+                    // RADIUS-SCALED density (artist request 2026-07-11).
+                    // The chord budget is relative to the MODEL, not the
+                    // edge: at the 0.1 default every edge may sag 0.1% of
+                    // the bounding diagonal. Segment counts then grow as
+                    // sqrt(radius) — a big barrel ring genuinely carries
+                    // more segments than a small bore, a 0.8-radius edge
+                    // round crosses in 2 instead of the angle floor's 4,
+                    // and fillet-owned freeform rims stop out-sampling
+                    // the primitives next to them (the old edge-extent
+                    // basis gave a 500mm and a 5mm bore the SAME ring
+                    // and pushed fillet bsplines through a 4x tighter
+                    // gate — the demo read inverted, dense struts under
+                    // a coarse barrel). Uniform scaling of the whole
+                    // model still reproduces identical topology; only
+                    // features WITHIN a model contrast now.
+                    chord = std::max(
+                        chord * 0.01 * adModelDiag(), 1e-9);
+                    // Deviation is the master knob here: the 28-degree
+                    // default no longer floors every ring at 13. A
+                    // 60-degree kink guard still catches tangent breaks,
+                    // and an angle the user TIGHTENED below the default
+                    // is honored as before.
+                    if (!(s.angleToleranceDeg <
+                          settings.defaults.angleToleranceDeg - 1e-9)) {
+                        ang = std::max(ang, 60.0 * M_PI / 180.0);
                     }
-                    const double frac =
-                        (ct == GeomAbs_Line || ct == GeomAbs_Circle ||
-                         ct == GeomAbs_Ellipse || primitiveDriven)
-                            ? 0.2
-                            : 0.05;
-                    chord = std::max(chord * frac * extent, 1e-9);
                 }
-                try {
-                    n = std::clamp(stableDeflectionCount(c, ang, chord), 1,
-                                   256);
-                } catch (const Standard_Failure&) {
-                }
-                // Closed edges (full circles) keep a sane ring floor.
-                if (c.Value(c.FirstParameter())
-                        .Distance(c.Value(c.LastParameter())) < 1e-9) {
-                    n = std::max(n, 6);
+                const bool closedLoop =
+                    c.Value(c.FirstParameter())
+                        .Distance(c.Value(c.LastParameter())) < 1e-9;
+                if (s.relativeDeviation && closedLoop &&
+                    c.GetType() != GeomAbs_Line) {
+                    // Closed curved loops follow the RING'S SIZE — the
+                    // unrolled radius len/2pi in closed form — not the
+                    // worst local bend. A tilted strut's blend rim bends
+                    // 2-3x tighter on its downhill side; per-interval
+                    // counting would drive that collar as dense as a
+                    // barrel twice its size and the artist's hierarchy
+                    // (big barrel > strut collar > small bore) would
+                    // collapse again.
+                    double len = 0.0;
+                    try {
+                        len = GCPnts_AbscissaPoint::Length(c);
+                    } catch (const Standard_Failure&) {
+                    }
+                    if (len > 1e-12) {
+                        const double rEff = len / (2.0 * M_PI);
+                        const double half =
+                            std::acos(1.0 - std::min(chord / rEff, 1.0));
+                        n = half > 1e-9 ? int(std::ceil(M_PI / half - 1e-9))
+                                        : 256;
+                        // The (possibly user-tightened) turn budget still
+                        // bounds each segment's arc.
+                        n = std::max(n, int(std::ceil(2.0 * M_PI / ang -
+                                                      1e-9)));
+                    }
+                    n = std::clamp(n, 6, 256);
+                } else {
+                    try {
+                        n = std::clamp(stableDeflectionCount(c, ang, chord),
+                                       1, 256);
+                    } catch (const Standard_Failure&) {
+                    }
+                    // Closed edges (full circles) keep a sane ring floor.
+                    if (closedLoop) n = std::max(n, 6);
                 }
             }
         }

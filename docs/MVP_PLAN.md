@@ -1,5 +1,44 @@
 # Weft — MVP Plan
 
+> **RADIUS-SCALED DENSITY LAW (artist request 2026-07-11, landed).**
+> The artist reported the demo reading INVERTED: the r=14 barrel at 13
+> radial segments while smaller booleaned struts sat at 29-32, plus
+> coons fillets carrying across-band divisions they shouldn't have —
+> and asked that size-scaling carry to fillets too. Root cause was the
+> relative-deviation basis in solveDensity's `adaptiveCount`
+> (meshers.cpp): chord budget = fraction of the EDGE'S OWN extent
+> (0.2 analytic / 0.05 freeform), which (a) made every ring
+> angle-driven at 13 regardless of radius BY DESIGN, and (b) pushed
+> fillet-owned bspline rims through the 4x tighter freeform gate, then
+> dragged neighbouring primitive rings up through density groups (a
+> plain r=5 cap circle solved at 32). THE NEW LAW: under
+> relativeDeviation the chord budget is relative to the MODEL —
+> `chord = chordTolerance * 0.01 * bboxDiag` (0.1 default = sag <=
+> 0.1% of the diagonal) — so counts grow as sqrt(radius); the
+> 28-degree default angle no longer floors rings at 13 (relaxed to a
+> 60-degree kink guard; an angle the user TIGHTENS below the default
+> is honored). Closed curved loops take a closed-form count on the
+> UNROLLED radius len/2pi rather than per-interval sampling, so a
+> tilted strut's blend rim (downhill side bends 2-3x tighter) does not
+> get driven as dense as a barrel twice its size. The old
+> primitiveDriven boolean-cut classifier died with the extent basis.
+> Demo hierarchy now: barrel r14=22 > channel r11=19 > strut
+> collars=18-19 > r6=14-15 > r5 bores=13 > micro=floor; fillet across
+> counts: skirt seam 9->5, 30-deg seam 5->2, micro-edge 4->2, small
+> rounds floor at filletLoops(3). Whole corpus moved at cad (leaner
+> nearly everywhere: flaregun 9295q/176t -> 5821q/59t, teleporter
+> halved, tork 998t -> 447t; weldment n-gons +365, the sloppy
+> assembly absorbing coarser rims); default profile BYTE-IDENTICAL
+> everywhere (non-relative path untouched). Gate PASS after --update,
+> ctest PASS, visually verified on demo (hierarchy + skirt lattices +
+> plate rounds), flaregun (grip/trigger flow), foam (patchwork barrel
+> is the KNOWN co-axial task, unchanged). NOTE: quad-fill's interior
+> isoCount (meshers.cpp ~6968) still uses the old 0.2*extent basis —
+> align it with the model-relative law when quad-fill interiors next
+> get attention. BRepBndLib box query is lazy (first relative-mode
+> proposal) because warming OCCT's triangulation cache changes
+> fallback output.
+
 > **Stitch campaign update (2026-07-10, late session).** The decoupled
 > seams path is nearly watertight corpus-wide. Scoreboard at cad
 > `--stitch`: **11/14 watertight 0/0** (flaregun, foam, mohne,
