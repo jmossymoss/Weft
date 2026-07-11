@@ -16478,6 +16478,31 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             if (BRep_Tool::Curve(e, cf, cl).IsNull()) continue;
             BRepAdaptor_Curve c(e);
             const double len = GCPnts_AbscissaPoint::Length(c);
+            // The artist's rule (2026-07-11): a STRAIGHT rail carries no
+            // stations by default — "along the blend" is 1 unless the
+            // fillet actually curves along its length, and then the
+            // curvature LAW sizes it (the pocket ring's 9 stations),
+            // not this flow floor. The pitch floor predates the
+            // radius-scaled law; it survives only for curved rails.
+            if (c.GetType() == GeomAbs_Line) continue;
+            {
+                const gp_Pnt A = c.Value(c.FirstParameter());
+                const gp_Pnt B = c.Value(c.LastParameter());
+                const gp_Pnt M = c.Value(0.5 * (c.FirstParameter() +
+                                                c.LastParameter()));
+                const gp_XYZ ab = B.XYZ() - A.XYZ();
+                const double ab2 = ab.SquareModulus();
+                double sag;
+                if (ab2 > 1e-24) {
+                    const gp_XYZ am = M.XYZ() - A.XYZ();
+                    const double t =
+                        std::clamp(am.Dot(ab) / ab2, 0.0, 1.0);
+                    sag = (am - ab * t).Modulus();
+                } else {
+                    sag = len;  // closed loop: genuinely curved
+                }
+                if (sag < 1e-4 * len) continue;  // straight bspline rail
+            }
             // Hairline slivers bound the rung count instead of exploding
             // it: stations ~ len/width goes quadratic on a 0.1-wide rail
             // (observed 56 rungs on a cosmetic sliver), so each edge is

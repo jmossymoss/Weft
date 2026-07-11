@@ -1,5 +1,25 @@
 # Weft — MVP Plan
 
+> **STRAIGHT RAILS CARRY NO STATIONS (artist rule 2026-07-11,
+> landed).** "Along the blend should default to 1 and not increase
+> with adaptive unless the fillet has curvature along" — reproduced on
+> iso14649 (a dead-straight 1016-long corner round carried 4 along
+> stations; the pocket's curved torus ring correctly carried 9). The
+> culprit was the adaptive STRIP PITCH FLOOR (one rung per 2 strip
+> widths, meshers.cpp ~16460): a flow-evenness heuristic that predates
+> the radius-scaled law. It now SKIPS straight rails (GeomAbs_Line, or
+> mid-point sagitta < 1e-4 * len for bspline-typed straight edges) —
+> curvature-driven counts come from the law alone, exactly the
+> artist's rule; the floor survives only on curved rails. Whole corpus
+> leaner at cad (flaregun 5821q/59t -> 4930q/46t, foam -> 5446q,
+> filletslot 40q -> 20q = the acceptance case: straight slot blends at
+> along=1), default profile untouched (floor only ran on adaptive
+> faces), all watertight, fold census 0 except tork (gate-exempt
+> broken source, 5 pre-existing-class folds), gate --update + ctest
+> PASS, visual pass on iso14649 (straight corner rounds single-span,
+> curved pocket rings keep their rings) and flaregun (curved strips
+> keep flow).
+
 > **SEMANTIC STRIP KNOBS (artist report 2026-07-11, landed).** Coons
 > patch axes are wire-start-relative, so mirror-twin fillet strips
 > bound the SAME geometric direction to grid u on one twin and grid v
