@@ -13979,6 +13979,197 @@ void meshParametricGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
     }
 }
 
+// A one-direction-closed blend ring: the chart is closed in v (the ring)
+// and open in u (the profile); the boundary is exactly two closed rims
+// (one B-rep edge each, at the profile extremes) joined by a seam. The
+// demo strut skirts are the diagnosed case — fillet bands around tilted
+// cylinders, where the coons patch's 3D transfinite blend fights the
+// strongly non-arclength chart, folds, and loses the self-heal
+// tournament to the contract floor (the "dissolving" collar).
+//
+// This lattice never interpolates in 3D. Rim rows are the rims' exact
+// contract samples; every interior vertex is evaluated DIRECTLY on the
+// surface at station parameters lerped between the paired rim stations
+// (wrap-shortest in v, seam-arc-fraction weights in u), so it cannot
+// fold from transfinite warp by construction. Station pairing between
+// the rims takes the least-twist rotation (min total wrapped v
+// distance) — per-station, which is what the coons rotate knob could
+// never express. The ring is emitted CLOSED (no duplicated seam
+// column); the seam edge is internal to the face and exempt from the
+// border contract. Callers gate the result transactionally (contract +
+// fold census) and fall back to the historic coons byte-identically.
+bool meshRingLattice(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
+                     const Model& model, int faceId,
+                     const std::vector<int>& solvedEdge,
+                     const PinnedEdges* pins, MeshBuilder& out) {
+    if (!surf.IsVClosed() || surf.IsUClosed()) return false;
+    const double vLo = surf.FirstVParameter();
+    const double period = surf.IsVPeriodic()
+                              ? surf.VPeriod()
+                              : surf.LastVParameter() - vLo;
+    if (!(period > 0)) return false;
+
+    // Boundary census: exactly one seam (used twice by the face) and two
+    // one-sided rim edges. Anything richer (multi-edge rims, extra
+    // borders, holes) stays on the coons path.
+    std::map<int, int> occur;
+    for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+        if (BRep_Tool::Degenerated(TopoDS::Edge(ex.Current()))) continue;
+        const int eid = model.edges.FindIndex(ex.Current());
+        if (eid >= 1) ++occur[eid];
+    }
+    int seamEid = 0;
+    std::vector<int> rimEids;
+    for (const auto& [eid, cnt] : occur) {
+        if (cnt == 2) {
+            if (seamEid) return false;
+            seamEid = eid;
+        } else if (cnt == 1) {
+            rimEids.push_back(eid);
+        } else {
+            return false;
+        }
+    }
+    if (!seamEid || rimEids.size() != 2) return false;
+
+    struct Rim {
+        std::vector<gp_Pnt> p;     // M ring stations (closed, no repeat)
+        std::vector<double> u, v;  // pcurve uv per station
+        double uMean = 0;
+    };
+    Rim rim[2];
+    for (int k = 0; k < 2; ++k) {
+        const TopoDS_Edge edge = TopoDS::Edge(model.edges(rimEids[k]));
+        double f2, l2, f3, l3;
+        Handle(Geom2d_Curve) pc =
+            BRep_Tool::CurveOnSurface(edge, face, f2, l2);
+        Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, f3, l3);
+        if (pc.IsNull() || c3.IsNull()) return false;
+        // The rim must itself be a closed ring, not an open border arc.
+        if (c3->Value(f3).Distance(c3->Value(l3)) >
+            std::max(1e-6, BRep_Tool::Tolerance(edge))) {
+            return false;
+        }
+        const int n = rimEids[k] < int(solvedEdge.size())
+                          ? solvedEdge[rimEids[k]]
+                          : 0;
+        if (!edgeIsPinned(rimEids[k], pins) && n < 3) return false;
+        const double ph = closedEdgePhase(edge, model);
+        for (double t : edgeSampleFractions(rimEids[k], n, ph, false,
+                                            /*includeLast=*/false, pins,
+                                            &model)) {
+            const gp_Pnt2d uv = pc->Value(f2 + (l2 - f2) * t);
+            rim[k].p.push_back(c3->Value(f3 + (l3 - f3) * t));
+            rim[k].u.push_back(uv.X());
+            rim[k].v.push_back(uv.Y());
+        }
+    }
+    // Equal station counts or no lattice (the density solve's rail
+    // alignment usually delivers this; a mismatch means transition
+    // topology this mesher does not attempt).
+    const int M = int(rim[0].p.size());
+    if (M < 3 || int(rim[1].p.size()) != M) return false;
+
+    // Normalize both rims to ascend v (wrap-aware), then place the
+    // low-profile rim first.
+    for (int k = 0; k < 2; ++k) {
+        Rim& R = rim[k];
+        double turn = 0;
+        for (int i = 0; i + 1 < M; ++i) {
+            double d = R.v[i + 1] - R.v[i];
+            d -= period * std::round(d / period);
+            turn += d;
+        }
+        if (turn < 0) {
+            std::reverse(R.p.begin(), R.p.end());
+            std::reverse(R.u.begin(), R.u.end());
+            std::reverse(R.v.begin(), R.v.end());
+        }
+        for (double u : R.u) R.uMean += u;
+        R.uMean /= M;
+    }
+    Rim& A = rim[rim[0].uMean <= rim[1].uMean ? 0 : 1];
+    Rim& B = rim[rim[0].uMean <= rim[1].uMean ? 1 : 0];
+    if (!(B.uMean - A.uMean >
+          1e-6 * (surf.LastUParameter() - surf.FirstUParameter()))) {
+        return false;
+    }
+
+    // Profile rows at the seam's solved stations: the seam samples are
+    // even in 3D arc length, so their u parameters give well-spaced rows
+    // even on wildly non-arclength charts (the skirt's u range is 12x
+    // its profile length).
+    const TopoDS_Edge seam = TopoDS::Edge(model.edges(seamEid));
+    double sf2, sl2;
+    Handle(Geom2d_Curve) spc = BRep_Tool::CurveOnSurface(seam, face, sf2, sl2);
+    if (spc.IsNull()) return false;
+    const int np =
+        seamEid < int(solvedEdge.size()) ? solvedEdge[seamEid] : 0;
+    if (!edgeIsPinned(seamEid, pins) && np < 1) return false;
+    std::vector<double> su;
+    for (double t : edgeSampleFractions(seamEid, np, 0.0, false,
+                                        /*includeLast=*/true, pins, &model)) {
+        su.push_back(spc->Value(sf2 + (sl2 - sf2) * t).X());
+    }
+    if (su.size() < 2) return false;
+    if (su.front() > su.back()) std::reverse(su.begin(), su.end());
+    for (size_t i = 0; i + 1 < su.size(); ++i) {
+        if (su[i + 1] <= su[i]) return false;  // rows must advance
+    }
+    const int NP = int(su.size()) - 1;
+    const double span = su[NP] - su[0];
+    if (!(span > 0)) return false;
+
+    // Least-twist station pairing: the rotation of B against A that
+    // minimizes total wrapped v distance.
+    int bestR = 0;
+    double bestCost = 1e300;
+    for (int r = 0; r < M; ++r) {
+        double c = 0;
+        for (int j = 0; j < M; ++j) {
+            double d = B.v[(j + r) % M] - A.v[j];
+            d -= period * std::round(d / period);
+            c += std::abs(d);
+        }
+        if (c < bestCost) {
+            bestCost = c;
+            bestR = r;
+        }
+    }
+
+    std::vector<uint32_t> grid((NP + 1) * M);
+    for (int j = 0; j < M; ++j) {
+        grid[j] = out.addVertex(A.p[j], {faceId, A.u[j], A.v[j]});
+    }
+    for (int j = 0; j < M; ++j) {
+        const int k = (j + bestR) % M;
+        grid[NP * M + j] = out.addVertex(B.p[k], {faceId, B.u[k], B.v[k]});
+    }
+    for (int r = 1; r < NP; ++r) {
+        const double w = (su[r] - su[0]) / span;
+        for (int j = 0; j < M; ++j) {
+            const int k = (j + bestR) % M;
+            double dv = B.v[k] - A.v[j];
+            dv -= period * std::round(dv / period);
+            double vv = A.v[j] + w * dv;
+            vv -= period * std::floor((vv - vLo) / period);
+            const double uu = A.u[j] + w * (B.u[k] - A.u[j]);
+            grid[r * M + j] =
+                out.addVertex(surf.Value(uu, vv), {faceId, uu, vv});
+        }
+    }
+    const bool flip = face.Orientation() == TopAbs_REVERSED;
+    for (int r = 0; r < NP; ++r) {
+        for (int j = 0; j < M; ++j) {
+            const int j1 = (j + 1) % M;
+            out.addPolygon({grid[r * M + j], grid[(r + 1) * M + j],
+                            grid[(r + 1) * M + j1], grid[r * M + j1]},
+                           faceId, flip);
+        }
+    }
+    return true;
+}
+
 // Concentric quad rings between a hole circle and the rectangular border
 // of a planar face. The circle takes one vertex per boundary vertex (the
 // solver guarantees ring count == 2*(nu+nv)); circle vertices reuse the
@@ -17284,6 +17475,83 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             case MesherKind::CoonsGrid: {
                 double holdU = plan.isFillet && plan.acrossIsU ? s.filletHold : 0;
                 double holdV = plan.isFillet && !plan.acrossIsU ? s.filletHold : 0;
+                // One-direction-closed blend rings (the demo strut
+                // skirts): the coons patch's transfinite 3D blend folds
+                // on these charts and the face drops to the contract
+                // floor. The ring lattice evaluates every vertex on the
+                // surface directly, so try it first — kept only when it
+                // welds exactly AND never folds (Newell vs CAD normal
+                // with periodic v unwrap); otherwise the historic coons
+                // path runs untouched, byte-for-byte.
+                if (plan.insertWires.empty() && surf.IsVClosed() &&
+                    !surf.IsUClosed()) {
+                    PolyMesh tmp;
+                    MeshBuilder rb(tmp);
+                    auto latticeFolds = [&](const PolyMesh& pm) {
+                        Handle(Geom_Surface) S2 = BRep_Tool::Surface(face);
+                        if (S2.IsNull()) return 0;
+                        const double vper =
+                            surf.IsVPeriodic()
+                                ? surf.VPeriod()
+                                : surf.LastVParameter() -
+                                      surf.FirstVParameter();
+                        const bool rev =
+                            face.Orientation() == TopAbs_REVERSED;
+                        int folds = 0;
+                        for (const auto& poly : pm.polygons) {
+                            if (poly.size() < 3) continue;
+                            gp_XYZ nw(0, 0, 0);
+                            double mu = 0, mv = 0, vref = 0;
+                            int na = 0;
+                            for (size_t i = 0; i < poly.size(); ++i) {
+                                const auto& a2 = pm.vertices[poly[i]];
+                                const auto& b2 =
+                                    pm.vertices[poly[(i + 1) %
+                                                     poly.size()]];
+                                nw += gp_XYZ(
+                                    a2[1] * b2[2] - a2[2] * b2[1],
+                                    a2[2] * b2[0] - a2[0] * b2[2],
+                                    a2[0] * b2[1] - a2[1] * b2[0]);
+                                const Anchor& an = pm.anchors[poly[i]];
+                                if (an.faceId == fid) {
+                                    double vv = an.v;
+                                    if (!na) {
+                                        vref = vv;
+                                    } else if (vper > 0) {
+                                        // Wrap cells: unwrap v against
+                                        // the first anchor so the mean
+                                        // lands inside the cell.
+                                        vv -= vper *
+                                              std::round((vv - vref) /
+                                                         vper);
+                                    }
+                                    mu += an.u;
+                                    mv += vv;
+                                    ++na;
+                                }
+                            }
+                            if (!na || nw.Modulus() < 1e-16) continue;
+                            gp_Pnt P2;
+                            gp_Vec dU, dV;
+                            S2->D1(mu / na, mv / na, P2, dU, dV);
+                            gp_XYZ nS = dU.Crossed(dV).XYZ();
+                            if (rev) nS.Reverse();
+                            if (nS.Modulus() < 1e-16) continue;
+                            if (nw.Dot(nS) < 0) ++folds;
+                        }
+                        return folds;
+                    };
+                    if (meshRingLattice(face, surf, model, fid, solvedEdge,
+                                        &pinnedEdge, rb) &&
+                        borderContractViolation(fid, tmp) == 0 &&
+                        latticeFolds(tmp) == 0) {
+                        parts[fid] = std::move(tmp);
+                        dbg("mesh face %d: ring lattice (closed blend ring)",
+                            fid);
+                        break;
+                    }
+                    dbg("mesh face %d: ring lattice unusable -> coons", fid);
+                }
                 // A bent ribbon with an end notch: try the rail sweep's clean
                 // notch cut first. Keep it only when it welds EXACTLY (no
                 // border-contract violation) — a fine-railed solve. When the

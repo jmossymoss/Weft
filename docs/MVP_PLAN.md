@@ -181,20 +181,45 @@
 > approximate (largest-remainder), and the redistribution must be
 > gated to strip-confined groups so it cannot ripple a whole model.
 
-> **Demo skirt "dissolving" (artist report 2026-07-11): diagnosed to
-> the face.** The two tilted-strut blend skirts on the demo are
-> v-CLOSED bspline rings (probe92: face 6 u=[0,36.4] vClosed=1, face
-> 18 u=[0,40.7] vClosed=1). The 30-deg skirt's coons builds; the
-> 40-deg skirt's coons FOLDS 14 cells and the self-heal correctly
-> keeps the contract floor — the 'dissolving' collar IS the floor web,
-> not a broken mesher. Rotation is ruled out empirically (probe97:
-> rotate 0-3 all still floor). THE FIX is the FilletBand closed-ring
-> case: a ring lattice for one-direction-closed blend bands — profile
-> rows x ring stations evaluated directly on the surface (the
-> transposed revolution lattice; rims sampled from the two boundary
-> loops at solved counts, interior rings at lerped parameters), which
-> is immune to transfinite warp folding by construction. Acceptance:
-> demo skirts both clean ring lattices; probe97 is the harness.
+> **Demo skirt "dissolving" (artist report 2026-07-11): FIXED — the
+> ring lattice landed.** Diagnosis first: the two tilted-strut blend
+> skirts are v-CLOSED bspline rings (probe92/probe98: face 6
+> u=[0,36.4] vClosed=1, face 18 u=[0,40.7] vClosed=1; both charts
+> wildly non-arclength — u range 36-41 params over a 3-8.4 profile).
+> The 30-deg skirt's coons built; the 40-deg skirt's coons FOLDED 14
+> cells and the self-heal correctly kept the contract floor — the
+> 'dissolving' collar WAS the floor web. Rotation ruled out
+> (probe97: rotate 0-3 all floor). The fix is `meshRingLattice`
+> (meshers.cpp, after meshParametricGrid): for a CoonsGrid face whose
+> chart is closed in v only, bounded by exactly one seam (used twice)
+> + two closed single-edge rims at EQUAL solved counts (the density
+> solve's rail alignment delivers this), emit profile rows x ring
+> stations evaluated DIRECTLY on the surface — rim rows are the rims'
+> exact contract fractions (edgeSampleFractions + closedEdgePhase +
+> pins), interior stations lerp v wrap-shortest between least-twist
+> ROTATION-paired rim stations (min total wrapped v distance —
+> per-station, what coonsRotate can't express), row spacing from the
+> seam's arc-even solved samples so the non-arclength chart can't
+> cluster rows. The ring emits CLOSED (no seam column twins; seams
+> are contract-exempt). Transactional at the CoonsGrid dispatch:
+> kept only when borderContractViolation==0 AND a periodic-unwrap
+> Newell-vs-CAD fold census is 0, else the historic coons runs
+> byte-identically. Result: demo/torture cad 887q/116t ->
+> 1040q/76t/36n (the floor fans became quads), watertight both
+> profiles and under --stitch, BOTH skirts verified visually as
+> clean concentric-loop collars (probe98 build: face 18 2 -> 0).
+> Only demo/torture goldens moved; foam face 495 also takes the
+> lattice with identical counts; corpus gate PASS, ctest PASS.
+> This IS the FilletBand closed-ring case (artist demand 1b, first
+> half); the open-band FilletBand (filletslot fixture) remains. A
+> u-closed transpose (blend rings OCCT charted the other way) is a
+> cheap follow-up if a model surfaces one.
+> NOTE for the stitch campaign (task 2): foam at cad --stitch now
+> shows 4 open edges (faces 514/558/628 near edges 1464/1551) — A/B
+> confirmed PRE-EXISTING before the ring lattice (rail-alignment-era
+> drift; it was 0/0 in the 2026-07-10 scoreboard); nasty 12o/2nm and
+> teleporter 14o likewise identical pre/post. Re-diagnose with
+> probe86 when the campaign resumes.
 
 > **NEXT SESSION — the artist's two standing demands (2026-07-10):**
 >
