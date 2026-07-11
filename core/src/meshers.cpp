@@ -16211,6 +16211,191 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             }
         }
     }
+    // Rail-station ALIGNMENT (adaptive coons strips): opposite chained
+    // sides match by SUM, but their stations sit at whatever arc
+    // fractions the per-piece counts imply — unequal piece densities put
+    // station k at different fractions on the two rails, and since the
+    // lattice connects station k to station k (the continuity the
+    // fillet loops crossing the band NEED), every rung shears
+    // diagonally. The artist's requirement is BOTH: continuous AND
+    // perpendicular — so align the FRACTIONS themselves: raise
+    // per-piece counts toward an arc-proportional distribution at a
+    // common total N' (monotone raises only, so every floor and pin
+    // survives; N' is capped so one dense curvy piece cannot explode
+    // the strip; raises apply through the density groups so neighbours
+    // follow coherently). Rungs then come out straight and continuous
+    // with no mesher re-pairing at all.
+    bool railAlignAny = false;
+    for (const auto& [fid2, plan2] : plans) {
+        (void)plan2;
+        if (settings.forFace(fid2).adaptive) {
+            railAlignAny = true;
+            break;
+        }
+    }
+    if (railAlignAny) {
+        std::set<int> alignedRoots;  // first-come: don't re-move a group
+        for (const auto& [fid, plan] : plans) {
+            if (plan.kind != MesherKind::CoonsGrid) continue;
+            if (!settings.forFace(fid).adaptive) continue;
+            if (settings.forFace(fid).exclude) continue;
+            bool anyChain = false;
+            for (int i = 0; i < 4; ++i) {
+                if (plan.coonsSides[i].size() > 1) anyChain = true;
+            }
+            if (!anyChain) continue;
+            auto sideEdges = [&](int i) {
+                std::vector<int> v = plan.coonsSides[i];
+                if (v.empty()) {
+                    const auto& src = (i % 2 == 0) ? plan.uEdges
+                                                   : plan.vEdges;
+                    const int idx = i / 2;
+                    if (int(src.size()) > idx && src[idx] > 0) {
+                        v.push_back(src[idx]);
+                    }
+                }
+                return v;
+            };
+            for (int pr = 0; pr < 2; ++pr) {
+                std::vector<int> A = sideEdges(pr);
+                std::vector<int> C = sideEdges(pr + 2);
+                if (A.empty() || C.empty()) continue;
+                if (A.size() < 2 && C.size() < 2) continue;
+                auto chainLens = [&](const std::vector<int>& ch,
+                                     std::vector<double>& L) {
+                    double total = 0;
+                    L.clear();
+                    for (int eid : ch) {
+                        if (eid < 1 || eid > model.edgeCount()) return -1.0;
+                        const TopoDS_Edge e =
+                            TopoDS::Edge(model.edges(eid));
+                        if (BRep_Tool::Degenerated(e)) return -1.0;
+                        BRepAdaptor_Curve c(e);
+                        const double l = GCPnts_AbscissaPoint::Length(c);
+                        if (l <= 1e-12) return -1.0;
+                        L.push_back(l);
+                        total += l;
+                    }
+                    return total;
+                };
+                std::vector<double> LA, LC;
+                const double totA = chainLens(A, LA);
+                const double totC = chainLens(C, LC);
+                if (totA <= 0 || totC <= 0) continue;
+                auto sumOf = [&](const std::vector<int>& ch) {
+                    int n = 0;
+                    for (int eid : ch) {
+                        if (eid >= int(solvedEdge.size()) ||
+                            solvedEdge[eid] < 1) {
+                            return -1;
+                        }
+                        n += solvedEdge[eid];
+                    }
+                    return n;
+                };
+                const int NA = sumOf(A), NC = sumOf(C);
+                // Unequal sums align too — both rails land on the same
+                // arc-proportional total, which ALSO equalizes them (the
+                // SUM repair below then no-ops for this pair).
+                if (NA < 2 || NC < 2) continue;
+                const int N0 = std::max(NA, NC);
+                bool blocked = false;
+                for (const std::vector<int>* ch : {&A, &C}) {
+                    for (int eid : *ch) {
+                        const int root = density.groups.find(eid);
+                        if (density.pinnedRoots.count(root) ||
+                            alignedRoots.count(root)) {
+                            blocked = true;
+                        }
+                    }
+                }
+                if (blocked) continue;
+                // Common total: every piece's current count must fit
+                // under the arc-proportional line, on both rails.
+                double need = N0;
+                auto needOf = [&](const std::vector<int>& ch,
+                                  const std::vector<double>& L,
+                                  double tot) {
+                    for (size_t i = 0; i < ch.size(); ++i) {
+                        need = std::max(
+                            need, solvedEdge[ch[i]] * tot / L[i]);
+                    }
+                };
+                needOf(A, LA, totA);
+                needOf(C, LC, totC);
+                int Np = int(std::ceil(need - 1e-9));
+                const int cap =
+                    std::min(64, std::max(N0 + 4, int(2.5 * N0)));
+                if (Np > cap) continue;  // one hot piece; not worth it
+                // Largest-remainder arc-proportional targets at Np,
+                // clamped up to current; iterate the common total until
+                // both rails carry it exactly.
+                auto targetsOf = [&](const std::vector<int>& ch,
+                                     const std::vector<double>& L,
+                                     double tot, int total,
+                                     std::vector<int>& t) {
+                    t.assign(ch.size(), 0);
+                    std::vector<std::pair<double, size_t>> rem;
+                    int used = 0;
+                    for (size_t i = 0; i < ch.size(); ++i) {
+                        const double ideal = total * L[i] / tot;
+                        t[i] = std::max(1, int(ideal));
+                        rem.push_back({ideal - int(ideal), i});
+                        used += t[i];
+                    }
+                    std::sort(rem.rbegin(), rem.rend());
+                    for (size_t k = 0; used < total && k < rem.size();
+                         ++k, ++used) {
+                        ++t[rem[k].second];
+                    }
+                    int sum = 0;
+                    for (size_t i = 0; i < ch.size(); ++i) {
+                        t[i] = std::max(t[i], solvedEdge[ch[i]]);
+                        sum += t[i];
+                    }
+                    return sum;
+                };
+                std::vector<int> tA, tC;
+                bool ok = false;
+                for (int iter = 0; iter < 4; ++iter) {
+                    const int sA = targetsOf(A, LA, totA, Np, tA);
+                    const int sC = targetsOf(C, LC, totC, Np, tC);
+                    if (sA == Np && sC == Np) {
+                        ok = true;
+                        break;
+                    }
+                    Np = std::max(sA, sC);
+                    if (Np > cap) break;
+                }
+                if (!ok) continue;
+                // Apply through the groups (monotone raises only).
+                auto raise = [&](const std::vector<int>& ch,
+                                 const std::vector<int>& t) {
+                    for (size_t i = 0; i < ch.size(); ++i) {
+                        const int root = density.groups.find(ch[i]);
+                        alignedRoots.insert(root);
+                        auto git = density.groupCount.find(root);
+                        if (git != density.groupCount.end() &&
+                            git->second < t[i]) {
+                            git->second = t[i];
+                        }
+                        for (int e2 = 1; e2 <= model.edgeCount(); ++e2) {
+                            if (density.groups.find(e2) == root &&
+                                solvedEdge[e2] < t[i]) {
+                                solvedEdge[e2] = t[i];
+                            }
+                        }
+                    }
+                };
+                dbg("density: face %d rail align pair %d: %d/%d -> %d "
+                    "stations (arc-proportional)",
+                    fid, pr, NA, NC, Np);
+                raise(A, tA);
+                raise(C, tC);
+            }
+        }
+    }
+
     // Chained-coons SUM repair: opposite chained sides of a coons patch
     // match by SUM of their per-edge counts — an equality the solver's
     // chain pass establishes BEFORE the floors above run. Any post-solve
