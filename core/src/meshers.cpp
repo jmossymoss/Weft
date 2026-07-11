@@ -10967,7 +10967,14 @@ bool meshRevolutionRimNotch(const TopoDS_Face& face,
                             const std::vector<int>& rimHigh, int plainRimEdge,
                             const std::vector<int>& solvedEdge, int faceId,
                             int nu, int nv, MeshBuilder& out,
-                            const PinnedEdges* pins = nullptr) {
+                            const PinnedEdges* pins = nullptr,
+                            // Interior row LEVELS (surface v): the insert
+                            // composition subdivides every column at these
+                            // heights so slot rows exist for the carve.
+                            // Only the pinned boolean-cut path supports
+                            // them; the strip path bails so the caller's
+                            // floor still catches the face.
+                            const std::vector<double>* levelsOpt = nullptr) {
     if (!surf.IsUClosed() || surf.IsVClosed()) return false;
     if (rimLow.empty() || rimHigh.empty()) return false;
     nu = std::max(3, nu);
@@ -11265,6 +11272,36 @@ bool meshRevolutionRimNotch(const TopoDS_Face& face,
             plainIds[c] =
                 wb.addVertex(plainS[c].p, {faceId, plainS[c].u, plainS[c].v});
         }
+        // Interior row levels (the insert composition): every column line
+        // subdivides at the requested surface-v heights, ordered from the
+        // plain rim toward the cut end. Levels apply only strictly inside
+        // a column's own span — the notch's columns end at the FLOOR, so
+        // a level above it simply doesn't exist there (the caps absorb
+        // the difference as n-gon side verts).
+        std::vector<std::vector<uint32_t>> colChain(nu);
+        if (levelsOpt) {
+            // Margin matches the insert's own plan gate (1% rim
+            // clearance): a slot row 1.5% above the rim is a thin but
+            // VALID band, and the staircase needs it — a fatter margin
+            // silently dropped it and left the carve's loop open.
+            const double margin = 0.005 * vspan;
+            for (int c = 0; c < nu; ++c) {
+                const bool notchCol = c > colL && c < colR;
+                const double vEnd = notchCol ? vFloor : vCut;
+                const double lo3 = std::min(vPlain, vEnd) + margin;
+                const double hi3 = std::max(vPlain, vEnd) - margin;
+                std::vector<double> lv;
+                for (double v : *levelsOpt) {
+                    if (v > lo3 && v < hi3) lv.push_back(v);
+                }
+                std::sort(lv.begin(), lv.end());
+                if (vPlain > vEnd) std::reverse(lv.begin(), lv.end());
+                for (double v : lv) {
+                    colChain[c].push_back(wb.addVertex(
+                        surf.Value(uk[c], v), {faceId, uk[c], v}));
+                }
+            }
+        }
         // Each column's cut-rim end: base-arc vertex outside the notch,
         // floor vertex inside it.
         auto topOf = [&](int c) {
@@ -11282,17 +11319,54 @@ bool meshRevolutionRimNotch(const TopoDS_Face& face,
             const bool cNotch = c > colL && c < colR;
             const bool pNotch = cp > colL && cp < colR;
             if (c == colL) {
-                // Left cap: base arc -> wall (TL,BL) -> floor, folded once.
-                emit({topOf(c), cutIds[TL], cutIds[BL], topOf(cp),
-                      plainIds[cp], plainIds[c]});
+                // Left cap: base arc -> wall (TL,BL) -> floor, folded
+                // once; level verts ride the two side chains.
+                std::vector<uint32_t> ring{topOf(c), cutIds[TL],
+                                           cutIds[BL], topOf(cp)};
+                for (auto it = colChain[cp].rbegin();
+                     it != colChain[cp].rend(); ++it) {
+                    ring.push_back(*it);
+                }
+                ring.push_back(plainIds[cp]);
+                ring.push_back(plainIds[c]);
+                for (uint32_t v : colChain[c]) ring.push_back(v);
+                emit(std::move(ring));
             } else if (c == colR - 1) {
                 // Right cap.
-                emit({topOf(c), cutIds[BR], cutIds[TR], topOf(cp),
-                      plainIds[cp], plainIds[c]});
-            } else {
+                std::vector<uint32_t> ring{topOf(c), cutIds[BR],
+                                           cutIds[TR], topOf(cp)};
+                for (auto it = colChain[cp].rbegin();
+                     it != colChain[cp].rend(); ++it) {
+                    ring.push_back(*it);
+                }
+                ring.push_back(plainIds[cp]);
+                ring.push_back(plainIds[c]);
+                for (uint32_t v : colChain[c]) ring.push_back(v);
+                emit(std::move(ring));
+            } else if (colChain[c].empty() && colChain[cp].empty()) {
                 (void)cNotch;
                 (void)pNotch;
                 emit({topOf(c), topOf(cp), plainIds[cp], plainIds[c]});
+            } else {
+                // Banded column pair: both lines carry the same level
+                // set (non-cap pairs are both full-height or both
+                // notch-floor columns); a mismatch means a level fell
+                // inside one column's end margin only — bail to the
+                // caller's floor rather than emit a cracked band.
+                if (colChain[c].size() != colChain[cp].size()) {
+                    return false;
+                }
+                std::vector<uint32_t> lowC{plainIds[c]};
+                std::vector<uint32_t> lowP{plainIds[cp]};
+                for (size_t k = 0; k < colChain[c].size(); ++k) {
+                    lowC.push_back(colChain[c][k]);
+                    lowP.push_back(colChain[cp][k]);
+                }
+                lowC.push_back(topOf(c));
+                lowP.push_back(topOf(cp));
+                for (size_t b = 0; b + 1 < lowC.size(); ++b) {
+                    emit({lowC[b + 1], lowP[b + 1], lowP[b], lowC[b]});
+                }
             }
         }
         dbg("rimnotch face %d: PINNED nu=%d cols[%d,%d] polys=%zu", faceId,
@@ -11318,6 +11392,10 @@ bool meshRevolutionRimNotch(const TopoDS_Face& face,
         dbg("rimnotch face %d: pinned cut misaligned at nu=%d, strip path",
             faceId, nu);
     }
+
+    // The strip path below cannot honor explicit interior levels — the
+    // insert composition only rides the pinned boolean-cut lattice.
+    if (levelsOpt) return false;
 
     // ---- Rows in w. Feature row just past the notch depth; a thin strip
     // row hugs the cut rim so the columns stay straight for (nearly) the
@@ -13335,7 +13413,8 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
                           const BRepAdaptor_Surface& surf, const Model& model,
                           const FacePlan& plan,
                           const std::vector<int>& solvedEdge, int faceId,
-                          int nu, int nv, MeshBuilder& out) {
+                          int nu, int nv, MeshBuilder& out,
+                          const PinnedEdges* pins = nullptr) {
     // Row alignment (rows exactly at each band's v-extents) is what
     // makes the staircase close; a v-closed surface ignores explicit
     // rows, so refuse and let the face take the contract floor.
@@ -13436,12 +13515,26 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
     PolyMesh grid;
     {
         MeshBuilder tmp(grid);
-        if (!meshRevolutionGrid(
+        bool built;
+        if (plan.castellated) {
+            // Notched rim AND interior slots on one wall (torture's
+            // muzzle): the base lattice comes from the pinned
+            // boolean-cut notch mesher, subdivided at the slot rows,
+            // and the carve below webs the slots exactly as on a
+            // plain-rim wall. The interior levels exclude the rims
+            // (vRows carries v0/v1 too).
+            std::vector<double> levels(vRows.begin() + 1, vRows.end() - 1);
+            built = meshRevolutionRimNotch(face, surf, model, plan.rimLow,
+                                           plan.rimHigh, plan.plainRimEdge,
+                                           solvedEdge, faceId, nu, nv, tmp,
+                                           pins, &levels);
+        } else {
+            built = meshRevolutionGrid(
                 face, surf, model, plan.uEdges, solvedEdge, faceId, nu,
                 int(vRows.size()) - 1, tmp, &vRows,
-                plan.rimLow.empty() ? nullptr : &plan.rimLow)) {
-            return false;
+                plan.rimLow.empty() ? nullptr : &plan.rimLow);
         }
+        if (!built) return false;
     }
 
     const double period = u1 - u0;
@@ -13503,7 +13596,10 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
     }
     // Wires present but nothing deleted: the intact grid would cover the
     // holes and every wall border would dangle. Refuse visibly.
-    if (!any) return false;
+    if (!any) {
+        dbg("insert face %d: no covered cells", faceId);
+        return false;
+    }
     auto before = directedBoundary(grid, all);
     auto after = directedBoundary(grid, keep);
 
@@ -13530,10 +13626,17 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
             stair.erase(it);
             if (cur == start) { closedLoop = true; break; }
         }
-        if (!closedLoop || loop.size() < 3) return false;
+        if (!closedLoop || loop.size() < 3) {
+            dbg("insert face %d: staircase loop open (size %zu)", faceId,
+                loop.size());
+            return false;
+        }
         loops.push_back(std::move(loop));
     }
-    if (loops.empty()) return false;
+    if (loops.empty()) {
+        dbg("insert face %d: no staircase loops", faceId);
+        return false;
+    }
     // Every wire must belong to a loop or its hole stays open.
     std::vector<std::vector<size_t>> loopWires(loops.size());
     {
@@ -16841,7 +16944,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     // the same floor catches it, no worse than before.
                     if (!meshRevolutionInsert(face, surf, model, plan,
                                               solvedEdge, fid, nu, nv,
-                                              out)) {
+                                              out, &pinnedEdge)) {
                         demote(fid, face, surf, s,
                                "castellated insert failed");
                     }
