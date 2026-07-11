@@ -12,8 +12,8 @@ fillet cad 8 quads, 0 tris, 4 n-gons
 fillet default 7 quads, 0 tris, 2 n-gons
 hole cad 17 quads, 0 tris, 4 n-gons
 hole default 20 quads, 0 tris, 4 n-gons
-demo cad 19 quads, 0 tris, 2 n-gons
-demo default 22 quads, 0 tris, 2 n-gons
+demo cad 887 quads, 116 tris, 36 n-gons
+demo default 398 quads, 104 tris, 48 n-gons
 boss cad 18 quads, 0 tris, 3 n-gons
 boss default 21 quads, 0 tris, 3 n-gons
 notched cad 35 quads, 0 tris, 8 n-gons

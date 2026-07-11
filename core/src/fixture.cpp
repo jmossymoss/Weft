@@ -69,18 +69,13 @@ TopoDS_Shape makeFixture(const std::string& name) {
         return fillet.Shape();
     }
     if (name == "demo") {
-        TopoDS_Shape cyl = BRepPrimAPI_MakeCylinder(10.0, 30.0).Shape();
-        gp_Trsf move;
-        move.SetTranslation(gp_Vec(30.0, 0.0, 0.0));
-        TopoDS_Shape box =
-            BRepPrimAPI_MakeBox(20.0, 30.0, 15.0).Shape().Moved(move);
-
-        TopoDS_Compound comp;
-        BRep_Builder builder;
-        builder.MakeCompound(comp);
-        builder.Add(comp, cyl);
-        builder.Add(comp, box);
-        return comp;
+        // The demo IS the torture scene: one solid carrying the
+        // campaign's issue classes (stacked barrel + blend, slot through
+        // the wall, rim-open notch, crossing bores, hairline and large
+        // fillets, angled struts, micro-chamfer) — the model a build is
+        // judged on. The old cylinder+box compound lives on as the
+        // separate primitives fixtures.
+        return makeFixture("torture");
     }
     if (name == "hole") {
         // Plate with a through-bore: two ring-junction faces + a bore wall.
