@@ -230,6 +230,13 @@ struct GenerationReport {
     // the value the face was already meshed at (no dead zone before a
     // manual count exceeds the adaptive floor).
     std::map<int, std::array<int, 2>> faceCounts;
+    // Blend strips (fillet Coons/planar grids): which patch axis the
+    // fillet-loops knob (the across-the-blend count) drives — 1 = the
+    // u/gridU axis, 2 = the v/gridV axis. On these faces "grid u" is
+    // always the ALONG count and "grid v" is inert (the solve remaps
+    // semantically), so UIs should present loops/along, not raw u/v.
+    // Absent for faces without across semantics.
+    std::map<int, int> faceAcross;
 };
 
 // Per-face mesh reuse across generate() calls: pass the same cache and

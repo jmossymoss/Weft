@@ -1941,10 +1941,32 @@ static std::string adjustFaceDensityOne(App& app, int fid,
                 scale(s.chordTolerance, 5e-4, 100.0, "deviation");
             }
             break;
-        default:  // PlanarGrid, CoonsGrid
-            if (secondary) count(s.gridV, 1, "grid v", live[1]);
-            else count(s.gridU, 1, "grid u", live[0]);
+        default: {  // PlanarGrid, CoonsGrid
+            // Blend strips scrub SEMANTIC axes: primary = along the
+            // blend (always gridU — the solve remaps it to whichever
+            // patch axis runs along, so mirror twins agree), secondary
+            // = the across loop count (gridV is inert on strips; a raw
+            // grid-v scrub would be a dead knob).
+            const bool strip = fid <= int(app.analysis.faces.size()) &&
+                               app.analysis.faces[fid - 1].isFillet;
+            const auto ax = app.report.faceAcross.find(fid);
+            if (strip && ax != app.report.faceAcross.end()) {
+                if (secondary) {
+                    s.filletLoops = std::max(1, s.filletLoops + steps);
+                    std::snprintf(hud, sizeof hud,
+                                  "fillet loops (across): %d",
+                                  s.filletLoops);
+                } else {
+                    count(s.gridU, 1, "along the blend",
+                          ax->second == 1 ? live[1] : live[0]);
+                }
+            } else if (secondary) {
+                count(s.gridV, 1, "grid v", live[1]);
+            } else {
+                count(s.gridU, 1, "grid u", live[0]);
+            }
             break;
+        }
     }
     return hud;
 }
@@ -3012,7 +3034,37 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
         }
         hover({int(MK::PlateWeb), int(MK::QuadFill), int(MK::MinimalNGon)});
     }
-    if (grid) {
+    // Blend strips get SEMANTIC axis knobs: the raw u/v exposure leaks
+    // the wire-start-dependent patch orientation, so mirror-twin strips
+    // bound the same geometric direction to grid u on one and grid v on
+    // the other (artist report). The solve remaps: on strips, gridU is
+    // ALWAYS the along count, fillet loops ALWAYS the across count, and
+    // gridV is inert — so show along + the across mapping, not raw u/v.
+    int stripAcross = 0;  // 1 = loops ride the patch u axis, 2 = v
+    if (isFillet && (k == MK::CoonsGrid || k == MK::PlanarGrid)) {
+        auto ax = app.report.faceAcross.find(app.activeFace);
+        if (ax != app.report.faceAcross.end()) stripAcross = ax->second;
+    }
+    if (grid && stripAcross) {
+        const int alongLive = stripAcross == 1 ? liveN[1] : liveN[0];
+        int alongShown =
+            s.adaptive && alongLive > 0 ? alongLive : s.gridU;
+        if (ImGui::DragInt("along the blend", &alongShown, 0.2f, 1,
+                           256)) {
+            s.gridU = alongShown;
+            ch = true;
+        }
+        hover({int(MK::PlanarGrid), int(MK::CoonsGrid)});
+        ImGui::TextDisabled("across = fillet loops (patch %s)",
+                            stripAcross == 1 ? "u" : "v");
+        if (k == MK::CoonsGrid) {
+            int rot = s.coonsRotate;
+            if (ImGui::SliderInt("rotate patch", &rot, 0, 3)) {
+                s.coonsRotate = rot;
+                ch = true;
+            }
+        }
+    } else if (grid) {
         int gridUShown = s.adaptive && liveN[0] > 0 ? liveN[0] : s.gridU;
         if (ImGui::DragInt("grid u", &gridUShown, 0.2f, 1, 256)) {
             s.gridU = gridUShown;
@@ -3055,7 +3107,9 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
     // ignores them — so only surface them where they actually do something,
     // not on every face the classifier merely tagged [fillet].
     if (isFillet && (k == MK::CoonsGrid || k == MK::PlanarGrid)) {
-        ch |= ImGui::DragInt("fillet loops", &s.filletLoops, 0.2f, 1, 64);
+        ch |= ImGui::DragInt(stripAcross ? "fillet loops (across)"
+                                         : "fillet loops",
+                             &s.filletLoops, 0.2f, 1, 64);
         hover({kFilletFaces});
         float hold = float(s.filletHold);
         if (ImGui::SliderFloat("hold", &hold, 0.0f, 0.95f)) {

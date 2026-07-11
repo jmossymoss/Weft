@@ -8234,8 +8234,20 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                         TopoDS::Edge(model.edges(patch.edgeIds[i])));
                     return GCPnts_AbscissaPoint::Length(c);
                 };
-                plan.acrossIsU =
-                    sideLen(0) + sideLen(2) < sideLen(1) + sideLen(3);
+                const double pairU = sideLen(0) + sideLen(2);
+                const double pairV = sideLen(1) + sideLen(3);
+                plan.acrossIsU = pairU < pairV;
+                // Assignment monitor (artist request): near-equal side
+                // pairs make the across pick a coin toss — flag it so a
+                // wrong-axis loops knob is traceable; the report's
+                // faceAcross makes the pick visible in the UI either
+                // way.
+                if (std::min(pairU, pairV) >
+                    0.85 * std::max(pairU, pairV)) {
+                    dbg("plan face %d: fillet across ambiguous "
+                        "(side pairs %.4g / %.4g)",
+                        fid, pairU, pairV);
+                }
             }
             // A bent ribbon whose end notch coons just chained into one side:
             // the transfinite grid would fan/crowd toward the pocket and cover
@@ -8815,11 +8827,16 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
         // Did the user type an explicit COUNT on this face (vs only a
         // tolerance/flag)? If so its proposals are exact, not adaptive floors.
         const FaceMeshSettings& dfl = settings.defaults;
+        // filletLoops deliberately NOT in this list: the across axis of
+        // a blend strip is never adaptive (adU/adV below), so the loops
+        // knob flows through without this hammer — and including it
+        // meant a loops-only override KILLED the along axis's
+        // adaptivity too, collapsing a 24-station edge round to
+        // gridU's default 1 the moment the user touched loops.
         curCountOverride =
             overridden &&
             (s.gridU != dfl.gridU || s.gridV != dfl.gridV ||
-             s.radial != dfl.radial || s.axial != dfl.axial ||
-             s.filletLoops != dfl.filletLoops);
+             s.radial != dfl.radial || s.axial != dfl.axial);
         if (!plan.loops.empty()) {
             // Explicit boundary control: a TOTAL vertex count around the
             // outer loop, distributed across its edges by arc length and
@@ -8874,10 +8891,27 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
             plan.kind == MesherKind::CoonsGrid ||
             plan.kind == MesherKind::MinimalNGon ||
             plan.kind == MesherKind::RingJunction) {
-            int nu = std::max(1, plan.isFillet && plan.acrossIsU
+            int nu, nv;
+            if (plan.isFillet && (plan.kind == MesherKind::CoonsGrid ||
+                                  plan.kind == MesherKind::PlanarGrid)) {
+                // SEMANTIC knobs on blend strips (artist report
+                // 2026-07-11): "fillet loops" is ALWAYS the across-the-
+                // blend count and "grid u" is ALWAYS the along count,
+                // whichever patch axis each lands on. Mirror-twin strips
+                // rotate their coons sides by one (the wire starts on a
+                // different edge), so the raw exposure made the same
+                // geometric direction ride grid u on one twin and grid v
+                // on its mirror. grid v is inert here (the app hides
+                // it). Defaults are symmetric (gridU == gridV), so
+                // unoverridden output is unchanged.
+                nu = std::max(1, plan.acrossIsU ? s.filletLoops : s.gridU);
+                nv = std::max(1, plan.acrossIsU ? s.gridU : s.filletLoops);
+            } else {
+                nu = std::max(1, plan.isFillet && plan.acrossIsU
                                      ? s.filletLoops : s.gridU);
-            int nv = std::max(1, plan.isFillet && !plan.acrossIsU
+                nv = std::max(1, plan.isFillet && !plan.acrossIsU
                                      ? s.filletLoops : s.gridV);
+            }
             // Hole cutouts demand lattice lines the border edges alone
             // would never propose (a straight edge proposes 1); the
             // floors size cells to the holes so lines run border to
@@ -18434,6 +18468,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             if (plan.kind == MesherKind::RevolutionGrid &&
                 plan.uEdges.size() == 2) {
                 report->faceRims[fid] = {plan.uEdges[0], plan.uEdges[1]};
+            }
+            // Blend strips: which patch axis the fillet-loops knob
+            // (across-the-blend) drives, so the UI can label knobs
+            // semantically instead of leaking the wire-start-dependent
+            // u/v orientation (mirror twins rotate their sides).
+            if (plan.isFillet && (plan.kind == MesherKind::CoonsGrid ||
+                                  plan.kind == MesherKind::PlanarGrid)) {
+                report->faceAcross[fid] = plan.acrossIsU ? 1 : 2;
             }
             // The solved primary/secondary counts, so a UI can seed its
             // manual fields from what the face actually meshed at. Prefer the
