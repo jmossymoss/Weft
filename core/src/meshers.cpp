@@ -30,6 +30,7 @@
 #include <Geom_Circle.hxx>
 #include <Geom_Curve.hxx>
 #include <Poly_Triangulation.hxx>
+#include <Precision.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS_Vertex.hxx>
@@ -817,6 +818,91 @@ bool isClosedRevolution(const BRepAdaptor_Surface& surf) {
     // time): u-closed is what the ring meshers actually need — exact
     // rim rows, phase-aligned columns — not the analytic type tag.
     return surf.IsUClosed();
+}
+
+// Adaptor-independent closed-revolution probe (MVP demand #2): OFFSET
+// surfaces report IsUClosed()=false even across a full 2-pi period
+// (foam's can body — 411 coons patches instead of columns), and geometry
+// kernels export revolves as plain bsplines whose closure flag can lie
+// too. Geometry doesn't: sample a probe grid and accept iff every
+// u-isoline ring closes on itself and its points share one radius and
+// one height about a common fitted axis. Typed revolution surfaces are
+// excluded here — they are the fast path's business.
+bool isGeometricClosedRevolution(const BRepAdaptor_Surface& surf) {
+    switch (surf.GetType()) {
+        case GeomAbs_Plane:
+        case GeomAbs_Cylinder:
+        case GeomAbs_Cone:
+        case GeomAbs_Sphere:
+        case GeomAbs_Torus:
+        case GeomAbs_SurfaceOfRevolution: return false;
+        default: break;
+    }
+    const double u0 = surf.FirstUParameter(), u1 = surf.LastUParameter();
+    const double v0 = surf.FirstVParameter(), v1 = surf.LastVParameter();
+    if (Precision::IsInfinite(u0) || Precision::IsInfinite(u1) ||
+        Precision::IsInfinite(v0) || Precision::IsInfinite(v1) ||
+        !(u1 > u0) || !(v1 > v0)) {
+        return false;
+    }
+    constexpr int NV = 5, NU = 12;
+    gp_XYZ P[NV][NU + 1];
+    gp_XYZ lo(1e300, 1e300, 1e300), hi(-1e300, -1e300, -1e300);
+    for (int j = 0; j < NV; ++j) {
+        const double v = v0 + (v1 - v0) * j / double(NV - 1);
+        for (int i = 0; i <= NU; ++i) {
+            const double u = u0 + (u1 - u0) * i / double(NU);
+            P[j][i] = surf.Value(u, v).XYZ();
+            lo.SetX(std::min(lo.X(), P[j][i].X()));
+            lo.SetY(std::min(lo.Y(), P[j][i].Y()));
+            lo.SetZ(std::min(lo.Z(), P[j][i].Z()));
+            hi.SetX(std::max(hi.X(), P[j][i].X()));
+            hi.SetY(std::max(hi.Y(), P[j][i].Y()));
+            hi.SetZ(std::max(hi.Z(), P[j][i].Z()));
+        }
+    }
+    const double scale = (hi - lo).Modulus();
+    if (scale < 1e-12) return false;
+    // Every ring must close over the full u period.
+    const double tolClose = 1e-5 * scale;
+    for (int j = 0; j < NV; ++j) {
+        if ((P[j][NU] - P[j][0]).Modulus() > tolClose) return false;
+    }
+    // Fitted axis: through the ring centroids. A flat washer's centroids
+    // coincide, so fall back to ring 0's Newell normal.
+    gp_XYZ C[NV];
+    for (int j = 0; j < NV; ++j) {
+        C[j] = gp_XYZ(0, 0, 0);
+        for (int i = 0; i < NU; ++i) C[j] += P[j][i];
+        C[j] /= double(NU);
+    }
+    gp_XYZ dir = C[NV - 1] - C[0];
+    if (dir.Modulus() < 1e-6 * scale) {
+        gp_XYZ n(0, 0, 0);
+        for (int i = 0; i < NU; ++i) {
+            n += (P[0][i] - C[0]).Crossed(P[0][(i + 1) % NU] - C[0]);
+        }
+        dir = n;
+    }
+    if (dir.Modulus() < 1e-12) return false;
+    dir.Normalize();
+    // Each ring: one radius, one height about the axis.
+    const double tolGeom = 5e-4 * scale;
+    for (int j = 0; j < NV; ++j) {
+        double rMin = 1e300, rMax = -1e300, hMin = 1e300, hMax = -1e300;
+        for (int i = 0; i < NU; ++i) {
+            const gp_XYZ d = P[j][i] - C[0];
+            const double h = d.Dot(dir);
+            const gp_XYZ radial = d - dir * h;
+            const double r = radial.Modulus();
+            rMin = std::min(rMin, r);
+            rMax = std::max(rMax, r);
+            hMin = std::min(hMin, h);
+            hMax = std::max(hMax, h);
+        }
+        if (rMax - rMin > tolGeom || hMax - hMin > tolGeom) return false;
+    }
+    return true;
 }
 
 // --- Closed-ring phase anchor ----------------------------------------------
@@ -7532,6 +7618,15 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         if (cache) cache->revolutionCovers[fid] = v;
         return v;
     };
+    auto geomRev = [&] {
+        if (cache) {
+            auto it = cache->geomRevolution.find(fid);
+            if (it != cache->geomRevolution.end()) return it->second;
+        }
+        bool v = isGeometricClosedRevolution(surf);
+        if (cache) cache->geomRevolution[fid] = v;
+        return v;
+    };
     bool coonsReflex = false;  // flat outline with a strong reflex bend
     auto coonsOk = [&](CoonsPatch& patch) {
         // Patch construction is cheap; a memoized NEGATIVE skips it (and
@@ -7712,7 +7807,8 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 // Forced: also accept u-closed freeform surfaces (revolved
                 // bsplines and the like) that the auto path won't touch,
                 // and partial wraps that route as open bands.
-                if (isClosedRevolution(surf) || surf.IsUClosed()) {
+                if (isClosedRevolution(surf) || surf.IsUClosed() ||
+                    geomRev()) {
                     finishRevolution();
                     return plan;
                 }
@@ -7873,7 +7969,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // fixed-v coverage — edgesHugRimsOrInserts checks between-chain
     // coverage itself, so wavy-rim bands loft instead of falling to a
     // coons patch (which degenerates on a full-period chart).
-    if (isClosedRevolution(surf)) {
+    if (isClosedRevolution(surf) || geomRev()) {
         std::vector<std::vector<int>> inserts;
         if (edgesHugRimsOrInserts(face, surf, model, inserts)) {
             plan.insertWires = std::move(inserts);
@@ -17134,8 +17230,23 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     double pu = 0, pv = 0;
                     int anchored = 0;
                     double u0ref = 0, v0ref = 0;
+                    // Offset surfaces LIE about u-periodicity the same
+                    // way they lie about closure (IsUPeriodic()=false
+                    // across a genuine full turn) — without the unwrap,
+                    // every u-seam cell of a rerouted revolution wall
+                    // averages across the wrap, reads inverted, and the
+                    // self-heal trades clean columns for a floor web.
+                    // A closed-revolution plan's own u-range IS the
+                    // period.
                     const double uPeriod =
-                        surf.IsUPeriodic() ? surf.UPeriod() : 0.0;
+                        surf.IsUPeriodic()
+                            ? surf.UPeriod()
+                            : (plan.kind == MesherKind::RevolutionGrid &&
+                                       (isClosedRevolution(surf) ||
+                                        isGeometricClosedRevolution(surf))
+                                   ? surf.LastUParameter() -
+                                         surf.FirstUParameter()
+                                   : 0.0);
                     // v unwraps too: on a doubly periodic surface (a
                     // full torus) the v-seam cells otherwise average
                     // across the wrap and read as inverted — false

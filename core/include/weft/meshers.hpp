@@ -256,6 +256,7 @@ struct GenerationCache {
     // Geometry-only memos (settings-independent, per model): results of
     // the point-classifier probes planning runs on every face.
     std::map<int, bool> revolutionCovers;
+    std::map<int, bool> geomRevolution;
     std::map<int, bool> coonsValid;
     // Flat faces whose coons outline has a strong reflex bend (chevron
     // plates): geometry-only, planning may prefer quad-fill for them.
@@ -263,6 +264,7 @@ struct GenerationCache {
     void clear() {
         faces.clear();
         revolutionCovers.clear();
+        geomRevolution.clear();
         coonsValid.clear();
         coonsReflex.clear();
     }

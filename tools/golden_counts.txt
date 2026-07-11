@@ -33,7 +33,7 @@ ribbonnotch default 99 quads, 100 tris, 6 n-gons
 hairline cad 70 quads, 0 tris, 3 n-gons
 hairline default 53 quads, 0 tris, 3 n-gons
 canrev cad 264 quads, 0 tris, 4 n-gons
-canrev default 23 quads, 0 tris, 4 n-gons
+canrev default 32 quads, 0 tris, 4 n-gons
 microedge cad 5 quads, 0 tris, 2 n-gons
 microedge default 5 quads, 0 tris, 2 n-gons
 filletslot cad 40 quads, 0 tris, 8 n-gons
