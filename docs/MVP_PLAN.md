@@ -83,6 +83,28 @@
 > over rail disagreements); then the remaining residuals above, full
 > corpus + sweep + golden/visual passes, and flip stitch to default.
 
+> **Fixture + detection round (2026-07-11).** Six isolated reproducers
+> now live in `weft fixture` AND as committed STEP under
+> `tests/fixtures/`: hairline (twin-rail), canrev (offset-of-revolution
+> can — demand #2 acceptance), slitdrill (tangent-contact slit, a
+> KNOWN-RED reproducer: 2 nm at cad on the default path, gate-exempt
+> like tork), microedge (0.12 chamfer edge), filletslot (demand #1b
+> acceptance), torture (the demo scene — all classes in one solid;
+> watertight on both default profiles, 60 opens under --stitch = the
+> standing stitch testbed). All are in the corpus gate.
+> Demand #2 first half LANDED: isGeometricClosedRevolution (probe-grid
+> radius/height-about-fitted-axis test, memoized as
+> GenerationCache::geomRevolution) routes offset/bspline closed
+> revolves to revolution grids — canrev's offset wall is a pure
+> 264-quad lattice now (was coons). The fold census learned the same
+> lesson (offset surfaces lie about IsUPeriodic; the plan's u-range is
+> the period). SECOND HALF STILL OPEN: foam's body is ~130 PARTIAL
+> [0,1]x[0,1] bspline patches — segments of one revolution; per-face
+> closure can never fire. They need co-axial patch GROUPING into one
+> shared column flow (detect co-axial revolution segments at analysis,
+> solve one shared column set across the group). probe92 dumps the
+> per-face adaptor closure/type census.
+
 > **NEXT SESSION — the artist's two standing demands (2026-07-10):**
 >
 > 1. **NO ABSORBER BANDS, ANYWHERE.** Stated five times. The decoupled-
