@@ -129,6 +129,16 @@
 > revolution segments). isGeometricClosedRevolution still covers
 > re-imports that DO arrive as offsets (canrev).
 
+> **DONE (2026-07-11, same day): the composition below LANDED** —
+> meshRevolutionRimNotch's pinned path takes optional interior row
+> levels, meshRevolutionInsert builds its castellated base grid
+> through it, and torture faces 34/45 are columned lattices (35 polys
+> each, notch caps + slot collar, verified visually). Only torture's
+> goldens moved; corpus byte-identical, gate PASS. Level margin must
+> stay at the insert's 1% rim-clearance (2% silently dropped a slot
+> row 1.5% above the rim and re-opened the carve's staircase).
+> Historical context follows:
+>
 > **TOP PRIORITY (artist-flagged on the torture demo, 2026-07-11):
 > notched cylinders must be revolved cylinders.** torture faces 34
 > (muzzle outer wall) and 45 (bore wall) carry BOTH a rim-open notch
