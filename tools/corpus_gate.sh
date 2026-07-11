@@ -34,7 +34,8 @@ for arg in "$@"; do
 done
 
 FIXTURES="cylinder box cone sphere torus fillet hole demo boss notched \
-          slotted barrel drilled bossfillet ribbon ribbonnotch"
+          slotted barrel drilled bossfillet ribbon ribbonnotch \
+          hairline canrev microedge filletslot torture slitdrill"
 FAIL=0
 : > "$OUT/counts.txt"
 
@@ -72,8 +73,14 @@ run_one() { # name file profile-args profile-tag watertight-required
 
 for f in $FIXTURES; do
     "$WEFT" fixture "$OUT/$f.step" --shape "$f" > /dev/null 2>&1
-    run_one "$f" "$OUT/$f.step" "--profile cad" cad yes
-    run_one "$f" "$OUT/$f.step" "" default yes
+    wtf=yes
+    # slitdrill deliberately reproduces the tangent-contact class (a
+    # pocket wall tangent to a bore leaves a lengthwise line edge in the
+    # bore wall) which still goes non-manifold at cad — a known-red
+    # reproducer, gated on "meshes without crashing" until fixed.
+    [ "$f" = slitdrill ] && wtf=no
+    run_one "$f" "$OUT/$f.step" "--profile cad" cad "$wtf"
+    run_one "$f" "$OUT/$f.step" "" default "$wtf"
 done
 
 for file in tests/STEP_Examples/*.stp; do

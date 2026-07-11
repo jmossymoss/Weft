@@ -76,7 +76,7 @@ endforeach()
 target_link_libraries(weft_core PUBLIC
   TKernel TKMath
   TKBRep TKG2d TKG3d TKGeomBase
-  TKTopAlgo TKGeomAlgo TKPrim TKBO TKBool TKFillet TKShHealing TKMesh
+  TKTopAlgo TKGeomAlgo TKPrim TKBO TKBool TKFillet TKOffset TKShHealing TKMesh
   TKXSBase ${WEFT_OCCT_STEP}
   # --- new: XCAF/XDE document stack + mesh toolkits ---
   ${WEFT_OCCT_XCAF} ${WEFT_OCCT_XDE}

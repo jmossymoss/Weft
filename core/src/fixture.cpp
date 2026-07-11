@@ -2,27 +2,37 @@
 
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepFilletAPI_MakeChamfer.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
+#include <BRepOffsetAPI_MakeThickSolid.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCone.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
+#include <BRepPrimAPI_MakeRevol.hxx>
 #include <BRepPrimAPI_MakeSphere.hxx>
 #include <BRepPrimAPI_MakeTorus.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRep_Builder.hxx>
+#include <GeomAPI_PointsToBSpline.hxx>
 #include <GeomAPI_PointsToBSplineSurface.hxx>
+#include <TColgp_Array1OfPnt.hxx>
 #include <TColgp_Array2OfPnt.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
+#include <gp_Ax1.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Trsf.hxx>
 #include <gp_Vec.hxx>
 
 #include <BRep_Tool.hxx>
+#include <Geom_BSplineCurve.hxx>
 #include <Geom_BSplineSurface.hxx>
 #include <Geom_Curve.hxx>
 
@@ -277,9 +287,299 @@ TopoDS_Shape makeFixture(const std::string& name) {
         }
         return slab;
     }
+    if (name == "hairline") {
+        // The foam-674/675 / weldment-chamfer class ISOLATED: a boss whose
+        // base rim carries a HAIRLINE fillet — a 0.15-wide torus band
+        // whose two rails run parallel a strip-width apart while the
+        // along-pitch is 20-50x larger. Every proximity heuristic that
+        // scales with the along-pitch swallows the twin rail; only HOME
+        // attribution (nearest own curve) separates them.
+        TopoDS_Shape base = BRepPrimAPI_MakeBox(40.0, 40.0, 8.0).Shape();
+        gp_Ax2 axis(gp_Pnt(20.0, 20.0, 8.0), gp_Dir(0, 0, 1));
+        TopoDS_Shape boss = BRepPrimAPI_MakeCylinder(axis, 10.0, 12.0).Shape();
+        TopoDS_Shape fused = BRepAlgoAPI_Fuse(base, boss).Shape();
+        BRepFilletAPI_MakeFillet fillet(fused);
+        for (TopExp_Explorer ex(fused, TopAbs_EDGE); ex.More(); ex.Next()) {
+            const TopoDS_Edge e = TopoDS::Edge(ex.Current());
+            double f, l;
+            Handle(Geom_Curve) c = BRep_Tool::Curve(e, f, l);
+            if (c.IsNull()) continue;
+            gp_Pnt m = c->Value((f + l) / 2);
+            // The boss/base junction circle at z=8, r=10.
+            if (std::abs(m.Z() - 8.0) < 1e-6 &&
+                std::abs(std::hypot(m.X() - 20.0, m.Y() - 20.0) - 10.0) <
+                    1e-6) {
+                fillet.Add(0.15, e);
+            }
+        }
+        return fillet.Shape();
+    }
+    if (name == "canrev") {
+        // The foam can-body class ISOLATED: a vase revolved from a bspline
+        // profile, then hollowed with MakeThickSolid — the walls become
+        // OFFSET_SURFACE geometry that is a perfect surface of revolution
+        // but is not TYPED as one, so it takes coons patchwork unless the
+        // planner detects revolution geometry from the shape itself
+        // (MVP demand #2).
+        TColgp_Array1OfPnt pts(1, 6);
+        pts.SetValue(1, gp_Pnt(14.0, 0.0, 0.0));
+        pts.SetValue(2, gp_Pnt(15.5, 0.0, 8.0));
+        pts.SetValue(3, gp_Pnt(16.0, 0.0, 20.0));
+        pts.SetValue(4, gp_Pnt(15.0, 0.0, 32.0));
+        pts.SetValue(5, gp_Pnt(12.0, 0.0, 42.0));
+        pts.SetValue(6, gp_Pnt(9.0, 0.0, 48.0));
+        Handle(Geom_BSplineCurve) prof =
+            GeomAPI_PointsToBSpline(pts).Curve();
+        BRepBuilderAPI_MakeWire wire;
+        wire.Add(BRepBuilderAPI_MakeEdge(prof).Edge());
+        wire.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(9.0, 0.0, 48.0),
+                                         gp_Pnt(0.0, 0.0, 48.0))
+                     .Edge());
+        wire.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(0.0, 0.0, 48.0),
+                                         gp_Pnt(0.0, 0.0, 0.0))
+                     .Edge());
+        wire.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(0.0, 0.0, 0.0),
+                                         gp_Pnt(14.0, 0.0, 0.0))
+                     .Edge());
+        TopoDS_Face profFace = BRepBuilderAPI_MakeFace(wire.Wire()).Face();
+        TopoDS_Shape vase =
+            BRepPrimAPI_MakeRevol(profFace,
+                                  gp_Ax1(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)))
+                .Shape();
+        // Hollow it: remove the top cap so the shell opens like a can —
+        // the remaining walls are offset surfaces of the revolve.
+        TopTools_ListOfShape toRemove;
+        for (TopExp_Explorer ex(vase, TopAbs_FACE); ex.More(); ex.Next()) {
+            const TopoDS_Face f = TopoDS::Face(ex.Current());
+            // The flat annular top at z=48.
+            bool top = true;
+            for (TopExp_Explorer vx(f, TopAbs_VERTEX); vx.More();
+                 vx.Next()) {
+                gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(vx.Current()));
+                if (std::abs(p.Z() - 48.0) > 1e-6) {
+                    top = false;
+                    break;
+                }
+            }
+            if (top) {
+                toRemove.Append(f);
+                break;
+            }
+        }
+        BRepOffsetAPI_MakeThickSolid hollow;
+        hollow.MakeThickSolidByJoin(vase, toRemove, -1.5, 1e-6);
+        return hollow.Shape();
+    }
+    if (name == "slitdrill") {
+        // The nasty_cheese face-6 class ISOLATED: two equal bores crossing
+        // inside a block (their walls meet in ellipse seams), plus a
+        // rectangular pocket grazing one bore so a LENGTHWISE line edge
+        // lands in the bore wall's rim chain — the slit that must kick a
+        // full-wrap pure lattice back to the strip/floor machinery.
+        TopoDS_Shape block = BRepPrimAPI_MakeBox(40.0, 40.0, 30.0).Shape();
+        gp_Ax2 axZ(gp_Pnt(20.0, 20.0, -1.0), gp_Dir(0, 0, 1));
+        TopoDS_Shape boreZ =
+            BRepPrimAPI_MakeCylinder(axZ, 6.0, 32.0).Shape();
+        gp_Ax2 axX(gp_Pnt(-1.0, 20.0, 15.0), gp_Dir(1, 0, 0));
+        TopoDS_Shape boreX =
+            BRepPrimAPI_MakeCylinder(axX, 6.0, 42.0).Shape();
+        TopoDS_Shape cut = BRepAlgoAPI_Cut(block, boreZ).Shape();
+        cut = BRepAlgoAPI_Cut(cut, boreX).Shape();
+        // Pocket whose wall passes exactly through the Z bore's surface
+        // (x = 26 = 20 + r): the intersection leaves a line edge running
+        // the length of the bore wall.
+        TopoDS_Shape pocket =
+            BRepPrimAPI_MakeBox(gp_Pnt(26.0, 10.0, -1.0),
+                                gp_Pnt(41.0, 30.0, 31.0))
+                .Shape();
+        return BRepAlgoAPI_Cut(cut, pocket).Shape();
+    }
+    if (name == "microedge") {
+        // The nasty edge-699 class ISOLATED: a 0.12-long chamfer edge — a
+        // micro-edge between full-size faces. One side samples it as a
+        // handful of segments, the other side's border jumps straight
+        // across it; the seam machinery must not lose the corner.
+        TopoDS_Shape box = BRepPrimAPI_MakeBox(30.0, 30.0, 12.0).Shape();
+        BRepFilletAPI_MakeChamfer cham(box);
+        for (TopExp_Explorer ex(box, TopAbs_EDGE); ex.More(); ex.Next()) {
+            const TopoDS_Edge e = TopoDS::Edge(ex.Current());
+            double f, l;
+            Handle(Geom_Curve) c = BRep_Tool::Curve(e, f, l);
+            if (c.IsNull()) continue;
+            gp_Pnt m = c->Value((f + l) / 2);
+            // One vertical corner edge only.
+            if (std::abs(m.X()) < 1e-6 && std::abs(m.Y()) < 1e-6) {
+                cham.Add(0.12, e);
+            }
+        }
+        return cham.Shape();
+    }
+    if (name == "filletslot") {
+        // The artist's coons-loop-spam report ISOLATED (MVP demand #1b):
+        // a slot through a plate whose four interior vertical edges are
+        // blended r=2 — the slot ends become quarter-round constant-
+        // radius fillet strips that weld into the flat slot walls. The
+        // FilletBand mesher must run rungs at the WALL's count, not the
+        // adaptive/pitch-floor spam a coons grid produces.
+        TopoDS_Shape plate = BRepPrimAPI_MakeBox(50.0, 30.0, 10.0).Shape();
+        TopoDS_Shape slot =
+            BRepPrimAPI_MakeBox(gp_Pnt(10.0, 11.0, -1.0),
+                                gp_Pnt(40.0, 19.0, 11.0))
+                .Shape();
+        TopoDS_Shape cut = BRepAlgoAPI_Cut(plate, slot).Shape();
+        BRepFilletAPI_MakeFillet fillet(cut);
+        for (TopExp_Explorer ex(cut, TopAbs_EDGE); ex.More(); ex.Next()) {
+            const TopoDS_Edge e = TopoDS::Edge(ex.Current());
+            double f, l;
+            Handle(Geom_Curve) c = BRep_Tool::Curve(e, f, l);
+            if (c.IsNull()) continue;
+            gp_Pnt a = c->Value(f), b = c->Value(l);
+            // The slot's four interior vertical edges.
+            const bool vertical = std::abs(a.X() - b.X()) < 1e-9 &&
+                                  std::abs(a.Y() - b.Y()) < 1e-9;
+            const bool slotCorner =
+                (std::abs(a.X() - 10.0) < 1e-6 ||
+                 std::abs(a.X() - 40.0) < 1e-6) &&
+                (std::abs(a.Y() - 11.0) < 1e-6 ||
+                 std::abs(a.Y() - 19.0) < 1e-6);
+            if (vertical && slotCorner) fillet.Add(2.0, e);
+        }
+        return fillet.Shape();
+    }
+    if (name == "torture") {
+        // The demo scene: one solid carrying most of the campaign's issue
+        // classes at once, so a build can be judged on a single model.
+        //   - stacked two-diameter barrel joined by a blend fillet
+        //     (flaregun barrel class: column flow across bands),
+        //   - a capsule slot through the barrel wall (insert class) and a
+        //     channel cut through its top rim (rim-open notch class),
+        //   - two crossing bores in the plate (nasty ellipse-seam class),
+        //   - a hairline 0.15 fillet ring at a small boss (foam twin-rail
+        //     class),
+        //   - a slot with r=2 blended end edges (the artist's fillet-band
+        //     class),
+        //   - a 0.12 micro-chamfer on one plate corner (nasty micro-edge
+        //     class).
+        TopoDS_Shape plate = BRepPrimAPI_MakeBox(120.0, 80.0, 12.0).Shape();
+        // Stacked barrel at (30, 40): wide band below, narrow band above.
+        gp_Ax2 axB(gp_Pnt(30.0, 40.0, 12.0), gp_Dir(0, 0, 1));
+        TopoDS_Shape band1 =
+            BRepPrimAPI_MakeCylinder(axB, 14.0, 22.0).Shape();
+        gp_Ax2 axT(gp_Pnt(30.0, 40.0, 34.0), gp_Dir(0, 0, 1));
+        TopoDS_Shape band2 =
+            BRepPrimAPI_MakeCylinder(axT, 11.0, 24.0).Shape();
+        TopoDS_Shape solid = BRepAlgoAPI_Fuse(plate, band1).Shape();
+        solid = BRepAlgoAPI_Fuse(solid, band2).Shape();
+        // Hollow the top band into a muzzle: bore from above.
+        gp_Ax2 axBore(gp_Pnt(30.0, 40.0, 20.0), gp_Dir(0, 0, 1));
+        TopoDS_Shape bore = BRepPrimAPI_MakeCylinder(axBore, 8.0, 40.0).Shape();
+        solid = BRepAlgoAPI_Cut(solid, bore).Shape();
+        // Capsule slot through the top band's wall.
+        {
+            TopoDS_Shape sBox =
+                BRepPrimAPI_MakeBox(gp_Pnt(14.0, 37.0, 38.0),
+                                    gp_Pnt(24.0, 43.0, 48.0))
+                    .Shape();
+            gp_Ax2 e1(gp_Pnt(14.0, 40.0, 38.0), gp_Dir(1, 0, 0));
+            gp_Ax2 e2(gp_Pnt(14.0, 40.0, 48.0), gp_Dir(1, 0, 0));
+            TopoDS_Shape c1 =
+                BRepPrimAPI_MakeCylinder(e1, 3.0, 10.0).Shape();
+            TopoDS_Shape c2 =
+                BRepPrimAPI_MakeCylinder(e2, 3.0, 10.0).Shape();
+            TopoDS_Shape slot =
+                BRepAlgoAPI_Fuse(BRepAlgoAPI_Fuse(sBox, c1).Shape(), c2)
+                    .Shape();
+            solid = BRepAlgoAPI_Cut(solid, slot).Shape();
+        }
+        // Channel through the muzzle's top rim (rim-open notch).
+        {
+            TopoDS_Shape channel =
+                BRepPrimAPI_MakeBox(gp_Pnt(27.0, 40.0, 52.0),
+                                    gp_Pnt(33.0, 60.0, 60.0))
+                    .Shape();
+            solid = BRepAlgoAPI_Cut(solid, channel).Shape();
+        }
+        // Crossing bores in the plate at (80, 30).
+        {
+            gp_Ax2 azV(gp_Pnt(80.0, 30.0, -1.0), gp_Dir(0, 0, 1));
+            TopoDS_Shape bV =
+                BRepPrimAPI_MakeCylinder(azV, 5.0, 14.0).Shape();
+            gp_Ax2 azH(gp_Pnt(80.0, -1.0, 6.0), gp_Dir(0, 1, 0));
+            TopoDS_Shape bH =
+                BRepPrimAPI_MakeCylinder(azH, 5.0, 82.0).Shape();
+            solid = BRepAlgoAPI_Cut(solid, bV).Shape();
+            solid = BRepAlgoAPI_Cut(solid, bH).Shape();
+        }
+        // Small boss at (105, 62) with a hairline base fillet.
+        {
+            gp_Ax2 axS(gp_Pnt(105.0, 62.0, 12.0), gp_Dir(0, 0, 1));
+            TopoDS_Shape boss =
+                BRepPrimAPI_MakeCylinder(axS, 6.0, 10.0).Shape();
+            solid = BRepAlgoAPI_Fuse(solid, boss).Shape();
+            BRepFilletAPI_MakeFillet fillet(solid);
+            for (TopExp_Explorer ex(solid, TopAbs_EDGE); ex.More();
+                 ex.Next()) {
+                const TopoDS_Edge e = TopoDS::Edge(ex.Current());
+                double f, l;
+                Handle(Geom_Curve) c = BRep_Tool::Curve(e, f, l);
+                if (c.IsNull()) continue;
+                gp_Pnt m = c->Value((f + l) / 2);
+                if (std::abs(m.Z() - 12.0) < 1e-6 &&
+                    std::abs(std::hypot(m.X() - 105.0, m.Y() - 62.0) -
+                             6.0) < 1e-6) {
+                    fillet.Add(0.15, e);
+                }
+            }
+            solid = fillet.Shape();
+        }
+        // Slot with blended end edges at (60..90, 55..65).
+        {
+            TopoDS_Shape slot =
+                BRepPrimAPI_MakeBox(gp_Pnt(58.0, 55.0, -1.0),
+                                    gp_Pnt(88.0, 65.0, 13.0))
+                    .Shape();
+            solid = BRepAlgoAPI_Cut(solid, slot).Shape();
+            BRepFilletAPI_MakeFillet fillet(solid);
+            for (TopExp_Explorer ex(solid, TopAbs_EDGE); ex.More();
+                 ex.Next()) {
+                const TopoDS_Edge e = TopoDS::Edge(ex.Current());
+                double f, l;
+                Handle(Geom_Curve) c = BRep_Tool::Curve(e, f, l);
+                if (c.IsNull()) continue;
+                gp_Pnt a = c->Value(f), b = c->Value(l);
+                const bool vertical = std::abs(a.X() - b.X()) < 1e-9 &&
+                                      std::abs(a.Y() - b.Y()) < 1e-9;
+                const bool corner =
+                    (std::abs(a.X() - 58.0) < 1e-6 ||
+                     std::abs(a.X() - 88.0) < 1e-6) &&
+                    (std::abs(a.Y() - 55.0) < 1e-6 ||
+                     std::abs(a.Y() - 65.0) < 1e-6);
+                if (vertical && corner) fillet.Add(2.0, e);
+            }
+            solid = fillet.Shape();
+        }
+        // Micro-chamfer on the plate corner at the origin.
+        {
+            BRepFilletAPI_MakeChamfer cham(solid);
+            for (TopExp_Explorer ex(solid, TopAbs_EDGE); ex.More();
+                 ex.Next()) {
+                const TopoDS_Edge e = TopoDS::Edge(ex.Current());
+                double f, l;
+                Handle(Geom_Curve) c = BRep_Tool::Curve(e, f, l);
+                if (c.IsNull()) continue;
+                gp_Pnt m = c->Value((f + l) / 2);
+                if (std::abs(m.X()) < 1e-6 && std::abs(m.Y()) < 1e-6) {
+                    cham.Add(0.12, e);
+                }
+            }
+            solid = cham.Shape();
+        }
+        return solid;
+    }
     throw std::runtime_error(
         "unknown fixture: " + name +
-        " (expected cylinder|box|cone|sphere|torus|fillet|hole|demo|boss)");
+        " (expected cylinder|box|cone|sphere|torus|fillet|hole|demo|boss|"
+        "hairline|canrev|slitdrill|microedge|filletslot|torture)");
 }
 
 }  // namespace weft
