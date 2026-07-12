@@ -3498,6 +3498,9 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
         int mesher = std::clamp(s.forceMesher, 0, nMesher - 1);
         if (ImGui::BeginCombo("mesher", kMesherNames[mesher])) {
             for (int i = 0; i < nMesher; ++i) {
+                // Quad Fill remains loadable for legacy recipes, but is no
+                // longer offered or selected by the geometry policy.
+                if (i == 1 + int(MK::QuadFill)) continue;
                 const bool ok = i == 0 || (bmask & (1u << i));
                 ImGui::BeginDisabled(!ok);
                 if (ImGui::Selectable(kMesherNames[i], mesher == i)) {
@@ -3767,7 +3770,7 @@ static void drawMesherDefaultTabs(App& app) {
         ImGui::TextDisabled("revolves, domes, disk caps");
         if (ImGui::DragInt("radial", &d.radial, 0.2f, 3, 256)) ch = true;
         hover({int(MK::RevolutionGrid), int(MK::DiskCap),
-               int(MK::AnnulusRing), int(MK::PlateWeb), int(MK::QuadFill),
+               int(MK::AnnulusRing), int(MK::PlateWeb),
                int(MK::RibbonSweep), int(MK::RailLadder), int(MK::DomeCap)});
         if (ImGui::DragInt("axial", &d.axial, 0.2f, 1, 256)) ch = true;
         hover({int(MK::RevolutionGrid), int(MK::DomeCap)});
@@ -3822,7 +3825,7 @@ static void drawMesherDefaultTabs(App& app) {
         ImGui::EndTabItem();
     }
     if (tab("flat faces", {int(MK::MinimalNGon), int(MK::PlanarGrid),
-                           int(MK::QuadFill), int(MK::PlateWeb)})) {
+                           int(MK::PlateWeb)})) {
         ImGui::TextDisabled("planar panels and grids");
         ch |= ImGui::Checkbox("minimal n-gon (flat panels)", &d.minimal);
         hover({int(MK::MinimalNGon)});

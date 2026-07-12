@@ -195,6 +195,15 @@ struct FacePlan {
     // Effective wire rotation for Coons. Analytic drum trims canonicalize
     // this so planning, the GPU proxy, and the CPU mesher share axes.
     int coonsRotate = 0;
+    // A single-wire UV-orthogonal trim. This covers rectangular patches
+    // whose sides were split by STEP bookkeeping (MP9 face 632), and
+    // cylinders whose side repeatedly steps in/out around slots. The trim
+    // is meshed by one global parameter lattice: every surviving cell is a
+    // quad, so a notch cannot restart the cylinder spans or create a fan.
+    bool orthogonalTrimGrid = false;
+    int orthogonalDriverU = 0;
+    int orthogonalDriverV = 0;
+    std::vector<int> orthogonalEdges;
 };
 
 bool sameFaceSettings(const FaceMeshSettings& a,
@@ -585,6 +594,148 @@ bool openBandSides(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         }
     }
     return outerWires == 1 && sides.size() == 2;
+}
+
+// Recognize one connected UV-orthogonal trim as a structured lattice, not
+// as a generic polygon to triangulate. STEP exporters commonly split a
+// perfectly regular side at every adjacent feature; counting B-rep edges
+// therefore says nothing about the patch topology. What matters is that all
+// non-degenerate pcurves run along one surface parameter and that horizontal
+// scanlines meet one connected interval.
+bool planOrthogonalTrimGrid(const TopoDS_Face& face,
+                            const BRepAdaptor_Surface& surf,
+                            const Model& model, FacePlan& plan) {
+    const int dbgFid = model.faces.FindIndex(face);
+    if (surf.IsUClosed() || surf.IsVClosed()) return false;
+    int wires = 0;
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) ++wires;
+    if (wires != 1) return false;
+
+    const double u0 = surf.FirstUParameter(), u1 = surf.LastUParameter();
+    const double v0 = surf.FirstVParameter(), v1 = surf.LastVParameter();
+    const double us = std::max(1e-12, u1 - u0);
+    const double vs = std::max(1e-12, v1 - v0);
+    const double ut = 2e-5 * us, vt = 2e-5 * vs;
+    const double nearU = 0.03 * us, nearV = 0.03 * vs;
+    std::vector<int> horizontal, vertical;
+    double bestU = -1.0, bestV = -1.0;
+    bool hasInteriorStep = false;
+    int fullHeightVertical = 0, insetVertical = 0;
+    int realEdges = 0;
+    for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+        const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+        if (BRep_Tool::Degenerated(edge)) continue;
+        ++realEdges;
+        double f, l;
+        Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(edge, face, f, l);
+        if (pc.IsNull()) return false;
+        double eu0 = 1e300, eu1 = -1e300, ev0 = 1e300, ev1 = -1e300;
+        for (int k = 0; k <= 12; ++k) {
+            const gp_Pnt2d uv = pc->Value(f + (l - f) * k / 12.0);
+            eu0 = std::min(eu0, uv.X()); eu1 = std::max(eu1, uv.X());
+            ev0 = std::min(ev0, uv.Y()); ev1 = std::max(ev1, uv.Y());
+        }
+        const double du = eu1 - eu0, dv = ev1 - ev0;
+        const int eid = model.edges.FindIndex(edge);
+        if (eid < 1) return false;
+        plan.orthogonalEdges.push_back(eid);
+        if (du > ut && (dv <= nearV || du / us >= dv / vs)) {
+            horizontal.push_back(eid);
+            if (du > bestU) { bestU = du; plan.orthogonalDriverU = eid; }
+            const double vm = 0.5 * (ev0 + ev1);
+            hasInteriorStep |= vm > v0 + 0.05*vs && vm < v1 - 0.05*vs;
+        } else if (dv > vt && (du <= nearU || dv / vs > du / us)) {
+            vertical.push_back(eid);
+            if (dv > bestV) { bestV = dv; plan.orthogonalDriverV = eid; }
+            const double um = 0.5 * (eu0 + eu1);
+            if (dv >= 0.9*vs) ++fullHeightVertical;
+            if (um > u0 + 0.05*us && um < u1 - 0.05*us) ++insetVertical;
+            hasInteriorStep |= um > u0 + 0.05*us && um < u1 - 0.05*us;
+        } else if (du > ut || dv > vt) {
+            dbg("orthogonal face %d rejected: diagonal edge %d du %.6g "
+                "dv %.6g", dbgFid, eid, du/us, dv/vs);
+            return false; // a real diagonal/curved trim needs a local web
+        }
+    }
+    if (realEdges < 6 || horizontal.size() < 2 || vertical.size() < 2 ||
+        plan.orthogonalDriverU == 0 || plan.orthogonalDriverV == 0) {
+        return false;
+    }
+    const GeomAbs_SurfaceType st = surf.GetType();
+    const bool drum = st == GeomAbs_Cylinder || st == GeomAbs_Cone ||
+                      st == GeomAbs_SurfaceOfRevolution;
+    const bool freeformComb = !drum && realEdges >= 20 &&
+                              fullHeightVertical == 1 &&
+                              insetVertical >= 2 && horizontal.size() >= 8;
+    if (!drum && realEdges >= 20) {
+        dbg("orthogonal freeform face %d: edges=%d h=%zu v=%zu full=%d "
+            "inset=%d interior=%d comb=%d", dbgFid, realEdges,
+            horizontal.size(), vertical.size(), fullHeightVertical,
+            insetVertical, hasInteriorStep ? 1 : 0,
+            freeformComb ? 1 : 0);
+    }
+    // On a freeform surface only accept the split-sided rectangle case.
+    // Orthogonal interior steps on arbitrary UV charts need a more general
+    // trim solver; drums are safe because U/V are angular/axial directions.
+    if (drum && (fullHeightVertical != 1 ||
+                 (insetVertical < 1 && horizontal.size() < 4))) {
+        return false;
+    }
+    if (!drum && !freeformComb &&
+        (hasInteriorStep || horizontal.size() != 2)) {
+        dbg("orthogonal face %d rejected: freeform interior step", dbgFid);
+        return false;
+    }
+
+    // Scan every V slab. A valid band has exactly one connected inside run;
+    // this excludes disjoint combs even when all of their edges are axis
+    // aligned.
+    std::vector<double> levels{v0, v1};
+    for (int eid : vertical) {
+        double f, l;
+        Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(
+            TopoDS::Edge(model.edges(eid)), face, f, l);
+        levels.push_back(pc->Value(f).Y());
+        levels.push_back(pc->Value(l).Y());
+    }
+    std::sort(levels.begin(), levels.end());
+    levels.erase(std::unique(levels.begin(), levels.end(),
+                             [&](double a, double b) {
+                                 return std::abs(a - b) <= vt;
+                             }), levels.end());
+    const double tolF = BRep_Tool::Tolerance(face);
+    for (size_t j = 0; j + 1 < levels.size(); ++j) {
+        if (levels[j + 1] - levels[j] <= vt) continue;
+        const double v = 0.5 * (levels[j] + levels[j + 1]);
+        int runs = 0; bool wasIn = false;
+        for (int i = 0; i < 96; ++i) {
+            const double u = u0 + (i + 0.5) * us / 96.0;
+            BRepClass_FaceClassifier cls(const_cast<TopoDS_Face&>(face),
+                                         gp_Pnt2d(u, v), tolF);
+            const bool in = cls.State() != TopAbs_OUT;
+            if (in && !wasIn) ++runs;
+            wasIn = in;
+        }
+        if (runs != 1 && !drum && !freeformComb) {
+            dbg("orthogonal face %d rejected: v slab %.6g has %d runs",
+                dbgFid, v, runs);
+            return false;
+        }
+    }
+
+    plan.orthogonalTrimGrid = true;
+    plan.kind = drum ? MesherKind::RevolutionGrid : MesherKind::CoonsGrid;
+    plan.uEdges = std::move(horizontal);
+    plan.vEdges = std::move(vertical);
+    auto driverFirst = [](std::vector<int>& es, int driver) {
+        auto it = std::find(es.begin(), es.end(), driver);
+        if (it != es.end()) std::rotate(es.begin(), it, it + 1);
+    };
+    driverFirst(plan.uEdges, plan.orthogonalDriverU);
+    driverFirst(plan.vEdges, plan.orthogonalDriverV);
+    plan.constrains = true;
+    plan.bandWrapFrac = drum ? us / (2.0 * M_PI) : 1.0;
+    return true;
 }
 
 // Full-wrap castellated rim: a u-closed straight-ruling band (cylinder or
@@ -7503,6 +7654,46 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     BRepAdaptor_Surface surf(face);
     FacePlan plan;
 
+    if (const char* uvFaces = std::getenv("WEFT_UV_FACES")) {
+        std::stringstream requested(uvFaces);
+        std::string token;
+        bool trace = false;
+        while (std::getline(requested, token, ',')) {
+            if (std::atoi(token.c_str()) == fid) trace = true;
+        }
+        if (trace) {
+            dbg("uvface %d: type=%d bounds u=[%.6g,%.6g] v=[%.6g,%.6g]",
+                fid, int(surf.GetType()), surf.FirstUParameter(),
+                surf.LastUParameter(), surf.FirstVParameter(),
+                surf.LastVParameter());
+            for (int eid : info.edgeIds) {
+                const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+                double f = 0.0, l = 0.0;
+                Handle(Geom2d_Curve) pc =
+                    BRep_Tool::CurveOnSurface(edge, face, f, l);
+                if (pc.IsNull()) {
+                    dbg("uvface %d edge %d: no pcurve", fid, eid);
+                    continue;
+                }
+                double eu0 = 1e300, eu1 = -1e300;
+                double ev0 = 1e300, ev1 = -1e300;
+                for (int k = 0; k <= 16; ++k) {
+                    const gp_Pnt2d uv =
+                        pc->Value(f + (l - f) * k / 16.0);
+                    eu0 = std::min(eu0, uv.X());
+                    eu1 = std::max(eu1, uv.X());
+                    ev0 = std::min(ev0, uv.Y());
+                    ev1 = std::max(ev1, uv.Y());
+                }
+                dbg("uvface %d edge %d: u=[%.6g,%.6g] v=[%.6g,%.6g] "
+                    "closed=%d deg=%d",
+                    fid, eid, eu0, eu1, ev0, ev1,
+                    BRep_Tool::IsClosed(edge, face) ? 1 : 0,
+                    BRep_Tool::Degenerated(edge) ? 1 : 0);
+            }
+        }
+    }
+
     // Geometry-only probe results memoize in the cache (the classifier
     // calls dominate planning cost and never change for a model).
     auto revCovers = [&] {
@@ -7559,7 +7750,8 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         const GeomAbs_SurfaceType st = surf.GetType();
         const bool analyticDrum =
             st == GeomAbs_Cylinder || st == GeomAbs_Cone ||
-            st == GeomAbs_SurfaceOfRevolution;
+            st == GeomAbs_SurfaceOfRevolution ||
+            st == GeomAbs_SurfaceOfExtrusion;
         if (v && analyticDrum && s.coonsRotate == 0 &&
             !patch.collapsedLast) {
             auto axisTravel = [&](int side) {
@@ -7596,6 +7788,44 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             cache->coonsReflex[fid] = coonsReflex;
         }
         return v;
+    };
+    auto coonsChainsCompatible = [&](const CoonsPatch& patch) {
+        if (!patch.chained()) return true;
+        const GeomAbs_SurfaceType st = surf.GetType();
+        const bool analyticDrum =
+            st == GeomAbs_Cylinder || st == GeomAbs_Cone ||
+            st == GeomAbs_SurfaceOfRevolution ||
+            st == GeomAbs_SurfaceOfExtrusion;
+        // A trimmed analytic drum keeps its canonical UV patch: its surface
+        // directions are meaningful even when a T-junction splits one rim.
+        if (analyticDrum) return true;
+        const bool compatible =
+            patch.chain[0].size() == patch.chain[2].size() &&
+            patch.chain[1].size() == patch.chain[3].size();
+        // A split-sided rectangular UV patch is still one four-sided
+        // topology. Let chained Coons consume it directly; rejecting it on
+        // raw B-rep edge counts is what turned MP9 face 632 into a triangle
+        // floor. Drums use the dedicated clipped lattice instead.
+        if (!compatible) {
+            FacePlan orthProbe;
+            if (planOrthogonalTrimGrid(face, surf, model, orthProbe) &&
+                orthProbe.kind == MesherKind::CoonsGrid) {
+                return true;
+            }
+        }
+        // One extra split on a small patch is ordinary STEP bookkeeping and
+        // the existing local fold repair handles it cleanly. The destructive
+        // absorption fans appear on genuinely complex outlines (7+ edges),
+        // with trimmed tori requiring the stricter 5-edge limit.
+        const size_t safeEdges = st == GeomAbs_Torus ? 5u : 6u;
+        if (!compatible && info.edgeIds.size() <= safeEdges) return true;
+        if (!compatible) {
+            dbg("coons: face %d rejected: opposite chain topology "
+                "%zu/%zu and %zu/%zu",
+                fid, patch.chain[0].size(), patch.chain[2].size(),
+                patch.chain[1].size(), patch.chain[3].size());
+        }
+        return compatible;
     };
 
     auto finishRevolution = [&]() {
@@ -8037,6 +8267,20 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         plan.vEdges.clear();
     }
 
+    // Split rectangle / side-notched primitive band. This must precede
+    // Coons: a many-piece side is CAD bookkeeping, not a request to pull
+    // every piece toward a patch centre. One global UV lattice preserves
+    // the primitive spans and clips only the cells outside the trim.
+    {
+        FacePlan orth;
+        if (planOrthogonalTrimGrid(face, surf, model, orth)) {
+            dbg("plan face %d: orthogonal trim grid u=%zu v=%zu", fid,
+                orth.uEdges.size(), orth.vEdges.size());
+            plan = std::move(orth);
+            return plan;
+        }
+    }
+
     // Spherical / dome cap (a single-wire revolution-like bspline that bulges
     // from a base loop to a pole): mesh as a clean UV hemisphere — latitude
     // rings + straight meridians + a pole fan — instead of the Coons grid,
@@ -8131,7 +8375,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // is shorter in 3D.
     {
         CoonsPatch patch;
-        if (coonsOk(patch)) {
+        if (coonsOk(patch) && coonsChainsCompatible(patch)) {
             // A flat chevron (reflex outline) folds under any transfinite
             // grid. In quad-dominant mode quad-fill's grid + CDT rim is
             // strictly better and samples the same solved counts. In
@@ -8139,8 +8383,10 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             // n-gons starve shared rails against unconstrained fallback
             // neighbours (measured: dup flaps on sliver strips) — so the
             // patch proceeds and the untangler + fold overlay take over.
-            if (coonsReflex && s.quadDominant &&
-                planQuadFill(face, surf, model, plan)) {
+            if (coonsReflex && s.quadDominant) {
+                plan = FacePlan();
+                plan.kind = MesherKind::Fallback;
+                plan.forceFallbackQuads = 1;
                 return plan;
             }
             plan.kind = MesherKind::CoonsGrid;
@@ -8261,28 +8507,24 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // long-chain outlines that used to lattice as quad-fill qualify.
     if (tryOpenBand()) return plan;
 
-    // Flat faces with quad-dominant set get the structured grid + rim
-    // fill instead of OCCT triangulation + pairing. CURVED faces whose
-    // coons rejected (concave outlines, long chains) take it by DEFAULT:
-    // the grid lives in UV and maps through the surface, which beats a
-    // sliver-fan triangulation — and the fold check still demotes any
-    // chart the grid can't express.
+    // Quad Fill is not an automatic output strategy. For a genuine long,
+    // thin freeform ribbon we still reuse its boundary analysis to seed the
+    // specialized rail sweep; all other unclaimed faces take the local
+    // exact-border fallback below.
     const bool planarHere = surf.GetType() == GeomAbs_Plane;
-    if ((s.quadDominant || !planarHere) &&
-        planQuadFill(face, surf, model, plan)) {
-        // A long thin BENT ribbon (grip / trigger-guard rails) coons just
-        // rejected: sweep the rails into an even quad flow instead of the
-        // grid+CDT pairing. The plan (edge lists, density) stays quad-fill's
-        // exactly — only the mesher changes, and it falls straight back to
-        // quad-fill on any doubt, so this never disturbs a neighbour.
+    if (!planarHere) {
+        // A long thin bent ribbon (grip / trigger-guard rails) may sweep its
+        // two rails into regular rows. Failure demotes to the contract floor,
+        // never back to Quad Fill.
         const GeomAbs_SurfaceType st = surf.GetType();
         const bool analyticDrum =
             st == GeomAbs_Cylinder || st == GeomAbs_Cone ||
             st == GeomAbs_SurfaceOfRevolution;
-        if (!analyticDrum && ribbonDetect(face, model)) {
+        if (!analyticDrum && ribbonDetect(face, model) &&
+            planQuadFill(face, surf, model, plan)) {
             plan.kind = MesherKind::RibbonSweep;
+            return plan;
         }
-        return plan;
     }
 
     // A shallow conical cap nothing else claimed would tri-fan; a single
@@ -8294,7 +8536,15 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         plan.kind = MesherKind::MinimalNGon;
         return plan;
     }
+    plan = FacePlan();
     plan.kind = MesherKind::Fallback;
+    if (plan.forceFallbackQuads < 0) {
+        // Automatic fallback stays triangulated: pairing unrelated floor
+        // triangles can recreate the very long poles Quad Fill was removed
+        // for. Quad pairing remains an explicit --quads/user choice.
+        plan.forceFallbackQuads =
+            s.quadDominant && !s.pureTriFloor ? 1 : 0;
+    }
     // Quad-dominant decimation moves border verts by up to the chord
     // tolerance; on a face with features SMALLER than that it wraps flaps
     // over the neighbours (folds the weld then has to amputate). Such
@@ -8531,6 +8781,11 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
         // edges together: each hole/border edge solves on its own (the
         // bore through a hole drives that hole).
         if (!plan.loops.empty()) continue;
+        // Orthogonal trims share one station lattice, but a short notch
+        // step must not be unioned with the full-width rim (that would give
+        // every tiny step the complete cylinder count). Their explicit
+        // station pins reconcile the shared borders later.
+        if (plan.orthogonalTrimGrid) continue;
         // Rims made of several edges (a T-junction interrupts one side's
         // circle) must match the opposite rim in TOTAL, not per edge —
         // uniting them would hand every arc the full circle's count and
@@ -8788,7 +9043,42 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
             overridden &&
             (s.gridU != dfl.gridU || s.gridV != dfl.gridV ||
              s.radial != dfl.radial || s.axial != dfl.axial);
-        if (!plan.loops.empty()) {
+        if (plan.orthogonalTrimGrid) {
+            const TopoDS_Face of = TopoDS::Face(model.faces(fid));
+            BRepAdaptor_Surface os(of);
+            const double us = std::max(
+                1e-12, os.LastUParameter() - os.FirstUParameter());
+            const double vs = std::max(
+                1e-12, os.LastVParameter() - os.FirstVParameter());
+            const bool drum = plan.kind == MesherKind::RevolutionGrid;
+            auto spanOf = [&](int eid, bool u) {
+                double f, l;
+                Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(
+                    TopoDS::Edge(model.edges(eid)), of, f, l);
+                if (pc.IsNull()) return 0.0;
+                double lo = 1e300, hi = -1e300;
+                for (int k = 0; k <= 8; ++k) {
+                    const gp_Pnt2d p = pc->Value(f + (l - f) * k / 8.0);
+                    const double x = u ? p.X() : p.Y();
+                    lo = std::min(lo, x); hi = std::max(hi, x);
+                }
+                return std::max(0.0, hi - lo);
+            };
+            for (int e : plan.uEdges) {
+                const double frac = spanOf(e, true) /
+                    (drum ? 2.0 * M_PI : us);
+                const int n = std::max(1, int(std::lround(
+                    (drum ? std::max(3, s.radial) : std::max(1, s.gridU)) *
+                    frac)));
+                proposeSet({e}, n, 1, s.adaptive, s, overridden);
+            }
+            for (int e : plan.vEdges) {
+                const double frac = spanOf(e, false) / vs;
+                const int n = std::max(1, int(std::lround(
+                    std::max(1, drum ? s.axial : s.gridV) * frac)));
+                proposeSet({e}, n, 1, s.adaptive, s, overridden);
+            }
+        } else if (!plan.loops.empty()) {
             // Explicit boundary control: a TOTAL vertex count around the
             // outer loop, distributed across its edges by arc length and
             // pinned — it drives the neighbouring walls' shared edges too.
@@ -12550,6 +12840,381 @@ bool meshRevolutionAnnulusBody(const BRepAdaptor_Surface& surf, int faceId,
     return true;
 }
 
+void pinOrthogonalTrimGrids(const Model& model,
+                            const std::map<int, FacePlan>& plans,
+                            const GenerationSettings& settings,
+                            const std::vector<int>& solvedEdge,
+                            PinnedEdges& pins) {
+    auto uniqueStations = [](std::vector<double>& a, double tol) {
+        std::sort(a.begin(), a.end());
+        a.erase(std::unique(a.begin(), a.end(), [&](double x, double y) {
+                    return std::abs(x - y) <= tol;
+                }), a.end());
+    };
+    for (const auto& [fid, plan] : plans) {
+        if (!plan.orthogonalTrimGrid) continue;
+        const TopoDS_Face face = TopoDS::Face(model.faces(fid));
+        BRepAdaptor_Surface surf(face);
+        const FaceMeshSettings& s = settings.forFace(fid);
+        const double u0 = surf.FirstUParameter(), u1 = surf.LastUParameter();
+        const double v0 = surf.FirstVParameter(), v1 = surf.LastVParameter();
+        const double ut = 1e-9 * std::max(1.0, std::abs(u1 - u0));
+        const double vt = 1e-9 * std::max(1.0, std::abs(v1 - v0));
+        const int nu = plan.kind == MesherKind::RevolutionGrid
+            ? std::max(1, plan.orthogonalDriverU > 0
+                              ? solvedEdge[plan.orthogonalDriverU]
+                              : int(std::lround(std::max(3, s.radial) *
+                                                plan.bandWrapFrac)))
+            : std::max(1, plan.orthogonalDriverU > 0
+                              ? solvedEdge[plan.orthogonalDriverU] : s.gridU);
+        const int nv = std::max(1, plan.orthogonalDriverV > 0
+                                      ? solvedEdge[plan.orthogonalDriverV]
+                                      : (plan.kind == MesherKind::RevolutionGrid
+                                             ? s.axial : s.gridV));
+        std::vector<double> U, V;
+        for (int i = 0; i <= nu; ++i) U.push_back(u0 + (u1-u0)*i/nu);
+        for (int j = 0; j <= nv; ++j) V.push_back(v0 + (v1-v0)*j/nv);
+        auto collectEndpoints = [&](int eid) {
+            const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
+            double f, l;
+            Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(e, face, f, l);
+            if (pc.IsNull()) return;
+            const gp_Pnt2d a = pc->Value(f), b = pc->Value(l);
+            U.push_back(a.X()); U.push_back(b.X());
+            V.push_back(a.Y()); V.push_back(b.Y());
+        };
+        for (int e : plan.orthogonalEdges) collectEndpoints(e);
+        uniqueStations(U, std::max(ut, 1e-4*std::abs(u1-u0)));
+        uniqueStations(V, std::max(vt, 1e-6*std::abs(v1-v0)));
+
+        auto pinEdge = [&](int eid, bool alongU) {
+            const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
+            double f, l;
+            Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(e, face, f, l);
+            if (pc.IsNull()) return;
+            auto coord = [&](double t, bool alongU) {
+                const gp_Pnt2d p = pc->Value(f + (l-f)*t);
+                return alongU ? p.X() : p.Y();
+            };
+            std::vector<double> fr{0.0, 1.0};
+            if (!pins[eid].empty()) {
+                fr.insert(fr.end(), pins[eid].begin(), pins[eid].end());
+            }
+            for (bool axis : {alongU}) {
+                const auto& stations = axis ? U : V;
+                const double a = coord(0, axis), b = coord(1, axis);
+                const double lo = std::min(a,b), hi = std::max(a,b);
+                const double tol = axis ? ut : vt;
+                if (hi - lo <= tol) continue;
+                for (double x : stations) {
+                    if (x <= lo + tol || x >= hi - tol) continue;
+                    double L = 0.0, R = 1.0;
+                    for (int it = 0; it < 52; ++it) {
+                        const double m = 0.5 * (L + R);
+                        if ((coord(m, axis) < x) == (a < b)) L = m;
+                        else R = m;
+                    }
+                    fr.push_back(0.5 * (L + R));
+                }
+            }
+            std::sort(fr.begin(), fr.end());
+            fr.erase(std::unique(fr.begin(), fr.end(), [](double x, double y) {
+                         return std::abs(x-y) < 1e-10;
+                     }), fr.end());
+            pins[eid] = std::move(fr);
+        };
+        for (int e : plan.uEdges) pinEdge(e, true);
+        for (int e : plan.vEdges) pinEdge(e, false);
+    }
+}
+
+bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
+                            const BRepAdaptor_Surface& surf,
+                            const Model& model, const FacePlan& plan,
+                            const std::vector<int>& solvedEdge, int faceId,
+                            int nu, int nv, MeshBuilder& out,
+                            const PinnedEdges* pins) {
+    nu = std::max(1, nu); nv = std::max(1, nv);
+    const double u0 = surf.FirstUParameter(), u1 = surf.LastUParameter();
+    const double v0 = surf.FirstVParameter(), v1 = surf.LastVParameter();
+    const double ut = 1e-9 * std::max(1.0, std::abs(u1 - u0));
+    const double vt = 1e-9 * std::max(1.0, std::abs(v1 - v0));
+    std::vector<double> U, V;
+    for (int i = 0; i <= nu; ++i) U.push_back(u0 + (u1 - u0) * i / nu);
+    for (int j = 0; j <= nv; ++j) V.push_back(v0 + (v1 - v0) * j / nv);
+    auto addEdgeEndpoints = [&](int eid) {
+        const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+        double f, l;
+        Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(edge, face, f, l);
+        if (pc.IsNull()) return false;
+        const gp_Pnt2d a = pc->Value(f), b = pc->Value(l);
+        U.push_back(a.X()); U.push_back(b.X());
+        V.push_back(a.Y()); V.push_back(b.Y());
+        return true;
+    };
+    for (int e : plan.orthogonalEdges) if (!addEdgeEndpoints(e)) return false;
+    auto normalize = [](std::vector<double>& a, double tol) {
+        std::sort(a.begin(), a.end());
+        std::vector<double> b;
+        for (double x : a) {
+            if (b.empty() || std::abs(x - b.back()) > tol) b.push_back(x);
+        }
+        a.swap(b);
+    };
+    const double stationTolU = std::max(ut, 1e-4*std::abs(u1-u0));
+    const double stationTolV = std::max(vt, 1e-6*std::abs(v1-v0));
+    normalize(U, stationTolU);
+    normalize(V, stationTolV);
+    if (U.size() < 2 || V.size() < 2 ||
+        (U.size() - 1) * (V.size() - 1) > 200000) return false;
+
+    // Exact sampled trim polygon in wire order. Pins include every crossing
+    // with the global station lines, so clipping creates no unsampled point
+    // along a shared B-rep edge.
+    const double qU = std::max(1e-12, ut), qV = std::max(1e-12, vt);
+    auto uvKey = [&](const gp_Pnt2d& p) {
+        return std::make_pair(llround(p.X()/qU), llround(p.Y()/qV));
+    };
+    std::vector<gp_Pnt2d> boundary;
+    std::map<std::pair<long long,long long>, gp_Pnt> exactBoundary;
+    std::vector<std::pair<gp_Pnt2d,gp_Pnt>> exactSamples;
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        for (BRepTools_WireExplorer we(TopoDS::Wire(wx.Current()), face);
+             we.More(); we.Next()) {
+            const TopoDS_Edge edge = we.Current();
+            if (BRep_Tool::Degenerated(edge)) continue;
+            const int eid = model.edges.FindIndex(edge);
+            if (eid < 1) return false;
+            double f, l, f3, l3;
+            Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(edge, face,
+                                                                 f, l);
+            Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, f3, l3);
+            if (pc.IsNull() || c3.IsNull()) return false;
+            const int n = std::max(1, solvedEdge[eid]);
+            const bool rev = edge.Orientation() == TopAbs_REVERSED;
+            for (double t : edgeSampleFractions(eid, n, 0.0, rev, false,
+                                                pins, &model)) {
+                gp_Pnt2d uv = pc->Value(f + (l-f)*t);
+                auto snap = [](double x, const std::vector<double>& s,
+                               double tol) {
+                    auto it = std::lower_bound(s.begin(),s.end(),x);
+                    double best=x, d=tol;
+                    if (it!=s.end() && std::abs(*it-x)<=d) {
+                        d=std::abs(*it-x); best=*it;
+                    }
+                    if (it!=s.begin()) {
+                        --it;
+                        if (std::abs(*it-x)<=d) best=*it;
+                    }
+                    return best;
+                };
+                uv.SetX(snap(uv.X(),U,stationTolU));
+                uv.SetY(snap(uv.Y(),V,stationTolV));
+                boundary.push_back(uv);
+                const gp_Pnt ep = c3->Value(f3 + (l3-f3)*t);
+                exactBoundary[uvKey(uv)] = ep;
+                exactSamples.push_back({uv,ep});
+            }
+        }
+        break;
+    }
+    if (boundary.size() < 3) return false;
+    auto clipHalfPlane = [](const std::vector<gp_Pnt2d>& in, bool axisU,
+                            double bound, bool keepGreater) {
+        std::vector<gp_Pnt2d> out;
+        if (in.empty()) return out;
+        auto val = [&](const gp_Pnt2d& p) { return axisU ? p.X() : p.Y(); };
+        auto inside = [&](const gp_Pnt2d& p) {
+            return keepGreater ? val(p) >= bound - 1e-12
+                               : val(p) <= bound + 1e-12;
+        };
+        gp_Pnt2d A = in.back(); bool aIn = inside(A);
+        for (const gp_Pnt2d& B : in) {
+            const bool bIn = inside(B);
+            if (aIn != bIn) {
+                const double av = val(A), bv = val(B);
+                const double t = std::abs(bv-av) > 1e-15
+                    ? std::clamp((bound-av)/(bv-av), 0.0, 1.0) : 0.0;
+                out.emplace_back(A.X() + (B.X()-A.X())*t,
+                                 A.Y() + (B.Y()-A.Y())*t);
+            }
+            if (bIn) out.push_back(B);
+            A = B; aIn = bIn;
+        }
+        return out;
+    };
+
+    const bool faceReversed = face.Orientation() == TopAbs_REVERSED;
+    const double tolF = BRep_Tool::Tolerance(face);
+    std::map<std::pair<long long, long long>, uint32_t> verts;
+    auto vertex = [&](const gp_Pnt2d& p) {
+        const auto key = uvKey(p);
+        auto it = verts.find(key);
+        if (it != verts.end()) return it->second;
+        auto xb = exactBoundary.find(key);
+        gp_Pnt p3 = xb != exactBoundary.end()
+                        ? xb->second : surf.Value(p.X(), p.Y());
+        if (xb == exactBoundary.end()) {
+            double best = 1e300;
+            for (const auto& [uv,ep] : exactSamples) {
+                const double duv = std::abs(uv.X()-p.X())/stationTolU +
+                                   std::abs(uv.Y()-p.Y())/stationTolV;
+                if (std::abs(uv.X()-p.X()) <= stationTolU &&
+                    std::abs(uv.Y()-p.Y()) <= stationTolV && duv < best) {
+                    best = duv; p3 = ep;
+                }
+            }
+            // Sloppy STEP pcurves can miss the shared 3D edge by several
+            // microns even at the same logical station. A cell vertex that
+            // is already within 0.02 mm of an exact pinned edge sample is
+            // that sample; canonicalize it now so the neighbouring face
+            // shares the identical point. The radius is well below the CAD
+            // profile's 0.1 mm deviation and only considers explicit pins.
+            gp_Pnt surfaceP = surf.Value(p.X(),p.Y());
+            double d3 = 0.02;
+            for (const auto& [uv,ep] : exactSamples) {
+                const double d = surfaceP.Distance(ep);
+                if (d < d3) { d3 = d; p3 = ep; }
+            }
+        }
+        const uint32_t id = out.addVertex(p3, {faceId, p.X(), p.Y()});
+        verts.emplace(key, id);
+        return id;
+    };
+    int emitted = 0, tris = 0, quads = 0, ngons = 0;
+    for (int j = 0; j + 1 < int(V.size()); ++j) {
+        if (V[j + 1] - V[j] <= vt) continue;
+        const double vb = V[j], vt2 = V[j+1], vm = 0.5*(vb+vt2);
+        struct Crossing { double u; size_t seg; };
+        std::vector<Crossing> cross;
+        for (size_t k = 0; k < boundary.size(); ++k) {
+            const gp_Pnt2d& a = boundary[k];
+            const gp_Pnt2d& b = boundary[(k+1)%boundary.size()];
+            if (std::abs(b.Y()-a.Y()) < 1e-14) continue;
+            if (vm < std::min(a.Y(),b.Y()) || vm > std::max(a.Y(),b.Y()))
+                continue;
+            const double t = (vm-a.Y())/(b.Y()-a.Y());
+            cross.push_back({a.X()+(b.X()-a.X())*t,k});
+        }
+        std::sort(cross.begin(), cross.end(),
+                  [](const Crossing& a,const Crossing& b){return a.u<b.u;});
+        auto onSegAtV = [&](size_t k, double v) {
+            const gp_Pnt2d& a = boundary[k];
+            const gp_Pnt2d& b = boundary[(k+1)%boundary.size()];
+            const double t = std::abs(b.Y()-a.Y()) > 1e-14
+                ? std::clamp((v-a.Y())/(b.Y()-a.Y()),0.0,1.0) : 0.0;
+            return gp_Pnt2d(a.X()+(b.X()-a.X())*t,v);
+        };
+        std::vector<std::vector<gp_Pnt2d>> slabs;
+        for (size_t k = 0; k + 1 < cross.size(); ++k) {
+            if (cross[k+1].u-cross[k].u <= ut) continue;
+            BRepClass_FaceClassifier cc(const_cast<TopoDS_Face&>(face),
+                gp_Pnt2d(0.5*(cross[k].u+cross[k+1].u),vm),tolF);
+            if (cc.State() == TopAbs_OUT) continue;
+            slabs.push_back({onSegAtV(cross[k].seg,vb),
+                             onSegAtV(cross[k+1].seg,vb),
+                             onSegAtV(cross[k+1].seg,vt2),
+                             onSegAtV(cross[k].seg,vt2)});
+        }
+        for (int i = 0; i + 1 < int(U.size()); ++i) {
+            if (U[i + 1] - U[i] <= ut) continue;
+            const double ul = U[i], ur = U[i+1];
+            for (const auto& slab : slabs) {
+            std::vector<gp_Pnt2d> poly = clipHalfPlane(slab,true,ul,true);
+            poly = clipHalfPlane(poly,true,ur,false);
+            if (poly.size() < 3) continue;
+            std::vector<gp_Pnt2d> clean;
+            std::set<std::pair<long long,long long>> cleanKeys;
+            for (const gp_Pnt2d& p : poly) {
+                if (!clean.empty() && p.Distance(clean.back()) <= 1e-10)
+                    continue;
+                if (cleanKeys.insert(uvKey(p)).second) clean.push_back(p);
+            }
+            if (clean.size() > 2 && clean.front().Distance(clean.back()) < 1e-10)
+                clean.pop_back();
+            if (clean.size() < 3) continue;
+            double area = 0.0, cu = 0.0, cv = 0.0;
+            for (size_t k = 0; k < clean.size(); ++k) {
+                const gp_Pnt2d& a = clean[k];
+                const gp_Pnt2d& b = clean[(k+1)%clean.size()];
+                area += a.X()*b.Y() - b.X()*a.Y();
+                cu += a.X(); cv += a.Y();
+            }
+            if (std::abs(area) < 1e-14) continue;
+            BRepClass_FaceClassifier cls(const_cast<TopoDS_Face&>(face),
+                gp_Pnt2d(cu/clean.size(), cv/clean.size()), tolF);
+            if (cls.State() == TopAbs_OUT) continue;
+            std::vector<uint32_t> ids;
+            ids.reserve(clean.size());
+            for (const gp_Pnt2d& p : clean) ids.push_back(vertex(p));
+            gp_XYZ nw(0,0,0);
+            for (size_t k = 0; k < clean.size(); ++k) {
+                const gp_XYZ a = surf.Value(clean[k].X(), clean[k].Y()).XYZ();
+                const gp_XYZ b = surf.Value(clean[(k+1)%clean.size()].X(),
+                                             clean[(k+1)%clean.size()].Y()).XYZ();
+                nw += gp_XYZ(a.Y()*b.Z()-a.Z()*b.Y(),
+                             a.Z()*b.X()-a.X()*b.Z(),
+                             a.X()*b.Y()-a.Y()*b.X());
+            }
+            gp_Pnt sp; gp_Vec du, dv;
+            surf.D1(cu/clean.size(), cv/clean.size(), sp, du, dv);
+            gp_Vec expected = du.Crossed(dv);
+            if (faceReversed) expected.Reverse();
+            if (gp_Vec(nw).Dot(expected) < 0) std::reverse(ids.begin(), ids.end());
+            out.addPolygon(std::move(ids), faceId, false);
+            if (clean.size() == 3) ++tris;
+            else if (clean.size() == 4) ++quads;
+            else ++ngons;
+            ++emitted;
+            }
+        }
+    }
+    // Clipping a non-convex trim exactly on a station line can leave a
+    // numerically tiny cell whose Newell test chooses the opposite hand.
+    // Propagate one consistent winding through shared lattice edges; each
+    // connected component's seed was already oriented to the CAD normal.
+    {
+        PolyMesh& pm = out.mesh();
+        struct Use { size_t poly; bool forward; };
+        std::map<std::pair<uint32_t,uint32_t>, std::vector<Use>> uses;
+        for (size_t pi = 0; pi < pm.polygons.size(); ++pi) {
+            const auto& p = pm.polygons[pi];
+            for (size_t k = 0; k < p.size(); ++k) {
+                const uint32_t a = p[k], b = p[(k+1)%p.size()];
+                uses[{std::min(a,b),std::max(a,b)}].push_back(
+                    {pi, a < b});
+            }
+        }
+        std::vector<std::vector<std::pair<size_t,bool>>> adj(pm.polygons.size());
+        for (const auto& [edge, u] : uses) {
+            if (u.size() != 2) continue;
+            const bool same = u[0].forward == u[1].forward;
+            adj[u[0].poly].push_back({u[1].poly, same});
+            adj[u[1].poly].push_back({u[0].poly, same});
+        }
+        std::vector<int> parity(pm.polygons.size(), -1);
+        for (size_t root = 0; root < parity.size(); ++root) {
+            if (parity[root] >= 0) continue;
+            parity[root] = 0;
+            std::vector<size_t> todo{root};
+            while (!todo.empty()) {
+                const size_t a = todo.back(); todo.pop_back();
+                for (const auto& [b, toggle] : adj[a]) {
+                    const int want = parity[a] ^ int(toggle);
+                    if (parity[b] < 0) { parity[b] = want; todo.push_back(b); }
+                }
+            }
+        }
+        for (size_t i = 0; i < parity.size(); ++i)
+            if (parity[i]) std::reverse(pm.polygons[i].begin(),
+                                        pm.polygons[i].end());
+    }
+    dbg("orthogonal grid face %d: %zux%zu stations, %d cells (%d tri, "
+        "%d quad, %d ngon)", faceId, U.size(), V.size(), emitted, tris,
+        quads, ngons);
+    return emitted > 0;
+}
+
 bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                         const Model& model, const std::vector<int>& rimEdges,
                         const std::vector<int>& solvedEdge, int faceId,
@@ -12981,7 +13646,13 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
             // -1 keeps the old "denser drives" so its many samples weld
             // rather than pile into one strip.
             const double vr0 = vRange(rim[0]), vr1 = vRange(rim[1]);
-            const double flatV = std::max(1e-6, 0.02 * bandH);
+            // Boolean-split analytic rims commonly carry a small pcurve
+            // wobble even though they are visually a level ring. Two percent
+            // rejected MP9 face 1310 at 3.9% and replaced a clean cylindrical
+            // transition with a dense contract web. Five percent still
+            // excludes genuinely wavy saddle rims while accepting this mild
+            // trim noise.
+            const double flatV = std::max(1e-6, 0.05 * bandH);
             if (std::abs(vr0 - vr1) > flatV) driveSide = vr0 > vr1 ? 0 : 1;
             // A strip can only stay convex over a FLAT rim: the drive rim
             // absorbs its wander by welding, but the stripped rim (the
@@ -17086,6 +17757,32 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     // Fillet flow-through: pin blend-chain cross-rails to the band columns
     // so columns run barrel -> fillet -> fillet -> lower band unbroken.
     pinFilletChains(model, plans, solvedEdge, pinnedEdge);
+    // Support-loop hold changes the sampling fractions along a fillet's
+    // across edges. Pin those fractions model-wide so fallback/planar
+    // neighbours sample the same shared edge instead of staying uniform and
+    // opening a seam. Chained sides require chain-global parameterization and
+    // keep their existing uniform contract for now.
+    for (const auto& [fid, plan] : plans) {
+        const FaceMeshSettings& fs = settings.forFace(fid);
+        if (!plan.isFillet || fs.filletHold <= 0.0) continue;
+        bool chained = false;
+        for (const auto& side : plan.coonsSides) chained |= !side.empty();
+        if (chained) continue;
+        const auto& across = plan.acrossIsU ? plan.uEdges : plan.vEdges;
+        for (int eid : across) {
+            if (eid < 1 || eid >= int(pinnedEdge.size()) ||
+                !pinnedEdge[eid].empty()) {
+                continue;
+            }
+            const int n = std::max(1, solvedEdge[eid]);
+            pinnedEdge[eid] = clusteredParams(n, fs.filletHold);
+        }
+    }
+    // One station set owns every side of an orthogonal trim. Propagate the
+    // intersections onto the shared B-rep edges so neighbouring faces emit
+    // the same points; otherwise a clean quad lattice would merely hide
+    // T-junctions along its border.
+    pinOrthogonalTrimGrids(model, plans, settings, solvedEdge, pinnedEdge);
 
     // Resolve every face's division counts up front (union-find lookups
     // path-compress, so they must not run concurrently) — after this the
@@ -17115,6 +17812,23 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         switch (plan.kind) {
             case MesherKind::RevolutionGrid:
             case MesherKind::DiskCap: {
+                if (plan.orthogonalTrimGrid) {
+                    const int radialWrap = std::max(
+                        1, int(std::lround(std::max(3, s.radial) *
+                                           plan.bandWrapFrac)));
+                    const int nuO = plan.orthogonalDriverU > 0
+                        ? std::max(solvedEdge[plan.orthogonalDriverU],
+                                   density.countFor(plan.orthogonalDriverU,
+                                                    radialWrap))
+                        : radialWrap;
+                    const int nvO = plan.orthogonalDriverV > 0
+                        ? std::max(solvedEdge[plan.orthogonalDriverV],
+                                   density.countFor(plan.orthogonalDriverV,
+                                                    std::max(1, s.axial)))
+                        : std::max(1, s.axial);
+                    counts[fid] = {std::max(1, nuO), std::max(1, nvO), 0};
+                    break;
+                }
                 if (plan.castellated) {
                     // Full-wrap castellated rim: the plain rim drives the
                     // column count (the notch is cut, never counted); the
@@ -17155,6 +17869,23 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             }
             case MesherKind::PlanarGrid:
             case MesherKind::CoonsGrid: {
+                if (plan.orthogonalTrimGrid) {
+                    counts[fid] = {
+                        plan.orthogonalDriverU > 0
+                            ? std::max(solvedEdge[plan.orthogonalDriverU],
+                                       density.countFor(
+                                           plan.orthogonalDriverU,
+                                           std::max(1, s.gridU)))
+                            : std::max(1, s.gridU),
+                        plan.orthogonalDriverV > 0
+                            ? std::max(solvedEdge[plan.orthogonalDriverV],
+                                       density.countFor(
+                                           plan.orthogonalDriverV,
+                                           std::max(1, s.gridV)))
+                            : std::max(1, s.gridV),
+                        0};
+                    break;
+                }
                 int defU = plan.isFillet && plan.acrossIsU ? s.filletLoops
                                                            : s.gridU;
                 int defV = plan.isFillet && !plan.acrossIsU ? s.filletLoops
@@ -17525,6 +18256,85 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         return 0;
     };
 
+    // Repair isolated folded floor cells without imposing a replacement
+    // lattice: insert one surface-anchored centre and fan only that polygon.
+    // Borders and all neighbouring polygons remain untouched. Returns true
+    // only when the resulting part has no inverted polygons.
+    auto repairFloorFolds = [&](int fid, const TopoDS_Face& face,
+                                PolyMesh& part) {
+        Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+        if (surface.IsNull()) return false;
+        BRepAdaptor_Surface sa(face);
+        const double up = sa.IsUPeriodic() ? sa.UPeriod() : 0.0;
+        const double vp = sa.IsVPeriodic() ? sa.VPeriod() : 0.0;
+        for (int pass = 0; pass < 3; ++pass) {
+            const auto folded = foldedPolys(model, part);
+            const int before = int(std::count(folded.begin(), folded.end(),
+                                              uint8_t{1}));
+            if (before == 0) return true;
+            PolyMesh cand = part;
+            bool changed = false;
+            const size_t originalPolys = part.polygons.size();
+            for (size_t pi = 0; pi < originalPolys; ++pi) {
+                if (pi >= folded.size() || !folded[pi]) continue;
+                const auto poly = part.polygons[pi];
+                if (poly.size() < 3) continue;
+                double cu = 0.0, cv = 0.0, uref = 0.0, vref = 0.0;
+                bool anchored = true;
+                for (size_t k = 0; k < poly.size(); ++k) {
+                    const uint32_t vi = poly[k];
+                    if (vi >= part.anchors.size() ||
+                        part.anchors[vi].faceId != fid) {
+                        anchored = false;
+                        break;
+                    }
+                    double u = part.anchors[vi].u;
+                    double v = part.anchors[vi].v;
+                    if (k == 0) {
+                        uref = u;
+                        vref = v;
+                    } else {
+                        if (up > 0) u -= up * std::round((u - uref) / up);
+                        if (vp > 0) v -= vp * std::round((v - vref) / vp);
+                    }
+                    cu += u;
+                    cv += v;
+                }
+                if (!anchored) continue;
+                cu /= poly.size();
+                cv /= poly.size();
+                const gp_Pnt cp = surface->Value(cu, cv);
+                const uint32_t ci = uint32_t(cand.vertices.size());
+                cand.vertices.push_back({cp.X(), cp.Y(), cp.Z()});
+                cand.anchors.push_back({fid, cu, cv});
+                const int pf = pi < cand.polygonFaceId.size()
+                                   ? cand.polygonFaceId[pi]
+                                   : fid;
+                cand.polygons[pi] = {poly[0], poly[1], ci};
+                for (size_t k = 1; k < poly.size(); ++k) {
+                    cand.polygons.push_back(
+                        {poly[k], poly[(k + 1) % poly.size()], ci});
+                    cand.polygonFaceId.push_back(pf);
+                }
+                if (pi < cand.polygonFaceId.size()) {
+                    cand.polygonFaceId[pi] = pf;
+                }
+                changed = true;
+            }
+            if (!changed) return false;
+            const auto afterMask = foldedPolys(model, cand);
+            const int after = int(std::count(afterMask.begin(),
+                                             afterMask.end(), uint8_t{1}));
+            if (after >= before) return false;
+            part = std::move(cand);
+            dbg("mesh face %d: floor fold repair %d -> %d", fid, before,
+                after);
+        }
+        const auto folded = foldedPolys(model, part);
+        return std::none_of(folded.begin(), folded.end(),
+                            [](uint8_t v) { return v != 0; });
+    };
+
     // One demotion path for every mesher failure: the contract floor
     // first (exact borders, cannot leak), verified; the raw OCCT
     // triangulation only when even that is unavailable.
@@ -17537,6 +18347,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         // refinement and the OCCT retry both honor the (budget-scaled)
         // deviation, so a failed mesher doesn't freeze the face's detail.
         FaceMeshSettings fsD = s;
+        // A failed structured strategy has already proved that imposed flow
+        // is unsafe. Keep its emergency floor as honest local triangles;
+        // only an explicit quad-dominant request may pair them.
+        if (!s.quadDominant) fsD.pureTriFloor = true;
         const double dscD = std::clamp(settings.densityScale, 0.05, 20.0);
         if (dscD != 1.0) {
             fsD.chordTolerance /= dscD * dscD;
@@ -17556,7 +18370,15 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                                     &pinnedEdge);
             const int floorBad =
                 built ? borderContractViolation(fid, parts[fid]) : -1;
+            int floorFolds = 0;
             if (built && floorBad == 0) {
+                if (!repairFloorFolds(fid, face, parts[fid])) {
+                    const auto folded = foldedPolys(model, parts[fid]);
+                    floorFolds = int(std::count(folded.begin(), folded.end(),
+                                                uint8_t{1}));
+                }
+            }
+            if (built && floorBad == 0 && floorFolds == 0) {
                 // Verified floor: borders are exact at the solved
                 // counts, so conform must treat them as authority,
                 // not as freeform movers to kidnap.
@@ -17564,12 +18386,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 dbg("mesh face %d: %s -> contract floor", fid, why);
                 return;
             }
-            dbg("mesh face %d: floor %s (edge %d)", fid,
-                built ? "violates contract" : "failed to build", floorBad);
+            dbg("mesh face %d: floor %s (edge %d, folds %d)", fid,
+                built ? "rejected" : "failed to build", floorBad,
+                floorFolds);
         }
         parts[fid] = PolyMesh();
         MeshBuilder retry(parts[fid]);
         meshFallback(face, surf, fid, fsD, retry);
+        repairFloorFolds(fid, face, parts[fid]);
         dbg("mesh face %d: %s -> OCCT fallback (no contract floor)", fid,
             why);
     };
@@ -17619,7 +18443,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         };
         switch (plan.kind) {
             case MesherKind::RevolutionGrid:
-                if (plan.castellated && !plan.insertWires.empty()) {
+                if (plan.orthogonalTrimGrid) {
+                    if (!meshOrthogonalTrimGrid(face, surf, model, plan,
+                                                solvedEdge, fid, nu, nv, out,
+                                                &pinnedEdge)) {
+                        demote(fid, face, surf, s,
+                               "orthogonal revolution grid failed");
+                    }
+                } else if (plan.castellated && !plan.insertWires.empty()) {
                     // A notched rim AND an interior slot on one wall
                     // (torture's muzzle): the rim-notch mesher cannot
                     // emit interior wires, so it was GUARANTEED to fail
@@ -17738,6 +18569,15 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 break;
             }
             case MesherKind::CoonsGrid: {
+                if (plan.orthogonalTrimGrid) {
+                    if (!meshOrthogonalTrimGrid(face, surf, model, plan,
+                                                solvedEdge, fid, nu, nv, out,
+                                                &pinnedEdge)) {
+                        demote(fid, face, surf, s,
+                               "orthogonal surface grid failed");
+                    }
+                    break;
+                }
                 double holdU = plan.isFillet && plan.acrossIsU ? s.filletHold : 0;
                 double holdV = plan.isFillet && !plan.acrossIsU ? s.filletHold : 0;
                 // One-direction-closed blend rings (the demo strut
@@ -17949,38 +18789,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                                  : &plan.insertWires,
                         std::max(0, s.junctionRings), &pinnedEdge,
                         s.cellCap, settings.decoupleSeams)) {
-                    // A coons cutout that only resolves its bores by
-                    // blowing the cell budget (the hole-scaffold pathology)
-                    // gets the structured quad-fill grid instead: a clean
-                    // quad interior with CDT-webbed holes at the same
-                    // pathology cap, far tidier than the contract-floor
-                    // fans. The demote stays the last resort. Gated on
-                    // cellCap>0 so a face that would have failed anyway
-                    // (guard off) takes the exact historical demote path.
-                    bool built = false;
-                    if (s.cellCap > 0 && !plan.insertWires.empty()) {
-                        parts[fid] = PolyMesh();
-                        MeshBuilder qf(parts[fid]);
-                        FaceMeshSettings qs = s;
-                        const double qsc =
-                            std::clamp(settings.densityScale, 0.05, 20.0);
-                        if (qsc != 1.0) {
-                            qs.chordTolerance /= qsc * qsc;
-                            qs.angleToleranceDeg = std::clamp(
-                                qs.angleToleranceDeg / qsc, 1.0, 60.0);
-                        }
-                        if (meshQuadFill(face, surf, model, fid, solvedEdge,
-                                         s.radial, qs, qf, quadGridU,
-                                         quadGridV)) {
-                            if (!s.pureTriFloor) pairPartTris(parts[fid]);
-                            built = borderContractViolation(
-                                        fid, parts[fid]) == 0;
-                        }
-                        if (!built) parts[fid] = PolyMesh();
-                    }
-                    if (!built) {
-                        demote(fid, face, surf, s, "coons failed");
-                    }
+                    demote(fid, face, surf, s, "coons failed");
                 }
                 break;
             }
@@ -18050,33 +18859,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 }
                 break;
             case MesherKind::RibbonSweep: {
-                // The rail sweep, or -- on any doubt (unequal rails, a fold,
-                // a leak) -- the exact quad-fill+pairing safe path this face
-                // would have taken, which is watertight by construction.
+                // The rail sweep, or on any doubt (unequal rails, a fold, a
+                // leak) the local exact-border floor. Never invent a global
+                // Quad Fill lattice as an emergency substitute.
                 if (meshRibbonSweep(face, model, fid, solvedEdge, s.radial,
                                     out, &builtCounts[fid])) {
                     break;
                 }
-                parts[fid] = PolyMesh();
-                MeshBuilder qf(parts[fid]);
-                FaceMeshSettings qs = s;
-                const double qsc =
-                    std::clamp(settings.densityScale, 0.05, 20.0);
-                if (qsc != 1.0) {
-                    qs.chordTolerance /= qsc * qsc;
-                    qs.angleToleranceDeg =
-                        std::clamp(qs.angleToleranceDeg / qsc, 1.0, 60.0);
-                }
-                if (!meshQuadFill(face, surf, model, fid, solvedEdge,
-                                  s.radial, qs, qf, quadGridU, quadGridV)) {
-                    demote(fid, face, surf, s, "ribbon->quad fill failed");
-                } else {
-                    // Fell back to the boundary-driven quad fill: report its
-                    // outer loop total, not a rail count.
-                    builtCounts[fid] = {
-                        outerWireSolvedTotal(face, model, solvedEdge, s.radial), 0};
-                    if (!s.pureTriFloor) pairPartTris(parts[fid]);
-                }
+                demote(fid, face, surf, s, "ribbon sweep failed");
                 break;
             }
             case MesherKind::QuadFill: {
@@ -18124,6 +18914,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 FaceMeshSettings fs = s;
                 if (plan.forceFallbackQuads >= 0) {
                     fs.quadDominant = plan.forceFallbackQuads != 0;
+                    fs.pureTriFloor = plan.forceFallbackQuads == 0;
                 }
                 // The global budget knob reaches triangulations too:
                 // deflection error scales with the SQUARE of linear
@@ -18145,16 +18936,22 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     meshSurfaceCapFan(face, model, fid, solvedEdge,
                                       s.radial, out) &&
                     borderContractViolation(fid, parts[fid]) == 0) {
-                    fellBack[fid] = 2;  // exact borders: conform authority
-                    break;
+                    if (repairFloorFolds(fid, face, parts[fid])) {
+                        fellBack[fid] = 2;  // exact borders: authority
+                        break;
+                    }
                 }
                 {
                     parts[fid] = PolyMesh();
                     MeshBuilder retryFloor(parts[fid]);
-                    if (meshContractFallback(face, model, fid, solvedEdge,
-                                             s.radial, retryFloor, &fs,
-                                             angleSplit, &pinnedEdge) &&
-                        borderContractViolation(fid, parts[fid]) == 0) {
+                    const bool builtFloor = meshContractFallback(
+                        face, model, fid, solvedEdge, s.radial, retryFloor,
+                        &fs, angleSplit, &pinnedEdge);
+                    const bool exactFloor =
+                        builtFloor &&
+                        borderContractViolation(fid, parts[fid]) == 0;
+                    if (exactFloor &&
+                        repairFloorFolds(fid, face, parts[fid])) {
                         fellBack[fid] = 2;  // exact borders: authority
                         break;
                     }
@@ -18162,6 +18959,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 parts[fid] = PolyMesh();
                 MeshBuilder retryFb(parts[fid]);
                 meshFallback(face, surf, fid, fs, retryFb);
+                repairFloorFolds(fid, face, parts[fid]);
                 break;
             }
         }
@@ -18182,18 +18980,34 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         if (plan.kind != MesherKind::Fallback &&
             plan.kind != MesherKind::QuadDominant) {
             std::set<std::pair<uint32_t, uint32_t>> seen;
+            std::map<std::pair<uint32_t,uint32_t>, size_t> seenAt;
             bool sane = true;
-            for (const auto& poly : parts[fid].polygons) {
+            uint32_t repeatA = 0, repeatB = 0;
+            size_t repeatPoly = 0;
+            for (size_t pi = 0; pi < parts[fid].polygons.size(); ++pi) {
+                const auto& poly = parts[fid].polygons[pi];
                 for (size_t i = 0; i < poly.size() && sane; ++i) {
-                    if (!seen.insert({poly[i],
-                                      poly[(i + 1) % poly.size()]})
-                             .second) {
+                    repeatA = poly[i];
+                    repeatB = poly[(i + 1) % poly.size()];
+                    repeatPoly = pi;
+                    const auto directed = std::make_pair(repeatA, repeatB);
+                    if (!seen.insert(directed).second) {
                         sane = false;
+                    } else {
+                        seenAt[directed] = pi;
                     }
                 }
                 if (!sane) break;
             }
             if (!sane) {
+                if (plan.orthogonalTrimGrid) {
+                    const Anchor& aa = parts[fid].anchors[repeatA];
+                    const Anchor& ab = parts[fid].anchors[repeatB];
+                    dbg("orthogonal face %d repeated directed edge %u->%u "
+                        "uv (%.8g,%.8g)->(%.8g,%.8g) at polygon %zu "
+                        "(first %zu)", fid, repeatA, repeatB, aa.u, aa.v,
+                        ab.u, ab.v, repeatPoly, seenAt[{repeatA,repeatB}]);
+                }
                 demote(fid, face, surf, s, "self-check failed");
             }
         }
@@ -18210,6 +19024,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         if (!settings.decoupleSeams && !fellBack[fid] &&
             plan.kind != MesherKind::Fallback &&
             plan.kind != MesherKind::QuadDominant &&
+            !plan.orthogonalTrimGrid &&
             !(plan.isFillet && s.filletHold > 0.0)) {
             const int bad = borderContractViolation(fid, parts[fid]);
             if (bad) {
@@ -19044,7 +19859,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         unionSeams(mesh, model, weldGlobal);
     }
     timingCheckpoint("union seams");
-    if (settings.decoupleSeams && !std::getenv("WEFT_NO_STITCH")) {
+    const bool hasOrthogonalTrim = std::any_of(
+        plans.begin(), plans.end(), [](const auto& kv) {
+            return kv.second.orthogonalTrimGrid;
+        });
+    if ((settings.decoupleSeams || hasOrthogonalTrim) &&
+        !std::getenv("WEFT_NO_STITCH")) {
         // The curve-guided stitcher: every 2-owner B-rep edge's two sides
         // merge onto one parameter-sorted vertex chain, closing the seams
         // the decoupled counts left open. Twin fusion first: two samples

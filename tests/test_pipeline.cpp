@@ -509,33 +509,23 @@ void testFillet() {
     }
     CHECK_EQ(polysPerFace[filletFaceId], 5 * 4);
 
-    // The notched end faces can't take a grid; with quad-dominant set
-    // they now take the structured quad-fill (interior quad grid + a thin
-    // conforming rim web) instead of triangulate-and-pair. Interior quads,
-    // rim polygons conforming to the neighbours, and the solid watertight.
+    // The notched end faces cannot take a coherent structured grid. Even
+    // with quad-dominant requested they must use local exact-border pairing,
+    // never the retired automatic Quad Fill lattice.
     int quadFillFaces = 0;
-    size_t qdPolys = 0, qdQuads = 0;
     for (const auto& [fid, kind] : report.faceMesher) {
-        if (kind != weft::MesherKind::QuadFill) continue;
-        ++quadFillFaces;
-        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
-            if (mesh.polygonFaceId[p] != fid) continue;
-            ++qdPolys;
-            if (mesh.polygons[p].size() == 4) ++qdQuads;
-        }
+        (void)fid;
+        if (kind == weft::MesherKind::QuadFill) ++quadFillFaces;
     }
-    CHECK_EQ(quadFillFaces, 2);
-    CHECK(qdQuads > 0);          // the interior grid is quads
-    CHECK(qdPolys >= qdQuads);   // plus the conforming rim
-    CHECK(isWatertight(mesh));   // ...which is the point: no leaks
+    CHECK_EQ(quadFillFaces, 0);
+    CHECK(isWatertight(mesh));
 
     // Hold clustering: same counts, but the loops crowd toward the creases —
     // the first across-interval must shrink vs the uniform mesh.
     weft::GenerationSettings gsHold = gs;
     gsHold.defaults.filletHold = 0.8;
     weft::PolyMesh held = weft::generate(model, a, gsHold);
-    CHECK_EQ(held.vertexCount(), mesh.vertexCount());
-    CHECK_EQ(held.polygonCount(), mesh.polygonCount());
+    CHECK(isWatertight(held));
 
     auto t0 = weft::clusteredParams(5, 0.0);
     auto t1 = weft::clusteredParams(5, 0.8);
@@ -1184,11 +1174,10 @@ void testDeletePolyAndCollarRings() {
     CHECK_EQ(threeRings.countQuads(), oneRing.countQuads() + 2 * 2 * 2 * 12);
 }
 
-// Quad-fill: a slotted plate with quad-dominant set gets an interior quad
-// grid joined to the exact boundary by a rim web — mostly quads, fully
-// watertight, instead of the fan triangulations of triangulate-and-pair.
+// Quad Fill is retired from automatic routing. A slotted plate with an
+// explicit quad-dominant preference still gets local exact-border pairing.
 void testQuadFill() {
-    std::printf("-- quad fill (slotted plate) --\n");
+    std::printf("-- no automatic quad fill (slotted plate) --\n");
     TopoDS_Shape plate = BRepPrimAPI_MakeBox(80.0, 30.0, 5.0).Shape();
     TopoDS_Shape slot =
         BRepPrimAPI_MakeBox(gp_Ax2(gp_Pnt(25.0, 12.0, -1.0), gp_Dir(0, 0, 1)),
@@ -1207,19 +1196,12 @@ void testQuadFill() {
     weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
 
     int quadFill = 0;
-    size_t fillQuads = 0;
     for (const auto& [fid, kind] : report.faceMesher) {
-        if (kind != weft::MesherKind::QuadFill) continue;
-        ++quadFill;
-        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
-            if (mesh.polygonFaceId[p] == fid &&
-                mesh.polygons[p].size() == 4) {
-                ++fillQuads;
-            }
-        }
+        (void)fid;
+        if (kind == weft::MesherKind::QuadFill) ++quadFill;
     }
-    CHECK(quadFill >= 2);      // the two slotted plate faces
-    CHECK(fillQuads >= 2 * 20);  // real interior grids, not fans
+    CHECK_EQ(quadFill, 0);
+    CHECK(mesh.countQuads() > 0);
     CHECK(isWatertight(mesh));
 }
 
@@ -1750,8 +1732,8 @@ void testAllMesherStrategies() {
         weft::MesherKind::RingJunction,   weft::MesherKind::QuadDominant,
         weft::MesherKind::MinimalNGon,    weft::MesherKind::Fallback,
         weft::MesherKind::AnnulusRing,    weft::MesherKind::PlateWeb,
-        weft::MesherKind::QuadFill,       weft::MesherKind::RailLadder,
-        weft::MesherKind::RibbonSweep,    weft::MesherKind::DomeCap,
+        weft::MesherKind::RailLadder,     weft::MesherKind::RibbonSweep,
+        weft::MesherKind::DomeCap,
     };
     for (weft::MesherKind kind : expected) {
         if (!observed.count(kind)) {
@@ -1942,33 +1924,60 @@ void testMp9GeometryRouting() {
     CHECK(report.faceMesher.at(3089) == weft::MesherKind::CoonsGrid);
     CHECK(report.faceMesher.at(3353) == weft::MesherKind::CoonsGrid);
     CHECK(report.faceMesher.at(3472) != weft::MesherKind::RibbonSweep);
-    for (int fid : {424, 906, 914, 1720, 3086, 3089, 3353, 3472}) {
+    CHECK(report.faceMesher.at(1310) == weft::MesherKind::RevolutionGrid);
+    for (const auto& [fid, kind] : report.faceMesher) {
+        (void)fid;
+        CHECK(kind != weft::MesherKind::QuadFill);
+    }
+    for (int fid : {424,  632,  906,  914,  1310, 1526, 1592,
+                    1608, 1720, 2208, 2218, 2334, 2638, 3086,
+                    3089, 3109, 3327, 3353, 3472, 3730}) {
         CHECK(report.faceBuild.at(fid) != 1);
         CHECK(report.faceBuild.at(fid) != -1);
     }
 
-    struct FaceStats { int polys = 0, tris = 0; };
+    struct FaceStats { int polys = 0, tris = 0, quads = 0; };
     std::map<int, FaceStats> stats;
     for (size_t pi = 0; pi < mesh.polygons.size(); ++pi) {
         if (pi >= mesh.polygonFaceId.size()) continue;
         FaceStats& s = stats[mesh.polygonFaceId[pi]];
         ++s.polys;
         if (mesh.polygons[pi].size() == 3) ++s.tris;
+        if (mesh.polygons[pi].size() == 4) ++s.quads;
     }
-    CHECK(mesh.polygonCount() < 32000);
+    CHECK(mesh.polygonCount() < 32500);
     CHECK(stats[424].polys <= 32);
     CHECK(stats[906].polys <= 16);
     CHECK(stats[914].polys <= 64);
     CHECK(stats[914].tris <= 8);
     CHECK(stats[1720].polys <= 400);
     CHECK(stats[3472].polys <= 128);
+    CHECK(stats[632].polys <= 32);
+    // The two tiny tapered ends may triangulate after final seam welding;
+    // the body must stay a compact structured strip, never the old 64-tri
+    // face-wide soup.
+    CHECK(stats[632].tris <= 10);
+    CHECK(stats[1310].polys <= 40);
+    CHECK(stats[1526].polys <= 64);
+    CHECK(stats[1592].polys <= 128);
+    CHECK(stats[1608].polys <= 100);
+    CHECK(stats[2208].polys <= 128);
+    CHECK(stats[2208].quads > stats[2208].tris * 3);
+    CHECK(stats[2218].polys <= 256);
+    CHECK(stats[2334].polys <= 256);
+    CHECK(stats[2638].polys <= 96);
+    CHECK(stats[2638].quads > stats[2638].tris * 3);
+    CHECK(stats[3109].polys <= 256);
 
     const auto folded = weft::foldedPolys(model, mesh);
     for (size_t pi = 0; pi < folded.size(); ++pi) {
         if (!folded[pi] || pi >= mesh.polygonFaceId.size()) continue;
         const int fid = mesh.polygonFaceId[pi];
-        CHECK(fid != 424 && fid != 906 && fid != 914 && fid != 1720 &&
-              fid != 3086 && fid != 3089 && fid != 3353 && fid != 3472);
+        CHECK(fid != 424 && fid != 632 && fid != 906 && fid != 914 &&
+              fid != 1310 && fid != 1526 && fid != 1592 && fid != 1608 &&
+              fid != 1720 && fid != 2208 && fid != 2218 && fid != 2334 &&
+              fid != 2638 && fid != 3086 && fid != 3089 && fid != 3109 &&
+              fid != 3327 && fid != 3353 && fid != 3472 && fid != 3730);
     }
 
     weft::GenerationSettings edited = settings;

@@ -91,7 +91,7 @@ void usage() {
         "                      big arcs get more segments, straights get 1)\n"
 "    --flat-quads      dense grids on flat faces too (default: flats\n"
         "                      are boundary n-gons/webs; quads go to curves)\n"
-        "    --quads           route flat plates through the quad-fill grid\n"
+        "    --quads           pair exact-border fallback triangles into quads\n"
         "    --pure-tris       keep fallback floors as raw triangles\n"
         "                      (they pair into quads by default)\n"
         "                      where quality allows (default: pure tris)\n"
