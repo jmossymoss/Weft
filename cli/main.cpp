@@ -20,7 +20,6 @@
 #include <stdexcept>
 #include <algorithm>
 #include <map>
-#include <memory>
 #include <string>
 #include <vector>
 
@@ -179,24 +178,8 @@ int cmdConvert(const std::vector<std::string>& args) {
 
     weft::io::System sys;
     weft::io::bootstrapIo(sys);
-    weft::Model model = weft::io::importFile(sys, input);
-
     weft::io::Format out = sys.probeFormatForOutput(output);
-    const weft::io::FactoryWriter* fw = sys.findFactoryWriter(out);
-    std::unique_ptr<weft::io::Writer> w = sys.createWriter(out);
-    if (!w || !fw) throw std::runtime_error("no writer for output: " + output);
-    weft::io::ParamGroup pg = fw->createParams(out);
-    w->applyParams(pg);
-
-    weft::PolyMesh mesh;  // populated only for mesh targets (kept alive here)
-    weft::io::WriteInput in;
-    in.model = &model;
-    if (!weft::io::formatProvidesBRep(out)) {
-        mesh = weft::io::tessellate(model);
-        in.mesh = &mesh;
-    }
-    if (!w->transfer(in)) throw std::runtime_error("writer rejected input for " + output);
-    w->writeFile(output);
+    weft::io::convertFile(sys, input, output);
     std::printf("%s -> %s (%s)\n", input.c_str(), output.c_str(),
                 std::string(weft::io::formatIdentifier(out)).c_str());
     return 0;
@@ -348,11 +331,9 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     auto exportMesh = [&](const weft::PolyMesh& m, const std::string& path) {
         weft::io::Format out = sys.probeFormatForOutput(path);
         const weft::io::FactoryWriter* fw = sys.findFactoryWriter(out);
-        std::unique_ptr<weft::io::Writer> w = sys.createWriter(out);
-        if (!w || !fw) {  // unknown extension -> preserve the old OBJ fallback
+        if (!fw) {  // unknown extension -> preserve the old OBJ fallback
             out = weft::io::Format::Obj;
             fw = sys.findFactoryWriter(out);
-            w = sys.createWriter(out);
         }
         weft::io::ParamGroup pg = fw->createParams(out);
         auto setIf = [&](const char* k, const std::string& v) {
@@ -362,10 +343,8 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         setIf("yUp", objOpts.yUp ? "true" : "false");
         setIf("scale", std::to_string(objOpts.scale));
         setIf("normals", noNormals ? "false" : "true");
-        w->applyParams(pg);
         weft::io::WriteInput in{&m, &model, &analysis.solidFaces};
-        if (!w->transfer(in)) throw std::runtime_error("writer rejected input for " + path);
-        w->writeFile(path);
+        weft::io::exportFile(sys, out, in, path, &pg);
     };
 
     // LOD tiers: one control setup, one export per density factor.

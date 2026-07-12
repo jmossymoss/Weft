@@ -5,6 +5,7 @@
 #include "weft/analysis.hpp"
 #include "weft/edit.hpp"
 #include "weft/fixture.hpp"
+#include "weft/io/system.hpp"
 #include "weft/mesh.hpp"
 #include "weft/meshers.hpp"
 #include "weft/model.hpp"
@@ -14,19 +15,24 @@
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
+#include <BRep_Builder.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepTools.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Compound.hxx>
 #include <gp_Ax2.hxx>
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
+#include <thread>
 
 static int failures = 0;
 
@@ -1474,6 +1480,87 @@ void testGenerationCache() {
     CHECK(isWatertight(cachedRun));
 }
 
+// Top-level generation is a library API and may be called by independent
+// workers. Seam mode must belong to each invocation; one caller must not
+// change another caller's planning or emission decisions.
+void testConcurrentGenerationSettings() {
+    std::printf("-- concurrent generation settings --\n");
+    std::string stepPath = tmpPath("weft_test_concurrent.step");
+    weft::writeStep(weft::makeFixture("demo"), stepPath);
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis a = weft::analyze(model);
+
+    weft::GenerationSettings coupled;
+    coupled.parallelMeshing = false;
+    weft::GenerationSettings decoupled = coupled;
+    decoupled.decoupleSeams = true;
+
+    const weft::PolyMesh coupledBase = weft::generate(model, a, coupled);
+    const weft::PolyMesh decoupledBase = weft::generate(model, a, decoupled);
+    CHECK(coupledBase.polygonCount() != decoupledBase.polygonCount());
+
+    for (int pass = 0; pass < 4; ++pass) {
+        std::atomic<int> ready{0};
+        std::atomic<bool> go{false};
+        weft::PolyMesh coupledRun, decoupledRun;
+        auto run = [&](const weft::GenerationSettings& settings,
+                       weft::PolyMesh& result) {
+            ready.fetch_add(1, std::memory_order_release);
+            while (!go.load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
+            result = weft::generate(model, a, settings);
+        };
+        std::thread aThread(run, std::cref(coupled),
+                            std::ref(coupledRun));
+        std::thread bThread(run, std::cref(decoupled),
+                            std::ref(decoupledRun));
+        while (ready.load(std::memory_order_acquire) != 2) {
+            std::this_thread::yield();
+        }
+        go.store(true, std::memory_order_release);
+        aThread.join();
+        bThread.join();
+
+        CHECK_EQ(coupledRun.vertexCount(), coupledBase.vertexCount());
+        CHECK_EQ(coupledRun.polygonCount(), coupledBase.polygonCount());
+        CHECK_EQ(decoupledRun.vertexCount(), decoupledBase.vertexCount());
+        CHECK_EQ(decoupledRun.polygonCount(), decoupledBase.polygonCount());
+    }
+}
+
+// The high-level conversion path owns the full CAD -> mesh -> writer
+// workflow. Multi-body CAD must stay multi-object in DCC-oriented output.
+void testCadConversionPreservesObjects() {
+    std::printf("-- CAD conversion object grouping --\n");
+    BRep_Builder builder;
+    TopoDS_Compound assembly;
+    builder.MakeCompound(assembly);
+    builder.Add(assembly, BRepPrimAPI_MakeBox(1.0, 2.0, 3.0).Shape());
+    builder.Add(assembly,
+                BRepPrimAPI_MakeBox(gp_Pnt(5.0, 0.0, 0.0),
+                                    2.0, 2.0, 2.0).Shape());
+
+    const std::string stepPath = tmpPath("weft_test_convert_objects.step");
+    const std::string objPath = tmpPath("weft_test_convert_objects.obj");
+    weft::writeStep(assembly, stepPath);
+
+    weft::io::System io;
+    weft::io::bootstrapIo(io);
+    weft::io::convertFile(io, stepPath, objPath);
+
+    std::ifstream obj(objPath);
+    CHECK(obj.good());
+    int objects = 0;
+    int faceGroups = 0;
+    for (std::string line; std::getline(obj, line);) {
+        if (line.rfind("o ", 0) == 0) ++objects;
+        if (line.rfind("g face_", 0) == 0) ++faceGroups;
+    }
+    CHECK_EQ(objects, 2);
+    CHECK(faceGroups > 0);
+}
+
 // Announce each test and turn stray exceptions into a named failure
 // instead of a silent fail-fast crash (0xc0000409 on Windows).
 #define RUN(fn)                                               \
@@ -1646,6 +1733,8 @@ int main() {
     RUN(testWeldTolerance);
     RUN(testWeldVerts);
     RUN(testGenerationCache);
+    RUN(testConcurrentGenerationSettings);
+    RUN(testCadConversionPreservesObjects);
     if (failures) {
         std::printf("\n%d FAILURE(S)\n", failures);
         return 1;

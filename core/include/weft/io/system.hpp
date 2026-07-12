@@ -60,6 +60,14 @@ Model importFile(const System&, const std::string& path);  // probe->create->rea
 void exportFile(const System&, Format, const WriteInput&, const std::string& path,
                 const ParamGroup* = nullptr);
 
+// Complete format-conversion workflow. B-rep targets serialize the imported
+// model directly; mesh targets tessellate it and preserve the CAD model's
+// solid/object grouping in formats that support separate objects or nodes.
+// With no params, the target writer's advertised defaults are applied.
+void convertFile(const System&, const std::string& inputPath,
+                 const std::string& outputPath,
+                 const ParamGroup* outputParams = nullptr);
+
 // Default BRepMesh tessellation of Model::shape (for B-rep -> mesh convert,
 // which has no retopo step). polygonFaceId carries the model's FaceId.
 PolyMesh tessellate(const Model&);

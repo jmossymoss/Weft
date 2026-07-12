@@ -1,5 +1,7 @@
 #include "weft/io/system.hpp"
 
+#include "weft/analysis.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -106,6 +108,34 @@ void exportFile(const System& sys, Format fmt, const WriteInput& in, const std::
     if (params) w->applyParams(*params);
     if (!w->transfer(in)) throw std::runtime_error("writer transfer failed: " + path);
     if (!w->writeFile(path)) throw std::runtime_error("failed to write file: " + path);
+}
+
+void convertFile(const System& sys, const std::string& inputPath,
+                 const std::string& outputPath,
+                 const ParamGroup* outputParams) {
+    Model model = importFile(sys, inputPath);
+    const Format outputFormat = sys.probeFormatForOutput(outputPath);
+    const FactoryWriter* factory = sys.findFactoryWriter(outputFormat);
+    if (!factory) {
+        throw std::runtime_error("no writer registered for output: " +
+                                 outputPath);
+    }
+
+    PolyMesh mesh;
+    Analysis analysis;
+    WriteInput input;
+    input.model = &model;
+    if (!formatProvidesBRep(outputFormat)) {
+        mesh = tessellate(model);
+        analysis = analyze(model);
+        input.mesh = &mesh;
+        input.solidFaces = &analysis.solidFaces;
+    }
+
+    ParamGroup defaults;
+    if (!outputParams) defaults = factory->createParams(outputFormat);
+    exportFile(sys, outputFormat, input, outputPath,
+               outputParams ? outputParams : &defaults);
 }
 
 }  // namespace weft::io

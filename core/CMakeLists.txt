@@ -37,11 +37,10 @@ target_include_directories(weft_core
   PUBLIC ${OpenCASCADE_INCLUDE_DIR}
 )
 
-# The io subsystem's registry API uses std::span (Mayo-faithful signatures);
-# the repo otherwise defaults to C++17. Require C++20 for weft_core's own
-# translation units. Kept PRIVATE: Stage A callers (cli/app/tests) do not
-# include the io headers, so their standard is unchanged.
-target_compile_features(weft_core PRIVATE cxx_std_20)
+# The public io registry API uses std::span, so consumers that include those
+# headers must compile as C++20 too. Propagate the requirement through the
+# target instead of making each CLI/app/test target rediscover it manually.
+target_compile_features(weft_core PUBLIC cxx_std_20)
 
 # OCCT 7.8 merged TKSTEP/TKSTEPBase/TKSTEPAttr/TKSTEP209 into TKDESTEP.
 if(TARGET TKDESTEP)

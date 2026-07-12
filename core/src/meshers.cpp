@@ -63,28 +63,24 @@ namespace weft {
 
 // Stage-by-stage debug trace. Guarded by a mutex, flushed per line, so a
 // crash log's last line names the exact face/edge/stage that died.
-static std::FILE* gDebugLog = nullptr;
+static std::atomic<std::FILE*> gDebugLog{nullptr};
 static std::mutex gDebugMutex;
 
-void setGenerateDebugLog(std::FILE* f) { gDebugLog = f; }
-
-// Decoupled-seams experiment (GenerationSettings::decoupleSeams), visible
-// to the deep mesher internals without threading a parameter through
-// every signature: set once at generate() entry, read by the coons body
-// (emit the lattice's own rail instead of a natural-rail transition
-// strip). One generate() runs at a time per process today; the worker
-// threads of that run all read the same value.
-static std::atomic<bool> gStitchMode{false};
+void setGenerateDebugLog(std::FILE* f) {
+    gDebugLog.store(f, std::memory_order_release);
+}
 
 static void dbg(const char* fmt, ...) {
-    if (!gDebugLog) return;
+    if (!gDebugLog.load(std::memory_order_acquire)) return;
     std::lock_guard<std::mutex> lock(gDebugMutex);
+    std::FILE* log = gDebugLog.load(std::memory_order_acquire);
+    if (!log) return;
     va_list args;
     va_start(args, fmt);
-    std::fprintf(gDebugLog, "[core] ");
-    std::vfprintf(gDebugLog, fmt, args);
-    std::fputc('\n', gDebugLog);
-    std::fflush(gDebugLog);
+    std::fprintf(log, "[core] ");
+    std::vfprintf(log, fmt, args);
+    std::fputc('\n', log);
+    std::fflush(log);
     va_end(args);
 }
 
@@ -1838,7 +1834,8 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
                        const std::vector<int>& solvedEdge, MeshBuilder& out,
                        const std::vector<double>* uScaffold = nullptr,
                        const std::vector<double>* vScaffold = nullptr,
-                       const PinnedEdges* pins = nullptr) {
+                       const PinnedEdges* pins = nullptr,
+                       bool decoupleSeams = false) {
     CoonsPatch patch;
     if (!makeCoonsPatch(face, model, patch, rotate)) return false;
     Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
@@ -2043,7 +2040,7 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
     std::vector<BPt> natBottom, natTop;  // natural deficit rails
     if (bottom.size() != top.size() && bottom.size() >= 2 &&
         top.size() >= 2) {
-        if (gStitchMode.load(std::memory_order_relaxed)) {
+        if (decoupleSeams) {
             // Decoupled seams: NO transition strip — the lattice's own
             // arc-uniform resampling of the deficit rail IS the emitted
             // border (points on the rail curve via surface eval). The
@@ -3796,11 +3793,12 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
                    const std::vector<int>& solvedEdge, MeshBuilder& out,
                    const std::vector<std::vector<int>>* inserts = nullptr,
                    int collarRings = 1,
-                   const PinnedEdges* pins = nullptr, int cellCap = 0) {
+                   const PinnedEdges* pins = nullptr, int cellCap = 0,
+                   bool decoupleSeams = false) {
     if (!inserts || inserts->empty()) {
         return meshCoonsGridBody(face, model, faceId, uParams, vParams,
                                  rotate, solvedEdge, out, nullptr, nullptr,
-                                 pins);
+                                 pins, decoupleSeams);
     }
     dbg("coons cutout %d: %zu insert wire(s)", faceId, inserts->size());
     // Hole rings: 3D edge curves at solved counts (the bore wall's own
@@ -4013,7 +4011,8 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
         {
             MeshBuilder tmp(grid);
             if (!meshCoonsGridBody(face, model, faceId, uParams, vParams,
-                                   rotate, solvedEdge, tmp, uSc, vSc, pins)) {
+                                   rotate, solvedEdge, tmp, uSc, vSc, pins,
+                                   decoupleSeams)) {
                 dbg("coons cutout %d: body failed (attempt %d)", faceId,
                     attempt);
                 return false;
@@ -8169,7 +8168,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             !surf.IsUClosed() &&
             surf.LastUParameter() - surf.FirstUParameter() >= 1.0) {
             if (tryOpenBand()) {
-                if (!gStitchMode.load() &&
+                if (!settings.decoupleSeams &&
                     (plan.rimLow.size() != 1 || plan.rimHigh.size() != 1)) {
                     dbg("plan face %d: drum multi-piece rims -> coons",
                         fid);
@@ -12606,7 +12605,8 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
                         const std::vector<double>* vRowsOpt = nullptr,
                         const std::vector<int>* rimLowOpt = nullptr,
                         std::array<int, 2>* built = nullptr,
-                        bool dedupeDriveRim = false) {
+                        bool dedupeDriveRim = false,
+                        bool decoupleSeams = false) {
     nu = std::max(3, nu);
     nv = std::max(1, nv);
     const double v0 = surf.FirstVParameter();
@@ -12760,7 +12760,7 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
     // extra polygon vertices (quad -> 5-gon, the absorption pattern).
     // Only u-monotone rims that wind one full period qualify — a rim
     // that doubles back in azimuth keeps the strict machinery below.
-    if (gStitchMode.load(std::memory_order_relaxed) && !vWrap && !vRows &&
+    if (decoupleSeams && !vWrap && !vRows &&
         rim[0].size() >= 3 && rim[1].size() >= 3 &&
         rim[0].size() != rim[1].size()) {
         struct StitchRow {
@@ -13560,7 +13560,8 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
                           const FacePlan& plan,
                           const std::vector<int>& solvedEdge, int faceId,
                           int nu, int nv, MeshBuilder& out,
-                          const PinnedEdges* pins = nullptr) {
+                          const PinnedEdges* pins = nullptr,
+                          bool decoupleSeams = false) {
     // Row alignment (rows exactly at each band's v-extents) is what
     // makes the staircase close; a v-closed surface ignores explicit
     // rows, so refuse and let the face take the contract floor.
@@ -13678,7 +13679,8 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
             built = meshRevolutionGrid(
                 face, surf, model, plan.uEdges, solvedEdge, faceId, nu,
                 int(vRows.size()) - 1, tmp, &vRows,
-                plan.rimLow.empty() ? nullptr : &plan.rimLow);
+                plan.rimLow.empty() ? nullptr : &plan.rimLow, nullptr,
+                false, decoupleSeams);
         }
         if (!built) return false;
     }
@@ -14959,7 +14961,7 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
             // stitcher. (A complete-but-small set is legitimate: a
             // sloppy freeform border decimating onto a coarse analytic
             // contract keeps working — 1797609in needs exactly that.)
-            if (gStitchMode.load(std::memory_order_relaxed) &&
+            if (settings.decoupleSeams &&
                 (analyticNb || freeformSeam)) {
                 size_t loose = 0;
                 const double tolLoose =
@@ -16168,8 +16170,6 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         plans.emplace(fid, std::move(plan));
     }
     dbg("generate: plans done");
-    gStitchMode.store(settings.decoupleSeams, std::memory_order_relaxed);
-
     propagateBandRadialToBlendGroup(analysis, plans, settings);
 
     DensitySolution density = solveDensity(model, plans, settings);
@@ -17514,7 +17514,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     // the same floor catches it, no worse than before.
                     if (!meshRevolutionInsert(face, surf, model, plan,
                                               solvedEdge, fid, nu, nv,
-                                              out, &pinnedEdge)) {
+                                              out, &pinnedEdge,
+                                              settings.decoupleSeams)) {
                         demote(fid, face, surf, s,
                                "castellated insert failed");
                     }
@@ -17548,7 +17549,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     // rim linkage.
                     if (!meshRevolutionInsert(face, surf, model, plan,
                                               solvedEdge, fid, nu, nv,
-                                              out)) {
+                                              out, nullptr,
+                                              settings.decoupleSeams)) {
                         demote(fid, face, surf, s,
                                "revolution insert failed");
                     }
@@ -17590,7 +17592,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             face, surf, model, plan.uEdges, solvedEdge, fid,
                             nu, nv, out, nullptr,
                             plan.rimLow.empty() ? nullptr : &plan.rimLow,
-                            &builtCounts[fid])) {
+                            &builtCounts[fid], false,
+                            settings.decoupleSeams)) {
                         // Same floor the border-contract postcondition
                         // used to reach — but explicit, so the relaxed
                         // stitch mode can't ship the empty part as a
@@ -17829,7 +17832,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         plan.insertWires.empty() ? nullptr
                                                  : &plan.insertWires,
                         std::max(0, s.junctionRings), &pinnedEdge,
-                        s.cellCap)) {
+                        s.cellCap, settings.decoupleSeams)) {
                     // A coons cutout that only resolves its bores by
                     // blowing the cell budget (the hole-scaffold pathology)
                     // gets the structured quad-fill grid instead: a clean
@@ -18252,7 +18255,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                 fid, nu, nv, cb2, nullptr,
                                 plan.rimLow.empty() ? nullptr
                                                     : &plan.rimLow,
-                                &bc2, /*dedupeDriveRim=*/true) &&
+                                &bc2, /*dedupeDriveRim=*/true,
+                                settings.decoupleSeams) &&
                             borderContractViolation(fid, cand2) == 0) {
                             const auto [t2, i2] = invertedCells(cand2);
                             (void)t2;
