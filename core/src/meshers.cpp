@@ -8,6 +8,7 @@
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBndLib.hxx>
@@ -50,6 +51,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <map>
 #include <memory>
@@ -190,6 +192,38 @@ struct FacePlan {
     // sweep pairs stations by arc length; dispatch tries it first and
     // keeps coons as the byte-identical fallback.
     bool tryRibbonSweep = false;
+};
+
+bool sameFaceSettings(const FaceMeshSettings& a,
+                      const FaceMeshSettings& b) {
+    return a.radial == b.radial && a.axial == b.axial &&
+           a.gridU == b.gridU && a.gridV == b.gridV && a.cap == b.cap &&
+           a.chordTolerance == b.chordTolerance &&
+           a.angleToleranceDeg == b.angleToleranceDeg &&
+           a.filletLoops == b.filletLoops &&
+           a.filletHold == b.filletHold &&
+           a.junctionRings == b.junctionRings &&
+           a.quadDominant == b.quadDominant &&
+           a.pureTriFloor == b.pureTriFloor && a.minimal == b.minimal &&
+           a.exclude == b.exclude && a.forceMesher == b.forceMesher &&
+           a.linkRims == b.linkRims && a.minSize == b.minSize &&
+           a.relativeDeviation == b.relativeDeviation &&
+           a.weldTolerance == b.weldTolerance &&
+           a.squareCollar == b.squareCollar &&
+           a.coonsRotate == b.coonsRotate && a.boundary == b.boundary &&
+           a.adaptive == b.adaptive && a.cellCap == b.cellCap;
+}
+
+struct CachedFacePlan {
+    FaceMeshSettings effective;
+    FaceMeshSettings defaults;
+    bool explicitFace = false;
+    bool decoupleSeams = false;
+    FacePlan plan;
+};
+
+struct FacePlanCache {
+    std::map<int, CachedFacePlan> faces;
 };
 
 // A genuine full revolution band's boundary consists only of its two
@@ -8415,7 +8449,8 @@ void propagateBandRadialToBlendGroup(const Analysis& analysis,
 }
 
 DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
-                             const GenerationSettings& settings) {
+                             const GenerationSettings& settings,
+                             GenerationCache* cache) {
     DensitySolution sol(model.edgeCount());
 
     for (const auto& [fid, plan] : plans) {
@@ -8529,7 +8564,7 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
     // use only: BRepBndLib::Add can warm OCCT triangulation caches and
     // change later fallback output, so profiles that never take the
     // relative path must never query the box.
-    double adDiag = -1.0;
+    double adDiag = cache ? cache->modelDiagonal : -1.0;
     auto adModelDiag = [&]() {
         if (adDiag < 0) {
             adDiag = 1e-9;
@@ -8541,16 +8576,20 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                 adDiag = std::max(
                     1e-9, gp_Pnt(x0, y0, z0).Distance(gp_Pnt(x1, y1, z1)));
             }
+            if (cache) cache->modelDiagonal = adDiag;
         }
         return adDiag;
     };
-    std::map<std::tuple<int, long long, long long>, int> adCache;
+    std::map<std::array<long long, 4>, int> localAdCache;
+    auto& adCache = cache ? cache->adaptiveEdgeCounts : localAdCache;
     auto adaptiveCount = [&](int eid, const FaceMeshSettings& s) {
-        auto key = std::make_tuple(
+        const std::array<long long, 4> key = {
             eid,
-            (long long)(s.chordTolerance * 1e9) +
+            static_cast<long long>(s.chordTolerance * 1e9) * 2 +
                 (s.relativeDeviation ? 1 : 0),
-            (long long)(s.angleToleranceDeg * 1e6));
+            static_cast<long long>(s.angleToleranceDeg * 1e6),
+            static_cast<long long>(settings.defaults.angleToleranceDeg *
+                                   1e6)};
         auto it = adCache.find(key);
         if (it != adCache.end()) return it->second;
         int n = 1;
@@ -14358,7 +14397,14 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     {
         static std::mutex occtMeshMutex;
         std::lock_guard<std::mutex> lock(occtMeshMutex);
-        BRepTools::Clean(face);
+        // Triangulation is cache state on the face/edge TShapes. Cleaning and
+        // meshing the live model mutates the B-rep, so an identical warm-cache
+        // generation can solve different adaptive counts than the cold run.
+        // Mesh an isolated topology copy while sharing the exact geometry.
+        BRepBuilderAPI_Copy copier(face, Standard_False, Standard_False);
+        const TopoDS_Face triangulationFace =
+            TopoDS::Face(copier.Shape());
+        BRepTools::Clean(triangulationFace);
         IMeshTools_Parameters mp;
         // Relative mode scales the tolerance by THIS FACE's extent
         // ourselves (sagitta as a fraction of feature size — the same
@@ -14383,8 +14429,8 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         mp.Relative = Standard_False;
         if (s.minSize > 0) mp.MinSize = s.minSize;
         mp.InParallel = Standard_True;
-        BRepMesh_IncrementalMesh mesher(face, mp);
-        tri = BRep_Tool::Triangulation(face, loc);
+        BRepMesh_IncrementalMesh mesher(triangulationFace, mp);
+        tri = BRep_Tool::Triangulation(triangulationFace, loc);
     }
     if (tri.IsNull()) return;
 
@@ -15992,6 +16038,23 @@ int outerWireSolvedTotal(const TopoDS_Face& face, const Model& model,
 PolyMesh generate(const Model& model, const Analysis& analysis,
                   const GenerationSettings& settingsIn, GenerationReport* report,
                   GenerationCache* cache) {
+    const bool timingEnabled = std::getenv("WEFT_TIMINGS") != nullptr;
+    auto timingLast = std::chrono::steady_clock::now();
+    const auto timingBegin = timingLast;
+    auto timingCheckpoint = [&](const char* stage) {
+        if (!timingEnabled) return;
+        const auto now = std::chrono::steady_clock::now();
+        const auto delta = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               now - timingLast)
+                               .count();
+        const auto total = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               now - timingBegin)
+                               .count();
+        std::fprintf(stderr, "timing: %-20s %6lld ms (%6lld total)\n", stage,
+                     static_cast<long long>(delta),
+                     static_cast<long long>(total));
+        timingLast = now;
+    };
     // Local mutable copy: a per-face radial override on a revolution band is
     // propagated across its connected blend group (below) so the whole barrel
     // densifies as one unit instead of stranding a neighbour at the old count.
@@ -15999,21 +16062,54 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     dbg("generate: begin (%d faces, %d edges, parallel=%d, conform=%d)",
         model.faceCount(), model.edgeCount(), settings.parallelMeshing ? 1 : 0,
         settings.conformBorders ? 1 : 0);
+    std::shared_ptr<FacePlanCache> planCache;
+    if (cache) {
+        if (cache->facePlans) {
+            planCache =
+                std::static_pointer_cast<FacePlanCache>(cache->facePlans);
+        } else {
+            planCache = std::make_shared<FacePlanCache>();
+            cache->facePlans = planCache;
+        }
+    }
     std::map<int, FacePlan> plans;
     for (int fid = 1; fid <= model.faceCount(); ++fid) {
-        FacePlan plan = planFace(fid, model, analysis, settings, cache);
-        if (settings.forFace(fid).exclude) {
+        const FaceMeshSettings& effective = settings.forFace(fid);
+        const bool explicitFace = settings.perFace.count(fid) != 0;
+        FacePlan plan;
+        bool reusedPlan = false;
+        if (planCache) {
+            auto it = planCache->faces.find(fid);
+            if (it != planCache->faces.end() &&
+                it->second.explicitFace == explicitFace &&
+                it->second.decoupleSeams == settings.decoupleSeams &&
+                sameFaceSettings(it->second.effective, effective) &&
+                sameFaceSettings(it->second.defaults, settings.defaults)) {
+                plan = it->second.plan;
+                reusedPlan = true;
+            }
+        }
+        if (!reusedPlan) {
+            plan = planFace(fid, model, analysis, settings, cache);
+        }
+        if (!reusedPlan && effective.exclude) {
             // Deleted faces neither mesh nor constrain their neighbours'
             // densities — their borders become free boundary loops.
             plan.kind = MesherKind::Fallback;
             plan.constrains = false;
         }
+        if (!reusedPlan && planCache) {
+            planCache->faces[fid] = {effective, settings.defaults,
+                                     explicitFace, settings.decoupleSeams,
+                                     plan};
+        }
         plans.emplace(fid, std::move(plan));
     }
     dbg("generate: plans done");
+    timingCheckpoint("face planning");
     propagateBandRadialToBlendGroup(analysis, plans, settings);
 
-    DensitySolution density = solveDensity(model, plans, settings);
+    DensitySolution density = solveDensity(model, plans, settings, cache);
     // Curvature floor, every mode: a curved edge solved below its turn
     // angle collapses to chords — observed as two bracket-bend
     // quarter-pipes flattening into the SAME plane strip and weld-fusing
@@ -16043,8 +16139,16 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         GeomAdaptor_Curve gc(c3, f, l);
         if (gc.GetType() == GeomAbs_Line) continue;
         try {
-            const int floorN =
-                std::clamp(stableDeflectionCount(gc, M_PI / 3.0, 1e6), 1, 32);
+            int floorN = 0;
+            if (cache) {
+                auto fit = cache->curvatureFloors.find(eid);
+                if (fit != cache->curvatureFloors.end()) floorN = fit->second;
+            }
+            if (floorN == 0) {
+                floorN = std::clamp(
+                    stableDeflectionCount(gc, M_PI / 3.0, 1e6), 1, 32);
+                if (cache) cache->curvatureFloors[eid] = floorN;
+            }
             auto [it, inserted] = floorOfRoot.try_emplace(root, floorN);
             if (!inserted && it->second < floorN) it->second = floorN;
         } catch (const Standard_Failure&) {
@@ -16820,6 +16924,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         }
     }
     dbg("generate: density solved");
+    timingCheckpoint("density solve");
 
     // Pin castellated rims' base arcs to their column azimuths (the
     // column-alignment contract): the notch band and the neighbour annulus
@@ -16980,15 +17085,32 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         const double dsc = std::clamp(settings.densityScale, 0.05, 20.0);
         std::vector<double> faceArea(faceN + 1, 0.0);
         double modelArea = 0.0;
-        for (int fid = 1; fid <= faceN; ++fid) {
-            try {
-                GProp_GProps gp;
-                BRepGProp::SurfaceProperties(TopoDS::Face(model.faces(fid)),
-                                             gp);
-                faceArea[fid] = std::max(0.0, gp.Mass());
-            } catch (const Standard_Failure&) {
+        const bool cachedAreas =
+            cache && cache->modelArea >= 0.0 &&
+            int(cache->faceAreas.size()) == faceN;
+        if (cachedAreas) {
+            modelArea = cache->modelArea;
+            for (int fid = 1; fid <= faceN; ++fid) {
+                faceArea[fid] = cache->faceAreas.at(fid);
             }
-            modelArea += faceArea[fid];
+        } else {
+            for (int fid = 1; fid <= faceN; ++fid) {
+                try {
+                    GProp_GProps gp;
+                    BRepGProp::SurfaceProperties(
+                        TopoDS::Face(model.faces(fid)), gp);
+                    faceArea[fid] = std::max(0.0, gp.Mass());
+                } catch (const Standard_Failure&) {
+                }
+                modelArea += faceArea[fid];
+            }
+            if (cache) {
+                cache->faceAreas.clear();
+                for (int fid = 1; fid <= faceN; ++fid) {
+                    cache->faceAreas[fid] = faceArea[fid];
+                }
+                cache->modelArea = modelArea;
+            }
         }
         if (modelArea > 1e-12) {
             for (int fid = 1; fid <= faceN; ++fid) {
@@ -17094,6 +17216,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 ++cacheHits;
             }
         }
+    }
+    const int cacheMisses = faceN - cacheHits;
+    timingCheckpoint("counts + cache keys");
+    if (settings.progressTotal) {
+        settings.progressTotal->store(cacheMisses, std::memory_order_relaxed);
     }
     // Border-contract oracle: does this part contain every border edge
     // of the face at its solved sampling (each consecutive pair of
@@ -18143,18 +18270,29 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         }
     };
 
+    std::vector<int> workFaces;
+    workFaces.reserve(cacheMisses);
+    for (int fid = 1; fid <= faceN; ++fid) {
+        if (!cached[fid]) workFaces.push_back(fid);
+    }
     unsigned threads = std::min<unsigned>(
-        std::max(1u, std::thread::hardware_concurrency()), unsigned(faceN));
+        std::max(1u, std::thread::hardware_concurrency()),
+        std::max(1u, static_cast<unsigned>(workFaces.size())));
     if (!settings.parallelMeshing) threads = 1;
     if (threads > 1) {
         // OCCT computes pcurves and UV bounds lazily and caches them on
         // the SHARED TShape — workers racing through
         // BRepTools::AddUVBounds / BRep_Tool::CurveOnSurface segfault on
         // large assemblies (observed inside meshCoonsGrid on an 8k-face
-        // model). Warm every face's caches single-threaded first; the
-        // parallel pass then only reads.
-        for (int fid = 1; fid <= faceN; ++fid) {
-            if (cached[fid]) continue;
+        // model). Warm only the cache-miss faces and their edges
+        // single-threaded first; the parallel pass then only reads.
+        std::vector<char> warmEdge(model.edgeCount() + 1, 0);
+        for (int fid : workFaces) {
+            for (TopExp_Explorer ex(model.faces(fid), TopAbs_EDGE); ex.More();
+                 ex.Next()) {
+                const int eid = model.edges.FindIndex(ex.Current());
+                if (eid > 0) warmEdge[eid] = 1;
+            }
             try {
                 Bnd_Box2d warm;
                 BRepTools::AddUVBounds(TopoDS::Face(model.faces(fid)), warm);
@@ -18164,6 +18302,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             }
         }
         for (int eid = 1; eid <= model.edgeCount(); ++eid) {
+            if (!warmEdge[eid]) continue;
             try {
                 double f = 0, l = 0;
                 (void)BRep_Tool::Curve(TopoDS::Edge(model.edges(eid)), f, l);
@@ -18201,25 +18340,26 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             dbg("mesh face %d: fallback threw too -> left empty", fid);
         }
     };
-    auto meshFaceCached = [&](int fid) {
-        if (!cached[fid]) meshFaceGuarded(fid);
+    auto meshFaceNeeded = [&](int fid) {
+        meshFaceGuarded(fid);
         if (settings.progressFaces) {
-            settings.progressFaces->fetch_add(1, std::memory_order_relaxed);
+            settings.progressFaces->fetch_add(1,
+                                               std::memory_order_relaxed);
         }
     };
     if (threads <= 1) {
-        for (int fid = 1; fid <= faceN; ++fid) meshFaceCached(fid);
+        for (int fid : workFaces) meshFaceNeeded(fid);
     } else {
-        std::atomic<int> nextFace{1};
+        std::atomic<size_t> nextFace{0};
         std::exception_ptr firstError;
         std::mutex errorMutex;
         std::vector<std::thread> pool;
         for (unsigned t = 0; t < threads; ++t) {
             pool.emplace_back([&] {
                 try {
-                    for (int fid = nextFace.fetch_add(1); fid <= faceN;
-                         fid = nextFace.fetch_add(1)) {
-                        meshFaceCached(fid);
+                    for (size_t wi = nextFace.fetch_add(1);
+                         wi < workFaces.size(); wi = nextFace.fetch_add(1)) {
+                        meshFaceNeeded(workFaces[wi]);
                     }
                 } catch (...) {
                     std::lock_guard<std::mutex> lock(errorMutex);
@@ -18239,6 +18379,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             }
         }
     }
+    timingCheckpoint("face meshing");
 
     // Report the counts the mesher ACTUALLY built, per face, against what was
     // requested — so a --radial a shared/feature-constrained rim couldn't take
@@ -18315,8 +18456,15 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                fellBack);
         dbg("generate: borders conformed");
     }
+    timingCheckpoint("merge + conform");
 
     if (report) {
+        report->cacheHits = cacheHits;
+        report->cacheMisses = cacheMisses;
+        for (int fid = 1; fid <= faceN; ++fid) {
+            (cached[fid] ? report->reusedFaces : report->remeshedFaces)
+                .push_back(fid);
+        }
         for (int fid = 1; fid <= faceN; ++fid) {
             const FaceMeshSettings& s = settings.forFace(fid);
             const FacePlan& plan = plans.at(fid);
@@ -18457,24 +18605,60 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             gp_Pnt target;  // canonical point (group representative)
         };
         std::vector<Corner> corners;
+        double cornerCell = 1e-7;
         for (int i = 1; i <= vmap.Extent(); ++i) {
             const TopoDS_Vertex v = TopoDS::Vertex(vmap(i));
             const int r = find(i);
-            corners.push_back(
-                {BRep_Tool::Pnt(v),
-                 std::max({1e-7, 2.0 * BRep_Tool::Tolerance(v),
-                           1.05 * reach[r]}),
-                 BRep_Tool::Pnt(TopoDS::Vertex(vmap(r)))});
+            const double tol =
+                std::max({1e-7, 2.0 * BRep_Tool::Tolerance(v),
+                          1.05 * reach[r]});
+            corners.push_back({BRep_Tool::Pnt(v), tol,
+                               BRep_Tool::Pnt(TopoDS::Vertex(vmap(r)))});
+            cornerCell = std::max(cornerCell, tol);
+        }
+
+        // Spatially index CAD corners. The previous all-pairs scan compared
+        // every mesh vertex with every B-rep vertex: MP9's ~41k mesh vertices
+        // and thousands of CAD corners made a fully cached face edit spend
+        // most of its time here. A cell is the largest capture radius, so any
+        // matching corner must be in the query cell or one of its 26
+        // neighbours. Keep the lowest corner index to preserve the old
+        // first-match behaviour when tolerance spheres overlap.
+        using CornerCell = std::tuple<long long, long long, long long>;
+        std::map<CornerCell, std::vector<size_t>> cornerGrid;
+        auto cornerCellOf = [&](const gp_Pnt& p) -> CornerCell {
+            return {static_cast<long long>(std::floor(p.X() / cornerCell)),
+                    static_cast<long long>(std::floor(p.Y() / cornerCell)),
+                    static_cast<long long>(std::floor(p.Z() / cornerCell))};
+        };
+        for (size_t i = 0; i < corners.size(); ++i) {
+            cornerGrid[cornerCellOf(corners[i].at)].push_back(i);
         }
         size_t snapped = 0;
         for (auto& mv : mesh.vertices) {
             gp_Pnt p(mv[0], mv[1], mv[2]);
-            for (const auto& c : corners) {
-                if (p.SquareDistance(c.at) < c.tol * c.tol) {
-                    mv = {c.target.X(), c.target.Y(), c.target.Z()};
-                    ++snapped;
-                    break;
+            const auto [cx, cy, cz] = cornerCellOf(p);
+            size_t best = corners.size();
+            for (long long dx = -1; dx <= 1; ++dx) {
+                for (long long dy = -1; dy <= 1; ++dy) {
+                    for (long long dz = -1; dz <= 1; ++dz) {
+                        auto it = cornerGrid.find(
+                            {cx + dx, cy + dy, cz + dz});
+                        if (it == cornerGrid.end()) continue;
+                        for (size_t ci : it->second) {
+                            if (ci >= best) continue;
+                            const Corner& c = corners[ci];
+                            if (p.SquareDistance(c.at) < c.tol * c.tol) {
+                                best = ci;
+                            }
+                        }
+                    }
                 }
+            }
+            if (best != corners.size()) {
+                const Corner& c = corners[best];
+                mv = {c.target.X(), c.target.Y(), c.target.Z()};
+                ++snapped;
             }
         }
         dbg("generate: %zu corner verts canonicalized, %d micro edges "
@@ -18582,11 +18766,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     };
 
     finish(mesh);
+    timingCheckpoint("corner repair + weld");
     if (settings.conformBorders) {
         // Post-weld: borders share ids now, so an open edge with an exact
         // complement path is a REAL T-junction, never a pre-weld ghost.
         unionSeams(mesh, model, weldGlobal);
     }
+    timingCheckpoint("union seams");
     if (settings.decoupleSeams && !std::getenv("WEFT_NO_STITCH")) {
         // The curve-guided stitcher: every 2-owner B-rep edge's two sides
         // merge onto one parameter-sorted vertex chain, closing the seams
@@ -18829,6 +19015,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
 
     dbg("generate: done (%zu verts, %zu polys)", mesh.vertexCount(),
         mesh.polygonCount());
+    timingCheckpoint("cleanup");
     return mesh;
 }
 

@@ -35,6 +35,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <vector>
 
 static int failures = 0;
 
@@ -1457,29 +1458,62 @@ void testNudgeVertex() {
 void testGenerationCache() {
     std::printf("-- generation cache --\n");
     std::string stepPath = tmpPath("weft_test_cache.step");
-    weft::writeStep(weft::makeFixture("boss"), stepPath);
+    weft::writeStep(weft::makeFixture("fillet"), stepPath);
     weft::Model model = weft::loadStep(stepPath);
     weft::Analysis a = weft::analyze(model);
 
     weft::GenerationSettings gs;
     gs.defaults.minimal = false;  // legacy dense-flat counts
     gs.defaults.radial = 14;
+    std::atomic<int> progress{0}, progressTotal{-1};
+    gs.progressFaces = &progress;
+    gs.progressTotal = &progressTotal;
     weft::GenerationCache cache;
-    weft::PolyMesh first = weft::generate(model, a, gs, nullptr, &cache);
-    weft::PolyMesh again = weft::generate(model, a, gs, nullptr, &cache);
+    weft::GenerationReport firstReport, againReport;
+    weft::PolyMesh first =
+        weft::generate(model, a, gs, &firstReport, &cache);
+    weft::PolyMesh again =
+        weft::generate(model, a, gs, &againReport, &cache);
     CHECK_EQ(again.vertexCount(), first.vertexCount());
     CHECK_EQ(again.polygonCount(), first.polygonCount());
     CHECK(isWatertight(again));
+    CHECK_EQ(firstReport.cacheMisses, model.faceCount());
+    CHECK_EQ(againReport.cacheHits, model.faceCount());
+    CHECK_EQ(againReport.cacheMisses, 0);
+    CHECK_EQ(progressTotal.load(), 0);
+    CHECK_EQ(progress.load(), model.faceCount());  // first run only
 
-    // Change one face; the cached result must equal a cache-less one.
-    gs.perFace[1] = gs.defaults;
-    gs.perFace[1].gridU = 3;
-    gs.perFace[1].gridV = 3;
-    weft::PolyMesh cachedRun = weft::generate(model, a, gs, nullptr, &cache);
-    weft::PolyMesh freshRun = weft::generate(model, a, gs);
+    // Change one face without changing its border counts; exactly that local
+    // part should rebuild while every independent face remains cached.
+    int editedFace = 0;
+    for (const auto& [fid, kind] : firstReport.faceMesher) {
+        if (kind == weft::MesherKind::CoonsGrid) {
+            editedFace = fid;
+            break;
+        }
+    }
+    CHECK(editedFace > 0);
+    gs.perFace[editedFace] = gs.defaults;
+    gs.perFace[editedFace].coonsRotate = 1;
+    progress = 0;
+    progressTotal = -1;
+    weft::GenerationReport editReport;
+    weft::PolyMesh cachedRun =
+        weft::generate(model, a, gs, &editReport, &cache);
+    CHECK_EQ(progressTotal.load(), editReport.cacheMisses);
+    CHECK_EQ(progress.load(), editReport.cacheMisses);
+    weft::GenerationSettings freshSettings = gs;
+    freshSettings.progressFaces = nullptr;
+    freshSettings.progressTotal = nullptr;
+    weft::PolyMesh freshRun = weft::generate(model, a, freshSettings);
     CHECK_EQ(cachedRun.vertexCount(), freshRun.vertexCount());
     CHECK_EQ(cachedRun.polygonCount(), freshRun.polygonCount());
     CHECK(isWatertight(cachedRun));
+    CHECK(editReport.cacheHits > 0);
+    CHECK(editReport.cacheMisses < model.faceCount());
+    CHECK_EQ(editReport.cacheHits + editReport.cacheMisses, model.faceCount());
+    std::printf("  local edit: %d remeshed, %d reused\n",
+                editReport.cacheMisses, editReport.cacheHits);
 }
 
 // Top-level generation is a library API and may be called by independent
@@ -1853,6 +1887,88 @@ void testWeldVerts() {
     CHECK(std::abs(loaded.ops[0].weldPoints[1][0] - lastPos[0]) < 1e-9);
 }
 
+void testCadCorpus() {
+    std::printf("-- layered CAD corpus --\n");
+    const std::filesystem::path root =
+        std::filesystem::path(__FILE__).parent_path();
+    const std::filesystem::path manifest = root / "CAD_CORPUS.tsv";
+    std::ifstream in(manifest);
+    CHECK(in.good());
+    std::string line;
+    int cases = 0, fastCases = 0;
+    while (std::getline(in, line)) {
+        if (line.empty() || line.rfind("name\t", 0) == 0) continue;
+        std::vector<std::string> field;
+        for (size_t pos = 0;;) {
+            const size_t tab = line.find('\t', pos);
+            field.push_back(line.substr(pos, tab - pos));
+            if (tab == std::string::npos) break;
+            pos = tab + 1;
+        }
+        CHECK(field.size() >= 9);
+        if (field.size() < 9) continue;
+        ++cases;
+        const std::string& name = field[0];
+        const std::filesystem::path step = root / field[2];
+        CHECK(std::filesystem::exists(step));
+        if (field[7] != "-") {
+            const std::filesystem::path visual = root / field[7];
+            CHECK(std::filesystem::exists(visual));
+            if (std::filesystem::exists(visual)) {
+                CHECK(std::filesystem::file_size(visual) > 1024);
+            }
+        }
+        if (field[3] != "1") continue;  // hero/performance tier is explicit
+        ++fastCases;
+
+        const int maxRaw = std::stoi(field[4]);
+        const int maxEmpty = std::stoi(field[5]);
+        const bool requireWatertight = field[6] == "1";
+        weft::Model model = weft::loadStep(step.string());
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationSettings settings;
+        settings.defaults.minimal = true;
+        settings.defaults.adaptive = true;
+        settings.defaults.relativeDeviation = true;
+        weft::GenerationCache cache;
+        weft::GenerationReport report;
+        weft::PolyMesh mesh =
+            weft::generate(model, analysis, settings, &report, &cache);
+        int raw = 0, empty = 0;
+        for (const auto& [fid, build] : report.faceBuild) {
+            (void)fid;
+            if (build == 1) ++raw;
+            if (build == -1) ++empty;
+        }
+        CHECK(!mesh.polygons.empty());
+        CHECK(raw <= maxRaw);
+        CHECK(empty <= maxEmpty);
+        if (requireWatertight) CHECK(isWatertight(mesh));
+
+        // A second pass must be fully cached and deterministic. This keeps the
+        // corpus useful for the interactive one-face regeneration workflow.
+        weft::GenerationReport againReport;
+        weft::PolyMesh again =
+            weft::generate(model, analysis, settings, &againReport, &cache);
+        if (againReport.cacheMisses != 0) {
+            std::printf("    unexpected warm-cache misses:");
+            for (int fid : againReport.remeshedFaces) {
+                std::printf(" %d", fid);
+            }
+            std::printf("\n");
+        }
+        CHECK_EQ(again.vertexCount(), mesh.vertexCount());
+        CHECK_EQ(again.polygonCount(), mesh.polygonCount());
+        CHECK_EQ(againReport.cacheHits, model.faceCount());
+        CHECK_EQ(againReport.cacheMisses, 0);
+        std::printf("  %-28s %4d faces  raw=%d empty=%d%s\n", name.c_str(),
+                    model.faceCount(), raw, empty,
+                    requireWatertight ? " watertight" : " open/known issue");
+    }
+    CHECK(cases >= 28);
+    CHECK(fastCases >= 27);
+}
+
 int main() {
     RUN(testCylinder);
     RUN(testBox);
@@ -1883,6 +1999,7 @@ int main() {
     RUN(testConcurrentGenerationSettings);
     RUN(testCadConversionPreservesObjects);
     RUN(testAllMesherStrategies);
+    RUN(testCadCorpus);
     if (failures) {
         std::printf("\n%d FAILURE(S)\n", failures);
         return 1;

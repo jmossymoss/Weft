@@ -14,12 +14,17 @@
 #include "weft/recipe.hpp"
 #include "weft/validate.hpp"
 
+#include <BRep_Builder.hxx>
+#include <TopoDS_Compound.hxx>
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <algorithm>
+#include <chrono>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -41,6 +46,10 @@ void usage() {
         "      list B-rep faces (type, radius, neighbors) and edges\n"
         "      (convexity, dihedral angle)\n"
         "\n"
+        "  weft extract <in.step> --faces ID[,ID...] --rings N -o <out.step>\n"
+        "      write selected source faces plus N adjacency rings as a small\n"
+        "      regression STEP file (default: one neighbor ring)\n"
+        "\n"
         "  weft validate <in.step> [mesh options]\n"
         "      bake-ready checks: watertightness, winding, degenerates,\n"
         "      chord deviation vs the live B-rep; exits 1 on leaks\n"
@@ -54,6 +63,10 @@ void usage() {
         "      face's radial through the list, re-validating each result —\n"
         "      an edit must never open a seam, demote a face to raw\n"
         "      triangulation, or leave one empty; exits 1 on any failure\n"
+        "\n"
+        "  weft cache-check <in.step> --face ID:key=value[,key=value...]\n"
+        "      generate once, apply one face edit, and report exact remesh\n"
+        "      face ids plus cold, edit and identical-warm timings\n"
         "\n"
         "  weft mesh <in.step> -o <out.obj|out.glb|out.stl|out.fbx> [options]\n"
         "      generate topology and export OBJ (groups carry face IDs)\n"
@@ -158,6 +171,77 @@ int cmdInspect(const std::vector<std::string>& args) {
         }
         std::printf("]\n");
     }
+    return 0;
+}
+
+std::set<int> parseIdList(const std::string& value) {
+    std::set<int> ids;
+    for (size_t pos = 0; pos < value.size();) {
+        size_t comma = value.find(',', pos);
+        if (comma == std::string::npos) comma = value.size();
+        const std::string token = value.substr(pos, comma - pos);
+        if (token.empty()) throw std::runtime_error("empty face id");
+        ids.insert(std::stoi(token));
+        pos = comma + 1;
+    }
+    return ids;
+}
+
+int cmdExtract(const std::vector<std::string>& args) {
+    if (args.empty()) { usage(); return 2; }
+    const std::string input = args[0];
+    std::string output;
+    std::set<int> selected;
+    int rings = 1;
+    for (size_t i = 1; i < args.size(); ++i) {
+        if (args[i] == "--faces" && i + 1 < args.size()) {
+            selected = parseIdList(args[++i]);
+        } else if (args[i] == "--rings" && i + 1 < args.size()) {
+            rings = std::stoi(args[++i]);
+        } else if ((args[i] == "-o" || args[i] == "--output") &&
+                   i + 1 < args.size()) {
+            output = args[++i];
+        } else {
+            throw std::runtime_error("unknown extract option: " + args[i]);
+        }
+    }
+    if (selected.empty()) throw std::runtime_error("extract needs --faces");
+    if (output.empty()) throw std::runtime_error("extract needs -o <out.step>");
+    if (rings < 0 || rings > 8) {
+        throw std::runtime_error("--rings must be between 0 and 8");
+    }
+
+    weft::Model model = weft::loadStep(input);
+    weft::Analysis analysis = weft::analyze(model);
+    for (int fid : selected) {
+        if (fid < 1 || fid > model.faceCount()) {
+            throw std::runtime_error("face id out of range: " +
+                                     std::to_string(fid));
+        }
+    }
+
+    std::set<int> included = selected;
+    std::set<int> frontier = selected;
+    for (int ring = 0; ring < rings; ++ring) {
+        std::set<int> next;
+        for (int fid : frontier) {
+            for (int neighbor : analysis.faces[fid - 1].neighborFaceIds) {
+                if (included.insert(neighbor).second) next.insert(neighbor);
+            }
+        }
+        frontier = std::move(next);
+        if (frontier.empty()) break;
+    }
+
+    BRep_Builder builder;
+    TopoDS_Compound compound;
+    builder.MakeCompound(compound);
+    for (int fid : included) builder.Add(compound, model.faces(fid));
+    weft::writeStep(compound, output);
+    std::printf("%s -> %s: %zu face(s), source ids:", input.c_str(),
+                output.c_str(), included.size());
+    for (int fid : included) std::printf(" %d", fid);
+    std::printf("\n");
     return 0;
 }
 
@@ -446,15 +530,32 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     // raw triangulation is the tri-soup last resort, empty is a hole).
     {
         int floor = 0, raw = 0, empty = 0;
+        std::vector<int> rawFaces, emptyFaces;
         for (const auto& [fid, how] : report.faceBuild) {
             if (how == 2) ++floor;
-            if (how == 1) ++raw;
-            if (how == -1) ++empty;
+            if (how == 1) {
+                ++raw;
+                rawFaces.push_back(fid);
+            }
+            if (how == -1) {
+                ++empty;
+                emptyFaces.push_back(fid);
+            }
         }
         if (floor || raw || empty) {
             std::printf("  demoted: %d to contract floor, %d to raw "
                         "triangulation, %d emitted nothing\n",
                         floor, raw, empty);
+            if (!rawFaces.empty()) {
+                std::printf("    raw face ids:");
+                for (int fid : rawFaces) std::printf(" %d", fid);
+                std::printf("\n");
+            }
+            if (!emptyFaces.empty()) {
+                std::printf("    empty face ids:");
+                for (int fid : emptyFaces) std::printf(" %d", fid);
+                std::printf("\n");
+            }
         }
     }
     if (!report.edgeDivisions.empty()) {
@@ -463,6 +564,69 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
             std::printf(" #%d=%d", eid, div);
         }
         std::printf("\n");
+    }
+    return 0;
+}
+
+int cmdCacheCheck(const std::vector<std::string>& args) {
+    if (args.empty()) { usage(); return 2; }
+    const std::string input = args[0];
+    std::string faceSpec;
+    for (size_t i = 1; i < args.size(); ++i) {
+        if (args[i] == "--face" && i + 1 < args.size()) {
+            faceSpec = args[++i];
+        } else {
+            throw std::runtime_error("unknown cache-check option: " + args[i]);
+        }
+    }
+    const size_t colon = faceSpec.find(':');
+    if (colon == std::string::npos) {
+        throw std::runtime_error("cache-check needs --face ID:key=value");
+    }
+    const int faceId = std::stoi(faceSpec.substr(0, colon));
+
+    weft::Model model = weft::loadStep(input);
+    weft::Analysis analysis = weft::analyze(model);
+    if (faceId < 1 || faceId > model.faceCount()) {
+        throw std::runtime_error("face id out of range");
+    }
+    weft::GenerationSettings base;
+    base.defaults.minimal = true;
+    base.defaults.adaptive = true;
+    base.defaults.relativeDeviation = true;
+    weft::GenerationCache cache;
+    auto run = [&](const char* label, const weft::GenerationSettings& settings) {
+        const auto begin = std::chrono::steady_clock::now();
+        weft::GenerationReport report;
+        weft::PolyMesh mesh =
+            weft::generate(model, analysis, settings, &report, &cache);
+        const auto elapsed =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - begin)
+                .count();
+        std::printf("%s: %lld ms, %d remeshed, %d reused", label,
+                    static_cast<long long>(elapsed), report.cacheMisses,
+                    report.cacheHits);
+        if (!report.remeshedFaces.empty()) {
+            std::printf("; face ids:");
+            for (int fid : report.remeshedFaces) std::printf(" %d", fid);
+        }
+        std::printf("; %zu verts, %zu polys\n", mesh.vertexCount(),
+                    mesh.polygonCount());
+        return mesh;
+    };
+
+    run("cold", base);
+    weft::GenerationSettings edited = base;
+    weft::FaceMeshSettings face = base.defaults;
+    weft::applySettingsList(face, faceSpec.substr(colon + 1));
+    edited.perFace[faceId] = face;
+    weft::PolyMesh changed = run("single-face edit", edited);
+    weft::PolyMesh identical = run("identical warm run", edited);
+    if (changed.vertexCount() != identical.vertexCount() ||
+        changed.polygonCount() != identical.polygonCount()) {
+        std::printf("ERROR: identical warm run changed mesh counts\n");
+        return 1;
     }
     return 0;
 }
@@ -629,8 +793,10 @@ int main(int argc, char** argv) {
     try {
         if (cmd == "fixture") return cmdFixture(args);
         if (cmd == "inspect") return cmdInspect(args);
+        if (cmd == "extract") return cmdExtract(args);
         if (cmd == "convert") return cmdConvert(args);
         if (cmd == "mesh") return cmdMesh(args);
+        if (cmd == "cache-check") return cmdCacheCheck(args);
         if (cmd == "validate") return cmdMesh(args, /*validateOnly=*/true);
         if (cmd == "sweep") return cmdSweep(args);
         usage();

@@ -8,6 +8,7 @@
 #include <array>
 #include <cstdio>
 #include <map>
+#include <memory>
 
 namespace weft {
 
@@ -141,6 +142,10 @@ struct GenerationSettings {
     // Live progress for UIs: incremented once per meshed face when set
     // (non-owning; the pointee must outlive the generate call).
     std::atomic<int>* progressFaces = nullptr;
+    // Updated after planning/density/cache lookup to the number of cache
+    // misses that actually require a mesher. UIs can distinguish a local
+    // remesh from cached faces participating in the final seam/weld pass.
+    std::atomic<int>* progressTotal = nullptr;
 
     const FaceMeshSettings& forFace(int faceId) const {
         auto it = perFace.find(faceId);
@@ -210,6 +215,12 @@ const char* mesherKindName(MesherKind k);
 std::vector<double> clusteredParams(int divisions, double hold);
 
 struct GenerationReport {
+    // Per-face generation cache accounting for this run. A local edit may
+    // legitimately miss adjacent faces when shared border counts changed.
+    int cacheHits = 0;
+    int cacheMisses = 0;
+    std::vector<int> reusedFaces;
+    std::vector<int> remeshedFaces;
     std::map<int, MesherKind> faceMesher;  // FaceId -> strategy used
     // FaceId -> how the face was actually built: 0 = its planned mesher,
     // 1 = raw OCCT triangulation (the tri-soup last resort), 2 = the
@@ -244,8 +255,9 @@ struct GenerationReport {
 
 // Per-face mesh reuse across generate() calls: pass the same cache and
 // only faces whose settings, solved counts, or plan changed re-mesh —
-// dragging one face's density re-meshes one face, not the model. The
-// merge/conform/weld stages still run (they're cheap next to meshing).
+// a topology-only face edit re-meshes that face, while a density edit also
+// re-meshes the minimum shared-border constraint group needed to avoid cracks.
+// The merge/conform/weld stages still run over the assembled result.
 struct GenerationCache {
     struct CachedFace {
         std::string key;
@@ -271,12 +283,31 @@ struct GenerationCache {
     // Flat faces whose coons outline has a strong reflex bend (chevron
     // plates): geometry-only, planning may prefer quad-fill for them.
     std::map<int, bool> coonsReflex;
+    // Geometry-only surface areas used by the per-face cell pathology budget.
+    // BRepGProp::SurfaceProperties over thousands of faces is far too costly
+    // to repeat after every interactive settings edit.
+    std::map<int, double> faceAreas;
+    double modelArea = -1.0;
+    // Geometry/tolerance memos used by the global density solve.
+    std::map<std::array<long long, 4>, int> adaptiveEdgeCounts;
+    std::map<int, int> curvatureFloors;
+    double modelDiagonal = -1.0;
+    // Type-erased internal cache of geometry classification plans. FacePlan
+    // stays private to meshers.cpp so OCCT planning details do not leak into
+    // the public API.
+    std::shared_ptr<void> facePlans;
     void clear() {
         faces.clear();
         revolutionCovers.clear();
         geomRevolution.clear();
         coonsValid.clear();
         coonsReflex.clear();
+        faceAreas.clear();
+        modelArea = -1.0;
+        adaptiveEdgeCounts.clear();
+        curvatureFloors.clear();
+        modelDiagonal = -1.0;
+        facePlans.reset();
     }
 };
 

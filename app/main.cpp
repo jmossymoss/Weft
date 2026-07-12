@@ -79,6 +79,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <numeric>
 #include <set>
 #include <string>
 #include <vector>
@@ -294,6 +295,82 @@ static Vec3 norm(Vec3 v) {
     float l = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
     return l > 0 ? Vec3{v.x / l, v.y / l, v.z / l} : v;
 }
+
+// Read-only nearest-vertex index used when the generated mesh is adopted.
+// The old edge-overlay snap tested every sampled B-rep point against every
+// mesh vertex (O(samples * vertices)); on an assembly like MP9 that repeated
+// hundreds of millions of distance checks after even a one-face cache hit.
+class VertexKdTree {
+public:
+    explicit VertexKdTree(
+        const std::vector<std::array<double, 3>>& points)
+        : points_(points) {
+        order_.resize(points.size());
+        std::iota(order_.begin(), order_.end(), uint32_t{0});
+        nodes_.reserve(points.size());
+        root_ = build(0, order_.size(), 0);
+    }
+
+    bool nearestWithin(const std::array<double, 3>& point, double maxDist2,
+                       uint32_t& hit) const {
+        bool found = false;
+        search(root_, point, maxDist2, hit, found);
+        return found;
+    }
+
+private:
+    struct Node {
+        uint32_t point = 0;
+        int left = -1;
+        int right = -1;
+        unsigned char axis = 0;
+    };
+
+    int build(size_t begin, size_t end, int depth) {
+        if (begin >= end) return -1;
+        const unsigned char axis = static_cast<unsigned char>(depth % 3);
+        const size_t mid = begin + (end - begin) / 2;
+        std::nth_element(order_.begin() + begin, order_.begin() + mid,
+                         order_.begin() + end, [&](uint32_t a, uint32_t b) {
+                             return points_[a][axis] < points_[b][axis];
+                         });
+        const int node = static_cast<int>(nodes_.size());
+        nodes_.push_back({order_[mid], -1, -1, axis});
+        const int left = build(begin, mid, depth + 1);
+        const int right = build(mid + 1, end, depth + 1);
+        nodes_[node].left = left;
+        nodes_[node].right = right;
+        return node;
+    }
+
+    void search(int nodeIndex, const std::array<double, 3>& point,
+                double& bestDist2, uint32_t& hit, bool& found) const {
+        if (nodeIndex < 0) return;
+        const Node& node = nodes_[nodeIndex];
+        const auto& candidate = points_[node.point];
+        const double dx = candidate[0] - point[0];
+        const double dy = candidate[1] - point[1];
+        const double dz = candidate[2] - point[2];
+        const double dist2 = dx * dx + dy * dy + dz * dz;
+        if (dist2 < bestDist2) {
+            bestDist2 = dist2;
+            hit = node.point;
+            found = true;
+        }
+        const double delta = point[node.axis] - candidate[node.axis];
+        const int nearNode = delta < 0.0 ? node.left : node.right;
+        const int farNode = delta < 0.0 ? node.right : node.left;
+        search(nearNode, point, bestDist2, hit, found);
+        if (delta * delta < bestDist2) {
+            search(farNode, point, bestDist2, hit, found);
+        }
+    }
+
+    const std::vector<std::array<double, 3>>& points_;
+    std::vector<uint32_t> order_;
+    std::vector<Node> nodes_;
+    int root_ = -1;
+};
 
 static Mat4 matLookAt(Vec3 eye, Vec3 at, Vec3 up) {
     Vec3 f = norm(sub(at, eye));
@@ -612,13 +689,27 @@ struct App {
     std::map<uint64_t, std::array<float, 3>> exactNormalCache;
     // Keybinds help panel (collapsed to a bottom-left prompt by default).
     bool showKeybinds = false;
-    // Async regenerate: the mesh builds on a worker thread so the UI
-    // never hangs; a centred progress overlay reports faces meshed.
+    // Import and regenerate both run away from the UI thread. OCCT STEP
+    // translation/healing can take tens of seconds on a large assembly before
+    // meshing even starts, so import needs the same responsiveness guarantee.
+    std::thread loadThread;
+    std::atomic<bool> loadBusy{false};
+    std::atomic<bool> loadReady{false};
+    double loadStartTime = 0.0;
+    bool loadGenerateAfter = true;
+    std::string loadPath;
+    std::string loadError;
+    weft::Model loadedModel;
+    weft::Analysis loadedAnalysis;
+    std::vector<weft::EdgePolyline> loadedBrepEdges;
+
+    // Async regenerate: the mesh builds on a worker thread; a centred
+    // progress overlay reports faces meshed.
     std::thread genThread;
     std::atomic<bool> genBusy{false};
     std::atomic<bool> genReady{false};
     std::atomic<int> genProgress{0};
-    int genTotal = 0;
+    std::atomic<int> genTotal{0};
     double genStartTime = 0.0;
     weft::GenerationSettings genSettings;
     std::vector<weft::ManualOp> genOps;  // worker's frozen ops snapshot  // worker's frozen snapshot
@@ -1067,8 +1158,11 @@ static void startGenerate(App& app) {
     // in the worker.
     app.genOps = app.recipe.ops;
     app.genProgress = 0;
-    app.genTotal = app.model.faceCount();
+    // Unknown until planning/density/cache lookup determines the affected
+    // border-connected set. Do not imply that every model face will remesh.
+    app.genTotal = -1;
     app.genSettings.progressFaces = &app.genProgress;
+    app.genSettings.progressTotal = &app.genTotal;
     app.genError.clear();
     app.genStartTime = glfwGetTime();
     app.genBusy = true;
@@ -1140,6 +1234,7 @@ static void finishGenerate(App& app) {
     // snap each sample onto the nearest generated vertex too.
     app.brepEdges = weft::sampleEdges(app.model, 28,
                                       app.report.edgeDivisions);
+    const VertexKdTree meshVertices(app.mesh.vertices);
     for (weft::EdgePolyline& e : app.brepEdges) {
         if (!app.report.edgeDivisions.count(e.edgeId)) continue;
         if (e.points.size() < 2) continue;
@@ -1152,16 +1247,10 @@ static void finishGenerate(App& app) {
         }
         for (auto& p : e.points) {
             double best = cl2;
-            const std::array<double, 3>* hit = nullptr;
-            for (const auto& v : app.mesh.vertices) {
-                double dx = v[0] - p[0], dy = v[1] - p[1], dz = v[2] - p[2];
-                double d = dx * dx + dy * dy + dz * dz;
-                if (d < best) {
-                    best = d;
-                    hit = &v;
-                }
+            uint32_t hit = 0;
+            if (meshVertices.nearestWithin(p, best, hit)) {
+                p = app.mesh.vertices[hit];
             }
-            if (hit) p = *hit;
         }
     }
 
@@ -1199,8 +1288,14 @@ static void finishGenerate(App& app) {
     // the next run — clearing the flag here silently dropped them, so a
     // drag's landed value never meshed and an undo during a run restored
     // the recipe but left the stale mesh on screen.
-    logLine("regenerate: done (%zu verts, %zu polys)",
-            app.mesh.vertexCount(), app.mesh.polygonCount());
+    logLine("regenerate: done (%zu verts, %zu polys; %d remeshed, %d reused)",
+            app.mesh.vertexCount(), app.mesh.polygonCount(),
+            app.report.cacheMisses, app.report.cacheHits);
+    if (!firstMesh && app.report.cacheHits > 0) {
+        app.status = "updated " + std::to_string(app.report.cacheMisses) +
+                     " face(s), reused " +
+                     std::to_string(app.report.cacheHits);
+    }
 
     // Blender live link: mirror every result to the watched OBJ. Written
     // to a temp file and renamed into place, so the addon's mtime poll
@@ -1264,18 +1359,24 @@ static void frameModel(App& app) {
     app.cam.dist = 1.9f * float(std::sqrt(dx * dx + dy * dy + dz * dz) + 1.0);
 }
 
-static void loadModel(App& app, const std::string& path) {
-    logLine("load: %s", path.c_str());
-    // The worker reads model/analysis/genCache for its whole run — drain
-    // any in-flight generate before replacing them under it.
-    while (app.genBusy && !app.genReady) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+static void finishLoadModel(App& app) {
+    if (app.loadThread.joinable()) app.loadThread.join();
+    app.loadBusy = false;
+    app.loadReady = false;
+    if (!app.loadError.empty()) {
+        logLine("load: FAILED after %.1f ms: %s",
+                (glfwGetTime() - app.loadStartTime) * 1000.0,
+                app.loadError.c_str());
+        app.status = "load failed: " + app.loadError;
+        return;
     }
-    if (app.genReady) finishGenerate(app);
+    const std::string path = app.loadPath;
+    // The main loop only adopts this result after the old model's generation
+    // worker has drained, so moving the document cannot race the mesher.
     try {
-        app.model = weft::loadStep(path);
-        app.analysis = weft::analyze(app.model);
-        app.brepEdges = weft::sampleEdges(app.model, 28);
+        app.model = std::move(app.loadedModel);
+        app.analysis = std::move(app.loadedAnalysis);
+        app.brepEdges = std::move(app.loadedBrepEdges);
         app.sourcePath = path;
         std::error_code ec;
         app.sourceMtime = std::filesystem::last_write_time(path, ec);
@@ -1297,7 +1398,6 @@ static void loadModel(App& app, const std::string& path) {
         // Deviation relative to feature size: a 500mm bore and a 5mm bore
         // carry the same ring topology, the angle criterion drives counts.
         app.recipe.settings.defaults.relativeDeviation = true;
-        startGenerate(app);  // async: the progress overlay covers the wait
         frameModel(app);
         app.status = path + ": " + std::to_string(app.model.faceCount()) +
                      " faces, " + std::to_string(app.model.edgeCount()) +
@@ -1313,16 +1413,59 @@ static void loadModel(App& app, const std::string& path) {
         if (std::filesystem::exists(app.recipePath)) {
             try {
                 app.recipe = weft::loadRecipe(app.recipePath);
-                regenerate(app);
                 app.status += "  (recipe loaded)";
                 logLine("load: applied %s", app.recipePath.c_str());
             } catch (const std::exception& e) {
                 app.status = std::string("recipe load failed: ") + e.what();
             }
         }
+        // Start once, after a sidecar recipe has replaced the defaults. This
+        // avoids generating the same large model twice during open.
+        if (app.loadGenerateAfter) startGenerate(app);
+        logLine("load: ready in %.1f ms (%d faces, %d edges)",
+                (glfwGetTime() - app.loadStartTime) * 1000.0,
+                app.model.faceCount(), app.model.edgeCount());
     } catch (const std::exception& e) {
         app.status = std::string("load failed: ") + e.what();
     }
+}
+
+static void loadModel(App& app, const std::string& path,
+                      bool generateAfter = true) {
+    if (path.empty()) return;
+    if (app.loadBusy) {
+        app.status = "already loading " + app.loadPath;
+        return;
+    }
+    logLine("load: %s", path.c_str());
+    if (app.loadThread.joinable()) app.loadThread.join();
+    app.loadPath = path;
+    app.loadError.clear();
+    app.loadedModel = {};
+    app.loadedAnalysis = {};
+    app.loadedBrepEdges.clear();
+    app.loadGenerateAfter = generateAfter;
+    app.loadStartTime = glfwGetTime();
+    app.loadBusy = true;
+    app.loadReady = false;
+    app.status = "loading " + path;
+    App* a = &app;
+    app.loadThread = std::thread([a] {
+        try {
+            weft::Model model = weft::loadStep(a->loadPath);
+            weft::Analysis analysis = weft::analyze(model);
+            std::vector<weft::EdgePolyline> edges =
+                weft::sampleEdges(model, 28);
+            a->loadedModel = std::move(model);
+            a->loadedAnalysis = std::move(analysis);
+            a->loadedBrepEdges = std::move(edges);
+        } catch (const std::exception& e) {
+            a->loadError = e.what();
+        } catch (...) {
+            a->loadError = "unknown exception";
+        }
+        a->loadReady = true;
+    });
 }
 
 // Hot-reload: the source STEP changed on disk (the CAD app re-exported
@@ -3488,8 +3631,10 @@ static ImVec2 gViewMin{0, 0}, gViewMax{0, 0};
 // While the worker meshes, a centred card shows a spinning hourglass
 // and the per-face progress — the app never just hangs.
 static void drawGenProgress(App& app) {
-    if (!app.genBusy) return;
-    if (glfwGetTime() - app.genStartTime < 0.2) return;  // no flicker
+    const bool loading = app.loadBusy.load(std::memory_order_relaxed);
+    if (!loading && !app.genBusy) return;
+    const double started = loading ? app.loadStartTime : app.genStartTime;
+    if (glfwGetTime() - started < 0.2) return;  // no flicker
     ImGui::SetNextWindowPos({(gViewMin.x + gViewMax.x) * 0.5f,
                              (gViewMin.y + gViewMax.y) * 0.5f},
                             ImGuiCond_Always, {0.5f, 0.5f});
@@ -3521,22 +3666,36 @@ static void drawGenProgress(App& app) {
                   spin * 0.7f + 4.6f, 32);
     dl->PathStroke(IM_COL32(242, 158, 46, 160), 0, 2.5f * gUiScale);
     ImGui::Dummy({w, (r + 8.0f * gUiScale) * 2.0f});
-    const int done = app.genProgress.load(std::memory_order_relaxed);
-    const int total = std::max(1, app.genTotal);
-    char label[64];
-    if (done < total) {
-        std::snprintf(label, sizeof label, "meshing %d / %d faces", done,
-                      total);
+    if (loading) {
+        ImGui::Text("reading + repairing STEP...");
+        ImGui::TextDisabled("%.1f s elapsed; the app remains responsive",
+                            glfwGetTime() - app.loadStartTime);
     } else {
-        std::snprintf(label, sizeof label, "welding + conforming...");
-    }
-    ImGui::ProgressBar(std::min(1.0f, float(done) / float(total)), {w, 0},
-                       label);
-    // Edits made while this run was already meshing coalesce into a
-    // follow-up run — say so, so the value the user landed on is
-    // visibly still on its way rather than silently dropped.
-    if (app.dirty) {
-        ImGui::TextDisabled("newer edits queued for the next pass...");
+        const int done = app.genProgress.load(std::memory_order_relaxed);
+        const int total = app.genTotal.load(std::memory_order_relaxed);
+        char label[64];
+        if (total < 0) {
+            std::snprintf(label, sizeof label,
+                          "planning affected faces...");
+        } else if (total == 0) {
+            std::snprintf(label, sizeof label,
+                          "all faces reused; updating seams...");
+        } else if (done < total) {
+            std::snprintf(label, sizeof label, "meshing %d / %d faces", done,
+                          total);
+        } else {
+            std::snprintf(label, sizeof label, "welding + conforming...");
+        }
+        const float fraction =
+            total <= 0 ? (total == 0 ? 1.0f : 0.0f)
+                       : std::min(1.0f, float(done) / float(total));
+        ImGui::ProgressBar(fraction, {w, 0}, label);
+        // Edits made while this run was already meshing coalesce into a
+        // follow-up run — say so, so the value the user landed on is
+        // visibly still on its way rather than silently dropped.
+        if (app.dirty) {
+            ImGui::TextDisabled("newer edits queued for the next pass...");
+        }
     }
     ImGui::End();
 }
@@ -4830,7 +4989,8 @@ int main(int argc, char** argv) {
 
     App app;
     app.livePath = gDataDir + "/weft_live.obj";
-    if (!startModel.empty()) loadModel(app, startModel);
+    bool startupLoadPending = !startModel.empty();
+    if (startupLoadPending) loadModel(app, startModel, false);
     else loadFixture(app, startFixture);
     if (startStitch && app.hasModel) {
         // After the load (which resets the recipe): flip the experiment
@@ -5426,7 +5586,8 @@ int main(int argc, char** argv) {
         // STEP hot-reload: poll the source file's mtime (cheap) and reload
         // once it changes AND stops changing — exporters write in bursts,
         // and a half-written STEP must never be parsed.
-        if (app.hasModel && app.watchSource && !app.sourcePath.empty()) {
+        if (app.hasModel && !app.loadBusy && app.watchSource &&
+            !app.sourcePath.empty()) {
             double now = glfwGetTime();
             static double nextPoll = 0.0;
             if (now >= nextPoll) {
@@ -5450,8 +5611,26 @@ int main(int argc, char** argv) {
         }
 
         if (app.mutatedThisFrame) logLine("frame: input handled, dirty");
-        if (app.dirty && !app.genBusy) startGenerate(app);
         if (app.genReady) finishGenerate(app);
+        if (app.loadReady && !app.genBusy) finishLoadModel(app);
+        if (startupLoadPending && app.hasModel && !app.loadBusy) {
+            if (startStitch) app.recipe.settings.decoupleSeams = true;
+            for (const auto& [fid, spec] : startFaceOverrides) {
+                weft::FaceMeshSettings s = app.recipe.settings.defaults;
+                weft::applySettingsList(s, spec);
+                app.recipe.settings.perFace[fid] = s;
+            }
+            if (startSelect > 0 && startSelect <= app.model.faceCount()) {
+                app.selFaces = {startSelect};
+                app.activeFace = startSelect;
+                frameModel(app);
+            }
+            startupLoadPending = false;
+            startGenerate(app);
+        }
+        if (app.dirty && !app.genBusy && !app.loadBusy && !app.loadReady) {
+            startGenerate(app);
+        }
 
         const float vpAspect = fbh > 0 ? float(fbw) / fbh : 1.6f;
         Mat4 proj =
@@ -6334,6 +6513,7 @@ int main(int argc, char** argv) {
         // glfwSwapBuffers captures the previous frame, which was commonly the
         // "welding + conforming" progress card rather than the finished mesh.
         if (!screenshotPath.empty() && ++frame >= 4 &&
+            !app.loadBusy && !app.loadReady &&
             !(app.hasModel && (app.genBusy || app.genReady))) {
             std::vector<unsigned char> px(size_t(fbw) * fbh * 3);
             glReadPixels(0, 0, fbw, fbh, GL_RGB, GL_UNSIGNED_BYTE, px.data());
@@ -6346,6 +6526,10 @@ int main(int argc, char** argv) {
         glfwSwapBuffers(window);
     }
 
+    // A window close may arrive while either worker is active. Drain both so
+    // their App pointer and OCCT objects remain alive through completion.
+    if (app.loadThread.joinable()) app.loadThread.join();
+    if (app.genThread.joinable()) app.genThread.join();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

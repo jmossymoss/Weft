@@ -1,0 +1,29 @@
+name	tier	path	fast	max_raw	max_empty	require_watertight	visual	notes
+cylinder	fixture	fixtures/generated/cylinder.step	1	0	0	1	visual_baselines/generated/cylinder.png	analytic cylinder, caps and periodic seam
+box	fixture	fixtures/generated/box.step	1	0	0	1	-	planar minimal n-gons
+cone	fixture	fixtures/generated/cone.step	1	0	0	1	-	apex singularity
+sphere	fixture	fixtures/generated/sphere.step	1	0	0	1	-	two pole singularities
+torus	fixture	fixtures/generated/torus.step	1	0	0	1	-	doubly periodic surface
+fillet	fixture	fixtures/generated/fillet.step	1	0	0	1	-	open quarter-cylinder blend
+hole	fixture	fixtures/generated/hole.step	1	0	0	1	-	through bore and annular junctions
+boss	fixture	fixtures/generated/boss.step	1	0	0	1	-	trimmed planar face and boss wall
+bossfillet	fixture	fixtures/generated/bossfillet.step	1	0	0	1	visual_baselines/generated/bossfillet.png	closed torus fillet ring
+slotted	fixture	fixtures/generated/slotted.step	1	0	0	1	-	closed cylinder with interior trim
+barrel	fixture	fixtures/generated/barrel.step	1	0	0	1	-	partial-wrap wall with capsule cut
+barrel2	fixture	fixtures/generated/barrel2.step	1	0	0	1	visual_baselines/generated/barrel2.png	chained rim plus capsule cut
+drilled	fixture	fixtures/generated/drilled.step	1	0	0	1	-	partial-wrap wall with round bore
+notched	fixture	fixtures/generated/notched.step	1	0	0	1	visual_baselines/generated/notched.png	rim-open channel cut
+ribbon	fixture	fixtures/generated/ribbon.step	1	0	0	1	-	curved extrusion strip
+ribbonnotch	fixture	fixtures/generated/ribbonnotch.step	1	0	0	1	visual_baselines/generated/ribbonnotch.png	curved strip with end notch
+canrev	fixture	fixtures/generated/canrev.step	1	0	0	1	-	canonical revolution stack
+filletslot	fixture	fixtures/generated/filletslot.step	1	0	0	1	-	open fillet band around a slot
+hairline	fixture	fixtures/generated/hairline.step	1	0	0	1	-	hairline feature spacing
+microedge	fixture	fixtures/generated/microedge.step	1	0	0	1	visual_baselines/generated/microedge.png	micro chamfer edge
+slitdrill	fixture	fixtures/generated/slitdrill.step	1	0	0	0	visual_baselines/generated/slitdrill.png	slit plus bore; visual baseline exposes four non-manifold edges
+torture	fixture	fixtures/generated/torture.step	1	0	0	1	visual_baselines/generated/torture.png	combined feature scene
+mp9_raw_127	regression	regressions/mp9/mp9_raw_127.step	1	1	0	0	visual_baselines/mp9/mp9_raw_127.png	MP9 source face 127 plus one adjacency ring
+mp9_raw_cluster_243_247	regression	regressions/mp9/mp9_raw_cluster_243_247.step	1	2	0	0	visual_baselines/mp9/mp9_raw_cluster_243_247.png	MP9 connected faces 243,244,246,247 plus neighbor 245
+mp9_raw_1692	regression	regressions/mp9/mp9_raw_1692.step	1	1	0	0	visual_baselines/mp9/mp9_raw_1692.png	MP9 source face 1692 plus one adjacency ring
+mp9_empty_1189	regression	regressions/mp9/mp9_empty_1189.step	1	0	1	0	visual_baselines/mp9/mp9_empty_1189.png	MP9 offset face 1189 disappears
+mp9_empty_2128	regression	regressions/mp9/mp9_empty_2128.step	1	0	1	0	visual_baselines/mp9/mp9_empty_2128.png	MP9 extrusion face 2128 disappears
+mp9	hero	STEP_Examples/MP9.stp	0	6	2	0	-	large assembly performance and integration baseline

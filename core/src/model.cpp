@@ -245,6 +245,17 @@ TopoDS_Shape healWithHistory(const TopoDS_Shape& input, Handle(BRepTools_History
     };
     outHist = new BRepTools_History();
     TopoDS_Shape shape = input;
+    TopTools_IndexedMapOfShape inputFaces;
+    TopExp::MapShapes(input, TopAbs_FACE, inputFaces);
+    // ShapeFix reconstructs the whole compound. On multi-thousand-face
+    // assemblies this is an unbounded serial tax (MP9: about nine seconds),
+    // and one malformed wire can still make the completed pass throw. STEP
+    // translation already performs shape processing, so large imports retain
+    // sewing/unification and rely on guarded per-face mesh recovery instead.
+    constexpr int kGlobalShapeFixFaceBudget = 2000;
+    const bool runGlobalShapeFix =
+        inputFaces.Extent() <= kGlobalShapeFixFaceBudget ||
+        std::getenv("WEFT_FULL_HEAL") != nullptr;
 
     // Sew faces that arrive with their own duplicate copies of shared
     // edges (common in some exporters): unshared edges can't take part in
@@ -270,21 +281,23 @@ TopoDS_Shape healWithHistory(const TopoDS_Shape& input, Handle(BRepTools_History
     }
     mark("sew");
 
-    try {
-        TopoDS_Shape preFix = shape;
-        ShapeFix_Shape fixer(shape);
-        fixer.Perform();
-        TopoDS_Shape fixed = fixer.Shape();
-        if (!fixed.IsNull()) {
-            Handle(BRepTools_History) hist =
-                historyOfReShape(preFix, fixer.Context());
-            shape = fixed;
-            outHist->Merge(hist);
+    if (runGlobalShapeFix) {
+        try {
+            TopoDS_Shape preFix = shape;
+            ShapeFix_Shape fixer(shape);
+            fixer.Perform();
+            TopoDS_Shape fixed = fixer.Shape();
+            if (!fixed.IsNull()) {
+                Handle(BRepTools_History) hist =
+                    historyOfReShape(preFix, fixer.Context());
+                shape = fixed;
+                outHist->Merge(hist);
+            }
+        } catch (const Standard_Failure&) {
+            // ShapeFix is an enhancement, not an import precondition.
         }
-    } catch (const Standard_Failure&) {
-        // ShapeFix is an enhancement, not an import precondition.
     }
-    mark("shape fix");
+    mark(runGlobalShapeFix ? "shape fix" : "shape fix (budget skip)");
 
     // STEP kernels split closed revolves into half-faces, so a bore
     // arrives as two half-cylinders with seam lines and split rim arcs.
