@@ -8,6 +8,10 @@ add_library(weft_core
   src/analysis.cpp
   src/mesh.cpp
   src/meshers.cpp
+  src/mesher_sampling.cpp
+  src/mesher_trace.cpp
+  src/mesher_utils.cpp
+  src/mesh_diagnostics.cpp
   src/edit.cpp
   src/recipe.cpp
   src/remap.cpp

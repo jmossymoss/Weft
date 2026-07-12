@@ -1,5 +1,8 @@
 #include "weft/meshers.hpp"
 
+#include "mesher_sampling.hpp"
+#include "mesher_trace.hpp"
+
 #include <functional>
 #include <sstream>
 
@@ -48,11 +51,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <atomic>
-#include <cstdarg>
 #include <map>
 #include <memory>
-#include <mutex>
 #include <numeric>
 #include <set>
 #include <thread>
@@ -60,191 +60,10 @@
 #include <vector>
 
 namespace weft {
-
-// Stage-by-stage debug trace. Guarded by a mutex, flushed per line, so a
-// crash log's last line names the exact face/edge/stage that died.
-static std::atomic<std::FILE*> gDebugLog{nullptr};
-static std::mutex gDebugMutex;
-
-void setGenerateDebugLog(std::FILE* f) {
-    gDebugLog.store(f, std::memory_order_release);
-}
-
-static void dbg(const char* fmt, ...) {
-    if (!gDebugLog.load(std::memory_order_acquire)) return;
-    std::lock_guard<std::mutex> lock(gDebugMutex);
-    std::FILE* log = gDebugLog.load(std::memory_order_acquire);
-    if (!log) return;
-    va_list args;
-    va_start(args, fmt);
-    std::fprintf(log, "[core] ");
-    std::vfprintf(log, fmt, args);
-    std::fputc('\n', log);
-    std::fflush(log);
-    va_end(args);
-}
-
-std::vector<double> clusteredParams(int divisions, double hold) {
-    int n = std::max(1, divisions);
-    hold = std::min(0.95, std::max(0.0, hold));
-    std::vector<double> t(n + 1);
-    for (int i = 0; i <= n; ++i) {
-        double x = double(i) / n;
-        // Monotonic for hold < 1: slope 1-hold at the ends, 1+hold mid-span,
-        // so intervals shrink near the creases and grow in the middle.
-        t[i] = x - hold * std::sin(2.0 * M_PI * x) / (2.0 * M_PI);
-    }
-    t.front() = 0.0;
-    t.back() = 1.0;
-    return t;
-}
-
-const char* mesherKindName(MesherKind k) {
-    switch (k) {
-        case MesherKind::RevolutionGrid: return "revolution-grid";
-        case MesherKind::DiskCap: return "disk-cap";
-        case MesherKind::PlanarGrid: return "parametric-grid";
-        case MesherKind::CoonsGrid: return "coons-grid";
-        case MesherKind::RingJunction: return "ring-junction";
-        case MesherKind::QuadDominant: return "quad-dominant";
-        case MesherKind::MinimalNGon: return "minimal-ngon";
-        case MesherKind::Fallback: return "fallback-tri";
-        case MesherKind::AnnulusRing: return "annulus-ring";
-        case MesherKind::PlateWeb: return "plate-web";
-        case MesherKind::QuadFill: return "quad-fill";
-        case MesherKind::RailLadder: return "rail-ladder";
-        case MesherKind::RibbonSweep: return "ribbon-sweep";
-        case MesherKind::DomeCap: return "dome-cap";
-    }
-    return "fallback-tri";
-}
+using mesher_detail::dbg;
+using mesher_detail::stableDeflectionCount;
 
 namespace {
-
-// Platform-stable tangential-deflection count (MVP P0.3 determinism).
-// OCCT's GCPnts_TangentialDeflection is an iterative subdivider whose
-// data-dependent branches flip on last-ulp libm differences — the same
-// model tessellated on MSVC and glibc could disagree by one segment,
-// and the downstream topology then diverged per platform (the five
-// Windows pipeline failures). Derive the count in closed form instead.
-//
-// The border contract samples every edge at UNIFORM curve parameters,
-// so the right criterion is per-uniform-interval, not total: find the
-// smallest N such that each of the N parameter intervals turns at most
-// angTol (turn = integral of curvature x arc length, accumulated over
-// 33 fixed samples) and sags at most chordTol (the sagitta of an arc
-// turning dT over chord dS is ~ dT*dS/8). Curvature concentrated in one
-// bend raises N the way the old subdivider did, but the computation is
-// a fixed-order arithmetic scan — a last-ulp perturbation only matters
-// when an interval lands within the epsilon slack of its tolerance,
-// which the comparisons absorb.
-int stableDeflectionCount(const Adaptor3d_Curve& c, double angTol,
-                          double chordTol) {
-    const double f = c.FirstParameter(), l = c.LastParameter();
-    if (!(l > f)) return 1;
-    constexpr int kSamples = 33;
-    // Positions plus cumulative arc length S and turning angle T at the
-    // fixed samples. The turn between samples is the angle between their
-    // unit tangents — bounded by pi per gap, exact on conics, and immune
-    // to the curvature spikes that make an integral of k*ds explode when
-    // a micro-fillet lands between two samples.
-    gp_Pnt P[kSamples];
-    double S[kSamples] = {0}, T[kSamples] = {0};
-    bool have[kSamples] = {false};
-    gp_Vec prevDir;
-    bool prevDirOk = false;
-    bool prevOk = false;
-    for (int i = 0; i < kSamples; ++i) {
-        const double t = f + (l - f) * i / double(kSamples - 1);
-        gp_Vec dir;
-        bool dirOk = false;
-        bool ok = true;
-        try {
-            gp_Vec D1;
-            c.D1(t, P[i], D1);
-            if (D1.Magnitude() > 1e-12) {
-                dir = D1.Normalized();
-                dirOk = true;
-            }
-        } catch (const Standard_Failure&) {
-            try {
-                P[i] = c.Value(t);
-            } catch (const Standard_Failure&) {
-                ok = false;
-            }
-        }
-        if (i > 0) {
-            S[i] = S[i - 1];
-            T[i] = T[i - 1];
-            if (!ok) P[i] = P[i - 1];
-        }
-        have[i] = ok;
-        if (!ok) continue;
-        if (prevOk) {
-            S[i] = S[i - 1] + P[i].Distance(P[i - 1]);
-            if (dirOk && prevDirOk) {
-                T[i] = T[i - 1] + prevDir.Angle(dir);
-            }
-        }
-        if (dirOk) {
-            prevDir = dir;
-            prevDirOk = true;
-        }
-        prevOk = true;
-    }
-    const double aTol = std::max(angTol, 1e-3) * (1.0 + 1e-9);
-    const double cTol = std::max(chordTol, 1e-12) * (1.0 + 1e-9);
-    // Piecewise-linear reads at fraction x.
-    auto at = [&](const double* A, double x) {
-        const double u = x * (kSamples - 1);
-        const int i = std::min(kSamples - 2, std::max(0, int(u)));
-        return A[i] + (A[i + 1] - A[i]) * (u - i);
-    };
-    auto pAt = [&](double x) {
-        const double u = x * (kSamples - 1);
-        const int i = std::min(kSamples - 2, std::max(0, int(u)));
-        const double w = u - i;
-        return gp_Pnt(P[i].X() + (P[i + 1].X() - P[i].X()) * w,
-                      P[i].Y() + (P[i + 1].Y() - P[i].Y()) * w,
-                      P[i].Z() + (P[i + 1].Z() - P[i].Z()) * w);
-    };
-    for (int n = 1; n < 256; ++n) {
-        // Below the sampling resolution nothing can be said (and a true
-        // tangent kink between two samples would otherwise fail every n
-        // and drive the loop to the cap), so intervals no wider than one
-        // sample gap pass by construction.
-        const bool subSample = n >= kSamples - 1;
-        bool ok = true;
-        for (int i = 0; i < n && ok; ++i) {
-            const double x0 = i / double(n), x1 = (i + 1) / double(n);
-            const double dT = at(T, x1) - at(T, x0);
-            if (!subSample && dT > aTol) {
-                ok = false;
-                break;
-            }
-            // Chord deviation of this interval, probed at the interval's
-            // parametric midpoint — the same single-probe semantics the
-            // old subdivider used, so counts stay in its regime. The
-            // probe reads the piecewise-linear polyline, so intervals
-            // finer than the sampling resolution sag zero by
-            // construction (nothing can be said below it anyway).
-            {
-                const gp_Pnt A = pAt(x0), B = pAt(x1);
-                const gp_Pnt M = pAt(0.5 * (x0 + x1));
-                gp_Vec ab(A, B);
-                const double ab2 = ab.SquareMagnitude();
-                gp_Vec am(A, M);
-                double w = ab2 > 1e-24 ? am.Dot(ab) / ab2 : 0.0;
-                w = std::clamp(w, 0.0, 1.0);
-                const gp_Pnt Q(A.X() + ab.X() * w, A.Y() + ab.Y() * w,
-                               A.Z() + ab.Z() * w);
-                if (M.Distance(Q) > cTol) ok = false;
-            }
-        }
-        if (ok) return n;
-    }
-    return 256;
-}
 
 class MeshBuilder {
 public:
@@ -4401,7 +4220,12 @@ bool samplePlanarRings(const TopoDS_Face& face, const Model& model,
                 Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, f3, l3);
                 Handle(Geom2d_Curve) c2 =
                     BRep_Tool::CurveOnSurface(edge, face, f2, l2);
-                if (c3.IsNull() || c2.IsNull()) return false;
+                if (c3.IsNull() || c2.IsNull()) {
+                    dbg("planar rings: edge %d missing %s%s", eid,
+                        c3.IsNull() ? "3D curve" : "",
+                        c2.IsNull() ? " pcurve" : "");
+                    return false;
+                }
                 const bool rev = edge.Orientation() == TopAbs_REVERSED;
                 const double ph = closedEdgePhase(edge, model);
                 Piece pc;
@@ -4475,7 +4299,12 @@ bool samplePlanarRings(const TopoDS_Face& face, const Model& model,
             Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, f3, l3);
             Handle(Geom2d_Curve) c2 =
                 BRep_Tool::CurveOnSurface(edge, face, f2, l2);
-            if (c3.IsNull() || c2.IsNull()) return false;
+            if (c3.IsNull() || c2.IsNull()) {
+                dbg("planar rings: edge %d missing %s%s", eid,
+                    c3.IsNull() ? "3D curve" : "",
+                    c2.IsNull() ? " pcurve" : "");
+                return false;
+            }
             const bool rev = edge.Orientation() == TopAbs_REVERSED;
             const double ph = closedEdgePhase(edge, model);
             // endpoint owned by the next edge
@@ -4488,6 +4317,18 @@ bool samplePlanarRings(const TopoDS_Face& face, const Model& model,
         }
         if (ring.uv.size() < 3) {
             dbg("planar rings: wire ring only %zu verts", ring.uv.size());
+            for (BRepTools_WireExplorer we(wire, face); we.More();
+                 we.Next()) {
+                const int eid = model.edges.FindIndex(we.Current());
+                const int solved =
+                    eid >= 1 && eid < int(solvedEdge.size())
+                        ? solvedEdge[eid]
+                        : 0;
+                const size_t pinCount =
+                    edgeIsPinned(eid, pins) ? (*pins)[eid].size() : 0;
+                dbg("planar rings: edge %d solved=%d pin-points=%zu", eid,
+                    solved, pinCount);
+            }
             return false;
         }
         rings.push_back(std::move(ring));
@@ -16227,18 +16068,19 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         }
     }
     // Wire floor: a closed wire sampled at fewer than 3 border vertices
-    // cannot bound any polygon — a 2-edge planar face (the reconstructed
-    // caps on translator-dropped holes, lens faces in sloppy CAD) whose
-    // near-straight edges each solve to 1 otherwise collapses to a 2-gon
-    // and demotes to raw triangulation. Raise the wire's longest
-    // unpinned edge until the wire can close — through its whole density
-    // group, so both bordering faces read the same count everywhere.
+    // cannot bound any polygon; rail ladders need 4 so their two tips split
+    // the outline into two real rails. Per-face and per-edge pins are user
+    // requests, not permission to create impossible topology, so this hard
+    // floor clamps them too. Raise the wire's longest edge through its whole
+    // density group so both bordering faces read the same count everywhere.
     for (int fid = 1; fid <= model.faceCount(); ++fid) {
         for (TopExp_Explorer wx(model.faces(fid), TopAbs_WIRE); wx.More();
              wx.Next()) {
             int total = 0;
             int bumpEid = 0;
             double bumpLen = -1.0;
+            const int minimum =
+                plans.at(fid).kind == MesherKind::RailLadder ? 4 : 3;
             for (TopExp_Explorer ex(wx.Current(), TopAbs_EDGE); ex.More();
                  ex.Next()) {
                 const TopoDS_Edge e = TopoDS::Edge(ex.Current());
@@ -16246,10 +16088,6 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 const int eid = model.edges.FindIndex(e);
                 if (eid < 1) continue;
                 total += std::max(0, solvedEdge[eid]);
-                if (settings.perEdge.count(eid)) continue;
-                if (density.pinnedRoots.count(density.groups.find(eid))) {
-                    continue;
-                }
                 double cf, cl;
                 if (BRep_Tool::Curve(e, cf, cl).IsNull()) continue;
                 BRepAdaptor_Curve c(e);
@@ -16259,11 +16097,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     bumpEid = eid;
                 }
             }
-            if (total == 0 || total >= 3 || bumpEid == 0) continue;
+            if (total == 0 || total >= minimum || bumpEid == 0) continue;
             dbg("density: wire on face %d totals %d samples, edge %d "
                 "raised by %d",
-                fid, total, bumpEid, 3 - total);
-            const int target = solvedEdge[bumpEid] + 3 - total;
+                fid, total, bumpEid, minimum - total);
+            const int target = solvedEdge[bumpEid] + minimum - total;
             const int root = density.groups.find(bumpEid);
             auto it = density.groupCount.find(root);
             if (it != density.groupCount.end() && it->second < target) {
@@ -18992,60 +18830,6 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     dbg("generate: done (%zu verts, %zu polys)", mesh.vertexCount(),
         mesh.polygonCount());
     return mesh;
-}
-
-std::vector<uint8_t> foldedPolys(const Model& model, const PolyMesh& mesh) {
-    std::vector<uint8_t> folded(mesh.polygons.size(), 0);
-    // Surface adaptors are built lazily per face; polygons arrive grouped
-    // by face so in practice each face is built once.
-    int curFace = 0;
-    std::unique_ptr<BRepAdaptor_Surface> surf;
-    double orient = 1.0;
-    for (size_t p = 0; p < mesh.polygons.size(); ++p) {
-        const int fid = mesh.polygonFaceId[p];
-        if (fid <= 0 || fid > model.faceCount()) continue;
-        const auto& poly = mesh.polygons[p];
-        // Newell normal: robust winding normal for any planar-ish polygon.
-        double nx = 0, ny = 0, nz = 0;
-        for (size_t i = 0; i < poly.size(); ++i) {
-            const auto& a = mesh.vertices[poly[i]];
-            const auto& b = mesh.vertices[poly[(i + 1) % poly.size()]];
-            nx += (a[1] - b[1]) * (a[2] + b[2]);
-            ny += (a[2] - b[2]) * (a[0] + b[0]);
-            nz += (a[0] - b[0]) * (a[1] + b[1]);
-        }
-        const double nlen = std::sqrt(nx * nx + ny * ny + nz * nz);
-        if (nlen < 1e-14) continue;  // degenerate: no winding to judge
-        if (fid != curFace) {
-            const TopoDS_Face& face = TopoDS::Face(model.faces(fid));
-            surf = std::make_unique<BRepAdaptor_Surface>(face);
-            orient = face.Orientation() == TopAbs_REVERSED ? -1.0 : 1.0;
-            curFace = fid;
-        }
-        // Every vertex with an anchor on this face votes: surface normal
-        // at ITS OWN uv against the polygon winding. Per-vertex sampling
-        // (not a uv average) keeps periodic surfaces honest — averaging
-        // across a cylinder's seam lands on the far side of the barrel.
-        int votes = 0;
-        for (uint32_t vi : poly) {
-            if (vi >= mesh.anchors.size()) continue;
-            const Anchor& an = mesh.anchors[vi];
-            if (an.faceId != fid) continue;
-            gp_Pnt sp;
-            gp_Vec du, dv;
-            surf->D1(an.u, an.v, sp, du, dv);
-            gp_Vec sn = du.Crossed(dv);
-            const double slen = sn.Magnitude();
-            if (slen < 1e-14) continue;  // pole: normal undefined there
-            const double dot =
-                orient * (sn.X() * nx + sn.Y() * ny + sn.Z() * nz) /
-                (slen * nlen);
-            if (dot > 0.1) ++votes;
-            else if (dot < -0.1) --votes;
-        }
-        if (votes < 0) folded[p] = 1;
-    }
-    return folded;
 }
 
 }  // namespace weft

@@ -148,8 +148,9 @@ struct GenerationSettings {
     }
 };
 
-// Which strategy generate() picked for each face — reported so the CLI can
-// show what was parametric and what fell back to triangulation.
+// Which strategy generate() picked for each face. GenerationReport::faceBuild
+// separately records whether that plan ultimately needed an emergency raw
+// OCCT triangulation.
 enum class MesherKind {
     RevolutionGrid,  // closed-u cylinder/cone/sphere/torus: quad grid with
                      // wrap-around seams and collapsed apex/pole rows
@@ -161,12 +162,14 @@ enum class MesherKind {
     RingJunction,    // rectangular planar face with one circular hole:
                      // concentric quad rings from the circle to the border
                      // (the cylinder-to-plane junction pattern, plan §3.3/4.2)
-    QuadDominant,    // fallback triangulation + guided tri-pairing into
+    QuadDominant,    // border-exact contract web + guided tri-pairing into
                      // quads (plan §3.5 seed; a cross-field solver slots in
                      // here later)
     MinimalNGon,     // planar face as a single boundary n-gon (flat panels
                      // don't need interior topology for game meshes)
-    Fallback,        // OCCT incremental triangulation, pure triangles
+    Fallback,        // border-exact contract floor for faces no structured
+                     // family can express. Raw OCCT triangulation is only its
+                     // last-resort failure path and is reported as faceBuild=1.
     AnnulusRing,     // face bounded by exactly two closed loops (the flat
                      // ring between two revolution rims): one zippered
                      // band — equal counts give pure quads

@@ -30,6 +30,9 @@
 #include <TopoDS_Wire.hxx>
 
 #include <memory>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <stdexcept>
 #include <vector>
 
@@ -228,24 +231,60 @@ static TopoDS_Shape capDroppedFaces(const TopoDS_Shape& shape,
 }
 
 TopoDS_Shape healWithHistory(const TopoDS_Shape& input, Handle(BRepTools_History)& outHist) {
+    const bool profile = std::getenv("WEFT_PROFILE_IMPORT") != nullptr;
+    auto last = std::chrono::steady_clock::now();
+    auto mark = [&](const char* stage) {
+        if (!profile) return;
+        const auto now = std::chrono::steady_clock::now();
+        std::fprintf(stderr, "import profile: %-24s %8lld ms\n", stage,
+                     static_cast<long long>(
+                         std::chrono::duration_cast<std::chrono::milliseconds>(
+                             now - last)
+                             .count()));
+        last = now;
+    };
     outHist = new BRepTools_History();
     TopoDS_Shape shape = input;
 
     // Sew faces that arrive with their own duplicate copies of shared
     // edges (common in some exporters): unshared edges can't take part in
     // density matching or welding, leaving open seams through the model.
-    TopoDS_Shape preSew = shape;
-    BRepBuilderAPI_Sewing sewing(1e-4);
-    sewing.Add(shape);
-    sewing.Perform();
-    if (!sewing.SewedShape().IsNull()) shape = sewing.SewedShape();
-    outHist->Merge(historyOfSewing(preSew, sewing));
+    // Every repair is transactional and best-effort. Large assemblies often
+    // contain one locally malformed wire that OCCT cannot repair (for example
+    // "Courbes non jointives"). That must not discard thousands of otherwise
+    // transferable bodies or make the whole file impossible to open.
+    try {
+        TopoDS_Shape preSew = shape;
+        BRepBuilderAPI_Sewing sewing(1e-4);
+        sewing.Add(shape);
+        sewing.Perform();
+        TopoDS_Shape sewn = sewing.SewedShape();
+        if (!sewn.IsNull()) {
+            Handle(BRepTools_History) hist = historyOfSewing(preSew, sewing);
+            shape = sewn;
+            outHist->Merge(hist);
+        }
+    } catch (const Standard_Failure&) {
+        // Keep the last known-good shape; downstream mesh fallbacks isolate
+        // any genuinely broken faces.
+    }
+    mark("sew");
 
-    TopoDS_Shape preFix = shape;
-    ShapeFix_Shape fixer(shape);
-    fixer.Perform();
-    shape = fixer.Shape();
-    outHist->Merge(historyOfReShape(preFix, fixer.Context()));
+    try {
+        TopoDS_Shape preFix = shape;
+        ShapeFix_Shape fixer(shape);
+        fixer.Perform();
+        TopoDS_Shape fixed = fixer.Shape();
+        if (!fixed.IsNull()) {
+            Handle(BRepTools_History) hist =
+                historyOfReShape(preFix, fixer.Context());
+            shape = fixed;
+            outHist->Merge(hist);
+        }
+    } catch (const Standard_Failure&) {
+        // ShapeFix is an enhancement, not an import precondition.
+    }
+    mark("shape fix");
 
     // STEP kernels split closed revolves into half-faces, so a bore
     // arrives as two half-cylinders with seam lines and split rim arcs.
@@ -254,11 +293,12 @@ TopoDS_Shape healWithHistory(const TopoDS_Shape& input, Handle(BRepTools_History
     // edges — the rim halves become one closed circle) so holes and
     // bosses solve as single revolution rings. Planar and freeform
     // faces are kept as authored: only revolved geometry is healed.
-    {
-        ShapeUpgrade_UnifySameDomain unify(shape, /*UnifyEdges*/ true,
-                                           /*UnifyFaces*/ true,
-                                           /*ConcatBSplines*/ false);
-        for (TopExp_Explorer fx(shape, TopAbs_FACE); fx.More(); fx.Next()) {
+    try {
+        TopoDS_Shape before = shape;
+        ShapeUpgrade_UnifySameDomain unify(before, /*UnifyEdges*/ true,
+                                            /*UnifyFaces*/ true,
+                                            /*ConcatBSplines*/ false);
+        for (TopExp_Explorer fx(before, TopAbs_FACE); fx.More(); fx.Next()) {
             BRepAdaptor_Surface s(TopoDS::Face(fx.Current()), false);
             switch (s.GetType()) {
                 case GeomAbs_Cylinder:
@@ -272,26 +312,46 @@ TopoDS_Shape healWithHistory(const TopoDS_Shape& input, Handle(BRepTools_History
             }
         }
         unify.Build();
-        if (!unify.Shape().IsNull()) shape = unify.Shape();
-        if (!unify.History().IsNull()) outHist->Merge(unify.History());
+        TopoDS_Shape unified = unify.Shape();
+        if (!unified.IsNull()) {
+            Handle(BRepTools_History) hist = unify.History();
+            shape = unified;
+            if (!hist.IsNull()) outHist->Merge(hist);
+        }
+    } catch (const Standard_Failure&) {
+        // A single bad revolve must not abort the assembly import.
     }
+    mark("revolve unify");
     // Second, unscoped edge pass: tangent same-curve chains merge into
     // single edges everywhere (the kept planar faces blocked arc merges
     // along their wires in the scoped pass above, leaving one rim of a
     // band as a full circle and the other as two halves — a structural
     // count mismatch). Feature circles come out as ONE closed edge.
-    {
-        ShapeUpgrade_UnifySameDomain unify(shape, /*UnifyEdges*/ true,
-                                           /*UnifyFaces*/ false,
-                                           /*ConcatBSplines*/ true);
+    try {
+        TopoDS_Shape before = shape;
+        ShapeUpgrade_UnifySameDomain unify(before, /*UnifyEdges*/ true,
+                                            /*UnifyFaces*/ false,
+                                            /*ConcatBSplines*/ true);
         unify.Build();
-        if (!unify.Shape().IsNull()) shape = unify.Shape();
-        if (!unify.History().IsNull()) outHist->Merge(unify.History());
+        TopoDS_Shape unified = unify.Shape();
+        if (!unified.IsNull()) {
+            Handle(BRepTools_History) hist = unify.History();
+            shape = unified;
+            if (!hist.IsNull()) outHist->Merge(hist);
+        }
+    } catch (const Standard_Failure&) {
+        // Preserve the pre-pass topology when OCCT cannot concatenate a wire.
     }
+    mark("edge unify");
 
     // Cap holes left by faces the translator dropped (nearly-closed
     // shells only; authored sheet bodies keep their boundary).
-    shape = capDroppedFaces(shape, outHist);
+    try {
+        shape = capDroppedFaces(shape, outHist);
+    } catch (const Standard_Failure&) {
+        // Capping is optional recovery; retain the import without it.
+    }
+    mark("cap dropped faces");
 
     return shape;
 }

@@ -30,6 +30,9 @@
 #include <XSControl_WorkSession.hxx>
 
 #include <map>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -154,19 +157,41 @@ public:
     }
 
     bool readFile(const std::string& path) override {
+        const auto begin = std::chrono::steady_clock::now();
         OccStaticVariablesRollback rb;
         applyStepReadStatics(rb);
         m_path = path;
-        return m_reader.ReadFile(path.c_str()) == IFSelect_RetDone;
+        const bool ok = m_reader.ReadFile(path.c_str()) == IFSelect_RetDone;
+        if (std::getenv("WEFT_PROFILE_IMPORT")) {
+            std::fprintf(stderr, "import profile: %-24s %8lld ms\n", "STEP parse",
+                         static_cast<long long>(
+                             std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - begin)
+                                 .count()));
+        }
+        return ok;
     }
 
     Model transfer() override {
+        const bool profile = std::getenv("WEFT_PROFILE_IMPORT") != nullptr;
+        auto last = std::chrono::steady_clock::now();
+        auto mark = [&](const char* stage) {
+            if (!profile) return;
+            const auto now = std::chrono::steady_clock::now();
+            std::fprintf(stderr, "import profile: %-24s %8lld ms\n", stage,
+                         static_cast<long long>(
+                             std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 now - last)
+                                 .count()));
+            last = now;
+        };
         OccStaticVariablesRollback rb;
         applyStepReadStatics(rb);
 
         Handle(TDocStd_Document) doc;
         XCAFApp_Application::GetApplication()->NewDocument("BinXCAF", doc);
         m_reader.Transfer(doc);
+        mark("STEP transfer/XCAF");
 
         // Heal the SAME compound the old loadStep did (byte-identical
         // geometry) while XCAF carries the metadata off the same transfer.
@@ -175,7 +200,9 @@ public:
             throw std::runtime_error("STEP file contained no transferable shapes: " + m_path);
 
         Model m = cafToModel(oneShape, doc);
+        mark("heal/index/metadata");
         applyLegacySolidNames(m, oneShape, m_reader.Reader());
+        mark("legacy names");
         XCAFApp_Application::GetApplication()->Close(doc);  // release the XDE document
         return m;
     }

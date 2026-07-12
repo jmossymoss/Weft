@@ -24,9 +24,11 @@
 #include <TopoDS_Compound.hxx>
 #include <gp_Ax2.hxx>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <map>
@@ -1561,6 +1563,151 @@ void testCadConversionPreservesObjects() {
     CHECK(faceGroups > 0);
 }
 
+// Strategy audit: every selectable mesher family must build at least one real
+// face, keep closed fixtures watertight, avoid raw OCCT fallback/empty output,
+// and produce no surface-winding folds. The two hero files cover specialized
+// rail-ladder and freeform dome routing that deliberately does not occur on
+// the small analytic fixtures.
+void testAllMesherStrategies() {
+    std::printf("-- all mesher strategies --\n");
+    std::set<weft::MesherKind> observed;
+
+    auto runModel = [&](const std::string& label, const weft::Model& model,
+                        const weft::GenerationSettings& settings) {
+        const weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        const weft::PolyMesh mesh =
+            weft::generate(model, analysis, settings, &report);
+        CHECK(!mesh.vertices.empty());
+        CHECK(!mesh.polygons.empty());
+        CHECK(isWatertight(mesh));
+        for (const auto& [faceId, build] : report.faceBuild) {
+            (void)faceId;
+            CHECK(build != 1);   // never raw OCCT triangulation
+            CHECK(build != -1);  // never an empty face
+        }
+        const std::vector<uint8_t> folded = weft::foldedPolys(model, mesh);
+        CHECK(std::find(folded.begin(), folded.end(), uint8_t{1}) ==
+              folded.end());
+        for (const auto& [faceId, kind] : report.faceMesher) {
+            (void)faceId;
+            observed.insert(kind);
+        }
+        std::printf("  %-16s %zu verts, %zu polys\n", label.c_str(),
+                    mesh.vertexCount(), mesh.polygonCount());
+    };
+
+    auto runShape = [&](const std::string& label, const TopoDS_Shape& shape,
+                        const weft::GenerationSettings& settings) {
+        const std::string path = tmpPath("weft_strategy_" + label + ".step");
+        weft::writeStep(shape, path);
+        runModel(label, weft::loadStep(path), settings);
+    };
+    auto runFixture = [&](const std::string& name,
+                          const weft::GenerationSettings& settings) {
+        runShape(name, weft::makeFixture(name), settings);
+    };
+
+    weft::GenerationSettings defaults;
+    runFixture("cylinder", defaults);  // revolution + disk cap
+    runFixture("ribbon", defaults);    // ribbon sweep
+    runFixture("slotted", defaults);   // quad fill / annulus family
+
+    weft::GenerationSettings dense;
+    dense.defaults.minimal = false;
+    dense.defaults.gridU = 3;
+    dense.defaults.gridV = 3;
+    runFixture("box", dense);   // planar grid
+    runFixture("boss", dense);  // ring junction
+    runFixture("fillet", dense);  // coons grid
+
+    // Exercise the two fallback policies explicitly on a valid planar face.
+    for (weft::MesherKind kind : {weft::MesherKind::Fallback,
+                                  weft::MesherKind::QuadDominant}) {
+        weft::GenerationSettings forced = dense;
+        forced.perFace[1] = forced.defaults;
+        forced.perFace[1].forceMesher = 1 + int(kind);
+        runShape(kind == weft::MesherKind::Fallback ? "fallback"
+                                                     : "quad_dominant",
+                 weft::makeFixture("box"), forced);
+    }
+
+    // Two concentric circular boundaries route the flat faces to annulus-ring.
+    TopoDS_Shape washer = BRepAlgoAPI_Cut(
+                              BRepPrimAPI_MakeCylinder(20.0, 5.0).Shape(),
+                              BRepPrimAPI_MakeCylinder(
+                                  gp_Ax2(gp_Pnt(0, 0, -1),
+                                         gp_Dir(0, 0, 1)),
+                                  10.0, 7.0)
+                                  .Shape())
+                              .Shape();
+    runShape("annulus", washer, dense);
+
+    // Multiple circular holes route top and bottom through plate-web.
+    TopoDS_Shape plate = BRepPrimAPI_MakeBox(60.0, 30.0, 5.0).Shape();
+    for (double x : {18.0, 42.0}) {
+        const TopoDS_Shape bore =
+            BRepPrimAPI_MakeCylinder(
+                gp_Ax2(gp_Pnt(x, 15.0, -1.0), gp_Dir(0, 0, 1)), 5.0,
+                7.0)
+                .Shape();
+        plate = BRepAlgoAPI_Cut(plate, bore).Shape();
+    }
+    runShape("plate_web", plate, dense);
+
+    weft::GenerationSettings cad;
+    cad.defaults.minimal = true;
+    cad.defaults.adaptive = true;
+    cad.defaults.relativeDeviation = true;
+    const std::filesystem::path corpus =
+        std::filesystem::path(__FILE__).parent_path() / "STEP_Examples";
+    const weft::Model flaregun =
+        weft::loadStep((corpus / "flaregun.stp").string());
+    const weft::Model foam =
+        weft::loadStep((corpus / "foam.stp").string());
+    runModel("flaregun", flaregun, cad);  // rail ladder
+    runModel("foam", foam, cad);          // dome cap
+
+    // Regression for impossible two-vertex rail wires: a propagated radial
+    // edit used to pin both rail edges to one segment, defeating the generic
+    // wire floor and sending neighbouring rail ladders to raw OCCT output.
+    auto checkDensityEdit = [&](const weft::Model& model, int faceId) {
+        const weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationSettings edited = cad;
+        edited.perFace[faceId] = cad.defaults;
+        edited.perFace[faceId].radial = 8;
+        weft::GenerationReport report;
+        const weft::PolyMesh mesh =
+            weft::generate(model, analysis, edited, &report);
+        CHECK(isWatertight(mesh));
+        for (const auto& [fid, build] : report.faceBuild) {
+            (void)fid;
+            CHECK(build != 1);
+            CHECK(build != -1);
+        }
+    };
+    checkDensityEdit(flaregun, 81);
+    checkDensityEdit(foam, 814);
+
+    constexpr weft::MesherKind expected[] = {
+        weft::MesherKind::RevolutionGrid, weft::MesherKind::DiskCap,
+        weft::MesherKind::PlanarGrid,     weft::MesherKind::CoonsGrid,
+        weft::MesherKind::RingJunction,   weft::MesherKind::QuadDominant,
+        weft::MesherKind::MinimalNGon,    weft::MesherKind::Fallback,
+        weft::MesherKind::AnnulusRing,    weft::MesherKind::PlateWeb,
+        weft::MesherKind::QuadFill,       weft::MesherKind::RailLadder,
+        weft::MesherKind::RibbonSweep,    weft::MesherKind::DomeCap,
+    };
+    for (weft::MesherKind kind : expected) {
+        if (!observed.count(kind)) {
+            std::printf("missing mesher strategy: %s\n",
+                        weft::mesherKindName(kind));
+            CHECK(false);
+        }
+    }
+    CHECK_EQ(observed.size(), std::size(expected));
+}
+
 // Announce each test and turn stray exceptions into a named failure
 // instead of a silent fail-fast crash (0xc0000409 on Windows).
 #define RUN(fn)                                               \
@@ -1735,6 +1882,7 @@ int main() {
     RUN(testGenerationCache);
     RUN(testConcurrentGenerationSettings);
     RUN(testCadConversionPreservesObjects);
+    RUN(testAllMesherStrategies);
     if (failures) {
         std::printf("\n%d FAILURE(S)\n", failures);
         return 1;

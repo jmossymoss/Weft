@@ -562,9 +562,22 @@ int cmdSweep(const std::vector<std::string>& args) {
                        "/nm=" + std::to_string(vr.nonManifoldEdges);
             }
             int raw = 0, empty = 0;
+            std::vector<int> newRawFaces, newEmptyFaces;
             for (const auto& [f2, how] : rep.faceBuild) {
-                if (how == 1) ++raw;
-                if (how == -1) ++empty;
+                if (how == 1) {
+                    ++raw;
+                    auto it = baseRep.faceBuild.find(f2);
+                    if (it == baseRep.faceBuild.end() || it->second != 1) {
+                        newRawFaces.push_back(f2);
+                    }
+                }
+                if (how == -1) {
+                    ++empty;
+                    auto it = baseRep.faceBuild.find(f2);
+                    if (it == baseRep.faceBuild.end() || it->second != -1) {
+                        newEmptyFaces.push_back(f2);
+                    }
+                }
             }
             int baseRaw = 0, baseEmpty = 0;
             for (const auto& [f2, how] : baseRep.faceBuild) {
@@ -574,10 +587,24 @@ int cmdSweep(const std::vector<std::string>& args) {
             if (raw > baseRaw) {
                 bad += " raw-demotions=" + std::to_string(raw) + " (base " +
                        std::to_string(baseRaw) + ")";
+                if (!newRawFaces.empty()) {
+                    bad += " faces=";
+                    for (int f2 : newRawFaces) {
+                        bad += "#" + std::to_string(f2) + ",";
+                    }
+                    bad.pop_back();
+                }
             }
             if (empty > baseEmpty) {
                 bad += " empty=" + std::to_string(empty) + " (base " +
                        std::to_string(baseEmpty) + ")";
+                if (!newEmptyFaces.empty()) {
+                    bad += " faces=";
+                    for (int f2 : newEmptyFaces) {
+                        bad += "#" + std::to_string(f2) + ",";
+                    }
+                    bad.pop_back();
+                }
             }
             if (!bad.empty()) {
                 std::printf("FAIL face %d radial %d:%s\n", fid, r,
