@@ -1514,6 +1514,27 @@ void testGenerationCache() {
     CHECK_EQ(editReport.cacheHits + editReport.cacheMisses, model.faceCount());
     std::printf("  local edit: %d remeshed, %d reused\n",
                 editReport.cacheMisses, editReport.cacheHits);
+
+    // Viewport preview and final export share identical per-face parts. The
+    // final pass must reuse all of them, then restore the authoritative
+    // watertight result without remeshing a face.
+    weft::GenerationSettings previewSettings = gs;
+    previewSettings.progressFaces = nullptr;
+    previewSettings.progressTotal = nullptr;
+    previewSettings.finalizeMesh = false;
+    weft::GenerationReport previewReport;
+    (void)weft::generate(model, a, previewSettings, &previewReport, &cache);
+    CHECK_EQ(previewReport.cacheMisses, 0);
+
+    weft::GenerationSettings exportSettings = previewSettings;
+    exportSettings.finalizeMesh = true;
+    weft::GenerationReport exportReport;
+    weft::PolyMesh exportRun =
+        weft::generate(model, a, exportSettings, &exportReport, &cache);
+    CHECK_EQ(exportReport.cacheMisses, 0);
+    CHECK_EQ(exportRun.vertexCount(), cachedRun.vertexCount());
+    CHECK_EQ(exportRun.polygonCount(), cachedRun.polygonCount());
+    CHECK(isWatertight(exportRun));
 }
 
 // Top-level generation is a library API and may be called by independent

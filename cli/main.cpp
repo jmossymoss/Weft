@@ -64,7 +64,7 @@ void usage() {
         "      an edit must never open a seam, demote a face to raw\n"
         "      triangulation, or leave one empty; exits 1 on any failure\n"
         "\n"
-        "  weft cache-check <in.step> --face ID:key=value[,key=value...]\n"
+        "  weft cache-check <in.step> --face ID:key=value[,key=value...] [--preview]\n"
         "      generate once, apply one face edit, and report exact remesh\n"
         "      face ids plus cold, edit and identical-warm timings\n"
         "\n"
@@ -572,9 +572,12 @@ int cmdCacheCheck(const std::vector<std::string>& args) {
     if (args.empty()) { usage(); return 2; }
     const std::string input = args[0];
     std::string faceSpec;
+    bool preview = false;
     for (size_t i = 1; i < args.size(); ++i) {
         if (args[i] == "--face" && i + 1 < args.size()) {
             faceSpec = args[++i];
+        } else if (args[i] == "--preview") {
+            preview = true;
         } else {
             throw std::runtime_error("unknown cache-check option: " + args[i]);
         }
@@ -594,6 +597,7 @@ int cmdCacheCheck(const std::vector<std::string>& args) {
     base.defaults.minimal = true;
     base.defaults.adaptive = true;
     base.defaults.relativeDeviation = true;
+    base.finalizeMesh = !preview;
     weft::GenerationCache cache;
     auto run = [&](const char* label, const weft::GenerationSettings& settings) {
         const auto begin = std::chrono::steady_clock::now();

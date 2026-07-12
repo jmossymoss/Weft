@@ -489,6 +489,32 @@ uniform float uMix;    // 0 = per-vertex colour, 1 = uColor override
 uniform vec3 uColor;
 void main() { frag = vec4(mix(vColor, uColor, uMix), 1.0); })";
 
+// GPU-only topology feedback. The current CAD surface triangles carry
+// normalized face UVs; the fragment shader draws the requested grid at frame
+// rate while the exact CPU mesher settles in the background.
+static const char* kProxyVS = R"(#version 330 core
+layout(location=0) in vec3 aPos;
+layout(location=1) in vec2 aUv;
+uniform mat4 uMVP;
+out vec2 vUv;
+void main() {
+    vUv = aUv;
+    gl_Position = uMVP * vec4(aPos, 1.0);
+})";
+
+static const char* kProxyFS = R"(#version 330 core
+in vec2 vUv;
+out vec4 frag;
+uniform vec3 uGrid;  // requested U count, V count, opacity
+void main() {
+    vec2 cell = vUv * max(uGrid.xy, vec2(1.0));
+    vec2 phase = fract(cell);
+    vec2 edge = min(phase, 1.0 - phase) / max(fwidth(cell), vec2(1e-5));
+    float line = 1.0 - smoothstep(0.25, 1.15, min(edge.x, edge.y));
+    if (line < 0.02) discard;
+    frag = vec4(0.12, 0.92, 1.0, line * uGrid.z);
+})";
+
 // ---------------------------------------------------------------------------
 // GPU vertex buffers (pos3 + col3).
 
@@ -523,6 +549,26 @@ struct Buffer {
         }
         glBindVertexArray(0);
         count = static_cast<int>(data.size()) / floatsPerVert;
+    }
+
+    void uploadUv(const std::vector<float>& data) {
+        if (!vao) {
+            glGenVertexArrays(1, &vao);
+            glGenBuffers(1, &vbo);
+        }
+        const GLsizei stride = 5 * sizeof(float);
+        glBindVertexArray(vao);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, data.size() * sizeof(float), data.data(),
+                     GL_DYNAMIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)0);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, stride,
+                              (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(1);
+        glDisableVertexAttribArray(2);
+        glBindVertexArray(0);
+        count = static_cast<int>(data.size()) / 5;
     }
 };
 
@@ -712,7 +758,7 @@ struct App {
     std::atomic<int> genTotal{0};
     double genStartTime = 0.0;
     weft::GenerationSettings genSettings;
-    std::vector<weft::ManualOp> genOps;  // worker's frozen ops snapshot  // worker's frozen snapshot
+    std::vector<weft::ManualOp> genOps;  // worker's frozen ops snapshot
     weft::PolyMesh genMesh;
     weft::GenerationReport genReport;
     std::string genError;
@@ -729,13 +775,16 @@ struct App {
     double lastMutationTime = 0.0;
 
     // GPU.
-    Buffer fill, wire, brep, pick, preview, verts;
+    Buffer fill, wire, brep, pick, preview, verts, gpuProxy;
     Buffer allVerts;  // every visible vert, drawn small+black in vert mode
     // Problem overlay: open edges (red) and non-manifold edges (magenta)
     // rebuilt after every regenerate — the trust meter for game export.
     Buffer problems;
     int openEdgeCount = 0, multiEdgeCount = 0;
     int foldedPolyCount = 0;
+    bool meshFinalized = false;
+    bool gpuProxyPending = false;
+    int gpuProxyFace = 0;
     bool showProblems = true;
     // Quality heatmap: tint polys by worst corner angle vs the regular
     // polygon's — pinches and slivers glow before they reach the DCC.
@@ -825,7 +874,7 @@ static std::array<float, 3> heatColor(double q) {
 static void rebuildBuffers(App& app) {
     const weft::PolyMesh& m = app.mesh;
 
-    std::vector<float> fill, pick, wire;
+    std::vector<float> fill, pick, wire, proxy;
     fill.reserve(m.polygons.size() * 27);
     auto push = [](std::vector<float>& v, const std::array<double, 3>& p,
                    const std::array<float, 3>& c) {
@@ -1021,9 +1070,96 @@ static void rebuildBuffers(App& app) {
         app.fillSegs.back()[2] = int(fill.size() / 9) - app.fillSegs.back()[1];
         app.polyFillRange[i][1] = int(fill.size() / 9) - app.polyFillRange[i][0];
     }
+
+    // Build UV-bearing triangles only for the active face. This buffer is
+    // stable for the life of the current exact mesh; density edits change two
+    // shader uniforms, never CPU geometry or GPU uploads.
+    if (app.activeFace >= 1 && app.activeFace <= app.model.faceCount()) {
+        try {
+            const int fid = app.activeFace;
+            const TopoDS_Face face = TopoDS::Face(app.model.faces(fid));
+            BRepAdaptor_Surface surf(face);
+            const double u0 = surf.FirstUParameter();
+            const double u1 = surf.LastUParameter();
+            const double v0 = surf.FirstVParameter();
+            const double v1 = surf.LastVParameter();
+            const double du = u1 - u0, dv = v1 - v0;
+            if (std::isfinite(du) && std::isfinite(dv) &&
+                std::abs(du) > 1e-12 && std::abs(dv) > 1e-12) {
+                std::map<uint32_t, std::array<double, 2>> uvCache;
+                auto uvOf = [&](uint32_t vi,
+                                std::array<double, 2>& uv) -> bool {
+                    auto hit = uvCache.find(vi);
+                    if (hit != uvCache.end()) {
+                        uv = hit->second;
+                        return std::isfinite(uv[0]) && std::isfinite(uv[1]);
+                    }
+                    weft::Anchor a;
+                    if (vi < m.anchors.size()) a = m.anchors[vi];
+                    if (a.faceId != fid) {
+                        std::array<double, 3> point = m.vertices[vi];
+                        a = weft::snapToFace(app.model, fid, point);
+                    }
+                    uv = {(a.u - u0) / du, (a.v - v0) / dv};
+                    uvCache[vi] = uv;
+                    return a.faceId == fid && std::isfinite(uv[0]) &&
+                           std::isfinite(uv[1]);
+                };
+                auto emitTri = [&](uint32_t a, uint32_t b, uint32_t c) {
+                    std::array<uint32_t, 3> vi{a, b, c};
+                    std::array<std::array<double, 2>, 3> uv;
+                    for (int k = 0; k < 3; ++k) {
+                        if (!uvOf(vi[k], uv[k])) return;
+                    }
+                    // Keep periodic seam triangles local in UV space so the
+                    // procedural grid does not streak across the full chart.
+                    for (int axis = 0; axis < 2; ++axis) {
+                        const bool periodic = axis == 0 ? surf.IsUPeriodic()
+                                                        : surf.IsVPeriodic();
+                        if (!periodic) continue;
+                        double lo = uv[0][axis], hi = lo;
+                        for (int k = 1; k < 3; ++k) {
+                            lo = std::min(lo, uv[k][axis]);
+                            hi = std::max(hi, uv[k][axis]);
+                        }
+                        if (hi - lo > 0.5) {
+                            for (int k = 0; k < 3; ++k) {
+                                if (uv[k][axis] < 0.5) uv[k][axis] += 1.0;
+                            }
+                        }
+                    }
+                    for (int k = 0; k < 3; ++k) {
+                        const auto& p = m.vertices[vi[k]];
+                        proxy.insert(proxy.end(), {float(p[0]), float(p[1]),
+                                                   float(p[2]),
+                                                   float(uv[k][0]),
+                                                   float(uv[k][1])});
+                    }
+                };
+                for (size_t pi = 0; pi < m.polygons.size(); ++pi) {
+                    if (m.polygonFaceId[pi] != fid) continue;
+                    const auto& poly = m.polygons[pi];
+                    if (poly.size() <= 4) {
+                        for (size_t k = 1; k + 1 < poly.size(); ++k) {
+                            emitTri(poly[0], poly[k], poly[k + 1]);
+                        }
+                    } else {
+                        for (const auto& t :
+                             weft::triangulatePoly(m.vertices, poly)) {
+                            emitTri(poly[t[0]], poly[t[1]], poly[t[2]]);
+                        }
+                    }
+                }
+            }
+        } catch (const Standard_Failure&) {
+            proxy.clear();
+        }
+    }
     app.fill.upload(fill, 9);
     app.pick.upload(pick);
     app.wire.upload(wire);
+    app.gpuProxy.uploadUv(proxy);
+    app.gpuProxyFace = proxy.empty() ? 0 : app.activeFace;
 
     // Vertices of the selected faces (drawn as points; colour comes from
     // the uniform tint, so the values here are placeholders).
@@ -1100,9 +1236,11 @@ static void updateProblems(App& app) {
     app.multiEdgeCount = 0;
     app.foldedPolyCount = 0;
     std::map<std::pair<uint32_t, uint32_t>, int> dir;
-    for (const auto& poly : app.mesh.polygons) {
-        for (size_t i = 0; i < poly.size(); ++i) {
-            ++dir[{poly[i], poly[(i + 1) % poly.size()]}];
+    if (app.meshFinalized) {
+        for (const auto& poly : app.mesh.polygons) {
+            for (size_t i = 0; i < poly.size(); ++i) {
+                ++dir[{poly[i], poly[(i + 1) % poly.size()]}];
+            }
         }
     }
     std::vector<float> lines;
@@ -1117,13 +1255,15 @@ static void updateProblems(App& app) {
             lines.push_back(bl);
         }
     };
-    for (const auto& [e, count] : dir) {
-        if (count > 1) {
-            pushEdge(e.first, e.second, 1.0f, 0.2f, 0.9f);  // magenta
-            app.multiEdgeCount += count - 1;
-        } else if (!dir.count({e.second, e.first})) {
-            pushEdge(e.first, e.second, 1.0f, 0.25f, 0.15f);  // red
-            ++app.openEdgeCount;
+    if (app.meshFinalized) {
+        for (const auto& [e, count] : dir) {
+            if (count > 1) {
+                pushEdge(e.first, e.second, 1.0f, 0.2f, 0.9f);  // magenta
+                app.multiEdgeCount += count - 1;
+            } else if (!dir.count({e.second, e.first})) {
+                pushEdge(e.first, e.second, 1.0f, 0.25f, 0.15f);  // red
+                ++app.openEdgeCount;
+            }
         }
     }
     const std::vector<uint8_t> folded =
@@ -1153,6 +1293,10 @@ static void startGenerate(App& app) {
             app.recipe.settings.perEdge.size(), app.recipe.ops.size());
     if (app.genThread.joinable()) app.genThread.join();
     app.genSettings = app.recipe.settings;
+    // The viewport needs connected vertices for editing, but not the costly
+    // whole-model conformation/stitch/cleanup pass. Export regenerates from
+    // these cached face parts with finalization enabled.
+    app.genSettings.finalizeMesh = false;
     // Ops frozen like settings: the UI thread mutates them mid-run
     // (weld, undo, grab drags) and a live read is a use-after-free
     // in the worker.
@@ -1205,6 +1349,8 @@ static void finishGenerate(App& app) {
             (glfwGetTime() - app.genStartTime) * 1000.0);
     {
         app.mesh = std::move(app.genMesh);
+        app.meshFinalized = app.genSettings.finalizeMesh;
+        app.gpuProxyPending = app.dirty && app.activeFace > 0;
         app.report = std::move(app.genReport);
         app.exactNormalCache.clear();  // vert indices died with the mesh
         app.selPolys.clear();  // mesh indices died with the old mesh
@@ -1744,7 +1890,28 @@ static std::string tempDir() {
 #endif
 }
 
-static void exportObjTo(App& app, const std::string& out);
+static weft::PolyMesh finalizedMeshForExport(App& app) {
+    // The generation cache is shared with the preview worker, so drain it
+    // before reusing the cached face parts for the authoritative final pass.
+    while (app.genBusy && !app.genReady) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    if (app.genReady) finishGenerate(app);
+
+    weft::GenerationSettings settings = app.recipe.settings;
+    settings.finalizeMesh = true;
+    settings.progressFaces = nullptr;
+    settings.progressTotal = nullptr;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh =
+        weft::generate(app.model, app.analysis, settings, &report,
+                       &app.genCache);
+    weft::applyOps(mesh, app.model, app.recipe.ops);
+    return mesh;
+}
+
+static void exportObjTo(App& app, const std::string& out,
+                        const weft::PolyMesh& mesh);
 
 // Format dispatch by extension: the dialog seeds the right one, and a
 // hand-typed path still lands with the exporter it names.
@@ -1756,10 +1923,15 @@ static void exportMeshTo(App& app, const std::string& out) {
         for (char& c : ext) c = char(std::tolower(c));
     }
     try {
+        app.status = "finalizing mesh for export...";
+        const double finalizeStart = glfwGetTime();
+        weft::PolyMesh exportMesh = finalizedMeshForExport(app);
+        logLine("export: finalization took %.1f ms",
+                (glfwGetTime() - finalizeStart) * 1000.0);
         if (ext == "glb" || ext == "gltf") {
             // writeGlb bakes exact CAD normals; engine-space knobs
             // apply to a transformed copy (glTF is Y-up by spec).
-            weft::PolyMesh copy = app.mesh;
+            weft::PolyMesh copy = exportMesh;
             for (auto& v : copy.vertices) {
                 double x = v[0] * app.exportScale;
                 double y = v[1] * app.exportScale;
@@ -1781,31 +1953,28 @@ static void exportMeshTo(App& app, const std::string& out) {
             fo.triangulate = app.exportTriangulate;
             fo.yUp = app.exportYUp;
             fo.scale = app.exportScale;
-            weft::writeFbx(app.mesh, out, fo);
+            weft::writeFbx(exportMesh, out, fo);
             app.status = "exported " + out;
         } else {
-            exportObjTo(app, out);
+            exportObjTo(app, out, exportMesh);
         }
     } catch (const std::exception& e) {
         app.status = std::string("export failed: ") + e.what();
     }
 }
 
-static void exportObjTo(App& app, const std::string& out) {
-    try {
-        weft::ObjExportOptions opts;
-        opts.triangulate = app.exportTriangulate;
-        opts.yUp = app.exportYUp;
-        opts.scale = double(app.exportScale);
-        // CAD part names ride through to the export's o-blocks.
-        opts.objectNames = &app.model.solidNames;
-        weft::writeObj(app.mesh, out, &app.analysis.solidFaces, &opts);
-        app.status = "exported " + out;
-        logLine("export: %s (%zu verts, %zu polys)", out.c_str(),
-                app.mesh.vertexCount(), app.mesh.polygonCount());
-    } catch (const std::exception& e) {
-        app.status = std::string("export failed: ") + e.what();
-    }
+static void exportObjTo(App& app, const std::string& out,
+                        const weft::PolyMesh& mesh) {
+    weft::ObjExportOptions opts;
+    opts.triangulate = app.exportTriangulate;
+    opts.yUp = app.exportYUp;
+    opts.scale = double(app.exportScale);
+    // CAD part names ride through to the export's o-blocks.
+    opts.objectNames = &app.model.solidNames;
+    weft::writeObj(mesh, out, &app.analysis.solidFaces, &opts);
+    app.status = "exported " + out;
+    logLine("export: %s (%zu verts, %zu polys)", out.c_str(),
+            mesh.vertexCount(), mesh.polygonCount());
 }
 
 static void loadFixture(App& app, const std::string& name) {
@@ -1827,6 +1996,7 @@ static void loadFixture(App& app, const std::string& name) {
 static void markDirty(App& app) {
     app.dirty = true;
     app.mutatedThisFrame = true;
+    app.gpuProxyPending = app.activeFace > 0;
 }
 
 
@@ -1880,6 +2050,52 @@ static weft::MesherKind effectiveKind(App& app, int fid) {
         if (it != app.report.faceMesher.end()) return it->second;
     }
     return weft::MesherKind::RevolutionGrid;
+}
+
+static std::array<float, 2> gpuProxyCounts(App& app) {
+    const int fid = app.activeFace;
+    if (fid < 1) return {1.0f, 1.0f};
+    const weft::FaceMeshSettings& s = app.recipe.settings.forFace(fid);
+    const weft::MesherKind kind = effectiveKind(app, fid);
+    std::array<int, 2> n = faceSolvedCounts(app, fid);
+    auto manual = [&](int u, int v) {
+        n = {std::max(1, u), std::max(1, v)};
+    };
+    using MK = weft::MesherKind;
+    switch (kind) {
+        case MK::RevolutionGrid:
+        case MK::DomeCap: manual(s.radial, s.axial); break;
+        case MK::DiskCap:
+        case MK::AnnulusRing: manual(s.radial, std::max(1, s.junctionRings)); break;
+        case MK::RibbonSweep:
+        case MK::RailLadder: manual(s.radial, std::max(1, s.filletLoops)); break;
+        case MK::PlateWeb:
+            manual(s.boundary > 0 ? s.boundary : s.radial,
+                   std::max(1, s.junctionRings));
+            break;
+        case MK::MinimalNGon:
+            manual(s.boundary > 0 ? s.boundary : 1, 1);
+            break;
+        default: manual(s.gridU, s.gridV); break;
+    }
+    if (s.adaptive) {
+        const std::array<int, 2> live = faceSolvedCounts(app, fid);
+        if (live[0] > 0) n[0] = live[0];
+        if (live[1] > 0) n[1] = live[1];
+        const weft::FaceMeshSettings& old = app.genSettings.forFace(fid);
+        const double chordScale = std::sqrt(std::clamp(
+            old.chordTolerance / std::max(1e-9, s.chordTolerance),
+            0.0625, 16.0));
+        const double angleScale = std::clamp(
+            old.angleToleranceDeg /
+                std::max(1.0, s.angleToleranceDeg),
+            0.25, 4.0);
+        const double scale = std::max(chordScale, angleScale);
+        n[0] = std::max(1, int(std::lround(n[0] * scale)));
+        n[1] = std::max(1, int(std::lround(n[1] * scale)));
+    }
+    return {float(std::clamp(n[0], 1, 256)),
+            float(std::clamp(n[1], 1, 256))};
 }
 
 // Copy only the fields that CHANGED this frame onto a target. Panel and
@@ -3684,7 +3900,7 @@ static void drawGenProgress(App& app) {
             std::snprintf(label, sizeof label, "meshing %d / %d faces", done,
                           total);
         } else {
-            std::snprintf(label, sizeof label, "welding + conforming...");
+            std::snprintf(label, sizeof label, "assembling preview...");
         }
         const float fraction =
             total <= 0 ? (total == 0 ? 1.0f : 0.0f)
@@ -3709,6 +3925,13 @@ static void drawOverlay(App& app) {
                      ImGuiWindowFlags_AlwaysAutoResize |
                      ImGuiWindowFlags_NoFocusOnAppearing |
                      ImGuiWindowFlags_NoNav);
+    if (app.gpuProxyPending) {
+        const std::array<float, 2> n = gpuProxyCounts(app);
+        ImGui::TextColored({0.20f, 0.90f, 1.0f, 1.0f},
+                           "GPU PREVIEW  %.0f x %.0f", n[0], n[1]);
+        ImGui::TextDisabled("exact topology settling...");
+        ImGui::Separator();
+    }
     if (app.mode == Mode::LoopCut) {
         ImGui::TextColored({1.0f, 0.85f, 0.25f, 1.0f}, "LOOP CUT");
         ImGui::SameLine();
@@ -4502,7 +4725,10 @@ static void drawUi(App& app) {
                     app.mesh.polygonCount());
         ImGui::Text("%zu quads  %zu tris  %zu n-gons", app.mesh.countQuads(),
                     app.mesh.countTris(), app.mesh.countNgons());
-        if (app.openEdgeCount == 0 && app.multiEdgeCount == 0) {
+        if (!app.meshFinalized) {
+            ImGui::TextDisabled(
+                "interactive preview - seam repair runs on export");
+        } else if (app.openEdgeCount == 0 && app.multiEdgeCount == 0) {
             ImGui::TextColored({0.4f, 0.9f, 0.45f, 1.0f}, "watertight");
         } else {
             ImGui::TextColored({1.0f, 0.45f, 0.3f, 1.0f},
@@ -4806,9 +5032,14 @@ static void drawUi(App& app) {
                 markDirty(app);
             }
             bool conform = app.recipe.settings.conformBorders;
-            if (ImGui::Checkbox("border conformity pass", &conform)) {
+            if (ImGui::Checkbox("export border conformity", &conform)) {
                 app.recipe.settings.conformBorders = conform;
                 markDirty(app);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Deferred during interactive preview; applied by the\n"
+                    "authoritative mesh pass when exporting.");
             }
             bool stitch = app.recipe.settings.decoupleSeams;
             if (ImGui::Checkbox("decoupled seams (stitch)", &stitch)) {
@@ -4876,6 +5107,7 @@ int main(int argc, char** argv) {
     std::string screenshotPath, startModel, startFixture = "demo";
     int startSelect = 0, startMode = 0;
     bool startQuality = false, startMatcap = false, startSmooth = false;
+    bool startProxy = false;
     float startYaw = 0.9f, startPitch = 0.5f;
     bool demoLoopCut = false, startStitch = false;
     std::vector<std::pair<int, std::string>> startFaceOverrides;  // FID:spec
@@ -4891,6 +5123,7 @@ int main(int argc, char** argv) {
         else if (a == "--quality") startQuality = true;
         else if (a == "--matcap") startMatcap = true;
         else if (a == "--smooth") startSmooth = true;
+        else if (a == "--show-proxy") startProxy = true;
         else if (a == "--mode" && i + 1 < argc) startMode = std::stoi(argv[++i]);
         else if (a == "--faceradial" && i + 1 < argc) {  // FID:spec, screenshot testing
             std::string spec = argv[++i];
@@ -4986,6 +5219,7 @@ int main(int argc, char** argv) {
 
     GLuint litProg = makeProgram(kLitVS, kLitFS);
     GLuint flatProg = makeProgram(kFlatVS, kFlatFS);
+    GLuint proxyProg = makeProgram(kProxyVS, kProxyFS);
 
     App app;
     app.livePath = gDataDir + "/weft_live.obj";
@@ -5611,7 +5845,12 @@ int main(int argc, char** argv) {
         }
 
         if (app.mutatedThisFrame) logLine("frame: input handled, dirty");
-        if (app.genReady) finishGenerate(app);
+        if (app.genReady) {
+            finishGenerate(app);
+            if (startProxy && app.activeFace > 0) {
+                app.gpuProxyPending = true;
+            }
+        }
         if (app.loadReady && !app.genBusy) finishLoadModel(app);
         if (startupLoadPending && app.hasModel && !app.loadBusy) {
             if (startStitch) app.recipe.settings.decoupleSeams = true;
@@ -5628,7 +5867,16 @@ int main(int argc, char** argv) {
             startupLoadPending = false;
             startGenerate(app);
         }
-        if (app.dirty && !app.genBusy && !app.loadBusy && !app.loadReady) {
+        // Slider drags and wheel bursts can emit dozens of mutations. Wait
+        // briefly for the gesture to settle instead of launching a generation
+        // for each intermediate value and leaving a tail of stale jobs behind
+        // the pointer. Buttons/undo still feel immediate; continuous controls
+        // pay one small debounce and then one exact local remesh.
+        const bool editingTopology =
+            app.mutatedThisFrame || ImGui::IsAnyItemActive() ||
+            (glfwGetTime() - app.lastMutationTime < 0.08);
+        if (app.dirty && !app.genBusy && !app.loadBusy && !app.loadReady &&
+            !editingTopology) {
             startGenerate(app);
         }
 
@@ -6415,6 +6663,24 @@ int main(int argc, char** argv) {
                 glDepthFunc(GL_LESS);
             }
             glDisable(GL_POLYGON_OFFSET_FILL);
+        }
+        if (app.hasModel && app.gpuProxyPending && app.gpuProxy.count > 0 &&
+            app.gpuProxyFace == app.activeFace) {
+            const std::array<float, 2> count = gpuProxyCounts(app);
+            const float grid[3] = {count[0], count[1], 0.88f};
+            glUseProgram(proxyProg);
+            glUniformMatrix4fv(glGetUniformLocation(proxyProg, "uMVP"), 1,
+                               GL_FALSE, mvp.m);
+            glUniform3fv(glGetUniformLocation(proxyProg, "uGrid"), 1, grid);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glDepthMask(GL_FALSE);
+            glDepthFunc(GL_LEQUAL);
+            glBindVertexArray(app.gpuProxy.vao);
+            glDrawArrays(GL_TRIANGLES, 0, app.gpuProxy.count);
+            glDepthFunc(GL_LESS);
+            glDepthMask(GL_TRUE);
+            glDisable(GL_BLEND);
         }
         glUseProgram(flatProg);
         glUniformMatrix4fv(glGetUniformLocation(flatProg, "uMVP"), 1, GL_FALSE,

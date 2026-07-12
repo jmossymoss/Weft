@@ -226,6 +226,19 @@ struct FacePlanCache {
     std::map<int, CachedFacePlan> faces;
 };
 
+using CornerCell = std::tuple<long long, long long, long long>;
+struct CachedCorner {
+    gp_Pnt at;
+    double tol = 0.0;
+    gp_Pnt target;
+};
+struct CornerRepairCache {
+    std::vector<CachedCorner> corners;
+    std::map<CornerCell, std::vector<size_t>> grid;
+    double cell = 1e-7;
+    int microEdges = 0;
+};
+
 // A genuine full revolution band's boundary consists only of its two
 // v-rims and (possibly) a seam. Sampled through the pcurves: an edge that
 // is neither a rim-hugging v-iso nor a u-iso seam means the face is
@@ -16110,6 +16123,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     propagateBandRadialToBlendGroup(analysis, plans, settings);
 
     DensitySolution density = solveDensity(model, plans, settings, cache);
+    timingCheckpoint("density proposals");
     // Curvature floor, every mode: a curved edge solved below its turn
     // angle collapses to chords — observed as two bracket-bend
     // quarter-pipes flattening into the SAME plane strip and weld-fusing
@@ -16171,6 +16185,22 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             solvedEdge[eid] = it->second;  // proposal-less group: uniform
         }
     }
+    timingCheckpoint("curvature floors");
+    auto geometryEdgeLength = [&](int eid) {
+        if (cache) {
+            auto it = cache->edgeLengths.find(eid);
+            if (it != cache->edgeLengths.end()) return it->second;
+        }
+        double len = 0.0;
+        try {
+            const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
+            BRepAdaptor_Curve c(e);
+            len = GCPnts_AbscissaPoint::Length(c);
+        } catch (const Standard_Failure&) {
+        }
+        if (cache) cache->edgeLengths[eid] = len;
+        return len;
+    };
     // Wire floor: a closed wire sampled at fewer than 3 border vertices
     // cannot bound any polygon; rail ladders need 4 so their two tips split
     // the outline into two real rails. Per-face and per-edge pins are user
@@ -16181,8 +16211,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         for (TopExp_Explorer wx(model.faces(fid), TopAbs_WIRE); wx.More();
              wx.Next()) {
             int total = 0;
-            int bumpEid = 0;
-            double bumpLen = -1.0;
+            std::vector<int> wireEdges;
             const int minimum =
                 plans.at(fid).kind == MesherKind::RailLadder ? 4 : 3;
             for (TopExp_Explorer ex(wx.Current(), TopAbs_EDGE); ex.More();
@@ -16191,17 +16220,28 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 if (BRep_Tool::Degenerated(e)) continue;
                 const int eid = model.edges.FindIndex(e);
                 if (eid < 1) continue;
+                wireEdges.push_back(eid);
                 total += std::max(0, solvedEdge[eid]);
+            }
+            // Nearly every valid wire already clears the hard floor. The old
+            // loop integrated every CAD edge's arc length before discovering
+            // that no repair was needed; on MP9 that was thousands of costly
+            // GCPnts solves after every edit. Only rank edges on the rare wire
+            // that actually needs a bump.
+            if (total == 0 || total >= minimum || wireEdges.empty()) continue;
+            int bumpEid = 0;
+            double bumpLen = -1.0;
+            for (int eid : wireEdges) {
+                const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
                 double cf, cl;
                 if (BRep_Tool::Curve(e, cf, cl).IsNull()) continue;
-                BRepAdaptor_Curve c(e);
-                const double len = GCPnts_AbscissaPoint::Length(c);
+                const double len = geometryEdgeLength(eid);
                 if (len > bumpLen) {
                     bumpLen = len;
                     bumpEid = eid;
                 }
             }
-            if (total == 0 || total >= minimum || bumpEid == 0) continue;
+            if (bumpEid == 0) continue;
             dbg("density: wire on face %d totals %d samples, edge %d "
                 "raised by %d",
                 fid, total, bumpEid, minimum - total);
@@ -16218,6 +16258,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             }
         }
     }
+    timingCheckpoint("wire floors");
     // Annulus containment floor: on a plate with holes, the outer ring's
     // chords cut INSIDE the true boundary — if a chord sags deeper than
     // the clearance to a hole, the sampled hole protrudes through the
@@ -16342,6 +16383,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     // that can't honour an arbitrary raised count — pitching a straight
     // rim edge (which no other floor ever raises; the curvature floor
     // skips lines) demoted two flaregun bands to the contract floor.
+    timingCheckpoint("annulus floors");
     std::set<int> pitchFragileRoots;
     for (const auto& [fid, plan] : plans) {
         if (plan.kind != MesherKind::RevolutionGrid) continue;
@@ -16371,12 +16413,18 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     // query the box when the non-adaptive profile will skip every pitch floor:
     // merely warming that cache changed later fallback output on complex parts.
     if (needsStripPitch) {
-        Bnd_Box bb;
-        BRepBndLib::Add(model.shape, bb);
-        if (!bb.IsVoid()) {
-            double x0, y0, z0, x1, y1, z1;
-            bb.Get(x0, y0, z0, x1, y1, z1);
-            modelDiag = gp_Pnt(x0, y0, z0).Distance(gp_Pnt(x1, y1, z1));
+        if (cache && cache->modelDiagonal >= 0.0) {
+            modelDiag = cache->modelDiagonal;
+        } else {
+            Bnd_Box bb;
+            BRepBndLib::Add(model.shape, bb);
+            if (!bb.IsVoid()) {
+                double x0, y0, z0, x1, y1, z1;
+                bb.Get(x0, y0, z0, x1, y1, z1);
+                modelDiag =
+                    gp_Pnt(x0, y0, z0).Distance(gp_Pnt(x1, y1, z1));
+            }
+            if (cache) cache->modelDiagonal = modelDiag;
         }
     }
     for (const auto& [fid, plan] : plans) {
@@ -16387,13 +16435,25 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         if (!settings.forFace(fid).adaptive) continue;
         const TopoDS_Face face = TopoDS::Face(model.faces(fid));
         double area = 0, perim = 0;
+        if (cache) {
+            auto ait = cache->faceAreas.find(fid);
+            if (ait != cache->faceAreas.end()) area = ait->second;
+            auto pit = cache->faceOuterPerimeters.find(fid);
+            if (pit != cache->faceOuterPerimeters.end()) perim = pit->second;
+        }
         try {
-            GProp_GProps sp;
-            BRepGProp::SurfaceProperties(face, sp);
-            area = sp.Mass();
-            GProp_GProps lp;
-            BRepGProp::LinearProperties(BRepTools::OuterWire(face), lp);
-            perim = lp.Mass();
+            if (!(area > 0.0)) {
+                GProp_GProps sp;
+                BRepGProp::SurfaceProperties(face, sp);
+                area = sp.Mass();
+                if (cache) cache->faceAreas[fid] = area;
+            }
+            if (!(perim > 0.0)) {
+                GProp_GProps lp;
+                BRepGProp::LinearProperties(BRepTools::OuterWire(face), lp);
+                perim = lp.Mass();
+                if (cache) cache->faceOuterPerimeters[fid] = perim;
+            }
         } catch (const Standard_Failure&) {
             continue;
         }
@@ -16419,7 +16479,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             double cf, cl;
             if (BRep_Tool::Curve(e, cf, cl).IsNull()) continue;
             BRepAdaptor_Curve c(e);
-            const double len = GCPnts_AbscissaPoint::Length(c);
+            const double len = geometryEdgeLength(eid);
             // The artist's rule (2026-07-11): a STRAIGHT rail carries no
             // stations by default — "along the blend" is 1 unless the
             // fillet actually curves along its length, and then the
@@ -16481,6 +16541,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     // the strip; raises apply through the density groups so neighbours
     // follow coherently). Rungs then come out straight and continuous
     // with no mesher re-pairing at all.
+    timingCheckpoint("strip pitch floors");
     bool railAlignAny = false;
     for (const auto& [fid2, plan2] : plans) {
         (void)plan2;
@@ -16526,8 +16587,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         const TopoDS_Edge e =
                             TopoDS::Edge(model.edges(eid));
                         if (BRep_Tool::Degenerated(e)) return -1.0;
-                        BRepAdaptor_Curve c(e);
-                        const double l = GCPnts_AbscissaPoint::Length(c);
+                        const double l = geometryEdgeLength(eid);
                         if (l <= 1e-12) return -1.0;
                         L.push_back(l);
                         total += l;
@@ -16667,6 +16727,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     // the complete graph reaches a fixpoint; otherwise restore the safe
     // post-floor counts and let the existing local transition strips absorb
     // the mismatches.
+    timingCheckpoint("rail alignment");
     bool hasAdaptiveFaces = false;
     for (int fid = 1; fid <= model.faceCount(); ++fid) {
         if (settings.forFace(fid).adaptive) {
@@ -16729,8 +16790,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         if (BRep_Tool::Degenerated(E)) continue;
                         double cf, cl;
                         if (BRep_Tool::Curve(E, cf, cl).IsNull()) continue;
-                        BRepAdaptor_Curve c(E);
-                        const double len = GCPnts_AbscissaPoint::Length(c);
+                        const double len = geometryEdgeLength(e);
                         if (len > bumpLen) {
                             bumpLen = len;
                             bumpEid = e;
@@ -16770,6 +16830,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 "rolled back transaction");
         }
     }
+    timingCheckpoint("chain sum repair");
     // Revolution rim SUM constraint: when a T-junction splits one rim of
     // a closed band into k edges while the other stays a full circle,
     // the totals must agree or the band needs a transition strip — and
@@ -16913,6 +16974,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             if (!changed) break;
         }
     }
+    timingCheckpoint("rim sum repair");
     if (const char* dumpE = getenv("WEFT_EDGE_DEBUG")) {
         std::stringstream ss(dumpE);
         std::string tok;
@@ -16924,7 +16986,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         }
     }
     dbg("generate: density solved");
-    timingCheckpoint("density solve");
+    timingCheckpoint("density repairs");
 
     // Pin castellated rims' base arcs to their column azimuths (the
     // column-alignment contract): the notch band and the neighbour annulus
@@ -18451,7 +18513,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
 
     dbg("generate: merged (%zu verts, %zu polys)", mesh.vertexCount(),
         mesh.polygonCount());
-    if (settings.conformBorders) {
+    if (settings.finalizeMesh && settings.conformBorders) {
         conformFallbackBorders(mesh, model, plans, settings, range,
                                fellBack);
         dbg("generate: borders conformed");
@@ -18525,12 +18587,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     // per-vertex, feature-clamped radius instead of this blunt scalar.)
     double weldGlobal = settings.weldTolerance;
     {
-        Bnd_Box wbb;
-        BRepBndLib::Add(model.shape, wbb);
-        if (!wbb.IsVoid()) {
-            const double diag = std::sqrt(wbb.SquareExtent());
-            if (diag > 0.0) weldGlobal = std::min(weldGlobal, 0.02 * diag);
+        double diag = cache ? cache->modelDiagonal : -1.0;
+        if (diag < 0.0) {
+            Bnd_Box wbb;
+            BRepBndLib::Add(model.shape, wbb);
+            if (!wbb.IsVoid()) diag = std::sqrt(wbb.SquareExtent());
+            if (cache) cache->modelDiagonal = diag;
         }
+        if (diag > 0.0) weldGlobal = std::min(weldGlobal, 0.02 * diag);
     }
 
     // Per-face weld tolerances (0 = inherit the global), indexed by FaceId.
@@ -18550,6 +18614,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     // corner from its own edge, so corners never welded. Snap any mesh
     // vertex within a B-rep vertex's tolerance onto its exact point.
     auto finish = [&](PolyMesh& mesh) {
+        std::shared_ptr<CornerRepairCache> repair;
+        if (cache && cache->cornerRepair) {
+            repair = std::static_pointer_cast<CornerRepairCache>(
+                cache->cornerRepair);
+        }
+        if (!repair) {
+            repair = std::make_shared<CornerRepairCache>();
         weft::ShapeMap vmap;
         TopExp::MapShapes(model.shape, TopAbs_VERTEX, vmap);
 
@@ -18599,13 +18670,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
 
         // Snap-test against each vertex's own point/tolerance, but send
         // the mesh vertex to its GROUP representative's point.
-        struct Corner {
-            gp_Pnt at;      // where mesh verts of this B-rep vertex land
-            double tol;     // capture radius around this vertex
-            gp_Pnt target;  // canonical point (group representative)
-        };
-        std::vector<Corner> corners;
-        double cornerCell = 1e-7;
+        auto& corners = repair->corners;
+        double& cornerCell = repair->cell;
         for (int i = 1; i <= vmap.Extent(); ++i) {
             const TopoDS_Vertex v = TopoDS::Vertex(vmap(i));
             const int r = find(i);
@@ -18624,8 +18690,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         // matching corner must be in the query cell or one of its 26
         // neighbours. Keep the lowest corner index to preserve the old
         // first-match behaviour when tolerance spheres overlap.
-        using CornerCell = std::tuple<long long, long long, long long>;
-        std::map<CornerCell, std::vector<size_t>> cornerGrid;
+        auto& cornerGrid = repair->grid;
         auto cornerCellOf = [&](const gp_Pnt& p) -> CornerCell {
             return {static_cast<long long>(std::floor(p.X() / cornerCell)),
                     static_cast<long long>(std::floor(p.Y() / cornerCell)),
@@ -18634,6 +18699,18 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         for (size_t i = 0; i < corners.size(); ++i) {
             cornerGrid[cornerCellOf(corners[i].at)].push_back(i);
         }
+        repair->microEdges = microEdges;
+        if (cache) cache->cornerRepair = repair;
+        }
+        const auto& corners = repair->corners;
+        const double cornerCell = repair->cell;
+        const auto& cornerGrid = repair->grid;
+        const int microEdges = repair->microEdges;
+        auto cornerCellOf = [&](const gp_Pnt& p) -> CornerCell {
+            return {static_cast<long long>(std::floor(p.X() / cornerCell)),
+                    static_cast<long long>(std::floor(p.Y() / cornerCell)),
+                    static_cast<long long>(std::floor(p.Z() / cornerCell))};
+        };
         size_t snapped = 0;
         for (auto& mv : mesh.vertices) {
             gp_Pnt p(mv[0], mv[1], mv[2]);
@@ -18647,7 +18724,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         if (it == cornerGrid.end()) continue;
                         for (size_t ci : it->second) {
                             if (ci >= best) continue;
-                            const Corner& c = corners[ci];
+                            const CachedCorner& c = corners[ci];
                             if (p.SquareDistance(c.at) < c.tol * c.tol) {
                                 best = ci;
                             }
@@ -18656,7 +18733,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 }
             }
             if (best != corners.size()) {
-                const Corner& c = corners[best];
+                const CachedCorner& c = corners[best];
                 mv = {c.target.X(), c.target.Y(), c.target.Z()};
                 ++snapped;
             }
@@ -18664,6 +18741,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         dbg("generate: %zu corner verts canonicalized, %d micro edges "
             "collapsed",
             snapped, microEdges);
+        timingCheckpoint("corner canonicalize");
 
         // Solid-scoped weld: contacting bodies in a multi-body file have
         // coincident skins with opposing windings — a global weld fuses
@@ -18702,6 +18780,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 }
             }
         }
+        timingCheckpoint("weld groups");
 
         // Per-vertex weld radius: each vertex welds at the LOOSEST of the
         // global tolerance and every per-face override on a polygon that
@@ -18757,16 +18836,24 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             }
             if (weldMax <= 0.0) weldMax = weldGlobal;
         }
+        timingCheckpoint("weld tolerances");
 
         dbg("generate: welding%s%s", weldGroup.empty() ? "" : " (per solid)",
             perVertex ? " (per-vertex tol)" : "");
         weldVertices(mesh, weldMax,
                      weldGroup.empty() ? nullptr : &weldGroup,
                      perVertex ? &vertTol : nullptr);
+        timingCheckpoint("vertex weld");
     };
 
     finish(mesh);
     timingCheckpoint("corner repair + weld");
+    if (!settings.finalizeMesh) {
+        dbg("generate: preview done (%zu verts, %zu polys)",
+            mesh.vertexCount(), mesh.polygonCount());
+        timingCheckpoint("preview complete");
+        return mesh;
+    }
     if (settings.conformBorders) {
         // Post-weld: borders share ids now, so an open edge with an exact
         // complement path is a REAL T-junction, never a pre-weld ghost.

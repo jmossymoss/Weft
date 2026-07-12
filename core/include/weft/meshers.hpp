@@ -132,6 +132,11 @@ struct GenerationSettings {
     // threads or the freeform border-conformity pass to bisect problems.
     bool parallelMeshing = true;
     bool conformBorders = true;
+    // Interactive preview mode can defer expensive whole-model repair.
+    // False still performs the lightweight weld needed by mesh editing, but
+    // skips fallback-border conformation, seam stitching, and final cleanup.
+    // Export/CLI generation leaves this true for the authoritative mesh.
+    bool finalizeMesh = true;
     // EXPERIMENT (decoupled seams): skip the global count-equalization
     // repairs (chained-coons sum repair, revolution rim SUM constraint)
     // and let the post-weld unionSeams splice reconcile mismatched
@@ -287,6 +292,8 @@ struct GenerationCache {
     // BRepGProp::SurfaceProperties over thousands of faces is far too costly
     // to repeat after every interactive settings edit.
     std::map<int, double> faceAreas;
+    std::map<int, double> faceOuterPerimeters;
+    std::map<int, double> edgeLengths;
     double modelArea = -1.0;
     // Geometry/tolerance memos used by the global density solve.
     std::map<std::array<long long, 4>, int> adaptiveEdgeCounts;
@@ -296,6 +303,7 @@ struct GenerationCache {
     // stays private to meshers.cpp so OCCT planning details do not leak into
     // the public API.
     std::shared_ptr<void> facePlans;
+    std::shared_ptr<void> cornerRepair;
     void clear() {
         faces.clear();
         revolutionCovers.clear();
@@ -303,11 +311,14 @@ struct GenerationCache {
         coonsValid.clear();
         coonsReflex.clear();
         faceAreas.clear();
+        faceOuterPerimeters.clear();
+        edgeLengths.clear();
         modelArea = -1.0;
         adaptiveEdgeCounts.clear();
         curvatureFloors.clear();
         modelDiagonal = -1.0;
         facePlans.reset();
+        cornerRepair.reset();
     }
 };
 
