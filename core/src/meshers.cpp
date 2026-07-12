@@ -192,6 +192,9 @@ struct FacePlan {
     // sweep pairs stations by arc length; dispatch tries it first and
     // keeps coons as the byte-identical fallback.
     bool tryRibbonSweep = false;
+    // Effective wire rotation for Coons. Analytic drum trims canonicalize
+    // this so planning, the GPU proxy, and the CPU mesher share axes.
+    int coonsRotate = 0;
 };
 
 bool sameFaceSettings(const FaceMeshSettings& a,
@@ -680,12 +683,12 @@ bool isClosedRevolution(const BRepAdaptor_Surface& surf) {
         case GeomAbs_Sphere:
         case GeomAbs_Torus:
         case GeomAbs_SurfaceOfRevolution: return surf.IsUClosed();
-        default: break;
+        case GeomAbs_BSplineSurface:
+        case GeomAbs_BezierSurface:
+        case GeomAbs_OffsetSurface:
+        case GeomAbs_OtherSurface: return surf.IsUClosed();
+        default: return false;
     }
-    // Revolved bsplines (CAD kernels export revolves as NURBS all the
-    // time): u-closed is what the ring meshers actually need — exact
-    // rim rows, phase-aligned columns — not the analytic type tag.
-    return surf.IsUClosed();
 }
 
 // Adaptor-independent closed-revolution probe (MVP demand #2): OFFSET
@@ -7512,6 +7515,18 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         return v;
     };
     auto geomRev = [&] {
+        // This probe exists for CAD writers that hide a revolve behind a
+        // spline/offset surface. A surface of extrusion can also resemble
+        // concentric closed samples over a small trimmed chart, but treating
+        // it as a revolve discards its real boundary layout (MP9 face 424).
+        // Typed analytic revolves use isClosedRevolution() instead.
+        switch (surf.GetType()) {
+            case GeomAbs_BSplineSurface:
+            case GeomAbs_BezierSurface:
+            case GeomAbs_OffsetSurface:
+            case GeomAbs_OtherSurface: break;
+            default: return false;
+        }
         if (cache) {
             auto it = cache->geomRevolution.find(fid);
             if (it != cache->geomRevolution.end()) return it->second;
@@ -7521,6 +7536,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         return v;
     };
     bool coonsReflex = false;  // flat outline with a strong reflex bend
+    int coonsEffectiveRotate = s.coonsRotate;
     auto coonsOk = [&](CoonsPatch& patch) {
         // Patch construction is cheap; a memoized NEGATIVE skips it (and
         // the probes); a positive still rebuilds the (cheap) patch data.
@@ -7534,6 +7550,44 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         bool reflex = false;
         bool v = makeCoonsPatch(face, model, patch, s.coonsRotate, &why,
                                 &reflex);
+        // Four-sided trims on analytic drums often cannot use the strict
+        // open-band mesher (their side curves are not full-height isos), but
+        // they still need the primitive's semantic axes. Wire start order is
+        // arbitrary, so canonicalize the default Coons orientation: grid U
+        // follows surface U/azimuth and grid V follows the axis/profile. This
+        // also keeps the GPU UV proxy aligned with the released CPU mesh.
+        const GeomAbs_SurfaceType st = surf.GetType();
+        const bool analyticDrum =
+            st == GeomAbs_Cylinder || st == GeomAbs_Cone ||
+            st == GeomAbs_SurfaceOfRevolution;
+        if (v && analyticDrum && s.coonsRotate == 0 &&
+            !patch.collapsedLast) {
+            auto axisTravel = [&](int side) {
+                double du = 0.0, dv = 0.0;
+                gp_Pnt2d prev = patch.side(side, 0.0);
+                for (int k = 1; k <= 8; ++k) {
+                    const gp_Pnt2d cur = patch.side(side, k / 8.0);
+                    du += std::abs(cur.X() - prev.X());
+                    dv += std::abs(cur.Y() - prev.Y());
+                    prev = cur;
+                }
+                return std::array<double, 2>{du, dv};
+            };
+            const auto a0 = axisTravel(0);
+            const auto a1 = axisTravel(1);
+            if (a0[1] > a0[0] && a1[0] > a1[1]) {
+                CoonsPatch canonical;
+                const char* canonicalWhy = nullptr;
+                bool canonicalReflex = false;
+                if (makeCoonsPatch(face, model, canonical, 1,
+                                   &canonicalWhy, &canonicalReflex)) {
+                    patch = std::move(canonical);
+                    reflex = canonicalReflex;
+                    coonsEffectiveRotate = 1;
+                    dbg("plan face %d: canonical drum coons axes", fid);
+                }
+            }
+        }
         if (!v && why) dbg("coons: face %d rejected: %s", fid, why);
         if (v && reflex) dbg("coons: face %d has a reflex flat outline", fid);
         coonsReflex = v && reflex;
@@ -8090,6 +8144,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 return plan;
             }
             plan.kind = MesherKind::CoonsGrid;
+            plan.coonsRotate = coonsEffectiveRotate;
             plan.constrains = true;
             plan.insertWires = patch.holeWires;
             insertCountFloors(face, patch, plan.insertMinU,
@@ -8220,7 +8275,11 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         // grid+CDT pairing. The plan (edge lists, density) stays quad-fill's
         // exactly — only the mesher changes, and it falls straight back to
         // quad-fill on any doubt, so this never disturbs a neighbour.
-        if (ribbonDetect(face, model)) {
+        const GeomAbs_SurfaceType st = surf.GetType();
+        const bool analyticDrum =
+            st == GeomAbs_Cylinder || st == GeomAbs_Cone ||
+            st == GeomAbs_SurfaceOfRevolution;
+        if (!analyticDrum && ribbonDetect(face, model)) {
             plan.kind = MesherKind::RibbonSweep;
         }
         return plan;
@@ -16920,7 +16979,38 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 // counts — an unresolved mismatch takes the transition
                 // strip instead.
                 const auto& small = tLo < tHi ? lo : hi;
-                if (small.size() != 1) continue;
+                const auto& large = tLo < tHi ? hi : lo;
+                const long deficit = std::labs(tHi - tLo);
+                if (small.size() != 1) {
+                    // A small boolean/T-junction split can leave two short
+                    // rim chains just one or two stations apart. The
+                    // revolution mesher cannot build that mismatch and used
+                    // to demote an otherwise ordinary cone/cylinder to the
+                    // contract floor (MP9 face 906: 7 versus 6). Repair only
+                    // this tightly bounded case, choosing a group absent
+                    // from the opposite rim so the raise cannot cancel out.
+                    if (small.size() <= 4 && large.size() <= 4 &&
+                        deficit <= 2) {
+                        std::set<int> oppositeRoots;
+                        for (int e : large) {
+                            oppositeRoots.insert(density.groups.find(e));
+                        }
+                        for (int e : small) {
+                            const int root = density.groups.find(e);
+                            if (oppositeRoots.count(root) ||
+                                density.pinnedRoots.count(root)) {
+                                continue;
+                            }
+                            raiseGroup(e, solvedEdge[e] + int(deficit));
+                            changed = true;
+                            dbg("density: face %d split rim totals %ld/%ld "
+                                "equalized on edge %d",
+                                fid, tLo, tHi, e);
+                            break;
+                        }
+                    }
+                    continue;
+                }
                 // A rim split into MANY edges is a castellated boolean rim
                 // (foam's top ring: 74 feature arcs, each a short bspline
                 // intersection curve the freeform chord gate over-samples),
@@ -16937,7 +17027,6 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 // cuts the freeform chord gate over-samples. A genuine few-way
                 // T-junction (a handful of arcs, totals within a small factor)
                 // still equalizes so its thin transition strip can't fold.
-                const auto& large = tLo < tHi ? hi : lo;
                 const long heavy = std::max(tLo, tHi);
                 const long light = std::max<long>(1, std::min(tLo, tHi));
                 if (settings.defaults.minimal && large.size() >= 24 &&
@@ -16965,7 +17054,6 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         density.groups.find(small[0]))) {
                     continue;
                 }
-                const long deficit = std::labs(tHi - tLo);
                 raiseGroup(small[0], solvedEdge[small[0]] + int(deficit));
                 changed = true;
                 dbg("density: face %d rim totals %ld/%ld equalized", fid,
@@ -17205,7 +17293,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             s.filletHold, s.junctionRings, s.quadDominant ? 1 : 0,
             s.minimal ? 1 : 0, s.exclude ? 1 : 0, s.minSize,
             s.relativeDeviation ? 1 : 0, s.squareCollar ? 1 : 0,
-            s.coonsRotate, settings.densityScale, s.pureTriFloor ? 1 : 0,
+            plan.coonsRotate, settings.densityScale,
+            s.pureTriFloor ? 1 : 0,
             s.weldTolerance);
         cacheKey[fid] = key;
         if (plan.kind == MesherKind::AnnulusRing ||
@@ -17854,7 +17943,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 }
                 if (!meshCoonsGrid(
                         face, model, fid, clusteredParams(nu, holdU),
-                        clusteredParams(nv, holdV), s.coonsRotate,
+                        clusteredParams(nv, holdV), plan.coonsRotate,
                         solvedEdge, out,
                         plan.insertWires.empty() ? nullptr
                                                  : &plan.insertWires,
@@ -18147,10 +18236,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 // Inverted-cell census of ANY candidate part for this
                 // face — the planned build and self-heal candidates are
                 // judged by the same ruler.
-                auto invertedCells = [&](const PolyMesh& part)
+                auto invertedCells = [&](const PolyMesh& part,
+                                         std::vector<size_t>* which = nullptr)
                     -> std::pair<int, int> {
                 int inverted = 0, tested = 0;
-                for (const auto& poly : part.polygons) {
+                for (size_t polyIndex = 0;
+                     polyIndex < part.polygons.size(); ++polyIndex) {
+                    const auto& poly = part.polygons[polyIndex];
                     if (poly.size() < 3) continue;
                     gp_XYZ nw(0, 0, 0), cen(0, 0, 0);
                     for (size_t i = 0; i < poly.size(); ++i) {
@@ -18238,6 +18330,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     ++tested;
                     if (gp_Vec(nw).Dot(n) < 0) {
                         ++inverted;
+                        if (which) which->push_back(polyIndex);
                         if (std::getenv("WEFT_FOLD_DEBUG")) {
                             dbg("fold f%d: %zu-gon uv=(%.4f,%.4f) "
                                 "cen=(%.3f,%.3f,%.3f)",
@@ -18294,6 +18387,97 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                 parts[fid] = std::move(cand2);
                                 builtCounts[fid] = bc2;
                                 liveFolds = i2;
+                            }
+                        }
+                    }
+                    if (liveFolds > 0) {
+                        // A single warped Coons quad should not replace the
+                        // entire otherwise-clean grid with a dense fallback
+                        // web. Try both diagonals and a surface-anchored
+                        // centre fan locally, then keep the
+                        // strictly cleaner exact-border candidate. This is
+                        // the common pointed B-spline-tip case (MP9 face
+                        // 914): the clean cells remain quads and only the
+                        // saddle becomes a small triangle fan instead of
+                        // hundreds of fallback polygons.
+                        if (plan.kind == MesherKind::CoonsGrid ||
+                            plan.kind == MesherKind::QuadFill) {
+                            std::vector<size_t> foldedPolys;
+                            invertedCells(parts[fid], &foldedPolys);
+                            const PolyMesh foldBase = parts[fid];
+                            for (int mode = 0; mode < 3; ++mode) {
+                                PolyMesh cand = foldBase;
+                                bool splitAny = false;
+                                for (size_t pi : foldedPolys) {
+                                    if (pi >= cand.polygons.size() ||
+                                        cand.polygons[pi].size() != 4) {
+                                        continue;
+                                    }
+                                    const auto q = cand.polygons[pi];
+                                    const int pf =
+                                        pi < cand.polygonFaceId.size()
+                                            ? cand.polygonFaceId[pi]
+                                            : fid;
+                                    if (mode == 0) {
+                                        cand.polygons[pi] = {q[0], q[1], q[2]};
+                                        cand.polygons.push_back(
+                                            {q[0], q[2], q[3]});
+                                        cand.polygonFaceId.push_back(pf);
+                                    } else if (mode == 1) {
+                                        cand.polygons[pi] = {q[0], q[1], q[3]};
+                                        cand.polygons.push_back(
+                                            {q[1], q[2], q[3]});
+                                        cand.polygonFaceId.push_back(pf);
+                                    } else {
+                                        double cu = 0.0, cv = 0.0;
+                                        int anchored = 0;
+                                        for (uint32_t qi : q) {
+                                            if (qi >= cand.anchors.size() ||
+                                                cand.anchors[qi].faceId != fid) {
+                                                continue;
+                                            }
+                                            cu += cand.anchors[qi].u;
+                                            cv += cand.anchors[qi].v;
+                                            ++anchored;
+                                        }
+                                        if (anchored != 4) continue;
+                                        cu /= 4.0;
+                                        cv /= 4.0;
+                                        const gp_Pnt cp = S->Value(cu, cv);
+                                        const uint32_t ci =
+                                            uint32_t(cand.vertices.size());
+                                        cand.vertices.push_back(
+                                            {cp.X(), cp.Y(), cp.Z()});
+                                        cand.anchors.push_back({fid, cu, cv});
+                                        cand.polygons[pi] = {q[0], q[1], ci};
+                                        cand.polygons.push_back(
+                                            {q[1], q[2], ci});
+                                        cand.polygons.push_back(
+                                            {q[2], q[3], ci});
+                                        cand.polygons.push_back(
+                                            {q[3], q[0], ci});
+                                        cand.polygonFaceId.push_back(pf);
+                                        cand.polygonFaceId.push_back(pf);
+                                        cand.polygonFaceId.push_back(pf);
+                                    }
+                                    if (pi < cand.polygonFaceId.size()) {
+                                        cand.polygonFaceId[pi] = pf;
+                                    }
+                                    splitAny = true;
+                                }
+                                if (!splitAny ||
+                                    borderContractViolation(fid, cand) != 0) {
+                                    continue;
+                                }
+                                const auto [t2, i2] = invertedCells(cand);
+                                (void)t2;
+                                if (i2 < liveFolds) {
+                                    dbg("mesh face %d: self-heal - %d folded "
+                                        "-> %d by local fold repair",
+                                        fid, liveFolds, i2);
+                                    parts[fid] = std::move(cand);
+                                    liveFolds = i2;
+                                }
                             }
                         }
                     }

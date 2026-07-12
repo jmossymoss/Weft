@@ -1908,6 +1908,87 @@ void testWeldVerts() {
     CHECK(std::abs(loaded.ops[0].weldPoints[1][0] - lastPos[0]) < 1e-9);
 }
 
+// MP9 is the complex assembly baseline: it combines thousands of trimmed
+// faces, split analytic rims, pointed B-spline patches, fillets, bores, and
+// deeply chained cone junctions. Keep the reported problem regions clean and
+// prove that a local density edit does not remesh the 3748-face assembly.
+void testMp9GeometryRouting() {
+    std::printf("-- MP9 geometry routing + local edit --\n");
+    const std::filesystem::path path =
+        std::filesystem::path(__FILE__).parent_path() /
+        "STEP_Examples" / "MP9.stp";
+    if (!std::filesystem::exists(path)) {
+        std::printf("  skipped (MP9.stp not present)\n");
+        return;
+    }
+
+    const weft::Model model = weft::loadStep(path.string());
+    const weft::Analysis analysis = weft::analyze(model);
+    CHECK_EQ(model.faceCount(), 3748);
+
+    weft::GenerationSettings settings;
+    settings.defaults.minimal = true;
+    settings.defaults.adaptive = true;
+    settings.defaults.relativeDeviation = true;
+    weft::GenerationCache cache;
+    weft::GenerationReport report;
+    const weft::PolyMesh mesh =
+        weft::generate(model, analysis, settings, &report, &cache);
+
+    CHECK(report.faceMesher.at(424) == weft::MesherKind::CoonsGrid);
+    CHECK(report.faceMesher.at(906) == weft::MesherKind::RevolutionGrid);
+    CHECK(report.faceMesher.at(914) == weft::MesherKind::CoonsGrid);
+    CHECK(report.faceMesher.at(3086) == weft::MesherKind::RevolutionGrid);
+    CHECK(report.faceMesher.at(3089) == weft::MesherKind::CoonsGrid);
+    CHECK(report.faceMesher.at(3353) == weft::MesherKind::CoonsGrid);
+    CHECK(report.faceMesher.at(3472) != weft::MesherKind::RibbonSweep);
+    for (int fid : {424, 906, 914, 1720, 3086, 3089, 3353, 3472}) {
+        CHECK(report.faceBuild.at(fid) != 1);
+        CHECK(report.faceBuild.at(fid) != -1);
+    }
+
+    struct FaceStats { int polys = 0, tris = 0; };
+    std::map<int, FaceStats> stats;
+    for (size_t pi = 0; pi < mesh.polygons.size(); ++pi) {
+        if (pi >= mesh.polygonFaceId.size()) continue;
+        FaceStats& s = stats[mesh.polygonFaceId[pi]];
+        ++s.polys;
+        if (mesh.polygons[pi].size() == 3) ++s.tris;
+    }
+    CHECK(mesh.polygonCount() < 32000);
+    CHECK(stats[424].polys <= 32);
+    CHECK(stats[906].polys <= 16);
+    CHECK(stats[914].polys <= 64);
+    CHECK(stats[914].tris <= 8);
+    CHECK(stats[1720].polys <= 400);
+    CHECK(stats[3472].polys <= 128);
+
+    const auto folded = weft::foldedPolys(model, mesh);
+    for (size_t pi = 0; pi < folded.size(); ++pi) {
+        if (!folded[pi] || pi >= mesh.polygonFaceId.size()) continue;
+        const int fid = mesh.polygonFaceId[pi];
+        CHECK(fid != 424 && fid != 906 && fid != 914 && fid != 1720 &&
+              fid != 3086 && fid != 3089 && fid != 3353 && fid != 3472);
+    }
+
+    weft::GenerationSettings edited = settings;
+    edited.finalizeMesh = false;
+    edited.perFace[3353] = settings.defaults;
+    edited.perFace[3353].gridV = settings.defaults.gridV + 1;
+    weft::GenerationReport editReport;
+    const weft::PolyMesh preview =
+        weft::generate(model, analysis, edited, &editReport, &cache);
+    CHECK(!preview.polygons.empty());
+    CHECK(editReport.cacheMisses < 100);
+    CHECK(editReport.cacheHits > 3600);
+    CHECK(std::find(editReport.remeshedFaces.begin(),
+                    editReport.remeshedFaces.end(), 3353) !=
+          editReport.remeshedFaces.end());
+    std::printf("  %zu polys; face edit remeshed %d, reused %d\n",
+                mesh.polygonCount(), editReport.cacheMisses,
+                editReport.cacheHits);
+}
+
 void testCadCorpus() {
     std::printf("-- layered CAD corpus --\n");
     const std::filesystem::path root =
@@ -2017,6 +2098,7 @@ int main() {
     RUN(testWeldTolerance);
     RUN(testWeldVerts);
     RUN(testGenerationCache);
+    RUN(testMp9GeometryRouting);
     RUN(testConcurrentGenerationSettings);
     RUN(testCadConversionPreservesObjects);
     RUN(testAllMesherStrategies);
