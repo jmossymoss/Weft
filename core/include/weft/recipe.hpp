@@ -1,5 +1,6 @@
 #pragma once
 
+#include "weft/compiler.hpp"
 #include "weft/edit.hpp"
 #include "weft/meshers.hpp"
 
@@ -7,6 +8,11 @@
 #include <vector>
 
 namespace weft {
+
+enum class MeshPipeline {
+    PrimitiveCompiler,
+    Legacy,
+};
 
 // The recipe (plan §5): persist decisions, not output. Generation settings
 // keyed to stable CAD IDs plus manual ops anchored to (faceID,u,v), in a
@@ -19,6 +25,10 @@ namespace weft {
 //   edge 5 20
 //   op loop 3 0.5 0.5 0.35
 struct Recipe {
+    // New sessions use the primitive-aware compiler. Recipes written before
+    // the pipeline directive existed are loaded as Legacy for compatibility.
+    MeshPipeline pipeline = MeshPipeline::PrimitiveCompiler;
+    CompilerSettings compiler;
     GenerationSettings settings;
     std::vector<ManualOp> ops;  // replayed in order after generation
 };

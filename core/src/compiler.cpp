@@ -1666,12 +1666,27 @@ PolyMesh generatePrimitiveAware(const Model& model, const Analysis& analysis,
                                 CompilerPlan* compilerPlan,
                                 GenerationReport* generationReport,
                                 GenerationCache* cache) {
+    return generatePrimitiveAware(model, analysis,
+                                  compilerSettingsFrom(settings), settings,
+                                  compilerPlan, generationReport, cache);
+}
+
+PolyMesh generatePrimitiveAware(const Model& model, const Analysis& analysis,
+                                const CompilerSettings& compilerSettings,
+                                const GenerationSettings& generationSettings,
+                                CompilerPlan* compilerPlan,
+                                GenerationReport* generationReport,
+                                GenerationCache* cache) {
     CompilerPlan plan =
-        planPrimitiveAware(model, analysis, compilerSettingsFrom(settings));
+        planPrimitiveAware(model, analysis, compilerSettings);
 
     CompilerMeshBuilder native(plan);
     std::set<int> nativeFaces;
     for (const PatchPlan& patch : plan.patches) {
+        // Face deletion is an edit operation, not a legacy mesher choice.
+        // Respect it before the compiler backend runs; the containment pass
+        // receives the same exclusion and therefore cannot add it back.
+        if (generationSettings.forFace(patch.faceId).exclude) continue;
         bool built = false;
         if (patch.kind == PatchKind::PlanarNGon) {
             built = meshPlanarPatch(model, plan, patch, native);
@@ -1710,7 +1725,7 @@ PolyMesh generatePrimitiveAware(const Model& model, const Analysis& analysis,
 
     PolyMesh mesh = std::move(native.mesh);
     if (nativeFaces.size() != plan.graph.faces.size()) {
-        GenerationSettings fallbackSettings = settings;
+        GenerationSettings fallbackSettings = generationSettings;
         fallbackSettings.perEdge.clear();
         for (const CanonicalEdgePlan& edge : plan.edgePlans) {
             if (!plan.graph.edges[edge.edgeId - 1].degenerate) {
@@ -1785,7 +1800,8 @@ PolyMesh generatePrimitiveAware(const Model& model, const Analysis& analysis,
             if (vertexGroup[vertex] < 0) vertexGroup[vertex] = group;
         }
     }
-    weldVertices(mesh, std::max(1e-9, settings.weldTolerance), &vertexGroup);
+    weldVertices(mesh, std::max(1e-9, generationSettings.weldTolerance),
+                 &vertexGroup);
     refreshCertifiedTriangulations(mesh);
     if (generationReport) *generationReport = std::move(mergedReport);
     if (compilerPlan) *compilerPlan = std::move(plan);

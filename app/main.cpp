@@ -41,6 +41,7 @@
 #include <gp_Vec.hxx>
 
 #include "weft/analysis.hpp"
+#include "weft/compiler.hpp"
 #include "weft/edit.hpp"
 #include "weft/export_fbx.hpp"
 #include "weft/export_gltf.hpp"
@@ -757,6 +758,8 @@ struct App {
     std::atomic<int> genProgress{0};
     std::atomic<int> genTotal{0};
     double genStartTime = 0.0;
+    weft::MeshPipeline genPipeline = weft::MeshPipeline::PrimitiveCompiler;
+    weft::CompilerSettings genCompilerSettings;
     weft::GenerationSettings genSettings;
     std::vector<weft::ManualOp> genOps;  // worker's frozen ops snapshot
     weft::PolyMesh genMesh;
@@ -1288,10 +1291,18 @@ static void finishGenerate(App& app);
 // further edits leave `dirty` set and coalesce into the next run.
 static void startGenerate(App& app) {
     if (!app.hasModel || app.genBusy) return;
-    logLine("regenerate: begin (%zu overrides, %zu edge pins, %zu ops)",
+    logLine("regenerate: begin (%s, %zu overrides, %zu edge pins, %zu ops)",
+            app.recipe.pipeline == weft::MeshPipeline::PrimitiveCompiler
+                ? "primitive compiler"
+                : "legacy",
             app.recipe.settings.perFace.size(),
-            app.recipe.settings.perEdge.size(), app.recipe.ops.size());
+            app.recipe.pipeline == weft::MeshPipeline::PrimitiveCompiler
+                ? app.recipe.compiler.perEdge.size()
+                : app.recipe.settings.perEdge.size(),
+            app.recipe.ops.size());
     if (app.genThread.joinable()) app.genThread.join();
+    app.genPipeline = app.recipe.pipeline;
+    app.genCompilerSettings = app.recipe.compiler;
     app.genSettings = app.recipe.settings;
     // The viewport needs connected vertices for editing, but not the costly
     // whole-model conformation/stitch/cleanup pass. Export regenerates from
@@ -1316,9 +1327,15 @@ static void startGenerate(App& app) {
     app.genThread = std::thread([a] {
         try {
             weft::GenerationReport report;
-            weft::PolyMesh mesh =
-                weft::generate(a->model, a->analysis, a->genSettings,
-                               &report, &a->genCache);
+            weft::PolyMesh mesh;
+            if (a->genPipeline == weft::MeshPipeline::PrimitiveCompiler) {
+                mesh = weft::generatePrimitiveAware(
+                    a->model, a->analysis, a->genCompilerSettings,
+                    a->genSettings, nullptr, &report, &a->genCache);
+            } else {
+                mesh = weft::generate(a->model, a->analysis, a->genSettings,
+                                      &report, &a->genCache);
+            }
             weft::applyOps(mesh, a->model, a->genOps);
             a->genMesh = std::move(mesh);
             a->genReport = std::move(report);
@@ -1903,9 +1920,15 @@ static weft::PolyMesh finalizedMeshForExport(App& app) {
     settings.progressFaces = nullptr;
     settings.progressTotal = nullptr;
     weft::GenerationReport report;
-    weft::PolyMesh mesh =
-        weft::generate(app.model, app.analysis, settings, &report,
-                       &app.genCache);
+    weft::PolyMesh mesh;
+    if (app.recipe.pipeline == weft::MeshPipeline::PrimitiveCompiler) {
+        mesh = weft::generatePrimitiveAware(
+            app.model, app.analysis, app.recipe.compiler, settings, nullptr,
+            &report, &app.genCache);
+    } else {
+        mesh = weft::generate(app.model, app.analysis, settings, &report,
+                              &app.genCache);
+    }
     weft::applyOps(mesh, app.model, app.recipe.ops);
     return mesh;
 }
@@ -1999,6 +2022,14 @@ static void markDirty(App& app) {
     app.gpuProxyPending = app.activeFace > 0;
 }
 
+static bool usingPrimitiveCompiler(const App& app) {
+    return app.recipe.pipeline == weft::MeshPipeline::PrimitiveCompiler;
+}
+
+static std::map<int, int>& activeEdgePins(App& app) {
+    return usingPrimitiveCompiler(app) ? app.recipe.compiler.perEdge
+                                       : app.recipe.settings.perEdge;
+}
 
 // The solved subdivision total around a face's OUTER loop — the honest
 // seed when a pinned boundary total switches on (seeding from 0 or a
@@ -2365,6 +2396,19 @@ static const weft::FaceMeshSettings& activeSettings(const App& app) {
 static void adjustFaceDensity(App& app, bool secondary, int steps) {
     logLine("edit: %zu selected face(s), active %d", app.selFaces.size(),
             app.activeFace);
+    if (usingPrimitiveCompiler(app)) {
+        weft::CompilerSettings& c = app.recipe.compiler;
+        int& value = secondary ? c.axialSegments : c.radialSegments;
+        value = std::clamp(value + steps, secondary ? 1 : 3,
+                           c.maximumEdgeSegments);
+        std::snprintf(app.hudText, sizeof app.hudText, "%s: %d",
+                      secondary ? "compiler axial rows"
+                                : "compiler cylinder spans",
+                      value);
+        app.hudUntil = glfwGetTime() + 0.9;
+        markDirty(app);
+        return;
+    }
     std::string hud;
     if (app.selFaces.empty()) {
         // No selection: nudge the global density scale. Nudging the
@@ -2408,6 +2452,29 @@ static void adjustFaceDensity(App& app, bool secondary, int steps) {
 //   ctrl+wheel         face secondary density | global angle tolerance
 //   ctrl+shift+wheel   face fillet loops      | global fillet loops
 static void adjustHovered(App& app, bool ctrl, bool shift, int steps) {
+    if (usingPrimitiveCompiler(app)) {
+        weft::CompilerSettings& c = app.recipe.compiler;
+        const char* label = nullptr;
+        int* value = nullptr;
+        int floor = 1;
+        if (ctrl && shift) {
+            label = "compiler fillet rows";
+            value = &c.filletAcrossSegments;
+        } else if (ctrl) {
+            label = "compiler axial rows";
+            value = &c.axialSegments;
+        } else {
+            label = "compiler cylinder spans";
+            value = &c.radialSegments;
+            floor = 3;
+        }
+        *value = std::clamp(*value + steps, floor, c.maximumEdgeSegments);
+        std::snprintf(app.hudText, sizeof app.hudText, "%s: %d", label,
+                      *value);
+        app.hudUntil = glfwGetTime() + 0.9;
+        markDirty(app);
+        return;
+    }
     if (app.hoverFace > 0) {
         const int fid = app.hoverFace;
         auto it = app.recipe.settings.perFace.find(fid);
@@ -2606,9 +2673,10 @@ static void toggleLoopCutMode(App& app) {
 static int adjustSelectedEdges(App& app, int typedValue, int delta) {
     if (app.selEdges.empty()) return 0;
     const int count = int(app.selEdges.size());
+    std::map<int, int>& pins = activeEdgePins(app);
     auto currentOf = [&](int eid) {
-        auto pin = app.recipe.settings.perEdge.find(eid);
-        if (pin != app.recipe.settings.perEdge.end()) return pin->second;
+        auto pin = pins.find(eid);
+        if (pin != pins.end()) return pin->second;
         auto it = app.report.edgeDivisions.find(eid);
         return it != app.report.edgeDivisions.end() ? it->second : 8;
     };
@@ -2651,7 +2719,7 @@ static int adjustSelectedEdges(App& app, int typedValue, int delta) {
         }
     }
     for (size_t i = 0; i < edges.size(); ++i) {
-        app.recipe.settings.perEdge[edges[i].first] = share[i];
+        pins[edges[i].first] = share[i];
     }
     markDirty(app);
     return target;
@@ -3561,6 +3629,29 @@ static void drawActiveFaceSettings(App& app) {
         app.activeFace > int(app.analysis.faces.size())) {
         return;
     }
+    if (usingPrimitiveCompiler(app)) {
+        auto mesher = app.report.faceMesher.find(app.activeFace);
+        if (mesher != app.report.faceMesher.end()) {
+            ImGui::Text("compiler patch: %s",
+                        weft::mesherKindName(mesher->second));
+        } else {
+            ImGui::Text("compiler patch: planning%s",
+                        (app.dirty || app.genBusy) ? "..." : "");
+        }
+        auto count = app.report.faceCounts.find(app.activeFace);
+        if (count != app.report.faceCounts.end()) {
+            ImGui::TextDisabled("solved spans: %d x %d", count->second[0],
+                                count->second[1]);
+        }
+        auto build = app.report.faceBuild.find(app.activeFace);
+        if (build != app.report.faceBuild.end() && build->second == 1) {
+            ImGui::TextColored({1.0f, 0.6f, 0.3f, 1.0f},
+                               "unsupported-face fallback");
+        }
+        ImGui::TextDisabled("topology is coordinated globally by the");
+        ImGui::TextDisabled("primitive compiler; use its settings panel");
+        return;
+    }
     const weft::FaceInfo& f = app.analysis.faces[app.activeFace - 1];
     const weft::MesherKind kind = effectiveKind(app, app.activeFace);
     const bool forced =
@@ -3681,6 +3772,98 @@ static void drawActiveFaceSettings(App& app) {
             }
             markDirty(app);
         }
+    }
+}
+
+// The primitive-aware compiler has its own topology contract and controls.
+// These values do not proxy through legacy FaceMeshSettings: the planner
+// consumes them directly when it creates canonical edge samples and patches.
+static void drawPrimitiveCompilerSettings(App& app) {
+    weft::CompilerSettings& c = app.recipe.compiler;
+    bool changed = false;
+
+    ImGui::TextWrapped("One shared edge plan drives every primitive patch.");
+    ImGui::TextDisabled("Cylinder rails use the same uniformly spaced");
+    ImGui::TextDisabled("angular stations on both sides.");
+    ImGui::Separator();
+
+    changed |= ImGui::DragInt("cylinder spans (360 deg)",
+                              &c.radialSegments, 0.2f, 3,
+                              c.maximumEdgeSegments);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "minimum uniform span count for a full revolution;\n"
+            "trim vertices are absorbed by boundary collar n-gons\n"
+            "instead of disturbing the cylinder's main span rhythm");
+    }
+    changed |= ImGui::DragInt("axial rows", &c.axialSegments, 0.2f, 1,
+                              c.maximumEdgeSegments);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("rows between the two matched cylinder rails");
+    }
+    changed |= ImGui::DragInt("fillet rows (across)",
+                              &c.filletAcrossSegments, 0.2f, 1,
+                              c.maximumEdgeSegments);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "minimum rows across a detected fillet ribbon;\n"
+            "the same count is solved across the whole ribbon");
+    }
+
+    float chord = float(c.chordTolerance);
+    if (ImGui::DragFloat("chord tolerance", &chord, 0.005f, 0.00001f,
+                         100.0f, "%.5f",
+                         ImGuiSliderFlags_Logarithmic)) {
+        c.chordTolerance = chord;
+        changed = true;
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "maximum geometric deviation in model units;\n"
+            "may raise edge counts above the requested minimum");
+    }
+    float angle = float(c.angleToleranceDeg);
+    if (ImGui::DragFloat("angle tolerance", &angle, 0.25f, 0.1f, 90.0f,
+                         "%.1f deg")) {
+        c.angleToleranceDeg = angle;
+        changed = true;
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "maximum turn per span; tighter angles add spans\n"
+            "without breaking uniform cylinder distribution");
+    }
+
+    if (ImGui::TreeNode("limits and edge overrides")) {
+        changed |= ImGui::DragInt("minimum closed spans",
+                                  &c.minimumClosedCurveSegments, 0.2f, 3,
+                                  c.maximumEdgeSegments);
+        changed |= ImGui::DragInt("maximum edge spans",
+                                  &c.maximumEdgeSegments, 0.5f, 8, 1024);
+        ImGui::TextDisabled("feature-edge mode can pin individual CAD edges");
+        ImGui::TextDisabled("%zu compiler edge pin(s)", c.perEdge.size());
+        if (!c.perEdge.empty() && ImGui::SmallButton("clear all edge pins")) {
+            c.perEdge.clear();
+            changed = true;
+        }
+        ImGui::TreePop();
+    }
+
+    if (changed) {
+        c.maximumEdgeSegments = std::clamp(c.maximumEdgeSegments, 8, 1024);
+        c.minimumClosedCurveSegments =
+            std::clamp(c.minimumClosedCurveSegments, 3,
+                       c.maximumEdgeSegments);
+        c.radialSegments =
+            std::clamp(c.radialSegments, 3, c.maximumEdgeSegments);
+        c.axialSegments =
+            std::clamp(c.axialSegments, 1, c.maximumEdgeSegments);
+        c.filletAcrossSegments =
+            std::clamp(c.filletAcrossSegments, 1, c.maximumEdgeSegments);
+        c.chordTolerance = std::max(1e-12, c.chordTolerance);
+        c.angleToleranceDeg =
+            std::clamp(c.angleToleranceDeg, 0.1, 90.0);
+        markDirty(app);
     }
 }
 
@@ -4724,6 +4907,21 @@ static void drawUi(App& app) {
 
     if (app.hasModel &&
         ImGui::CollapsingHeader("Topology", ImGuiTreeNodeFlags_DefaultOpen)) {
+        int pipeline = usingPrimitiveCompiler(app) ? 0 : 1;
+        ImGui::SetNextItemWidth(190.0f * gUiScale);
+        if (ImGui::Combo("pipeline", &pipeline,
+                         "primitive compiler\0legacy meshers\0")) {
+            app.recipe.pipeline = pipeline == 0
+                                      ? weft::MeshPipeline::PrimitiveCompiler
+                                      : weft::MeshPipeline::Legacy;
+            markDirty(app);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Primitive compiler: coordinated B-rep graph, canonical\n"
+                "edge samples, uniform cylinder spans. Legacy remains\n"
+                "available only for comparison and old recipes.");
+        }
         ImGui::Text("%zu verts   %zu polys", app.mesh.vertexCount(),
                     app.mesh.polygonCount());
         ImGui::Text("%zu quads  %zu tris  %zu n-gons", app.mesh.countQuads(),
@@ -4793,6 +4991,7 @@ static void drawUi(App& app) {
             }
         }
         ImGui::Separator();
+        if (!usingPrimitiveCompiler(app)) {
         // One knob for the whole budget: scales every density proposal.
         float ds = float(app.recipe.settings.densityScale);
         if (ImGui::SliderFloat("density scale", &ds, 0.25f, 4.0f, "%.2fx",
@@ -4884,12 +5083,22 @@ static void drawUi(App& app) {
                               "local feature size so it can't collapse\n"
                               "real geometry.");
         }
+        }
     }
 
     // Global defaults live in their own left-panel section, one tab per
     // mesher family — cylinders, fillets, ribbons, rings, flat faces —
     // instead of a flat wall of every knob at once.
-    if (app.hasModel &&
+    if (app.hasModel && usingPrimitiveCompiler(app) &&
+        ImGui::CollapsingHeader("Primitive compiler",
+                                ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::PushID("compiler");
+        drawPrimitiveCompilerSettings(app);
+        ImGui::PopID();
+    }
+
+    // The old knobs are a separate pipeline, not aliases for compiler values.
+    if (app.hasModel && !usingPrimitiveCompiler(app) &&
         ImGui::CollapsingHeader("Mesher defaults",
                                 ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::PushID("defaults");
@@ -4903,29 +5112,28 @@ static void drawUi(App& app) {
             if (app.selEdges.empty()) {
                 ImGui::TextDisabled("click edges (shift extends)");
             } else {
+                std::map<int, int>& pins = activeEdgePins(app);
                 ImGui::Text("%zu edge(s) selected", app.selEdges.size());
                 for (int eid : app.selEdges) {
-                    auto pin = app.recipe.settings.perEdge.find(eid);
+                    auto pin = pins.find(eid);
                     auto cur = app.report.edgeDivisions.find(eid);
                     ImGui::TextDisabled(
                         "edge #%d: %d divisions%s", eid,
-                        pin != app.recipe.settings.perEdge.end()
+                        pin != pins.end()
                             ? pin->second
                             : (cur != app.report.edgeDivisions.end()
                                    ? cur->second
                                    : 0),
-                        pin != app.recipe.settings.perEdge.end()
-                            ? " (pinned)"
-                            : "");
+                        pin != pins.end() ? " (pinned)" : "");
                 }
                 ImGui::TextDisabled("wheel / [ ] pins verts");
                 bool anyPinned = false;
                 for (int eid : app.selEdges) {
-                    anyPinned |= app.recipe.settings.perEdge.count(eid) > 0;
+                    anyPinned |= pins.count(eid) > 0;
                 }
                 if (anyPinned && ImGui::SmallButton("clear pin(s)")) {
                     for (int eid : app.selEdges) {
-                        app.recipe.settings.perEdge.erase(eid);
+                        pins.erase(eid);
                     }
                     markDirty(app);
                 }
@@ -5630,11 +5838,12 @@ int main(int argc, char** argv) {
                 if (app.mode == Mode::Bridge && app.hoverLoop >= 0) {
                     int eid = app.bLoopEdge[app.hoverLoop];
                     int cur = int(app.bLoops[app.hoverLoop].size());
-                    auto it = app.recipe.settings.perEdge.find(eid);
-                    if (it != app.recipe.settings.perEdge.end()) {
+                    std::map<int, int>& pins = activeEdgePins(app);
+                    auto it = pins.find(eid);
+                    if (it != pins.end()) {
                         cur = it->second;
                     }
-                    app.recipe.settings.perEdge[eid] = std::max(3, cur + delta);
+                    pins[eid] = std::max(3, cur + delta);
                     markDirty(app);
                 } else if (app.mode == Mode::Bridge ||
                            (app.selectMode == SelectMode::Edge && shift &&

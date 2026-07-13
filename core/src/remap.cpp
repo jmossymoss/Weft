@@ -149,6 +149,9 @@ Recipe remapRecipe(const Recipe& recipe, const Model& oldModel,
     };
 
     Recipe out;
+    out.pipeline = recipe.pipeline;
+    out.compiler = recipe.compiler;
+    out.compiler.perEdge.clear();
     out.settings = recipe.settings;  // defaults + global knobs carry over
     out.settings.perFace.clear();
     out.settings.perEdge.clear();
@@ -159,6 +162,10 @@ Recipe remapRecipe(const Recipe& recipe, const Model& oldModel,
     }
     for (const auto& [eid, count] : recipe.settings.perEdge) {
         if (int n = edgeFor(eid)) out.settings.perEdge[n] = count;
+        else ++edgesDropped;
+    }
+    for (const auto& [eid, count] : recipe.compiler.perEdge) {
+        if (int n = edgeFor(eid)) out.compiler.perEdge[n] = count;
         else ++edgesDropped;
     }
     for (ManualOp op : recipe.ops) {

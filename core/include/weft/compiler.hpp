@@ -224,6 +224,17 @@ PolyMesh generatePrimitiveAware(const Model& model, const Analysis& analysis,
                                 GenerationReport* generationReport = nullptr,
                                 GenerationCache* cache = nullptr);
 
+// Native entry point for applications built around the compiler.  Compiler
+// density/topology controls are deliberately separate from the legacy face
+// mesher settings; GenerationSettings is retained only for unsupported-face
+// containment, export finalization, and welding/manual-edit compatibility.
+PolyMesh generatePrimitiveAware(const Model& model, const Analysis& analysis,
+                                const CompilerSettings& compilerSettings,
+                                const GenerationSettings& fallbackSettings,
+                                CompilerPlan* compilerPlan = nullptr,
+                                GenerationReport* generationReport = nullptr,
+                                GenerationCache* cache = nullptr);
+
 const char* curveTypeName(CurveType type);
 const char* semanticEdgeTypeName(SemanticEdgeType type);
 const char* regionTypeName(RegionType type);

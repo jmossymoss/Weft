@@ -1,5 +1,6 @@
 #include "weft/recipe.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
@@ -54,6 +55,46 @@ void applySettingsList(FaceMeshSettings& s, const std::string& list) {
     }
 }
 
+static void applyCompilerSetting(CompilerSettings& s, const std::string& key,
+                                 const std::string& value) {
+    if (key == "chord") s.chordTolerance = std::stod(value);
+    else if (key == "angle") s.angleToleranceDeg = std::stod(value);
+    else if (key == "radial") s.radialSegments = std::stoi(value);
+    else if (key == "axial") s.axialSegments = std::stoi(value);
+    else if (key == "fillet") s.filletAcrossSegments = std::stoi(value);
+    else if (key == "minclosed") {
+        s.minimumClosedCurveSegments = std::stoi(value);
+    } else if (key == "maxedge") {
+        s.maximumEdgeSegments = std::stoi(value);
+    } else {
+        throw std::runtime_error("unknown compiler setting: " + key);
+    }
+}
+
+static void applyCompilerSettingsList(CompilerSettings& s,
+                                      const std::string& list) {
+    size_t pos = 0;
+    while (pos < list.size()) {
+        const size_t comma = list.find(',', pos);
+        const std::string pair = list.substr(pos, comma - pos);
+        const size_t eq = pair.find('=');
+        if (eq == std::string::npos) {
+            throw std::runtime_error("expected key=val, got " + pair);
+        }
+        applyCompilerSetting(s, pair.substr(0, eq), pair.substr(eq + 1));
+        pos = comma == std::string::npos ? list.size() : comma + 1;
+    }
+    s.chordTolerance = std::max(1e-12, s.chordTolerance);
+    s.angleToleranceDeg = std::clamp(s.angleToleranceDeg, 0.1, 180.0);
+    s.radialSegments = std::max(3, s.radialSegments);
+    s.axialSegments = std::max(1, s.axialSegments);
+    s.filletAcrossSegments = std::max(1, s.filletAcrossSegments);
+    s.minimumClosedCurveSegments =
+        std::max(3, s.minimumClosedCurveSegments);
+    s.maximumEdgeSegments =
+        std::max(s.minimumClosedCurveSegments, s.maximumEdgeSegments);
+}
+
 static std::string settingsToString(const FaceMeshSettings& s) {
     char buf[448];
     std::snprintf(buf, sizeof buf,
@@ -73,10 +114,30 @@ static std::string settingsToString(const FaceMeshSettings& s) {
     return buf;
 }
 
+static std::string compilerSettingsToString(const CompilerSettings& s) {
+    char buf[256];
+    std::snprintf(buf, sizeof buf,
+                  "radial=%d,axial=%d,fillet=%d,chord=%g,angle=%g,"
+                  "minclosed=%d,maxedge=%d",
+                  s.radialSegments, s.axialSegments,
+                  s.filletAcrossSegments, s.chordTolerance,
+                  s.angleToleranceDeg, s.minimumClosedCurveSegments,
+                  s.maximumEdgeSegments);
+    return buf;
+}
+
 void saveRecipe(const Recipe& recipe, const std::string& path) {
     std::ofstream out(path);
     if (!out) throw std::runtime_error("cannot open for writing: " + path);
     out << "weft-recipe 1\n";
+    out << "pipeline "
+        << (recipe.pipeline == MeshPipeline::PrimitiveCompiler ? "compiler"
+                                                               : "legacy")
+        << "\n";
+    out << "compiler " << compilerSettingsToString(recipe.compiler) << "\n";
+    for (const auto& [eid, count] : recipe.compiler.perEdge) {
+        out << "compiler-edge " << eid << " " << count << "\n";
+    }
     out << "default " << settingsToString(recipe.settings.defaults) << "\n";
     if (recipe.settings.densityScale != 1.0) {
         out << "scale " << recipe.settings.densityScale << "\n";
@@ -134,6 +195,7 @@ Recipe loadRecipe(const std::string& path) {
 
     Recipe recipe;
     GenerationSettings& gs = recipe.settings;
+    bool sawPipeline = false;
     std::string line;
     std::getline(in, line);  // finish the header line
     int lineNo = 1;
@@ -144,7 +206,29 @@ Recipe loadRecipe(const std::string& path) {
         std::string kind;
         ss >> kind;
         try {
-            if (kind == "default") {
+            if (kind == "pipeline") {
+                std::string pipeline;
+                ss >> pipeline;
+                if (pipeline == "compiler") {
+                    recipe.pipeline = MeshPipeline::PrimitiveCompiler;
+                } else if (pipeline == "legacy") {
+                    recipe.pipeline = MeshPipeline::Legacy;
+                } else {
+                    throw std::runtime_error("unknown pipeline: " + pipeline);
+                }
+                sawPipeline = true;
+            } else if (kind == "compiler") {
+                std::string list;
+                ss >> list;
+                applyCompilerSettingsList(recipe.compiler, list);
+            } else if (kind == "compiler-edge") {
+                int eid, count;
+                ss >> eid >> count;
+                if (!ss || eid < 1 || count < 1) {
+                    throw std::runtime_error("malformed compiler-edge");
+                }
+                recipe.compiler.perEdge[eid] = count;
+            } else if (kind == "default") {
                 std::string list;
                 ss >> list;
                 applySettingsList(gs.defaults, list);
@@ -225,6 +309,9 @@ Recipe loadRecipe(const std::string& path) {
                                      ": " + e.what());
         }
     }
+    // Recipes written before the compiler existed have no pipeline line;
+    // preserve their historical behavior instead of silently changing mesh.
+    if (!sawPipeline) recipe.pipeline = MeshPipeline::Legacy;
     return recipe;
 }
 
