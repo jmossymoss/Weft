@@ -17,6 +17,25 @@ struct Anchor {
     double v = 0.0;
 };
 
+// Exact ownership used by the primitive-aware compiler.  Anchor remains the
+// lightweight legacy face-UV editing handle; MeshConstraint records whether a
+// vertex is fixed to a B-rep vertex, moves along one exact edge parameter, or
+// moves in one exact face's UV domain.
+enum class MeshConstraintType {
+    None,
+    BrepVertex,
+    BrepEdge,
+    BrepFace,
+};
+
+struct MeshConstraint {
+    MeshConstraintType type = MeshConstraintType::None;
+    int ownerId = 0;
+    double t = 0.0;
+    double u = 0.0;
+    double v = 0.0;
+};
+
 // Polygonal mesh with per-polygon back-references to the B-rep face that
 // generated it. Vertices are welded across B-rep face borders so adjacent
 // faces that agree on divisions share vertices (no duplicate seams in the
@@ -24,8 +43,19 @@ struct Anchor {
 struct PolyMesh {
     std::vector<std::array<double, 3>> vertices;
     std::vector<Anchor> anchors;                  // parallel to vertices
+    std::vector<MeshConstraint> constraints;      // optional, parallel to vertices
     std::vector<std::vector<uint32_t>> polygons;  // CCW indices, tri/quad/n-gon
     std::vector<int> polygonFaceId;               // B-rep FaceId per polygon
+    // Face-specific UV per polygon corner.  Shared 3D edge samples can have a
+    // different UV on each incident face (especially periodic seams), so a
+    // single vertex-level Anchor cannot represent compiler output faithfully.
+    // Empty when a producer has no corner UV data.
+    std::vector<std::vector<Anchor>> polygonCornerAnchors;
+    // Deterministic global-index triangulation for every polygon.  Modeling
+    // output remains mixed n-gons/quads/tris; rendering, collision and
+    // triangle-only export can consume this certified representation without
+    // allowing each downstream application to pick different diagonals.
+    std::vector<std::vector<std::array<uint32_t, 3>>> certifiedTriangles;
 
     size_t vertexCount() const { return vertices.size(); }
     size_t polygonCount() const { return polygons.size(); }
@@ -58,6 +88,10 @@ void weldVertices(PolyMesh& mesh, double tolerance,
 std::vector<std::array<uint32_t, 3>> triangulatePoly(
     const std::vector<std::array<double, 3>>& verts,
     const std::vector<uint32_t>& poly);
+
+// Rebuild PolyMesh::certifiedTriangles from the current polygons.  Call after
+// topology-changing operations such as welding or manual editing.
+void refreshCertifiedTriangulations(PolyMesh& mesh);
 
 // Game-engine export shaping: triangulate tessellates every quad/n-gon
 // (many pipelines want raw tris), yUp converts Z-up CAD space to Y-up

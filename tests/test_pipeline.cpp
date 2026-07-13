@@ -3,6 +3,7 @@
 // prints and exits non-zero on failure so CTest reports it.
 
 #include "weft/analysis.hpp"
+#include "weft/compiler.hpp"
 #include "weft/edit.hpp"
 #include "weft/fixture.hpp"
 #include "weft/io/system.hpp"
@@ -203,6 +204,101 @@ void testCylinder() {
     CHECK_EQ(vLines, (int)mesh.vertexCount());
     CHECK_EQ(fLines, (int)mesh.polygonCount());
     CHECK_EQ(gLines, 3);  // one group per B-rep face
+}
+
+void testPrimitiveAwareCompiler() {
+    std::printf("-- primitive-aware compiler architecture --\n");
+    const std::string cylinderPath =
+        tmpPath("weft_test_compiler_cylinder.step");
+    weft::writeStep(weft::makeFixture("cylinder"), cylinderPath);
+    weft::Model model = weft::loadStep(cylinderPath);
+    weft::Analysis analysis = weft::analyze(model);
+
+    weft::CompilerSettings compilerSettings;
+    compilerSettings.radialSegments = 12;
+    compilerSettings.chordTolerance = 0.1;
+    compilerSettings.angleToleranceDeg = 28.0;
+    weft::CompilerPlan plan =
+        weft::planPrimitiveAware(model, analysis, compilerSettings);
+
+    CHECK_EQ(plan.graph.faces.size(), model.faceCount());
+    CHECK_EQ(plan.graph.edges.size(), model.edgeCount());
+    CHECK_EQ(plan.edgePlans.size(), model.edgeCount());
+    CHECK(!plan.graph.vertices.empty());
+    CHECK(!plan.graph.coedges.empty());
+    CHECK(!plan.regions.empty());
+    CHECK(!plan.countConstraints.empty());
+
+    for (const weft::CanonicalEdgePlan& edgePlan : plan.edgePlans) {
+        CHECK(edgePlan.segmentCount >= 1);
+        CHECK_EQ(edgePlan.samples.size(), edgePlan.segmentCount + 1);
+        CHECK_EQ(edgePlan.edgeId,
+                 static_cast<int>(&edgePlan - plan.edgePlans.data()) + 1);
+        const weft::BrepEdgeNode& edge =
+            plan.graph.edges[edgePlan.edgeId - 1];
+        if (edge.firstVertex > 0) {
+            CHECK_EQ(edgePlan.samples.front().id,
+                     plan.graph.vertices[edge.firstVertex - 1].sampleId);
+        }
+        if (edge.lastVertex > 0) {
+            CHECK_EQ(edgePlan.samples.back().id,
+                     plan.graph.vertices[edge.lastVertex - 1].sampleId);
+        }
+        if (edgePlan.closed) {
+            CHECK_EQ(edgePlan.samples.front().id,
+                     edgePlan.samples.back().id);
+        }
+    }
+    for (const weft::BrepCoedgeNode& coedge : plan.graph.coedges) {
+        const weft::CanonicalEdgePlan& edgePlan =
+            plan.edgePlans[coedge.edgeId - 1];
+        CHECK_EQ(coedge.sampleIds.size(), edgePlan.samples.size());
+        CHECK_EQ(coedge.uv.size(), edgePlan.samples.size());
+        for (size_t i = 0; i < coedge.sampleIds.size(); ++i) {
+            const size_t canonical = coedge.reversed
+                                         ? coedge.sampleIds.size() - 1 - i
+                                         : i;
+            CHECK_EQ(coedge.sampleIds[i], edgePlan.samples[canonical].id);
+        }
+    }
+
+    weft::GenerationSettings generation;
+    generation.defaults.radial = 12;
+    generation.defaults.axial = 3;  // straight spans stay one unless needed
+    generation.defaults.minimal = true;
+    weft::GenerationReport report;
+    weft::CompilerPlan generatedPlan;
+    const weft::PolyMesh mesh = weft::generatePrimitiveAware(
+        model, analysis, generation, &generatedPlan, &report);
+    CHECK(isWatertight(mesh));
+    CHECK_EQ(generatedPlan.edgePlans.size(), model.edgeCount());
+    for (const auto& [fid, kind] : report.faceMesher) {
+        (void)fid;
+        CHECK(kind != weft::MesherKind::QuadFill);
+    }
+
+    // The feature graph must expose a real fillet as a semantic region and
+    // preserve its tangent rails instead of flattening it into generic face
+    // adjacency.
+    const std::string filletPath = tmpPath("weft_test_compiler_fillet.step");
+    weft::writeStep(weft::makeFixture("fillet"), filletPath);
+    weft::Model filletModel = weft::loadStep(filletPath);
+    weft::Analysis filletAnalysis = weft::analyze(filletModel);
+    const weft::CompilerPlan filletPlan =
+        weft::planPrimitiveAware(filletModel, filletAnalysis,
+                                 compilerSettings);
+    int filletRegions = 0;
+    int filletRails = 0;
+    for (const weft::SemanticRegion& region : filletPlan.regions) {
+        if (region.type == weft::RegionType::Fillet) ++filletRegions;
+    }
+    for (const weft::BrepEdgeNode& edge : filletPlan.graph.edges) {
+        if (edge.semantic == weft::SemanticEdgeType::FilletRail) {
+            ++filletRails;
+        }
+    }
+    CHECK(filletRegions > 0);
+    CHECK(filletRails >= 2);
 }
 
 void testBox() {
@@ -2082,6 +2178,7 @@ void testCadCorpus() {
 
 int main() {
     RUN(testCylinder);
+    RUN(testPrimitiveAwareCompiler);
     RUN(testBox);
     RUN(testCone);
     RUN(testSphere);

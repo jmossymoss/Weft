@@ -61,9 +61,11 @@ void weldVertices(PolyMesh& mesh, double tolerance,
     std::vector<uint32_t> remap(mesh.vertices.size());
     std::vector<std::array<double, 3>> kept;
     std::vector<Anchor> keptAnchors;
+    std::vector<MeshConstraint> keptConstraints;
     std::vector<size_t> keptSource;  // kept index -> first source vertex
     kept.reserve(mesh.vertices.size());
     keptAnchors.reserve(mesh.vertices.size());
+    keptConstraints.reserve(mesh.vertices.size());
     keptSource.reserve(mesh.vertices.size());
     const double tol2 = tolerance * tolerance;
 
@@ -130,6 +132,9 @@ void weldVertices(PolyMesh& mesh, double tolerance,
             kept.push_back(v);
             keptAnchors.push_back(i < mesh.anchors.size() ? mesh.anchors[i]
                                                           : Anchor{});
+            keptConstraints.push_back(
+                i < mesh.constraints.size() ? mesh.constraints[i]
+                                            : MeshConstraint{});
             keptSource.push_back(i);
             cells[{cx, cy, cz}].push_back(match);
         }
@@ -137,25 +142,41 @@ void weldVertices(PolyMesh& mesh, double tolerance,
     }
     mesh.vertices = std::move(kept);
     mesh.anchors = std::move(keptAnchors);
+    mesh.constraints = std::move(keptConstraints);
 
     std::vector<std::vector<uint32_t>> polys;
     std::vector<int> polyFace;
+    std::vector<std::vector<Anchor>> cornerAnchors;
     for (size_t p = 0; p < mesh.polygons.size(); ++p) {
         std::vector<uint32_t> mapped;
+        std::vector<Anchor> mappedCorners;
         mapped.reserve(mesh.polygons[p].size());
-        for (uint32_t idx : mesh.polygons[p]) {
+        const bool hasCorners = p < mesh.polygonCornerAnchors.size() &&
+                                mesh.polygonCornerAnchors[p].size() ==
+                                    mesh.polygons[p].size();
+        for (size_t c = 0; c < mesh.polygons[p].size(); ++c) {
+            const uint32_t idx = mesh.polygons[p][c];
             uint32_t m = remap[idx];
-            if (mapped.empty() || mapped.back() != m) mapped.push_back(m);
+            if (mapped.empty() || mapped.back() != m) {
+                mapped.push_back(m);
+                if (hasCorners) mappedCorners.push_back(
+                    mesh.polygonCornerAnchors[p][c]);
+            }
         }
         while (mapped.size() > 1 && mapped.front() == mapped.back()) {
             mapped.pop_back();
+            if (hasCorners) mappedCorners.pop_back();
         }
         if (mapped.size() < 3) continue;  // collapsed by the weld
         polys.push_back(std::move(mapped));
         polyFace.push_back(mesh.polygonFaceId[p]);
+        cornerAnchors.push_back(hasCorners ? std::move(mappedCorners)
+                                           : std::vector<Anchor>{});
     }
     mesh.polygons = std::move(polys);
     mesh.polygonFaceId = std::move(polyFace);
+    mesh.polygonCornerAnchors = std::move(cornerAnchors);
+    refreshCertifiedTriangulations(mesh);
 }
 
 std::vector<std::array<uint32_t, 3>> triangulatePoly(
@@ -278,6 +299,20 @@ std::vector<std::array<uint32_t, 3>> triangulatePoly(
             {uint32_t(idx[0]), uint32_t(idx[1]), uint32_t(idx[2])});
     }
     return tris;
+}
+
+void refreshCertifiedTriangulations(PolyMesh& mesh) {
+    mesh.certifiedTriangles.clear();
+    mesh.certifiedTriangles.reserve(mesh.polygons.size());
+    for (const std::vector<uint32_t>& polygon : mesh.polygons) {
+        std::vector<std::array<uint32_t, 3>> global;
+        for (const std::array<uint32_t, 3>& local :
+             triangulatePoly(mesh.vertices, polygon)) {
+            global.push_back({polygon[local[0]], polygon[local[1]],
+                              polygon[local[2]]});
+        }
+        mesh.certifiedTriangles.push_back(std::move(global));
+    }
 }
 
 void writeObj(const PolyMesh& mesh, const std::string& path,

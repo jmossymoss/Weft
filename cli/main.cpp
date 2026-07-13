@@ -3,6 +3,7 @@
 // topology generation → OBJ out. See docs/PLAN.md §9.
 
 #include "weft/analysis.hpp"
+#include "weft/compiler.hpp"
 #include "weft/edit.hpp"
 #include "weft/fixture.hpp"
 #include "weft/mesh.hpp"
@@ -87,6 +88,10 @@ void usage() {
         "    --profile cad     the CAD n-gon profile: minimal flats + adaptive\n"
         "                      curvature counts + natural strips ('dense'\n"
         "                      restores grid flats)\n"
+        "    --pipeline compiler\n"
+        "                      experimental primitive-aware B-rep compiler:\n"
+        "                      canonical shared-edge plans + semantic regions;\n"
+        "                      legacy remains the default comparison path\n"
         "    --adaptive        curvature-driven border counts (the CAD profile;\n"
         "                      big arcs get more segments, straights get 1)\n"
 "    --flat-quads      dense grids on flat faces too (default: flats\n"
@@ -144,8 +149,54 @@ int cmdFixture(const std::vector<std::string>& args) {
 
 int cmdInspect(const std::vector<std::string>& args) {
     if (args.empty()) { usage(); return 2; }
+    int compilerFace = 0;
+    for (size_t i = 1; i + 1 < args.size(); ++i) {
+        if (args[i] == "--compiler-face") {
+            compilerFace = std::stoi(args[++i]);
+        }
+    }
     weft::Model model = weft::loadStep(args[0]);
     weft::Analysis a = weft::analyze(model);
+
+    if (compilerFace > 0) {
+        if (compilerFace > model.faceCount()) {
+            throw std::runtime_error("compiler face id is out of range");
+        }
+        const weft::CompilerPlan plan = weft::planPrimitiveAware(model, a);
+        const weft::BrepFaceNode& face =
+            plan.graph.faces[compilerFace - 1];
+        const weft::PatchPlan& patch = plan.patches[compilerFace - 1];
+        std::printf("compiler face #%d: %s, patch=%s, fallback=%s, wires=%zu\n",
+                    compilerFace, weft::surfaceTypeName(face.surface.type),
+                    weft::patchKindName(patch.kind),
+                    weft::patchFallbackReasonName(patch.fallbackReason),
+                    face.wires.size());
+        for (size_t wi = 0; wi < face.wires.size(); ++wi) {
+            std::printf("  wire %zu: %zu coedges\n", wi,
+                        face.wires[wi].size());
+            for (int coedgeId : face.wires[wi]) {
+                const weft::BrepCoedgeNode& coedge =
+                    plan.graph.coedges[coedgeId - 1];
+                const weft::BrepEdgeNode& edge =
+                    plan.graph.edges[coedge.edgeId - 1];
+                double u0 = std::numeric_limits<double>::infinity();
+                double u1 = -u0, v0 = u0, v1 = -u0;
+                for (const auto& uv : coedge.uv) {
+                    if (!std::isfinite(uv[0]) || !std::isfinite(uv[1])) continue;
+                    u0 = std::min(u0, uv[0]);
+                    u1 = std::max(u1, uv[0]);
+                    v0 = std::min(v0, uv[1]);
+                    v1 = std::max(v1, uv[1]);
+                }
+                std::printf("    c%-5d e%-5d %s %s n=%zu uv=[%.6g,%.6g]x[%.6g,%.6g]\n",
+                            coedge.id, edge.id,
+                            weft::curveTypeName(edge.curve),
+                            weft::semanticEdgeTypeName(edge.semantic),
+                            coedge.sampleIds.size(), u0, u1, v0, v1);
+            }
+        }
+        return 0;
+    }
 
     std::printf("%s: %d faces, %d edges\n\n", args[0].c_str(),
                 model.faceCount(), model.edgeCount());
@@ -276,6 +327,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     std::string recipeOut;
     bool validate = validateOnly;
     bool noNormals = false;
+    bool primitiveCompiler = false;
     std::vector<double> lods;
     weft::ObjExportOptions objOpts;
     weft::Recipe recipe;
@@ -329,6 +381,12 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
             } else {
                 throw std::runtime_error("unknown profile: " + prof);
             }
+        }
+        else if (a == "--pipeline") {
+            const std::string pipeline = next();
+            if (pipeline == "compiler") primitiveCompiler = true;
+            else if (pipeline == "legacy") primitiveCompiler = false;
+            else throw std::runtime_error("unknown pipeline: " + pipeline);
         }
         else if (a == "--validate") validate = true;
         else if (a == "--stitch") gs.decoupleSeams = true;  // experiment
@@ -430,6 +488,14 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         weft::io::WriteInput in{&m, &model, &analysis.solidFaces};
         weft::io::exportFile(sys, out, in, path, &pg);
     };
+    auto generateSelected = [&](const weft::GenerationSettings& selected,
+                                weft::GenerationReport* report,
+                                weft::CompilerPlan* plan = nullptr) {
+        return primitiveCompiler
+                   ? weft::generatePrimitiveAware(model, analysis, selected,
+                                                   plan, report)
+                   : weft::generate(model, analysis, selected, report);
+    };
 
     // LOD tiers: one control setup, one export per density factor.
     // Divisions scale with the factor, chord tolerance with 1/f^2, and
@@ -452,7 +518,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
             };
             scaleSet(scaled.defaults);
             for (auto& [fid, fs] : scaled.perFace) scaleSet(fs);
-            weft::PolyMesh lod = weft::generate(model, analysis, scaled);
+            weft::PolyMesh lod = generateSelected(scaled, nullptr);
             weft::applyOps(lod, model, recipe.ops);
             size_t dot = output.rfind('.');
             std::string lodPath =
@@ -473,7 +539,9 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     }
 
     weft::GenerationReport report;
-    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    weft::CompilerPlan compilerPlan;
+    weft::PolyMesh mesh = generateSelected(
+        gs, &report, primitiveCompiler ? &compilerPlan : nullptr);
     weft::applyOps(mesh, model, recipe.ops);
     if (!output.empty()) {
         exportMesh(mesh, output);
@@ -484,6 +552,34 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     std::printf("  %zu vertices, %zu polygons (%zu quads, %zu tris, %zu n-gons)\n",
                 mesh.vertexCount(), mesh.polygonCount(), mesh.countQuads(),
                 mesh.countTris(), mesh.countNgons());
+    if (primitiveCompiler) {
+        std::printf("  compiler: %zu regions, %zu coedges, %zu global count constraints\n",
+                    compilerPlan.regions.size(), compilerPlan.graph.coedges.size(),
+                    compilerPlan.countConstraints.size());
+        std::map<weft::PatchKind, int> patchCounts;
+        std::map<weft::PatchFallbackReason, int> fallbackReasons;
+        for (const weft::PatchPlan& patch : compilerPlan.patches) {
+            ++patchCounts[patch.kind];
+            if (patch.kind == weft::PatchKind::TriangleFallback) {
+                ++fallbackReasons[patch.fallbackReason];
+            }
+        }
+        std::printf("  compiler core: %zu native faces, %zu isolated fallbacks; patches",
+                    compilerPlan.nativeFaceIds.size(),
+                    compilerPlan.patches.size() - compilerPlan.nativeFaceIds.size());
+        for (const auto& [kind, count] : patchCounts) {
+            std::printf(" %s=%d", weft::patchKindName(kind), count);
+        }
+        std::printf("\n");
+        if (!fallbackReasons.empty()) {
+            std::printf("  isolated fallback reasons:");
+            for (const auto& [reason, count] : fallbackReasons) {
+                std::printf(" %s=%d",
+                            weft::patchFallbackReasonName(reason), count);
+            }
+            std::printf("\n");
+        }
+    }
     {
         const auto folded = weft::foldedPolys(model, mesh);
         size_t nf = 0;
