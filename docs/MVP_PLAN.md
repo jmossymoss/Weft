@@ -759,3 +759,27 @@ Blender export hardening, broad Plasticity-export testing, docs, packaging.
 - **Cross-platform CI**: run the pipeline suite on Windows + Linux on every push.
 - **Visual diff**: headless renders (the `--screenshot` path) of hero faces
   before/after, for the changes counts can't capture (rings are quads).
+
+## 9. Research-backed mesher programme
+
+The implementation roadmap now has a dedicated scientific basis in
+[`MESHING_RESEARCH_PLAN.md`](MESHING_RESEARCH_PLAN.md). Its governing decisions
+are:
+
+1. preserve the exact B-rep face/loop/edge hierarchy as a topology invariant;
+2. let each shared CAD edge own one ordered sample sequence consumed by every
+   adjacent face;
+3. derive density from a curvature/feature-aware size field, then reconcile
+   legal counts with a local integer constraint solve;
+4. retain deterministic primitive and connector templates, using field-guided
+   quadrangulation only for genuinely freeform interiors;
+5. keep a boundary-exact CDT safety floor rather than hidden OCCT triangle-soup
+   demotion;
+6. separate the immediate GPU proxy from the local CPU-authoritative mesh, and
+   reserve global conform/weld work for validation/export.
+
+The research plan maps peer-reviewed methods and current 2026 work to concrete
+Weft modules, falsifiable MP9 milestones, one-ring visual checks, topology and
+geometric metrics, and latency budgets. It is the source of truth for the core
+mesher rewrite; this MVP document remains the source of truth for artist-facing
+acceptance.
