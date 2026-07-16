@@ -132,6 +132,10 @@ struct GenerationSettings {
     // threads or the freeform border-conformity pass to bisect problems.
     bool parallelMeshing = true;
     bool conformBorders = true;
+    // Guarded R1 rollout: let legacy analytic edge samplers consume the
+    // immutable shared-edge table.  Kept off for existing recipes until MP9
+    // one-ring/full-model visual gates approve each migrated curve family.
+    bool canonicalEdgeContracts = false;
     // Interactive preview mode can defer expensive whole-model repair.
     // False still performs the lightweight weld needed by mesh editing, but
     // skips fallback-border conformation, seam stitching, and final cleanup.
@@ -226,6 +230,11 @@ struct GenerationReport {
     int cacheMisses = 0;
     std::vector<int> reusedFaces;
     std::vector<int> remeshedFaces;
+    // Guarded topology-first rollout coverage.  These are ordinary two-owner
+    // line/circle B-rep edges whose final legacy count/pins were frozen into
+    // a single immutable sample sequence before face meshing.
+    int canonicalSharedEdges = 0;
+    int canonicalSharedSamples = 0;
     std::map<int, MesherKind> faceMesher;  // FaceId -> strategy used
     // FaceId -> how the face was actually built: 0 = its planned mesher,
     // 1 = raw OCCT triangulation (the tri-soup last resort), 2 = the

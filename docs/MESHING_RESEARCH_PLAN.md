@@ -191,6 +191,21 @@ periodic-domain handling, and a CDT safety floor.
 sample-ID sequence on every valid shared edge before any weld pass. Invalid CAD
 topology is reported separately rather than hidden.
 
+**Implementation checkpoint (2026-07-16):** the shared canonical edge types are
+now used by both the primitive compiler and a guarded legacy adapter. After all
+legacy density, phase, and pin repairs finish, an immutable table can own the
+final sample sequence for ordinary two-owner line/circle edges. Freeform UV
+projection and direct sample-ID ownership remain pending. The rollout is
+disabled by default through
+`GenerationSettings::canonicalEdgeContracts` until the full R1 exit gate is
+met. The accepted MP9 handgrip fixture remains byte-identical with the guard
+off. The extracted face 632 one-ring has no unexplained cracks, but its STEP
+round-trip changes the source trim topology and the mapped target face remains
+a 115-triangle contract floor; full-model `face_632` is therefore the
+authoritative visual regression. This is an R1 foundation checkpoint, not R1
+acceptance: the handgrip connector gaps remain and full MP9 still contains
+open/non-manifold edges, folds, degenerate elements, and slivers.
+
 ### R2 — Scientific sizing and continuous cylinder spans
 
 Replace mesher-local pitch floors with `SurfaceSizingField`. Solve one radial

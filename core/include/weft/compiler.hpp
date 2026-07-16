@@ -1,6 +1,7 @@
 #pragma once
 
 #include "weft/analysis.hpp"
+#include "weft/edge_contract.hpp"
 #include "weft/meshers.hpp"
 
 #include <array>
@@ -134,26 +135,6 @@ struct BrepGraph {
     std::vector<BrepFaceNode> faces;       // index = id - 1
     std::vector<BrepEdgeNode> edges;       // index = id - 1
     std::vector<BrepCoedgeNode> coedges;   // index = id - 1
-};
-
-struct CanonicalEdgeSample {
-    std::uint64_t id = 0;
-    double curveParameter = 0.0;
-    // Normalized distance along the canonical FORWARD edge.  Structured
-    // patches pair opposite rails by this value instead of assuming that two
-    // unrelated curve parameterizations advance at the same physical rate.
-    double normalizedAbscissa = 0.0;
-    std::array<double, 3> position{};
-    bool valid = false;
-};
-
-struct CanonicalEdgePlan {
-    int edgeId = 0;
-    int idealSegmentCount = 1;
-    int segmentCount = 1;
-    bool closed = false;
-    bool uniformAbscissa = false;
-    std::vector<CanonicalEdgeSample> samples;
 };
 
 struct CountConstraint {

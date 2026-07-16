@@ -25,9 +25,9 @@ enum class MeshPipeline {
 //   edge 5 20
 //   op loop 3 0.5 0.5 0.35
 struct Recipe {
-    // New sessions use the primitive-aware compiler. Recipes written before
-    // the pipeline directive existed are loaded as Legacy for compatibility.
-    MeshPipeline pipeline = MeshPipeline::PrimitiveCompiler;
+    // The production workflow stays on the more complete legacy mesher set.
+    // The primitive compiler remains available as an explicit experiment.
+    MeshPipeline pipeline = MeshPipeline::Legacy;
     CompilerSettings compiler;
     GenerationSettings settings;
     std::vector<ManualOp> ops;  // replayed in order after generation

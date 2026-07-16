@@ -1035,6 +1035,17 @@ bool insertRimStation(const Model& model, CompilerPlan& plan,
             CanonicalEdgeSample sample;
             sample.id = nextSample++;
             sample.curveParameter = parameter;
+            if (edgePlan.samples.size() >= 2) {
+                const double firstParameter =
+                    edgePlan.samples.front().curveParameter;
+                const double lastParameter =
+                    edgePlan.samples.back().curveParameter;
+                if (std::abs(lastParameter - firstParameter) > 1e-15) {
+                    sample.curveFraction =
+                        (parameter - firstParameter) /
+                        (lastParameter - firstParameter);
+                }
+            }
             sample.valid = evaluateCanonicalEdgePoint(
                 model, plan, coedge.edgeId, edge, parameter, sample.position);
             if (!sample.valid) return false;
@@ -1503,6 +1514,8 @@ void populateCanonicalSamples(const Model& model, CompilerPlan& plan,
         edgePlan.idealSegmentCount = solvedCounts[eid * 2];
         edgePlan.segmentCount = solvedCounts[eid * 2 + 1];
         edgePlan.closed = edgeNode.closed;
+        edgePlan.parameterLinear = edgeNode.curve == CurveType::Line ||
+                                   edgeNode.curve == CurveType::Circle;
 
         const int segments = std::max(1, edgePlan.segmentCount);
         double firstParameter = 0.0;
@@ -1546,6 +1559,9 @@ void populateCanonicalSamples(const Model& model, CompilerPlan& plan,
             const double parameter = parameters[static_cast<size_t>(i)];
             CanonicalEdgeSample sample;
             sample.curveParameter = parameter;
+            sample.curveFraction =
+                (parameter - firstParameter) /
+                std::max(1e-30, lastParameter - firstParameter);
             sample.normalizedAbscissa = fraction;
             const bool first = i == 0 && edgeNode.firstVertex > 0;
             const bool last = i == segments && edgeNode.lastVertex > 0;
@@ -1763,6 +1779,10 @@ PolyMesh generatePrimitiveAware(const Model& model, const Analysis& analysis,
         appendMesh(mesh, fallback);
         mergedReport.cacheHits += fallbackReport.cacheHits;
         mergedReport.cacheMisses += fallbackReport.cacheMisses;
+        mergedReport.canonicalSharedEdges +=
+            fallbackReport.canonicalSharedEdges;
+        mergedReport.canonicalSharedSamples +=
+            fallbackReport.canonicalSharedSamples;
         mergedReport.reusedFaces.insert(mergedReport.reusedFaces.end(),
                                         fallbackReport.reusedFaces.begin(),
                                         fallbackReport.reusedFaces.end());

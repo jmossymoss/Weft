@@ -758,7 +758,7 @@ struct App {
     std::atomic<int> genProgress{0};
     std::atomic<int> genTotal{0};
     double genStartTime = 0.0;
-    weft::MeshPipeline genPipeline = weft::MeshPipeline::PrimitiveCompiler;
+    weft::MeshPipeline genPipeline = weft::MeshPipeline::Legacy;
     weft::CompilerSettings genCompilerSettings;
     weft::GenerationSettings genSettings;
     std::vector<weft::ManualOp> genOps;  // worker's frozen ops snapshot

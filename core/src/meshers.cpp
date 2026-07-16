@@ -4,6 +4,7 @@
 #include "mesher_trace.hpp"
 
 #include <functional>
+#include <limits>
 #include <sstream>
 
 #include <BRepAdaptor_Curve.hxx>
@@ -63,6 +64,10 @@
 
 namespace weft {
 using mesher_detail::dbg;
+using mesher_detail::edgeIsPinned;
+using mesher_detail::edgeSampleFractions;
+using mesher_detail::phasedT;
+using mesher_detail::PinnedEdges;
 using mesher_detail::stableDeflectionCount;
 
 namespace {
@@ -201,9 +206,49 @@ struct FacePlan {
     // is meshed by one global parameter lattice: every surviving cell is a
     // quad, so a notch cannot restart the cylinder spans or create a fan.
     bool orthogonalTrimGrid = false;
+    // A freeform comb uses a separate local-cell builder (grip shells).
+    // Its hook is intentionally distinct from the analytic drum comb below:
+    // the latter keeps the exact clipped primitive lattice and only removes
+    // feature stations outside the groove corridor that owns them.
+    bool orthogonalLocalComb = false;
+    bool orthogonalDrumComb = false;
+    // Number of repeated trim pieces that the primitive direction must be
+    // able to represent locally. Used only as a geometry-derived density
+    // floor; ordinary cylinders/cones leave it zero.
+    int orthogonalFeatureCount = 0;
+    // A Coons patch that terminates at a genuine analytic pole. Non-adaptive
+    // defaults still need the revolution turn represented; these fields map
+    // that angular floor onto the patch's semantic grid axis.
+    bool coonsPolePatch = false;
+    bool coonsPoleAroundIsU = true;
+    double coonsPoleTurnFraction = 0.0;
     int orthogonalDriverU = 0;
     int orthogonalDriverV = 0;
     std::vector<int> orthogonalEdges;
+    // A separately-proven single-wire trim corridor.  This is deliberately
+    // not a relaxation of chained Coons: Coons has already declined the
+    // face before this flag can be set.  Two monotone boundary rail chains
+    // are matched by arc length; any count/shape mismatch is confined to the
+    // two short end closures.  The public kind remains CoonsGrid so the
+    // existing opposite-chain density machinery can align the rail samples,
+    // while dispatch routes the geometry through the local corridor builder.
+    bool trimCorridor = false;
+    bool trimCorridorAxisU = true;
+    int trimCorridorBands = 1;
+    // A broad, single-wire freeform panel whose complete trimmed surface was
+    // proven to lie inside a scale-aware chord-deviation slab. Every boundary
+    // and dense in-face probe must satisfy the active absolute/relative export
+    // tolerance plus CAD sewing noise before the exact border becomes one
+    // game n-gon.
+    bool deviationFlatPanel = false;
+    // Separate from trimCorridor/Coons acceptance: a UV-monotone curved neck
+    // transition with two proven longitudinal trim rails. The rails solve to
+    // identical station totals and a small number of true-surface cross
+    // sections; only bounded concave ends close as local n-gons. No existing
+    // corridor predicate is relaxed to obtain this.
+    bool sectionStrip = false;
+    bool sectionStripAxisU = true;
+    int sectionStripBands = 1;
 };
 
 bool sameFaceSettings(const FaceMeshSettings& a,
@@ -397,7 +442,8 @@ bool edgesHugRimsOrInserts(const TopoDS_Face& face,
                            const BRepAdaptor_Surface& surf,
                            const Model& model,
                            std::vector<std::vector<int>>& wires,
-                           const std::vector<int>* bandSides = nullptr) {
+                           const std::vector<int>* bandSides = nullptr,
+                           bool repeatedNotchedSeam = false) {
     const double u0 = surf.FirstUParameter(), u1 = surf.LastUParameter();
     const double v0 = surf.FirstVParameter(), v1 = surf.LastVParameter();
     const double uspan = std::max(1e-12, u1 - u0);
@@ -509,7 +555,13 @@ bool edgesHugRimsOrInserts(const TopoDS_Face& face,
             ++plunges;
         }
     }
-    if (plunges > std::max(2, kBins / 8)) return false;
+    // A geometry-validated repeated chamfer seam legitimately doubles back
+    // in many bins (one plunge per groove).  The caller only enables this
+    // after proving a single plain rim, alternating far-rim lands, and two
+    // side edges; retain the ordinary strict limit everywhere else.
+    const int plungeLimit = repeatedNotchedSeam ? kBins / 2
+                                                 : std::max(2, kBins / 8);
+    if (plunges > plungeLimit) return false;
     // Between-chain coverage: the loft region must actually belong to
     // the face — a band with a large un-modeled cutout (not an insert
     // wire) cannot loft. Insert-wire boxes are skipped: their cells are
@@ -545,8 +597,12 @@ bool edgesHugRimsOrInserts(const TopoDS_Face& face,
 // across the primitive). A side-like edge on a cutout wire (a slot as
 // tall as the wall) still rejects — that geometry is not a band.
 bool openBandSides(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
-                   const Model& model, std::vector<int>& sides) {
+                   const Model& model, std::vector<int>& sides,
+                   bool* repeatedNotched = nullptr,
+                   int* repeatedFeatureCount = nullptr) {
     sides.clear();
+    if (repeatedNotched) *repeatedNotched = false;
+    if (repeatedFeatureCount) *repeatedFeatureCount = 0;
     switch (surf.GetType()) {
         case GeomAbs_Cylinder:
         case GeomAbs_Cone:
@@ -558,42 +614,103 @@ bool openBandSides(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         1e-12, surf.LastUParameter() - surf.FirstUParameter());
     const double vspan = std::max(
         1e-12, surf.LastVParameter() - surf.FirstVParameter());
-    int outerWires = 0;
+    struct EdgeBox {
+        int eid = 0;
+        double u0 = 1e300, u1 = -1e300, v0 = 1e300, v1 = -1e300;
+    };
+    std::vector<std::vector<EdgeBox>> wireBoxes;
     for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
-        std::vector<int> wireSides;
+        std::vector<EdgeBox> boxes;
         for (TopExp_Explorer ex(wx.Current(), TopAbs_EDGE); ex.More();
              ex.Next()) {
             const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
             if (BRep_Tool::Degenerated(edge)) continue;
-            if (BRep_Tool::IsClosed(edge, face)) return false;  // seam
-            double f, l;
+            if (BRep_Tool::IsClosed(edge, face)) return false;
+            EdgeBox b;
+            b.eid = model.edges.FindIndex(edge);
+            if (b.eid < 1) return false;
+            double f,l;
             Handle(Geom2d_Curve) pc =
-                BRep_Tool::CurveOnSurface(edge, face, f, l);
+                BRep_Tool::CurveOnSurface(edge,face,f,l);
             if (pc.IsNull()) return false;
-            double umin = 1e300, umax = -1e300, vmin = 1e300, vmax = -1e300;
-            for (int k = 0; k <= 8; ++k) {
-                gp_Pnt2d uv = pc->Value(f + (l - f) * k / 8.0);
-                umin = std::min(umin, uv.X());
-                umax = std::max(umax, uv.X());
-                vmin = std::min(vmin, uv.Y());
-                vmax = std::max(vmax, uv.Y());
+            for (int k=0;k<=16;++k) {
+                const gp_Pnt2d uv=pc->Value(f+(l-f)*k/16.0);
+                b.u0=std::min(b.u0,uv.X()); b.u1=std::max(b.u1,uv.X());
+                b.v0=std::min(b.v0,uv.Y()); b.v1=std::max(b.v1,uv.Y());
             }
-            // A side spans (nearly) the whole band height at one u; a
-            // notch wall is u-iso too but stops at the notch arch.
-            if (umax - umin < 0.02 * uspan && vmax - vmin >= 0.9 * vspan) {
-                const int eid = model.edges.FindIndex(edge);
-                if (eid < 1) return false;
-                wireSides.push_back(eid);
-            }
+            boxes.push_back(b);
         }
-        if (wireSides.size() == 2) {
-            ++outerWires;
-            sides = wireSides;
-        } else if (!wireSides.empty()) {
-            return false;
-        }
+        if (!boxes.empty()) wireBoxes.push_back(std::move(boxes));
     }
-    return outerWires == 1 && sides.size() == 2;
+
+    // Historic strict case: exactly two full-height u-iso sides on one wire.
+    int outerWires=0;
+    for (const auto& boxes:wireBoxes) {
+        std::vector<int> wireSides;
+        for (const EdgeBox& b:boxes) {
+            if (b.u1-b.u0 < 0.02*uspan && b.v1-b.v0 >= 0.9*vspan)
+                wireSides.push_back(b.eid);
+        }
+        if (wireSides.size()==2) { ++outerWires; sides=wireSides; }
+        else if (!wireSides.empty()) { outerWires=-100; break; }
+    }
+    if (outerWires==1 && sides.size()==2) return true;
+    sides.clear();
+
+    // Conservative repeated-notch seam relaxation.  A conical chamfer can
+    // have one clean full-span rim while the opposite rim is a repeated
+    // groove chain whose first/last notch shortens both angular side edges.
+    // It is still an open band, but only when the complete structural pattern
+    // is present: one wire, one plain rim, one side touching each u extreme,
+    // and at least three alternating deep feature pieces / far-rim lands.
+    if (surf.GetType()!=GeomAbs_Cone || wireBoxes.size()!=1) return false;
+    const auto& boxes=wireBoxes.front();
+    const double su0=surf.FirstUParameter(), su1=surf.LastUParameter();
+    const double sv0=surf.FirstVParameter(), sv1=surf.LastVParameter();
+    int plain=0, plainAtLow=0;
+    for (const EdgeBox& b:boxes) {
+        const double du=b.u1-b.u0, dv=b.v1-b.v0;
+        if (du < 0.95*uspan || dv > 0.03*vspan) continue;
+        const bool low=std::abs(0.5*(b.v0+b.v1)-sv0) <= 0.04*vspan;
+        const bool high=std::abs(0.5*(b.v0+b.v1)-sv1) <= 0.04*vspan;
+        if (!low && !high) continue;
+        if (plain) return false; // two plain rims are the ordinary case
+        plain=b.eid; plainAtLow=low?1:0;
+    }
+    if (!plain) return false;
+    const double plainV=plainAtLow?sv0:sv1;
+    const double farV=plainAtLow?sv1:sv0;
+    int sideLo=0,sideHi=0; double spanLo=0,spanHi=0;
+    int farLands=0,deepPieces=0;
+    for (const EdgeBox& b:boxes) {
+        if (b.eid==plain) continue;
+        const double du=b.u1-b.u0, dv=b.v1-b.v0;
+        const bool touchesPlain=std::min(std::abs(b.v0-plainV),
+                                         std::abs(b.v1-plainV))<=0.04*vspan;
+        if (du<=0.02*uspan && touchesPlain && dv>=0.25*vspan) {
+            if (std::abs(0.5*(b.u0+b.u1)-su0)<=0.03*uspan && dv>spanLo)
+                {sideLo=b.eid;spanLo=dv;}
+            if (std::abs(0.5*(b.u0+b.u1)-su1)<=0.03*uspan && dv>spanHi)
+                {sideHi=b.eid;spanHi=dv;}
+        }
+        const bool hugsFar=dv<=0.03*vspan &&
+            std::abs(0.5*(b.v0+b.v1)-farV)<=0.04*vspan;
+        if (hugsFar && du>=0.04*uspan) ++farLands;
+        if (du>=0.04*uspan && dv>=0.12*vspan) ++deepPieces;
+        // Nothing in the notched chain may cross through the plain rim.
+        if (plainAtLow ? b.v0 < sv0-0.02*vspan
+                       : b.v1 > sv1+0.02*vspan) return false;
+    }
+    if (!sideLo || !sideHi || sideLo==sideHi || farLands<3 ||
+        deepPieces<3) return false;
+    sides={sideLo,sideHi};
+    if (repeatedNotched) *repeatedNotched=true;
+    if (repeatedFeatureCount) {
+        *repeatedFeatureCount = std::max(farLands, deepPieces);
+    }
+    dbg("open band: repeated notched cone sides %d/%d (%d lands, %d deep)",
+        sideLo,sideHi,farLands,deepPieces);
+    return true;
 }
 
 // Recognize one connected UV-orthogonal trim as a structured lattice, not
@@ -621,6 +738,7 @@ bool planOrthogonalTrimGrid(const TopoDS_Face& face,
     double bestU = -1.0, bestV = -1.0;
     bool hasInteriorStep = false;
     int fullHeightVertical = 0, insetVertical = 0;
+    int fullWidthRims = 0, longRails = 0, curvedCaps = 0;
     int realEdges = 0;
     for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
         const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
@@ -639,6 +757,12 @@ bool planOrthogonalTrimGrid(const TopoDS_Face& face,
         const int eid = model.edges.FindIndex(edge);
         if (eid < 1) return false;
         plan.orthogonalEdges.push_back(eid);
+        if (du >= 0.9 * us && dv <= 0.04 * vs) ++fullWidthRims;
+        if (du <= nearU && dv >= 0.35 * vs) ++longRails;
+        if (du >= 0.03 * us && du <= 0.25 * us &&
+            dv >= 0.05 * vs && dv <= 0.35 * vs) {
+            ++curvedCaps;
+        }
         if (du > ut && (dv <= nearV || du / us >= dv / vs)) {
             horizontal.push_back(eid);
             if (du > bestU) { bestU = du; plan.orthogonalDriverU = eid; }
@@ -667,6 +791,18 @@ bool planOrthogonalTrimGrid(const TopoDS_Face& face,
     const bool freeformComb = !drum && realEdges >= 20 &&
                               fullHeightVertical == 1 &&
                               insetVertical >= 2 && horizontal.size() >= 8;
+    // Analytic repeated-groove half drums are a single comb-shaped wire:
+    // one clean full-width rim, paired long groove rails, and paired curved
+    // cap pieces.  Keep this gate deliberately structural; a merely split
+    // rectangle or a one-off notch continues through the historic lattice.
+    const bool drumComb = drum && realEdges >= 16 && fullWidthRims == 1 &&
+                          fullHeightVertical == 1 && longRails >= 4 &&
+                          curvedCaps >= 4;
+    if (drum) {
+        dbg("orthogonal drum face %d: edges=%d rims=%d sides=%d rails=%d "
+            "caps=%d comb=%d", dbgFid, realEdges, fullWidthRims,
+            fullHeightVertical, longRails, curvedCaps, drumComb ? 1 : 0);
+    }
     if (!drum && realEdges >= 20) {
         dbg("orthogonal freeform face %d: edges=%d h=%zu v=%zu full=%d "
             "inset=%d interior=%d comb=%d", dbgFid, realEdges,
@@ -724,6 +860,11 @@ bool planOrthogonalTrimGrid(const TopoDS_Face& face,
     }
 
     plan.orthogonalTrimGrid = true;
+    plan.orthogonalLocalComb = freeformComb;
+    plan.orthogonalDrumComb = drumComb;
+    if (drumComb) {
+        plan.orthogonalFeatureCount = std::max(longRails, curvedCaps);
+    }
     plan.kind = drum ? MesherKind::RevolutionGrid : MesherKind::CoonsGrid;
     plan.uEdges = std::move(horizontal);
     plan.vEdges = std::move(vertical);
@@ -1019,110 +1160,8 @@ double closedEdgePhase(const TopoDS_Edge& edge, const Model& model) {
     return ph;
 }
 
-// Phased sample parameter for step i of n. A reversed traversal must
-// enumerate the SAME positions in the opposite order — with a phase,
-// "1 - t" would produce a different sample set, so the index flips
-// instead. Falls back to the plain formula when unphased.
-inline double phasedT(int i, int n, double ph, bool rev) {
-    if (ph <= 0.0) return rev ? 1.0 - double(i) / n : double(i) / n;
-    const int idx = rev ? (n - i % n) % n : i % n;
-    double t = ph + double(idx) / n;
-    t -= std::floor(t);
-    return t;
-}
-
-// ---- Pinned-sample facility (the column-alignment contract) -------------
-// An edge can carry EXPLICIT parameter samples instead of the uniform
-// phased steps. The samples are fractions in [0,1] along the edge's FORWARD
-// (non-reversed) 3D-curve direction, ascending, INCLUDING both endpoints
-// (0 and 1). Both faces sharing the edge read the same list and emit the
-// same physical points (fraction t -> the intrinsic edge parameter, so
-// c3->Value and the pcurve agree on both sides), welding bit-identically.
-// This lets a revolution band pin a shared rim/rail edge to its column
-// azimuths so columns run straight onto and through the edge with no
-// transition strip and no phase break. Empty entry = uniform sampling.
-using PinnedEdges = std::vector<std::vector<double>>;
-
-inline bool edgeIsPinned(int eid, const PinnedEdges* pins) {
-    return pins && eid >= 1 && eid < int(pins->size()) && !(*pins)[eid].empty();
-}
-
-// ---- Even-arc-length sampling (the border contract) ---------------------
-// Forward param-fractions in [0,1] along edge `eid`'s FORWARD 3D curve at
-// EVEN 3D ARC LENGTH: n+1 abscissa-uniform stations via
-// GCPnts_UniformAbscissa, returned ascending with endpoints exactly 0 and
-// 1. The caller maps a fraction t -> the intrinsic edge parameter
-// f + t*(l-f), so c3->Value and the pcurve agree and both faces of a shared
-// edge, using the same edge curve and the same n, emit BIT-IDENTICAL points.
-//
-// Returns EMPTY for analytic line/circle edges — their parameter is already
-// proportional to arc, so even-arc == uniform and they stay byte-identical —
-// and on ANY failure, so the caller keeps its uniform fractions. Only
-// bspline/ellipse/etc. edges (parameter not proportional to arc) actually
-// move. Deterministic from the edge curve alone: no face/model dependence.
-std::vector<double> evenArcFractions(const Model& model, int eid, int n) {
-    std::vector<double> out;
-    if (n < 1 || eid < 1 || eid > model.edgeCount()) return out;
-    const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
-    double f = 0, l = 0;
-    Handle(Geom_Curve) c3 = BRep_Tool::Curve(e, f, l);
-    if (c3.IsNull()) return out;
-    const double span = l - f;
-    if (span <= 1e-12) return out;
-    GeomAdaptor_Curve gac(c3, f, l);
-    const GeomAbs_CurveType ct = gac.GetType();
-    if (ct == GeomAbs_Line || ct == GeomAbs_Circle) return out;  // already even
-    GCPnts_UniformAbscissa algo(gac, n + 1);
-    if (!algo.IsDone() || algo.NbPoints() != n + 1) return out;
-    out.reserve(n + 1);
-    double prev = -1.0;
-    for (int i = 1; i <= n + 1; ++i) {
-        double frac = std::clamp((algo.Parameter(i) - f) / span, 0.0, 1.0);
-        if (frac < prev) return {};  // non-monotone: bail to uniform
-        prev = frac;
-        out.push_back(frac);
-    }
-    out.front() = 0.0;
-    out.back() = 1.0;
-    return out;
-}
-
-// Face-local sample fractions for one edge. With a pin, the pinned
-// fractions in face-local order (reversed when the edge is reversed on this
-// face — same positions, opposite traversal, exactly like phasedT); else
-// the uniform phased fractions. `includeLast` keeps the final endpoint
-// (open-chain samplers); drop it when the next edge owns the shared corner
-// (closed-loop samplers).
-inline std::vector<double> edgeSampleFractions(int eid, int n, double ph,
-                                               bool rev, bool includeLast,
-                                               const PinnedEdges* pins,
-                                               const Model* model) {
-    std::vector<double> t;
-    if (edgeIsPinned(eid, pins)) {
-        t = (*pins)[eid];  // ascending forward-param, endpoints included
-        if (rev) std::reverse(t.begin(), t.end());
-        if (!includeLast && t.size() > 1) t.pop_back();
-        return t;
-    }
-    n = std::max(1, n);
-    // Even 3D arc-length is the shared border contract for freeform edges.
-    // Only the UNPHASED (open-edge) path resamples: a phased/closed rim is a
-    // circle (already even) and its phase offset is a uniform-parameter
-    // construct. Analytic edges return empty here and fall through to the
-    // uniform phased path below, staying byte-identical.
-    if (model && ph == 0.0) {
-        std::vector<double> arc = evenArcFractions(*model, eid, n);
-        if (!arc.empty()) {  // ascending forward fractions, endpoints in
-            if (rev) std::reverse(arc.begin(), arc.end());
-            if (!includeLast && arc.size() > 1) arc.pop_back();
-            return arc;
-        }
-    }
-    const int last = includeLast ? n : n - 1;
-    for (int i = 0; i <= last; ++i) t.push_back(phasedT(i, n, ph, rev));
-    return t;
-}
-
+// Shared phased, pinned, and even-arc edge sampling lives in
+// mesher_sampling.cpp so every legacy strategy consumes the same contract.
 // A planar face bounded by exactly one full-circle edge (a cylinder cap).
 bool boundingCircle(const TopoDS_Face& face, gp_Circ& circOut, int& edgeIdOut,
                     const Model& model) {
@@ -1358,6 +1397,10 @@ struct CoonsPatch {
     // splitting one corner). The chain skips it; the mesher stitches its
     // samples into the corner polygon so the neighbour's seam welds.
     int stubEdgeId = 0;
+    // Joint occupied by the stub, in side order.  Ordinary corner stubs sit
+    // after side 3 (the lower-left grid corner); a pole-adjacent bookkeeping
+    // sliver may instead sit after side 2 (the upper-left pole corner).
+    int stubAfterSide = 3;
     bool stubRev = false;
     Handle(Geom2d_Curve) stubPc;
     double stubFirst = 0.0, stubLast = 0.0;
@@ -1541,7 +1584,24 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
         // No short stub: fall through to corner-angle chaining below.
         if (all[shortest].len < 0.02 * perim) gap = shortest;
     }
-    const int nReal = int(all.size()) - (gap >= 0 ? 1 : 0);
+    // A pole edge can be accompanied by one microscopic REAL edge at either
+    // end (the revolved profile missed the axis by STEP tolerance).  That
+    // sliver is not a fourth patch side: retain it as a local corner stitch
+    // while the remaining three sides use the collapsed-pole grid.  Both
+    // adjacent edges must not be tiny, otherwise the pole layout is
+    // ambiguous and keeps the old conservative path.
+    int poleStub = -1;
+    if (gap >= 0 && all[gap].degenerate && all.size() == 5) {
+        double perim = 0.0;
+        for (const auto& e : all) perim += e.len;
+        const int before = (gap + int(all.size()) - 1) % int(all.size());
+        const int after = (gap + 1) % int(all.size());
+        const bool beforeTiny = all[before].len < 0.02 * perim;
+        const bool afterTiny = all[after].len < 0.02 * perim;
+        if (beforeTiny != afterTiny) poleStub = beforeTiny ? before : after;
+    }
+    const int nReal = int(all.size()) - (gap >= 0 ? 1 : 0) -
+                      (poleStub >= 0 ? 1 : 0);
     if (nReal < 3) return reject("under 3 real edges");
 
     // Order the real sides starting AFTER the gap, so the gap sits
@@ -1551,7 +1611,7 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
     const int start = gap >= 0 ? (gap + 1) % int(all.size()) : 0;
     for (int k = 0; k < int(all.size()); ++k) {
         int i = (start + k) % int(all.size());
-        if (i != gap) order.push_back(i);
+        if (i != gap && i != poleStub) order.push_back(i);
     }
 
     // More than four sides: group consecutive edges into FOUR sides at
@@ -1730,15 +1790,27 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
             patch.first[3] = patch.last[3] = 0.0;
             patch.rev[3] = false;
         }
-    } else if (gap >= 0) {
-        // Four real sides + corner stub: remember it for stitching.
-        const TopoDS_Edge& stub = all[gap].edge;
+    }
+    auto rememberStub = [&](int src, int afterSide) {
+        const TopoDS_Edge& stub = all[src].edge;
         patch.stubEdgeId = model.edges.FindIndex(stub);
+        patch.stubAfterSide = afterSide;
         patch.stubRev = stub.Orientation() == TopAbs_REVERSED;
         patch.stubPc = BRep_Tool::CurveOnSurface(stub, face,
                                                  patch.stubFirst,
                                                  patch.stubLast);
-        if (patch.stubEdgeId < 1) return reject("stub edge unknown");
+        return patch.stubEdgeId >= 1 && !patch.stubPc.IsNull();
+    };
+    if (poleStub >= 0) {
+        const int before = (gap + int(all.size()) - 1) % int(all.size());
+        // Before the degenerate edge: side2 -> stub -> pole side.
+        // After it: pole side -> stub -> side0.
+        if (!rememberStub(poleStub, poleStub == before ? 2 : 3)) {
+            return reject("pole stub edge unknown");
+        }
+    } else if (gap >= 0 && nReal != 3) {
+        // Four real sides + corner stub: remember it for stitching.
+        if (!rememberStub(gap, 3)) return reject("stub edge unknown");
     }
     const int sides = patch.collapsedLast && !patch.poleCurve ? 3 : 4;
     for (int i = 0; i < sides; ++i) {
@@ -1759,7 +1831,7 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
         // an actual seam jump is on the order of the span itself. The
         // corner carrying a stub legitimately jumps by the stub's length.
         double allow = 0.02 * span;
-        if (patch.stubEdgeId > 0 && i == sides - 1 &&
+        if (patch.stubEdgeId > 0 && i == patch.stubAfterSide &&
             !patch.stubPc.IsNull()) {
             allow += patch.stubPc->Value(patch.stubFirst)
                          .Distance(patch.stubPc->Value(patch.stubLast));
@@ -2403,7 +2475,11 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
                                             grid[j * (nu + 1) + i + 1],
                                             grid[(j + 1) * (nu + 1) + i + 1],
                                             grid[(j + 1) * (nu + 1) + i]};
-            if (i == 0 && j == 0 && !stubVerts.empty()) {
+            const bool stubCorner =
+                !stubVerts.empty() && i == 0 &&
+                ((patch.stubAfterSide == 3 && j == 0) ||
+                 (patch.stubAfterSide == 2 && j + 1 == j1));
+            if (stubCorner) {
                 std::vector<uint32_t> withStub(ring.begin(), ring.end());
                 withStub.insert(withStub.end(), stubVerts.begin(),
                                 stubVerts.end());
@@ -2593,7 +2669,10 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
         std::vector<uint32_t> high;
         for (int i = i0; i <= i1; ++i) high.push_back(grid[j0 * (nu + 1) + i]);
         emitStrip(railIds(natBottom), high,
-                  stubVerts.empty() ? nullptr : &stubVerts, false,
+                  stubVerts.empty() || patch.stubAfterSide != 3
+                      ? nullptr
+                      : &stubVerts,
+                  false,
                   UINT32_MAX);
     }
     if (!natTop.empty()) {
@@ -2608,7 +2687,8 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
         // lives at lattice (0,0), outside the emitted grid here. Close
         // the strip through it. (stubVerts[0] coincides with the natural
         // left rail's first point, so it is skipped.)
-        const bool stubHere = !stubVerts.empty() && natBottom.empty();
+        const bool stubHere = !stubVerts.empty() && natBottom.empty() &&
+                              patch.stubAfterSide == 3;
         uint32_t corner00 = UINT32_MAX;
         if (stubHere) {
             const BPt& c = gpts[0];
@@ -5187,10 +5267,13 @@ bool meshRailLadder(const TopoDS_Face& face, const Model& model, int faceId,
 bool sampleRibbonRing(const TopoDS_Face& face, const Model& model,
                       const std::vector<int>* solvedEdge, int radialDefault,
                       std::vector<gp_Pnt>& P, std::vector<gp_Pnt2d>& UV,
-                      std::vector<int>& corners) {
+                      std::vector<int>& corners,
+                      const PinnedEdges* pins = nullptr,
+                      std::vector<int>* sampleEdges = nullptr) {
     P.clear();
     UV.clear();
     corners.clear();
+    if (sampleEdges) sampleEdges->clear();
     TopoDS_Wire outer = BRepTools::OuterWire(face);
     if (outer.IsNull()) return false;
     int wireEdges = 0, rawEdges = 0;
@@ -5230,10 +5313,11 @@ bool sampleRibbonRing(const TopoDS_Face& face, const Model& model,
         const double ph = closedEdgePhase(edge, model);
         corners.push_back(int(P.size()));
         for (double t : edgeSampleFractions(eid, n, ph, rev,
-                                            /*includeLast=*/false, nullptr,
+                                            /*includeLast=*/false, pins,
                                             &model)) {
             UV.push_back(c2->Value(f2 + (l2 - f2) * t));
             P.push_back(c3->Value(f3 + (l3 - f3) * t));
+            if (sampleEdges) sampleEdges->push_back(eid);
         }
     }
     if (P.size() < 4 || corners.size() < 4) return false;
@@ -5544,12 +5628,14 @@ bool ribbonEndNotchDetect(const TopoDS_Face& face, const Model& model) {
 // never ships a fold or a leak.
 bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
                      const std::vector<int>& solvedEdge, int radialDefault,
-                     MeshBuilder& out, std::array<int, 2>* built = nullptr) {
+                     MeshBuilder& out, std::array<int, 2>* built = nullptr,
+                     const PinnedEdges* pins = nullptr) {
+    const size_t polygonBegin = out.mesh().polygons.size();
     std::vector<gp_Pnt> P;
     std::vector<gp_Pnt2d> UV;
     std::vector<int> corners;
     if (!sampleRibbonRing(face, model, &solvedEdge, radialDefault, P, UV,
-                          corners)) {
+                          corners, pins)) {
         return false;
     }
     const int N = int(P.size());
@@ -5646,12 +5732,17 @@ bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
     const bool cap1Simple = (r.a0 == (r.b1 + 1) % N);
     const bool cap2Simple = (r.b0 == (r.a1 + 1) % N);
     const bool flip = face.Orientation() == TopAbs_REVERSED;
-    // Border vertices are anchorless (they live on shared B-rep edges and
-    // must weld to the neighbour's samples); the sweep adds no interior
-    // vertices, so the whole strip welds by construction.
+    // Border positions come from the exact shared 3D edge curves, so they
+    // weld to the neighbour bit-for-bit.  Keep this face's UV provenance as
+    // an anchor as well: on a thin folded ribbon, projecting a polygon
+    // centroid can land on the far side of the surface and falsely report an
+    // otherwise clean ladder as inverted.
     std::vector<uint32_t> vid(N, UINT32_MAX);
     auto pushUv = [&](int ring) {
-        if (vid[ring] == UINT32_MAX) vid[ring] = out.addVertex(P[ring], {});
+        if (vid[ring] == UINT32_MAX) {
+            vid[ring] = out.addVertex(
+                P[ring], {faceId, UV[ring].X(), UV[ring].Y()});
+        }
         return vid[ring];
     };
     Handle(Geom_Surface) S = BRep_Tool::Surface(face);
@@ -5681,26 +5772,52 @@ bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
         }
         return n;
     };
-    // Reference: a mid-strip rung so the surface normal is well defined.
-    // The two rails can carry different station counts, so take the midpoint
-    // of EACH (same ~0.5 arc fraction) to form a representative body cell.
+    // Winding vote over the strip, not one midpoint cell.  A sharp rail bend
+    // can make the two independently sampled midpoint indices straddle
+    // different stations; that one bow-tie then votes opposite to every
+    // honest ladder cell and flips the whole sweep.  Match several local
+    // segments by normalized arc fraction and let their CAD-normal agreement
+    // choose the single hand used by the body and both caps.
     bool reverseAll = false;
     {
-        const int rmA = std::clamp(MA / 2, 1, MA - 1);
-        const int rmB = std::clamp(MB / 2, 1, MB - 1);
-        std::vector<int> refQuad = {railA[rmA - 1], railA[rmA], railBr[rmB],
-                                    railBr[rmB - 1]};
-        gp_XYZ nq = newell(refQuad);
-        gp_Pnt2d c(0.25 * (UV[railA[rmA - 1]].X() + UV[railA[rmA]].X() +
-                           UV[railBr[rmB]].X() + UV[railBr[rmB - 1]].X()),
-                   0.25 * (UV[railA[rmA - 1]].Y() + UV[railA[rmA]].Y() +
-                           UV[railBr[rmB]].Y() + UV[railBr[rmB - 1]].Y()));
-        gp_Vec ref = surfN(c);
-        if (ref.Magnitude() > 1e-12 && nq.Modulus() > 1e-12 &&
-            gp_Vec(nq).Dot(ref) < 0) {
-            reverseAll = true;
+        auto arcTable = [&](const std::vector<int>& rail) {
+            std::vector<double> arc(rail.size(), 0.0);
+            for (size_t i = 1; i < rail.size(); ++i) {
+                arc[i] = arc[i - 1] +
+                         P[rail[i - 1]].Distance(P[rail[i]]);
+            }
+            return arc;
+        };
+        const std::vector<double> aArc = arcTable(railA);
+        const std::vector<double> bArc = arcTable(railBr);
+        auto segmentAt = [](const std::vector<double>& arc, double frac) {
+            const double target = frac * std::max(1e-12, arc.back());
+            int i = 0;
+            while (i + 2 < int(arc.size()) && arc[i + 1] < target) ++i;
+            return i;
+        };
+        double vote = 0.0;
+        for (int s2 = 1; s2 < 8; ++s2) {
+            const double frac = s2 / 8.0;
+            const int ia = segmentAt(aArc, frac);
+            const int ib = segmentAt(bArc, frac);
+            const std::vector<int> refQuad = {
+                railA[ia], railA[ia + 1], railBr[ib + 1], railBr[ib]};
+            const gp_XYZ nq = newell(refQuad);
+            gp_Pnt2d c(0, 0);
+            for (int idx : refQuad) {
+                c.SetX(c.X() + 0.25 * UV[idx].X());
+                c.SetY(c.Y() + 0.25 * UV[idx].Y());
+            }
+            const gp_Vec ref = surfN(c);
+            if (ref.Magnitude() <= 1e-12 || nq.Modulus() <= 1e-12) continue;
+            vote += gp_Vec(nq).Dot(ref) /
+                    (nq.Modulus() * ref.Magnitude());
         }
+        reverseAll = vote < 0.0;
     }
+    int localFoldSplits = 0;
+    int localFoldDetected = 0;
     auto emit = [&](std::vector<uint32_t> poly) {
         // Collapse vertices that coincide within the weld tolerance (a sharp
         // reflex station can pinch a rung to zero width): a 4-gon becomes a
@@ -5864,10 +5981,121 @@ bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
     // flat end keeps its rail-end rung as a body cell. The two rails can carry
     // DIFFERENT station counts (one B-rep edge subdivides finer than its
     // opposite side), so each rail keeps its own body span.
-    const int loA = (cap1Simple || cap1Flat) ? 0 : 1;
-    const int loB = (cap1Simple || cap1Flat) ? 0 : 1;
-    const int hiA = notchCut ? sA : ((cap2Simple || cap2Flat) ? MA : MA - 1);
-    const int hiB = notchCut ? sB : ((cap2Simple || cap2Flat) ? MB : MB - 1);
+    int loA = (cap1Simple || cap1Flat) ? 0 : 1;
+    int loB = (cap1Simple || cap1Flat) ? 0 : 1;
+    int hiA = notchCut ? sA : ((cap2Simple || cap2Flat) ? MA : MA - 1);
+    int hiB = notchCut ? sB : ((cap2Simple || cap2Flat) ? MB : MB - 1);
+    // If both rails are monotone in the SAME surface coordinate but their
+    // trims begin/end at different parameter values, the non-overlapping
+    // prefixes belong to the end caps, not the body zipper.  Align the body
+    // to the common parameter interval; the generalized cap boundary below
+    // then includes every trimmed-off rail segment, so the face contract is
+    // unchanged.  This prevents a short rail rung from being stretched
+    // diagonally across a B-spline bend.
+    int alignedParamAxis = -1;
+    if (!notchCut) {
+        BRepAdaptor_Surface alignSurf(face);
+        auto alignedTrack = [&](const std::vector<int>& rail, bool useU,
+                                double period) {
+            std::vector<double> q(rail.size());
+            q[0] = useU ? UV[rail[0]].X() : UV[rail[0]].Y();
+            for (size_t i = 1; i < rail.size(); ++i) {
+                q[i] = useU ? UV[rail[i]].X() : UV[rail[i]].Y();
+                if (period > 0.0) {
+                    q[i] -= period *
+                            std::round((q[i] - q[i - 1]) / period);
+                }
+            }
+            return q;
+        };
+        const std::array<double, 2> period = {
+            alignSurf.IsUPeriodic() ? alignSurf.UPeriod() : 0.0,
+            alignSurf.IsVPeriodic() ? alignSurf.VPeriod() : 0.0};
+        const std::array<double, 2> span = {
+            std::max(1e-12, alignSurf.LastUParameter() -
+                                alignSurf.FirstUParameter()),
+            std::max(1e-12, alignSurf.LastVParameter() -
+                                alignSurf.FirstVParameter())};
+        std::array<std::vector<double>, 2> trackA, trackB;
+        double bestScore = 0.0;
+        for (int axis = 0; axis < 2; ++axis) {
+            trackA[axis] = alignedTrack(railA, axis == 0, period[axis]);
+            trackB[axis] = alignedTrack(railBr, axis == 0, period[axis]);
+            auto quality = [](const std::vector<double>& q) {
+                double variation = 0.0;
+                for (size_t i = 1; i < q.size(); ++i) {
+                    variation += std::abs(q[i] - q[i - 1]);
+                }
+                const double delta = q.back() - q.front();
+                return std::pair<double, double>{
+                    delta, variation > 1e-12
+                               ? std::abs(delta) / variation
+                               : 0.0};
+            };
+            const auto [da, ma] = quality(trackA[axis]);
+            const auto [db, mb] = quality(trackB[axis]);
+            if (da * db <= 0.0 || std::min(ma, mb) < 0.92) continue;
+            const double dir = da > 0.0 ? 1.0 : -1.0;
+            const double a0 = dir * trackA[axis][loA];
+            const double a1 = dir * trackA[axis][hiA];
+            const double b0 = dir * trackB[axis][loB];
+            const double b1 = dir * trackB[axis][hiB];
+            const double overlap = std::min(a1, b1) - std::max(a0, b0);
+            const double shorter = std::min(a1 - a0, b1 - b0);
+            const double coverage = std::min(std::abs(da), std::abs(db)) /
+                                    span[axis];
+            const double score = std::min(ma, mb) * std::min(1.0, coverage);
+            if (overlap > 0.70 * std::max(1e-12, shorter) &&
+                coverage >= 0.20 && score > bestScore) {
+                bestScore = score;
+                alignedParamAxis = axis;
+            }
+        }
+        if (alignedParamAxis >= 0) {
+            const auto& a = trackA[alignedParamAxis];
+            const auto& b = trackB[alignedParamAxis];
+            const double dir = (a.back() - a.front()) > 0.0 ? 1.0 : -1.0;
+            auto nearest = [&](const std::vector<double>& q, int first,
+                               int last, double target) {
+                int best = first;
+                double d = std::abs(dir * q[first] - target);
+                for (int i = first + 1; i <= last; ++i) {
+                    const double di = std::abs(dir * q[i] - target);
+                    if (di < d) {
+                        d = di;
+                        best = i;
+                    }
+                }
+                return best;
+            };
+            const int oldLoA = loA, oldLoB = loB;
+            const int oldHiA = hiA, oldHiB = hiB;
+            if (!cap1Simple && !cap1Flat) {
+                const double start =
+                    std::max(dir * a[loA], dir * b[loB]);
+                loA = nearest(a, loA, hiA, start);
+                loB = nearest(b, loB, hiB, start);
+            }
+            if (!cap2Simple && !cap2Flat) {
+                const double finish =
+                    std::min(dir * a[hiA], dir * b[hiB]);
+                hiA = nearest(a, loA, hiA, finish);
+                hiB = nearest(b, loB, hiB, finish);
+            }
+            if (hiA - loA < 2 || hiB - loB < 2) {
+                loA = oldLoA;
+                loB = oldLoB;
+                hiA = oldHiA;
+                hiB = oldHiB;
+                alignedParamAxis = -1;
+            } else if (std::getenv("WEFT_FOLD_DEBUG")) {
+                dbg("ribbon align f%d axis=%c A %d..%d -> %d..%d, "
+                    "B %d..%d -> %d..%d",
+                    faceId, alignedParamAxis == 0 ? 'u' : 'v', oldLoA,
+                    oldHiA, loA, hiA, oldLoB, oldHiB, loB, hiB);
+            }
+        }
+    }
     // Zip two rails (ring-index chains RA, RB, paired 1:1 at their ends) by
     // ARC LENGTH, not by index. Index pairing twists where a sharp reflex
     // crowds the samples on one rail (the flaregun grip creases: adjacent
@@ -5877,6 +6105,7 @@ bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
     // a pure quad ladder; where one rail is finer its extra stations BATCH
     // into the cell as a grouped n-gon (a pentagon / hexagon whose flat side
     // runs along that rail), never a fanned triangle.
+    int paramRailZips = 0;
     auto zipRailPair = [&](const std::vector<int>& RA,
                            const std::vector<int>& RB) {
         const int nA = int(RA.size()) - 1, nB = int(RB.size()) - 1;
@@ -5886,9 +6115,99 @@ bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
             gA[i] = gA[i - 1] + P[RA[i - 1]].Distance(P[RA[i]]);
         for (int i = 1; i <= nB; ++i)
             gB[i] = gB[i - 1] + P[RB[i - 1]].Distance(P[RB[i]]);
+        // On a trimmed parametric strip the two rails often share an exact
+        // CAD running coordinate even when their 3D arc lengths bunch very
+        // differently around a sharp bend. Pairing those rails by unrelated
+        // arc fractions can cross two adjacent rungs. Prefer the common
+        // monotone surface parameter when both rails prove it geometrically;
+        // arbitrary/skew ribbons retain the historic arc-length zipper.
+        struct ParamTrack {
+            std::vector<double> value;
+            double delta = 0.0;
+            double variation = 0.0;
+            double monotonicity = 0.0;
+        };
+        auto track = [&](const std::vector<int>& rail, bool useU,
+                         double period) {
+            ParamTrack t;
+            t.value.resize(rail.size());
+            t.value[0] = useU ? UV[rail[0]].X() : UV[rail[0]].Y();
+            for (size_t i = 1; i < rail.size(); ++i) {
+                double q = useU ? UV[rail[i]].X() : UV[rail[i]].Y();
+                if (period > 0.0) {
+                    q -= period *
+                         std::round((q - t.value[i - 1]) / period);
+                }
+                t.value[i] = q;
+                t.variation += std::abs(q - t.value[i - 1]);
+            }
+            t.delta = t.value.back() - t.value.front();
+            if (t.variation > 1e-12) {
+                t.monotonicity = std::abs(t.delta) / t.variation;
+            }
+            return t;
+        };
+        BRepAdaptor_Surface railSurf(face);
+        const double pU = railSurf.IsUPeriodic() ? railSurf.UPeriod() : 0.0;
+        const double pV = railSurf.IsVPeriodic() ? railSurf.VPeriod() : 0.0;
+        const std::array<ParamTrack, 2> aTrack = {
+            track(RA, true, pU), track(RA, false, pV)};
+        const std::array<ParamTrack, 2> bTrack = {
+            track(RB, true, pU), track(RB, false, pV)};
+        const std::array<double, 2> domainSpan = {
+            std::max(1e-12, railSurf.LastUParameter() -
+                                railSurf.FirstUParameter()),
+            std::max(1e-12, railSurf.LastVParameter() -
+                                railSurf.FirstVParameter())};
+        int paramAxis = -1;
+        double paramScore = 0.0;
+        for (int axis = 0; axis < 2; ++axis) {
+            const double mono = std::min(aTrack[axis].monotonicity,
+                                         bTrack[axis].monotonicity);
+            if (aTrack[axis].delta * bTrack[axis].delta <= 0.0) continue;
+            const double coverage =
+                std::min(std::abs(aTrack[axis].delta),
+                         std::abs(bTrack[axis].delta)) /
+                domainSpan[axis];
+            const double score = mono * std::min(1.0, coverage);
+            if (mono >= 0.92 && coverage >= 0.20 && score > paramScore) {
+                paramScore = score;
+                paramAxis = axis;
+            }
+        }
+        bool absoluteParamMetric = false;
+        if (paramAxis >= 0) {
+            const ParamTrack& ta = aTrack[paramAxis];
+            const ParamTrack& tb = bTrack[paramAxis];
+            if (std::getenv("WEFT_FOLD_DEBUG")) {
+                dbg("ribbon param zip f%d axis=%c A %.4f..%.4f B %.4f..%.4f "
+                    "mono %.3f/%.3f",
+                    faceId, paramAxis == 0 ? 'u' : 'v', ta.value.front(),
+                    ta.value.back(), tb.value.front(), tb.value.back(),
+                    ta.monotonicity, tb.monotonicity);
+            }
+            const double dir = ta.delta > 0.0 ? 1.0 : -1.0;
+            const double lo = std::min(dir * ta.value.front(),
+                                       dir * tb.value.front());
+            const double hi = std::max(dir * ta.value.back(),
+                                       dir * tb.value.back());
+            const double scale = 1.0 / std::max(1e-12, hi - lo);
+            for (int i = 0; i <= nA; ++i) {
+                gA[i] = (dir * ta.value[i] - lo) * scale;
+            }
+            for (int i = 0; i <= nB; ++i) {
+                gB[i] = (dir * tb.value[i] - lo) * scale;
+            }
+            absoluteParamMetric = true;
+            ++paramRailZips;
+        }
         const double LA = std::max(1e-12, gA[nA]), LB = std::max(1e-12, gB[nB]);
-        auto fa = [&](int i) { return gA[i] / LA; };
-        auto fb = [&](int i) { return gB[i] / LB; };
+        auto fa = [&](int i) {
+            return absoluteParamMetric ? gA[i] : gA[i] / LA;
+        };
+        auto fb = [&](int i) {
+            return absoluteParamMetric ? gB[i] : gB[i] / LB;
+        };
         int ia = 0, ib = 0;
         while (ia < nA || ib < nB) {
             if (ia >= nA) {
@@ -5975,21 +6294,31 @@ bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
     // body's last cell owns, so any tiling of this boundary welds to the body.
     auto capBoundary = [&](bool nearCap) {
         std::vector<int> poly;
-        if (nearCap) {  // cap 1: body rung at r=1, cap arc a0..b1
-            poly.push_back(railA[1]);
-            for (int k = r.a0;; k = (k + N - 1) % N) {
+        if (nearCap) {  // cap 1: body base -> a0 -> cap arc -> body base
+            poly.push_back(railA[loA]);
+            for (int i = loA - 1; i >= 0; --i) {
+                poly.push_back(railA[i]);
+            }
+            for (int k = (r.a0 + N - 1) % N;;
+                 k = (k + N - 1) % N) {
                 poly.push_back(k);
                 if (k == r.b1) break;
             }
-            poly.push_back(railBr[1]);
-        } else {  // cap 2: body rung at r=MA-1/MB-1, cap arc a1..b0
-            poly.push_back(railA[MA - 1]);
-            poly.push_back(railA[MA]);
+            for (int i = 1; i <= loB; ++i) {
+                poly.push_back(railBr[i]);
+            }
+        } else {  // cap 2: body end -> a1 -> cap arc -> body end
+            poly.push_back(railA[hiA]);
+            for (int i = hiA + 1; i <= MA; ++i) {
+                poly.push_back(railA[i]);
+            }
             for (int k = (r.a1 + 1) % N;; k = (k + 1) % N) {
                 poly.push_back(k);
                 if (k == r.b0) break;
             }
-            poly.push_back(railBr[MB - 1]);
+            for (int i = MB - 1; i >= hiB; --i) {
+                poly.push_back(railBr[i]);
+            }
         }
         return poly;
     };
@@ -6115,6 +6444,255 @@ bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
     if (!notchCut &&
         !closeCap(/*nearCap=*/false, cap2Simple, cap2Flat, cap2Arc))
         return false;
+    // One sharp bend can make an arc-fraction rail pairing cross for a single
+    // station even though the surrounding ladder is valid.  Judge every
+    // emitted quad against this face's retained UV anchors and replace only
+    // an opposing quad with the diagonal whose two triangles both agree with
+    // the CAD normal.  Shared border edges are untouched; unlike the contract
+    // floor this cannot spread a local kink into a face-wide triangle fan.
+    BRepAdaptor_Surface foldSurf(face);
+    const double foldUPeriod = foldSurf.IsUPeriodic() ? foldSurf.UPeriod()
+                                                       : 0.0;
+    const double foldVPeriod = foldSurf.IsVPeriodic() ? foldSurf.VPeriod()
+                                                       : 0.0;
+    GeomAPI_ProjectPointOnSurf foldProj;
+    foldProj.Init(gp_Pnt(0, 0, 0), S);
+    auto agreement = [&](const std::vector<uint32_t>& poly) {
+        gp_XYZ n(0, 0, 0);
+        gp_XYZ cen(0, 0, 0);
+        gp_Pnt2d uv(0, 0);
+        int anchored = 0;
+        double uRef = 0.0, vRef = 0.0;
+        for (size_t i = 0; i < poly.size(); ++i) {
+            const auto& a = out.mesh().vertices[poly[i]];
+            const auto& b =
+                out.mesh().vertices[poly[(i + 1) % poly.size()]];
+            n += gp_XYZ(a[1] * b[2] - a[2] * b[1],
+                        a[2] * b[0] - a[0] * b[2],
+                        a[0] * b[1] - a[1] * b[0]);
+            cen += gp_XYZ(a[0], a[1], a[2]);
+            const Anchor& an = out.mesh().anchors[poly[i]];
+            if (an.faceId == faceId) {
+                double au = an.u, av = an.v;
+                if (anchored == 0) {
+                    uRef = au;
+                    vRef = av;
+                } else {
+                    if (foldUPeriod > 0.0) {
+                        au -= foldUPeriod *
+                              std::round((au - uRef) / foldUPeriod);
+                    }
+                    if (foldVPeriod > 0.0) {
+                        av -= foldVPeriod *
+                              std::round((av - vRef) / foldVPeriod);
+                    }
+                }
+                uv.SetX(uv.X() + au);
+                uv.SetY(uv.Y() + av);
+                ++anchored;
+            }
+        }
+        // An unknown orientation is not evidence that a cell is safe.  A
+        // degenerate polygon cannot be certified against the CAD normal, so
+        // make every caller take the repair/demotion path.
+        if (n.Modulus() <= 1e-16) return -1.0;
+        if (anchored == int(poly.size())) {
+            uv.SetX(uv.X() / anchored);
+            uv.SetY(uv.Y() / anchored);
+        } else {
+            cen /= double(poly.size());
+            foldProj.Perform(gp_Pnt(cen));
+            if (!foldProj.IsDone() || foldProj.NbPoints() < 1) return -1.0;
+            double pu = 0.0, pv = 0.0;
+            foldProj.LowerDistanceParameters(pu, pv);
+            uv.SetX(pu);
+            uv.SetY(pv);
+        }
+        const gp_Vec sn = surfN(uv);
+        if (sn.Magnitude() <= 1e-16) return -1.0;
+        return gp_Vec(n).Dot(sn) / (n.Modulus() * sn.Magnitude());
+    };
+    const size_t polygonEnd = out.mesh().polygons.size();
+    std::vector<size_t> dropLocalPolys;
+    for (size_t pi = polygonBegin; pi < polygonEnd; ++pi) {
+        const std::vector<uint32_t> quad = out.mesh().polygons[pi];
+        if (quad.size() != 4 || agreement(quad) >= 0.0) continue;
+        ++localFoldDetected;
+        const bool bodyCell =
+            pi >= polyBeforeBody &&
+            pi < polyBeforeBody + size_t(bodyRungs);
+        if (std::getenv("WEFT_FOLD_DEBUG")) {
+            dbg("ribbon fold f%d poly=%zu region=%s uv "
+                "(%.4f,%.4f) (%.4f,%.4f) (%.4f,%.4f) (%.4f,%.4f)",
+                faceId, pi,
+                bodyCell ? "body" : "cap",
+                out.mesh().anchors[quad[0]].u,
+                out.mesh().anchors[quad[0]].v,
+                out.mesh().anchors[quad[1]].u,
+                out.mesh().anchors[quad[1]].v,
+                out.mesh().anchors[quad[2]].u,
+                out.mesh().anchors[quad[2]].v,
+                out.mesh().anchors[quad[3]].u,
+                out.mesh().anchors[quad[3]].v);
+        }
+        // A curved end-cap sliver can be nearly planar in 3D yet still turn
+        // past the face normal, making its closing chord invalid. Remove that
+        // chord by merging the cap into the adjacent body rung when the
+        // combined boundary is CAD-out. This keeps a single bounded n-gon and
+        // every exterior border edge; no triangle fan or global floor.
+        bool capMerged = false;
+        if (!bodyCell) {
+            for (size_t ni = polyBeforeBody;
+                 ni < polyBeforeBody + size_t(bodyRungs) && !capMerged;
+                 ++ni) {
+                if (ni >= out.mesh().polygons.size()) break;
+                const auto& body = out.mesh().polygons[ni];
+                for (size_t i = 0; i < body.size() && !capMerged; ++i) {
+                    const uint32_t a = body[i];
+                    const uint32_t b = body[(i + 1) % body.size()];
+                    for (size_t j = 0; j < quad.size(); ++j) {
+                        if (quad[j] != b ||
+                            quad[(j + 1) % quad.size()] != a) {
+                            continue;
+                        }
+                        std::vector<uint32_t> merged;
+                        for (size_t k = 0; k < body.size(); ++k) {
+                            merged.push_back(body[(i + 1 + k) % body.size()]);
+                        }
+                        for (size_t k = 0; k < quad.size() - 2; ++k) {
+                            merged.push_back(
+                                quad[(j + 2 + k) % quad.size()]);
+                        }
+                        if (agreement(merged) > 0.0) {
+                            out.mesh().polygons[ni] = std::move(merged);
+                            out.mesh().polygons[pi].clear();
+                            dropLocalPolys.push_back(pi);
+                            ++localFoldSplits;
+                            capMerged = true;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        if (capMerged) continue;
+        // First preserve quads: some ribbons cross a very curved surface in
+        // the width direction, so one ruled cell's Newell normal is a poor
+        // approximation even though both boundary rails are sound. Add a
+        // short CAD-evaluated mid-rail (or quarter rails) inside this rung.
+        // No boundary vertex changes, and the result remains a local strip of
+        // quads rather than a face-wide fallback fan.
+        bool bandRepaired = false;
+        const Anchor qa0 = out.mesh().anchors[quad[0]];
+        const Anchor qa1 = out.mesh().anchors[quad[1]];
+        const Anchor qb1 = out.mesh().anchors[quad[2]];
+        const Anchor qb0 = out.mesh().anchors[quad[3]];
+        if (qa0.faceId == faceId && qa1.faceId == faceId &&
+            qb0.faceId == faceId && qb1.faceId == faceId) {
+            auto uvLerp = [&](const Anchor& a, const Anchor& b, double t) {
+                double bu = b.u, bv = b.v;
+                if (foldUPeriod > 0.0) {
+                    bu -= foldUPeriod *
+                          std::round((bu - a.u) / foldUPeriod);
+                }
+                if (foldVPeriod > 0.0) {
+                    bv -= foldVPeriod *
+                          std::round((bv - a.v) / foldVPeriod);
+                }
+                return gp_Pnt2d(a.u + t * (bu - a.u),
+                                a.v + t * (bv - a.v));
+            };
+            for (int bands : {2, 4, 8}) {
+                const size_t vertexMark = out.mesh().vertices.size();
+                std::vector<uint32_t> start(bands + 1), finish(bands + 1);
+                start.front() = quad[0];
+                finish.front() = quad[1];
+                start.back() = quad[3];
+                finish.back() = quad[2];
+                for (int b = 1; b < bands; ++b) {
+                    const double t = double(b) / bands;
+                    const gp_Pnt2d us = uvLerp(qa0, qb0, t);
+                    const gp_Pnt2d uf = uvLerp(qa1, qb1, t);
+                    start[b] = out.addVertex(
+                        S->Value(us.X(), us.Y()),
+                        {faceId, us.X(), us.Y()});
+                    finish[b] = out.addVertex(
+                        S->Value(uf.X(), uf.Y()),
+                        {faceId, uf.X(), uf.Y()});
+                }
+                std::vector<std::vector<uint32_t>> cells;
+                double margin = 1e300;
+                for (int b = 0; b < bands; ++b) {
+                    cells.push_back({start[b], finish[b], finish[b + 1],
+                                     start[b + 1]});
+                    margin = std::min(margin, agreement(cells.back()));
+                }
+                if (margin > 0.0) {
+                    out.mesh().polygons[pi] = cells.front();
+                    for (int b = 1; b < bands; ++b) {
+                        out.addPolygon(cells[b], faceId, false);
+                    }
+                    ++localFoldSplits;
+                    bandRepaired = true;
+                    break;
+                }
+                out.mesh().vertices.resize(vertexMark);
+                out.mesh().anchors.resize(vertexMark);
+            }
+        }
+        if (bandRepaired) continue;
+        const std::array<std::vector<uint32_t>, 2> split02 = {
+            std::vector<uint32_t>{quad[0], quad[1], quad[2]},
+            std::vector<uint32_t>{quad[0], quad[2], quad[3]}};
+        const std::array<std::vector<uint32_t>, 2> split13 = {
+            std::vector<uint32_t>{quad[1], quad[2], quad[3]},
+            std::vector<uint32_t>{quad[1], quad[3], quad[0]}};
+        const std::array<std::array<std::vector<uint32_t>, 2>, 2> split = {
+            split02, split13};
+        int best = -1;
+        double bestMargin = -1e300;
+        for (int d = 0; d < 2; ++d) {
+            const double margin =
+                std::min(agreement(split[d][0]), agreement(split[d][1]));
+            if (margin > bestMargin) {
+                bestMargin = margin;
+                best = d;
+            }
+        }
+        if (best >= 0 && bestMargin > 0.0) {
+            out.mesh().polygons[pi] = split[best][0];
+            out.addPolygon(split[best][1], faceId, false);
+            ++localFoldSplits;
+            continue;
+        }
+        // Both rail-preserving subdivision and both honest diagonals failed.
+        // Do not hide the fold behind a centre fan: the caller can demote the
+        // complete face to a mesher that can certify its topology.
+        dbg("ribbon face %d: unrepaired fold at local polygon %zu -> demote",
+            faceId, pi - polygonBegin);
+        return false;
+    }
+    std::sort(dropLocalPolys.begin(), dropLocalPolys.end());
+    dropLocalPolys.erase(
+        std::unique(dropLocalPolys.begin(), dropLocalPolys.end()),
+        dropLocalPolys.end());
+    for (auto it = dropLocalPolys.rbegin(); it != dropLocalPolys.rend(); ++it) {
+        out.mesh().polygons.erase(out.mesh().polygons.begin() + *it);
+        out.mesh().polygonFaceId.erase(out.mesh().polygonFaceId.begin() + *it);
+    }
+    // Repairs may add cells after polygonEnd or merge a cap into a body cell.
+    // Re-certify the complete route result, including those replacements,
+    // before allowing RibbonSweep to own the face.
+    int finalFoldCount = 0;
+    for (size_t pi = polygonBegin; pi < out.mesh().polygons.size(); ++pi) {
+        const auto& poly = out.mesh().polygons[pi];
+        if (poly.size() < 3 || agreement(poly) <= 0.0) ++finalFoldCount;
+    }
+    if (finalFoldCount != 0) {
+        dbg("ribbon face %d: final fold census found %d cell(s) -> demote",
+            faceId, finalFoldCount);
+        return false;
+    }
     // Quality gate: the sweep only earns the face when the RAILS carry it --
     // an even quad ladder with the caps a bounded quad/n-gon closure. When
     // triangles outnumber every clean cell (quads plus grouped n-gons) the
@@ -6127,16 +6705,1488 @@ bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
         else if (p.size() == 4) ++nq;
         else ++nn;
     }
-    if (nt > nq + nn) {
+    // A short ribbon can legitimately consist of only one or two grouped
+    // body cells plus a small triangulated closure at either end.  Rejecting
+    // that bounded cap web merely because it contains four triangles throws
+    // away the rail-aligned result and replaces it with a face-wide contract
+    // floor (dozens of unrelated triangles on MP9's grip transition).  Keep
+    // the conservative gate for genuinely triangle-heavy false rails, but
+    // retain a small closure when the sweep did build a body and at least two
+    // clean grouped cells.  The budget covers two quad-sized cap webs; larger
+    // webs still take the safer fallback path.
+    const bool boundedCapWeb =
+        bodyRungs > 0 && nt <= 8 && (nq + nn) >= 2;
+    if (nt > nq + nn && !boundedCapWeb) {
         dbg("ribbon face %d: caps web-heavy (%d tri / %d quad / %d ngon) -> "
             "quad-fill",
             faceId, nt, nq, nn);
         return false;
     }
-    dbg("ribbon face %d: rails %d/%d, width %.2f aspect %.1f, caps %s/%s",
+    if (nt > nq + nn) {
+        dbg("ribbon face %d: retaining bounded cap web "
+            "(%d tri / %d quad / %d ngon)",
+            faceId, nt, nq, nn);
+    }
+    dbg("ribbon face %d: rails %d/%d, width %.2f aspect %.1f, caps %s/%s, "
+        "reverse=%d param-zips=%d local-folds=%d local-splits=%d",
         faceId, MA, MB, r.width, r.aspect, cap1Simple ? "quad" : "web",
-        cap2Simple ? "quad" : "web");
+        cap2Simple ? "quad" : "web", reverseAll ? 1 : 0, paramRailZips,
+        localFoldDetected,
+        localFoldSplits);
     if (built) *built = {bodyRungs, 1};
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Trim corridor: a conservative, separate answer for a single concave trim
+// which is topologically just two long rails plus two local end closures.
+//
+// This is intentionally *not* another permissive Coons fallback.  The four
+// Coons sides may legitimately cross on these trims even though the usable
+// topology is obvious (the MP9 optic/grip strips were the motivating class).
+// We therefore prove the narrower statement we actually need: two complete
+// boundary chains advance monotonically along one UV axis, arc-length paired
+// rungs stay inside the face, and every prospective body cell keeps one UV
+// orientation.  Only then may a direct rail strip own the face.  Border count
+// disagreement is never fanned across the face: the density solve aligns the
+// opposite rail-chain totals, while the two remaining chains close locally.
+
+struct TrimCorridorPatch {
+    bool ok = false;
+    bool axisU = true;
+    std::vector<int> railA;    // sampled-ring indices, low -> high
+    std::vector<int> railB;    // sampled-ring indices, low -> high
+    std::vector<int> capLow;   // exact boundary chain between rail starts
+    std::vector<int> capHigh;  // exact boundary chain between rail ends
+    std::vector<int> railAEdges;
+    std::vector<int> railBEdges;
+    std::vector<int> capLowEdges;
+    std::vector<int> capHighEdges;
+    double score = -1e300;
+};
+
+std::vector<int> corridorRingArc(int n, int from, int to, int step = 1) {
+    std::vector<int> out;
+    if (n < 1 || from < 0 || from >= n || to < 0 || to >= n) return out;
+    int k = from;
+    for (int guard = 0; guard <= n; ++guard) {
+        out.push_back(k);
+        if (k == to) return out;
+        k = (k + step + n) % n;
+    }
+    return {};
+}
+
+std::vector<int> corridorArcEdges(const std::vector<int>& arc,
+                                  const std::vector<int>& sampleEdges,
+                                  int n) {
+    std::vector<int> edges;
+    if (arc.size() < 2 || int(sampleEdges.size()) != n) return edges;
+    for (size_t i = 0; i + 1 < arc.size(); ++i) {
+        const int a = arc[i], b = arc[i + 1];
+        int eid = 0;
+        if ((a + 1) % n == b) {
+            eid = sampleEdges[a];
+        } else if ((b + 1) % n == a) {
+            eid = sampleEdges[b];
+        } else {
+            return {};
+        }
+        if (eid < 1) return {};
+        if (edges.empty() || edges.back() != eid) edges.push_back(eid);
+    }
+    return edges;
+}
+
+bool sameCorridorEdgeSet(const std::vector<int>& a,
+                         const std::vector<int>& b) {
+    if (a.size() != b.size()) return false;
+    std::multiset<int> aa(a.begin(), a.end()), bb(b.begin(), b.end());
+    return aa == bb;
+}
+
+struct CorridorSample {
+    gp_Pnt2d uv;
+    gp_Pnt p;
+};
+
+CorridorSample sampleCorridorArc(const std::vector<int>& rail, double t,
+                                 const std::vector<gp_Pnt>& p,
+                                 const std::vector<gp_Pnt2d>& uv) {
+    if (rail.empty()) return {};
+    if (rail.size() == 1 || t <= 0) return {uv[rail.front()], p[rail.front()]};
+    if (t >= 1) return {uv[rail.back()], p[rail.back()]};
+    std::vector<double> d(rail.size(), 0.0);
+    for (size_t i = 1; i < rail.size(); ++i) {
+        d[i] = d[i - 1] + p[rail[i - 1]].Distance(p[rail[i]]);
+    }
+    const double total = d.back();
+    if (total <= 1e-14) return {uv[rail.front()], p[rail.front()]};
+    const double want = total * t;
+    size_t i = 0;
+    while (i + 1 < d.size() && d[i + 1] < want) ++i;
+    if (i + 1 >= d.size()) return {uv[rail.back()], p[rail.back()]};
+    const double span = d[i + 1] - d[i];
+    const double f = span > 1e-14 ? (want - d[i]) / span : 0.0;
+    const gp_Pnt2d a = uv[rail[i]], b = uv[rail[i + 1]];
+    return {gp_Pnt2d(a.X() * (1.0 - f) + b.X() * f,
+                     a.Y() * (1.0 - f) + b.Y() * f),
+            gp_Pnt(p[rail[i]].XYZ() * (1.0 - f) +
+                   p[rail[i + 1]].XYZ() * f)};
+}
+
+// Find the strongest proven corridor.  `axisHint` is -1 at planning time and
+// 0/1 at build time.  The optional expected rails make the build reproduce
+// the exact edge-chain decision made by planning even if solved sampling
+// changes the number of points on individual edges.
+bool findTrimCorridor(const TopoDS_Face& face,
+                      const std::vector<gp_Pnt>& p,
+                      const std::vector<gp_Pnt2d>& uv,
+                      const std::vector<int>& corners,
+                      const std::vector<int>& sampleEdges, int axisHint,
+                      const std::array<std::vector<int>, 2>* expectedRails,
+                      TrimCorridorPatch& best) {
+    best = {};
+    const int n = int(p.size());
+    const int nc = int(corners.size());
+    if (n < 8 || nc < 6 || nc > 20 || int(uv.size()) != n ||
+        int(sampleEdges.size()) != n) {
+        return false;
+    }
+    double u0 = 1e300, u1 = -1e300, v0 = 1e300, v1 = -1e300;
+    for (const gp_Pnt2d& q : uv) {
+        u0 = std::min(u0, q.X()); u1 = std::max(u1, q.X());
+        v0 = std::min(v0, q.Y()); v1 = std::max(v1, q.Y());
+    }
+    if (u1 - u0 <= 1e-12 || v1 - v0 <= 1e-12) return false;
+
+    struct Meta {
+        int i = 0, j = 0, k = 0, l = 0, axis = 0;
+        bool reverse = false;
+        double score = -1e300;
+    };
+    std::vector<Meta> candidates;
+    auto coord = [&](int idx, int axis) {
+        return axis == 0 ? uv[idx].X() : uv[idx].Y();
+    };
+    auto arcLength = [&](const std::vector<int>& a) {
+        double d = 0.0;
+        for (size_t x = 1; x < a.size(); ++x) {
+            d += p[a[x - 1]].Distance(p[a[x]]);
+        }
+        return d;
+    };
+    auto monotone = [&](const std::vector<int>& a, int axis, double range) {
+        if (a.size() < 3) return false;
+        double furthest = coord(a.front(), axis);
+        double back = 0.0;
+        for (size_t x = 1; x < a.size(); ++x) {
+            const double q = coord(a[x], axis);
+            if (q < furthest) back += furthest - q;
+            if (q < furthest - 0.035 * range) return false;
+            furthest = std::max(furthest, q);
+        }
+        return back <= 0.10 * range;
+    };
+    auto primaryRange = [&](const std::vector<int>& a, int axis) {
+        double lo = 1e300, hi = -1e300;
+        for (int x : a) {
+            lo = std::min(lo, coord(x, axis));
+            hi = std::max(hi, coord(x, axis));
+        }
+        return hi - lo;
+    };
+    auto evaluateCheap = [&](int i, int j, int k, int l, int axis) {
+        const double loAll = axis == 0 ? u0 : v0;
+        const double hiAll = axis == 0 ? u1 : v1;
+        const double range = hiAll - loAll;
+        // Reject the overwhelming majority of four-cut combinations before
+        // constructing paths: rail starts must live near one axis extreme and
+        // rail ends near the other (or the exact reverse).
+        const double di = coord(i, axis), dj = coord(j, axis);
+        const double dk = coord(k, axis), dl = coord(l, axis);
+        const bool increasing = std::max(di, dl) <= loAll + 0.24 * range &&
+                                std::min(dj, dk) >= hiAll - 0.24 * range;
+        const bool decreasing = std::min(di, dl) >= hiAll - 0.24 * range &&
+                                std::max(dj, dk) <= loAll + 0.24 * range;
+        if (!increasing && !decreasing) return;
+
+        std::vector<int> rawA = corridorRingArc(n, i, j, +1);
+        std::vector<int> rawB = corridorRingArc(n, k, l, +1);
+        std::vector<int> capJK = corridorRingArc(n, j, k, +1);
+        std::vector<int> capLI = corridorRingArc(n, l, i, +1);
+        if (rawA.size() < 3 || rawB.size() < 3 || capJK.size() < 2 ||
+            capLI.size() < 2) {
+            return;
+        }
+        std::vector<int> a = rawA;
+        std::vector<int> b(rawB.rbegin(), rawB.rend());
+        std::vector<int> low = capLI, high = capJK;
+        if (decreasing) {
+            std::reverse(a.begin(), a.end());
+            std::reverse(b.begin(), b.end());
+            low = capJK;
+            high = capLI;
+        }
+        if (!monotone(a, axis, range) || !monotone(b, axis, range)) return;
+        if (primaryRange(a, axis) < 0.70 * range ||
+            primaryRange(b, axis) < 0.70 * range) {
+            return;
+        }
+        // End closures stay local in the primary direction.  They may be
+        // broad across the corridor (a flat grip end), but may not become a
+        // hidden third rail.
+        if (primaryRange(low, axis) > 0.32 * range ||
+            primaryRange(high, axis) > 0.32 * range) {
+            return;
+        }
+        const double la = arcLength(a), lb = arcLength(b);
+        const double lc0 = arcLength(low), lc1 = arcLength(high);
+        if (std::min(la, lb) <= 1e-9 ||
+            std::max(la, lb) > 3.2 * std::min(la, lb)) {
+            return;
+        }
+        if (std::max(lc0, lc1) > 1.6 * std::max(la, lb) ||
+            la + lb < 0.65 * (lc0 + lc1)) {
+            return;
+        }
+
+        std::vector<int> ae = corridorArcEdges(a, sampleEdges, n);
+        std::vector<int> be = corridorArcEdges(b, sampleEdges, n);
+        if (ae.empty() || be.empty()) return;
+        if (expectedRails &&
+            !(sameCorridorEdgeSet(ae, (*expectedRails)[0]) &&
+              sameCorridorEdgeSet(be, (*expectedRails)[1])) &&
+            !(sameCorridorEdgeSet(ae, (*expectedRails)[1]) &&
+              sameCorridorEdgeSet(be, (*expectedRails)[0]))) {
+            return;
+        }
+
+        double minW = 1e300, maxW = 0.0, sumW = 0.0;
+        double meanAlign = 0.0, minAlign = 1.0;
+        int alignN = 0;
+        double sign = 0.0, minArea = 1e300;
+        constexpr int probes = 16;
+        CorridorSample pa0 = sampleCorridorArc(a, 0.0, p, uv);
+        CorridorSample pb0 = sampleCorridorArc(b, 0.0, p, uv);
+        for (int s = 0; s < probes; ++s) {
+            const double f0 = double(s) / probes;
+            const double f1 = double(s + 1) / probes;
+            const CorridorSample aa = sampleCorridorArc(a, f0, p, uv);
+            const CorridorSample ab = sampleCorridorArc(a, f1, p, uv);
+            const CorridorSample ba = sampleCorridorArc(b, f0, p, uv);
+            const CorridorSample bb = sampleCorridorArc(b, f1, p, uv);
+            if (s > 0 && s + 1 < probes) {
+                const double w = aa.p.Distance(ba.p);
+                minW = std::min(minW, w);
+                maxW = std::max(maxW, w);
+                sumW += w;
+            }
+            gp_Vec ta(aa.p, ab.p), tb(ba.p, bb.p);
+            if (ta.Magnitude() > 1e-10 && tb.Magnitude() > 1e-10) {
+                const double d = ta.Dot(tb) /
+                    (ta.Magnitude() * tb.Magnitude());
+                meanAlign += d;
+                minAlign = std::min(minAlign, d);
+                ++alignN;
+            }
+            const std::array<gp_Pnt2d, 4> q = {aa.uv, ab.uv, bb.uv, ba.uv};
+            double a2 = 0.0;
+            for (int z = 0; z < 4; ++z) {
+                a2 += q[z].X() * q[(z + 1) % 4].Y() -
+                      q[(z + 1) % 4].X() * q[z].Y();
+            }
+            const double epsA = 1e-9 * (u1 - u0) * (v1 - v0);
+            if (std::abs(a2) <= epsA) return;
+            if (sign == 0.0) sign = a2;
+            if (a2 * sign <= 0.0) return;
+            minArea = std::min(minArea, std::abs(a2));
+            pa0 = ab; pb0 = bb;
+        }
+        (void)pa0; (void)pb0;
+        if (!std::isfinite(minW) || minW <= 1e-8 || maxW > 7.0 * minW) {
+            return;
+        }
+        if (alignN == 0) return;
+        meanAlign /= alignN;
+        // The rails must advance alongside one another.  This is the key
+        // distinction between a real corridor and the tempting but wrong
+        // split which swallows a short end wall into each rail: that split
+        // still looks axis-monotone, but its paired tangents turn across one
+        // another and bunch many rungs into the corner.
+        if (meanAlign < 0.55 || minAlign < -0.25) return;
+        const double meanW = sumW / std::max(1, probes - 2);
+        const double balance = std::abs(la - lb) / std::max(la, lb);
+        const double widthVar = (maxW - minW) / std::max(1e-12, meanW);
+        const double crossRange = axis == 0 ? (v1 - v0) : (u1 - u0);
+        auto normalizedCrossTravel = [&](const std::vector<int>& rail) {
+            double d = 0.0;
+            for (size_t z = 1; z < rail.size(); ++z) {
+                const double x0 = axis == 0 ? uv[rail[z - 1]].Y()
+                                             : uv[rail[z - 1]].X();
+                const double x1 = axis == 0 ? uv[rail[z]].Y()
+                                             : uv[rail[z]].X();
+                d += std::abs(x1 - x0);
+            }
+            return d / std::max(1e-12, crossRange);
+        };
+        const double crossDrift = normalizedCrossTravel(a) +
+                                  normalizedCrossTravel(b);
+        // Prefer the simplest pair of genuinely longitudinal rails.  Cap
+        // length is deliberately absent from the score: swallowing a short
+        // end wall into a rail makes the remaining cap look cheaper but is
+        // exactly what creates a corner fan.  Cross-axis drift and a very
+        // small edge-piece tie-break keep those end walls in the closures.
+        const double score = 8.0 - 2.5 * balance - 1.8 * widthVar +
+                             3.5 * meanAlign - 2.0 * crossDrift -
+                             0.20 * double(ae.size() + be.size());
+        candidates.push_back({i, j, k, l, axis, decreasing, score});
+    };
+
+    for (int axis = 0; axis < 2; ++axis) {
+        if (axisHint >= 0 && axis != axisHint) continue;
+        for (int ia = 0; ia < nc; ++ia)
+            for (int ib = ia + 1; ib < nc; ++ib)
+                for (int ic = ib + 1; ic < nc; ++ic)
+                    for (int id = ic + 1; id < nc; ++id) {
+                        const int c0 = corners[ia], c1 = corners[ib];
+                        const int c2 = corners[ic], c3 = corners[id];
+                        evaluateCheap(c0, c1, c2, c3, axis);
+                        evaluateCheap(c1, c2, c3, c0, axis);
+                    }
+    }
+    if (candidates.empty()) return false;
+    std::sort(candidates.begin(), candidates.end(),
+              [](const Meta& a, const Meta& b) { return a.score > b.score; });
+
+    Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+    if (surface.IsNull()) return false;
+    // Only the best few cheap candidates pay for BRep face classification.
+    // A valid corridor has a decisive rail/cap split; dozens of near ties are
+    // evidence that this is not the narrow topology class handled here.
+    const int testN = std::min<int>(16, candidates.size());
+    for (int ci = 0; ci < testN; ++ci) {
+        const Meta& m = candidates[ci];
+        std::vector<int> rawA = corridorRingArc(n, m.i, m.j, +1);
+        std::vector<int> rawB = corridorRingArc(n, m.k, m.l, +1);
+        std::vector<int> capJK = corridorRingArc(n, m.j, m.k, +1);
+        std::vector<int> capLI = corridorRingArc(n, m.l, m.i, +1);
+        std::vector<int> a = rawA;
+        std::vector<int> b(rawB.rbegin(), rawB.rend());
+        std::vector<int> low = capLI, high = capJK;
+        if (m.reverse) {
+            std::reverse(a.begin(), a.end());
+            std::reverse(b.begin(), b.end());
+            low = capJK;
+            high = capLI;
+        }
+        // Dense rungs prove the entire body corridor, including its physical
+        // ends.  A trim that needs an out-of-face end chord is not this narrow
+        // topology class and must stay on the exact-border fallback.
+        bool inside = true;
+        for (int s = 0; s <= 24 && inside; ++s) {
+            const double f = double(s) / 24.0;
+            const CorridorSample aa = sampleCorridorArc(a, f, p, uv);
+            const CorridorSample bb = sampleCorridorArc(b, f, p, uv);
+            for (int x = 1; x < 5; ++x) {
+                const double t = double(x) / 5.0;
+                const gp_Pnt2d q(aa.uv.X() * (1.0 - t) + bb.uv.X() * t,
+                                 aa.uv.Y() * (1.0 - t) + bb.uv.Y() * t);
+                BRepClass_FaceClassifier cls(
+                    const_cast<TopoDS_Face&>(face), q, 1e-7);
+                if (cls.State() == TopAbs_OUT) {
+                    inside = false;
+                    break;
+                }
+            }
+        }
+        if (!inside) continue;
+
+        TrimCorridorPatch got;
+        got.ok = true;
+        got.axisU = m.axis == 0;
+        got.railA = std::move(a);
+        got.railB = std::move(b);
+        got.capLow = std::move(low);
+        got.capHigh = std::move(high);
+        got.railAEdges = corridorArcEdges(got.railA, sampleEdges, n);
+        got.railBEdges = corridorArcEdges(got.railB, sampleEdges, n);
+        got.capLowEdges = corridorArcEdges(got.capLow, sampleEdges, n);
+        got.capHighEdges = corridorArcEdges(got.capHigh, sampleEdges, n);
+        got.score = m.score;
+        if (got.railAEdges.empty() || got.railBEdges.empty()) continue;
+        best = std::move(got);
+        return true;
+    }
+    return false;
+}
+
+// A separate four-chain recognizer for broad shallow panels and curved neck
+// transitions.  Unlike findTrimCorridor(), this class is defined by the UV
+// chart itself: two opposite boundary chains must traverse almost the complete
+// U or V range, the other two chains must be local end closures, and a dense
+// ruled lattice between matched rail stations must remain inside with one
+// Jacobian orientation.  Keeping it separate lets these many-piece STEP trims
+// qualify without weakening the accepted corridor/Coons predicates.
+bool findSectionStrip(const TopoDS_Face& face,
+                      const std::vector<gp_Pnt>& p,
+                      const std::vector<gp_Pnt2d>& uv,
+                      const std::vector<int>& corners,
+                      const std::vector<int>& sampleEdges, int axisHint,
+                      const std::array<std::vector<int>, 2>* expectedRails,
+                      TrimCorridorPatch& best) {
+    best = {};
+    const int n = int(p.size()), nc = int(corners.size());
+    if (n < 8 || nc < 8 || nc > 24 || int(uv.size()) != n ||
+        int(sampleEdges.size()) != n) {
+        return false;
+    }
+    double u0 = 1e300, u1 = -1e300, v0 = 1e300, v1 = -1e300;
+    for (const gp_Pnt2d& q : uv) {
+        u0 = std::min(u0, q.X()); u1 = std::max(u1, q.X());
+        v0 = std::min(v0, q.Y()); v1 = std::max(v1, q.Y());
+    }
+    const double span[2] = {u1 - u0, v1 - v0};
+    if (span[0] <= 1e-12 || span[1] <= 1e-12) return false;
+
+    struct Candidate {
+        std::vector<int> a, b, low, high;
+        std::vector<int> ae, be;
+        int axis = 0;
+        double score = -1e300;
+    };
+    std::vector<Candidate> candidates;
+    auto coord = [&](int idx, int axis) {
+        return axis == 0 ? uv[idx].X() : uv[idx].Y();
+    };
+    auto arcPrefix = [&](const std::vector<int>& arc) {
+        std::vector<double> d(arc.size(), 0.0);
+        for (size_t i = 1; i < arc.size(); ++i) {
+            d[i] = d[i - 1] + p[arc[i - 1]].Distance(p[arc[i]]);
+        }
+        return d;
+    };
+    auto arcSample = [&](const std::vector<int>& arc,
+                         const std::vector<double>& d, double t) {
+        if (arc.size() == 1 || t <= 0.0) {
+            return CorridorSample{uv[arc.front()], p[arc.front()]};
+        }
+        if (t >= 1.0 || d.back() <= 1e-14) {
+            return CorridorSample{uv[arc.back()], p[arc.back()]};
+        }
+        const double want = d.back() * t;
+        const auto it = std::lower_bound(d.begin(), d.end(), want);
+        size_t z = it == d.begin() ? 0 : size_t(it - d.begin() - 1);
+        if (z + 1 >= arc.size()) z = arc.size() - 2;
+        const double spanD = d[z + 1] - d[z];
+        const double f = spanD > 1e-14 ? (want - d[z]) / spanD : 0.0;
+        const gp_Pnt2d a = uv[arc[z]], b = uv[arc[z + 1]];
+        return CorridorSample{
+            gp_Pnt2d(a.X() * (1.0 - f) + b.X() * f,
+                     a.Y() * (1.0 - f) + b.Y() * f),
+            gp_Pnt(p[arc[z]].XYZ() * (1.0 - f) +
+                   p[arc[z + 1]].XYZ() * f)};
+    };
+    auto monotone = [&](const std::vector<int>& rail, int axis,
+                        double& coverage, double& crossDrift) {
+        if (rail.size() < 2) return false;
+        const double d = coord(rail.back(), axis) - coord(rail.front(), axis);
+        coverage = std::abs(d) / span[axis];
+        if (coverage < 0.72) return false;
+        const double sign = d >= 0.0 ? 1.0 : -1.0;
+        double back = 0.0, crossLo = 1e300, crossHi = -1e300;
+        for (size_t i = 0; i < rail.size(); ++i) {
+            const double c = coord(rail[i], 1 - axis);
+            crossLo = std::min(crossLo, c);
+            crossHi = std::max(crossHi, c);
+            if (i == 0) continue;
+            const double step = sign *
+                (coord(rail[i], axis) - coord(rail[i - 1], axis));
+            if (step < -0.04 * span[axis]) return false;
+            if (step < 0.0) back -= step;
+        }
+        if (back > 0.10 * span[axis]) return false;
+        crossDrift = (crossHi - crossLo) / span[1 - axis];
+        return crossDrift <= 0.34;
+    };
+    auto capLike = [&](const std::vector<int>& cap, int axis) {
+        if (cap.size() < 2) return false;
+        double axisLo = 1e300, axisHi = -1e300;
+        double crossLo = 1e300, crossHi = -1e300;
+        for (int idx : cap) {
+            axisLo = std::min(axisLo, coord(idx, axis));
+            axisHi = std::max(axisHi, coord(idx, axis));
+            crossLo = std::min(crossLo, coord(idx, 1 - axis));
+            crossHi = std::max(crossHi, coord(idx, 1 - axis));
+        }
+        return axisHi - axisLo <= 0.36 * span[axis] &&
+               crossHi - crossLo >= 0.45 * span[1 - axis];
+    };
+    auto consider = [&](int i, int j, int k, int l, int axis) {
+        std::vector<int> a = corridorRingArc(n, i, j, +1);
+        std::vector<int> high = corridorRingArc(n, j, k, +1);
+        std::vector<int> rawB = corridorRingArc(n, k, l, +1);
+        std::vector<int> low = corridorRingArc(n, l, i, +1);
+        std::vector<int> b(rawB.rbegin(), rawB.rend());
+        if (a.size() < 2 || b.size() < 2 || low.size() < 2 ||
+            high.size() < 2) {
+            return;
+        }
+        // Put both rails in the same longitudinal direction.
+        const double da = coord(a.back(), axis) - coord(a.front(), axis);
+        const double db = coord(b.back(), axis) - coord(b.front(), axis);
+        if (da * db < 0.0) std::reverse(b.begin(), b.end());
+        double coverA = 0.0, coverB = 0.0, driftA = 0.0, driftB = 0.0;
+        if (!monotone(a, axis, coverA, driftA) ||
+            !monotone(b, axis, coverB, driftB)) {
+            return;
+        }
+        if (!capLike(low, axis) || !capLike(high, axis)) {
+            return;
+        }
+        std::vector<int> ae = corridorArcEdges(a, sampleEdges, n);
+        std::vector<int> be = corridorArcEdges(b, sampleEdges, n);
+        if (ae.empty() || be.empty() || ae.size() > 12 || be.size() > 12) {
+            return;
+        }
+        if (expectedRails &&
+            !(sameCorridorEdgeSet(ae, (*expectedRails)[0]) &&
+              sameCorridorEdgeSet(be, (*expectedRails)[1])) &&
+            !(sameCorridorEdgeSet(ae, (*expectedRails)[1]) &&
+              sameCorridorEdgeSet(be, (*expectedRails)[0]))) {
+            return;
+        }
+        const std::vector<double> prefixA = arcPrefix(a);
+        const std::vector<double> prefixB = arcPrefix(b);
+        const double la = prefixA.back(), lb = prefixB.back();
+        if (std::min(la, lb) <= 1e-9 ||
+            std::max(la, lb) > 4.0 * std::min(la, lb)) {
+            return;
+        }
+        double minW = 1e300, maxW = 0.0, align = 0.0;
+        double referenceArea = 0.0;
+        constexpr int probes = 20;
+        for (int s = 0; s < probes; ++s) {
+            const double f0 = double(s) / probes;
+            const double f1 = double(s + 1) / probes;
+            const CorridorSample a0s = arcSample(a, prefixA, f0);
+            const CorridorSample a1s = arcSample(a, prefixA, f1);
+            const CorridorSample b0s = arcSample(b, prefixB, f0);
+            const CorridorSample b1s = arcSample(b, prefixB, f1);
+            const double w = a0s.p.Distance(b0s.p);
+            minW = std::min(minW, w); maxW = std::max(maxW, w);
+            gp_Vec ta(a0s.p, a1s.p), tb(b0s.p, b1s.p);
+            if (ta.Magnitude() > 1e-10 && tb.Magnitude() > 1e-10) {
+                align += ta.Dot(tb) / (ta.Magnitude() * tb.Magnitude());
+            }
+            const std::array<gp_Pnt2d, 4> q = {
+                a0s.uv, a1s.uv, b1s.uv, b0s.uv};
+            double a2 = 0.0;
+            for (int z = 0; z < 4; ++z) {
+                a2 += q[z].X() * q[(z + 1) % 4].Y() -
+                      q[(z + 1) % 4].X() * q[z].Y();
+            }
+            if (!std::isfinite(a2) || std::abs(a2) <=
+                    1e-10 * span[0] * span[1]) {
+                return;
+            }
+            if (referenceArea == 0.0) referenceArea = a2;
+            if (a2 * referenceArea <= 0.0) {
+                return;
+            }
+        }
+        align /= probes;
+        if (!std::isfinite(minW) || minW <= 1e-9 ||
+            maxW > 5.0 * minW || align < 0.20) {
+            return;
+        }
+        const double score = 6.0 * (coverA + coverB) + 2.0 * align -
+                             2.0 * (driftA + driftB) -
+                             0.12 * double(ae.size() + be.size());
+        candidates.push_back({std::move(a), std::move(b), std::move(low),
+                              std::move(high), std::move(ae), std::move(be),
+                              axis, score});
+    };
+
+    auto nearEnd = [&](int idx, int axis, bool high) {
+        const double lo = axis == 0 ? u0 : v0;
+        const double hi = axis == 0 ? u1 : v1;
+        const double x = coord(idx, axis);
+        return high ? x >= hi - 0.18 * span[axis]
+                    : x <= lo + 0.18 * span[axis];
+    };
+    auto endpointPattern = [&](int i, int j, int k, int l, int axis) {
+        return (nearEnd(i, axis, false) && nearEnd(j, axis, true) &&
+                nearEnd(k, axis, true) && nearEnd(l, axis, false)) ||
+               (nearEnd(i, axis, true) && nearEnd(j, axis, false) &&
+                nearEnd(k, axis, false) && nearEnd(l, axis, true));
+    };
+    for (int axis = 0; axis < 2; ++axis) {
+        if (axisHint >= 0 && axis != axisHint) continue;
+        for (int ia = 0; ia < nc; ++ia)
+            for (int ib = ia + 1; ib < nc; ++ib)
+                for (int ic = ib + 1; ic < nc; ++ic)
+                    for (int id = ic + 1; id < nc; ++id) {
+                        const int c0 = corners[ia], c1 = corners[ib];
+                        const int c2 = corners[ic], c3 = corners[id];
+                        // Cheap extrema test happens before any arc vectors
+                        // or prefix tables are allocated.  Only a rectangle-
+                        // like low/high/high/low split reaches consider().
+                        if (endpointPattern(c0, c1, c2, c3, axis)) {
+                            consider(c0, c1, c2, c3, axis);
+                        }
+                        if (endpointPattern(c1, c2, c3, c0, axis)) {
+                            consider(c1, c2, c3, c0, axis);
+                        }
+                    }
+    }
+    if (candidates.empty()) return false;
+    std::sort(candidates.begin(), candidates.end(),
+              [](const Candidate& a, const Candidate& b) {
+                  return a.score > b.score;
+              });
+
+    const double tol = std::max(1e-9, BRep_Tool::Tolerance(face));
+    const int testN = std::min<int>(24, candidates.size());
+    for (int ci = 0; ci < testN; ++ci) {
+        Candidate& c = candidates[ci];
+        const std::vector<double> da = arcPrefix(c.a);
+        const std::vector<double> db = arcPrefix(c.b);
+        std::array<bool, 25> safe{};
+        // Dense body proof.  The exact, potentially concave trim chains at
+        // the two physical ends are local closure cells, not straight ruled
+        // rows.  Find one central contiguous interval of valid rungs, while
+        // bounding each closure to at most about one third of the rail.
+        for (int s = 0; s <= 24; ++s) {
+            const double f = double(s) / 24.0;
+            const CorridorSample a = arcSample(c.a, da, f);
+            const CorridorSample b = arcSample(c.b, db, f);
+            bool stationInside = true;
+            for (int x = 1; x < 6; ++x) {
+                const double t = double(x) / 6.0;
+                const gp_Pnt2d q(a.uv.X() * (1.0 - t) + b.uv.X() * t,
+                                 a.uv.Y() * (1.0 - t) + b.uv.Y() * t);
+                BRepClass_FaceClassifier cls(
+                    const_cast<TopoDS_Face&>(face), q, tol);
+                if (cls.State() == TopAbs_OUT) {
+                    stationInside = false;
+                    break;
+                }
+            }
+            safe[size_t(s)] = stationInside;
+        }
+        int bestStart = -1, bestEnd = -1;
+        for (int s = 0; s <= 24;) {
+            while (s <= 24 && !safe[size_t(s)]) ++s;
+            const int start = s;
+            while (s <= 24 && safe[size_t(s)]) ++s;
+            const int end = s - 1;
+            if (start <= 24 &&
+                (bestStart < 0 || end - start > bestEnd - bestStart)) {
+                bestStart = start;
+                bestEnd = end;
+            }
+        }
+        const bool centralBody = bestStart >= 0 && bestStart <= 8 &&
+                                 bestEnd >= 16 && bestStart <= 12 &&
+                                 bestEnd >= 12 &&
+                                 bestEnd - bestStart + 1 >= 11;
+        if (!centralBody) {
+            continue;
+        }
+        best.ok = true;
+        best.axisU = c.axis == 0;
+        best.railA = std::move(c.a);
+        best.railB = std::move(c.b);
+        best.capLow = std::move(c.low);
+        best.capHigh = std::move(c.high);
+        best.railAEdges = std::move(c.ae);
+        best.railBEdges = std::move(c.be);
+        best.capLowEdges = corridorArcEdges(best.capLow, sampleEdges, n);
+        best.capHighEdges = corridorArcEdges(best.capHigh, sampleEdges, n);
+        best.score = c.score;
+        if (best.capLowEdges.empty() || best.capHighEdges.empty()) continue;
+        return true;
+    }
+    return false;
+}
+
+// Minimum number of across-corridor bands required by the surface itself.
+// A narrow annular trim stays one quad strip; a broader curved grip panel may
+// get a few true-surface scaffold rails rather than one chord spanning its
+// whole width.  This is still a rail grid, never a face-centre fan.
+int trimCorridorBandCount(const TopoDS_Face& face,
+                          const TrimCorridorPatch& patch,
+                          const std::vector<gp_Pnt>& p,
+                          const std::vector<gp_Pnt2d>& uv,
+                          double chordTolerance) {
+    Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+    if (surface.IsNull()) return 0;
+    const double tol = std::max(1e-7, chordTolerance);
+    for (int bands = 1; bands <= 12; ++bands) {
+        bool ok = true;
+        for (int s = 0; s <= 16 && ok; ++s) {
+            const double f = double(s) / 16.0;
+            const CorridorSample a =
+                sampleCorridorArc(patch.railA, f, p, uv);
+            const CorridorSample b =
+                sampleCorridorArc(patch.railB, f, p, uv);
+            for (int j = 0; j < bands; ++j) {
+                const double t0 = double(j) / bands;
+                const double t1 = double(j + 1) / bands;
+                const double tm = 0.5 * (t0 + t1);
+                auto at = [&](double t) {
+                    const double u = a.uv.X() * (1.0 - t) + b.uv.X() * t;
+                    const double v = a.uv.Y() * (1.0 - t) + b.uv.Y() * t;
+                    return surface->Value(u, v);
+                };
+                const gp_Pnt p0 = at(t0), p1 = at(t1), pm = at(tm);
+                const gp_Pnt chord((p0.XYZ() + p1.XYZ()) * 0.5);
+                if (pm.Distance(chord) > tol) {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if (ok) return bands;
+    }
+    return 0;
+}
+
+bool planTrimCorridor(const TopoDS_Face& face,
+                      const BRepAdaptor_Surface& surf, const Model& model,
+                      const FaceMeshSettings& settings, FacePlan& plan) {
+    const GeomAbs_SurfaceType st = surf.GetType();
+    if (st != GeomAbs_BSplineSurface && st != GeomAbs_BezierSurface &&
+        st != GeomAbs_OffsetSurface && st != GeomAbs_OtherSurface) {
+        return false;
+    }
+    if (surf.IsUPeriodic() || surf.IsVPeriodic()) return false;
+    int wires = 0;
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        if (++wires > 1) return false;
+    }
+    std::vector<gp_Pnt> p;
+    std::vector<gp_Pnt2d> uv;
+    std::vector<int> corners, sampleEdges;
+    if (!sampleRibbonRing(face, model, nullptr, 16, p, uv, corners, nullptr,
+                          &sampleEdges)) {
+        return false;
+    }
+    TrimCorridorPatch patch;
+    if (!findTrimCorridor(face, p, uv, corners, sampleEdges, -1, nullptr,
+                          patch)) {
+        return false;
+    }
+    const int bands = trimCorridorBandCount(
+        face, patch, p, uv, settings.chordTolerance);
+    if (bands < 1) return false;
+
+    std::vector<int> loop;
+    for (BRepTools_WireExplorer we(BRepTools::OuterWire(face), face);
+         we.More(); we.Next()) {
+        if (BRep_Tool::Degenerated(we.Current())) continue;
+        const int eid = model.edges.FindIndex(we.Current());
+        if (eid < 1) return false;
+        loop.push_back(eid);
+    }
+    if (loop.size() != corners.size()) return false;
+
+    plan = FacePlan();
+    plan.kind = MesherKind::CoonsGrid;
+    plan.constrains = true;
+    plan.trimCorridor = true;
+    plan.trimCorridorAxisU = patch.axisU;
+    plan.trimCorridorBands = bands;
+    plan.coonsSides[0] = patch.railAEdges;
+    plan.coonsSides[2] = patch.railBEdges;
+    plan.uEdges = patch.railAEdges;
+    plan.uEdges.insert(plan.uEdges.end(), patch.railBEdges.begin(),
+                       patch.railBEdges.end());
+    plan.vEdges = patch.capLowEdges;
+    plan.vEdges.insert(plan.vEdges.end(), patch.capHighEdges.begin(),
+                       patch.capHighEdges.end());
+    plan.loops = {std::move(loop)};  // per-edge proposals; never union chains
+    auto edgeList = [](const std::vector<int>& edges) {
+        std::string s;
+        for (int e : edges) {
+            if (!s.empty()) s += ',';
+            s += std::to_string(e);
+        }
+        return s;
+    };
+    dbg("corridor plan rails [%s] / [%s], caps [%s] / [%s]",
+        edgeList(patch.railAEdges).c_str(),
+        edgeList(patch.railBEdges).c_str(),
+        edgeList(patch.capLowEdges).c_str(),
+        edgeList(patch.capHighEdges).c_str());
+    return true;
+}
+
+bool planSectionStrip(const TopoDS_Face& face,
+                      const BRepAdaptor_Surface& surf, const Model& model,
+                      const FaceMeshSettings& settings, FacePlan& plan) {
+    const GeomAbs_SurfaceType st = surf.GetType();
+    if (st != GeomAbs_BSplineSurface && st != GeomAbs_BezierSurface &&
+        st != GeomAbs_OffsetSurface && st != GeomAbs_OtherSurface) {
+        return false;
+    }
+    if (surf.IsUPeriodic() || surf.IsVPeriodic()) return false;
+    int wires = 0, edgePieces = 0;
+    TopoDS_Wire outer = BRepTools::OuterWire(face);
+    if (outer.IsNull()) return false;
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        if (++wires > 1) return false;
+    }
+    if (wires != 1) return false;
+    for (BRepTools_WireExplorer we(outer, face); we.More(); we.Next()) {
+        if (BRep_Tool::Degenerated(we.Current())) return false;
+        ++edgePieces;
+    }
+    if (edgePieces < 12 || edgePieces > 24) return false;
+
+    // Cheap curvature class gate before any corner-combination work.  The
+    // transition path is for a genuinely bent but coherent chart: flat panels
+    // already took the deviation-n-gon route, while a normal field turning
+    // through more than ~80 degrees is not safe for ruled cross sections.
+    {
+        Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+        if (surface.IsNull()) return false;
+        double u0, u1, v0, v1;
+        BRepTools::UVBounds(face, u0, u1, v0, v1);
+        gp_Vec reference;
+        bool haveReference = false;
+        double worstDot = 1.0;
+        int normals = 0;
+        for (int j = 0; j < 5; ++j) {
+            for (int i = 0; i < 5; ++i) {
+                const gp_Pnt2d q(u0 + (u1 - u0) * (i + 0.5) / 5.0,
+                                 v0 + (v1 - v0) * (j + 0.5) / 5.0);
+                BRepClass_FaceClassifier cls(
+                    const_cast<TopoDS_Face&>(face), q,
+                    std::max(1e-9, BRep_Tool::Tolerance(face)));
+                if (cls.State() == TopAbs_OUT) continue;
+                gp_Pnt at;
+                gp_Vec du, dv;
+                try {
+                    surface->D1(q.X(), q.Y(), at, du, dv);
+                } catch (const Standard_Failure&) {
+                    return false;
+                }
+                gp_Vec n = du.Crossed(dv);
+                if (n.Magnitude() <= 1e-14) return false;
+                n.Normalize();
+                if (!haveReference) {
+                    reference = n;
+                    haveReference = true;
+                }
+                if (n.Dot(reference) < 0.0) n.Reverse();
+                worstDot = std::min(worstDot, n.Dot(reference));
+                ++normals;
+            }
+        }
+        if (normals < 8 || worstDot > 0.97 || worstDot < 0.15) return false;
+    }
+
+    std::vector<gp_Pnt> p;
+    std::vector<gp_Pnt2d> uv;
+    std::vector<int> corners, sampleEdges;
+    if (!sampleRibbonRing(face, model, nullptr, 16, p, uv, corners, nullptr,
+                          &sampleEdges)) {
+        return false;
+    }
+    TrimCorridorPatch patch;
+    if (!findSectionStrip(face, p, uv, corners, sampleEdges, -1, nullptr,
+                          patch)) {
+        return false;
+    }
+    int bands = trimCorridorBandCount(face, patch, p, uv,
+                                      settings.chordTolerance);
+    if (bands < 1) return false;
+    // Two interior sections keep a genuinely curved neck from collapsing
+    // into one ruled chord even when midpoint sag is deceptive.
+    bands = std::max(bands, 3);
+    bands = std::min(bands, 12);
+
+    std::vector<int> loop;
+    for (BRepTools_WireExplorer we(outer, face); we.More(); we.Next()) {
+        if (BRep_Tool::Degenerated(we.Current())) continue;
+        const int eid = model.edges.FindIndex(we.Current());
+        if (eid < 1) return false;
+        loop.push_back(eid);
+    }
+    if (loop.size() != size_t(edgePieces)) return false;
+
+    plan = FacePlan();
+    plan.kind = MesherKind::CoonsGrid;
+    plan.constrains = true;
+    plan.sectionStrip = true;
+    plan.sectionStripAxisU = patch.axisU;
+    plan.sectionStripBands = bands;
+    plan.coonsSides[0] = patch.railAEdges;
+    plan.coonsSides[2] = patch.railBEdges;
+    plan.uEdges = patch.railAEdges;
+    plan.uEdges.insert(plan.uEdges.end(), patch.railBEdges.begin(),
+                       patch.railBEdges.end());
+    plan.vEdges = patch.capLowEdges;
+    plan.vEdges.insert(plan.vEdges.end(), patch.capHighEdges.begin(),
+                       patch.capHighEdges.end());
+    plan.loops = {std::move(loop)};
+    dbg("section strip: transition axis=%c rails %zu/%zu caps %zu/%zu "
+        "bands=%d",
+        patch.axisU ? 'u' : 'v',
+        patch.railAEdges.size(), patch.railBEdges.size(),
+        patch.capLowEdges.size(), patch.capHighEdges.size(), bands);
+    return true;
+}
+
+// Deviation-flat panel. Some STEP writers retain a very shallow sculpt in a
+// BSpline chart even though it is below the active tessellation tolerance.
+// The generic relative-planarity heuristic can reject a large shallow panel,
+// after which fallback draws a face-wide CDT/star. This probe is deliberately
+// late and narrow: one broad single-wire freeform face, no periodic chart,
+// coherent dense boundary/interior normals, and a slab bounded by the active
+// absolute/relative deviation plus a CAD/model-tolerance floor.
+bool planDeviationFlatPanel(const TopoDS_Face& face,
+                            const BRepAdaptor_Surface& surf,
+                            const Model& model,
+                            const FaceMeshSettings& settings,
+                            FacePlan& plan) {
+    const GeomAbs_SurfaceType st = surf.GetType();
+    if (st != GeomAbs_BSplineSurface && st != GeomAbs_BezierSurface &&
+        st != GeomAbs_OffsetSurface && st != GeomAbs_OtherSurface) {
+        return false;
+    }
+    if (surf.IsUPeriodic() || surf.IsVPeriodic()) return false;
+    const double chordSetting = settings.chordTolerance;
+    if (!(chordSetting > 1e-8) || !std::isfinite(chordSetting)) return false;
+
+    int wires = 0, edgePieces = 0;
+    TopoDS_Wire outer = BRepTools::OuterWire(face);
+    if (outer.IsNull()) return false;
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        if (++wires > 1) return false;
+    }
+    if (wires != 1) return false;
+    double cadTolerance = std::max(1e-9, BRep_Tool::Tolerance(face));
+    for (BRepTools_WireExplorer we(outer, face); we.More(); we.Next()) {
+        const TopoDS_Edge edge = we.Current();
+        if (BRep_Tool::Degenerated(edge)) return false;
+        cadTolerance = std::max(cadTolerance, BRep_Tool::Tolerance(edge));
+        for (TopExp_Explorer vx(edge, TopAbs_VERTEX); vx.More(); vx.Next()) {
+            cadTolerance = std::max(
+                cadTolerance,
+                BRep_Tool::Tolerance(TopoDS::Vertex(vx.Current())));
+        }
+        ++edgePieces;
+    }
+    // A four-sided patch belongs to Coons; a very edge-rich outline is a
+    // boolean web, not one readable panel.  The lower bound also prevents
+    // this late path from stealing ordinary analytic-looking patches.
+    if (edgePieces < 8 || edgePieces > 24) return false;
+
+    Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+    if (surface.IsNull()) return false;
+    double u0, u1, v0, v1;
+    BRepTools::UVBounds(face, u0, u1, v0, v1);
+    if (!(u1 > u0) || !(v1 > v0)) return false;
+
+    std::vector<gp_Pnt> points;
+    std::vector<gp_Vec> normals;
+    points.reserve(400);
+    normals.reserve(200);
+    const double faceTol = std::max(1e-9, BRep_Tool::Tolerance(face));
+    auto addSurfaceProbe = [&](const gp_Pnt2d& uv) {
+        gp_Pnt p;
+        gp_Vec du, dv;
+        try {
+            surface->D1(uv.X(), uv.Y(), p, du, dv);
+        } catch (const Standard_Failure&) {
+            return false;
+        }
+        gp_Vec n = du.Crossed(dv);
+        if (n.Magnitude() <= 1e-14) return false;
+        n.Normalize();
+        points.push_back(p);
+        normals.push_back(n);
+        return true;
+    };
+
+    // Exact trim boundary, sampled independently of the later density solve.
+    // Any out-of-plane trim wiggle must count against the slab just as the
+    // interior surface does.
+    for (BRepTools_WireExplorer we(outer, face); we.More(); we.Next()) {
+        const TopoDS_Edge edge = we.Current();
+        double f = 0.0, l = 0.0;
+        Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(edge, face, f, l);
+        if (pc.IsNull() || !std::isfinite(f) || !std::isfinite(l)) {
+            return false;
+        }
+        for (int k = 0; k <= 12; ++k) {
+            if (!addSurfaceProbe(pc->Value(f + (l - f) * k / 12.0))) {
+                return false;
+            }
+        }
+    }
+
+    // Dense classified interior.  Unlike isGeometricallyFlat(), points in a
+    // trimmed-away part of the underlying spline do not influence the result.
+    constexpr int grid = 13;
+    int insideCount = 0;
+    for (int j = 0; j < grid; ++j) {
+        for (int i = 0; i < grid; ++i) {
+            const gp_Pnt2d uv(u0 + (u1 - u0) * (i + 0.5) / grid,
+                              v0 + (v1 - v0) * (j + 0.5) / grid);
+            BRepClass_FaceClassifier cls(const_cast<TopoDS_Face&>(face), uv,
+                                          faceTol);
+            if (cls.State() == TopAbs_OUT) continue;
+            if (!addSurfaceProbe(uv)) return false;
+            ++insideCount;
+        }
+    }
+    if (insideCount < 20 || points.size() < 32) return false;
+
+    // Average consistently-oriented surface normals.  A shallow but rapidly
+    // rippled sheet can fit a thin slab while still needing tessellation; the
+    // normal-cone gate excludes it.
+    gp_XYZ normalSum(0, 0, 0);
+    gp_Vec reference = normals.front();
+    for (gp_Vec n : normals) {
+        if (n.Dot(reference) < 0.0) n.Reverse();
+        normalSum += n.XYZ();
+    }
+    if (normalSum.Modulus() <= 1e-12) return false;
+    gp_Dir panelNormal(normalSum);
+    constexpr double minNormalDot = 0.985;  // about a 10-degree cone
+    double worstNormalDot = 1.0;
+    for (gp_Vec n : normals) {
+        if (n.Dot(reference) < 0.0) n.Reverse();
+        worstNormalDot =
+            std::min(worstNormalDot, n.Dot(gp_Vec(panelNormal)));
+    }
+    if (worstNormalDot < minNormalDot) return false;
+
+    gp_XYZ centre(0, 0, 0);
+    for (const gp_Pnt& p : points) centre += p.XYZ();
+    centre /= double(points.size());
+    double lo = 1e300, hi = -1e300;
+    double xLo = 1e300, xHi = -1e300;
+    double yLo = 1e300, yHi = -1e300;
+    double zLo = 1e300, zHi = -1e300;
+    for (const gp_Pnt& p : points) {
+        const double d = (p.XYZ() - centre).Dot(panelNormal.XYZ());
+        lo = std::min(lo, d);
+        hi = std::max(hi, d);
+        xLo = std::min(xLo, p.X()); xHi = std::max(xHi, p.X());
+        yLo = std::min(yLo, p.Y()); yHi = std::max(yHi, p.Y());
+        zLo = std::min(zLo, p.Z()); zHi = std::max(zHi, p.Z());
+    }
+    // Conservative O(N) extent: the AABB diagonal bounds every pairwise
+    // distance, so all scale-aware gates remain at least as strict as the
+    // former quadratic diameter scan without adding hundreds of thousands
+    // of distance evaluations on dense imported panels.
+    const double dx = xHi - xLo, dy = yHi - yLo, dz = zHi - zLo;
+    const double diameter = std::sqrt(dx * dx + dy * dy + dz * dz);
+    // A broad panel, not a hairline transition strip.  The perimeter/area
+    // aspect guard is intrinsic geometry and does not rely on model IDs.
+    GProp_GProps sp, lp;
+    try {
+        BRepGProp::SurfaceProperties(face, sp);
+        BRepGProp::LinearProperties(outer, lp);
+    } catch (const Standard_Failure&) {
+        return false;
+    }
+    const double area = sp.Mass(), perimeter = lp.Mass();
+    if (!(area > 1e-10) || !(perimeter > 1e-8)) return false;
+    const double width = 2.0 * area / perimeter;
+    const double length = 0.5 * perimeter - width;
+    if (!(width > 1e-8) || length > 8.0 * width) return false;
+    if (!(diameter > 1e-8) || width < 0.04 * diameter) return false;
+
+    // The boundary itself is exact and may occupy both sides of the best
+    // plane.  The allowance is scale-aware and uses the same active deviation
+    // meaning as fallback meshing: absolute chord, or 5% of face extent in
+    // relative mode.  A 15% leeway accounts for a non-planar exact boundary;
+    // CAD sewing tolerance and a tiny model-scale quantum form a floor so
+    // imported tolerance noise cannot arbitrarily flip the classification.
+    // Dense height plus the normal-cone check above remain the real geometry
+    // gates; this is not a GeomAbs_Plane/type shortcut.
+    const double slab = hi - lo;
+    const double activeDeviation = settings.relativeDeviation
+        ? std::max(1e-9, chordSetting * 0.05 * diameter)
+        : chordSetting;
+    const double toleranceFloor =
+        std::max(8.0 * cadTolerance, 1e-6 * diameter);
+    const double allowedSlab = toleranceFloor + 1.15 * activeDeviation;
+    if (!std::isfinite(slab) || slab > allowedSlab) return false;
+
+    FacePlan probe;
+    if (!planMinimalPlanar(face, surf, model, probe,
+                           /*requirePlane=*/false)) {
+        return false;
+    }
+    plan = std::move(probe);
+    plan.deviationFlatPanel = true;
+    dbg("deviation-flat panel: %d-edge exact n-gon, slab %.6g <= %.6g "
+        "(active %.6g + floor %.6g), aspect %.3g",
+        edgePieces, slab, allowedSlab, activeDeviation, toleranceFloor,
+        length / width);
+    return true;
+}
+
+bool meshTrimCorridor(const TopoDS_Face& face, const Model& model,
+                      const FacePlan& plan, int faceId,
+                      const std::vector<int>& solvedEdge, int radialDefault,
+                      MeshBuilder& out, const PinnedEdges* pins,
+                      std::array<int, 2>* built = nullptr) {
+    const size_t firstPolygon = out.mesh().polygons.size();
+    std::vector<gp_Pnt> p;
+    std::vector<gp_Pnt2d> uv;
+    std::vector<int> corners, sampleEdges;
+    if (!sampleRibbonRing(face, model, &solvedEdge, radialDefault, p, uv,
+                          corners, pins, &sampleEdges)) {
+        return false;
+    }
+    const std::array<std::vector<int>, 2> expected = {
+        plan.coonsSides[0], plan.coonsSides[2]};
+    TrimCorridorPatch patch;
+    const bool found = plan.sectionStrip
+        ? findSectionStrip(face, p, uv, corners, sampleEdges,
+                           plan.sectionStripAxisU ? 0 : 1, &expected, patch)
+        : findTrimCorridor(face, p, uv, corners, sampleEdges,
+                           plan.trimCorridorAxisU ? 0 : 1, &expected, patch);
+    if (!found) {
+        return false;
+    }
+    const int alongA = int(patch.railA.size()) - 1;
+    const int alongB = int(patch.railB.size()) - 1;
+    // This is the central contract of the planner.  Unequal rails would need
+    // a transition polygon in the body, recreating the very station collapse
+    // this path exists to remove.  Leave such a face to the exact-border floor
+    // instead of silently weakening the result.
+    if (alongA < 2 || alongA != alongB) {
+        dbg("corridor face %d: rail totals %d/%d not aligned", faceId,
+            alongA, alongB);
+        return false;
+    }
+    const int bands = std::clamp(plan.sectionStrip
+                                     ? plan.sectionStripBands
+                                     : plan.trimCorridorBands,
+                                 1, 12);
+    Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+    if (surface.IsNull()) return false;
+    const bool flip = face.Orientation() == TopAbs_REVERSED;
+
+    int bodyFirst = 0;
+    int bodyLast = alongA;
+    if (plan.sectionStrip) {
+        // The section recognizer may intentionally leave short concave ends
+        // to local exact-boundary closures.  Re-prove the usable rows using
+        // the FINAL solved rail samples, not the planning approximation.
+        std::vector<bool> safe(size_t(alongA + 1), false);
+        const double faceTol = std::max(1e-9, BRep_Tool::Tolerance(face));
+        for (int i = 0; i <= alongA; ++i) {
+            const gp_Pnt2d& a = uv[patch.railA[i]];
+            const gp_Pnt2d& b = uv[patch.railB[i]];
+            bool inside = true;
+            for (int x = 1; x < 12; ++x) {
+                const double t = double(x) / 12.0;
+                const gp_Pnt2d q(a.X() * (1.0 - t) + b.X() * t,
+                                 a.Y() * (1.0 - t) + b.Y() * t);
+                BRepClass_FaceClassifier cls(
+                    const_cast<TopoDS_Face&>(face), q, faceTol);
+                if (cls.State() == TopAbs_OUT) {
+                    inside = false;
+                    break;
+                }
+            }
+            safe[size_t(i)] = inside;
+        }
+        int bestFirst = -1, bestLast = -1;
+        for (int i = 0; i <= alongA;) {
+            while (i <= alongA && !safe[size_t(i)]) ++i;
+            const int first = i;
+            while (i <= alongA && safe[size_t(i)]) ++i;
+            const int last = i - 1;
+            if (first <= alongA &&
+                (bestFirst < 0 || last - first > bestLast - bestFirst)) {
+                bestFirst = first;
+                bestLast = last;
+            }
+        }
+        const int middle = alongA / 2;
+        const int minRows = std::max(
+            3, int(std::ceil(0.40 * double(alongA + 1))));
+        if (bestFirst < 0 || bestFirst > int(std::ceil(0.34 * alongA)) ||
+            bestLast < int(std::floor(0.66 * alongA)) ||
+            bestFirst > middle || bestLast < middle ||
+            bestLast - bestFirst + 1 < minRows ||
+            bestLast - bestFirst < 2) {
+            dbg("section strip face %d: solved rows lack central safe run "
+                "(%d..%d of %d)", faceId, bestFirst, bestLast, alongA);
+            return false;
+        }
+        bodyFirst = bestFirst;
+        bodyLast = bestLast;
+    } else {
+        // A one-segment B-rep cap cannot be subdivided by private scaffold
+        // vertices.  Absorb the adjacent interval into one short transition
+        // n-gon instead of collapsing every band onto the endpoint (a fan).
+        if (patch.capLow.size() <= 2) bodyFirst = 1;
+        if (patch.capHigh.size() <= 2) bodyLast = alongA - 1;
+        if (bodyFirst > bodyLast) return false;
+    }
+
+    // Every boundary sample is exact and anchorless; interior scaffold rails
+    // live on the true surface and retain face-UV anchors for editing.
+    std::vector<uint32_t> boundary(p.size(), UINT32_MAX);
+    auto boundaryId = [&](int idx) {
+        if (boundary[idx] == UINT32_MAX) {
+            boundary[idx] = out.addVertex(p[idx], {});
+        }
+        return boundary[idx];
+    };
+    std::vector<std::vector<uint32_t>> grid(
+        alongA + 1, std::vector<uint32_t>(bands + 1, UINT32_MAX));
+    std::vector<std::vector<gp_Pnt2d>> guv(
+        alongA + 1, std::vector<gp_Pnt2d>(bands + 1));
+    for (int i = 0; i <= alongA; ++i) {
+        const int ia = patch.railA[i], ib = patch.railB[i];
+        grid[i][0] = boundaryId(ia);
+        grid[i][bands] = boundaryId(ib);
+        guv[i][0] = uv[ia];
+        guv[i][bands] = uv[ib];
+        for (int j = 1; j < bands; ++j) {
+            if (i < bodyFirst || i > bodyLast) continue;
+            const double t = double(j) / bands;
+            const double u = uv[ia].X() * (1.0 - t) + uv[ib].X() * t;
+            const double v = uv[ia].Y() * (1.0 - t) + uv[ib].Y() * t;
+            guv[i][j] = gp_Pnt2d(u, v);
+            grid[i][j] = out.addVertex(surface->Value(u, v),
+                                       Anchor{faceId, u, v});
+        }
+    }
+    auto emitUv = [&](std::vector<uint32_t> ids,
+                      std::vector<gp_Pnt2d> q) {
+        std::vector<uint32_t> clean;
+        std::vector<gp_Pnt2d> cq;
+        for (size_t i = 0; i < ids.size(); ++i) {
+            if (!clean.empty() && clean.back() == ids[i]) continue;
+            clean.push_back(ids[i]); cq.push_back(q[i]);
+        }
+        if (clean.size() > 1 && clean.front() == clean.back()) {
+            clean.pop_back(); cq.pop_back();
+        }
+        if (clean.size() < 3) return false;
+        // Fail closed on a self-touching or crossing UV outline.  These cells
+        // are the topology that will be exported; a positive shoelace sum by
+        // itself is insufficient because two crossing lobes can cancel into
+        // a plausible signed area.
+        const size_t count = clean.size();
+        std::set<uint32_t> uniqueIds(clean.begin(), clean.end());
+        if (uniqueIds.size() != count) return false;
+        double uvLoX = 1e300, uvHiX = -1e300;
+        double uvLoY = 1e300, uvHiY = -1e300;
+        for (const gp_Pnt2d& x : cq) {
+            uvLoX = std::min(uvLoX, x.X()); uvHiX = std::max(uvHiX, x.X());
+            uvLoY = std::min(uvLoY, x.Y()); uvHiY = std::max(uvHiY, x.Y());
+        }
+        const double uvScale = std::max({uvHiX - uvLoX, uvHiY - uvLoY,
+                                         1e-12});
+        const double crossTol = 1e-12 * uvScale * uvScale;
+        auto orient2 = [](const gp_Pnt2d& a, const gp_Pnt2d& b,
+                          const gp_Pnt2d& c) {
+            return (b.X() - a.X()) * (c.Y() - a.Y()) -
+                   (b.Y() - a.Y()) * (c.X() - a.X());
+        };
+        auto onSegment = [&](const gp_Pnt2d& a, const gp_Pnt2d& b,
+                             const gp_Pnt2d& x) {
+            return std::abs(orient2(a, b, x)) <= crossTol &&
+                   x.X() >= std::min(a.X(), b.X()) - 1e-10 * uvScale &&
+                   x.X() <= std::max(a.X(), b.X()) + 1e-10 * uvScale &&
+                   x.Y() >= std::min(a.Y(), b.Y()) - 1e-10 * uvScale &&
+                   x.Y() <= std::max(a.Y(), b.Y()) + 1e-10 * uvScale;
+        };
+        auto intersects = [&](const gp_Pnt2d& a, const gp_Pnt2d& b,
+                              const gp_Pnt2d& c, const gp_Pnt2d& d) {
+            const double o1 = orient2(a, b, c), o2 = orient2(a, b, d);
+            const double o3 = orient2(c, d, a), o4 = orient2(c, d, b);
+            if (((o1 > crossTol && o2 < -crossTol) ||
+                 (o1 < -crossTol && o2 > crossTol)) &&
+                ((o3 > crossTol && o4 < -crossTol) ||
+                 (o3 < -crossTol && o4 > crossTol))) {
+                return true;
+            }
+            return (std::abs(o1) <= crossTol && onSegment(a, b, c)) ||
+                   (std::abs(o2) <= crossTol && onSegment(a, b, d)) ||
+                   (std::abs(o3) <= crossTol && onSegment(c, d, a)) ||
+                   (std::abs(o4) <= crossTol && onSegment(c, d, b));
+        };
+        for (size_t i = 0; i < count; ++i) {
+            const size_t in = (i + 1) % count;
+            for (size_t j = i + 1; j < count; ++j) {
+                const size_t jn = (j + 1) % count;
+                if (i == j || in == j || jn == i) continue;
+                if (intersects(cq[i], cq[in], cq[j], cq[jn])) return false;
+            }
+        }
+        double area = 0.0;
+        for (size_t i = 0; i < cq.size(); ++i) {
+            area += cq[i].X() * cq[(i + 1) % cq.size()].Y() -
+                    cq[(i + 1) % cq.size()].X() * cq[i].Y();
+        }
+        if (std::abs(area) <= 1e-14) return false;
+        if (area < 0) {
+            std::reverse(clean.begin(), clean.end());
+            std::reverse(cq.begin(), cq.end());
+        }
+        // A valid UV loop can still collapse in 3D on a singular chart.  Its
+        // Newell normal must be finite, non-trivial, and agree with the CAD
+        // surface normal.  Unknown/degenerate is rejection, never success.
+        gp_XYZ newell(0, 0, 0);
+        gp_XYZ centreUv(0, 0, 0);
+        double maxEdge2 = 0.0;
+        const PolyMesh& mesh = out.mesh();
+        for (size_t i = 0; i < count; ++i) {
+            const auto& a = mesh.vertices[clean[i]];
+            const auto& b = mesh.vertices[clean[(i + 1) % count]];
+            newell += gp_XYZ(a[1] * b[2] - a[2] * b[1],
+                             a[2] * b[0] - a[0] * b[2],
+                             a[0] * b[1] - a[1] * b[0]);
+            const double dx = b[0] - a[0], dy = b[1] - a[1];
+            const double dz = b[2] - a[2];
+            maxEdge2 = std::max(maxEdge2, dx * dx + dy * dy + dz * dz);
+            centreUv += gp_XYZ(cq[i].X(), cq[i].Y(), 0.0);
+        }
+        centreUv /= double(count);
+        if (!std::isfinite(newell.X()) || !std::isfinite(newell.Y()) ||
+            !std::isfinite(newell.Z()) || maxEdge2 <= 1e-24 ||
+            newell.Modulus() <= 1e-12 * maxEdge2) {
+            return false;
+        }
+        gp_Pnt at;
+        gp_Vec du, dv;
+        try {
+            surface->D1(centreUv.X(), centreUv.Y(), at, du, dv);
+        } catch (const Standard_Failure&) {
+            return false;
+        }
+        const gp_Vec cadNormal = du.Crossed(dv);
+        if (cadNormal.Magnitude() <= 1e-16 ||
+            gp_Vec(newell).Dot(cadNormal) <=
+                1e-8 * newell.Modulus() * cadNormal.Magnitude()) {
+            return false;
+        }
+        out.addPolygon(std::move(clean), faceId, flip);
+        return true;
+    };
+    for (int i = bodyFirst; i < bodyLast; ++i) {
+        for (int j = 0; j < bands; ++j) {
+            if (!emitUv({grid[i][j], grid[i + 1][j],
+                         grid[i + 1][j + 1], grid[i][j + 1]},
+                        {guv[i][j], guv[i + 1][j],
+                         guv[i + 1][j + 1], guv[i][j + 1]})) {
+                return false;
+            }
+        }
+    }
+    auto orientedCap = [](const std::vector<int>& cap, int from, int to,
+                          std::vector<int>& path) {
+        path.clear();
+        if (cap.empty()) return false;
+        if (cap.front() == from && cap.back() == to) {
+            path = cap;
+            return true;
+        }
+        if (cap.front() == to && cap.back() == from) {
+            path.assign(cap.rbegin(), cap.rend());
+            return true;
+        }
+        return false;
+    };
+    auto closeLow = [&]() {
+        if (bodyFirst == 0 && patch.capLow.size() <= 2) return true;
+        std::vector<uint32_t> ids;
+        std::vector<gp_Pnt2d> q;
+        // A0 -> Afirst, across the proved body row, Bfirst -> B0,
+        // then the exact cap B0 -> A0.
+        for (int i = 0; i <= bodyFirst; ++i) {
+            const int idx = patch.railA[i];
+            ids.push_back(boundaryId(idx));
+            q.push_back(uv[idx]);
+        }
+        for (int j = 1; j <= bands; ++j) {
+            ids.push_back(grid[bodyFirst][j]);
+            q.push_back(guv[bodyFirst][j]);
+        }
+        for (int i = bodyFirst - 1; i >= 0; --i) {
+            const int idx = patch.railB[i];
+            ids.push_back(boundaryId(idx));
+            q.push_back(uv[idx]);
+        }
+        std::vector<int> cap;
+        if (!orientedCap(patch.capLow, patch.railB.front(),
+                         patch.railA.front(), cap)) {
+            return false;
+        }
+        for (size_t i = 1; i < cap.size(); ++i) {
+            ids.push_back(boundaryId(cap[i]));
+            q.push_back(uv[cap[i]]);
+        }
+        return emitUv(std::move(ids), std::move(q));
+    };
+    auto closeHigh = [&]() {
+        if (bodyLast == alongA && patch.capHigh.size() <= 2) return true;
+        std::vector<uint32_t> ids;
+        std::vector<gp_Pnt2d> q;
+        // Alast -> Aend, exact cap Aend -> Bend, Bend -> Blast,
+        // then back across the proved body row.
+        for (int i = bodyLast; i <= alongA; ++i) {
+            const int idx = patch.railA[i];
+            ids.push_back(boundaryId(idx));
+            q.push_back(uv[idx]);
+        }
+        std::vector<int> cap;
+        if (!orientedCap(patch.capHigh, patch.railA.back(),
+                         patch.railB.back(), cap)) {
+            return false;
+        }
+        for (size_t i = 1; i < cap.size(); ++i) {
+            ids.push_back(boundaryId(cap[i]));
+            q.push_back(uv[cap[i]]);
+        }
+        for (int i = alongA - 1; i >= bodyLast; --i) {
+            const int idx = patch.railB[i];
+            ids.push_back(boundaryId(idx));
+            q.push_back(uv[idx]);
+        }
+        for (int j = bands - 1; j >= 0; --j) {
+            ids.push_back(grid[bodyLast][j]);
+            q.push_back(guv[bodyLast][j]);
+        }
+        return emitUv(std::move(ids), std::move(q));
+    };
+    if (!closeLow() || !closeHigh()) {
+        return false;
+    }
+    const std::vector<uint8_t> folds = foldedPolys(model, out.mesh());
+    if (folds.size() != out.mesh().polygons.size()) return false;
+    for (size_t i = firstPolygon; i < folds.size(); ++i) {
+        if (folds[i]) {
+            dbg("%s face %d: post-build fold census rejected polygon %zu",
+                plan.sectionStrip ? "section strip" : "corridor", faceId,
+                i - firstPolygon);
+            return false;
+        }
+    }
+    if (built) *built = {alongA, bands};
+    dbg("%s face %d: %d equal rail spans x %d band(s), body %d..%d, "
+        "caps %zu/%zu",
+        plan.sectionStrip ? "section strip" : "corridor", faceId, alongA,
+        bands, bodyFirst, bodyLast, patch.capLow.size(),
+        patch.capHigh.size());
+    dbg("%s face %d: post-build census 0 folds, 0 UV self-crossings",
+        plan.sectionStrip ? "section strip" : "corridor", faceId);
     return true;
 }
 
@@ -7789,7 +9839,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         }
         return v;
     };
-    auto coonsChainsCompatible = [&](const CoonsPatch& patch) {
+    auto coonsChainsCompatible = [&](CoonsPatch& patch) {
         if (!patch.chained()) return true;
         const GeomAbs_SurfaceType st = surf.GetType();
         const bool analyticDrum =
@@ -7799,33 +9849,217 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         // A trimmed analytic drum keeps its canonical UV patch: its surface
         // directions are meaningful even when a T-junction splits one rim.
         if (analyticDrum) return true;
-        const bool compatible =
-            patch.chain[0].size() == patch.chain[2].size() &&
-            patch.chain[1].size() == patch.chain[3].size();
-        // A split-sided rectangular UV patch is still one four-sided
-        // topology. Let chained Coons consume it directly; rejecting it on
-        // raw B-rep edge counts is what turned MP9 face 632 into a triangle
-        // floor. Drums use the dedicated clipped lattice instead.
-        if (!compatible) {
-            FacePlan orthProbe;
-            if (planOrthogonalTrimGrid(face, surf, model, orthProbe) &&
-                orthProbe.kind == MesherKind::CoonsGrid) {
-                return true;
+
+        // STEP edge-piece counts are bookkeeping, not patch topology. A
+        // perfectly good shell can have one long rail split at several
+        // assembly T-junctions while its opposite rail remains one edge.
+        // Preflight the geometric station corridor that the Coons mesher
+        // actually consumes instead: a single four-sided domain, monotone
+        // arc-length chains, a dense in-face lattice, and one non-zero
+        // Jacobian orientation throughout. Opposite sides may carry different
+        // SOLVED station totals; meshCoonsGrid preserves both natural borders
+        // and arc-resamples only the interior scaffold between them.
+        struct CoonsProbe {
+            bool ok = false;
+            const char* why = "unknown";
+            std::array<double, 4> sideLength{};
+            double railRatio = 0.0;
+            double jacobianMargin = 0.0;
+        };
+        auto preflight = [&](const CoonsPatch& candidate) {
+            CoonsProbe result;
+            if (candidate.collapsedLast || candidate.stubEdgeId > 0) {
+                result.why = "not four complete sides";
+                return result;
+            }
+            if (!candidate.holeWires.empty()) {
+                result.why = "chained patch has holes";
+                return result;
+            }
+            int wireCount = 0;
+            for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+                ++wireCount;
+            }
+            if (wireCount != 1) {
+                result.why = "not one outer wire";
+                return result;
+            }
+            for (const auto& side : candidate.chain) {
+                if (side.empty()) {
+                    result.why = "empty side chain";
+                    return result;
+                }
+            }
+
+            Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+            if (surface.IsNull()) {
+                result.why = "surface missing";
+                return result;
+            }
+
+            // Sample by the chain's 3D arc-length parameter (CoonsPatch::side
+            // already walks its pieces by length). Projection onto the end
+            // chord must advance monotonically. This admits arched ends up to
+            // a semicircle while rejecting loops/backtracking outlines whose
+            // normalized stations cannot be paired without crossing.
+            constexpr int kSideSamples = 32;
+            std::array<std::array<gp_Pnt, kSideSamples + 1>, 4> sidePoints;
+            for (int sd = 0; sd < 4; ++sd) {
+                try {
+                    for (int k = 0; k <= kSideSamples; ++k) {
+                        const gp_Pnt2d uv =
+                            candidate.side(sd, double(k) / kSideSamples);
+                        sidePoints[sd][k] = surface->Value(uv.X(), uv.Y());
+                    }
+                } catch (const Standard_Failure&) {
+                    result.why = "side sampling failed";
+                    return result;
+                }
+                double arc = 0.0;
+                for (int k = 1; k <= kSideSamples; ++k) {
+                    arc += sidePoints[sd][k - 1].Distance(sidePoints[sd][k]);
+                }
+                const gp_Vec chord(sidePoints[sd][0],
+                                   sidePoints[sd][kSideSamples]);
+                const double chord2 = chord.SquareMagnitude();
+                if (!std::isfinite(arc) || arc <= 1e-12 ||
+                    chord2 <= 0.0144 * arc * arc) {  // chord < 12% of arc
+                    result.why = "side chain loops back";
+                    return result;
+                }
+                double furthest = 0.0;
+                for (int k = 1; k <= kSideSamples; ++k) {
+                    const double progress =
+                        gp_Vec(sidePoints[sd][0], sidePoints[sd][k])
+                            .Dot(chord) /
+                        chord2;
+                    // Pcurve/STEP noise may wobble a few percent, but a real
+                    // reversal is not a viable station rail.
+                    if (progress < -0.05 || progress > 1.05 ||
+                        progress + 0.05 < furthest) {
+                        result.why = "non-monotone side chain";
+                        return result;
+                    }
+                    furthest = std::max(furthest, progress);
+                }
+                result.sideLength[sd] = arc;
+            }
+
+            // Opposite rails need comparable geometric extent, not matching
+            // STEP piece counts. The transition-strip path can absorb a large
+            // solved-count difference, but an 8:1 geometric mismatch is no
+            // longer a four-sided station corridor in practice.
+            for (int sd = 0; sd < 2; ++sd) {
+                const double a = result.sideLength[sd];
+                const double b = result.sideLength[sd + 2];
+                if (std::max(a, b) > 8.0 * std::max(1e-12, std::min(a, b))) {
+                    result.why = "opposite side extents diverge";
+                    return result;
+                }
+            }
+
+            // Dense UV probes prove that normalized opposite stations form a
+            // single inside corridor and keep one orientation. This is the
+            // same mapping the mesher seeds before its 3D blend/projection.
+            constexpr int kGrid = 12;
+            const double tol = BRep_Tool::Tolerance(face);
+            const double uSpan =
+                std::max(1e-12, candidate.outerBox[1] - candidate.outerBox[0]);
+            const double vSpan =
+                std::max(1e-12, candidate.outerBox[3] - candidate.outerBox[2]);
+            const double areaScale = uSpan * vSpan;
+            const double h = 0.24 / kGrid;
+            double referenceJacobian = 0.0;
+            double minAbsJacobian = 1e300;
+            double maxAbsJacobian = 0.0;
+            for (int j = 0; j < kGrid; ++j) {
+                const double b = (j + 0.5) / kGrid;
+                for (int i = 0; i < kGrid; ++i) {
+                    const double a = (i + 0.5) / kGrid;
+                    const gp_Pnt2d uv = candidate.uv(a, b);
+                    BRepClass_FaceClassifier cls(
+                        const_cast<TopoDS_Face&>(face), uv, tol);
+                    if (cls.State() == TopAbs_OUT) {
+                        result.why = "dense interior probe outside face";
+                        return result;
+                    }
+                    const gp_Pnt2d am = candidate.uv(a - h, b);
+                    const gp_Pnt2d ap = candidate.uv(a + h, b);
+                    const gp_Pnt2d bm = candidate.uv(a, b - h);
+                    const gp_Pnt2d bp = candidate.uv(a, b + h);
+                    const double jac =
+                        (ap.X() - am.X()) * (bp.Y() - bm.Y()) -
+                        (ap.Y() - am.Y()) * (bp.X() - bm.X());
+                    const double aj = std::abs(jac);
+                    if (!std::isfinite(jac) ||
+                        aj <= 1e-10 * areaScale / (kGrid * kGrid)) {
+                        result.why = "degenerate Coons Jacobian";
+                        return result;
+                    }
+                    if (referenceJacobian == 0.0) referenceJacobian = jac;
+                    if (jac * referenceJacobian <= 0.0) {
+                        result.why = "Coons Jacobian changes orientation";
+                        return result;
+                    }
+                    minAbsJacobian = std::min(minAbsJacobian, aj);
+                    maxAbsJacobian = std::max(maxAbsJacobian, aj);
+                }
+            }
+            if (maxAbsJacobian <= 0.0 ||
+                minAbsJacobian < 1e-7 * maxAbsJacobian) {
+                result.why = "Coons Jacobian pinches";
+                return result;
+            }
+            result.jacobianMargin = minAbsJacobian / maxAbsJacobian;
+            result.railRatio =
+                (result.sideLength[0] + result.sideLength[2]) /
+                std::max(1e-12,
+                         result.sideLength[1] + result.sideLength[3]);
+            result.ok = true;
+            result.why = "ok";
+            return result;
+        };
+
+        CoonsProbe chosen = preflight(patch);
+        int chosenRotate = coonsEffectiveRotate;
+        // With the default rotation, canonicalize a shell so sides 0/2 are
+        // its long rails and sides 1/3 are the arched ends. Grid columns then
+        // cross the shell between rails instead of following an arbitrary STEP
+        // wire start. An explicit rotate remains authoritative.
+        const bool explicitRotate =
+            settings.perFace.count(fid) > 0 &&
+            s.coonsRotate != settings.defaults.coonsRotate;
+        if (!explicitRotate) {
+            CoonsPatch alternate;
+            const int altRotate = (coonsEffectiveRotate + 1) % 4;
+            if (makeCoonsPatch(face, model, alternate, altRotate)) {
+                CoonsProbe alternateProbe = preflight(alternate);
+                if (alternateProbe.ok &&
+                    (!chosen.ok || alternateProbe.railRatio >
+                                       chosen.railRatio * 1.05)) {
+                    patch = std::move(alternate);
+                    chosen = alternateProbe;
+                    chosenRotate = altRotate;
+                }
             }
         }
-        // One extra split on a small patch is ordinary STEP bookkeeping and
-        // the existing local fold repair handles it cleanly. The destructive
-        // absorption fans appear on genuinely complex outlines (7+ edges),
-        // with trimmed tori requiring the stricter 5-edge limit.
-        const size_t safeEdges = st == GeomAbs_Torus ? 5u : 6u;
-        if (!compatible && info.edgeIds.size() <= safeEdges) return true;
-        if (!compatible) {
-            dbg("coons: face %d rejected: opposite chain topology "
-                "%zu/%zu and %zu/%zu",
-                fid, patch.chain[0].size(), patch.chain[2].size(),
-                patch.chain[1].size(), patch.chain[3].size());
+        if (!chosen.ok) {
+            dbg("coons: face %d rejected by geometric preflight: %s "
+                "chains=%zu/%zu/%zu/%zu lengths=%.3g/%.3g/%.3g/%.3g",
+                fid, chosen.why, patch.chain[0].size(),
+                patch.chain[1].size(), patch.chain[2].size(),
+                patch.chain[3].size(), chosen.sideLength[0],
+                chosen.sideLength[1], chosen.sideLength[2],
+                chosen.sideLength[3]);
+            return false;
         }
-        return compatible;
+        coonsEffectiveRotate = chosenRotate;
+        dbg("coons: face %d geometric preflight ok rotate=%d "
+            "lengths=%.3g/%.3g/%.3g/%.3g rail-ratio=%.3g jac=%.3g",
+            fid, chosenRotate, chosen.sideLength[0], chosen.sideLength[1],
+            chosen.sideLength[2], chosen.sideLength[3], chosen.railRatio,
+            chosen.jacobianMargin);
+        return true;
     };
 
     auto finishRevolution = [&]() {
@@ -7888,8 +10122,12 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     auto tryOpenBand = [&]() {
         std::vector<int> sides;
         std::vector<std::vector<int>> inserts;
-        if (!openBandSides(face, surf, model, sides) ||
-            !edgesHugRimsOrInserts(face, surf, model, inserts, &sides)) {
+        bool repeatedNotched = false;
+        int repeatedFeatureCount = 0;
+        if (!openBandSides(face, surf, model, sides, &repeatedNotched,
+                           &repeatedFeatureCount) ||
+            !edgesHugRimsOrInserts(face, surf, model, inserts, &sides,
+                                   repeatedNotched)) {
             return false;
         }
         // Strictly-interior wires (a slot or hole through the wall) mesh
@@ -7968,6 +10206,24 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         };
         plan.bandDriver = chainDriver(plan.rimHigh);
         if (!plan.bandDriver) plan.bandDriver = chainDriver(plan.rimLow);
+        if (repeatedNotched) {
+            // Deep repeated cone/chamfer seams are monotone trim combs, but
+            // the open-band WAVE transition has to bridge the entire wavy
+            // rim in one strip and can fold across a groove.  Retain the
+            // open-band density contract (plain rim columns + two side row
+            // contracts) while using the exact clipped primitive lattice;
+            // its drum-comb localizer removes each endpoint station outside
+            // the owning groove corridor.
+            plan.orthogonalTrimGrid = true;
+            plan.orthogonalDrumComb = true;
+            plan.orthogonalDriverU = plan.bandDriver;
+            plan.orthogonalDriverV = plan.bandSides.empty()
+                                         ? 0 : plan.bandSides.front();
+            plan.orthogonalEdges = info.edgeIds;
+            plan.orthogonalFeatureCount = repeatedFeatureCount;
+            dbg("plan face %d: repeated-notch cone -> localized revolution "
+                "grid", fid);
+        }
         dbg("plan face %d: open revolution band, sides %d/%d, driver %d "
             "wrap %.3f",
             fid, plan.bandSides[0], plan.bandSides[1], plan.bandDriver,
@@ -8393,6 +10649,31 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             plan.coonsRotate = coonsEffectiveRotate;
             plan.constrains = true;
             plan.insertWires = patch.holeWires;
+            if (patch.collapsedLast && patch.poleCurve) {
+                auto surfaceUTravel = [&](std::initializer_list<int> sides) {
+                    double travel = 0.0;
+                    for (int sd : sides) {
+                        gp_Pnt2d prev = patch.side(sd, 0.0);
+                        for (int k = 1; k <= 12; ++k) {
+                            const gp_Pnt2d cur =
+                                patch.side(sd, double(k) / 12.0);
+                            travel += std::abs(cur.X() - prev.X());
+                            prev = cur;
+                        }
+                    }
+                    return travel;
+                };
+                plan.coonsPolePatch = true;
+                // Grid U runs along sides 0/2; grid V runs along side 1 and
+                // the collapsed pole side 3. Ignore side 3's bookkeeping
+                // pcurve when deciding the physical angular direction.
+                plan.coonsPoleAroundIsU =
+                    surfaceUTravel({0, 2}) >= surfaceUTravel({1});
+                plan.coonsPoleTurnFraction = std::clamp(
+                    (surf.LastUParameter() - surf.FirstUParameter()) /
+                        (2.0 * M_PI),
+                    0.0, 1.0);
+            }
             insertCountFloors(face, patch, plan.insertMinU,
                               plan.insertMinV);
             if (patch.chained()) {
@@ -8525,6 +10806,41 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             plan.kind = MesherKind::RibbonSweep;
             return plan;
         }
+    }
+
+    // Broad, almost-flat freeform panels may legitimately be shallower than
+    // the requested chord tolerance even though the relative flatness test
+    // rejects them.  Prove the complete trimmed face against that absolute
+    // tolerance before emitting one exact-boundary game n-gon.
+    if (s.minimal && !info.isFillet &&
+        planDeviationFlatPanel(face, surf, model, s, plan)) {
+        dbg("plan face %d: deviation-flat exact-boundary panel", fid);
+        return plan;
+    }
+
+    // A concave freeform trim which every primitive/Coons/ribbon planner has
+    // already declined may still be a rigorously simple two-rail corridor.
+    // Keep this late and independent: it cannot broaden the successful Coons
+    // preflight, and its own dense in-face rung proof must pass before it can
+    // replace the contract floor.
+    if (!info.isFillet &&
+        planTrimCorridor(face, surf, model, s, plan)) {
+        dbg("plan face %d: trim corridor axis=%c rails %zu/%zu bands=%d",
+            fid, plan.trimCorridorAxisU ? 'u' : 'v',
+            plan.coonsSides[0].size(), plan.coonsSides[2].size(),
+            plan.trimCorridorBands);
+        return plan;
+    }
+
+    // Curved many-piece neck/transition trims: a separate UV-section strip,
+    // never a relaxation of the corridor or Coons gates above.  It qualifies
+    // only when two near-iso longitudinal boundary chains span the chart and
+    // a broad central ruled interval stays inside with one orientation; its
+    // bounded concave ends remain exact-boundary closure n-gons.
+    if (!info.isFillet &&
+        planSectionStrip(face, surf, model, s, plan)) {
+        dbg("plan face %d: curved multi-section trim strip", fid);
+        return plan;
     }
 
     // A shallow conical cap nothing else claimed would tri-fan; a single
@@ -9078,6 +11394,24 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                     std::max(1, drum ? s.axial : s.gridV) * frac)));
                 proposeSet({e}, n, 1, s.adaptive, s, overridden);
             }
+            if (drum && plan.orthogonalDrumComb &&
+                plan.orthogonalFeatureCount > 0 &&
+                plan.orthogonalDriverU > 0) {
+                // A repeated groove/castellation needs at least two angular
+                // intervals per detected rail/cap piece. Below that, several
+                // trim endpoints quantize into one primitive column and the
+                // default-density mesh visibly drops groove spans. This is a
+                // structural floor derived from the B-rep trim count, not an
+                // MP9 id or a hidden radial=32 dependency. Like the closed
+                // ring floor above, pre-divide by densityScale so the floor
+                // survives the proposal scaler.
+                const int featureFloor =
+                    std::max(3, 2 * plan.orthogonalFeatureCount);
+                const int proposal = overridden
+                    ? featureFloor
+                    : std::max(1, int(std::ceil(featureFloor / dScale)));
+                propose({plan.orthogonalDriverU}, proposal, overridden);
+            }
         } else if (!plan.loops.empty()) {
             // Explicit boundary control: a TOTAL vertex count around the
             // outer loop, distributed across its edges by arc length and
@@ -9152,6 +11486,26 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                                      ? s.filletLoops : s.gridU);
                 nv = std::max(1, plan.isFillet && !plan.acrossIsU
                                      ? s.filletLoops : s.gridV);
+            }
+            if (plan.kind == MesherKind::CoonsGrid &&
+                plan.coonsPolePatch && !s.adaptive) {
+                // A collapsed revolution cap is not a generic gridU=1
+                // patch: its surviving long direction spans a real fraction
+                // of a turn. Preserve that turn at the radial budget even in
+                // the fast non-adaptive default, plus enough profile rows to
+                // approach the pole smoothly. Adaptive mode already derives
+                // these counts from curvature and remains untouched.
+                const int around = std::max(
+                    4, int(std::lround(std::max(3, s.radial) *
+                                      plan.coonsPoleTurnFraction)));
+                const int profile = std::max(3, (around + 1) / 2);
+                if (plan.coonsPoleAroundIsU) {
+                    nu = std::max(nu, around);
+                    nv = std::max(nv, profile);
+                } else {
+                    nv = std::max(nv, around);
+                    nu = std::max(nu, profile);
+                }
             }
             // Hole cutouts demand lattice lines the border edges alone
             // would never propose (a straight edge proposes 1); the
@@ -12839,7 +15193,6 @@ bool meshRevolutionAnnulusBody(const BRepAdaptor_Surface& surf, int faceId,
     }
     return true;
 }
-
 void pinOrthogonalTrimGrids(const Model& model,
                             const std::map<int, FacePlan>& plans,
                             const GenerationSettings& settings,
@@ -12883,7 +15236,18 @@ void pinOrthogonalTrimGrids(const Model& model,
             U.push_back(a.X()); U.push_back(b.X());
             V.push_back(a.Y()); V.push_back(b.Y());
         };
-        for (int e : plan.orthogonalEdges) collectEndpoints(e);
+        // Generic split rectangles use one Cartesian station table, hence
+        // every boundary edge must be pinned where every trim endpoint's
+        // row/column crosses it.  A comb is different: a groove cap owns its
+        // station only inside that groove corridor.  Pinning the cap's V to
+        // every distant rail/side is precisely what created full transverse
+        // rings across the cylinder (and dense cross-lattices on freeform
+        // grip combs).  Their builders retain the uniform primitive/base
+        // stations here and consume each feature's own solved-edge samples
+        // locally.
+        if (!plan.orthogonalLocalComb && !plan.orthogonalDrumComb) {
+            for (int e : plan.orthogonalEdges) collectEndpoints(e);
+        }
         uniqueStations(U, std::max(ut, 1e-4*std::abs(u1-u0)));
         uniqueStations(V, std::max(vt, 1e-6*std::abs(v1-v0)));
 
@@ -12927,6 +15291,887 @@ void pinOrthogonalTrimGrids(const Model& model,
         for (int e : plan.vEdges) pinEdge(e, false);
     }
 }
+// Freeform comb trims (the long, alternating grip panels on imported CAD
+// parts) are not a Cartesian grid.  Carrying every tooth endpoint through
+// every V band turns one local trim event into a model-wide row/column
+// product and creates the dense side fans that motivated this path.  Build
+// each connected V slab against one shared absolute longitudinal phase:
+// exact samples on the two local rails remain exact, while the structural
+// columns keep the same U stations from the upper flare through every rib
+// interval into the lower body.  Exact trim samples become corners of the
+// local boundary n-gon instead of spawning short columns or triangle fans.
+bool meshOrthogonalLocalComb(const TopoDS_Face& face,
+                             const BRepAdaptor_Surface& surf,
+                             const Model& model, const FacePlan& plan,
+                             const std::vector<int>& solvedEdge, int faceId,
+                             int nu, int nv, int cellCap, MeshBuilder& out,
+                             const PinnedEdges* pins) {
+    nu = std::max(1, nu);
+    nv = std::max(1, nv);
+    const double u0 = surf.FirstUParameter(), u1 = surf.LastUParameter();
+    const double v0 = surf.FirstVParameter(), v1 = surf.LastVParameter();
+    const double us = std::max(1e-12, std::abs(u1 - u0));
+    const double vs = std::max(1e-12, std::abs(v1 - v0));
+    const double ut = 1e-9 * std::max(1.0, us);
+    const double vt = 1e-9 * std::max(1.0, vs);
+    const double stationTolU = std::max(ut, 1e-6 * us);
+    const double stationTolV = std::max(vt, 1e-6 * vs);
+    const double qU = std::max(1e-12, ut);
+    const double qV = std::max(1e-12, vt);
+    auto uvKey = [&](const gp_Pnt2d& p) {
+        return std::make_pair(llround(p.X() / qU), llround(p.Y() / qV));
+    };
+
+    struct ExactSample {
+        gp_Pnt2d uv;
+        gp_Pnt p;
+        bool horizontal = false;
+        double railV = 0.0;
+    };
+    std::vector<gp_Pnt2d> boundary;
+    std::vector<bool> boundaryHorizontal;
+    std::vector<ExactSample> samples;
+    std::map<std::pair<long long, long long>, gp_Pnt> exactBoundary;
+    std::vector<double> levels{v0, v1};
+
+    // Read the one trim wire in wire order.  Only genuinely longitudinal
+    // samples become local rail stations; short tooth ends contribute V
+    // levels instead, so they never acquire the count of a full tooth.
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        for (BRepTools_WireExplorer we(TopoDS::Wire(wx.Current()), face);
+             we.More(); we.Next()) {
+            const TopoDS_Edge edge = we.Current();
+            if (BRep_Tool::Degenerated(edge)) continue;
+            const int eid = model.edges.FindIndex(edge);
+            if (eid < 1) return false;
+            double f, l, f3, l3;
+            Handle(Geom2d_Curve) pc =
+                BRep_Tool::CurveOnSurface(edge, face, f, l);
+            Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, f3, l3);
+            if (pc.IsNull() || c3.IsNull()) return false;
+
+            const int n = std::max(1, solvedEdge[eid]);
+            const bool rev = edge.Orientation() == TopAbs_REVERSED;
+            const std::vector<double> fractions = edgeSampleFractions(
+                eid, n, 0.0, rev, false, pins, &model);
+            if (fractions.empty()) return false;
+
+            std::vector<std::pair<gp_Pnt2d, gp_Pnt>> edgeSamples;
+            edgeSamples.reserve(fractions.size() + 1);
+            double eu0 = 1e300, eu1 = -1e300;
+            double ev0 = 1e300, ev1 = -1e300;
+            for (double t : fractions) {
+                const gp_Pnt2d uv = pc->Value(f + (l - f) * t);
+                const gp_Pnt p = c3->Value(f3 + (l3 - f3) * t);
+                edgeSamples.push_back({uv, p});
+                eu0 = std::min(eu0, uv.X());
+                eu1 = std::max(eu1, uv.X());
+                ev0 = std::min(ev0, uv.Y());
+                ev1 = std::max(ev1, uv.Y());
+            }
+            // Include the far endpoint for span classification and mandatory
+            // V levels; the next wire edge still owns it in `boundary`.
+            const gp_Pnt2d uvFirst = pc->Value(f);
+            const gp_Pnt2d uvLast = pc->Value(l);
+            eu0 = std::min({eu0, uvFirst.X(), uvLast.X()});
+            eu1 = std::max({eu1, uvFirst.X(), uvLast.X()});
+            ev0 = std::min({ev0, uvFirst.Y(), uvLast.Y()});
+            ev1 = std::max({ev1, uvFirst.Y(), uvLast.Y()});
+            const double du = (eu1 - eu0) / us;
+            const double dv = (ev1 - ev0) / vs;
+            const bool horizontal = du >= 0.02 && du >= 4.0 * dv;
+
+            const double railV = 0.5 * (ev0 + ev1);
+            if (horizontal) {
+                // A slightly sloped CAD rail is still one topological row.
+                // Its min/max V values must not create two overlapping bands.
+                levels.push_back(railV);
+            } else {
+                levels.push_back(ev0);
+                levels.push_back(ev1);
+            }
+            for (const auto& [uv, p] : edgeSamples) {
+                // A topologically horizontal trim edge owns one row even
+                // when its STEP pcurve wiggles slightly in V.  Use that
+                // canonical row in the UV partition, while retaining the
+                // exact B-rep 3D sample at the canonical key.  This prevents
+                // one physical rail sample from being admitted to both
+                // neighbouring slabs without moving the exported border.
+                const gp_Pnt2d ownedUv(
+                    uv.X(), horizontal ? railV : uv.Y());
+                boundary.push_back(ownedUv);
+                boundaryHorizontal.push_back(horizontal);
+                samples.push_back({ownedUv, p, horizontal, railV});
+                exactBoundary[uvKey(ownedUv)] = p;
+                if (!horizontal) levels.push_back(ownedUv.Y());
+            }
+        }
+        break;
+    }
+    if (boundary.size() < 3) return false;
+
+    // Sparse structural rows keep the large un-notched shoulders smooth.
+    // Tooth endpoints and side-edge samples remain mandatory rows.
+    for (int j = 1; j < nv; ++j)
+        levels.push_back(v0 + (v1 - v0) * j / nv);
+    std::sort(levels.begin(), levels.end());
+    std::vector<double> compactLevels;
+    for (double v : levels) {
+        if (compactLevels.empty() ||
+            std::abs(v - compactLevels.back()) > stationTolV)
+            compactLevels.push_back(v);
+    }
+    levels.swap(compactLevels);
+    if (levels.size() < 2) return false;
+
+    struct Crossing { double u; size_t seg; };
+    struct LocalSlab {
+        gp_Pnt2d bl, br, tr, tl;
+        double vb = 0.0, vt = 0.0;
+    };
+    std::vector<LocalSlab> slabs;
+    const double tolF = BRep_Tool::Tolerance(face);
+    auto onSegAtV = [&](size_t k, double v) {
+        const gp_Pnt2d& a = boundary[k];
+        const gp_Pnt2d& b = boundary[(k + 1) % boundary.size()];
+        const double t = std::abs(b.Y() - a.Y()) > 1e-14
+            ? std::clamp((v - a.Y()) / (b.Y() - a.Y()), 0.0, 1.0)
+            : 0.0;
+        return gp_Pnt2d(a.X() + (b.X() - a.X()) * t, v);
+    };
+    for (size_t j = 0; j + 1 < levels.size(); ++j) {
+        const double vb = levels[j], vt2 = levels[j + 1];
+        if (vt2 - vb <= vt) continue;
+        const double vm = 0.5 * (vb + vt2);
+        std::vector<Crossing> cross;
+        for (size_t k = 0; k < boundary.size(); ++k) {
+            const gp_Pnt2d& a = boundary[k];
+            const gp_Pnt2d& b = boundary[(k + 1) % boundary.size()];
+            if (boundaryHorizontal[k]) continue;
+            if (std::abs(b.Y() - a.Y()) < 1e-14) continue;
+            // Half-open crossing rule prevents a sampled trim vertex from
+            // appearing twice when the scan line hits it exactly.
+            const double lo = std::min(a.Y(), b.Y());
+            const double hi = std::max(a.Y(), b.Y());
+            if (vm < lo || vm >= hi) continue;
+            const double t = (vm - a.Y()) / (b.Y() - a.Y());
+            cross.push_back({a.X() + (b.X() - a.X()) * t, k});
+        }
+        std::sort(cross.begin(), cross.end(),
+                  [](const Crossing& a, const Crossing& b) {
+                      return a.u < b.u;
+                  });
+        std::vector<Crossing> uniqueCross;
+        for (const Crossing& c : cross) {
+            if (uniqueCross.empty() ||
+                std::abs(c.u - uniqueCross.back().u) > ut)
+                uniqueCross.push_back(c);
+        }
+        for (size_t k = 0; k + 1 < uniqueCross.size(); ++k) {
+            if (uniqueCross[k + 1].u - uniqueCross[k].u <= ut) continue;
+            BRepClass_FaceClassifier cls(
+                const_cast<TopoDS_Face&>(face),
+                gp_Pnt2d(0.5 * (uniqueCross[k].u + uniqueCross[k + 1].u),
+                         vm),
+                tolF);
+            if (cls.State() == TopAbs_OUT) continue;
+            const gp_Pnt2d bl = onSegAtV(uniqueCross[k].seg, vb);
+            const gp_Pnt2d br = onSegAtV(uniqueCross[k + 1].seg, vb);
+            const gp_Pnt2d tr = onSegAtV(uniqueCross[k + 1].seg, vt2);
+            const gp_Pnt2d tl = onSegAtV(uniqueCross[k].seg, vt2);
+            if (std::max(br.X() - bl.X(), tr.X() - tl.X()) <= ut) continue;
+            slabs.push_back({bl, br, tr, tl, vb, vt2});
+        }
+    }
+    if (slabs.empty()) return false;
+
+    // cellCap is a budget, not permission to discard required trim samples.
+    // It limits only the optional structural rails.  Dividing by two leaves
+    // room for exact samples on the two B-rep rails of every slab.
+    const int cap = std::max(16, cellCap);
+    const int budgetCols = std::max(
+        1, cap / std::max(1, 2 * static_cast<int>(slabs.size())));
+    const int fullCols = std::max(1, std::min(nu, budgetCols));
+
+    // A B-spline's U parameter is rarely proportional to distance.  Linear
+    // U stations therefore bunch several otherwise global columns into the
+    // narrow side corridor of this grip.  Solve the one shared station set
+    // by arc length on the widest untrimmed slab, then reuse those exact U
+    // values through every V band.  This keeps both phase continuity and
+    // visibly even spans without making local trim endpoints persistent.
+    const LocalSlab* metricSlab = &slabs.front();
+    double metricWidth = -1.0;
+    for (const LocalSlab& slab : slabs) {
+        const double w = std::min(slab.br.X() - slab.bl.X(),
+                                  slab.tr.X() - slab.tl.X());
+        if (w > metricWidth) {
+            metricWidth = w;
+            metricSlab = &slab;
+        }
+    }
+    const double metricV = 0.5 * (metricSlab->vb + metricSlab->vt);
+    constexpr int kMetricSteps = 256;
+    std::array<double, kMetricSteps + 1> metricU{};
+    std::array<double, kMetricSteps + 1> metricLength{};
+    gp_Pnt previous = surf.Value(u0, metricV);
+    metricU[0] = u0;
+    for (int k = 1; k <= kMetricSteps; ++k) {
+        const double u = u0 + (u1 - u0) * double(k) / kMetricSteps;
+        const gp_Pnt p = surf.Value(u, metricV);
+        metricU[k] = u;
+        metricLength[k] = metricLength[k - 1] + previous.Distance(p);
+        previous = p;
+    }
+    std::vector<double> primaryU{u0};
+    const double metricTotal = metricLength.back();
+    for (int i = 1; i < fullCols; ++i) {
+        if (metricTotal <= 1e-12) {
+            primaryU.push_back(u0 + (u1 - u0) * double(i) / fullCols);
+            continue;
+        }
+        const double target = metricTotal * double(i) / fullCols;
+        const auto upper = std::lower_bound(metricLength.begin(),
+                                            metricLength.end(), target);
+        const int k = std::clamp(int(upper - metricLength.begin()),
+                                 1, kMetricSteps);
+        const double span = metricLength[k] - metricLength[k - 1];
+        const double f = span > 1e-12
+            ? (target - metricLength[k - 1]) / span : 0.0;
+        primaryU.push_back(metricU[k - 1] +
+                           (metricU[k] - metricU[k - 1]) * f);
+    }
+    primaryU.push_back(u1);
+
+    std::map<std::pair<long long, long long>, uint32_t> verts;
+    auto vertex = [&](const gp_Pnt2d& uv) {
+        const auto key = uvKey(uv);
+        auto found = verts.find(key);
+        if (found != verts.end()) return found->second;
+        gp_Pnt p = surf.Value(uv.X(), uv.Y());
+        auto xb = exactBoundary.find(key);
+        if (xb != exactBoundary.end()) {
+            p = xb->second;
+        } else {
+            // Canonicalize a numerically reconstructed side crossing to its
+            // exact shared-edge sample when both UV coordinates agree.
+            double best = 1e300;
+            for (const ExactSample& s : samples) {
+                if (std::abs(s.uv.X() - uv.X()) > stationTolU ||
+                    std::abs(s.uv.Y() - uv.Y()) > stationTolV)
+                    continue;
+                const double d = std::abs(s.uv.X() - uv.X()) / stationTolU +
+                                 std::abs(s.uv.Y() - uv.Y()) / stationTolV;
+                if (d < best) { best = d; p = s.p; }
+            }
+        }
+        const uint32_t id = out.addVertex(p, {faceId, uv.X(), uv.Y()});
+        verts.emplace(key, id);
+        return id;
+    };
+
+    struct RailPoint { double f; gp_Pnt2d uv; };
+    auto railSamples = [&](const gp_Pnt2d& left, const gp_Pnt2d& right,
+                           double v, double bandHeight,
+                           bool interiorTowardPositiveV) {
+        std::vector<RailPoint> rail;
+        const double width = right.X() - left.X();
+        if (width <= ut) return rail;
+        for (const ExactSample& s : samples) {
+            if (!s.horizontal ||
+                std::abs(s.railV - v) > 2.0 * stationTolV)
+                continue;
+            if (s.uv.X() < left.X() - stationTolU ||
+                s.uv.X() > right.X() + stationTolU)
+                continue;
+            // A horizontal trim separates this face from its neighbour.  It
+            // belongs to only the slab on the face-interior side; admitting
+            // it to both adjacent slabs duplicates the same directed edge
+            // and creates two overlapping layers.  Probe just inside the
+            // candidate slab to select the one legitimate owner.
+            const double probeStep = std::max(
+                8.0 * stationTolV, 0.05 * bandHeight);
+            const double probeV = s.uv.Y() +
+                (interiorTowardPositiveV ? probeStep : -probeStep);
+            BRepClass_FaceClassifier owner(
+                const_cast<TopoDS_Face&>(face),
+                gp_Pnt2d(s.uv.X(), probeV), tolF);
+            if (owner.State() == TopAbs_OUT) continue;
+            const double f = std::clamp(
+                (s.uv.X() - left.X()) / width, 0.0, 1.0);
+            rail.push_back({f, s.uv});
+        }
+        std::sort(rail.begin(), rail.end(),
+                  [](const RailPoint& a, const RailPoint& b) {
+                      return a.f < b.f;
+                  });
+        std::vector<RailPoint> uniqueRail;
+        for (const RailPoint& p : rail) {
+            if (uniqueRail.empty() ||
+                std::abs(p.f - uniqueRail.back().f) > 1e-7)
+                uniqueRail.push_back(p);
+            else if (std::abs(p.uv.Y() - v) <
+                     std::abs(uniqueRail.back().uv.Y() - v))
+                uniqueRail.back() = p;
+        }
+        return uniqueRail;
+    };
+
+    const bool faceReversed = face.Orientation() == TopAbs_REVERSED;
+    auto rejectLocalCell = [&](const char* reason) {
+        dbg("orthogonal local comb face %d: partition rejected (%s)",
+            faceId, reason);
+        return false;
+    };
+    int emitted = 0;
+    int emittedQuads = 0;
+    int emittedNgons = 0;
+    for (const LocalSlab& slab : slabs) {
+        const double bandHeight = slab.vt - slab.vb;
+        const std::vector<RailPoint> bottom =
+            railSamples(slab.bl, slab.br, slab.vb, bandHeight, true);
+        const std::vector<RailPoint> top =
+            railSamples(slab.tl, slab.tr, slab.vt, bandHeight, false);
+
+        auto pointAtU = [&](const std::vector<RailPoint>& exact,
+                            double u, double v) {
+            const RailPoint* closest = nullptr;
+            double du = 1e300;
+            for (const RailPoint& p : exact) {
+                const double d = std::abs(p.uv.X() - u);
+                if (d < du) { du = d; closest = &p; }
+            }
+            if (closest && du <= stationTolU) return closest->uv;
+            return gp_Pnt2d(u, v);
+        };
+
+        struct ColumnCut { gp_Pnt2d bottom, top; };
+        std::vector<ColumnCut> cuts{{slab.bl, slab.tl}};
+        const double commonLeft = std::max(slab.bl.X(), slab.tl.X());
+        const double commonRight = std::min(slab.br.X(), slab.tr.X());
+        for (int i = 1; i < fullCols; ++i) {
+            const double u = primaryU[i];
+            if (u <= commonLeft + stationTolU ||
+                u >= commonRight - stationTolU)
+                continue;
+            cuts.push_back({pointAtU(bottom, u, slab.vb),
+                            pointAtU(top, u, slab.vt)});
+        }
+        cuts.push_back({slab.br, slab.tr});
+        std::sort(cuts.begin(), cuts.end(), [](const ColumnCut& a,
+                                               const ColumnCut& b) {
+            return 0.5 * (a.bottom.X() + a.top.X()) <
+                   0.5 * (b.bottom.X() + b.top.X());
+        });
+
+        auto appendUnique = [&](std::vector<gp_Pnt2d>& uv,
+                                const gp_Pnt2d& p) {
+            if (uv.empty() || uvKey(uv.back()) != uvKey(p)) uv.push_back(p);
+        };
+        auto signedArea = [](const std::vector<gp_Pnt2d>& ring) {
+            double area = 0.0;
+            for (size_t k = 0; k < ring.size(); ++k) {
+                const gp_Pnt2d& a = ring[k];
+                const gp_Pnt2d& b = ring[(k + 1) % ring.size()];
+                area += a.X() * b.Y() - b.X() * a.Y();
+            }
+            return 0.5 * area;
+        };
+        auto buildCell = [&](const ColumnCut& left,
+                             const ColumnCut& right) {
+            std::vector<gp_Pnt2d> uv;
+            appendUnique(uv, left.bottom);
+            for (const RailPoint& p : bottom) {
+                if (p.uv.X() > left.bottom.X() + stationTolU &&
+                    p.uv.X() < right.bottom.X() - stationTolU)
+                    appendUnique(uv, p.uv);
+            }
+            appendUnique(uv, right.bottom);
+            appendUnique(uv, right.top);
+            for (auto it = top.rbegin(); it != top.rend(); ++it) {
+                if (it->uv.X() > left.top.X() + stationTolU &&
+                    it->uv.X() < right.top.X() - stationTolU)
+                    appendUnique(uv, it->uv);
+            }
+            appendUnique(uv, left.top);
+            if (uv.size() > 1 && uvKey(uv.front()) == uvKey(uv.back()))
+                uv.pop_back();
+            return uv;
+        };
+        // A sloped exact rail can meet a column endpoint and appear twice in
+        // the raw walk.  That creates a zero-area out-and-back excursion (the
+        // old duplicate-directed-edge sliver), not a second region.  Strip
+        // only a provably zero-area loop; two finite loops are ambiguous and
+        // fail closed.  The retained loop is the actual cell boundary.
+        const double zeroLoopArea = 1e-14 * std::max(1.0, us * vs);
+        auto normalizeCell = [&](std::vector<gp_Pnt2d>& uv) {
+            for (size_t guard = 0; guard <= uv.size() + 2; ++guard) {
+                std::map<std::pair<long long, long long>, size_t> seen;
+                bool foundRepeat = false;
+                for (size_t i = 0; i < uv.size(); ++i) {
+                    const auto key = uvKey(uv[i]);
+                    const auto [it, inserted] = seen.emplace(key, i);
+                    if (inserted) continue;
+                    const size_t first = it->second;
+                    std::vector<gp_Pnt2d> loopA(uv.begin() + first,
+                                                uv.begin() + i);
+                    std::vector<gp_Pnt2d> loopB(uv.begin() + i, uv.end());
+                    loopB.insert(loopB.end(), uv.begin(), uv.begin() + first);
+                    auto distinctKeys = [&](const auto& loop) {
+                        std::set<std::pair<long long, long long>> keys;
+                        for (const gp_Pnt2d& p : loop) keys.insert(uvKey(p));
+                        return keys.size();
+                    };
+                    const bool hairpinA = distinctKeys(loopA) < 3;
+                    const bool hairpinB = distinctKeys(loopB) < 3;
+                    // Exactly one side of the repeated vertex must be a
+                    // combinatorial A-B-A excursion.  Area-based guesses can
+                    // discard a real neighbouring region, so two finite loops
+                    // (or two empty loops) are never resolved here.
+                    if (hairpinA == hairpinB) return false;
+                    uv = hairpinA ? std::move(loopB) : std::move(loopA);
+                    foundRepeat = true;
+                    break;
+                }
+                if (!foundRepeat) return true;
+            }
+            return false;
+        };
+        auto properCross = [](const gp_Pnt2d& a, const gp_Pnt2d& b,
+                              const gp_Pnt2d& c, const gp_Pnt2d& d) {
+            auto cross = [](const gp_Pnt2d& p, const gp_Pnt2d& q,
+                            const gp_Pnt2d& r) {
+                return (q.X() - p.X()) * (r.Y() - p.Y()) -
+                       (q.Y() - p.Y()) * (r.X() - p.X());
+            };
+            const double abC = cross(a, b, c), abD = cross(a, b, d);
+            const double cdA = cross(c, d, a), cdB = cross(c, d, b);
+            return abC * abD < 0.0 && cdA * cdB < 0.0;
+        };
+        auto simpleCell = [&](const std::vector<gp_Pnt2d>& uv) {
+            std::set<std::pair<long long, long long>> unique;
+            for (const gp_Pnt2d& p : uv) {
+                if (!unique.insert(uvKey(p)).second) return false;
+            }
+            for (size_t i = 0; i < uv.size(); ++i) {
+                const size_t i2 = (i + 1) % uv.size();
+                for (size_t j = i + 1; j < uv.size(); ++j) {
+                    const size_t j2 = (j + 1) % uv.size();
+                    if (i2 == j || j2 == i) continue;
+                    if (properCross(uv[i], uv[i2], uv[j], uv[j2]))
+                        return false;
+                }
+            }
+            return true;
+        };
+        // No triangles are emitted.  If trimming leaves a three-corner wedge,
+        // remove its internal column separator and rebuild the union directly
+        // from the two rail walks.  Boundary wedges merge inward; an interior
+        // wedge deterministically merges left.  Rebuilding (rather than a
+        // post-hoc polygon union) gives one ownership partition by construction.
+        for (;;) {
+            bool coarsened = false;
+            for (size_t i = 0; i + 1 < cuts.size(); ++i) {
+                std::vector<gp_Pnt2d> uv = buildCell(cuts[i], cuts[i + 1]);
+                if (!normalizeCell(uv))
+                    return rejectLocalCell("finite repeated UV loop");
+                if (uv.size() >= 4) continue;
+                if (cuts.size() <= 2)
+                    return rejectLocalCell("unmergeable boundary wedge");
+                const size_t separator = i == 0 ? 1 : i;
+                cuts.erase(cuts.begin() + separator);
+                coarsened = true;
+                break;
+            }
+            if (!coarsened) break;
+        }
+
+        for (size_t i = 0; i + 1 < cuts.size(); ++i) {
+            const ColumnCut& left = cuts[i];
+            const ColumnCut& right = cuts[i + 1];
+            if (right.bottom.X() - left.bottom.X() <= ut ||
+                right.top.X() - left.top.X() <= ut)
+                continue;
+            std::vector<gp_Pnt2d> uv = buildCell(left, right);
+            if (!normalizeCell(uv))
+                return rejectLocalCell("finite repeated UV loop after merge");
+            if (uv.size() < 4)
+                return rejectLocalCell("triangle survived column coarsening");
+            if (!simpleCell(uv))
+                return rejectLocalCell("non-simple rebuilt UV cell");
+
+            double twiceArea = 0.0, cu = 0.0, cv = 0.0;
+            for (size_t k = 0; k < uv.size(); ++k) {
+                const gp_Pnt2d& a = uv[k];
+                const gp_Pnt2d& b = uv[(k + 1) % uv.size()];
+                const double cr = a.X() * b.Y() - b.X() * a.Y();
+                twiceArea += cr;
+                cu += (a.X() + b.X()) * cr;
+                cv += (a.Y() + b.Y()) * cr;
+            }
+            if (std::abs(twiceArea) <= 2.0 * zeroLoopArea)
+                return rejectLocalCell("zero-area rebuilt UV cell");
+            cu /= 3.0 * twiceArea;
+            cv /= 3.0 * twiceArea;
+            BRepClass_FaceClassifier cls(const_cast<TopoDS_Face&>(face),
+                                         gp_Pnt2d(cu, cv), tolF);
+            if (cls.State() == TopAbs_OUT) continue;
+
+            std::vector<uint32_t> ids;
+            ids.reserve(uv.size());
+            for (const gp_Pnt2d& p : uv) ids.push_back(vertex(p));
+            gp_XYZ nw(0, 0, 0);
+            for (size_t k = 0; k < uv.size(); ++k) {
+                const gp_XYZ a = surf.Value(uv[k].X(), uv[k].Y()).XYZ();
+                const gp_XYZ b = surf.Value(uv[(k + 1) % uv.size()].X(),
+                                             uv[(k + 1) % uv.size()].Y()).XYZ();
+                nw += gp_XYZ(a.Y() * b.Z() - a.Z() * b.Y(),
+                             a.Z() * b.X() - a.X() * b.Z(),
+                             a.X() * b.Y() - a.Y() * b.X());
+            }
+            gp_Pnt sp; gp_Vec du, dv;
+            surf.D1(cu, cv, sp, du, dv);
+            gp_Vec expected = du.Crossed(dv);
+            if (faceReversed) expected.Reverse();
+            const double wholeDot = gp_Vec(nw).Dot(expected);
+            if (gp_Vec(nw).Magnitude() <= 1e-16 ||
+                expected.Magnitude() <= 1e-16 ||
+                std::abs(wholeDot) <=
+                    1e-14 * gp_Vec(nw).Magnitude() * expected.Magnitude())
+                return rejectLocalCell("unknown CAD-normal agreement");
+            // Certify the simple ring with a deterministic UV ear clipping.
+            // Unlike a centroid fan, ears remain inside a concave cell, so a
+            // valid re-entrant boundary is not mistaken for a fold.  Every
+            // ear must agree with the CAD normal after output winding.
+            const double hand = wholeDot > 0.0 ? 1.0 : -1.0;
+            const double uvHand = signedArea(uv) > 0.0 ? 1.0 : -1.0;
+            auto uvCross = [](const gp_Pnt2d& a, const gp_Pnt2d& b,
+                              const gp_Pnt2d& c) {
+                return (b.X() - a.X()) * (c.Y() - a.Y()) -
+                       (b.Y() - a.Y()) * (c.X() - a.X());
+            };
+            auto pointInEar = [&](const gp_Pnt2d& a, const gp_Pnt2d& b,
+                                  const gp_Pnt2d& c,
+                                  const gp_Pnt2d& p) {
+                return uvHand * uvCross(a, b, p) >= -zeroLoopArea &&
+                       uvHand * uvCross(b, c, p) >= -zeroLoopArea &&
+                       uvHand * uvCross(c, a, p) >= -zeroLoopArea;
+            };
+            auto certifiedEar = [&](size_t ia, size_t ib, size_t ic) {
+                const gp_Pnt a = surf.Value(uv[ia].X(), uv[ia].Y());
+                const gp_Pnt b = surf.Value(uv[ib].X(), uv[ib].Y());
+                const gp_Pnt c = surf.Value(uv[ic].X(), uv[ic].Y());
+                const gp_Vec ab(a, b), ac(a, c);
+                const gp_Vec triN = ab.Crossed(ac);
+                const gp_Pnt2d probe((uv[ia].X() + uv[ib].X() +
+                                      uv[ic].X()) / 3.0,
+                                     (uv[ia].Y() + uv[ib].Y() +
+                                      uv[ic].Y()) / 3.0);
+                gp_Pnt pp; gp_Vec pdu, pdv;
+                surf.D1(probe.X(), probe.Y(), pp, pdu, pdv);
+                gp_Vec cadN = pdu.Crossed(pdv);
+                if (faceReversed) cadN.Reverse();
+                return triN.Magnitude() > 1e-16 &&
+                       cadN.Magnitude() > 1e-16 &&
+                       hand * triN.Dot(cadN) > 0.0;
+            };
+            std::vector<size_t> ear(uv.size());
+            std::iota(ear.begin(), ear.end(), size_t(0));
+            while (ear.size() > 3) {
+                bool clipped = false;
+                for (size_t k = 0; k < ear.size(); ++k) {
+                    const size_t ia = ear[(k + ear.size() - 1) % ear.size()];
+                    const size_t ib = ear[k];
+                    const size_t ic = ear[(k + 1) % ear.size()];
+                    if (uvHand * uvCross(uv[ia], uv[ib], uv[ic]) <=
+                        zeroLoopArea)
+                        continue;
+                    bool contains = false;
+                    for (size_t m : ear) {
+                        if (m == ia || m == ib || m == ic) continue;
+                        if (pointInEar(uv[ia], uv[ib], uv[ic], uv[m])) {
+                            contains = true;
+                            break;
+                        }
+                    }
+                    if (contains || !certifiedEar(ia, ib, ic)) continue;
+                    ear.erase(ear.begin() + k);
+                    clipped = true;
+                    break;
+                }
+                if (!clipped)
+                    return rejectLocalCell("uncertifiable UV ear");
+            }
+            if (ear.size() != 3 ||
+                uvHand * uvCross(uv[ear[0]], uv[ear[1]], uv[ear[2]]) <=
+                    zeroLoopArea ||
+                !certifiedEar(ear[0], ear[1], ear[2]))
+                return rejectLocalCell("folded final UV ear");
+            if (wholeDot < 0.0)
+                std::reverse(ids.begin(), ids.end());
+            out.addPolygon(std::move(ids), faceId, false);
+            if (uv.size() == 4) ++emittedQuads;
+            else ++emittedNgons;
+            ++emitted;
+        }
+    }
+    // A short connector can lie wholly under the first cell of the adjacent
+    // broad panel when a sloped trim endpoint is reconstructed at its exact
+    // 3D sample.  A repeated *directed* edge is only a warning: adjacent or
+    // folded cells can produce the same symptom.  Drop the smaller cell only
+    // after its complete UV ring is proven contained in the larger one.
+    // Ambiguous overlap fails the route so the caller can demote the face.
+    int culledOverlaps = 0;
+    {
+        PolyMesh& pm = out.mesh();
+        std::vector<char> drop(pm.polygons.size(), 0);
+        auto uvRing = [&](size_t pi, std::vector<gp_Pnt2d>& ring) {
+            ring.clear();
+            const auto& poly = pm.polygons[pi];
+            ring.reserve(poly.size());
+            for (uint32_t vi : poly) {
+                if (vi >= pm.anchors.size() ||
+                    pm.anchors[vi].faceId != faceId) {
+                    return false;
+                }
+                const Anchor& a = pm.anchors[vi];
+                ring.emplace_back(a.u, a.v);
+            }
+            return ring.size() >= 3;
+        };
+        auto signedUvArea = [&](const std::vector<gp_Pnt2d>& ring) {
+            double area = 0.0;
+            for (size_t k = 0; k < ring.size(); ++k) {
+                const gp_Pnt2d& a = ring[k];
+                const gp_Pnt2d& b = ring[(k + 1) % ring.size()];
+                area += a.X() * b.Y() - b.X() * a.Y();
+            }
+            return 0.5 * area;
+        };
+        const double uvTol = std::max({ut, vt, 1e-10});
+        const double uvTol2 = uvTol * uvTol;
+        const double areaTol = 1e-12 * std::max(1.0, us * vs);
+        auto orient = [](const gp_Pnt2d& a, const gp_Pnt2d& b,
+                         const gp_Pnt2d& c) {
+            return (b.X() - a.X()) * (c.Y() - a.Y()) -
+                   (b.Y() - a.Y()) * (c.X() - a.X());
+        };
+        auto onSegment = [&](const gp_Pnt2d& q, const gp_Pnt2d& a,
+                             const gp_Pnt2d& b) {
+            const double len = std::sqrt(a.SquareDistance(b));
+            if (len <= uvTol) return q.SquareDistance(a) <= uvTol2;
+            if (std::abs(orient(a, b, q)) > uvTol * len) return false;
+            const double dot = (q.X() - a.X()) * (q.X() - b.X()) +
+                               (q.Y() - a.Y()) * (q.Y() - b.Y());
+            return dot <= uvTol2;
+        };
+        auto properCross = [&](const gp_Pnt2d& a, const gp_Pnt2d& b,
+                               const gp_Pnt2d& c, const gp_Pnt2d& d) {
+            const double abC = orient(a, b, c);
+            const double abD = orient(a, b, d);
+            const double cdA = orient(c, d, a);
+            const double cdB = orient(c, d, b);
+            return abC * abD < -areaTol * areaTol &&
+                   cdA * cdB < -areaTol * areaTol;
+        };
+        auto simpleRing = [&](const std::vector<gp_Pnt2d>& ring) {
+            for (size_t i = 0; i < ring.size(); ++i) {
+                const size_t i2 = (i + 1) % ring.size();
+                if (ring[i].SquareDistance(ring[i2]) <= uvTol2) return false;
+                for (size_t j = i + 1; j < ring.size(); ++j) {
+                    const size_t j2 = (j + 1) % ring.size();
+                    if (i == j || i2 == j || j2 == i) continue;
+                    if (ring[i].SquareDistance(ring[j]) <= uvTol2)
+                        return false;
+                    const bool hit =
+                        properCross(ring[i], ring[i2], ring[j], ring[j2]) ||
+                        onSegment(ring[i], ring[j], ring[j2]) ||
+                        onSegment(ring[i2], ring[j], ring[j2]) ||
+                        onSegment(ring[j], ring[i], ring[i2]) ||
+                        onSegment(ring[j2], ring[i], ring[i2]);
+                    if (hit) return false;
+                }
+            }
+            return true;
+        };
+        // -1 outside, 0 on boundary, +1 strictly inside.
+        auto classifyPoint = [&](const gp_Pnt2d& q,
+                                 const std::vector<gp_Pnt2d>& ring) {
+            bool inside = false;
+            for (size_t i = 0, j = ring.size() - 1; i < ring.size();
+                 j = i++) {
+                const gp_Pnt2d& a = ring[j];
+                const gp_Pnt2d& b = ring[i];
+                if (onSegment(q, a, b)) return 0;
+                if ((a.Y() > q.Y()) == (b.Y() > q.Y())) continue;
+                const double x = a.X() +
+                    (q.Y() - a.Y()) * (b.X() - a.X()) /
+                    (b.Y() - a.Y());
+                if (x > q.X() + uvTol) inside = !inside;
+            }
+            return inside ? 1 : -1;
+        };
+        auto polygonCentroid = [&](const std::vector<gp_Pnt2d>& ring,
+                                   gp_Pnt2d& c) {
+            double twiceArea = 0.0, cx = 0.0, cy = 0.0;
+            for (size_t i = 0; i < ring.size(); ++i) {
+                const gp_Pnt2d& a = ring[i];
+                const gp_Pnt2d& b = ring[(i + 1) % ring.size()];
+                const double cross = a.X() * b.Y() - b.X() * a.Y();
+                twiceArea += cross;
+                cx += (a.X() + b.X()) * cross;
+                cy += (a.Y() + b.Y()) * cross;
+            }
+            if (std::abs(twiceArea) <= 2.0 * areaTol) return false;
+            c.SetX(cx / (3.0 * twiceArea));
+            c.SetY(cy / (3.0 * twiceArea));
+            return true;
+        };
+        auto provenContained = [&](size_t innerIndex, size_t outerIndex,
+                                   const char*& why) {
+            auto reject = [&](const char* reason) {
+                why = reason;
+                return false;
+            };
+            std::vector<gp_Pnt2d> inner, outer;
+            if (!uvRing(innerIndex, inner) || !uvRing(outerIndex, outer) ||
+                !simpleRing(inner) || !simpleRing(outer)) {
+                return reject("missing anchors or non-simple UV ring");
+            }
+            const double innerArea = signedUvArea(inner);
+            const double outerArea = signedUvArea(outer);
+            if (std::abs(innerArea) <= areaTol ||
+                std::abs(outerArea) <= areaTol) {
+                return reject("degenerate UV area");
+            }
+            if (innerArea * outerArea <= 0.0)
+                return reject("opposed UV winding");
+            if (std::abs(innerArea) >= std::abs(outerArea) - areaTol)
+                return reject("no strict smaller cell");
+            bool strict = false;
+            for (const gp_Pnt2d& p : inner) {
+                const int state = classifyPoint(p, outer);
+                if (state < 0) return reject("inner vertex outside keeper");
+                strict = strict || state > 0;
+            }
+            // Vertices alone are insufficient for a concave container: an
+            // inner edge could leave and re-enter it between endpoints.
+            for (size_t i = 0; i < inner.size(); ++i) {
+                const gp_Pnt2d& a = inner[i];
+                const gp_Pnt2d& b = inner[(i + 1) % inner.size()];
+                const gp_Pnt2d mid(0.5 * (a.X() + b.X()),
+                                   0.5 * (a.Y() + b.Y()));
+                if (classifyPoint(mid, outer) < 0)
+                    return reject("inner edge leaves keeper");
+                for (size_t j = 0; j < outer.size(); ++j) {
+                    if (properCross(a, b, outer[j],
+                                    outer[(j + 1) % outer.size()])) {
+                        return reject("UV boundaries cross");
+                    }
+                }
+            }
+            gp_Pnt2d ci, co;
+            if (!polygonCentroid(inner, ci) || !polygonCentroid(outer, co) ||
+                classifyPoint(ci, outer) < 0)
+                return reject("centroid outside keeper");
+            if (!strict) return reject("no strict interior sample");
+            BRepClass_FaceClassifier innerOwner(
+                const_cast<TopoDS_Face&>(face), ci, tolF);
+            BRepClass_FaceClassifier outerOwner(
+                const_cast<TopoDS_Face&>(face), co, tolF);
+            if (innerOwner.State() == TopAbs_OUT ||
+                outerOwner.State() == TopAbs_OUT) {
+                return reject("centroid outside CAD face");
+            }
+            why = "contained";
+            return true;
+        };
+        for (;;) {
+            std::map<std::pair<uint32_t, uint32_t>, size_t> directed;
+            bool found = false;
+            for (size_t pi = 0; pi < pm.polygons.size() && !found; ++pi) {
+                if (drop[pi]) continue;
+                const auto& poly = pm.polygons[pi];
+                for (size_t k = 0; k < poly.size(); ++k) {
+                    const auto edge = std::make_pair(
+                        poly[k], poly[(k + 1) % poly.size()]);
+                    auto [it, inserted] = directed.emplace(edge, pi);
+                    if (inserted || drop[it->second]) continue;
+                    const size_t other = it->second;
+                    std::vector<gp_Pnt2d> a, b;
+                    if (!uvRing(pi, a) || !uvRing(other, b)) return false;
+                    const size_t loser =
+                        std::abs(signedUvArea(a)) < std::abs(signedUvArea(b))
+                            ? pi : other;
+                    const size_t keeper = loser == pi ? other : pi;
+                    const char* overlapWhy = "unknown";
+                    if (!provenContained(loser, keeper, overlapWhy)) {
+                        dbg("orthogonal local comb face %d: ambiguous "
+                            "directed-edge overlap (%s, cells %zu/%zu, "
+                            "areas %.9g/%.9g) -> demote",
+                            faceId, overlapWhy, loser, keeper,
+                            loser == pi ? std::abs(signedUvArea(a))
+                                        : std::abs(signedUvArea(b)),
+                            keeper == pi ? std::abs(signedUvArea(a))
+                                         : std::abs(signedUvArea(b)));
+                        if (std::getenv("WEFT_LOCAL_COMB_DEBUG")) {
+                            const auto dumpRing = [&](const char* label,
+                                                      size_t index,
+                                                      const std::vector<gp_Pnt2d>& ring) {
+                                for (size_t ri = 0; ri < ring.size(); ++ri) {
+                                    dbg("local comb f%d %s cell %zu uv[%zu]="
+                                        "(%.12g,%.12g)", faceId, label,
+                                        index, ri, ring[ri].X(), ring[ri].Y());
+                                }
+                            };
+                            dumpRing("candidate-a", pi, a);
+                            dumpRing("candidate-b", other, b);
+                        }
+                        return false;
+                    }
+                    drop[loser] = 1;
+                    ++culledOverlaps;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) break;
+        }
+        if (culledOverlaps) {
+            const bool haveCorners =
+                pm.polygonCornerAnchors.size() == pm.polygons.size();
+            const bool haveCertified =
+                pm.certifiedTriangles.size() == pm.polygons.size();
+            std::vector<std::vector<uint32_t>> polygons;
+            std::vector<int> faceIds;
+            std::vector<std::vector<Anchor>> corners;
+            std::vector<std::vector<std::array<uint32_t, 3>>> certified;
+            polygons.reserve(pm.polygons.size() - culledOverlaps);
+            faceIds.reserve(pm.polygons.size() - culledOverlaps);
+            if (haveCorners) corners.reserve(pm.polygons.size() - culledOverlaps);
+            if (haveCertified)
+                certified.reserve(pm.polygons.size() - culledOverlaps);
+            for (size_t pi = 0; pi < pm.polygons.size(); ++pi) {
+                if (drop[pi]) continue;
+                polygons.push_back(std::move(pm.polygons[pi]));
+                faceIds.push_back(pm.polygonFaceId[pi]);
+                if (haveCorners)
+                    corners.push_back(std::move(pm.polygonCornerAnchors[pi]));
+                if (haveCertified)
+                    certified.push_back(std::move(pm.certifiedTriangles[pi]));
+            }
+            pm.polygons = std::move(polygons);
+            pm.polygonFaceId = std::move(faceIds);
+            if (haveCorners) pm.polygonCornerAnchors = std::move(corners);
+            if (haveCertified) pm.certifiedTriangles = std::move(certified);
+            emitted -= culledOverlaps;
+        }
+    }
+    dbg("orthogonal local comb face %d: %zu slabs, %d structural cols, "
+        "%d quads + %d boundary n-gons, %d covered slivers removed (cap %d)",
+        faceId, slabs.size(), fullCols, emittedQuads, emittedNgons,
+        culledOverlaps, cellCap);
+    return emitted > 0;
+}
 
 bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
                             const BRepAdaptor_Surface& surf,
@@ -12939,9 +16184,12 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
     const double v0 = surf.FirstVParameter(), v1 = surf.LastVParameter();
     const double ut = 1e-9 * std::max(1.0, std::abs(u1 - u0));
     const double vt = 1e-9 * std::max(1.0, std::abs(v1 - v0));
-    std::vector<double> U, V;
-    for (int i = 0; i <= nu; ++i) U.push_back(u0 + (u1 - u0) * i / nu);
-    for (int j = 0; j <= nv; ++j) V.push_back(v0 + (v1 - v0) * j / nv);
+    std::vector<double> baseU, baseV;
+    for (int i = 0; i <= nu; ++i)
+        baseU.push_back(u0 + (u1 - u0) * i / nu);
+    for (int j = 0; j <= nv; ++j)
+        baseV.push_back(v0 + (v1 - v0) * j / nv);
+    std::vector<double> U = baseU, V = baseV;
     auto addEdgeEndpoints = [&](int eid) {
         const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
         double f, l;
@@ -13082,6 +16330,7 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
         return id;
     };
     int emitted = 0, tris = 0, quads = 0, ngons = 0;
+    const size_t polyBegin = out.mesh().polygons.size();
     for (int j = 0; j + 1 < int(V.size()); ++j) {
         if (V[j + 1] - V[j] <= vt) continue;
         const double vb = V[j], vt2 = V[j+1], vm = 0.5*(vb+vt2);
@@ -13169,6 +16418,192 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
             }
         }
     }
+    // The fine clipping table above contains every trim endpoint so each
+    // groove cap is cut exactly.  On a repeated-groove drum those endpoints
+    // are LOCAL feature stations, not global topology.  Collapse a fine-grid
+    // edge whenever it lies off the uniform primitive rows/columns and the
+    // two cells on its sides form one rectangular quad.  At a groove rail or
+    // cap one side is absent/curved, so the station remains exactly where the
+    // feature owns it; everywhere else the long primitive span is restored.
+    // This is the same local-region doctrine as the open-band castellation
+    // builder, applied conservatively after exact polygon clipping.
+    int localizedEdges = 0;
+    if (plan.orthogonalDrumComb) {
+        PolyMesh& pm = out.mesh();
+        const double colTolU = std::max(ut, 2e-8 * std::abs(u1-u0));
+        const double colTolV = std::max(vt, 2e-8 * std::abs(v1-v0));
+        auto onBase = [](double x, const std::vector<double>& base,
+                         double tol) {
+            auto it = std::lower_bound(base.begin(), base.end(), x);
+            if (it != base.end() && std::abs(*it-x) <= tol) return true;
+            return it != base.begin() && std::abs(*std::prev(it)-x) <= tol;
+        };
+        auto uvArea = [&](const std::vector<uint32_t>& p) {
+            double a = 0.0;
+            for (size_t i = 0; i < p.size(); ++i) {
+                const Anchor& A = pm.anchors[p[i]];
+                const Anchor& B = pm.anchors[p[(i+1)%p.size()]];
+                a += A.u*B.v - B.u*A.v;
+            }
+            return a;
+        };
+        for (;;) {
+            struct Use { size_t poly; uint32_t a, b; };
+            std::map<std::pair<uint32_t,uint32_t>, std::vector<Use>> uses;
+            for (size_t pi = polyBegin; pi < pm.polygons.size(); ++pi) {
+                const auto& p = pm.polygons[pi];
+                if (p.size() < 3 || p.size() > 4) continue;
+                for (size_t k = 0; k < p.size(); ++k) {
+                    const uint32_t a = p[k], b = p[(k+1)%p.size()];
+                    uses[{std::min(a,b),std::max(a,b)}].push_back({pi,a,b});
+                }
+            }
+            bool changed = false;
+            std::set<size_t> claimed;
+            for (const auto& [shared, use] : uses) {
+                if (use.size() != 2 || use[0].poly == use[1].poly) continue;
+                const Anchor& A = pm.anchors[shared.first];
+                const Anchor& B = pm.anchors[shared.second];
+                if (A.faceId != faceId || B.faceId != faceId) continue;
+                const bool constU = std::abs(A.u-B.u) <= colTolU;
+                const bool constV = std::abs(A.v-B.v) <= colTolV;
+                if (!constU && !constV) continue;
+                if (constU && onBase(0.5*(A.u+B.u),baseU,colTolU)) continue;
+                if (constV && onBase(0.5*(A.v+B.v),baseV,colTolV)) continue;
+
+                const size_t pa = use[0].poly, pb = use[1].poly;
+                if (claimed.count(pa) || claimed.count(pb) ||
+                    pm.polygons[pa].empty() || pm.polygons[pb].empty()) {
+                    continue;
+                }
+                std::map<std::pair<uint32_t,uint32_t>, int> count;
+                std::map<uint32_t,std::vector<uint32_t>> adjacency;
+                for (size_t pi : {pa,pb}) {
+                    const auto& p = pm.polygons[pi];
+                    for (size_t k = 0; k < p.size(); ++k) {
+                        const uint32_t x=p[k], y=p[(k+1)%p.size()];
+                        ++count[{std::min(x,y),std::max(x,y)}];
+                    }
+                }
+                for (const auto& [e,c] : count) {
+                    if (c != 1) continue;
+                    adjacency[e.first].push_back(e.second);
+                    adjacency[e.second].push_back(e.first);
+                }
+                if (adjacency.size() < 4 ||
+                    std::any_of(adjacency.begin(), adjacency.end(),
+                                [](const auto& kv){return kv.second.size()!=2;})) {
+                    continue;
+                }
+                std::vector<uint32_t> ring;
+                uint32_t start = adjacency.begin()->first, prev = UINT32_MAX;
+                uint32_t cur = start;
+                do {
+                    ring.push_back(cur);
+                    const auto& n = adjacency[cur];
+                    const uint32_t next = n[0] == prev ? n[1] : n[0];
+                    prev = cur; cur = next;
+                } while (cur != start && ring.size() <= adjacency.size()+1);
+                if (cur != start || ring.size() != adjacency.size()) continue;
+
+                bool reduced = true;
+                while (reduced && ring.size() > 4) {
+                    reduced = false;
+                    for (size_t k = 0; k < ring.size(); ++k) {
+                        const Anchor& P = pm.anchors[ring[(k+ring.size()-1)%ring.size()]];
+                        const Anchor& Q = pm.anchors[ring[k]];
+                        const Anchor& R = pm.anchors[ring[(k+1)%ring.size()]];
+                        const double cross=(Q.u-P.u)*(R.v-Q.v)-
+                                           (Q.v-P.v)*(R.u-Q.u);
+                        const double scale=std::hypot(Q.u-P.u,Q.v-P.v)*
+                                           std::hypot(R.u-Q.u,R.v-Q.v);
+                        if (std::abs(cross) <= 1e-9*std::max(1e-30,scale)) {
+                            ring.erase(ring.begin()+k);
+                            reduced = true;
+                            break;
+                        }
+                    }
+                }
+                if (ring.size() != 4) continue;
+                if (uvArea(ring) * uvArea(pm.polygons[pa]) < 0.0)
+                    std::reverse(ring.begin(),ring.end());
+                // Candidate must remain a simple UV quad and face the CAD
+                // sheet. This is deliberately checked inside the builder,
+                // before the global fold census, so localizing comb stations
+                // cannot introduce a late sliver/fold after validation.
+                auto orientUv = [&](uint32_t ia, uint32_t ib, uint32_t ic) {
+                    const Anchor& a = pm.anchors[ia];
+                    const Anchor& b = pm.anchors[ib];
+                    const Anchor& c = pm.anchors[ic];
+                    return (b.u-a.u)*(c.v-a.v) -
+                           (b.v-a.v)*(c.u-a.u);
+                };
+                auto crosses = [&](uint32_t ia, uint32_t ib,
+                                   uint32_t ic, uint32_t id) {
+                    const double abC = orientUv(ia,ib,ic);
+                    const double abD = orientUv(ia,ib,id);
+                    const double cdA = orientUv(ic,id,ia);
+                    const double cdB = orientUv(ic,id,ib);
+                    return abC*abD < -1e-20 && cdA*cdB < -1e-20;
+                };
+                if (crosses(ring[0],ring[1],ring[2],ring[3]) ||
+                    crosses(ring[1],ring[2],ring[3],ring[0])) {
+                    continue;
+                }
+                double cu = 0.0, cv = 0.0;
+                gp_XYZ nw(0,0,0);
+                for (size_t k = 0; k < ring.size(); ++k) {
+                    const Anchor& a = pm.anchors[ring[k]];
+                    const Anchor& b = pm.anchors[ring[(k+1)%ring.size()]];
+                    cu += a.u; cv += a.v;
+                    const gp_XYZ pa3 = surf.Value(a.u,a.v).XYZ();
+                    const gp_XYZ pb3 = surf.Value(b.u,b.v).XYZ();
+                    nw += gp_XYZ(pa3.Y()*pb3.Z()-pa3.Z()*pb3.Y(),
+                                 pa3.Z()*pb3.X()-pa3.X()*pb3.Z(),
+                                 pa3.X()*pb3.Y()-pa3.Y()*pb3.X());
+                }
+                cu /= ring.size(); cv /= ring.size();
+                gp_Pnt sp; gp_Vec du,dv;
+                surf.D1(cu,cv,sp,du,dv);
+                gp_Vec expected = du.Crossed(dv);
+                if (faceReversed) expected.Reverse();
+                if (nw.Modulus() <= 1e-16 || expected.Magnitude() <= 1e-16)
+                    continue;
+                if (gp_Vec(nw).Dot(expected) < 0.0) {
+                    std::reverse(ring.begin(),ring.end());
+                }
+                pm.polygons[pa] = std::move(ring);
+                pm.polygons[pb].clear();
+                claimed.insert(pa);
+                claimed.insert(pb);
+                ++localizedEdges;
+                changed = true;
+            }
+            if (!changed) break;
+        }
+        if (localizedEdges) {
+            std::vector<std::vector<uint32_t>> polys;
+            std::vector<int> owners;
+            polys.reserve(pm.polygons.size()-localizedEdges);
+            owners.reserve(pm.polygonFaceId.size()-localizedEdges);
+            for (size_t i = 0; i < pm.polygons.size(); ++i) {
+                if (pm.polygons[i].empty()) continue;
+                polys.push_back(std::move(pm.polygons[i]));
+                owners.push_back(i < pm.polygonFaceId.size()
+                                     ? pm.polygonFaceId[i] : faceId);
+            }
+            pm.polygons = std::move(polys);
+            pm.polygonFaceId = std::move(owners);
+            emitted -= localizedEdges;
+            tris = quads = ngons = 0;
+            for (size_t i = polyBegin; i < pm.polygons.size(); ++i) {
+                if (pm.polygons[i].size()==3) ++tris;
+                else if (pm.polygons[i].size()==4) ++quads;
+                else ++ngons;
+            }
+        }
+    }
+
     // Clipping a non-convex trim exactly on a station line can leave a
     // numerically tiny cell whose Newell test chooses the opposite hand.
     // Propagate one consistent winding through shared lattice edges; each
@@ -13209,9 +16644,9 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
             if (parity[i]) std::reverse(pm.polygons[i].begin(),
                                         pm.polygons[i].end());
     }
-    dbg("orthogonal grid face %d: %zux%zu stations, %d cells (%d tri, "
-        "%d quad, %d ngon)", faceId, U.size(), V.size(), emitted, tris,
-        quads, ngons);
+    dbg("orthogonal grid face %d: %zux%zu fine stations, %d cells (%d tri, "
+        "%d quad, %d ngon), localized %d feature edges", faceId, U.size(),
+        V.size(), emitted, tris, quads, ngons, localizedEdges);
     return emitted > 0;
 }
 
@@ -15350,6 +18785,12 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
         // moving them tears its web triangles open.
         if (fid < int(fellBack.size()) && fellBack[fid] == 2) return false;
         MesherKind k = plans.at(fid).kind;
+        // RibbonSweep samples every border directly from the shared 3D curve
+        // at the pinned/solved fractions and passes the exact border contract
+        // before it is accepted.  Treat that rail ladder as an authority too:
+        // post-build snapping shears its sparse cap rungs and can fold an
+        // otherwise clean short strip.
+        if (k == MesherKind::RibbonSweep) return false;
         return (k == MesherKind::Fallback || k == MesherKind::QuadDominant ||
                 k == MesherKind::AnnulusRing ||
                 !plans.at(fid).loops.empty() ||
@@ -16135,7 +19576,10 @@ void fuseSeamTwins(PolyMesh& mesh, const Model& model, double weldTol) {
 // each face meshed at — the load-bearing pass of the decoupled-seams
 // architecture, replacing forced count equality. Geometry never moves:
 // only polygon connectivity gains vertices that already exist.
-void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
+void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
+                 const std::map<int, FacePlan>& plans,
+                 const GenerationSettings& settings,
+                 DensitySolution& density) {
     // face -> polygon indices (only 2-owner edges are stitched).
     std::map<int, std::vector<size_t>> facePolys;
     for (size_t p = 0; p < mesh.polygons.size(); ++p) {
@@ -16262,6 +19706,20 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
             home[v] = dh;
         }
     }
+    struct LocalCombBridgeEdge {
+        int edgeId = 0;
+        int localFace = 0;
+        int featureFace = 0;
+        uint32_t seed = std::numeric_limits<uint32_t>::max();
+    };
+    std::vector<LocalCombBridgeEdge> localCombBridgeEdges;
+    // The endpoint-bridge proof is still a research experiment.  Keep it
+    // opt-in until the entire proposal is transactional: earlier versions
+    // could reject the final bridge batch after already rewriting seam
+    // polygons, which regressed the accepted MP9 handgrip topology.  The
+    // ordinary shared-edge stitch path remains the production default.
+    const bool enableExperimentalLocalCombBridge =
+        std::getenv("WEFT_ENABLE_EXPERIMENTAL_LOCAL_COMB_BRIDGE") != nullptr;
     int spliced = 0;
     for (int eid = 1; eid <= model.edgeCount(); ++eid) {
         const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
@@ -16401,6 +19859,95 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
         if (traceEid) {
             dbg("stitch eid %d: sides %zu/%zu (f%d/f%d)", eid,
                 sideVerts[0].size(), sideVerts[1].size(), fA, fB);
+            for (int s2 = 0; s2 < 2; ++s2) {
+                auto bit = faceBoundary.find(fids[s2]);
+                if (bit == faceBoundary.end()) continue;
+                std::set<uint32_t> boundaryVerts;
+                for (const auto& [a, b] : bit->second) {
+                    boundaryVerts.insert(a);
+                    boundaryVerts.insert(b);
+                }
+                for (int end = 0; end < 2; ++end) {
+                    const gp_Pnt& q = end ? cp.back() : cp.front();
+                    std::vector<std::pair<double, uint32_t>> nearest;
+                    for (uint32_t v : boundaryVerts) {
+                        const auto& p = mesh.vertices[v];
+                        const double dx = p[0] - q.X();
+                        const double dy = p[1] - q.Y();
+                        const double dz = p[2] - q.Z();
+                        nearest.push_back({std::sqrt(dx * dx + dy * dy +
+                                                     dz * dz),
+                                           v});
+                    }
+                    std::sort(nearest.begin(), nearest.end());
+                    for (size_t k = 0; k < std::min<size_t>(4, nearest.size());
+                         ++k) {
+                        const auto [d, v] = nearest[k];
+                        const auto pit = facePitch[fids[s2]].find(v);
+                        const double pv = pit != facePitch[fids[s2]].end()
+                                              ? pit->second
+                                              : 0.0;
+                        dbg("stitch eid %d f%d end%d candidate%zu v%u "
+                            "dEnd=%.4g pitch=%.4g admitted=%d",
+                            eid, fids[s2], end, k, v, d, pv,
+                            sideVerts[s2].count(v) ? 1 : 0);
+                    }
+                }
+            }
+            dbg("stitch eid %d tolerances edge=%.4g faces=%.4g/%.4g "
+                "tolCap=%.4g",
+                eid, BRep_Tool::Tolerance(edge),
+                BRep_Tool::Tolerance(TopoDS::Face(model.faces(fA))),
+                BRep_Tool::Tolerance(TopoDS::Face(model.faces(fB))), tolCap);
+        }
+        const auto planA = plans.find(fA);
+        const auto planB = plans.find(fB);
+        const bool combA = planA != plans.end() &&
+                           planA->second.orthogonalLocalComb;
+        const bool combB = planB != plans.end() &&
+                           planB->second.orthogonalLocalComb;
+        if (enableExperimentalLocalCombBridge && combA != combB) {
+            const int localSide = combA ? 0 : 1;
+            const FacePlan& localPlan = combA ? planA->second : planB->second;
+            const bool horizontalClosure =
+                std::find(localPlan.uEdges.begin(), localPlan.uEdges.end(),
+                          eid) != localPlan.uEdges.end();
+            const bool pinned = settings.perEdge.count(eid) != 0 ||
+                density.pinnedRoots.count(density.groups.find(eid)) != 0;
+            const int solved = density.countFor(eid, 1);
+            if (horizontalClosure && solved <= 3 && !pinned &&
+                sideVerts[localSide].size() < 2) {
+                uint32_t seed = std::numeric_limits<uint32_t>::max();
+                double seedDistance = 1e300;
+                for (int side = 0; side < 2; ++side) {
+                    for (uint32_t v : sideVerts[side]) {
+                        const auto& p = mesh.vertices[v];
+                        const auto distanceTo = [&](const gp_Pnt& q) {
+                            const double dx = p[0] - q.X();
+                            const double dy = p[1] - q.Y();
+                            const double dz = p[2] - q.Z();
+                            return std::sqrt(dx * dx + dy * dy + dz * dz);
+                        };
+                        const double d = std::min(distanceTo(cp.front()),
+                                                  distanceTo(cp.back()));
+                        if (d < seedDistance) {
+                            seedDistance = d;
+                            seed = v;
+                        }
+                    }
+                }
+                if (seed != std::numeric_limits<uint32_t>::max()) {
+                    localCombBridgeEdges.push_back(
+                        {eid, fids[localSide], fids[1 - localSide], seed});
+                }
+                if (traceEid) {
+                    dbg("stitch eid %d: defer local-comb endpoint bridge "
+                        "(local f%d, feature f%d, solved %d, seed v%u)",
+                        eid, fids[localSide], fids[1 - localSide], solved,
+                        seed);
+                }
+                continue;
+            }
         }
         if (sideVerts[0].empty() || sideVerts[1].empty()) continue;
         // Already agreeing (welded shared chain)? Nothing to do.
@@ -16599,7 +20146,1331 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
             }
         }
     }
+    // A local-comb's short horizontal closures are deliberately not widened
+    // into the global structural lattice.  At a CAD-vertex star that can
+    // leave several already-meshed face borders forming one small open loop:
+    // there is no honest local segment for the ordinary union-chain splice
+    // above to rewrite.  Close only such proven loops, using existing border
+    // vertices.  No vertex moves, no sample/count changes, and no existing
+    // polygon is rewritten.
+    int bridgePolygons = 0;
+    if (!localCombBridgeEdges.empty()) {
+        struct OpenEdge {
+            uint32_t a = 0, b = 0;
+            int face = 0;
+        };
+        using EdgeKey = std::pair<uint32_t, uint32_t>;
+        auto edgeKey = [](uint32_t a, uint32_t b) {
+            return std::make_pair(std::min(a, b), std::max(a, b));
+        };
+        std::map<EdgeKey, int> edgeUses;
+        std::map<EdgeKey, std::vector<std::pair<uint32_t, uint32_t>>>
+            edgeDirections;
+        for (size_t pi = 0; pi < mesh.polygons.size(); ++pi) {
+            const auto& poly = mesh.polygons[pi];
+            for (size_t k = 0; k < poly.size(); ++k) {
+                const uint32_t a = poly[k], b = poly[(k + 1) % poly.size()];
+                ++edgeUses[edgeKey(a, b)];
+                edgeDirections[edgeKey(a, b)].push_back({a, b});
+            }
+        }
+
+        std::vector<OpenEdge> open;
+        std::map<uint32_t, std::vector<size_t>> incident, outgoing, incoming;
+        for (size_t pi = 0; pi < mesh.polygons.size(); ++pi) {
+            const auto& poly = mesh.polygons[pi];
+            for (size_t k = 0; k < poly.size(); ++k) {
+                const uint32_t a = poly[k], b = poly[(k + 1) % poly.size()];
+                if (edgeUses[edgeKey(a, b)] != 1) continue;
+                const size_t oi = open.size();
+                open.push_back({a, b, mesh.polygonFaceId[pi]});
+                incident[a].push_back(oi);
+                incident[b].push_back(oi);
+                outgoing[a].push_back(oi);
+                incoming[b].push_back(oi);
+            }
+        }
+
+        struct OpenComponent {
+            std::vector<size_t> edges;
+            std::set<uint32_t> vertices;
+        };
+        std::vector<OpenComponent> components;
+        std::vector<int> componentOfOpen(open.size(), -1);
+        std::map<uint32_t, int> componentOfVertex;
+        for (size_t first = 0; first < open.size(); ++first) {
+            if (componentOfOpen[first] >= 0) continue;
+            const int ci = static_cast<int>(components.size());
+            components.push_back({});
+            std::vector<size_t> stack{first};
+            componentOfOpen[first] = ci;
+            while (!stack.empty()) {
+                const size_t oi = stack.back();
+                stack.pop_back();
+                components[ci].edges.push_back(oi);
+                for (uint32_t v : {open[oi].a, open[oi].b}) {
+                    components[ci].vertices.insert(v);
+                    componentOfVertex[v] = ci;
+                    for (size_t next : incident[v]) {
+                        if (componentOfOpen[next] >= 0) continue;
+                        componentOfOpen[next] = ci;
+                        stack.push_back(next);
+                    }
+                }
+            }
+        }
+
+        std::map<int, std::vector<size_t>> candidatesByComponent;
+        bool candidateMappingOk = true;
+        for (size_t i = 0; i < localCombBridgeEdges.size(); ++i) {
+            const auto found = componentOfVertex.find(
+                localCombBridgeEdges[i].seed);
+            if (found == componentOfVertex.end()) {
+                candidateMappingOk = false;
+                break;
+            }
+            candidatesByComponent[found->second].push_back(i);
+        }
+
+        struct BridgeProposal {
+            std::vector<uint32_t> ring;
+            int face = 0;
+        };
+        struct SingleBridgeStar {
+            size_t proposalIndex = 0;
+            size_t candidateIndex = 0;
+            std::vector<uint32_t> cycle;
+            std::vector<int> cycleFaces;
+        };
+        struct SharedLocalChord {
+            EdgeKey key{};
+            int edgeId = 0;
+            int faceA = 0;
+            int faceB = 0;
+            double first = 0.0;
+            double last = 0.0;
+            double parameterA = 0.0;
+            double parameterB = 0.0;
+            double tolerance = 0.0;
+        };
+        std::vector<BridgeProposal> proposals;
+        std::vector<SingleBridgeStar> singleBridgeStars;
+        std::set<int> selectedComponents;
+        if (candidateMappingOk) {
+            for (const auto& [ci, candidateIds] : candidatesByComponent) {
+                if (ci < 0 || ci >= static_cast<int>(components.size()) ||
+                    candidateIds.empty() || candidateIds.size() > 2) {
+                    candidateMappingOk = false;
+                    break;
+                }
+                const OpenComponent& component = components[ci];
+                bool simpleDirectedCycle =
+                    component.edges.size() == component.vertices.size() &&
+                    component.edges.size() >= 3 &&
+                    component.edges.size() <= 64;
+                for (uint32_t v : component.vertices) {
+                    simpleDirectedCycle &= outgoing[v].size() == 1 &&
+                                           incoming[v].size() == 1;
+                }
+                if (!simpleDirectedCycle) {
+                    candidateMappingOk = false;
+                    break;
+                }
+
+                std::vector<uint32_t> cycle;
+                std::vector<int> cycleFaces;
+                uint32_t current = *component.vertices.begin();
+                const uint32_t start = current;
+                do {
+                    if (cycle.size() > component.edges.size()) {
+                        simpleDirectedCycle = false;
+                        break;
+                    }
+                    cycle.push_back(current);
+                    const OpenEdge& oe = open[outgoing[current].front()];
+                    cycleFaces.push_back(oe.face);
+                    current = oe.b;
+                } while (current != start);
+                if (!simpleDirectedCycle ||
+                    cycle.size() != component.edges.size()) {
+                    candidateMappingOk = false;
+                    break;
+                }
+
+                if (candidateIds.size() == 1) {
+                    const auto& candidate =
+                        localCombBridgeEdges[candidateIds.front()];
+                    if (std::find(cycleFaces.begin(), cycleFaces.end(),
+                                  candidate.localFace) == cycleFaces.end()) {
+                        candidateMappingOk = false;
+                        break;
+                    }
+                    std::reverse(cycle.begin(), cycle.end());
+                    std::reverse(cycleFaces.begin(), cycleFaces.end());
+                    // Keep an unmodified directed copy for the owner-sector
+                    // repartition below; the placeholder preserves the first
+                    // edge-use simulation until exact BRep samples exist.
+                    std::vector<uint32_t> directedCycle = cycle;
+                    std::vector<int> directedFaces = cycleFaces;
+                    std::reverse(directedCycle.begin(), directedCycle.end());
+                    std::reverse(directedFaces.begin(), directedFaces.end());
+                    singleBridgeStars.push_back(
+                        {proposals.size(), candidateIds.front(),
+                         std::move(directedCycle), std::move(directedFaces)});
+                    proposals.push_back({std::move(cycle),
+                                         candidate.localFace});
+                    selectedComponents.insert(ci);
+                    continue;
+                }
+
+                const auto& c0 = localCombBridgeEdges[candidateIds[0]];
+                const auto& c1 = localCombBridgeEdges[candidateIds[1]];
+                if (c0.localFace == c1.localFace ||
+                    c0.featureFace == c1.featureFace) {
+                    candidateMappingOk = false;
+                    break;
+                }
+                const std::set<int> localFaces{c0.localFace, c1.localFace};
+                const std::set<int> featureFaces{c0.featureFace,
+                                                 c1.featureFace};
+                std::vector<size_t> localJunctions, featureJunctions;
+                for (size_t k = 0; k < cycle.size(); ++k) {
+                    const int before =
+                        cycleFaces[(k + cycle.size() - 1) % cycle.size()];
+                    const int after = cycleFaces[k];
+                    if (before != after && localFaces.count(before) &&
+                        localFaces.count(after)) {
+                        localJunctions.push_back(k);
+                    }
+                    if (before != after && featureFaces.count(before) &&
+                        featureFaces.count(after)) {
+                        featureJunctions.push_back(k);
+                    }
+                }
+                if (localJunctions.size() != 1 ||
+                    featureJunctions.size() != 1 ||
+                    localJunctions.front() == featureJunctions.front()) {
+                    candidateMappingOk = false;
+                    break;
+                }
+
+                auto makeArc = [&](size_t from, size_t to) {
+                    std::vector<uint32_t> ring;
+                    std::set<int> arcFaces;
+                    size_t k = from;
+                    ring.push_back(cycle[k]);
+                    while (k != to) {
+                        arcFaces.insert(cycleFaces[k]);
+                        k = (k + 1) % cycle.size();
+                        ring.push_back(cycle[k]);
+                    }
+                    return std::make_pair(std::move(ring),
+                                          std::move(arcFaces));
+                };
+                auto arc0 = makeArc(featureJunctions.front(),
+                                    localJunctions.front());
+                auto arc1 = makeArc(localJunctions.front(),
+                                    featureJunctions.front());
+                std::array<std::pair<std::vector<uint32_t>, std::set<int>>, 2>
+                    arcs{std::move(arc0), std::move(arc1)};
+                std::set<size_t> assigned;
+                for (auto& arc : arcs) {
+                    size_t match = candidateIds.size();
+                    for (size_t k = 0; k < candidateIds.size(); ++k) {
+                        const auto& candidate =
+                            localCombBridgeEdges[candidateIds[k]];
+                        if (arc.second.count(candidate.localFace) &&
+                            arc.second.count(candidate.featureFace)) {
+                            if (match != candidateIds.size()) {
+                                match = candidateIds.size();
+                                break;
+                            }
+                            match = k;
+                        }
+                    }
+                    if (match == candidateIds.size() ||
+                        !assigned.insert(match).second ||
+                        arc.first.size() < 3) {
+                        candidateMappingOk = false;
+                        break;
+                    }
+                    std::reverse(arc.first.begin(), arc.first.end());
+                    proposals.push_back(
+                        {std::move(arc.first),
+                         localCombBridgeEdges[candidateIds[match]].localFace});
+                }
+                if (!candidateMappingOk || assigned.size() != 2) break;
+                selectedComponents.insert(ci);
+            }
+        }
+
+        // Simulate every edge use before touching the mesh.  Existing loop
+        // edges must gain exactly one opposite use.  A split two-face batch
+        // may introduce one chord, but that chord must occur twice in
+        // opposite directions within the same atomic proposal set.
+        std::map<EdgeKey, int> coveredOpen;
+        std::map<EdgeKey, std::vector<std::pair<uint32_t, uint32_t>>> newEdges;
+        if (candidateMappingOk) {
+            for (const BridgeProposal& proposal : proposals) {
+                const std::set<uint32_t> unique(proposal.ring.begin(),
+                                                proposal.ring.end());
+                if (proposal.ring.size() < 3 ||
+                    unique.size() != proposal.ring.size()) {
+                    candidateMappingOk = false;
+                    break;
+                }
+                for (size_t k = 0; k < proposal.ring.size(); ++k) {
+                    const uint32_t a = proposal.ring[k];
+                    const uint32_t b =
+                        proposal.ring[(k + 1) % proposal.ring.size()];
+                    const EdgeKey key = edgeKey(a, b);
+                    const int uses = edgeUses[key];
+                    if (uses == 1) {
+                        const auto& directions = edgeDirections[key];
+                        if (directions.size() != 1 ||
+                            directions.front() != std::make_pair(b, a)) {
+                            candidateMappingOk = false;
+                            break;
+                        }
+                        ++coveredOpen[key];
+                    } else if (uses == 0) {
+                        newEdges[key].push_back({a, b});
+                    } else {
+                        candidateMappingOk = false;
+                        break;
+                    }
+                }
+                if (!candidateMappingOk) break;
+            }
+        }
+        if (candidateMappingOk) {
+            for (int ci : selectedComponents) {
+                for (size_t oi : components[ci].edges) {
+                    if (coveredOpen[edgeKey(open[oi].a, open[oi].b)] != 1) {
+                        candidateMappingOk = false;
+                        break;
+                    }
+                }
+                if (!candidateMappingOk) break;
+            }
+        }
+        if (candidateMappingOk) {
+            for (const auto& [key, directions] : newEdges) {
+                if (directions.size() != 2 ||
+                    directions[0] !=
+                        std::make_pair(directions[1].second,
+                                       directions[1].first)) {
+                    candidateMappingOk = false;
+                    break;
+                }
+            }
+        }
+
+        // A two-face split introduces one synthetic chord between the two
+        // local-comb owners.  Its current endpoints are reconstructed cell
+        // corners and need not lie on the owners' exact shared BRep edge. Add
+        // only the missing exact edge samples at the uniquely nearest bounded
+        // parameters, then replace the chord by the shared connector chain.
+        // Existing vertices, cells, columns and rib stations remain untouched.
+        const size_t bridgeVertexBase = mesh.vertices.size();
+        const size_t bridgeAnchorBase = mesh.anchors.size();
+        const size_t bridgeConstraintBase = mesh.constraints.size();
+        const bool haveBridgeConstraints =
+            mesh.constraints.size() == mesh.vertices.size();
+        std::map<EdgeKey, SharedLocalChord> sharedLocalChords;
+        size_t pairedChordCount = 0;
+        size_t extraStarProposals = 0;
+        if (candidateMappingOk) {
+            auto nearestBoundedParameter = [&](const TopoDS_Edge& edge,
+                                               uint32_t vi,
+                                               double& parameter,
+                                               double& distance) {
+                if (vi >= mesh.vertices.size()) return false;
+                BRepAdaptor_Curve curve(edge);
+                const double first = curve.FirstParameter();
+                const double last = curve.LastParameter();
+                if (!std::isfinite(first) || !std::isfinite(last) ||
+                    last <= first)
+                    return false;
+                const auto& v = mesh.vertices[vi];
+                const gp_Pnt p(v[0], v[1], v[2]);
+                struct Candidate {
+                    double distance = 0.0;
+                    double parameter = 0.0;
+                };
+                std::vector<Candidate> candidates{
+                    {p.Distance(curve.Value(first)), first},
+                    {p.Distance(curve.Value(last)), last}};
+                try {
+                    Extrema_ExtPC extrema(p, curve);
+                    if (extrema.IsDone()) {
+                        for (int i = 1; i <= extrema.NbExt(); ++i) {
+                            const double candidate =
+                                extrema.Point(i).Parameter();
+                            const double parameterTolerance = std::max(
+                                Precision::PConfusion(),
+                                1e-10 * std::abs(last - first));
+                            if (candidate < first - parameterTolerance ||
+                                candidate > last + parameterTolerance)
+                                continue;
+                            candidates.push_back(
+                                {std::sqrt(extrema.SquareDistance(i)),
+                                 candidate});
+                        }
+                    }
+                } catch (...) {
+                    // Exact endpoints remain bounded candidates.
+                }
+                const double parameterTolerance = std::max(
+                    Precision::PConfusion(),
+                    1e-10 * std::abs(last - first));
+                std::sort(candidates.begin(), candidates.end(),
+                          [](const Candidate& a, const Candidate& b) {
+                              if (a.distance != b.distance)
+                                  return a.distance < b.distance;
+                              return a.parameter < b.parameter;
+                          });
+                std::vector<Candidate> distinct;
+                for (const Candidate& candidate : candidates) {
+                    bool duplicate = false;
+                    for (const Candidate& kept : distinct) {
+                        if (std::abs(candidate.parameter - kept.parameter) <=
+                            parameterTolerance) {
+                            duplicate = true;
+                            break;
+                        }
+                    }
+                    if (!duplicate) distinct.push_back(candidate);
+                }
+                if (distinct.empty()) return false;
+                const double uniquenessTolerance = std::max(
+                    Precision::Confusion(),
+                    1e-9 * std::max(1.0, distinct.front().distance));
+                if (distinct.size() > 1 &&
+                    distinct[1].distance - distinct[0].distance <=
+                        uniquenessTolerance)
+                    return false;
+                parameter = std::clamp(distinct.front().parameter, first,
+                                       last);
+                distance = distinct.front().distance;
+                return distance <= tolCap;
+            };
+            auto edgeOrientationOnFace = [&](int faceId, int edgeId,
+                                             TopAbs_Orientation& orientation) {
+                int occurrences = 0;
+                for (TopExp_Explorer ex(model.faces(faceId), TopAbs_EDGE);
+                     ex.More(); ex.Next()) {
+                    if (model.edges.FindIndex(ex.Current()) != edgeId)
+                        continue;
+                    orientation = ex.Current().Orientation();
+                    ++occurrences;
+                }
+                return occurrences == 1 &&
+                       (orientation == TopAbs_FORWARD ||
+                        orientation == TopAbs_REVERSED);
+            };
+
+            const auto syntheticChords = newEdges;
+            for (const auto& [key, directions] : syntheticChords) {
+                std::vector<std::pair<int, std::pair<uint32_t, uint32_t>>>
+                    proposalUses;
+                for (const BridgeProposal& proposal : proposals) {
+                    for (size_t k = 0; k < proposal.ring.size(); ++k) {
+                        const uint32_t a = proposal.ring[k];
+                        const uint32_t b = proposal.ring[
+                            (k + 1) % proposal.ring.size()];
+                        if (edgeKey(a, b) == key)
+                            proposalUses.push_back({proposal.face, {a, b}});
+                    }
+                }
+                if (proposalUses.size() != 2 ||
+                    proposalUses[0].first == proposalUses[1].first) {
+                    candidateMappingOk = false;
+                    break;
+                }
+                const int faceA = proposalUses[0].first;
+                const int faceB = proposalUses[1].first;
+                const auto planForA = plans.find(faceA);
+                const auto planForB = plans.find(faceB);
+                if (planForA == plans.end() || planForB == plans.end() ||
+                    !planForA->second.orthogonalLocalComb ||
+                    !planForB->second.orthogonalLocalComb) {
+                    candidateMappingOk = false;
+                    break;
+                }
+
+                std::set<int> possibleEdges;
+                for (TopExp_Explorer ex(model.faces(faceA), TopAbs_EDGE);
+                     ex.More(); ex.Next()) {
+                    const int edgeId = model.edges.FindIndex(ex.Current());
+                    if (edgeId < 1 || possibleEdges.count(edgeId)) continue;
+                    const TopoDS_Edge edge =
+                        TopoDS::Edge(model.edges(edgeId));
+                    if (BRep_Tool::Degenerated(edge) ||
+                        !model.edgeToFaces.Contains(edge))
+                        continue;
+                    const auto& owners = model.edgeToFaces.FindFromKey(edge);
+                    if (owners.Extent() != 2) continue;
+                    std::set<int> ownerFaces;
+                    for (const TopoDS_Shape& owner : owners) {
+                        ownerFaces.insert(model.faces.FindIndex(owner));
+                    }
+                    if (ownerFaces == std::set<int>{faceA, faceB})
+                        possibleEdges.insert(edgeId);
+                }
+
+                if (possibleEdges.size() != 1) {
+                    candidateMappingOk = false;
+                    break;
+                }
+                const int edgeId = *possibleEdges.begin();
+                const TopoDS_Edge edge = TopoDS::Edge(model.edges(edgeId));
+                BRepAdaptor_Curve curve(edge);
+                const double first = curve.FirstParameter();
+                const double last = curve.LastParameter();
+                const double tolerance = std::max(
+                    {weldTol, BRep_Tool::Tolerance(edge),
+                     BRep_Tool::Tolerance(
+                         TopoDS::Face(model.faces(faceA))),
+                     BRep_Tool::Tolerance(
+                         TopoDS::Face(model.faces(faceB))),
+                     Precision::Confusion()});
+                double parameterA = 0.0, parameterB = 0.0;
+                double distanceA = 0.0, distanceB = 0.0;
+                if (!nearestBoundedParameter(edge, key.first, parameterA,
+                                             distanceA) ||
+                    !nearestBoundedParameter(edge, key.second, parameterB,
+                                             distanceB) ||
+                    std::abs(parameterA - parameterB) <=
+                        std::max(Precision::PConfusion(),
+                                 1e-10 * std::abs(last - first))) {
+                    candidateMappingOk = false;
+                    break;
+                }
+
+                double first2d = 0.0, last2d = 0.0;
+                const TopoDS_Face anchorFace =
+                    TopoDS::Face(model.faces(faceA));
+                Handle(Geom2d_Curve) pcurve = BRep_Tool::CurveOnSurface(
+                    edge, anchorFace, first2d, last2d);
+                if (pcurve.IsNull() || !BRep_Tool::SameParameter(edge)) {
+                    candidateMappingOk = false;
+                    break;
+                }
+                const double parameterTolerance = std::max(
+                    Precision::PConfusion(),
+                    1e-10 * std::abs(last2d - first2d));
+                auto exactSample = [&](double parameter,
+                                       uint32_t& vertex) {
+                    if (parameter < first2d - parameterTolerance ||
+                        parameter > last2d + parameterTolerance)
+                        return false;
+                    const gp_Pnt point = curve.Value(parameter);
+                    std::set<uint32_t> exact;
+                    for (int localFace : {faceA, faceB}) {
+                        const auto boundary = faceBoundary.find(localFace);
+                        if (boundary == faceBoundary.end()) continue;
+                        for (const auto& segment : boundary->second) {
+                            for (uint32_t vi : {segment.first,
+                                                segment.second}) {
+                                const auto& v = mesh.vertices[vi];
+                                if (point.Distance(gp_Pnt(v[0], v[1],
+                                                         v[2])) <=
+                                    tolerance)
+                                    exact.insert(vi);
+                            }
+                        }
+                    }
+                    if (exact.size() > 1) return false;
+                    if (exact.size() == 1) {
+                        vertex = *exact.begin();
+                        return true;
+                    }
+                    const gp_Pnt2d uvPoint = pcurve->Value(parameter);
+                    if (BRep_Tool::Surface(anchorFace)
+                            ->Value(uvPoint.X(), uvPoint.Y())
+                            .Distance(point) > tolerance)
+                        return false;
+                    vertex = static_cast<uint32_t>(mesh.vertices.size());
+                    mesh.vertices.push_back(
+                        {point.X(), point.Y(), point.Z()});
+                    mesh.anchors.push_back(
+                        {faceA, uvPoint.X(), uvPoint.Y()});
+                    if (haveBridgeConstraints) {
+                        mesh.constraints.push_back(
+                            {MeshConstraintType::BrepEdge, edgeId,
+                             parameter, 0.0, 0.0});
+                    }
+                    return true;
+                };
+
+                uint32_t exactA = 0, exactB = 0;
+                if (!exactSample(parameterA, exactA) ||
+                    !exactSample(parameterB, exactB) || exactA == exactB) {
+                    candidateMappingOk = false;
+                    break;
+                }
+                const EdgeKey exactKey = edgeKey(exactA, exactB);
+                SharedLocalChord proof{exactKey, edgeId, faceA, faceB,
+                                       first, last,
+                                       exactA == exactKey.first
+                                           ? parameterA
+                                           : parameterB,
+                                       exactB == exactKey.second
+                                           ? parameterB
+                                           : parameterA,
+                                       tolerance};
+
+                // Assign the one endpoint already anchored to a local owner
+                // to that owner; the other endpoint belongs to the peer by
+                // elimination.  Each main proposal keeps only its endpoint
+                // and replaces the foreign endpoint with the exact BRep
+                // sample.  A small owner-side transition then covers the one
+                // omitted open edge.  Thus f38 never inherits f37's v461 (and
+                // f107 never inherits f39's mirrored junction).
+                const int anchorOfFirst =
+                    key.first < mesh.anchors.size()
+                        ? mesh.anchors[key.first].faceId
+                        : 0;
+                const int anchorOfSecond =
+                    key.second < mesh.anchors.size()
+                        ? mesh.anchors[key.second].faceId
+                        : 0;
+                const bool firstIsLocal =
+                    anchorOfFirst == faceA || anchorOfFirst == faceB;
+                const bool secondIsLocal =
+                    anchorOfSecond == faceA || anchorOfSecond == faceB;
+                if (firstIsLocal == secondIsLocal) {
+                    candidateMappingOk = false;
+                    break;
+                }
+                const uint32_t ownedEndpoint =
+                    firstIsLocal ? key.first : key.second;
+                const int ownedFace = firstIsLocal ? anchorOfFirst
+                                                   : anchorOfSecond;
+                if (ownedFace != faceA && ownedFace != faceB) {
+                    candidateMappingOk = false;
+                    break;
+                }
+                const int peerFace = ownedFace == faceA ? faceB : faceA;
+                auto exactFor = [&](uint32_t vi) {
+                    return vi == key.first ? exactA : exactB;
+                };
+                auto ownerFor = [&](uint32_t vi) {
+                    return vi == ownedEndpoint ? ownedFace : peerFace;
+                };
+                std::vector<BridgeProposal> transitions;
+                int transformedProposals = 0;
+                for (BridgeProposal& proposal : proposals) {
+                    if (proposal.face != faceA && proposal.face != faceB)
+                        continue;
+                    size_t chordIndex = proposal.ring.size();
+                    int chordOccurrences = 0;
+                    for (size_t k = 0; k < proposal.ring.size(); ++k) {
+                        if (edgeKey(proposal.ring[k], proposal.ring[
+                                (k + 1) % proposal.ring.size()]) == key) {
+                            chordIndex = k;
+                            ++chordOccurrences;
+                        }
+                    }
+                    if (chordOccurrences == 0) continue;
+                    if (chordOccurrences != 1 ||
+                        chordIndex == proposal.ring.size()) {
+                        candidateMappingOk = false;
+                        break;
+                    }
+                    const uint32_t retained =
+                        proposal.face == ownedFace
+                            ? ownedEndpoint
+                            : (ownedEndpoint == key.first ? key.second
+                                                          : key.first);
+                    const uint32_t foreign =
+                        retained == key.first ? key.second : key.first;
+                    if (proposal.ring[chordIndex] != retained ||
+                        proposal.ring[(chordIndex + 1) %
+                                      proposal.ring.size()] != foreign) {
+                        candidateMappingOk = false;
+                        break;
+                    }
+                    const size_t foreignIndex =
+                        (chordIndex + 1) % proposal.ring.size();
+                    const uint32_t successor = proposal.ring[
+                        (foreignIndex + 1) % proposal.ring.size()];
+                    const uint32_t exactRetained = exactFor(retained);
+                    const uint32_t exactForeign = exactFor(foreign);
+                    proposal.ring[foreignIndex] = exactForeign;
+                    proposal.ring.insert(
+                        proposal.ring.begin() + chordIndex + 1,
+                        exactRetained);
+                    transitions.push_back(
+                        {{foreign, successor, exactForeign},
+                         ownerFor(foreign)});
+                    ++transformedProposals;
+                }
+                if (!candidateMappingOk || transitions.size() != 2 ||
+                    transformedProposals != 2)
+                    break;
+                proposals.insert(proposals.end(),
+                                 std::make_move_iterator(transitions.begin()),
+                                 std::make_move_iterator(transitions.end()));
+
+                for (const auto& [faceId, oldDirected] : proposalUses) {
+                    (void)oldDirected;
+                    TopAbs_Orientation orientation = TopAbs_EXTERNAL;
+                    if (!edgeOrientationOnFace(faceId, edgeId,
+                                               orientation)) {
+                        candidateMappingOk = false;
+                        break;
+                    }
+                    std::pair<uint32_t, uint32_t> directed{};
+                    int occurrences = 0;
+                    for (const BridgeProposal& proposal : proposals) {
+                        if (proposal.face != faceId) continue;
+                        for (size_t k = 0; k < proposal.ring.size(); ++k) {
+                            const uint32_t a = proposal.ring[k];
+                            const uint32_t b = proposal.ring[
+                                (k + 1) % proposal.ring.size()];
+                            if (edgeKey(a, b) == exactKey) {
+                                directed = {a, b};
+                                ++occurrences;
+                            }
+                        }
+                    }
+                    if (occurrences != 1) {
+                        candidateMappingOk = false;
+                        break;
+                    }
+                    auto parameterFor = [&](uint32_t vi) {
+                        return vi == exactKey.first ? proof.parameterA
+                                                    : proof.parameterB;
+                    };
+                    const bool increasing =
+                        parameterFor(directed.second) >
+                        parameterFor(directed.first);
+                    if (increasing != (orientation == TopAbs_FORWARD)) {
+                        candidateMappingOk = false;
+                        break;
+                    }
+                }
+                if (!candidateMappingOk) break;
+                if (std::getenv("WEFT_STITCH_DEBUG")) {
+                    dbg("stitch: local-comb chord e%d v%u-v%u -> exact "
+                        "v%u-v%u for f%d/f%d (params %.12g/%.12g, "
+                        "offsets %.6g/%.6g)",
+                        edgeId, key.first, key.second, exactA, exactB,
+                        faceA, faceB, parameterA, parameterB, distanceA,
+                        distanceB);
+                }
+                sharedLocalChords.emplace(exactKey, std::move(proof));
+                ++pairedChordCount;
+            }
+
+            // A single deferred edge can sit in a small CAD-vertex star whose
+            // open loop contains both of its exact owners plus one owner run
+            // on either side (e240).  Replace the cross-face placeholder cap
+            // with one sector per existing face run, meeting only at the two
+            // exact endpoints of the deferred BRep edge.  Components where an
+            // exact owner has no run remain unchanged and must pass the strict
+            // one-face certification or fail closed.
+            for (const SingleBridgeStar& star : singleBridgeStars) {
+                if (!candidateMappingOk) break;
+                const LocalCombBridgeEdge& candidate =
+                    localCombBridgeEdges[star.candidateIndex];
+                if (star.cycle.size() < 3 ||
+                    star.cycleFaces.size() != star.cycle.size() ||
+                    star.proposalIndex >= proposals.size()) {
+                    candidateMappingOk = false;
+                    break;
+                }
+                struct FaceRun {
+                    int face = 0;
+                    std::vector<uint32_t> vertices;
+                };
+                std::vector<FaceRun> runs;
+                size_t start = 0;
+                bool foundBreak = false;
+                for (size_t k = 0; k < star.cycle.size(); ++k) {
+                    if (star.cycleFaces[(k + star.cycle.size() - 1) %
+                                        star.cycle.size()] !=
+                        star.cycleFaces[k]) {
+                        start = k;
+                        foundBreak = true;
+                        break;
+                    }
+                }
+                if (!foundBreak) continue;
+                for (size_t step = 0; step < star.cycle.size(); ++step) {
+                    const size_t k = (start + step) % star.cycle.size();
+                    const int faceId = star.cycleFaces[k];
+                    if (runs.empty() || runs.back().face != faceId) {
+                        runs.push_back({faceId, {star.cycle[k]}});
+                    }
+                    runs.back().vertices.push_back(
+                        star.cycle[(k + 1) % star.cycle.size()]);
+                }
+                int localRun = -1, featureRun = -1;
+                for (size_t ri = 0; ri < runs.size(); ++ri) {
+                    if (runs[ri].face == candidate.localFace) {
+                        if (localRun >= 0) {
+                            localRun = -2;
+                            break;
+                        }
+                        localRun = static_cast<int>(ri);
+                    }
+                    if (runs[ri].face == candidate.featureFace) {
+                        if (featureRun >= 0) {
+                            featureRun = -2;
+                            break;
+                        }
+                        featureRun = static_cast<int>(ri);
+                    }
+                }
+                if (localRun < 0 || featureRun < 0 || runs.size() < 3)
+                    continue;
+
+                const TopoDS_Edge edge =
+                    TopoDS::Edge(model.edges(candidate.edgeId));
+                if (BRep_Tool::Degenerated(edge) ||
+                    !BRep_Tool::SameParameter(edge) ||
+                    !model.edgeToFaces.Contains(edge)) {
+                    candidateMappingOk = false;
+                    break;
+                }
+                std::set<int> exactOwners;
+                for (const TopoDS_Shape& owner :
+                     model.edgeToFaces.FindFromKey(edge)) {
+                    exactOwners.insert(model.faces.FindIndex(owner));
+                }
+                if (exactOwners !=
+                    std::set<int>{candidate.localFace,
+                                  candidate.featureFace}) {
+                    candidateMappingOk = false;
+                    break;
+                }
+                BRepAdaptor_Curve curve(edge);
+                const double first = curve.FirstParameter();
+                const double last = curve.LastParameter();
+                const double tolerance = std::max(
+                    {weldTol, BRep_Tool::Tolerance(edge),
+                     BRep_Tool::Tolerance(TopoDS::Face(
+                         model.faces(candidate.localFace))),
+                     BRep_Tool::Tolerance(TopoDS::Face(
+                         model.faces(candidate.featureFace))),
+                     Precision::Confusion()});
+                const TopoDS_Face anchorFace = TopoDS::Face(
+                    model.faces(candidate.localFace));
+                double first2d = 0.0, last2d = 0.0;
+                Handle(Geom2d_Curve) pcurve = BRep_Tool::CurveOnSurface(
+                    edge, anchorFace, first2d, last2d);
+                if (pcurve.IsNull()) {
+                    candidateMappingOk = false;
+                    break;
+                }
+                auto exactEndpoint = [&](double parameter,
+                                         uint32_t& vertex) {
+                    const gp_Pnt point = curve.Value(parameter);
+                    std::set<uint32_t> exact;
+                    for (int owner : {candidate.localFace,
+                                      candidate.featureFace}) {
+                        const auto boundary = faceBoundary.find(owner);
+                        if (boundary == faceBoundary.end()) continue;
+                        for (const auto& segment : boundary->second) {
+                            for (uint32_t vi : {segment.first,
+                                                segment.second}) {
+                                const auto& v = mesh.vertices[vi];
+                                if (point.Distance(gp_Pnt(v[0], v[1],
+                                                         v[2])) <=
+                                    tolerance)
+                                    exact.insert(vi);
+                            }
+                        }
+                    }
+                    if (exact.size() > 1) return false;
+                    if (exact.size() == 1) {
+                        vertex = *exact.begin();
+                        return true;
+                    }
+                    const gp_Pnt2d uvPoint = pcurve->Value(parameter);
+                    if (BRep_Tool::Surface(anchorFace)
+                            ->Value(uvPoint.X(), uvPoint.Y())
+                            .Distance(point) > tolerance)
+                        return false;
+                    vertex = static_cast<uint32_t>(mesh.vertices.size());
+                    mesh.vertices.push_back(
+                        {point.X(), point.Y(), point.Z()});
+                    mesh.anchors.push_back(
+                        {candidate.localFace, uvPoint.X(), uvPoint.Y()});
+                    if (haveBridgeConstraints) {
+                        mesh.constraints.push_back(
+                            {MeshConstraintType::BrepEdge,
+                             candidate.edgeId, parameter, 0.0, 0.0});
+                    }
+                    return true;
+                };
+                uint32_t exactFirst = 0, exactLast = 0;
+                if (!exactEndpoint(first, exactFirst) ||
+                    !exactEndpoint(last, exactLast) ||
+                    exactFirst == exactLast) {
+                    candidateMappingOk = false;
+                    break;
+                }
+                TopAbs_Orientation localOrientation = TopAbs_EXTERNAL;
+                TopAbs_Orientation featureOrientation = TopAbs_EXTERNAL;
+                if (!edgeOrientationOnFace(candidate.localFace,
+                                           candidate.edgeId,
+                                           localOrientation) ||
+                    !edgeOrientationOnFace(candidate.featureFace,
+                                           candidate.edgeId,
+                                           featureOrientation) ||
+                    localOrientation == featureOrientation) {
+                    candidateMappingOk = false;
+                    break;
+                }
+                const uint32_t qFL =
+                    localOrientation == TopAbs_FORWARD ? exactFirst
+                                                       : exactLast;
+                const uint32_t qLF =
+                    localOrientation == TopAbs_FORWARD ? exactLast
+                                                       : exactFirst;
+                std::vector<char> onLocalToFeature(runs.size(), 0);
+                for (size_t ri = (localRun + 1) % runs.size();
+                     static_cast<int>(ri) != featureRun;
+                     ri = (ri + 1) % runs.size()) {
+                    onLocalToFeature[ri] = 1;
+                }
+                std::vector<BridgeProposal> sectors;
+                for (size_t ri = 0; ri < runs.size(); ++ri) {
+                    std::vector<uint32_t> ring = runs[ri].vertices;
+                    std::reverse(ring.begin(), ring.end());
+                    if (static_cast<int>(ri) == localRun) {
+                        ring.push_back(qFL);
+                        ring.push_back(qLF);
+                    } else if (static_cast<int>(ri) == featureRun) {
+                        ring.push_back(qLF);
+                        ring.push_back(qFL);
+                    } else {
+                        ring.push_back(onLocalToFeature[ri] ? qLF : qFL);
+                    }
+                    ring.erase(std::unique(ring.begin(), ring.end()),
+                               ring.end());
+                    if (ring.size() > 1 && ring.front() == ring.back())
+                        ring.pop_back();
+                    if (ring.size() < 3) {
+                        candidateMappingOk = false;
+                        break;
+                    }
+                    sectors.push_back({std::move(ring), runs[ri].face});
+                }
+                if (!candidateMappingOk || sectors.size() != runs.size())
+                    break;
+                proposals[star.proposalIndex] = std::move(sectors.front());
+                for (size_t si = 1; si < sectors.size(); ++si)
+                    proposals.push_back(std::move(sectors[si]));
+                extraStarProposals += sectors.size() - 1;
+                const EdgeKey exactKey = edgeKey(exactFirst, exactLast);
+                sharedLocalChords.emplace(
+                    exactKey,
+                    SharedLocalChord{
+                        exactKey, candidate.edgeId, candidate.localFace,
+                        candidate.featureFace, first, last,
+                        exactFirst == exactKey.first ? first : last,
+                        exactLast == exactKey.second ? last : first,
+                        tolerance});
+                if (std::getenv("WEFT_STITCH_DEBUG")) {
+                    dbg("stitch: local-comb star e%d repartitioned into "
+                        "%zu owner sectors at exact v%u-v%u",
+                        candidate.edgeId, sectors.size(), exactFirst,
+                        exactLast);
+                }
+            }
+        }
+
+        // Re-run the complete edge-use simulation after replacing each
+        // synthetic chord by old-junction -> exact-edge -> old-junction.
+        if (candidateMappingOk) {
+            coveredOpen.clear();
+            newEdges.clear();
+            for (const BridgeProposal& proposal : proposals) {
+                const std::set<uint32_t> unique(proposal.ring.begin(),
+                                                proposal.ring.end());
+                if (proposal.ring.size() < 3 ||
+                    unique.size() != proposal.ring.size()) {
+                    candidateMappingOk = false;
+                    break;
+                }
+                for (size_t k = 0; k < proposal.ring.size(); ++k) {
+                    const uint32_t a = proposal.ring[k];
+                    const uint32_t b = proposal.ring[
+                        (k + 1) % proposal.ring.size()];
+                    const EdgeKey key = edgeKey(a, b);
+                    const int uses = edgeUses[key];
+                    if (uses == 1) {
+                        const auto& directions = edgeDirections[key];
+                        if (directions.size() != 1 ||
+                            directions.front() != std::make_pair(b, a)) {
+                            candidateMappingOk = false;
+                            break;
+                        }
+                        ++coveredOpen[key];
+                    } else if (uses == 0) {
+                        newEdges[key].push_back({a, b});
+                    } else {
+                        candidateMappingOk = false;
+                        break;
+                    }
+                }
+                if (!candidateMappingOk) break;
+            }
+        }
+        if (candidateMappingOk) {
+            for (int ci : selectedComponents) {
+                for (size_t oi : components[ci].edges) {
+                    if (coveredOpen[edgeKey(open[oi].a, open[oi].b)] != 1) {
+                        candidateMappingOk = false;
+                        break;
+                    }
+                }
+                if (!candidateMappingOk) break;
+            }
+        }
+        if (candidateMappingOk) {
+            for (const auto& [key, directions] : newEdges) {
+                if (directions.size() != 2 ||
+                    directions[0] !=
+                        std::make_pair(directions[1].second,
+                                       directions[1].first)) {
+                    candidateMappingOk = false;
+                    break;
+                }
+            }
+        }
+        if (std::getenv("WEFT_STITCH_DEBUG")) {
+            dbg("stitch: local-comb bridge topology %s (%zu candidates, "
+                "%zu proposals, %zu components, %zu new chords)",
+                candidateMappingOk ? "accepted" : "rejected",
+                localCombBridgeEdges.size(), proposals.size(),
+                selectedComponents.size(), newEdges.size());
+            for (const BridgeProposal& proposal : proposals) {
+                dbg("stitch: local-comb bridge proposal f%d has %zu corners",
+                    proposal.face, proposal.ring.size());
+            }
+        }
+
+        auto certifyBridge = [&](const BridgeProposal& proposal) {
+            auto reject = [&](const char* why) {
+                if (std::getenv("WEFT_STITCH_DEBUG")) {
+                    dbg("stitch: local-comb bridge f%d rejected: %s",
+                        proposal.face, why);
+                }
+                return false;
+            };
+            if (proposal.face < 1 || proposal.face > model.faceCount())
+                return reject("invalid face");
+            const TopoDS_Face face = TopoDS::Face(model.faces(proposal.face));
+            Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+            if (surface.IsNull()) return reject("missing surface");
+            BRepAdaptor_Surface sa(face);
+            if (sa.IsUPeriodic() || sa.IsVPeriodic())
+                return reject("periodic local face");
+            const double uvSpan = std::max(
+                {1.0, std::abs(sa.LastUParameter() - sa.FirstUParameter()),
+                 std::abs(sa.LastVParameter() - sa.FirstVParameter())});
+            const double uvTol = 1e-10 * uvSpan;
+            const double uvAreaTol = uvTol * uvSpan;
+            const double faceTol = BRep_Tool::Tolerance(face);
+            std::vector<gp_Pnt2d> uv;
+            uv.reserve(proposal.ring.size());
+            auto provesExistingOwnBoundary = [&](uint32_t vi, double u,
+                                                  double v) {
+                if (vi >= mesh.anchors.size() ||
+                    mesh.anchors[vi].faceId != proposal.face)
+                    return false;
+                bool usedByFace = false;
+                for (size_t pi = 0; pi < mesh.polygons.size(); ++pi) {
+                    if (mesh.polygonFaceId[pi] != proposal.face) continue;
+                    if (std::find(mesh.polygons[pi].begin(),
+                                  mesh.polygons[pi].end(), vi) !=
+                        mesh.polygons[pi].end()) {
+                        usedByFace = true;
+                        break;
+                    }
+                }
+                if (!usedByFace) return false;
+                const bool onOpenFaceBoundary = std::any_of(
+                    open.begin(), open.end(), [&](const OpenEdge& edgeUse) {
+                        return edgeUse.face == proposal.face &&
+                               (edgeUse.a == vi || edgeUse.b == vi);
+                    });
+                if (!onOpenFaceBoundary) return false;
+                const auto& p = mesh.vertices[vi];
+                const double surfaceTolerance = std::max(
+                    {weldTol, faceTol, Precision::Confusion()});
+                return surface->Value(u, v).Distance(
+                           gp_Pnt(p[0], p[1], p[2])) <= surfaceTolerance;
+            };
+            std::map<uint32_t, gp_Pnt2d> sharedBoundaryUv;
+            for (size_t k = 0; k < proposal.ring.size(); ++k) {
+                const uint32_t a = proposal.ring[k];
+                const uint32_t b =
+                    proposal.ring[(k + 1) % proposal.ring.size()];
+                const auto proofIt = sharedLocalChords.find(edgeKey(a, b));
+                if (proofIt == sharedLocalChords.end()) continue;
+                const SharedLocalChord& proof = proofIt->second;
+                if ((proposal.face != proof.faceA &&
+                     proposal.face != proof.faceB) ||
+                    !BRep_Tool::SameParameter(
+                        TopoDS::Edge(model.edges(proof.edgeId))))
+                    return reject("invalid shared-edge chord owner");
+                const TopoDS_Edge edge =
+                    TopoDS::Edge(model.edges(proof.edgeId));
+                double first2d = 0.0, last2d = 0.0;
+                Handle(Geom2d_Curve) pcurve = BRep_Tool::CurveOnSurface(
+                    edge, face, first2d, last2d);
+                if (pcurve.IsNull())
+                    return reject("missing shared-edge pcurve");
+                const double parameterTolerance = std::max(
+                    Precision::PConfusion(),
+                    1e-10 * std::abs(last2d - first2d));
+                auto addSharedBoundaryUv = [&](uint32_t vi,
+                                               double parameter) {
+                    if (parameter < first2d - parameterTolerance ||
+                        parameter > last2d + parameterTolerance)
+                        return false;
+                    const gp_Pnt2d point = pcurve->Value(parameter);
+                    const auto& v = mesh.vertices[vi];
+                    if (surface->Value(point.X(), point.Y())
+                            .Distance(gp_Pnt(v[0], v[1], v[2])) >
+                        proof.tolerance)
+                        return false;
+                    const auto [it, inserted] =
+                        sharedBoundaryUv.emplace(vi, point);
+                    return inserted ||
+                           it->second.SquareDistance(point) <=
+                               uvTol * uvTol;
+                };
+                const double parameterForA =
+                    a == proof.key.first ? proof.parameterA
+                                         : proof.parameterB;
+                const double parameterForB =
+                    b == proof.key.first ? proof.parameterA
+                                         : proof.parameterB;
+                if (!addSharedBoundaryUv(a, parameterForA) ||
+                    !addSharedBoundaryUv(b, parameterForB))
+                    return reject("shared-edge pcurve mismatch");
+            }
+            for (uint32_t vi : proposal.ring) {
+                if (vi >= mesh.vertices.size()) return reject("invalid vertex");
+                double u = 0.0, vv = 0.0;
+                const auto sharedIt = sharedBoundaryUv.find(vi);
+                const bool haveSharedBoundaryUv =
+                    sharedIt != sharedBoundaryUv.end();
+                bool haveLocalCornerUv = haveSharedBoundaryUv;
+                if (haveSharedBoundaryUv) {
+                    u = sharedIt->second.X();
+                    vv = sharedIt->second.Y();
+                }
+                if (!haveLocalCornerUv && vi < mesh.anchors.size() &&
+                    mesh.anchors[vi].faceId == proposal.face) {
+                    u = mesh.anchors[vi].u;
+                    vv = mesh.anchors[vi].v;
+                    haveLocalCornerUv = true;
+                }
+                if (!haveLocalCornerUv) {
+                    const auto& v = mesh.vertices[vi];
+                    GeomAPI_ProjectPointOnSurf project(
+                        gp_Pnt(v[0], v[1], v[2]), surface);
+                    if (!project.IsDone() || project.NbPoints() < 1 ||
+                        project.LowerDistance() > tolCap) {
+                        if (std::getenv("WEFT_STITCH_DEBUG")) {
+                            dbg("stitch: local-comb bridge f%d v%u "
+                                "projection failed (anchor f%d, distance "
+                                "%.6g, cap %.6g)",
+                                proposal.face, vi,
+                                vi < mesh.anchors.size()
+                                    ? mesh.anchors[vi].faceId
+                                    : 0,
+                                project.IsDone() && project.NbPoints() > 0
+                                    ? project.LowerDistance()
+                                    : -1.0,
+                                tolCap);
+                        }
+                        return reject("projection outside bridge band");
+                    }
+                    project.LowerDistanceParameters(u, vv);
+                }
+                BRepClass_FaceClassifier owner(
+                    const_cast<TopoDS_Face&>(face), gp_Pnt2d(u, vv), faceTol);
+                const bool haveOwnBoundaryProof =
+                    !haveSharedBoundaryUv &&
+                    provesExistingOwnBoundary(vi, u, vv);
+                if (owner.State() == TopAbs_OUT && !haveSharedBoundaryUv &&
+                    !haveOwnBoundaryProof) {
+                    if (std::getenv("WEFT_STITCH_DEBUG")) {
+                        dbg("stitch: local-comb bridge f%d v%u UV "
+                            "(%.12g,%.12g) classified OUT (anchor f%d, "
+                            "local-corner=%d)",
+                            proposal.face, vi, u, vv,
+                            vi < mesh.anchors.size()
+                                ? mesh.anchors[vi].faceId
+                                : 0,
+                            haveLocalCornerUv ? 1 : 0);
+                    }
+                    return reject("corner projects outside local face");
+                }
+                if (owner.State() == TopAbs_OUT && haveSharedBoundaryUv &&
+                    std::getenv("WEFT_STITCH_DEBUG")) {
+                    dbg("stitch: local-comb bridge f%d v%u accepted by "
+                        "shared BRep edge despite OUT pcurve classifier",
+                        proposal.face, vi);
+                }
+                if (owner.State() == TopAbs_OUT && haveOwnBoundaryProof &&
+                    std::getenv("WEFT_STITCH_DEBUG")) {
+                    dbg("stitch: local-comb bridge f%d v%u accepted by "
+                        "existing own-face open-boundary proof despite OUT "
+                        "classifier",
+                        proposal.face, vi);
+                }
+                uv.emplace_back(u, vv);
+            }
+            auto cross = [](const gp_Pnt2d& a, const gp_Pnt2d& b,
+                            const gp_Pnt2d& c) {
+                return (b.X() - a.X()) * (c.Y() - a.Y()) -
+                       (b.Y() - a.Y()) * (c.X() - a.X());
+            };
+            auto onSegment = [&](const gp_Pnt2d& p, const gp_Pnt2d& a,
+                                 const gp_Pnt2d& b) {
+                const double len = std::sqrt(a.SquareDistance(b));
+                if (len <= uvTol)
+                    return p.SquareDistance(a) <= uvTol * uvTol;
+                if (std::abs(cross(a, b, p)) > uvTol * len) return false;
+                return (p.X() - a.X()) * (p.X() - b.X()) +
+                           (p.Y() - a.Y()) * (p.Y() - b.Y()) <=
+                       uvTol * uvTol;
+            };
+            for (size_t i = 0; i < uv.size(); ++i) {
+                const size_t i2 = (i + 1) % uv.size();
+                if (uv[i].SquareDistance(uv[i2]) <= uvTol * uvTol)
+                    return reject("collapsed UV edge");
+                for (size_t j = i + 1; j < uv.size(); ++j) {
+                    const size_t j2 = (j + 1) % uv.size();
+                    if (i2 == j || j2 == i) continue;
+                    const double abC = cross(uv[i], uv[i2], uv[j]);
+                    const double abD = cross(uv[i], uv[i2], uv[j2]);
+                    const double cdA = cross(uv[j], uv[j2], uv[i]);
+                    const double cdB = cross(uv[j], uv[j2], uv[i2]);
+                    if ((abC * abD < 0.0 && cdA * cdB < 0.0) ||
+                        onSegment(uv[i], uv[j], uv[j2]) ||
+                        onSegment(uv[i2], uv[j], uv[j2]) ||
+                        onSegment(uv[j], uv[i], uv[i2]) ||
+                        onSegment(uv[j2], uv[i], uv[i2]))
+                        return reject("non-simple UV ring");
+                }
+            }
+            double twiceArea = 0.0, cu = 0.0, cv = 0.0;
+            for (size_t k = 0; k < uv.size(); ++k) {
+                const gp_Pnt2d& a = uv[k];
+                const gp_Pnt2d& b = uv[(k + 1) % uv.size()];
+                const double cr = a.X() * b.Y() - b.X() * a.Y();
+                twiceArea += cr;
+                cu += (a.X() + b.X()) * cr;
+                cv += (a.Y() + b.Y()) * cr;
+            }
+            if (std::abs(twiceArea) <= 2.0 * uvAreaTol)
+                return reject("zero UV area");
+            cu /= 3.0 * twiceArea;
+            cv /= 3.0 * twiceArea;
+            BRepClass_FaceClassifier centerOwner(
+                const_cast<TopoDS_Face&>(face), gp_Pnt2d(cu, cv), faceTol);
+            if (centerOwner.State() == TopAbs_OUT)
+                return reject("centroid outside local face");
+
+            gp_XYZ nw(0, 0, 0);
+            for (size_t k = 0; k < proposal.ring.size(); ++k) {
+                const auto& a = mesh.vertices[proposal.ring[k]];
+                const auto& b = mesh.vertices[
+                    proposal.ring[(k + 1) % proposal.ring.size()]];
+                nw += gp_XYZ(a[1] * b[2] - a[2] * b[1],
+                             a[2] * b[0] - a[0] * b[2],
+                             a[0] * b[1] - a[1] * b[0]);
+            }
+            gp_Pnt p; gp_Vec du, dv;
+            sa.D1(cu, cv, p, du, dv);
+            gp_Vec cadN = du.Crossed(dv);
+            if (face.Orientation() == TopAbs_REVERSED) cadN.Reverse();
+            if (gp_Vec(nw).Magnitude() <= 1e-16 ||
+                cadN.Magnitude() <= 1e-16 || gp_Vec(nw).Dot(cadN) <= 0.0)
+                return reject("CAD-normal disagreement");
+
+            const auto triangles = triangulatePoly(mesh.vertices,
+                                                   proposal.ring);
+            if (triangles.size() != proposal.ring.size() - 2)
+                return reject("uncertifiable triangulation");
+            for (const auto& tri : triangles) {
+                const gp_Pnt2d probe(
+                    (uv[tri[0]].X() + uv[tri[1]].X() + uv[tri[2]].X()) / 3.0,
+                    (uv[tri[0]].Y() + uv[tri[1]].Y() + uv[tri[2]].Y()) / 3.0);
+                BRepClass_FaceClassifier triOwner(
+                    const_cast<TopoDS_Face&>(face), probe, faceTol);
+                if (triOwner.State() == TopAbs_OUT)
+                    return reject("triangle probe outside local face");
+                const auto& a = mesh.vertices[proposal.ring[tri[0]]];
+                const auto& b = mesh.vertices[proposal.ring[tri[1]]];
+                const auto& c = mesh.vertices[proposal.ring[tri[2]]];
+                const gp_Vec ab(gp_Pnt(a[0], a[1], a[2]),
+                                gp_Pnt(b[0], b[1], b[2]));
+                const gp_Vec ac(gp_Pnt(a[0], a[1], a[2]),
+                                gp_Pnt(c[0], c[1], c[2]));
+                gp_Pnt tp; gp_Vec tdu, tdv;
+                sa.D1(probe.X(), probe.Y(), tp, tdu, tdv);
+                gp_Vec tCad = tdu.Crossed(tdv);
+                if (face.Orientation() == TopAbs_REVERSED) tCad.Reverse();
+                if (ab.Crossed(ac).Magnitude() <= 1e-16 ||
+                    tCad.Magnitude() <= 1e-16 ||
+                    ab.Crossed(ac).Dot(tCad) <= 0.0)
+                    return reject("triangle CAD-normal disagreement");
+            }
+            return true;
+        };
+
+        if (candidateMappingOk) {
+            for (const BridgeProposal& proposal : proposals) {
+                if (!certifyBridge(proposal)) {
+                    if (std::getenv("WEFT_STITCH_DEBUG")) {
+                        dbg("stitch: local-comb bridge geometry rejected f%d "
+                            "(%zu corners)", proposal.face,
+                            proposal.ring.size());
+                    }
+                    candidateMappingOk = false;
+                    break;
+                }
+            }
+        }
+        const size_t expectedBridgeProposalCount =
+            localCombBridgeEdges.size() + 2 * pairedChordCount +
+            extraStarProposals;
+        if (candidateMappingOk &&
+            proposals.size() == expectedBridgeProposalCount) {
+            for (BridgeProposal& proposal : proposals) {
+                mesh.polygons.push_back(std::move(proposal.ring));
+                mesh.polygonFaceId.push_back(proposal.face);
+                ++bridgePolygons;
+            }
+            mesh.polygonCornerAnchors.clear();
+            refreshCertifiedTriangulations(mesh);
+        } else {
+            mesh.vertices.resize(bridgeVertexBase);
+            mesh.anchors.resize(bridgeAnchorBase);
+            mesh.constraints.resize(bridgeConstraintBase);
+            if (std::getenv("WEFT_STITCH_DEBUG")) {
+                dbg("stitch: local-comb endpoint bridge batch rejected");
+            }
+        }
+    }
     if (spliced) dbg("stitch: %d seam vertex insertion(s)", spliced);
+    if (bridgePolygons) {
+        dbg("stitch: %d certified local-comb endpoint bridge polygon(s)",
+            bridgePolygons);
+    }
 }
 
 void unionSeams(PolyMesh& mesh, const Model& model, double weldTol) {
@@ -17257,6 +22128,80 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             }
         }
     }
+    // Section-strip intrinsic rail floor.  Its geometric proof deliberately
+    // permits each concave end closure to occupy up to one third of the rail,
+    // while the final solved-row census requires three safe central rows (two
+    // actual body intervals).  Two curvature-driven spans therefore cannot
+    // ever build even though the face is valid: they provide only the single
+    // midpoint row and make output depend on unrelated neighbour pressure.
+    // Six longitudinal spans are the smallest context-independent sampling
+    // that always exposes rows at 1/3, 1/2, and 2/3.  Raise only adaptive,
+    // unpinned rail groups; explicit author counts and fragile revolution
+    // groups remain authoritative and will demote honestly if too coarse.
+    constexpr int sectionStripMinSpans = 6;
+    for (const auto& [fid, plan] : plans) {
+        if (!plan.sectionStrip || plan.kind != MesherKind::CoonsGrid) continue;
+        const FaceMeshSettings& fs = settings.forFace(fid);
+        if (!fs.adaptive || fs.exclude) continue;
+        for (int side : {0, 2}) {
+            const std::vector<int>& rail = plan.coonsSides[side];
+            if (rail.empty()) continue;
+            auto railTotal = [&]() {
+                int total = 0;
+                for (int eid : rail) {
+                    if (eid < 1 || eid >= int(solvedEdge.size())) return -1;
+                    total += std::max(0, solvedEdge[eid]);
+                }
+                return total;
+            };
+            const int before = railTotal();
+            if (before < 1 || before >= sectionStripMinSpans) continue;
+            for (int guard = 0; guard < sectionStripMinSpans * 2; ++guard) {
+                if (railTotal() >= sectionStripMinSpans) break;
+                int bestEdge = 0;
+                double bestPitch = -1.0;
+                for (int eid : rail) {
+                    if (eid < 1 || eid > model.edgeCount() ||
+                        settings.perEdge.count(eid)) {
+                        continue;
+                    }
+                    const int root = density.groups.find(eid);
+                    if (density.pinnedRoots.count(root) ||
+                        pitchFragileRoots.count(root)) {
+                        continue;
+                    }
+                    const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+                    if (BRep_Tool::Degenerated(edge)) continue;
+                    const double len = geometryEdgeLength(eid);
+                    if (!(len > 1e-12)) continue;
+                    const double pitch =
+                        len / std::max(1, solvedEdge[eid]);
+                    if (pitch > bestPitch) {
+                        bestPitch = pitch;
+                        bestEdge = eid;
+                    }
+                }
+                if (bestEdge == 0) break;
+                const int root = density.groups.find(bestEdge);
+                const int target = solvedEdge[bestEdge] + 1;
+                auto git = density.groupCount.find(root);
+                if (git != density.groupCount.end() && git->second < target) {
+                    git->second = target;
+                }
+                for (int eid = 1; eid <= model.edgeCount(); ++eid) {
+                    if (density.groups.find(eid) == root &&
+                        solvedEdge[eid] < target) {
+                        solvedEdge[eid] = target;
+                    }
+                }
+            }
+            const int after = railTotal();
+            if (after > before) {
+                dbg("density: face %d section rail %d floor %d -> %d "
+                    "spans", fid, side / 2, before, after);
+            }
+        }
+    }
     // Rail-station ALIGNMENT (adaptive coons strips): opposite chained
     // sides match by SUM, but their stations sit at whatever arc
     // fractions the per-piece counts imply — unequal piece densities put
@@ -17286,7 +22231,9 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             if (plan.kind != MesherKind::CoonsGrid) continue;
             if (!settings.forFace(fid).adaptive) continue;
             if (settings.forFace(fid).exclude) continue;
-            bool anyChain = false;
+            const bool matchedLocalRails =
+                plan.trimCorridor || plan.sectionStrip;
+            bool anyChain = matchedLocalRails;
             for (int i = 0; i < 4; ++i) {
                 if (plan.coonsSides[i].size() > 1) anyChain = true;
             }
@@ -17307,7 +22254,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 std::vector<int> A = sideEdges(pr);
                 std::vector<int> C = sideEdges(pr + 2);
                 if (A.empty() || C.empty()) continue;
-                if (A.size() < 2 && C.size() < 2) continue;
+                if (A.size() < 2 && C.size() < 2 &&
+                    !matchedLocalRails) {
+                    continue;
+                }
                 auto chainLens = [&](const std::vector<int>& ch,
                                      std::vector<double>& L) {
                     double total = 0;
@@ -17501,7 +22451,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     const auto& A = plan.coonsSides[pr];
                     const auto& B = plan.coonsSides[pr + 2];
                     if (A.empty() || B.empty()) continue;
-                    if (A.size() == 1 && B.size() == 1) continue;  // grouped
+                    if (A.size() == 1 && B.size() == 1 &&
+                        !(plan.trimCorridor || plan.sectionStrip)) {
+                        continue;  // ordinary Coons single edges are grouped
+                    }
                     long tA = 0, tB = 0;
                     for (int e : A) tA += std::max(0, solvedEdge[e]);
                     for (int e : B) tB += std::max(0, solvedEdge[e]);
@@ -17784,6 +22737,45 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     // T-junctions along its border.
     pinOrthogonalTrimGrids(model, plans, settings, solvedEdge, pinnedEdge);
 
+    // Research-backed boundary ownership, rollout R1: freeze the FINAL legacy
+    // count/pin decisions into one immutable sequence per ordinary shared
+    // line/circle B-rep edge before any face worker starts.  Freeform edges
+    // stay on their existing even-arc path until UV/sample-id migration.
+    // edgeSampleFractions() now
+    // adapts to this table whenever a caller requests that exact count and
+    // phase; special counts remain on the legacy path.  This deliberately
+    // changes ownership before it changes any primitive mesher topology.
+    const bool enableCanonicalEdgeContracts =
+        settings.canonicalEdgeContracts ||
+        std::getenv("WEFT_USE_CANONICAL_EDGE_TABLE");
+    int canonicalSharedEdges = 0;
+    int canonicalSharedSamples = 0;
+    if (enableCanonicalEdgeContracts) {
+        std::vector<double> canonicalEdgePhase(model.edgeCount() + 1, 0.0);
+        for (int eid = 1; eid <= model.edgeCount(); ++eid) {
+            const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+            if (BRep_Tool::Degenerated(edge) ||
+                !model.edgeToFaces.Contains(edge) ||
+                model.edgeToFaces.FindFromKey(edge).Extent() != 2) {
+                continue;
+            }
+            canonicalEdgePhase[eid] = closedEdgePhase(edge, model);
+        }
+        const std::shared_ptr<const CanonicalEdgeTable> canonicalEdgeTable =
+            mesher_detail::buildCanonicalEdgeTable(
+                model, solvedEdge, pinnedEdge, canonicalEdgePhase);
+        pinnedEdge.canonical = canonicalEdgeTable;
+        for (const CanonicalEdgePlan& edge : canonicalEdgeTable->edgePlans) {
+            canonicalSharedEdges += edge.edgeId > 0 ? 1 : 0;
+            if (edge.edgeId > 0) {
+                canonicalSharedSamples +=
+                    static_cast<int>(edge.samples.size());
+            }
+        }
+        dbg("generate: %d shared edges own canonical sample sequences",
+            canonicalSharedEdges);
+    }
+
     // Resolve every face's division counts up front (union-find lookups
     // path-compress, so they must not run concurrently) — after this the
     // per-face meshing is embarrassingly parallel.
@@ -18015,7 +23007,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             key, sizeof key,
             "k%d c%d f%d a%d l%d q%d|%d,%d,%d|r%d x%d u%d v%d cap%d ch%.6g "
             "an%.6g fl%d fh%.6g jr%d qd%d mn%d ex%d ms%.6g rd%d sq%d cr%d "
-            "ds%.4g pt%d wt%.6g",
+            "ds%.4g pt%d wt%.6g ce%d",
             int(plan.kind), plan.constrains ? 1 : 0, plan.isFillet ? 1 : 0,
             plan.acrossIsU ? 1 : 0, plan.linkRims ? 1 : 0,
             plan.forceFallbackQuads, counts[fid][0], counts[fid][1],
@@ -18026,7 +23018,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             s.relativeDeviation ? 1 : 0, s.squareCollar ? 1 : 0,
             plan.coonsRotate, settings.densityScale,
             s.pureTriFloor ? 1 : 0,
-            s.weldTolerance);
+            s.weldTolerance,
+            enableCanonicalEdgeContracts ? 1 : 0);
         cacheKey[fid] = key;
         if (plan.kind == MesherKind::AnnulusRing ||
             plan.kind == MesherKind::RailLadder ||
@@ -18207,14 +23200,40 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 }
                 return hits;
             };
-            const double ph = closedEdgePhase(E, model);
-            // Pinned edges expect their explicit samples, not uniform steps.
-            const std::vector<double> frac = edgeSampleFractions(
-                eid, n, ph, false, /*includeLast=*/true, &pinnedEdge, &model);
-            const int m = int(frac.size()) - 1;
+            // Read the already-frozen 3D boundary contract.  The spatial
+            // lookup below remains a temporary compatibility oracle for face
+            // builders that do not record sample ids yet, but it no longer
+            // invents a third edge discretisation.
+            std::vector<gp_Pnt> expected;
+            const CanonicalEdgePlan* contract =
+                pinnedEdge.canonical ? pinnedEdge.canonical->find(eid)
+                                     : nullptr;
+            if (contract) {
+                expected.reserve(contract->samples.size());
+                for (const CanonicalEdgeSample& sample : contract->samples) {
+                    if (!sample.valid) {
+                        expected.clear();
+                        break;
+                    }
+                    expected.emplace_back(sample.position[0],
+                                          sample.position[1],
+                                          sample.position[2]);
+                }
+            }
+            if (expected.empty()) {
+                const double ph = closedEdgePhase(E, model);
+                const std::vector<double> frac = edgeSampleFractions(
+                    eid, n, ph, false, /*includeLast=*/true, &pinnedEdge,
+                    &model);
+                expected.reserve(frac.size());
+                for (double t : frac) {
+                    expected.push_back(c3->Value(f + (l - f) * t));
+                }
+            }
+            const int m = int(expected.size()) - 1;
             if (m < 1) continue;
             auto sampleAt = [&](int i) {
-                return c3->Value(f + (l - f) * frac[i]);
+                return expected[i];
             };
             std::vector<uint32_t> prev = nearVertsEnd(sampleAt(0));
             for (int i = 1; i <= m; ++i) {
@@ -18444,9 +23463,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         switch (plan.kind) {
             case MesherKind::RevolutionGrid:
                 if (plan.orthogonalTrimGrid) {
-                    if (!meshOrthogonalTrimGrid(face, surf, model, plan,
-                                                solvedEdge, fid, nu, nv, out,
-                                                &pinnedEdge)) {
+                    const bool ok = plan.orthogonalLocalComb
+                        ? meshOrthogonalLocalComb(face, surf, model, plan,
+                                                  solvedEdge, fid, nu, nv,
+                                                  s.cellCap, out, &pinnedEdge)
+                        : meshOrthogonalTrimGrid(face, surf, model, plan,
+                                                 solvedEdge, fid, nu, nv, out,
+                                                 &pinnedEdge);
+                    if (!ok) {
                         demote(fid, face, surf, s,
                                "orthogonal revolution grid failed");
                     }
@@ -18569,10 +23593,30 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 break;
             }
             case MesherKind::CoonsGrid: {
+                if (plan.trimCorridor || plan.sectionStrip) {
+                    builtCounts[fid] = {
+                        outerWireSolvedTotal(face, model, solvedEdge,
+                                             s.radial),
+                        plan.sectionStrip ? plan.sectionStripBands
+                                          : plan.trimCorridorBands};
+                    if (!meshTrimCorridor(face, model, plan, fid, solvedEdge,
+                                          s.radial, out, &pinnedEdge,
+                                          &builtCounts[fid])) {
+                        demote(fid, face, surf, s,
+                               plan.sectionStrip ? "section strip failed"
+                                                 : "trim corridor failed");
+                    }
+                    break;
+                }
                 if (plan.orthogonalTrimGrid) {
-                    if (!meshOrthogonalTrimGrid(face, surf, model, plan,
-                                                solvedEdge, fid, nu, nv, out,
-                                                &pinnedEdge)) {
+                    const bool ok = plan.orthogonalLocalComb
+                        ? meshOrthogonalLocalComb(face, surf, model, plan,
+                                                  solvedEdge, fid, nu, nv,
+                                                  s.cellCap, out, &pinnedEdge)
+                        : meshOrthogonalTrimGrid(face, surf, model, plan,
+                                                 solvedEdge, fid, nu, nv, out,
+                                                 &pinnedEdge);
+                    if (!ok) {
                         demote(fid, face, surf, s,
                                "orthogonal surface grid failed");
                     }
@@ -18770,7 +23814,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         return true;
                     };
                     if (meshRibbonSweep(face, model, fid, solvedEdge, s.radial,
-                                        rb) &&
+                                        rb, nullptr, &pinnedEdge) &&
                         borderContractViolation(fid, tmp) == 0 &&
                         sweepFolds() == 0 && boundaryCovers()) {
                         parts[fid] = std::move(tmp);
@@ -18863,7 +23907,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 // leak) the local exact-border floor. Never invent a global
                 // Quad Fill lattice as an emergency substitute.
                 if (meshRibbonSweep(face, model, fid, solvedEdge, s.radial,
-                                    out, &builtCounts[fid])) {
+                                    out, &builtCounts[fid], &pinnedEdge)) {
                     break;
                 }
                 demote(fid, face, surf, s, "ribbon sweep failed");
@@ -19031,6 +24075,9 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 dbg("mesh face %d: border contract failed on edge %d (%s)",
                     fid, bad, mesherKindName(plan.kind));
                 demote(fid, face, surf, s, "border contract failed");
+            } else if (plan.sectionStrip) {
+                dbg("section strip face %d: exact-border contract passed",
+                    fid);
             }
         }
         // Fold postcondition: a part whose polygons largely oppose the
@@ -19522,6 +24569,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     if (report) {
         report->cacheHits = cacheHits;
         report->cacheMisses = cacheMisses;
+        report->canonicalSharedEdges = canonicalSharedEdges;
+        report->canonicalSharedSamples = canonicalSharedSamples;
         for (int fid = 1; fid <= faceN; ++fid) {
             (cached[fid] ? report->reusedFaces : report->remeshedFaces)
                 .push_back(fid);
@@ -19875,9 +24924,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         if (!std::getenv("WEFT_NO_FUSE")) {
             fuseSeamTwins(mesh, model, weldGlobal);
         }
-        stitchSeams(mesh, model, weldGlobal);
+        stitchSeams(mesh, model, weldGlobal, plans, settings, density);
     }
-
     // Fold cleanup: a directed edge traversed twice WITHIN one face means
     // conform or decimation wrapped a flap of polygons over its
     // neighbours. The flap is the smaller overlapping polygon — drop it;
@@ -20102,6 +25150,277 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 "pair(s)",
                 pass, fuse.size());
         }
+    }
+
+    // The non-manifold micro-segment repair above can collapse one side of a
+    // local-comb quad, leaving an honest triangle beside its unchanged cell.
+    // Restore the route's grouped topology only when the two cells have one
+    // opposite shared edge and their UV union is provably simple, additive,
+    // in-face, CAD-normal aligned, and fold-free.  This is deliberately a
+    // route-local certification pass; an unproven triangle is left alone.
+    int mergedCertifiedComb = 0;
+    for (;;) {
+        struct EdgeUse { size_t poly; uint32_t a, b; };
+        std::map<std::pair<uint32_t, uint32_t>, std::vector<EdgeUse>> owners;
+        for (size_t pi = 0; pi < mesh.polygons.size(); ++pi) {
+            const auto& poly = mesh.polygons[pi];
+            for (size_t k = 0; k < poly.size(); ++k) {
+                const uint32_t a = poly[k], b = poly[(k + 1) % poly.size()];
+                owners[{std::min(a, b), std::max(a, b)}].push_back({pi, a, b});
+            }
+        }
+
+        bool changed = false;
+        for (size_t pi = 0; pi < mesh.polygons.size() && !changed; ++pi) {
+            if (mesh.polygons[pi].size() != 3) continue;
+            const int fid = mesh.polygonFaceId[pi];
+            const auto planIt = plans.find(fid);
+            if (planIt == plans.end() ||
+                !planIt->second.orthogonalLocalComb)
+                continue;
+            const TopoDS_Face face = TopoDS::Face(model.faces(fid));
+            Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+            if (surface.IsNull()) continue;
+            BRepAdaptor_Surface sa(face);
+            const double uvSpan = std::max(
+                {1.0, std::abs(sa.LastUParameter() - sa.FirstUParameter()),
+                 std::abs(sa.LastVParameter() - sa.FirstVParameter())});
+            const double uvTol = 1e-10 * uvSpan;
+            const double uvAreaTol = uvTol * uvSpan;
+            const double faceTol = BRep_Tool::Tolerance(face);
+            const bool reversed = face.Orientation() == TopAbs_REVERSED;
+
+            auto ringUv = [&](const std::vector<uint32_t>& ring,
+                              std::vector<gp_Pnt2d>& uv) {
+                uv.clear();
+                uv.reserve(ring.size());
+                for (uint32_t vi : ring) {
+                    if (vi >= mesh.vertices.size()) return false;
+                    if (vi < mesh.anchors.size() &&
+                        mesh.anchors[vi].faceId == fid) {
+                        const Anchor& a = mesh.anchors[vi];
+                        uv.emplace_back(a.u, a.v);
+                        continue;
+                    }
+                    const auto& v = mesh.vertices[vi];
+                    GeomAPI_ProjectPointOnSurf project(
+                        gp_Pnt(v[0], v[1], v[2]), surface);
+                    if (!project.IsDone() || project.NbPoints() < 1)
+                        return false;
+                    double u = 0.0, vv = 0.0;
+                    project.LowerDistanceParameters(u, vv);
+                    uv.emplace_back(u, vv);
+                }
+                return true;
+            };
+            auto signedArea = [](const std::vector<gp_Pnt2d>& uv) {
+                double area = 0.0;
+                for (size_t k = 0; k < uv.size(); ++k) {
+                    const gp_Pnt2d& a = uv[k];
+                    const gp_Pnt2d& b = uv[(k + 1) % uv.size()];
+                    area += a.X() * b.Y() - b.X() * a.Y();
+                }
+                return 0.5 * area;
+            };
+            auto uvCross = [](const gp_Pnt2d& a, const gp_Pnt2d& b,
+                              const gp_Pnt2d& c) {
+                return (b.X() - a.X()) * (c.Y() - a.Y()) -
+                       (b.Y() - a.Y()) * (c.X() - a.X());
+            };
+            auto onSegment = [&](const gp_Pnt2d& p, const gp_Pnt2d& a,
+                                 const gp_Pnt2d& b) {
+                const double len = std::sqrt(a.SquareDistance(b));
+                if (len <= uvTol) return p.SquareDistance(a) <= uvTol * uvTol;
+                if (std::abs(uvCross(a, b, p)) > uvTol * len) return false;
+                return (p.X() - a.X()) * (p.X() - b.X()) +
+                           (p.Y() - a.Y()) * (p.Y() - b.Y()) <=
+                       uvTol * uvTol;
+            };
+            auto simpleUv = [&](const std::vector<gp_Pnt2d>& uv) {
+                for (size_t i = 0; i < uv.size(); ++i) {
+                    const size_t i2 = (i + 1) % uv.size();
+                    if (uv[i].SquareDistance(uv[i2]) <= uvTol * uvTol)
+                        return false;
+                    for (size_t j = i + 1; j < uv.size(); ++j) {
+                        const size_t j2 = (j + 1) % uv.size();
+                        if (i2 == j || j2 == i) continue;
+                        const double abC = uvCross(uv[i], uv[i2], uv[j]);
+                        const double abD = uvCross(uv[i], uv[i2], uv[j2]);
+                        const double cdA = uvCross(uv[j], uv[j2], uv[i]);
+                        const double cdB = uvCross(uv[j], uv[j2], uv[i2]);
+                        if ((abC * abD < 0.0 && cdA * cdB < 0.0) ||
+                            onSegment(uv[i], uv[j], uv[j2]) ||
+                            onSegment(uv[i2], uv[j], uv[j2]) ||
+                            onSegment(uv[j], uv[i], uv[i2]) ||
+                            onSegment(uv[j2], uv[i], uv[i2]))
+                            return false;
+                    }
+                }
+                return true;
+            };
+            auto certify = [&](size_t qi, uint32_t a, uint32_t b,
+                               std::vector<uint32_t>& united,
+                               double& quality) {
+                if (qi == pi || mesh.polygonFaceId[qi] != fid) return false;
+                const auto& tri = mesh.polygons[pi];
+                const auto& neighbour = mesh.polygons[qi];
+                size_t ti = tri.size(), ni = neighbour.size();
+                for (size_t k = 0; k < tri.size(); ++k) {
+                    if (tri[k] == a && tri[(k + 1) % tri.size()] == b) {
+                        ti = k;
+                        break;
+                    }
+                }
+                for (size_t k = 0; k < neighbour.size(); ++k) {
+                    if (neighbour[k] == b &&
+                        neighbour[(k + 1) % neighbour.size()] == a) {
+                        ni = k;
+                        break;
+                    }
+                }
+                if (ti == tri.size() || ni == neighbour.size()) return false;
+                united.clear();
+                for (size_t k = 0; k < neighbour.size(); ++k)
+                    united.push_back(neighbour[(ni + 1 + k) % neighbour.size()]);
+                for (size_t k = 1; k + 1 < tri.size(); ++k)
+                    united.push_back(tri[(ti + 1 + k) % tri.size()]);
+                std::set<uint32_t> unique(united.begin(), united.end());
+                if (united.size() < 4 || unique.size() != united.size())
+                    return false;
+
+                std::vector<gp_Pnt2d> uv, uvTri, uvNeighbour;
+                if (!ringUv(united, uv) || !ringUv(tri, uvTri) ||
+                    !ringUv(neighbour, uvNeighbour) || !simpleUv(uv))
+                    return false;
+                const double area = signedArea(uv);
+                const double areaTri = signedArea(uvTri);
+                const double areaNeighbour = signedArea(uvNeighbour);
+                if (std::abs(area) <= uvAreaTol || area * areaTri <= 0.0 ||
+                    area * areaNeighbour <= 0.0 ||
+                    std::abs(area - areaTri - areaNeighbour) >
+                        1e-7 * std::max(std::abs(area), uvAreaTol))
+                    return false;
+
+                double twiceArea = 0.0, cu = 0.0, cv = 0.0;
+                for (size_t k = 0; k < uv.size(); ++k) {
+                    const gp_Pnt2d& x = uv[k];
+                    const gp_Pnt2d& y = uv[(k + 1) % uv.size()];
+                    const double cr = x.X() * y.Y() - y.X() * x.Y();
+                    twiceArea += cr;
+                    cu += (x.X() + y.X()) * cr;
+                    cv += (x.Y() + y.Y()) * cr;
+                }
+                if (std::abs(twiceArea) <= 2.0 * uvAreaTol) return false;
+                cu /= 3.0 * twiceArea;
+                cv /= 3.0 * twiceArea;
+                BRepClass_FaceClassifier centerOwner(
+                    const_cast<TopoDS_Face&>(face), gp_Pnt2d(cu, cv), faceTol);
+                if (centerOwner.State() == TopAbs_OUT) return false;
+
+                // The new boundary must not duplicate another polygon's
+                // directed edge or create a third use of an undirected edge.
+                for (size_t k = 0; k < united.size(); ++k) {
+                    const uint32_t x = united[k];
+                    const uint32_t y = united[(k + 1) % united.size()];
+                    const auto own = owners.find(
+                        {std::min(x, y), std::max(x, y)});
+                    if (own == owners.end()) continue;
+                    int outsideUses = 0;
+                    for (const EdgeUse& use : own->second) {
+                        if (use.poly == pi || use.poly == qi) continue;
+                        ++outsideUses;
+                        if (use.a == x && use.b == y) return false;
+                    }
+                    if (outsideUses > 1) return false;
+                }
+
+                gp_XYZ nw(0, 0, 0);
+                for (size_t k = 0; k < united.size(); ++k) {
+                    const auto& x = mesh.vertices[united[k]];
+                    const auto& y = mesh.vertices[united[(k + 1) % united.size()]];
+                    nw += gp_XYZ(x[1] * y[2] - x[2] * y[1],
+                                 x[2] * y[0] - x[0] * y[2],
+                                 x[0] * y[1] - x[1] * y[0]);
+                }
+                gp_Pnt cp; gp_Vec du, dv;
+                sa.D1(cu, cv, cp, du, dv);
+                gp_Vec cadN = du.Crossed(dv);
+                if (reversed) cadN.Reverse();
+                if (gp_Vec(nw).Magnitude() <= 1e-16 ||
+                    cadN.Magnitude() <= 1e-16 || gp_Vec(nw).Dot(cadN) <= 0.0)
+                    return false;
+
+                const auto certified = triangulatePoly(mesh.vertices, united);
+                if (certified.size() != united.size() - 2) return false;
+                quality = 1.0;
+                for (const auto& t : certified) {
+                    const uint32_t ia = united[t[0]], ib = united[t[1]],
+                                   ic = united[t[2]];
+                    const auto& A = mesh.vertices[ia];
+                    const auto& B = mesh.vertices[ib];
+                    const auto& C = mesh.vertices[ic];
+                    const gp_Vec ab(gp_Pnt(A[0], A[1], A[2]),
+                                    gp_Pnt(B[0], B[1], B[2]));
+                    const gp_Vec ac(gp_Pnt(A[0], A[1], A[2]),
+                                    gp_Pnt(C[0], C[1], C[2]));
+                    const gp_Vec tn = ab.Crossed(ac);
+                    const gp_Pnt2d probe(
+                        (uv[t[0]].X() + uv[t[1]].X() + uv[t[2]].X()) / 3.0,
+                        (uv[t[0]].Y() + uv[t[1]].Y() + uv[t[2]].Y()) / 3.0);
+                    BRepClass_FaceClassifier triOwner(
+                        const_cast<TopoDS_Face&>(face), probe, faceTol);
+                    if (triOwner.State() == TopAbs_OUT) return false;
+                    gp_Pnt tp; gp_Vec tdu, tdv;
+                    sa.D1(probe.X(), probe.Y(), tp, tdu, tdv);
+                    gp_Vec tCad = tdu.Crossed(tdv);
+                    if (reversed) tCad.Reverse();
+                    if (tn.Magnitude() <= 1e-16 || tCad.Magnitude() <= 1e-16)
+                        return false;
+                    const double agree =
+                        tn.Dot(tCad) / (tn.Magnitude() * tCad.Magnitude());
+                    if (agree <= 0.0) return false;
+                    quality = std::min(quality, agree);
+                }
+                return true;
+            };
+
+            size_t bestNeighbour = mesh.polygons.size();
+            double bestQuality = -1.0;
+            std::vector<uint32_t> bestRing;
+            const auto tri = mesh.polygons[pi];
+            for (size_t k = 0; k < tri.size(); ++k) {
+                const uint32_t a = tri[k], b = tri[(k + 1) % tri.size()];
+                const auto own = owners.find(
+                    {std::min(a, b), std::max(a, b)});
+                if (own == owners.end() || own->second.size() != 2) continue;
+                for (const EdgeUse& use : own->second) {
+                    if (use.poly == pi || use.a != b || use.b != a) continue;
+                    std::vector<uint32_t> ring;
+                    double quality = -1.0;
+                    if (certify(use.poly, a, b, ring, quality) &&
+                        (quality > bestQuality ||
+                         (quality == bestQuality &&
+                          use.poly < bestNeighbour))) {
+                        bestNeighbour = use.poly;
+                        bestQuality = quality;
+                        bestRing = std::move(ring);
+                    }
+                }
+            }
+            if (bestNeighbour == mesh.polygons.size()) continue;
+            mesh.polygons[bestNeighbour] = std::move(bestRing);
+            mesh.polygons.erase(mesh.polygons.begin() + pi);
+            mesh.polygonFaceId.erase(mesh.polygonFaceId.begin() + pi);
+            ++mergedCertifiedComb;
+            changed = true;
+        }
+        if (!changed) break;
+    }
+    if (mergedCertifiedComb) {
+        mesh.polygonCornerAnchors.clear();
+        refreshCertifiedTriangulations(mesh);
+        dbg("generate: certified %d collapsed local-comb triangle merge(s)",
+            mergedCertifiedComb);
     }
 
     dbg("generate: done (%zu verts, %zu polys)", mesh.vertexCount(),

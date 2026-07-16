@@ -39,6 +39,8 @@
 #include <vector>
 
 static int failures = 0;
+static std::string testFilter;
+static int testsRun = 0;
 
 #define CHECK(cond)                                                     \
     do {                                                                \
@@ -127,8 +129,15 @@ void testCylinder() {
     gs.defaults.radial = 12;
     gs.defaults.axial = 3;
     gs.defaults.cap = weft::CapStyle::NGon;
+    gs.canonicalEdgeContracts = true;
     weft::GenerationReport report;
     weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
+
+    // The legacy path now freezes each ordinary cap/side B-rep edge into one
+    // canonical sequence before either incident face meshes it.
+    CHECK(report.canonicalSharedEdges >= 2);
+    CHECK(report.canonicalSharedSamples >=
+          report.canonicalSharedEdges * 2);
 
     int revolutionGrids = 0, diskCaps = 0;
     for (const auto& [fid, kind] : report.faceMesher) {
@@ -247,6 +256,12 @@ void testPrimitiveAwareCompiler() {
         if (edgePlan.closed) {
             CHECK_EQ(edgePlan.samples.front().id,
                      edgePlan.samples.back().id);
+        }
+        for (const weft::CanonicalEdgeSample& sample : edgePlan.samples) {
+            CHECK(sample.valid);
+            CHECK(std::isfinite(sample.position[0]));
+            CHECK(std::isfinite(sample.position[1]));
+            CHECK(std::isfinite(sample.position[2]));
         }
     }
     for (const weft::BrepCoedgeNode& coedge : plan.graph.coedges) {
@@ -1845,6 +1860,8 @@ void testAllMesherStrategies() {
 // instead of a silent fail-fast crash (0xc0000409 on Windows).
 #define RUN(fn)                                               \
     do {                                                      \
+        if (!testFilter.empty() && testFilter != #fn) break;  \
+        ++testsRun;                                           \
         std::printf("%-32s", #fn);                            \
         std::fflush(stdout);                                  \
         try {                                                 \
@@ -2176,7 +2193,8 @@ void testCadCorpus() {
     CHECK(fastCases >= 27);
 }
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc > 1) testFilter = argv[1];
     RUN(testCylinder);
     RUN(testPrimitiveAwareCompiler);
     RUN(testBox);
@@ -2209,6 +2227,10 @@ int main() {
     RUN(testCadConversionPreservesObjects);
     RUN(testAllMesherStrategies);
     RUN(testCadCorpus);
+    if (!testFilter.empty() && testsRun == 0) {
+        std::printf("unknown test: %s\n", testFilter.c_str());
+        return 2;
+    }
     if (failures) {
         std::printf("\n%d FAILURE(S)\n", failures);
         return 1;
