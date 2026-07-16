@@ -306,6 +306,7 @@ struct GenerationCache {
     double modelArea = -1.0;
     // Geometry/tolerance memos used by the global density solve.
     std::map<std::array<long long, 4>, int> adaptiveEdgeCounts;
+    std::map<std::array<long long, 4>, int> orthogonalSurfaceCounts;
     std::map<int, int> curvatureFloors;
     double modelDiagonal = -1.0;
     // Type-erased internal cache of geometry classification plans. FacePlan
@@ -324,6 +325,7 @@ struct GenerationCache {
         edgeLengths.clear();
         modelArea = -1.0;
         adaptiveEdgeCounts.clear();
+        orthogonalSurfaceCounts.clear();
         curvatureFloors.clear();
         modelDiagonal = -1.0;
         facePlans.reset();

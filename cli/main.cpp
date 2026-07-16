@@ -80,6 +80,8 @@ void usage() {
         "    --rings N         concentric quad loops around holes/bosses in\n"
         "                      planar faces (default 2)\n"
         "    --validate        run bake-ready checks after meshing\n"
+        "    --preview         export the connected interactive mesh before\n"
+        "                      border/stitch/final cleanup passes\n"
         "    --no-normals      skip exact CAD vertex normals in exports\n"
         "    --triangulate     ear-clip everything to triangles on export\n"
         "    --yup / --scale F Y-up + unit scale (engine spaces)\n"
@@ -389,6 +391,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
             else throw std::runtime_error("unknown pipeline: " + pipeline);
         }
         else if (a == "--validate") validate = true;
+        else if (a == "--preview") gs.finalizeMesh = false;
         else if (a == "--stitch") gs.decoupleSeams = true;  // experiment
         else if (a == "--debug") weft::setGenerateDebugLog(stderr);
         else if (a == "--no-normals") noNormals = true;

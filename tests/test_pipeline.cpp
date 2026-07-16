@@ -1616,8 +1616,12 @@ void testGenerationCache() {
     previewSettings.progressTotal = nullptr;
     previewSettings.finalizeMesh = false;
     weft::GenerationReport previewReport;
-    (void)weft::generate(model, a, previewSettings, &previewReport, &cache);
+    const weft::PolyMesh previewRun =
+        weft::generate(model, a, previewSettings, &previewReport, &cache);
     CHECK_EQ(previewReport.cacheMisses, 0);
+    // Preview skips export-only stitching/cleanup, but it must still run the
+    // lightweight weld so seam-adjacent viewport editing sees shared IDs.
+    CHECK(isWatertight(previewRun));
 
     weft::GenerationSettings exportSettings = previewSettings;
     exportSettings.finalizeMesh = true;
@@ -2051,12 +2055,20 @@ void testMp9GeometryRouting() {
 
     struct FaceStats { int polys = 0, tris = 0, quads = 0; };
     std::map<int, FaceStats> stats;
+    std::map<int, std::set<uint64_t>> faceEdges;
     for (size_t pi = 0; pi < mesh.polygons.size(); ++pi) {
         if (pi >= mesh.polygonFaceId.size()) continue;
-        FaceStats& s = stats[mesh.polygonFaceId[pi]];
+        const int fid = mesh.polygonFaceId[pi];
+        FaceStats& s = stats[fid];
         ++s.polys;
         if (mesh.polygons[pi].size() == 3) ++s.tris;
         if (mesh.polygons[pi].size() == 4) ++s.quads;
+        const auto& poly = mesh.polygons[pi];
+        for (size_t i = 0; i < poly.size(); ++i) {
+            uint32_t a = poly[i], b = poly[(i + 1) % poly.size()];
+            if (a > b) std::swap(a, b);
+            faceEdges[fid].insert((uint64_t(a) << 32) | b);
+        }
     }
     CHECK(mesh.polygonCount() < 32500);
     CHECK(stats[424].polys <= 32);
@@ -2065,11 +2077,27 @@ void testMp9GeometryRouting() {
     CHECK(stats[914].tris <= 8);
     CHECK(stats[1720].polys <= 400);
     CHECK(stats[3472].polys <= 128);
-    CHECK(stats[632].polys <= 32);
-    // The two tiny tapered ends may triangulate after final seam welding;
-    // the body must stay a compact structured strip, never the old 64-tri
-    // face-wide soup.
-    CHECK(stats[632].tris <= 10);
+    // Face 632 and its structured side-chain are the visual MP9 regression:
+    // the selected patch and connected neighbours must retain continuous
+    // quad columns through corner repair, welding, and seam reconciliation.
+    for (int fid : {631, 632, 633, 634}) {
+        CHECK(stats[fid].polys >= 12);
+        CHECK(stats[fid].polys <= 24);
+        CHECK_EQ(stats[fid].tris, 0);
+        CHECK_EQ(stats[fid].quads, stats[fid].polys);
+    }
+    CHECK_EQ(stats[651].polys, 1);
+    CHECK_EQ(stats[654].polys, 1);
+    for (int neighbour : {631, 633, 651, 654}) {
+        bool connected = false;
+        for (uint64_t edge : faceEdges[632]) {
+            if (faceEdges[neighbour].count(edge)) {
+                connected = true;
+                break;
+            }
+        }
+        CHECK(connected);
+    }
     CHECK(stats[1310].polys <= 40);
     CHECK(stats[1526].polys <= 64);
     CHECK(stats[1592].polys <= 128);
@@ -2095,16 +2123,21 @@ void testMp9GeometryRouting() {
 
     weft::GenerationSettings edited = settings;
     edited.finalizeMesh = false;
-    edited.perFace[3353] = settings.defaults;
-    edited.perFace[3353].gridV = settings.defaults.gridV + 1;
+    edited.perFace[632] = settings.defaults;
+    edited.perFace[632].gridU = settings.defaults.gridU + 1;
     weft::GenerationReport editReport;
     const weft::PolyMesh preview =
         weft::generate(model, analysis, edited, &editReport, &cache);
     CHECK(!preview.polygons.empty());
-    CHECK(editReport.cacheMisses < 100);
-    CHECK(editReport.cacheHits > 3600);
+    // Raising the selected face's U count also invalidates its shared top rim
+    // owner (651); every other MP9 face must remain cached.
+    CHECK_EQ(editReport.cacheMisses, 2);
+    CHECK_EQ(editReport.cacheHits, 3746);
     CHECK(std::find(editReport.remeshedFaces.begin(),
-                    editReport.remeshedFaces.end(), 3353) !=
+                    editReport.remeshedFaces.end(), 632) !=
+          editReport.remeshedFaces.end());
+    CHECK(std::find(editReport.remeshedFaces.begin(),
+                    editReport.remeshedFaces.end(), 651) !=
           editReport.remeshedFaces.end());
     std::printf("  %zu polys; face edit remeshed %d, reused %d\n",
                 mesh.polygonCount(), editReport.cacheMisses,
