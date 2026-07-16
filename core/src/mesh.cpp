@@ -147,6 +147,10 @@ void weldVertices(PolyMesh& mesh, double tolerance,
     std::vector<std::vector<uint32_t>> polys;
     std::vector<int> polyFace;
     std::vector<std::vector<Anchor>> cornerAnchors;
+    struct WeldedLoop {
+        std::vector<uint32_t> vertices;
+        std::vector<Anchor> corners;
+    };
     for (size_t p = 0; p < mesh.polygons.size(); ++p) {
         std::vector<uint32_t> mapped;
         std::vector<Anchor> mappedCorners;
@@ -168,10 +172,60 @@ void weldVertices(PolyMesh& mesh, double tolerance,
             if (hasCorners) mappedCorners.pop_back();
         }
         if (mapped.size() < 3) continue;  // collapsed by the weld
-        polys.push_back(std::move(mapped));
-        polyFace.push_back(mesh.polygonFaceId[p]);
-        cornerAnchors.push_back(hasCorners ? std::move(mappedCorners)
-                                           : std::vector<Anchor>{});
+        // A weld can expose a non-consecutive repeated vertex in a polygon,
+        // for example [A B C A D] around a micron-scale CAD edge. Leaving it
+        // in place creates a folded polygon and counts the same edge twice.
+        // Split at repeated vertices; keep either valid loop (or both for a
+        // genuine figure-eight) and discard only sub-loops with fewer than
+        // three corners.
+        std::vector<WeldedLoop> pending;
+        pending.push_back(
+            {std::move(mapped),
+             hasCorners ? std::move(mappedCorners)
+                        : std::vector<Anchor>{}});
+        while (!pending.empty()) {
+            WeldedLoop loop = std::move(pending.back());
+            pending.pop_back();
+            std::unordered_map<uint32_t, size_t> first;
+            size_t repeatA = loop.vertices.size();
+            size_t repeatB = loop.vertices.size();
+            for (size_t i = 0; i < loop.vertices.size(); ++i) {
+                auto [it, inserted] = first.emplace(loop.vertices[i], i);
+                if (!inserted) {
+                    repeatA = it->second;
+                    repeatB = i;
+                    break;
+                }
+            }
+            if (repeatB == loop.vertices.size()) {
+                polys.push_back(std::move(loop.vertices));
+                polyFace.push_back(mesh.polygonFaceId[p]);
+                cornerAnchors.push_back(std::move(loop.corners));
+                continue;
+            }
+            auto makeLoop = [&](bool between) {
+                WeldedLoop result;
+                auto append = [&](size_t i) {
+                    result.vertices.push_back(loop.vertices[i]);
+                    if (!loop.corners.empty()) {
+                        result.corners.push_back(loop.corners[i]);
+                    }
+                };
+                if (between) {
+                    for (size_t i = repeatA; i < repeatB; ++i) append(i);
+                } else {
+                    for (size_t i = repeatB; i < loop.vertices.size(); ++i) {
+                        append(i);
+                    }
+                    for (size_t i = 0; i < repeatA; ++i) append(i);
+                }
+                return result;
+            };
+            WeldedLoop a = makeLoop(true);
+            WeldedLoop b = makeLoop(false);
+            if (a.vertices.size() >= 3) pending.push_back(std::move(a));
+            if (b.vertices.size() >= 3) pending.push_back(std::move(b));
+        }
     }
     mesh.polygons = std::move(polys);
     mesh.polygonFaceId = std::move(polyFace);
