@@ -83,6 +83,18 @@ int main() {
                     weft::importStepSecure(path.string());
                 CHECK(imported.source != nullptr);
                 CHECK(imported.working != nullptr);
+                if (!imported.repair.identity ||
+                    !imported.repair.correspondenceComplete) {
+                    std::fprintf(
+                        stderr,
+                        "identity refusal: %s identity=%d correspondence=%d source_topology=%d working_topology=%d topology_correspondence=%d\n",
+                        path.filename().string().c_str(),
+                        imported.repair.identity,
+                        imported.repair.correspondenceComplete,
+                        imported.repair.sourceTopologyComplete,
+                        imported.repair.workingTopologyComplete,
+                        imported.correspondence.topologyComplete);
+                }
                 CHECK(imported.repair.identity);
                 CHECK(imported.repair.correspondenceComplete);
                 CHECK(imported.source &&
@@ -104,10 +116,6 @@ int main() {
                             resolvedSolidIds.insert(node.solidId);
                         }
                     }
-                    std::printf(
-                        "nested assembly adapter: %zu expanded nodes, %zu resolved leaves, %zu distinct leaf IDs, %d indexed solids\n",
-                        assembly.size(), resolvedLeaves, resolvedSolidIds.size(),
-                        imported.source->snapshot.model.solids.Extent());
                     CHECK(assembly.size() == 9);
                     CHECK(resolvedLeaves == 6);
                     CHECK(resolvedSolidIds.size() == 6);
@@ -145,11 +153,123 @@ int main() {
                             CHECK(node.localTransform[15] == 1.0);
                             CHECK(node.transform[15] == 1.0);
                             if (!node.isAssembly) {
+                                CHECK(!node.exactUse.IsNull());
                                 CHECK(node.solidIds.size() == 1);
                                 CHECK(node.solidId == node.solidIds.front());
                             }
                         }
                     }
+
+                    const weft::TopologyAccount& topology =
+                        imported.source->snapshot.topology;
+                    const weft::TopologyAccountValidation topologyValidation =
+                        weft::validateTopologyAccount(topology);
+                    CHECK(topologyValidation.complete());
+                    const auto occurrenceCount =
+                        [&](weft::StableIdKind kind) {
+                            return static_cast<std::size_t>(std::count_if(
+                                topology.occurrences.begin(),
+                                topology.occurrences.end(),
+                                [kind](const weft::TopologyOccurrence& occurrence) {
+                                    return occurrence.id.kind == kind;
+                                }));
+                        };
+                    const auto uniqueCount = [&](weft::StableIdKind kind) {
+                        return static_cast<std::size_t>(std::count_if(
+                            topology.uniqueEntityIds.begin(),
+                            topology.uniqueEntityIds.end(),
+                            [kind](weft::StableId entity) {
+                                return entity.kind == kind;
+                            }));
+                    };
+                    CHECK(topology.assemblies.size() == 2);
+                    CHECK(topology.instances.size() == 8);
+                    CHECK(topology.assemblyRoots.size() == 1);
+                    CHECK(topology.topologyRoots.size() == 1);
+                    CHECK(occurrenceCount(weft::StableIdKind::Compound) == 1);
+                    CHECK(occurrenceCount(weft::StableIdKind::Solid) == 6);
+                    CHECK(occurrenceCount(weft::StableIdKind::Shell) == 6);
+                    CHECK(occurrenceCount(weft::StableIdKind::Face) == 36);
+                    CHECK(occurrenceCount(weft::StableIdKind::Wire) == 36);
+                    CHECK(occurrenceCount(weft::StableIdKind::Edge) == 144);
+                    CHECK(occurrenceCount(weft::StableIdKind::Vertex) == 288);
+                    CHECK(topology.coedges.size() == 144);
+                    CHECK(uniqueCount(weft::StableIdKind::Compound) == 1);
+                    CHECK(uniqueCount(weft::StableIdKind::Solid) == 1);
+                    CHECK(uniqueCount(weft::StableIdKind::Shell) == 1);
+                    CHECK(uniqueCount(weft::StableIdKind::Face) == 6);
+                    CHECK(uniqueCount(weft::StableIdKind::Wire) == 6);
+                    CHECK(uniqueCount(weft::StableIdKind::Edge) == 12);
+                    CHECK(uniqueCount(weft::StableIdKind::Vertex) == 8);
+                    CHECK(topology.exactShapes.size() ==
+                          topology.occurrences.size());
+                    CHECK(imported.correspondence.topologyOccurrenceRecords.size() ==
+                          topology.occurrences.size());
+                    CHECK(std::all_of(
+                        imported.correspondence.topologyOccurrenceRecords.begin(),
+                        imported.correspondence.topologyOccurrenceRecords.end(),
+                        [](const weft::CorrespondenceRecord& record) {
+                            return record.sourceId.valid() &&
+                                record.workingIds.size() == 1 &&
+                                record.relation ==
+                                    weft::CorrespondenceRelation::Identity;
+                        }));
+
+                    weft::TopologyAccount missingInstanceRoots = topology;
+                    const auto leaf = std::find_if(
+                        missingInstanceRoots.instances.begin(),
+                        missingInstanceRoots.instances.end(),
+                        [](const weft::InstanceRecord& instance) {
+                            return !instance.targetAssembly &&
+                                !instance.topologyRoots.empty();
+                        });
+                    CHECK(leaf != missingInstanceRoots.instances.end());
+                    if (leaf != missingInstanceRoots.instances.end()) {
+                        leaf->topologyRoots.clear();
+                        const auto tampered = weft::validateTopologyAccount(
+                            missingInstanceRoots);
+                        CHECK(!tampered.complete());
+                        CHECK(std::find(
+                                  tampered.failureCodes.begin(),
+                                  tampered.failureCodes.end(),
+                                  "topology.instance.topology_roots_missing") !=
+                              tampered.failureCodes.end());
+                    }
+                }
+                if (path.filename() ==
+                    "solid.fillet.junction_t_y_x.step") {
+                    const weft::TopologyAccount& topology =
+                        imported.source->snapshot.topology;
+                    CHECK(weft::validateTopologyAccount(topology).complete());
+                    std::set<std::string> nonBodyDefinitions;
+                    for (const weft::AssemblyNode& node :
+                         imported.source->snapshot.model.assembly) {
+                        if (!node.isAssembly && node.solidIds.empty()) {
+                            nonBodyDefinitions.insert(node.sourceDefinition);
+                        }
+                    }
+                    CHECK(!nonBodyDefinitions.empty());
+                    bool sawNonBodyLeafRoot = false;
+                    for (const weft::InstanceRecord& instance :
+                         topology.instances) {
+                        if (instance.targetAssembly) continue;
+                        CHECK(!instance.topologyRoots.empty());
+                        if (nonBodyDefinitions.contains(
+                                instance.sourceDefinition) &&
+                            !instance.topologyRoots.empty()) {
+                            sawNonBodyLeafRoot = true;
+                        }
+                        for (weft::StableId root : instance.topologyRoots) {
+                            const auto occurrence = std::find_if(
+                                topology.occurrences.begin(),
+                                topology.occurrences.end(),
+                                [root](const weft::TopologyOccurrence& item) {
+                                    return item.id == root;
+                                });
+                            CHECK(occurrence != topology.occurrences.end());
+                        }
+                    }
+                    CHECK(sawNonBodyLeafRoot);
                 }
                 const weft::ReconnaissanceReport reconnaissance =
                     weft::reconnoitre(imported);

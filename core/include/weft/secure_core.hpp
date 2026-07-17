@@ -5,11 +5,13 @@
 #include <array>
 #include <compare>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace weft {
@@ -33,20 +35,24 @@ private:
 };
 
 enum class StableIdKind {
-    Invalid,
-    Model,
-    Assembly,
-    Instance,
-    Solid,
-    Shell,
-    Face,
-    Wire,
-    Coedge,
-    Edge,
-    Vertex,
-    Region,
-    Boundary,
-    Diagnostic,
+    Invalid = 0,
+    Model = 1,
+    Assembly = 2,
+    Instance = 3,
+    Solid = 4,
+    Shell = 5,
+    Face = 6,
+    Wire = 7,
+    Coedge = 8,
+    Edge = 9,
+    Vertex = 10,
+    Region = 11,
+    Boundary = 12,
+    Diagnostic = 13,
+    // Appended to preserve the serialized/digest values of every existing
+    // StableIdKind enumerator.
+    Compound = 14,
+    CompSolid = 15,
 };
 
 struct StableId {
@@ -105,6 +111,9 @@ struct TopologyOccurrence {
     double tolerance = 0.0;
     bool hasExactRepresentation = false;
     std::vector<std::string> conditionCodes;
+    std::optional<StableId> instanceId;
+    std::array<double, 16> localTransform{};
+    std::array<double, 16> worldTransform{};
 };
 
 struct PcurveRef {
@@ -125,6 +134,70 @@ struct CoedgeRecord {
     std::vector<std::string> conditionCodes;
 };
 
+struct AssemblyRecord {
+    StableId id;
+    std::string sourceLabel;
+};
+
+struct InstanceRecord {
+    StableId id;
+    StableId parentId;
+    std::optional<StableId> targetAssembly;
+    std::vector<StableId> topologyRoots;
+    std::string sourceDefinition;
+    std::string sourceComponent;
+    std::array<double, 16> localTransform{};
+    std::array<double, 16> worldTransform{};
+};
+
+struct TopologyCoedgeRecord {
+    StableId id;
+    StableId edgeId;
+    StableId wireId;
+    std::optional<StableId> faceId;
+    std::optional<StableId> instanceId;
+    std::uint32_t ordinalInWire = 0;
+    TopologyOrientation orientation = TopologyOrientation::Forward;
+    std::vector<PcurveRef> pcurveRepresentations;
+    std::vector<std::string> conditionCodes;
+};
+
+struct TopologyAccount {
+    std::vector<AssemblyRecord> assemblies;
+    std::vector<InstanceRecord> instances;
+    std::vector<StableId> assemblyRoots;
+    std::vector<StableId> topologyRoots;
+    std::vector<StableId> uniqueEntityIds;
+    std::vector<TopologyOccurrence> occurrences;
+    std::vector<TopologyCoedgeRecord> coedges;
+    std::map<StableId, TopoDS_Shape> exactShapes;
+    std::vector<std::string> constructionFailureCodes;
+};
+
+struct TopologyAccountCheck {
+    std::string code;
+    std::size_t expected = 0;
+    std::size_t checked = 0;
+    std::size_t skipped = 0;
+    std::size_t failed = 0;
+
+    bool complete() const noexcept {
+        return checked == expected && skipped == 0 && failed == 0 &&
+               (expected == 0 || checked != 0);
+    }
+};
+
+struct TopologyAccountValidation {
+    std::vector<TopologyAccountCheck> checks;
+    std::vector<std::string> failureCodes;
+
+    bool complete() const noexcept;
+    const TopologyAccountCheck* find(std::string_view code) const noexcept;
+};
+
+TopologyAccountValidation validateTopologyAccount(
+    const TopologyAccount& account);
+
 struct EdgeTopologyRecord {
     StableId id;
     std::optional<StableId> lowerVertex;
@@ -139,6 +212,9 @@ struct BRepSnapshot {
     std::vector<TopologyOccurrence> occurrences;
     std::vector<CoedgeRecord> coedges;
     std::vector<EdgeTopologyRecord> edgeTopology;
+    // Authoritative occurrence-preserving topology. The map-based fields
+    // above remain a temporary application/meshing compatibility view.
+    TopologyAccount topology;
 };
 
 struct SourceBRep {
@@ -168,6 +244,8 @@ struct CorrespondenceRecord {
 
 struct SourceWorkingMap {
     std::vector<CorrespondenceRecord> records;
+    std::vector<CorrespondenceRecord> topologyOccurrenceRecords;
+    bool topologyComplete = false;
     bool complete = false;
 
     const CorrespondenceRecord* find(StableId source) const noexcept;
@@ -219,6 +297,8 @@ struct RepairCertificate {
     std::string workingShapeSha256;
     bool sourceValid = false;
     bool workingValid = false;
+    bool sourceTopologyComplete = false;
+    bool workingTopologyComplete = false;
     bool correspondenceComplete = false;
     bool identity = false;
     bool meshable = false;

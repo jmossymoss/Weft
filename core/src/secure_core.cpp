@@ -37,6 +37,7 @@
 #include <iomanip>
 #include <locale>
 #include <map>
+#include <set>
 #include <sstream>
 #include <streambuf>
 #include <stdexcept>
@@ -195,7 +196,20 @@ BRepSnapshot buildSnapshot(Model model) {
             }
         }
     }
+    snapshot.topology = secure_detail::buildTopologyAccount(snapshot.model);
     return snapshot;
+}
+
+BRepSnapshot evaluatorSnapshot(const BRepSnapshot& snapshot) {
+    // GeometryEvaluator needs only these exact lookup tables. In particular,
+    // do not duplicate the authoritative occurrence account (and every
+    // TopoDS handle in it) for large production models such as MP9.
+    BRepSnapshot view;
+    view.model.faces = snapshot.model.faces;
+    view.model.edges = snapshot.model.edges;
+    view.vertices = snapshot.vertices;
+    view.coedges = snapshot.coedges;
+    return view;
 }
 
 template <typename T>
@@ -667,10 +681,20 @@ std::string exactShapeDigest(const TopoDS_Shape& shape) {
     return digest.finish();
 }
 
-std::size_t occurrenceCount(const BRepSnapshot& snapshot,
-                            StableIdKind kind) {
+std::size_t exactTopologyCount(const BRepSnapshot& snapshot,
+                               StableIdKind kind) {
+    if (kind == StableIdKind::Assembly) {
+        return snapshot.topology.assemblies.size();
+    }
+    if (kind == StableIdKind::Instance) {
+        return snapshot.topology.instances.size();
+    }
+    if (kind == StableIdKind::Coedge) {
+        return snapshot.topology.coedges.size();
+    }
     return static_cast<std::size_t>(std::count_if(
-        snapshot.occurrences.begin(), snapshot.occurrences.end(),
+        snapshot.topology.occurrences.begin(),
+        snapshot.topology.occurrences.end(),
         [kind](const TopologyOccurrence& occurrence) {
             return occurrence.id.kind == kind;
         }));
@@ -810,6 +834,125 @@ SourceWorkingMap buildCorrespondence(const Model& source, const Model& working,
     return correspondence;
 }
 
+bool sameTopologyOccurrence(const TopologyOccurrence& source,
+                            const TopologyOccurrence& working) {
+    return source.id == working.id &&
+        source.underlyingId == working.underlyingId &&
+        source.parentId == working.parentId &&
+        source.childIds == working.childIds &&
+        source.orientation == working.orientation &&
+        source.tolerance == working.tolerance &&
+        source.hasExactRepresentation == working.hasExactRepresentation &&
+        source.conditionCodes == working.conditionCodes &&
+        source.instanceId == working.instanceId &&
+        source.localTransform == working.localTransform &&
+        source.worldTransform == working.worldTransform;
+}
+
+bool sameAssemblyAccount(const TopologyAccount& source,
+                         const TopologyAccount& working) {
+    if (source.assemblies.size() != working.assemblies.size() ||
+        source.instances.size() != working.instances.size() ||
+        source.assemblyRoots != working.assemblyRoots ||
+        source.topologyRoots != working.topologyRoots ||
+        source.uniqueEntityIds != working.uniqueEntityIds ||
+        source.coedges.size() != working.coedges.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < source.assemblies.size(); ++index) {
+        if (source.assemblies[index].id != working.assemblies[index].id ||
+            source.assemblies[index].sourceLabel !=
+                working.assemblies[index].sourceLabel) {
+            return false;
+        }
+    }
+    for (std::size_t index = 0; index < source.instances.size(); ++index) {
+        const InstanceRecord& first = source.instances[index];
+        const InstanceRecord& second = working.instances[index];
+        if (first.id != second.id || first.parentId != second.parentId ||
+            first.targetAssembly != second.targetAssembly ||
+            first.topologyRoots != second.topologyRoots ||
+            first.sourceDefinition != second.sourceDefinition ||
+            first.sourceComponent != second.sourceComponent ||
+            first.localTransform != second.localTransform ||
+            first.worldTransform != second.worldTransform) {
+            return false;
+        }
+    }
+    for (std::size_t index = 0; index < source.coedges.size(); ++index) {
+        const TopologyCoedgeRecord& first = source.coedges[index];
+        const TopologyCoedgeRecord& second = working.coedges[index];
+        if (first.id != second.id || first.edgeId != second.edgeId ||
+            first.wireId != second.wireId || first.faceId != second.faceId ||
+            first.instanceId != second.instanceId ||
+            first.ordinalInWire != second.ordinalInWire ||
+            first.orientation != second.orientation ||
+            first.pcurveRepresentations != second.pcurveRepresentations ||
+            first.conditionCodes != second.conditionCodes) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void buildTopologyCorrespondence(SourceWorkingMap& correspondence,
+                                 const TopologyAccount& source,
+                                 const TopologyAccount& working,
+                                 bool sourceComplete,
+                                 bool workingComplete) {
+    std::set<StableId> mappedWorking;
+    std::map<StableId, const TopologyOccurrence*> workingOccurrences;
+    for (const TopologyOccurrence& occurrence : working.occurrences) {
+        workingOccurrences.emplace(occurrence.id, &occurrence);
+    }
+    correspondence.topologyOccurrenceRecords.clear();
+    correspondence.topologyOccurrenceRecords.reserve(
+        source.occurrences.size() + working.occurrences.size());
+    for (const TopologyOccurrence& sourceOccurrence : source.occurrences) {
+        CorrespondenceRecord record;
+        record.sourceId = sourceOccurrence.id;
+        const auto workingFound =
+            workingOccurrences.find(sourceOccurrence.id);
+        const TopologyOccurrence* workingOccurrence =
+            workingFound == workingOccurrences.end()
+            ? nullptr
+            : workingFound->second;
+        const auto sourceShape = source.exactShapes.find(sourceOccurrence.id);
+        const auto workingShape = working.exactShapes.find(sourceOccurrence.id);
+        if (workingOccurrence != nullptr &&
+            sourceShape != source.exactShapes.end() &&
+            workingShape != working.exactShapes.end() &&
+            sourceShape->second.IsSame(workingShape->second) &&
+            sameTopologyOccurrence(sourceOccurrence, *workingOccurrence)) {
+            record.workingIds.push_back(workingOccurrence->id);
+            record.relation = CorrespondenceRelation::Identity;
+            mappedWorking.insert(workingOccurrence->id);
+        } else {
+            record.relation = CorrespondenceRelation::Modified;
+        }
+        correspondence.topologyOccurrenceRecords.push_back(std::move(record));
+    }
+    for (const TopologyOccurrence& workingOccurrence : working.occurrences) {
+        if (!mappedWorking.contains(workingOccurrence.id)) {
+            correspondence.topologyOccurrenceRecords.push_back(
+                {{}, {workingOccurrence.id},
+                 CorrespondenceRelation::Introduced});
+        }
+    }
+    correspondence.topologyComplete = sourceComplete && workingComplete &&
+        sameAssemblyAccount(source, working) &&
+        source.occurrences.size() == working.occurrences.size() &&
+        std::all_of(correspondence.topologyOccurrenceRecords.begin(),
+                    correspondence.topologyOccurrenceRecords.end(),
+                    [](const CorrespondenceRecord& record) {
+                        return record.sourceId.valid() &&
+                            record.relation == CorrespondenceRelation::Identity &&
+                            record.workingIds.size() == 1;
+                    });
+    correspondence.complete =
+        correspondence.complete && correspondence.topologyComplete;
+}
+
 }  // namespace
 
 const char* repairProfileName(RepairProfile profile) noexcept {
@@ -872,10 +1015,20 @@ ImportedModel buildImportedModel(
 
     BRepSnapshot sourceSnapshot = buildSnapshot(std::move(sourceModel));
     BRepSnapshot workingSnapshot = buildSnapshot(std::move(workingModel));
+    const TopologyAccountValidation sourceTopologyValidation =
+        validateTopologyAccount(sourceSnapshot.topology);
+    const TopologyAccountValidation workingTopologyValidation =
+        validateTopologyAccount(workingSnapshot.topology);
+    buildTopologyCorrespondence(
+        imported.correspondence, sourceSnapshot.topology,
+        workingSnapshot.topology, sourceTopologyValidation.complete(),
+        workingTopologyValidation.complete());
     imported.sourceEvaluator =
-        std::make_shared<OcctGeometryEvaluator>(sourceSnapshot);
+        std::make_shared<OcctGeometryEvaluator>(
+            evaluatorSnapshot(sourceSnapshot));
     imported.workingEvaluator =
-        std::make_shared<OcctGeometryEvaluator>(workingSnapshot);
+        std::make_shared<OcctGeometryEvaluator>(
+            evaluatorSnapshot(workingSnapshot));
 
     auto source = std::make_shared<SourceBRep>();
     source->metadata = std::move(metadata);
@@ -891,32 +1044,39 @@ ImportedModel buildImportedModel(
     imported.repair.workingShapeSha256 = workingShapeDigest;
     imported.repair.sourceValid = sourceValid;
     imported.repair.workingValid = workingValid;
+    imported.repair.sourceTopologyComplete =
+        sourceTopologyValidation.complete();
+    imported.repair.workingTopologyComplete =
+        workingTopologyValidation.complete();
     imported.repair.correspondenceComplete = imported.correspondence.complete;
     imported.repair.sourceFaces = imported.source->snapshot.model.faceCount();
     imported.repair.workingFaces = imported.working->snapshot.model.faceCount();
     imported.repair.sourceEdges = imported.source->snapshot.model.edgeCount();
     imported.repair.workingEdges = imported.working->snapshot.model.edgeCount();
-    imported.repair.identity = !sourceShapeDigest.empty() &&
+    imported.repair.identity = imported.correspondence.topologyComplete &&
+        !sourceShapeDigest.empty() &&
         sourceShapeDigest == workingShapeDigest && imported.correspondence.complete &&
         std::all_of(imported.correspondence.records.begin(),
                     imported.correspondence.records.end(),
                     [](const CorrespondenceRecord& record) {
                         return record.relation == CorrespondenceRelation::Identity;
                     });
-    imported.repair.meshable = workingValid && imported.correspondence.complete;
+    imported.repair.meshable = workingValid && imported.correspondence.complete &&
+        sourceTopologyValidation.complete() &&
+        workingTopologyValidation.complete();
     imported.repair.operations = std::move(operations);
 
-    for (StableIdKind kind : {StableIdKind::Solid, StableIdKind::Face,
-                              StableIdKind::Wire, StableIdKind::Coedge,
-                              StableIdKind::Edge, StableIdKind::Vertex}) {
-        const std::size_t before = occurrenceCount(imported.source->snapshot, kind) +
-            (kind == StableIdKind::Coedge
-                 ? imported.source->snapshot.coedges.size()
-                 : 0);
-        const std::size_t after = occurrenceCount(imported.working->snapshot, kind) +
-            (kind == StableIdKind::Coedge
-                 ? imported.working->snapshot.coedges.size()
-                 : 0);
+    for (StableIdKind kind : {
+             StableIdKind::Assembly, StableIdKind::Instance,
+             StableIdKind::Compound, StableIdKind::CompSolid,
+             StableIdKind::Solid, StableIdKind::Shell,
+             StableIdKind::Face, StableIdKind::Wire,
+             StableIdKind::Coedge, StableIdKind::Edge,
+             StableIdKind::Vertex}) {
+        const std::size_t before =
+            exactTopologyCount(imported.source->snapshot, kind);
+        const std::size_t after =
+            exactTopologyCount(imported.working->snapshot, kind);
         if (before != after) {
             imported.repair.topologyCardinalityChanges.push_back(
                 {kind, before, after});
@@ -995,6 +1155,42 @@ ImportedModel buildImportedModel(
         {"repair.representation_audit", representationExpected,
          representationChecked, representationSkipped, 0},
     };
+    for (const TopologyAccountCheck& sourceCheck :
+         sourceTopologyValidation.checks) {
+        const TopologyAccountCheck* workingCheck =
+            workingTopologyValidation.find(sourceCheck.code);
+        if (workingCheck == nullptr) continue;
+        imported.repair.validationEvidence.push_back(
+            {"repair." + sourceCheck.code,
+             sourceCheck.expected + workingCheck->expected,
+             sourceCheck.checked + workingCheck->checked,
+             sourceCheck.skipped + workingCheck->skipped,
+             sourceCheck.failed + workingCheck->failed});
+    }
+    const std::size_t topologyMappedExpected =
+        imported.source->snapshot.topology.occurrences.size();
+    const std::size_t topologyMappedChecked =
+        static_cast<std::size_t>(std::count_if(
+            imported.correspondence.topologyOccurrenceRecords.begin(),
+            imported.correspondence.topologyOccurrenceRecords.end(),
+            [](const CorrespondenceRecord& record) {
+                return record.sourceId.valid() &&
+                    record.workingIds.size() == 1 &&
+                    record.relation == CorrespondenceRelation::Identity;
+            }));
+    const std::size_t topologyIntroduced =
+        static_cast<std::size_t>(std::count_if(
+            imported.correspondence.topologyOccurrenceRecords.begin(),
+            imported.correspondence.topologyOccurrenceRecords.end(),
+            [](const CorrespondenceRecord& record) {
+                return !record.sourceId.valid();
+            }));
+    imported.repair.validationEvidence.push_back(
+        {"repair.topology_occurrence_correspondence",
+         topologyMappedExpected, topologyMappedChecked, 0,
+         topologyMappedExpected -
+                 std::min(topologyMappedExpected, topologyMappedChecked) +
+             topologyIntroduced});
     if (imported.repair.operations.empty() && imported.repair.identity) {
         imported.repair.operations.push_back(
             {"repair.identity", {}, {}, "working B-rep is the source B-rep"});
@@ -1014,6 +1210,30 @@ ImportedModel buildImportedModel(
     if (!workingValid) {
         diagnostic("import.working.invalid", DiagnosticSeverity::Error,
                    "the derived working B-rep is invalid");
+    }
+    if (!sourceTopologyValidation.complete()) {
+        const std::string detail =
+            sourceTopologyValidation.failureCodes.empty()
+            ? "coverage did not complete"
+            : sourceTopologyValidation.failureCodes.front();
+        diagnostic("import.source.topology_account_incomplete",
+                   DiagnosticSeverity::Error,
+                   "immutable source topology account is incomplete: " +
+                       detail);
+    }
+    if (!workingTopologyValidation.complete()) {
+        const std::string detail =
+            workingTopologyValidation.failureCodes.empty()
+            ? "coverage did not complete"
+            : workingTopologyValidation.failureCodes.front();
+        diagnostic("import.working.topology_account_incomplete",
+                   DiagnosticSeverity::Error,
+                   "working topology account is incomplete: " + detail);
+    }
+    if (!imported.correspondence.topologyComplete) {
+        diagnostic("import.topology_correspondence.incomplete",
+                   DiagnosticSeverity::Error,
+                   "source-to-working occurrence correspondence is incomplete");
     }
     if (!imported.correspondence.complete) {
         diagnostic("import.correspondence.incomplete", DiagnosticSeverity::Error,

@@ -46,6 +46,11 @@ struct AssemblyNode {
     bool isAssembly = false;
     int solidId = -1;  // first body for export compatibility; -1 = unresolved
     std::vector<int> solidIds;  // every 1-based Model.solids body owned by this use
+    // Exact located XDE leaf use. It is retained even for non-body topology
+    // (free wires, edges, and vertices) so the secure topology account can
+    // bind every instance without a geometric-nearest fallback. Assembly
+    // definitions leave this null and are represented by their children.
+    TopoDS_Shape exactUse;
     std::array<double, 16> localTransform{};  // parent-relative, column-major, mm
     std::array<double, 16> transform{};       // absolute, column-major, mm
     std::vector<int> children;                // indices into Model.assembly

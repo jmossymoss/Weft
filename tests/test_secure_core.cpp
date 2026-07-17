@@ -6,6 +6,18 @@
 
 #include "test_temp_path.hpp"
 
+#include <BRepPrimAPI_MakeBox.hxx>
+#include <IFSelect_ReturnStatus.hxx>
+#include <STEPCAFControl_Writer.hxx>
+#include <STEPControl_StepModelType.hxx>
+#include <ShapeProcess.hxx>
+#include <TCollection_ExtendedString.hxx>
+#include <TDataStd_Name.hxx>
+#include <TDocStd_Document.hxx>
+#include <XCAFDoc_DocumentTool.hxx>
+#include <XCAFDoc_ShapeTool.hxx>
+#include <gp_Pnt.hxx>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -13,6 +25,7 @@
 #include <filesystem>
 #include <set>
 #include <string>
+#include <string_view>
 
 namespace {
 
@@ -59,9 +72,12 @@ void testConservativeIdentity(const std::filesystem::path& path) {
     CHECK(imported.repair.profile == weft::RepairProfile::Conservative);
     CHECK(imported.repair.sourceValid);
     CHECK(imported.repair.workingValid);
+    CHECK(imported.repair.sourceTopologyComplete);
+    CHECK(imported.repair.workingTopologyComplete);
     CHECK(imported.repair.correspondenceComplete);
     CHECK(imported.repair.identity);
     CHECK(imported.repair.meshable);
+    CHECK(imported.correspondence.topologyComplete);
     CHECK(imported.repair.sourceShapeSha256.size() == 64);
     CHECK(imported.repair.sourceShapeSha256 ==
           imported.repair.workingShapeSha256);
@@ -72,8 +88,40 @@ void testConservativeIdentity(const std::filesystem::path& path) {
     CHECK(std::all_of(imported.repair.validationEvidence.begin(),
                       imported.repair.validationEvidence.end(),
                       [](const weft::RepairValidationEvidence& evidence) {
-                          return evidence.expected > 0 && evidence.complete();
+                          return evidence.complete();
                       }));
+    const auto evidence = [&](std::string_view code) {
+        const auto found = std::find_if(
+            imported.repair.validationEvidence.begin(),
+            imported.repair.validationEvidence.end(),
+            [code](const weft::RepairValidationEvidence& candidate) {
+                return candidate.code == code;
+            });
+        return found == imported.repair.validationEvidence.end()
+            ? nullptr
+            : &*found;
+    };
+    for (std::string_view code : {
+             "repair.topology.occurrences",
+             "repair.topology.coedges",
+             "repair.topology_occurrence_correspondence"}) {
+        const weft::RepairValidationEvidence* checked = evidence(code);
+        CHECK(checked != nullptr);
+        if (checked) {
+            CHECK(checked->expected > 0);
+            CHECK(checked->checked == checked->expected);
+        }
+    }
+    for (std::string_view code : {
+             "repair.topology.assemblies", "repair.topology.instances"}) {
+        const weft::RepairValidationEvidence* checked = evidence(code);
+        CHECK(checked != nullptr);
+        if (checked) {
+            CHECK(checked->expected == 0);
+            CHECK(checked->checked == 0);
+            CHECK(checked->complete());
+        }
+    }
     CHECK(!imported.diagnostics.hasErrors());
     CHECK(imported.source->snapshot.model.shape.IsSame(
         imported.working->snapshot.model.shape));
@@ -89,6 +137,87 @@ void testConservativeIdentity(const std::filesystem::path& path) {
                                  record.relation ==
                                      weft::CorrespondenceRelation::Identity;
                       }));
+
+    const weft::TopologyAccount& sourceTopology =
+        imported.source->snapshot.topology;
+    const weft::TopologyAccountValidation sourceTopologyValidation =
+        weft::validateTopologyAccount(sourceTopology);
+    const weft::TopologyAccountValidation workingTopologyValidation =
+        weft::validateTopologyAccount(imported.working->snapshot.topology);
+    CHECK(sourceTopologyValidation.complete());
+    CHECK(workingTopologyValidation.complete());
+    const weft::TopologyAccountCheck* occurrenceCheck =
+        sourceTopologyValidation.find("topology.occurrences");
+    const weft::TopologyAccountCheck* coedgeCheck =
+        sourceTopologyValidation.find("topology.coedges");
+    CHECK(occurrenceCheck != nullptr);
+    CHECK(coedgeCheck != nullptr);
+    if (occurrenceCheck) {
+        CHECK(occurrenceCheck->expected > 0);
+        CHECK(occurrenceCheck->checked == occurrenceCheck->expected);
+    }
+    if (coedgeCheck) {
+        CHECK(coedgeCheck->expected > 0);
+        CHECK(coedgeCheck->checked == coedgeCheck->expected);
+    }
+    CHECK(sourceTopology.exactShapes.size() ==
+          sourceTopology.occurrences.size());
+    CHECK(imported.correspondence.topologyOccurrenceRecords.size() ==
+          sourceTopology.occurrences.size());
+    CHECK(std::all_of(
+        imported.correspondence.topologyOccurrenceRecords.begin(),
+        imported.correspondence.topologyOccurrenceRecords.end(),
+        [](const weft::CorrespondenceRecord& record) {
+            return record.sourceId.valid() && record.workingIds.size() == 1 &&
+                record.relation == weft::CorrespondenceRelation::Identity;
+        }));
+
+    const auto hasFailure = [](const weft::TopologyAccountValidation& validation,
+                               std::string_view code) {
+        return std::find(validation.failureCodes.begin(),
+                         validation.failureCodes.end(), code) !=
+            validation.failureCodes.end();
+    };
+    const weft::TopologyAccountValidation emptyValidation =
+        weft::validateTopologyAccount({});
+    CHECK(!emptyValidation.complete());
+    CHECK(hasFailure(emptyValidation, "topology.occurrence_account.empty"));
+
+    if (!sourceTopology.occurrences.empty()) {
+        weft::TopologyAccount missingShape = sourceTopology;
+        missingShape.exactShapes.erase(missingShape.occurrences.front().id);
+        const weft::TopologyAccountValidation missingShapeValidation =
+            weft::validateTopologyAccount(missingShape);
+        CHECK(!missingShapeValidation.complete());
+        CHECK(hasFailure(missingShapeValidation,
+                         "topology.occurrence.shape_missing"));
+        const weft::TopologyAccountCheck* checked =
+            missingShapeValidation.find("topology.occurrences");
+        CHECK(checked != nullptr);
+        if (checked) {
+            CHECK(checked->expected > 0);
+            CHECK(checked->checked == checked->expected);
+            CHECK(checked->failed > 0);
+        }
+
+        weft::TopologyAccount duplicateOccurrence = sourceTopology;
+        duplicateOccurrence.occurrences.push_back(
+            duplicateOccurrence.occurrences.front());
+        const weft::TopologyAccountValidation duplicateValidation =
+            weft::validateTopologyAccount(duplicateOccurrence);
+        CHECK(!duplicateValidation.complete());
+        CHECK(hasFailure(duplicateValidation,
+                         "topology.occurrence.id_duplicate"));
+    }
+    if (!sourceTopology.coedges.empty()) {
+        weft::TopologyAccount missingCoedge = sourceTopology;
+        missingCoedge.coedges.pop_back();
+        const weft::TopologyAccountValidation missingCoedgeValidation =
+            weft::validateTopologyAccount(missingCoedge);
+        CHECK(!missingCoedgeValidation.complete());
+        CHECK(hasFailure(missingCoedgeValidation,
+                         "topology.coedge.wire_coverage_invalid"));
+    }
 
     const weft::CoedgeRecord* coedge =
         firstExactCoedge(imported.source->snapshot);
@@ -148,6 +277,12 @@ void testCompatibilityIsAudited(const std::filesystem::path& path) {
     CHECK(imported.source != nullptr);
     CHECK(imported.working != nullptr);
     CHECK(imported.repair.profile == weft::RepairProfile::Compatibility);
+    CHECK(imported.repair.sourceTopologyComplete);
+    CHECK(imported.repair.workingTopologyComplete);
+    CHECK(!imported.correspondence.topologyComplete);
+    CHECK(!imported.repair.correspondenceComplete);
+    CHECK(!imported.repair.identity);
+    CHECK(!imported.repair.meshable);
     CHECK(imported.source && imported.source->metadata.sourceSha256.size() == 64);
     if (imported.source && imported.working) {
         CHECK(!imported.source->snapshot.model.shape.IsSame(
@@ -161,6 +296,12 @@ void testCompatibilityIsAudited(const std::filesystem::path& path) {
                           return operation.code ==
                                  "repair.compatibility_pipeline";
                       }));
+    CHECK(std::any_of(
+        imported.diagnostics.events.begin(), imported.diagnostics.events.end(),
+        [](const weft::ImportDiagnostic& diagnostic) {
+            return diagnostic.code ==
+                "import.topology_correspondence.incomplete";
+        }));
 }
 
 void testReadFailureIsNamed(const std::filesystem::path& path) {
@@ -198,6 +339,73 @@ void testSourceSnapshotPreventsPathReplacement() {
     CHECK(fresh.repair.sourceFaces == 6);
     CHECK(snapshot.source->metadata.sourceSha256 !=
           fresh.source->metadata.sourceSha256);
+
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
+void testMultipleFreeRootOccurrences() {
+    const std::filesystem::path path = weft::test::uniqueTempPath(
+        "weft_secure_core_multiple_free_roots", ".step");
+    Handle(TDocStd_Document) document =
+        new TDocStd_Document(TCollection_ExtendedString("BinXCAF"));
+    XCAFDoc_DocumentTool::Set(document->Main());
+    const Handle(XCAFDoc_ShapeTool) shapeTool =
+        XCAFDoc_DocumentTool::ShapeTool(document->Main());
+    CHECK(!shapeTool.IsNull());
+    if (shapeTool.IsNull()) return;
+
+    const TDF_Label first = shapeTool->AddShape(
+        BRepPrimAPI_MakeBox(2.0, 3.0, 4.0).Shape(), false, false);
+    const TDF_Label second = shapeTool->AddShape(
+        BRepPrimAPI_MakeBox(gp_Pnt(10.0, 0.0, 0.0), 5.0, 6.0, 7.0)
+            .Shape(),
+        false, false);
+    TDataStd_Name::Set(first, TCollection_ExtendedString("free_part_first"));
+    TDataStd_Name::Set(second, TCollection_ExtendedString("free_part_second"));
+
+    STEPCAFControl_Writer writer;
+    writer.SetNameMode(true);
+    const ShapeProcess::OperationsFlags noShapeProcessing;
+    writer.SetShapeProcessFlags(noShapeProcessing);
+    writer.ChangeWriter().SetShapeProcessFlags(noShapeProcessing);
+    const bool transferred = writer.Transfer(document, STEPControl_AsIs);
+    CHECK(transferred);
+    if (!transferred) return;
+    const bool written =
+        writer.Write(path.string().c_str()) == IFSelect_RetDone;
+    CHECK(written);
+    if (!written) return;
+
+    const weft::ImportedModel imported = weft::importStepSecure(
+        path.string(), weft::RepairProfile::Conservative);
+    CHECK(imported.repair.identity);
+    CHECK(imported.correspondence.topologyComplete);
+    CHECK(imported.source != nullptr);
+    if (!imported.source) return;
+
+    const weft::Model& model = imported.source->snapshot.model;
+    const weft::TopologyAccount& topology =
+        imported.source->snapshot.topology;
+    CHECK(model.assembly.size() == 2);
+    CHECK(topology.assemblies.empty());
+    CHECK(topology.assemblyRoots.empty());
+    CHECK(topology.instances.size() == 2);
+    CHECK(weft::validateTopologyAccount(topology).complete());
+    std::set<weft::StableId> instanceIds;
+    for (const weft::InstanceRecord& instance : topology.instances) {
+        CHECK(instance.parentId ==
+              (weft::StableId{weft::StableIdKind::Model, 1}));
+        CHECK(instance.sourceComponent.empty());
+        CHECK(!instance.sourceDefinition.empty());
+        CHECK(instance.topologyRoots.size() == 1);
+        CHECK(instanceIds.insert(instance.id).second);
+    }
+    for (const weft::AssemblyNode& node : model.assembly) {
+        CHECK(node.parent == -1);
+        CHECK(!node.isAssembly);
+        CHECK(!node.exactUse.IsNull());
+    }
 
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
@@ -275,6 +483,7 @@ int main() {
         testCompatibilityIsAudited(path);
         testReadFailureIsNamed(path);
         testSourceSnapshotPreventsPathReplacement();
+        testMultipleFreeRootOccurrences();
         testTotalReconnaissance(path);
         std::error_code ignored;
         std::filesystem::remove(path, ignored);

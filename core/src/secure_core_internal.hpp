@@ -9,6 +9,8 @@
 
 namespace weft::secure_detail {
 
+TopologyAccount buildTopologyAccount(const Model& model);
+
 SourceMetadata readSourceMetadata(const std::string& path,
                                   std::string_view sourceBytes);
 

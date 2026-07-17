@@ -324,6 +324,7 @@ static int walkLabel(const XCaf& xc, const TDF_Label& label, const TopLoc_Locati
     out.assembly.push_back(node);
     TopoDS_Shape worldUse = XCaf::shape(label);
     if (!loc.IsIdentity()) worldUse.Move(loc);
+    out.assembly[idx].exactUse = worldUse;
     out.leafBodyShapes.push_back(bodyUses(worldUse));
     return idx;
 }
