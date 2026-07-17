@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -88,6 +89,68 @@ int main() {
                       imported.source->metadata.sourceSha256.size() == 64);
                 CHECK(imported.repair.sourceShapeSha256.size() == 64);
                 CHECK(imported.repair.workingShapeSha256.size() == 64);
+                if (path.filename() ==
+                    "assembly.box.nested_repeated_instances.step") {
+                    const auto& assembly = imported.source->snapshot.model.assembly;
+                    const std::size_t resolvedLeaves =
+                        static_cast<std::size_t>(std::count_if(
+                            assembly.begin(), assembly.end(),
+                            [](const weft::AssemblyNode& node) {
+                                return node.solidId > 0;
+                            }));
+                    std::set<int> resolvedSolidIds;
+                    for (const weft::AssemblyNode& node : assembly) {
+                        if (node.solidId > 0) {
+                            resolvedSolidIds.insert(node.solidId);
+                        }
+                    }
+                    std::printf(
+                        "nested assembly adapter: %zu expanded nodes, %zu resolved leaves, %zu distinct leaf IDs, %d indexed solids\n",
+                        assembly.size(), resolvedLeaves, resolvedSolidIds.size(),
+                        imported.source->snapshot.model.solids.Extent());
+                    CHECK(assembly.size() == 9);
+                    CHECK(resolvedLeaves == 6);
+                    CHECK(resolvedSolidIds.size() == 6);
+                    if (assembly.size() == 9) {
+                        CHECK(assembly[0].parent == -1);
+                        CHECK(assembly[0].isAssembly);
+                        CHECK(assembly[0].sourceComponent.empty());
+                        CHECK(!assembly[0].sourceDefinition.empty());
+                        CHECK(assembly[1].parent == 0);
+                        CHECK(assembly[5].parent == 0);
+                        CHECK(assembly[1].isAssembly);
+                        CHECK(assembly[5].isAssembly);
+                        CHECK(assembly[1].sourceDefinition ==
+                              assembly[5].sourceDefinition);
+                        CHECK(assembly[1].sourceComponent !=
+                              assembly[5].sourceComponent);
+                        CHECK(assembly[2].parent == 1);
+                        CHECK(assembly[3].parent == 1);
+                        CHECK(assembly[4].parent == 1);
+                        CHECK(assembly[6].parent == 5);
+                        CHECK(assembly[7].parent == 5);
+                        CHECK(assembly[8].parent == 5);
+                        CHECK(assembly[2].sourceDefinition ==
+                              assembly[8].sourceDefinition);
+                        CHECK(assembly[2].sourceComponent ==
+                              assembly[6].sourceComponent);
+                        CHECK(assembly[3].sourceComponent ==
+                              assembly[7].sourceComponent);
+                        CHECK(assembly[4].sourceComponent ==
+                              assembly[8].sourceComponent);
+                        CHECK(assembly[1].localTransform[13] == 10.0);
+                        CHECK(assembly[5].localTransform[12] == 30.0);
+                        for (const weft::AssemblyNode& node : assembly) {
+                            CHECK(!node.sourceDefinition.empty());
+                            CHECK(node.localTransform[15] == 1.0);
+                            CHECK(node.transform[15] == 1.0);
+                            if (!node.isAssembly) {
+                                CHECK(node.solidIds.size() == 1);
+                                CHECK(node.solidId == node.solidIds.front());
+                            }
+                        }
+                    }
+                }
                 const weft::ReconnaissanceReport reconnaissance =
                     weft::reconnoitre(imported);
                 CHECK(reconnaissance.complete);

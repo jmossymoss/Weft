@@ -10,8 +10,10 @@
 #include <Bnd_Box.hxx>
 #include <BRepBndLib.hxx>
 #include <GProp_GProps.hxx>
+#include <TCollection_AsciiString.hxx>
 #include <TCollection_ExtendedString.hxx>
 #include <TDataStd_Name.hxx>
+#include <TDF_Tool.hxx>
 #include <TDocStd_Document.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
@@ -164,6 +166,12 @@ static std::array<double, 16> toMatrix(const TopLoc_Location& loc) {
     return m;
 }
 
+static std::string labelEntry(const TDF_Label& label) {
+    TCollection_AsciiString entry;
+    TDF_Tool::Entry(label, entry);
+    return entry.ToCString();
+}
+
 static std::array<double, 3> faceCentroid(const TopoDS_Face& f) {
     GProp_GProps props;
     BRepGProp::SurfaceProperties(f, props);
@@ -208,22 +216,30 @@ static void recordSolidMeta(const TopoDS_Shape& sh, const Inherited& inh, Import
     if (!any) stamp(sh);
 }
 
-static const void* firstBodyKey(const TopoDS_Shape& sh) {
-    TopExp_Explorer solid(sh, TopAbs_SOLID);
-    if (solid.More()) return solid.Current().TShape().get();
-    TopExp_Explorer shell(sh, TopAbs_SHELL, TopAbs_SOLID);
-    if (shell.More()) return shell.Current().TShape().get();
-    return nullptr;
+static std::vector<TopoDS_Shape> bodyUses(const TopoDS_Shape& shape) {
+    std::vector<TopoDS_Shape> bodies;
+    for (TopExp_Explorer solid(shape, TopAbs_SOLID); solid.More(); solid.Next()) {
+        bodies.push_back(solid.Current());
+    }
+    for (TopExp_Explorer shell(shape, TopAbs_SHELL, TopAbs_SOLID); shell.More();
+         shell.Next()) {
+        bodies.push_back(shell.Current());
+    }
+    return bodies;
 }
 
 // Recursive assembly walk; returns the index of the node created in
 // out.assembly (or -1). Metadata is stamped on ORIGINAL faces/solids.
 static int walkLabel(const XCaf& xc, const TDF_Label& label, const TopLoc_Location& loc,
-                     Inherited inh, ImportMeta& out, int& leaves, bool& sawAssembly) {
+                     int parent, Inherited inh, ImportMeta& out, int& leaves,
+                     bool& sawAssembly) {
     TDF_Label refLabel = label;
     TopLoc_Location here = loc;
-    if (XCaf::isShapeReference(label)) {
-        here = loc * XCaf::shapeReferenceLocation(label);
+    TopLoc_Location local;
+    const bool isReference = XCaf::isShapeReference(label);
+    if (isReference) {
+        local = XCaf::shapeReferenceLocation(label);
+        here = loc * local;
         if (xc.hasShapeColor(label)) {
             inh.hasColor = true;
             inh.color = toRGB(xc.shapeColor(label));
@@ -238,14 +254,19 @@ static int walkLabel(const XCaf& xc, const TDF_Label& label, const TopLoc_Locati
         sawAssembly = true;
         AssemblyNode node;
         node.name = name;
+        node.sourceDefinition = labelEntry(refLabel);
+        node.sourceComponent = isReference ? labelEntry(label) : std::string{};
+        node.parent = parent;
+        node.isAssembly = true;
         node.solidId = -1;
+        node.localTransform = toMatrix(local);
         node.transform = toMatrix(here);
         const int idx = static_cast<int>(out.assembly.size());
         out.assembly.push_back(node);
-        out.leafSolidKey.push_back(nullptr);
+        out.leafBodyShapes.emplace_back();
         std::vector<int> childIdx;
         for (const TDF_Label& c : XCaf::shapeComponents(refLabel)) {
-            int ci = walkLabel(xc, c, here, inh, out, leaves, sawAssembly);
+            int ci = walkLabel(xc, c, here, idx, inh, out, leaves, sawAssembly);
             if (ci >= 0) childIdx.push_back(ci);
         }
         out.assembly[idx].children = std::move(childIdx);
@@ -292,11 +313,18 @@ static int walkLabel(const XCaf& xc, const TDF_Label& label, const TopLoc_Locati
     ++leaves;
     AssemblyNode node;
     node.name = name;
+    node.sourceDefinition = labelEntry(refLabel);
+    node.sourceComponent = isReference ? labelEntry(label) : std::string{};
+    node.parent = parent;
+    node.isAssembly = false;
     node.solidId = -1;
+    node.localTransform = toMatrix(local);
     node.transform = toMatrix(here);
     const int idx = static_cast<int>(out.assembly.size());
     out.assembly.push_back(node);
-    out.leafSolidKey.push_back(firstBodyKey(sh));
+    TopoDS_Shape worldUse = XCaf::shape(label);
+    if (!loc.IsIdentity()) worldUse.Move(loc);
+    out.leafBodyShapes.push_back(bodyUses(worldUse));
     return idx;
 }
 
@@ -306,7 +334,8 @@ void captureMeta(const XCaf& xc, const LabelSequence& roots, ImportMeta& out) {
     int leaves = 0;
     bool sawAssembly = false;
     for (int i = 1; i <= roots.Length(); ++i)
-        walkLabel(xc, roots.Value(i), TopLoc_Location(), Inherited{}, out, leaves, sawAssembly);
+        walkLabel(xc, roots.Value(i), TopLoc_Location(), -1, Inherited{}, out,
+                  leaves, sawAssembly);
 }
 
 double readLengthUnit(const Handle(TDocStd_Document)& doc) {
@@ -465,14 +494,35 @@ static void resolveAssemblySolidIds(const TopoDS_Shape& origShape, const Model& 
     for (TopExp_Explorer sx(origShape, TopAbs_SHELL, TopAbs_SOLID); sx.More(); sx.Next())
         origBodies.push_back(sx.Current());
     if (static_cast<int>(origBodies.size()) != m.solids.Extent()) return;
-    std::unordered_map<const void*, int> solidIdByKey;
-    for (size_t i = 0; i < origBodies.size(); ++i)
-        solidIdByKey[origBodies[i].TShape().get()] = static_cast<int>(i) + 1;
+    std::vector<char> consumed(origBodies.size(), 0);
     for (size_t i = 0; i < meta.assembly.size(); ++i) {
-        const void* key = (i < meta.leafSolidKey.size()) ? meta.leafSolidKey[i] : nullptr;
-        if (!key) continue;
-        if (auto it = solidIdByKey.find(key); it != solidIdByKey.end())
-            meta.assembly[i].solidId = it->second;
+        if (i >= meta.leafBodyShapes.size()) break;
+        AssemblyNode& node = meta.assembly[i];
+        std::vector<std::size_t> matches;
+        for (const TopoDS_Shape& body : meta.leafBodyShapes[i]) {
+            std::size_t match = origBodies.size();
+            for (std::size_t candidate = 0; candidate < origBodies.size();
+                 ++candidate) {
+                if (!consumed[candidate] &&
+                    std::find(matches.begin(), matches.end(), candidate) ==
+                        matches.end() &&
+                    origBodies[candidate].IsSame(body)) {
+                    match = candidate;
+                    break;
+                }
+            }
+            if (match == origBodies.size()) {
+                matches.clear();
+                break;
+            }
+            matches.push_back(match);
+        }
+        node.solidIds.clear();
+        for (std::size_t match : matches) {
+            consumed[match] = 1;
+            node.solidIds.push_back(static_cast<int>(match) + 1);
+        }
+        node.solidId = node.solidIds.empty() ? -1 : node.solidIds.front();
     }
 }
 

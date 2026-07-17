@@ -40,9 +40,15 @@ using EdgeFaceMap = TopTools_IndexedDataMapOfShapeListOfShape;
 // hierarchy; a flat model leaves Model::assembly empty.
 struct AssemblyNode {
     std::string name;
-    int solidId = -1;                    // 1-based index into Model.solids; -1 = grouping node
-    std::array<double, 16> transform{};  // absolute, column-major, mm (identity if leaf)
-    std::vector<int> children;           // indices into Model.assembly
+    std::string sourceDefinition;  // deterministic XDE definition label entry
+    std::string sourceComponent;   // component label entry; empty for a free root
+    int parent = -1;               // index into Model.assembly; -1 for a free root
+    bool isAssembly = false;
+    int solidId = -1;  // first body for export compatibility; -1 = unresolved
+    std::vector<int> solidIds;  // every 1-based Model.solids body owned by this use
+    std::array<double, 16> localTransform{};  // parent-relative, column-major, mm
+    std::array<double, 16> transform{};       // absolute, column-major, mm
+    std::vector<int> children;                // indices into Model.assembly
 };
 
 // A loaded B-rep with stable integer IDs for faces and edges.

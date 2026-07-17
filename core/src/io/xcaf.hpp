@@ -78,7 +78,9 @@ struct ImportMeta {
     std::unordered_map<const void*, std::string> solidLayer;
     std::unordered_map<const void*, std::string> solidMaterial;
     std::vector<AssemblyNode> assembly;
-    std::vector<const void*> leafSolidKey;  // parallel to assembly; nullptr for group nodes
+    // Exact located body uses, parallel to assembly. Repeated/co-located paths
+    // deliberately remain separate and are consumed one-to-one at resolution.
+    std::vector<std::vector<TopoDS_Shape>> leafBodyShapes;
     double lengthUnitMm = 1.0;
 };
 
