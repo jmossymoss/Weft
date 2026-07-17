@@ -310,8 +310,8 @@ struct GenerationCache {
     std::map<int, int> curvatureFloors;
     double modelDiagonal = -1.0;
     // Type-erased internal cache of geometry classification plans. FacePlan
-    // stays private to meshers.cpp so OCCT planning details do not leak into
-    // the public API.
+    // stays private to the mesher implementation so OCCT planning details do
+    // not leak into the public API.
     std::shared_ptr<void> facePlans;
     std::shared_ptr<void> cornerRepair;
     void clear() {

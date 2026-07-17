@@ -9,6 +9,24 @@ add_library(weft_core
   src/compiler.cpp
   src/mesh.cpp
   src/meshers.cpp
+  src/mesher_internal.hpp
+  src/mesher_boundary.cpp
+  src/mesher_coons.cpp
+  src/mesher_annulus.cpp
+  src/mesher_web.cpp
+  src/mesher_ribbon.cpp
+  src/mesher_corridor.cpp
+  src/mesher_fallback.cpp
+  src/mesher_planning.cpp
+  src/mesher_density.cpp
+  src/mesher_revolution_common.cpp
+  src/mesher_revolution_open.cpp
+  src/mesher_revolution_grid.cpp
+  src/mesher_orthogonal.cpp
+  src/mesher_analytic.cpp
+  src/mesher_edge_contracts.cpp
+  src/mesher_occt_fallback.cpp
+  src/mesher_seams.cpp
   src/mesher_sampling.cpp
   src/mesher_trace.cpp
   src/mesher_utils.cpp
@@ -36,6 +54,14 @@ add_library(weft_core
   src/io/mesh_writers.cpp
   src/io/occ_writers.cpp
 )
+
+# Mesher implementations are intentionally separate translation units so an
+# edit to one strategy does not rebuild the former 1.3 MB monolith. MSVC does
+# not enable per-project parallel compilation by default; /MP lets these units
+# compile concurrently and /FS serializes their shared PDB writes.
+if(MSVC)
+  target_compile_options(weft_core PRIVATE /MP /FS)
+endif()
 
 target_include_directories(weft_core
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
