@@ -129,9 +129,9 @@ void testReferencesMigrationResolutionAndPersistence(
     CHECK(hasIssue(applicationIssues,
                    "secure_recipe.application.face_settings_unimplemented",
                    weft::RecipeIssueSeverity::Conflict));
-    CHECK(hasIssue(applicationIssues,
-                   "secure_recipe.application.edge_settings_unimplemented",
-                   weft::RecipeIssueSeverity::Conflict));
+    CHECK(!hasIssue(applicationIssues,
+                    "secure_recipe.application.edge_settings_unimplemented",
+                    weft::RecipeIssueSeverity::Conflict));
     CHECK(hasIssue(applicationIssues,
                    "secure_recipe.application.operations_unimplemented",
                    weft::RecipeIssueSeverity::Conflict));
@@ -330,6 +330,17 @@ void testV1RefusalsAndMalformedFile(
     CHECK(safeMigration.complete());
     CHECK(safeResolution.complete());
     CHECK(weft::validateSecureRecipeApplication(safeResolution).empty());
+
+    weft::Recipe edgeOnly;
+    edgeOnly.settings.perEdge[1] = 4;
+    const weft::RecipeV2MigrationResult edgeMigration =
+        weft::migrateRecipeV1(imported, edgeOnly);
+    const weft::RecipeV2Resolution edgeResolution =
+        weft::resolveRecipeV2(imported, edgeMigration.recipe);
+    CHECK(edgeMigration.complete());
+    CHECK(edgeResolution.complete());
+    CHECK(edgeResolution.settings.perEdge.at(1) == 4);
+    CHECK(weft::validateSecureRecipeApplication(edgeResolution).empty());
 }
 
 }  // namespace

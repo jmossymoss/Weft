@@ -831,9 +831,8 @@ static std::string secureRecipeConflict(const weft::Recipe& recipe) {
     if (!recipe.settings.perFace.empty()) {
         return "per-face certified-template settings are not implemented";
     }
-    if (!recipe.settings.perEdge.empty() ||
-        !recipe.compiler.perEdge.empty()) {
-        return "per-edge certified count constraints are not implemented";
+    if (!recipe.compiler.perEdge.empty()) {
+        return "legacy compiler edge constraints are not implemented";
     }
     if (!recipe.ops.empty()) {
         return "certified surface-anchored editing is not implemented";
@@ -953,11 +952,17 @@ static bool loadAndAdoptRecipe(App& app, const std::string& path) {
     return adoptRecipeV2(app, weft::loadRecipeV2(path));
 }
 
-static void syncRecipeV2Globals(App& app) {
+static void syncRecipeV2FromWorking(App& app) {
     if (!app.hasRecipeV2) return;
-    app.recipeV2.defaults = app.recipe.settings.defaults;
-    app.recipeV2.densityScale = app.recipe.settings.densityScale;
-    app.recipeV2.weldTolerance = app.recipe.settings.weldTolerance;
+    const weft::RecipeV2MigrationResult captured =
+        weft::captureRecipeV2(app.secureImported, app.recipe);
+    logRecipeWarnings(captured.issues);
+    if (const weft::RecipeMigrationIssue* conflict =
+            firstRecipeConflict(captured.issues)) {
+        throw std::runtime_error(
+            "recipe v2 recapture conflict: " + recipeIssueText(*conflict));
+    }
+    app.recipeV2 = captured.recipe;
 }
 
 static bool saveCurrentRecipeV2(App& app, const std::string& path) {
@@ -1022,6 +1027,16 @@ static weft::SecureMeshingConfiguration secureConfiguration(
         4096U, result.sampling.minimumClosedCurveSegments);
     result.cylinderAxialIntervals =
         static_cast<std::uint32_t>(defaults.axial);
+    for (const auto& [edgeId, count] : settings.perEdge) {
+        if (edgeId < 1 || count < 1) {
+            throw std::runtime_error(
+                "per-edge counts require positive working edge IDs and counts");
+        }
+        result.exactEdgeIntervalCounts.emplace(
+            weft::StableId{weft::StableIdKind::Edge,
+                           static_cast<std::uint64_t>(edgeId)},
+            static_cast<std::uint32_t>(count));
+    }
     return result;
 }
 
@@ -1925,7 +1940,7 @@ static void reloadModel(App& app) {
         (void)weft::remapRecipe(app.recipe, app.model, app.analysis, fresh,
                                 freshAnalysis, &rep);
         if (app.hasRecipeV2) {
-            syncRecipeV2Globals(app);
+            syncRecipeV2FromWorking(app);
             const weft::RecipeV2Resolution resolved =
                 weft::resolveRecipeV2(freshImported, app.recipeV2);
             logRecipeWarnings(resolved.issues);
@@ -5473,18 +5488,18 @@ static void drawUi(App& app) {
     if (app.hasModel &&
         ImGui::CollapsingHeader("Modelling controls (migration)")) {
         ImGui::TextWrapped(
-            "Per-family and per-face controls are temporarily disabled. "
-            "They return with recipe v2 source/working correspondence; "
+            "Per-family and per-face controls remain disabled. Certified "
+            "feature-edge count pins are available under Selection; "
             "certified triangles remain exportable now.");
     }
 
     // The old knobs are a separate pipeline, not aliases for compiler values.
     if (app.hasModel &&
         ImGui::CollapsingHeader("Selection", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::TextDisabled(
-            "selection is inspect-only until recipe v2 migration");
-        ImGui::BeginDisabled();
         if (app.selectMode == SelectMode::Edge) {
+            ImGui::TextWrapped(
+                "Feature-edge pins are certified recipe v2 interval "
+                "constraints.");
             if (app.selEdges.empty()) {
                 ImGui::TextDisabled("click edges (shift extends)");
             } else {
@@ -5502,7 +5517,7 @@ static void drawUi(App& app) {
                                    : 0),
                         pin != pins.end() ? " (pinned)" : "");
                 }
-                ImGui::TextDisabled("wheel / [ ] pins verts");
+                ImGui::TextDisabled("wheel / [ ] pins intervals");
                 bool anyPinned = false;
                 for (int eid : app.selEdges) {
                     anyPinned |= pins.count(eid) > 0;
@@ -5514,24 +5529,32 @@ static void drawUi(App& app) {
                     markDirty(app);
                 }
             }
-        } else if (app.activeFace <= 0 ||
-                   app.activeFace > int(app.analysis.faces.size())) {
-            ImGui::TextDisabled("click a face in the viewport");
         } else {
-            const weft::FaceInfo& f = app.analysis.faces[app.activeFace - 1];
-            if (app.selFaces.size() > 1) {
-                ImGui::Text("%zu faces (active #%d)", app.selFaces.size(),
-                            f.id);
+            ImGui::TextDisabled(
+                "face and model editing remains inspect-only during recipe "
+                "v2 migration");
+            ImGui::BeginDisabled();
+            if (app.activeFace <= 0 ||
+                app.activeFace > int(app.analysis.faces.size())) {
+                ImGui::TextDisabled("click a face in the viewport");
+            } else {
+                const weft::FaceInfo& f =
+                    app.analysis.faces[app.activeFace - 1];
+                if (app.selFaces.size() > 1) {
+                    ImGui::Text("%zu faces (active #%d)",
+                                app.selFaces.size(), f.id);
+                }
+                ImGui::Text("face #%d  %s%s%s", f.id,
+                            weft::surfaceTypeName(f.type),
+                            f.isFillet ? "  [fillet]" : "",
+                            f.isHole ? "  [hole]" : "");
+                if (f.radius > 0) ImGui::Text("radius %.3f", f.radius);
+                ImGui::PushID("perface");
+                drawActiveFaceSettings(app);
+                ImGui::PopID();
             }
-            ImGui::Text("face #%d  %s%s%s", f.id, weft::surfaceTypeName(f.type),
-                        f.isFillet ? "  [fillet]" : "",
-                        f.isHole ? "  [hole]" : "");
-            if (f.radius > 0) ImGui::Text("radius %.3f", f.radius);
-            ImGui::PushID("perface");
-            drawActiveFaceSettings(app);
-            ImGui::PopID();
+            ImGui::EndDisabled();
         }
-        ImGui::EndDisabled();
     }
 
     if (ImGui::CollapsingHeader("Display")) {

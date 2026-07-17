@@ -33,3 +33,6 @@ Current records:
   source-backed inspection/extraction, and explicit cache refusal.
 - `ADR-0018-source-referenced-recipe-v2.md` - immutable source references,
   strict fingerprint relocation, v1 migration, and working-to-source capture.
+- `ADR-0019-certified-per-edge-interval-constraints.md` - exact recipe-v2
+  edge counts reconciled through the canonical interval solver and shared
+  boundary identity.

@@ -151,6 +151,38 @@ void testExactClassesAndFailures() {
     const auto tied = weft::solveIntervals(tie);
     CHECK(tied && tied.solution->find(boundary(1)) == 4);
 
+    weft::IntervalProblem fixed;
+    fixed.variables = {variable(1, 20.0), variable(2, 4.0)};
+    fixed.variables.front().exact = 7;
+    fixed.equalities.push_back(equality({1, 2}));
+    const auto fixedResult = weft::solveIntervals(fixed);
+    CHECK(fixedResult);
+    CHECK(fixedResult && fixedResult.solution->find(boundary(1)) == 7);
+    CHECK(fixedResult && fixedResult.solution->find(boundary(2)) == 7);
+
+    weft::IntervalProblem exactConflict = fixed;
+    exactConflict.variables.back().exact = 8;
+    const auto conflictResult = weft::solveIntervals(exactConflict);
+    CHECK(!conflictResult);
+    CHECK(conflictResult.failure &&
+          conflictResult.failure->code == "interval.exact_conflict");
+
+    weft::IntervalProblem belowMinimum;
+    belowMinimum.variables = {variable(1, 10.0, 9)};
+    belowMinimum.variables.front().exact = 8;
+    const auto belowResult = weft::solveIntervals(belowMinimum);
+    CHECK(!belowResult);
+    CHECK(belowResult.failure &&
+          belowResult.failure->code == "interval.exact_below_minimum");
+
+    weft::IntervalProblem parity;
+    parity.variables = {variable(1, 8.0, 2, true)};
+    parity.variables.front().exact = 7;
+    const auto parityResult = weft::solveIntervals(parity);
+    CHECK(!parityResult);
+    CHECK(parityResult.failure &&
+          parityResult.failure->code == "interval.exact_parity_conflict");
+
     weft::IntervalProblem capped;
     capped.variables = {variable(1, 20.0, 17, true)};
     weft::SamplingConfiguration configuration;

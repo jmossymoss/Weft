@@ -610,11 +610,6 @@ std::vector<RecipeMigrationIssue> validateSecureRecipeApplication(
                  "secure_recipe.application.face_settings_unimplemented",
                  "per-face certified-template settings are not implemented");
     }
-    if (!resolution.settings.perEdge.empty()) {
-        addIssue(issues, RecipeIssueSeverity::Conflict,
-                 "secure_recipe.application.edge_settings_unimplemented",
-                 "per-edge certified count constraints are not implemented");
-    }
     if (!resolution.operations.empty()) {
         addIssue(issues, RecipeIssueSeverity::Conflict,
                  "secure_recipe.application.operations_unimplemented",

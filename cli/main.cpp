@@ -781,6 +781,16 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
             4096U, configuration.sampling.minimumClosedCurveSegments);
         configuration.cylinderAxialIntervals =
             static_cast<std::uint32_t>(selected.defaults.axial);
+        for (const auto& [edgeId, count] : selected.perEdge) {
+            if (edgeId < 1 || count < 1) {
+                throw std::runtime_error(
+                    "--edge requires positive working edge IDs and counts");
+            }
+            configuration.exactEdgeIntervalCounts.emplace(
+                weft::StableId{weft::StableIdKind::Edge,
+                               static_cast<std::uint64_t>(edgeId)},
+                static_cast<std::uint32_t>(count));
+        }
 
         weft::SecureMeshingResult generated =
             weft::generateSecureMesh(secureImported, configuration);

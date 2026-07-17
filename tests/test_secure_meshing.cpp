@@ -8,6 +8,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <map>
+#include <set>
 #include <string>
 
 namespace {
@@ -58,6 +60,21 @@ bool hasCoverage(const weft::ValidationCertificate& certificate,
         [&](const weft::ValidationCoverage& coverage) {
             return coverage.code == code;
         });
+}
+
+std::map<std::uint32_t, std::set<weft::StableId>> sampleFacesForEdge(
+    const weft::SecureMeshingResult& result, weft::StableId edge) {
+    std::map<std::uint32_t, std::set<weft::StableId>> samples;
+    if (!result.value) return samples;
+    for (const weft::CertifiedVertex& vertex :
+         result.value->certified.vertices) {
+        for (const weft::CertifiedVertexUse& use : vertex.provenance) {
+            if (use.boundary.workingEdge == edge) {
+                samples[use.boundary.sample.ordinal].insert(use.workingFace);
+            }
+        }
+    }
+    return samples;
 }
 
 weft::SecureMeshingResult generateFixture(
@@ -156,6 +173,116 @@ void testConnectedThroughHole() {
     CHECK(result.value && result.value->certified.triangles.size() > 200);
 }
 
+void testExactEdgeIntervals() {
+    TemporaryStep boxStep("box");
+    const weft::ImportedModel box =
+        weft::importStepSecure(boxStep.path().string());
+    const weft::StableId boxEdge{weft::StableIdKind::Edge, 1};
+    weft::SecureMeshingConfiguration pinnedBox = configuration();
+    pinnedBox.exactEdgeIntervalCounts[boxEdge] = 4;
+    const weft::SecureMeshingResult boxFirst =
+        weft::generateSecureMesh(box, pinnedBox);
+    const weft::SecureMeshingResult boxRepeated =
+        weft::generateSecureMesh(box, pinnedBox);
+    checkSuccessfulResult(boxFirst);
+    checkSuccessfulResult(boxRepeated);
+    CHECK(hasCoverage(
+        boxFirst.validation,
+        "secure_pipeline.exact_edge_interval_constraints"));
+    CHECK(boxFirst.value &&
+          boxFirst.value->generation.edgeDivisions.at(1) == 4);
+    const auto boxSamples = sampleFacesForEdge(boxFirst, boxEdge);
+    CHECK(boxSamples.size() == 5);
+    for (const auto& [ordinal, faces] : boxSamples) {
+        (void)ordinal;
+        CHECK(faces.size() >= 2);
+    }
+    CHECK(boxFirst.value && boxRepeated.value &&
+          boxFirst.value->certified.topologyFingerprint ==
+              boxRepeated.value->certified.topologyFingerprint);
+
+    TemporaryStep cylinderStep("cylinder");
+    const weft::ImportedModel cylinder =
+        weft::importStepSecure(cylinderStep.path().string());
+    const weft::ReconnaissanceReport reconnaissance =
+        weft::reconnoitre(cylinder);
+    std::vector<weft::StableId> circleEdges;
+    for (const weft::ExactGeometryClassification& record :
+         reconnaissance.records) {
+        if (record.taxonomy == weft::GeometryTaxonomy::Curve &&
+            record.familyCode == "circle") {
+            circleEdges.push_back(record.subjectId);
+        }
+    }
+    CHECK(circleEdges.size() == 2);
+    if (circleEdges.size() == 2) {
+        weft::SecureMeshingConfiguration pinnedCylinder = configuration();
+        pinnedCylinder.exactEdgeIntervalCounts[circleEdges.front()] = 64;
+        const weft::SecureMeshingResult cylinderResult =
+            weft::generateSecureMesh(cylinder, pinnedCylinder);
+        checkSuccessfulResult(cylinderResult);
+        CHECK(sampleFacesForEdge(cylinderResult, circleEdges[0]).size() == 64);
+        CHECK(sampleFacesForEdge(cylinderResult, circleEdges[1]).size() == 64);
+        CHECK(cylinderResult.value &&
+              cylinderResult.value->generation.edgeDivisions.at(
+                  static_cast<int>(circleEdges[0].ordinal)) == 64);
+        CHECK(cylinderResult.value &&
+              cylinderResult.value->generation.edgeDivisions.at(
+                  static_cast<int>(circleEdges[1].ordinal)) == 64);
+
+        weft::SecureMeshingConfiguration conflictingCylinder = configuration();
+        conflictingCylinder.exactEdgeIntervalCounts[circleEdges[0]] = 64;
+        conflictingCylinder.exactEdgeIntervalCounts[circleEdges[1]] = 48;
+        const weft::SecureMeshingResult conflicting =
+            weft::generateSecureMesh(cylinder, conflictingCylinder);
+        CHECK(!conflicting);
+        CHECK(conflicting.failure &&
+              conflicting.failure->code == "interval.exact_conflict");
+
+        pinnedCylinder.exactEdgeIntervalCounts[circleEdges.front()] = 8;
+        const weft::SecureMeshingResult belowMinimum =
+            weft::generateSecureMesh(cylinder, pinnedCylinder);
+        CHECK(!belowMinimum);
+        CHECK(belowMinimum.failure &&
+              belowMinimum.failure->code == "interval.exact_below_minimum");
+    }
+
+    weft::SecureMeshingConfiguration invalid = configuration();
+    invalid.exactEdgeIntervalCounts[
+        {weft::StableIdKind::Edge, 999999}] = 4;
+    const weft::SecureMeshingResult missingEdge =
+        weft::generateSecureMesh(box, invalid);
+    CHECK(!missingEdge);
+    CHECK(missingEdge.failure &&
+          missingEdge.failure->code ==
+              "secure_pipeline.edge_constraint_invalid");
+
+    invalid = configuration();
+    invalid.exactEdgeIntervalCounts[boxEdge] = 0;
+    const weft::SecureMeshingResult zeroCount =
+        weft::generateSecureMesh(box, invalid);
+    CHECK(!zeroCount);
+    CHECK(zeroCount.failure &&
+          zeroCount.failure->code ==
+              "secure_pipeline.edge_constraint_invalid");
+
+    for (const weft::ExactGeometryClassification& record :
+         reconnaissance.records) {
+        if (record.taxonomy == weft::GeometryTaxonomy::Curve &&
+            record.familyCode == "line") {
+            weft::SecureMeshingConfiguration axialEdge = configuration();
+            axialEdge.exactEdgeIntervalCounts[record.subjectId] = 2;
+            const weft::SecureMeshingResult axialEdgeRefusal =
+                weft::generateSecureMesh(cylinder, axialEdge);
+            CHECK(!axialEdgeRefusal);
+            CHECK(axialEdgeRefusal.failure &&
+                  axialEdgeRefusal.failure->code ==
+                      "cylinder.axial_samples_require_interior_provenance");
+            break;
+        }
+    }
+}
+
 void testUnsupportedAndConfigurationRefusals() {
     const weft::SecureMeshingResult sphere = generateFixture("sphere");
     CHECK(!sphere);
@@ -187,6 +314,7 @@ int main() {
         testPlanarBox();
         testFullCylinderDeterminism();
         testConnectedThroughHole();
+        testExactEdgeIntervals();
         testUnsupportedAndConfigurationRefusals();
     } catch (const std::exception& error) {
         std::printf("FAIL secure-meshing exception: %s\n", error.what());

@@ -65,6 +65,19 @@ IntervalProblemResult buildIntervalProblem(
     }
     IntervalProblem problem;
     const BRepSnapshot& snapshot = imported.working->snapshot;
+    for (const auto& [edge, count] :
+         configuration.exactEdgeIntervalCounts) {
+        if (!edge.valid() || edge.kind != StableIdKind::Edge || count == 0 ||
+            edge.ordinal >
+                static_cast<std::uint64_t>(snapshot.model.edgeCount()) ||
+            !edgeTopology(snapshot, edge)) {
+            result.failure = SecureMeshingFailure{
+                "secure_pipeline.edge_constraint_invalid",
+                "an exact edge count must name one existing working edge and be positive",
+                {edge}};
+            return result;
+        }
+    }
     std::set<StableId> cylinderAxialEdges;
     for (const ExactGeometryClassification& face : reconnaissance.records) {
         if (face.taxonomy != GeometryTaxonomy::Surface ||
@@ -139,9 +152,14 @@ IntervalProblemResult buildIntervalProblem(
                 {topology.id}};
             return result;
         }
+        const auto exact =
+            configuration.exactEdgeIntervalCounts.find(topology.id);
         problem.variables.push_back(
             {{StableIdKind::Boundary, topology.id.ordinal},
-             static_cast<double>(count), count, false});
+             static_cast<double>(count), count, false,
+             exact == configuration.exactEdgeIntervalCounts.end()
+                 ? std::optional<std::uint32_t>{}
+                 : std::optional<std::uint32_t>{exact->second}});
     }
 
     for (const ExactGeometryClassification& face : reconnaissance.records) {
@@ -230,6 +248,13 @@ SecureMeshingResult generateSecureMesh(
     appendCoverage(result.validation, "secure_pipeline.interval_counts",
                    intervalProblem.value->variables.size(),
                    intervals.solution->counts.size(), 0, 0);
+    if (!configuration.exactEdgeIntervalCounts.empty()) {
+        appendCoverage(
+            result.validation,
+            "secure_pipeline.exact_edge_interval_constraints",
+            configuration.exactEdgeIntervalCounts.size(),
+            configuration.exactEdgeIntervalCounts.size(), 0, 0);
+    }
 
     const CanonicalBoundaryBuildResult boundaries =
         buildCanonicalBoundaries(imported, reconnaissance,
@@ -398,8 +423,16 @@ SecureMeshingResult generateSecureMesh(
         return result;
     }
 
+    GenerationReport generation;
+    for (const SolvedInterval& interval : intervals.solution->counts) {
+        if (interval.boundaryId.kind == StableIdKind::Boundary) {
+            generation.edgeDivisions.emplace(
+                static_cast<int>(interval.boundaryId.ordinal),
+                static_cast<int>(interval.count));
+        }
+    }
     result.value = makeCertifiedFloorMeshingResult(
-        *assembled.value, result.validation, {},
+        *assembled.value, result.validation, std::move(generation),
         "structured modeling topology is not yet proven for every face");
     return result;
 }

@@ -4,6 +4,7 @@
 #include "weft/cylinder_template.hpp"
 #include "weft/interval_solver.hpp"
 
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -14,6 +15,9 @@ struct SecureMeshingConfiguration {
     SamplingConfiguration sampling;
     CertifiedMeshAssemblyConfiguration assembly;
     std::uint32_t cylinderAxialIntervals = 1;
+    // Working-edge IDs resolved through recipe-v2 correspondence. Counts are
+    // exact solver constraints, never face-local sampling requests.
+    std::map<StableId, std::uint32_t> exactEdgeIntervalCounts;
 };
 
 struct SecureMeshingFailure {

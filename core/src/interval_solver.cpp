@@ -78,7 +78,8 @@ IntervalSolveResult solveIntervals(const IntervalProblem& problem,
             variable.boundaryId.kind != StableIdKind::Boundary ||
             (previous.valid() && !(previous < variable.boundaryId)) ||
             !std::isfinite(variable.desired) || variable.desired < 0.0 ||
-            variable.minimum < 1) {
+            variable.minimum < 1 ||
+            (variable.exact && *variable.exact < 1)) {
             return solveFailure(
                 "interval.invalid_problem",
                 "variables must be unique ordered boundaries with valid domains");
@@ -132,12 +133,48 @@ IntervalSolveResult solveIntervals(const IntervalProblem& problem,
         const std::vector<std::size_t>& members = entry.second;
         std::uint32_t minimum = 1;
         bool requireEven = false;
+        std::optional<std::uint32_t> exact;
         for (std::size_t member : members) {
             minimum = std::max(minimum, problem.variables[member].minimum);
             requireEven = requireEven || problem.variables[member].requireEven;
+            if (problem.variables[member].exact) {
+                if (exact && *exact != *problem.variables[member].exact) {
+                    std::vector<StableId> subjects;
+                    for (std::size_t item : members) {
+                        subjects.push_back(
+                            problem.variables[item].boundaryId);
+                    }
+                    return solveFailure(
+                        "interval.exact_conflict",
+                        "an equality class contains incompatible exact counts",
+                        std::move(subjects));
+                }
+                exact = problem.variables[member].exact;
+            }
+        }
+        if (exact && *exact < minimum) {
+            std::vector<StableId> subjects;
+            for (std::size_t member : members) {
+                subjects.push_back(problem.variables[member].boundaryId);
+            }
+            return solveFailure(
+                "interval.exact_below_minimum",
+                "an exact count is below its certified minimum",
+                std::move(subjects));
+        }
+        if (exact && requireEven && *exact % 2 != 0) {
+            std::vector<StableId> subjects;
+            for (std::size_t member : members) {
+                subjects.push_back(problem.variables[member].boundaryId);
+            }
+            return solveFailure(
+                "interval.exact_parity_conflict",
+                "an exact count violates an even-parity constraint",
+                std::move(subjects));
         }
         std::uint32_t start = minimum;
         if (requireEven && start % 2 != 0) ++start;
+        if (exact) start = *exact;
         if (start > cap) {
             std::vector<StableId> subjects;
             for (std::size_t member : members) {
@@ -167,6 +204,7 @@ IntervalSolveResult solveIntervals(const IntervalProblem& problem,
             } else if (objective > bestObjective) {
                 break;
             }
+            if (exact) break;
             if (candidate > cap - std::min(step, cap)) break;
             candidate += step;
             if (candidate > cap) break;
@@ -181,7 +219,8 @@ IntervalSolveResult solveIntervals(const IntervalProblem& problem,
         const IntervalVariable& variable = problem.variables[index];
         const std::uint32_t count = counts[index].count;
         if (count < variable.minimum || count > cap ||
-            (variable.requireEven && count % 2 != 0)) {
+            (variable.requireEven && count % 2 != 0) ||
+            (variable.exact && count != *variable.exact)) {
             return solveFailure("interval.internal_self_check_failed",
                                 "a solved count violates its variable domain");
         }
