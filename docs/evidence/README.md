@@ -8,3 +8,4 @@ may supersede a result but must not rewrite what an earlier run proved.
 - `m0-strict-build-2026-07-17.md` - MSVC warnings-as-errors and static-analysis build evidence.
 - `m1-secure-import-2026-07-17.md` - processing-disabled source/working import contract evidence.
 - `m2-reconnaissance-2026-07-17.md` - total face/edge classification and planar projection evidence.
+- `m3-interval-solver-2026-07-17.md` - exact equality/minimum/parity count assignment evidence.

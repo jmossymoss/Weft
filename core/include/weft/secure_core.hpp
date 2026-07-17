@@ -45,6 +45,7 @@ enum class StableIdKind {
     Edge,
     Vertex,
     Region,
+    Boundary,
     Diagnostic,
 };
 

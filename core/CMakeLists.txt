@@ -7,6 +7,7 @@ add_library(weft_core
   src/secure_core.cpp
   src/secure_core_internal.hpp
   src/secure_reconnaissance.cpp
+  src/interval_solver.cpp
   src/model.cpp
   src/analysis.cpp
   src/compiler.cpp
