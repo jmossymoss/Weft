@@ -129,6 +129,7 @@ public:
         std::vector<RepairOperation> operations;
         std::vector<ParameterizationFlagChange> parameterizationFlagChanges;
         std::vector<ShellOrientationRepair> shellOrientationRepairs;
+        std::vector<ToleranceChange> toleranceReconciliations;
         std::vector<RepairRefusal> refusals;
         if (repairProfile == RepairProfile::Conservative) {
             secure_detail::ConservativeWorkingDerivation derivation =
@@ -141,6 +142,8 @@ public:
                 std::move(derivation.parameterizationFlagChanges);
             shellOrientationRepairs =
                 std::move(derivation.shellOrientationRepairs);
+            toleranceReconciliations =
+                std::move(derivation.toleranceReconciliations);
             refusals = std::move(derivation.refusals);
         } else {
             secure_detail::CompatibilityWorkingDerivation derivation =
@@ -161,7 +164,7 @@ public:
             std::move(operations),
             std::move(parameterizationFlagChanges),
             std::move(shellOrientationRepairs), std::move(refusals),
-            sourceDigestAtCapture);
+            sourceDigestAtCapture, std::move(toleranceReconciliations));
         if (m_unitResolution) {
             imported.diagnostics.events.push_back({
                 {StableIdKind::Diagnostic,

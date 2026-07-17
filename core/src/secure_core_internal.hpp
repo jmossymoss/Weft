@@ -55,8 +55,22 @@ struct ConservativeWorkingDerivation {
     std::vector<RepairOperation> operations;
     std::vector<ParameterizationFlagChange> parameterizationFlagChanges;
     std::vector<ShellOrientationRepair> shellOrientationRepairs;
+    std::vector<ToleranceChange> toleranceReconciliations;
     std::vector<RepairRefusal> refusals;
 };
+
+// Geometric evidence for one vertex's tolerance claim: the largest distance
+// from the vertex position to any incident 3D edge curve evaluated at the
+// vertex parameter, and the evidence envelope (the largest stored tolerance
+// among those incident edges).
+struct VertexToleranceEvidence {
+    bool measured = false;
+    double requiredGap = 0.0;
+    double toleranceEnvelope = 0.0;
+};
+
+VertexToleranceEvidence measureVertexToleranceEvidence(
+    const Model& model, const TopoDS_Shape& vertex);
 
 struct CompatibilityWorkingDerivation {
     TopoDS_Shape shape;
@@ -97,6 +111,7 @@ ImportedModel buildImportedModel(
     std::vector<ParameterizationFlagChange> parameterizationFlagChanges = {},
     std::vector<ShellOrientationRepair> shellOrientationRepairs = {},
     std::vector<RepairRefusal> refusals = {},
-    std::string sourceDigestAtCapture = {});
+    std::string sourceDigestAtCapture = {},
+    std::vector<ToleranceChange> toleranceReconciliations = {});
 
 }  // namespace weft::secure_detail

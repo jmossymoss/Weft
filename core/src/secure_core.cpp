@@ -1197,7 +1197,8 @@ ImportedModel buildImportedModel(
     std::vector<ParameterizationFlagChange> parameterizationFlagChanges,
     std::vector<ShellOrientationRepair> shellOrientationRepairs,
     std::vector<RepairRefusal> refusals,
-    std::string sourceDigestAtCapture) {
+    std::string sourceDigestAtCapture,
+    std::vector<ToleranceChange> toleranceReconciliations) {
     ImportedModel imported;
     const bool sourceValid = shapeIsValid(sourceModel.shape);
     const bool workingValid = shapeIsValid(workingModel.shape);
@@ -1484,6 +1485,78 @@ ImportedModel buildImportedModel(
         }
     }
 
+    std::size_t reconciliationExpected = 0;
+    std::size_t reconciliationChecked = 0;
+    std::size_t reconciliationFailed = 0;
+    const auto matchesReconciliation = [&](const ToleranceChange& change) {
+        return std::any_of(
+            toleranceReconciliations.begin(), toleranceReconciliations.end(),
+            [&](const ToleranceChange& certified) {
+                return certified.sourceId == change.sourceId &&
+                    certified.workingId == change.workingId &&
+                    certified.before == change.before &&
+                    certified.after == change.after;
+            });
+    };
+    for (const ToleranceChange& discovered :
+         imported.repair.toleranceChanges) {
+        if (matchesReconciliation(discovered)) continue;
+        // An uncertified tolerance difference is unexplained working drift.
+        ++reconciliationExpected;
+        ++reconciliationFailed;
+    }
+    for (const ToleranceChange& certified : toleranceReconciliations) {
+        ++reconciliationExpected;
+        const TopoDS_Shape* sourceVertex =
+            shapeForId(imported.source->snapshot, certified.sourceId);
+        const TopoDS_Shape* workingVertex =
+            shapeForId(imported.working->snapshot, certified.workingId);
+        const bool operationRecorded = std::any_of(
+            imported.repair.operations.begin(),
+            imported.repair.operations.end(),
+            [&](const RepairOperation& operation) {
+                return operation.code == "repair.tolerance_reconciliation" &&
+                    std::find(operation.sourceSubjects.begin(),
+                              operation.sourceSubjects.end(),
+                              certified.sourceId) !=
+                        operation.sourceSubjects.end();
+            });
+        bool valid =
+            certified.sourceId.kind == StableIdKind::Vertex &&
+            certified.sourceId == certified.workingId &&
+            sourceVertex != nullptr && workingVertex != nullptr &&
+            operationRecorded && std::isfinite(certified.before) &&
+            std::isfinite(certified.after) &&
+            certified.before < certified.after &&
+            std::any_of(imported.repair.toleranceChanges.begin(),
+                        imported.repair.toleranceChanges.end(),
+                        [&](const ToleranceChange& discovered) {
+                            return discovered.sourceId ==
+                                       certified.sourceId &&
+                                discovered.before == certified.before &&
+                                discovered.after == certified.after;
+                        });
+        if (valid) {
+            try {
+                const VertexToleranceEvidence remeasured =
+                    measureVertexToleranceEvidence(
+                        imported.working->snapshot.model, *workingVertex);
+                valid = remeasured.measured &&
+                    shapeTolerance(*sourceVertex) == certified.before &&
+                    shapeTolerance(*workingVertex) == certified.after &&
+                    certified.after == remeasured.requiredGap &&
+                    certified.after <= remeasured.toleranceEnvelope;
+            } catch (const Standard_Failure&) {
+                valid = false;
+            }
+        }
+        if (valid) {
+            ++reconciliationChecked;
+        } else {
+            ++reconciliationFailed;
+        }
+    }
+
     imported.repair.validationEvidence = {
         {"repair.exact_shape_hash", 2,
          static_cast<std::size_t>(!sourceShapeDigest.empty()) +
@@ -1502,6 +1575,8 @@ ImportedModel buildImportedModel(
          parameterizationFailed},
         {"repair.face_adjacency_orientation", orientationExpected,
          orientationChecked, 0, orientationFailed},
+        {"repair.tolerance_reconciliation", reconciliationExpected,
+         reconciliationChecked, 0, reconciliationFailed},
         // The immutable source must serialize to the same bytes it had when
         // captured, before any derivation or repair stage ran.
         {"repair.source_immutability", 1,
@@ -1614,9 +1689,16 @@ ImportedModel buildImportedModel(
                    "the repair stages ran");
     }
     for (const RepairRefusal& refusal : imported.repair.refusals) {
+        const bool orientationFamily =
+            refusal.code.rfind("repair.orientation.", 0) == 0;
+        const bool toleranceFamily =
+            refusal.code.rfind("repair.tolerance.", 0) == 0;
         imported.diagnostics.events.push_back(
             {{StableIdKind::Diagnostic, ++diagnosticOrdinal},
-             "import.repair.face_orientation_unproven",
+             orientationFamily
+                 ? "import.repair.face_orientation_unproven"
+                 : toleranceFamily ? "import.repair.tolerance_unproven"
+                                   : "import.repair.refused",
              DiagnosticSeverity::Error, refusal.subjects,
              refusal.code + ": " + refusal.detail});
         imported.repair.meshable = false;

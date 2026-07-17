@@ -20,6 +20,8 @@
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Iterator.hxx>
+#include <TopoDS_Vertex.hxx>
+#include <gp_Pnt.hxx>
 
 #include <algorithm>
 #include <cmath>
@@ -255,7 +257,122 @@ Handle(BRepTools_History) composeCopyRepairHistory(
     return composed;
 }
 
+std::string toleranceDetail(const ToleranceChange& change,
+                            double toleranceEnvelope) {
+    std::ostringstream detail;
+    detail.imbue(std::locale::classic());
+    detail << std::setprecision(std::numeric_limits<double>::max_digits10)
+           << "raised the working vertex tolerance from " << change.before
+           << " to the measured incidence gap " << change.after
+           << " within the incident-edge evidence envelope "
+           << toleranceEnvelope;
+    return detail.str();
+}
+
+// Raises only working vertex tolerances, only up to the measured incidence
+// gap, and only when that gap stays within the largest stored tolerance of
+// the incident source edges — the evidence envelope. Anything beyond
+// refuses by name and leaves the working copy untouched.
+void reconcileVertexTolerances(const Model& source,
+                               ConservativeWorkingDerivation& derivation) {
+    EdgeFaceMap vertexToEdges;
+    TopExp::MapShapesAndAncestors(source.shape, TopAbs_VERTEX, TopAbs_EDGE,
+                                  vertexToEdges);
+    BRep_Builder builder;
+    for (int vertexIndex = 1; vertexIndex <= vertexToEdges.Extent();
+         ++vertexIndex) {
+        const TopoDS_Shape& vertexShape = vertexToEdges.FindKey(vertexIndex);
+        const StableId vertexId{StableIdKind::Vertex,
+                                static_cast<std::uint64_t>(vertexIndex)};
+        VertexToleranceEvidence evidence;
+        double storedTolerance = 0.0;
+        try {
+            storedTolerance =
+                BRep_Tool::Tolerance(TopoDS::Vertex(vertexShape));
+            evidence = measureVertexToleranceEvidence(source, vertexShape);
+        } catch (const Standard_Failure&) {
+            continue;
+        }
+        if (!evidence.measured || !std::isfinite(evidence.requiredGap) ||
+            evidence.requiredGap <= storedTolerance) {
+            continue;
+        }
+        if (!std::isfinite(evidence.toleranceEnvelope) ||
+            evidence.requiredGap > evidence.toleranceEnvelope) {
+            derivation.refusals.push_back(
+                {"repair.tolerance.gap_beyond_envelope", {vertexId},
+                 "the measured vertex incidence gap exceeds every stored "
+                 "tolerance of its incident source edges"});
+            continue;
+        }
+        const TopoDS_Shape workingVertex =
+            derivation.exactShapes.mapped(vertexShape);
+        if (workingVertex.IsNull()) {
+            throw std::logic_error(
+                "tolerance reconciliation lost its working derivation");
+        }
+        builder.UpdateVertex(TopoDS::Vertex(workingVertex),
+                             evidence.requiredGap);
+        if (BRep_Tool::Tolerance(TopoDS::Vertex(vertexShape)) !=
+                storedTolerance ||
+            BRep_Tool::Tolerance(TopoDS::Vertex(workingVertex)) <
+                evidence.requiredGap) {
+            throw std::logic_error(
+                "tolerance reconciliation violated source/working isolation");
+        }
+        ToleranceChange change{vertexId, vertexId, storedTolerance,
+                               BRep_Tool::Tolerance(
+                                   TopoDS::Vertex(workingVertex))};
+        derivation.operations.push_back(
+            {"repair.tolerance_reconciliation", {vertexId}, {vertexId},
+             toleranceDetail(change, evidence.toleranceEnvelope)});
+        derivation.toleranceReconciliations.push_back(change);
+    }
+}
+
 }  // namespace
+
+VertexToleranceEvidence measureVertexToleranceEvidence(
+    const Model& model, const TopoDS_Shape& vertex) {
+    VertexToleranceEvidence evidence;
+    if (vertex.IsNull() || vertex.ShapeType() != TopAbs_VERTEX) {
+        return evidence;
+    }
+    EdgeFaceMap vertexToEdges;
+    TopExp::MapShapesAndAncestors(model.shape, TopAbs_VERTEX, TopAbs_EDGE,
+                                  vertexToEdges);
+    const int index = vertexToEdges.FindIndex(vertex);
+    if (index <= 0) return evidence;
+    const TopoDS_Vertex vertexShape =
+        TopoDS::Vertex(vertexToEdges.FindKey(index));
+    const gp_Pnt position = BRep_Tool::Pnt(vertexShape);
+    ShapeMap uniqueEdges;
+    for (const TopoDS_Shape& owner : vertexToEdges.FindFromIndex(index)) {
+        uniqueEdges.Add(owner);
+    }
+    for (int edgeIndex = 1; edgeIndex <= uniqueEdges.Extent(); ++edgeIndex) {
+        const TopoDS_Edge edge = TopoDS::Edge(uniqueEdges(edgeIndex));
+        if (BRep_Tool::Degenerated(edge)) continue;
+        double first = 0.0;
+        double last = 0.0;
+        const Handle(Geom_Curve) curve = BRep_Tool::Curve(edge, first, last);
+        if (curve.IsNull()) continue;
+        double parameter = 0.0;
+        try {
+            parameter = BRep_Tool::Parameter(vertexShape, edge);
+        } catch (const Standard_Failure&) {
+            continue;
+        }
+        if (!std::isfinite(parameter)) continue;
+        const double gap = position.Distance(curve->Value(parameter));
+        if (!std::isfinite(gap)) continue;
+        evidence.measured = true;
+        evidence.requiredGap = std::max(evidence.requiredGap, gap);
+        evidence.toleranceEnvelope = std::max(
+            evidence.toleranceEnvelope, BRep_Tool::Tolerance(edge));
+    }
+    return evidence;
+}
 
 ConservativeWorkingDerivation deriveConservativeWorking(
     const Model& source) {
@@ -310,6 +427,7 @@ ConservativeWorkingDerivation deriveConservativeWorking(
              proof->toleranceEnvelope});
     }
     repairShellOrientations(source, derivation);
+    reconcileVertexTolerances(source, derivation);
     return derivation;
 }
 
