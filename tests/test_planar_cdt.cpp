@@ -36,10 +36,12 @@ weft::PlanarTrimLoop makeLoop(
         const std::uint64_t edgeOrdinal =
             loopOrdinal * 1000 + static_cast<std::uint64_t>(index) + 1;
         loop.vertices.push_back(
-            {{{weft::StableIdKind::Boundary, edgeOrdinal},
-              static_cast<std::uint32_t>(index)},
-             {weft::StableIdKind::Edge, edgeOrdinal},
-             weft::StableId{weft::StableIdKind::Edge, edgeOrdinal + 100000},
+            {{{{{weft::StableIdKind::Boundary, edgeOrdinal},
+                static_cast<std::uint32_t>(index)},
+               {weft::StableIdKind::Edge, edgeOrdinal},
+               weft::StableId{weft::StableIdKind::Edge,
+                              edgeOrdinal + 100000},
+               points[index]}},
              static_cast<std::uint64_t>(index), points[index]});
     }
     return loop;
@@ -86,7 +88,11 @@ void checkCertified(const weft::PlanarCdtResult& result,
     for (std::size_t index = 0; index < result.value->vertices.size(); ++index) {
         const weft::PlanarTrimVertex& vertex = result.value->vertices[index];
         CHECK(vertex.canonicalVertexIndex == index);
-        CHECK(vertex.sample.boundary.ordinal == vertex.workingEdge.ordinal);
+        CHECK(!vertex.boundaryUses.empty());
+        if (!vertex.boundaryUses.empty()) {
+            CHECK(vertex.boundaryUses.front().sample.boundary.ordinal ==
+                  vertex.boundaryUses.front().workingEdge.ordinal);
+        }
     }
     for (const weft::PlanarCdtTriangle& triangle :
          result.value->triangles) {

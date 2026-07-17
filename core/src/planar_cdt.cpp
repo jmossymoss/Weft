@@ -287,14 +287,19 @@ bool validateMesh(const PlanarCdtMesh& mesh,
     PlanarCdtValidationEvidence& provenance = result.validation[0];
     for (const PlanarTrimVertex& vertex : mesh.vertices) {
         ++provenance.checked;
-        if (!vertex.sample.valid() ||
-            vertex.workingEdge.kind != StableIdKind::Edge ||
-            !vertex.workingEdge.valid() ||
-            vertex.sample.boundary.ordinal != vertex.workingEdge.ordinal ||
-            (vertex.sourceEdge &&
-             (vertex.sourceEdge->kind != StableIdKind::Edge ||
-              !vertex.sourceEdge->valid())) ||
-            vertex.canonicalVertexIndex == InvalidCanonicalVertexIndex) {
+        bool vertexValid = !vertex.boundaryUses.empty() &&
+            vertex.canonicalVertexIndex != InvalidCanonicalVertexIndex;
+        for (const PlanarTrimBoundaryUse& use : vertex.boundaryUses) {
+            vertexValid = vertexValid && use.sample.valid() &&
+                use.workingEdge.kind == StableIdKind::Edge &&
+                use.workingEdge.valid() &&
+                use.sample.boundary.ordinal == use.workingEdge.ordinal &&
+                (!use.sourceEdge ||
+                 (use.sourceEdge->kind == StableIdKind::Edge &&
+                  use.sourceEdge->valid())) &&
+                use.uv == vertex.uv;
+        }
+        if (!vertexValid) {
             ++provenance.failed;
             valid = false;
             setFailure(result, "cdt.vertex_provenance_invalid",

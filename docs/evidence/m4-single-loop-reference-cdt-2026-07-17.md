@@ -8,7 +8,8 @@ boundary-preserving ear triangulation, applies deterministic exact-incircle
 Lawson flips to unconstrained convex internal edges, and returns no mesh until
 an independent certificate pass succeeds.
 
-Vertices retain canonical sample/index plus source/working edge provenance.
+Vertices retain all incident canonical sample uses plus canonical index and
+source/working edge provenance.
 Every triangle retains source/working face provenance. No geometric point is
 introduced and no weld, OCCT triangulation, epsilon sign, or CGAL dependency is
 used.

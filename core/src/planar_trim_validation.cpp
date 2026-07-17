@@ -241,17 +241,39 @@ PlanarTrimValidationResult validatePlanarTrimDomain(
 
         for (std::size_t vertex = 0; vertex < loop.vertices.size(); ++vertex) {
             const PlanarTrimVertex& item = loop.vertices[vertex];
-            if (!item.sample.valid() ||
-                item.workingEdge.kind != StableIdKind::Edge ||
-                !item.workingEdge.valid() ||
-                item.sample.boundary.ordinal != item.workingEdge.ordinal ||
-                (item.sourceEdge &&
-                 (item.sourceEdge->kind != StableIdKind::Edge ||
-                  !item.sourceEdge->valid())) ||
-                item.canonicalVertexIndex == InvalidCanonicalVertexIndex) {
+            bool provenanceValid = !item.boundaryUses.empty() &&
+                item.canonicalVertexIndex != InvalidCanonicalVertexIndex;
+            for (std::size_t useIndex = 0;
+                 useIndex < item.boundaryUses.size(); ++useIndex) {
+                const PlanarTrimBoundaryUse& use =
+                    item.boundaryUses[useIndex];
+                provenanceValid = provenanceValid && use.sample.valid() &&
+                    use.workingEdge.kind == StableIdKind::Edge &&
+                    use.workingEdge.valid() &&
+                    use.sample.boundary.ordinal == use.workingEdge.ordinal &&
+                    (!use.sourceEdge ||
+                     (use.sourceEdge->kind == StableIdKind::Edge &&
+                      use.sourceEdge->valid())) &&
+                    finite(use.uv) && equal(use.uv, item.uv);
+                for (std::size_t previousUse = 0;
+                     previousUse < useIndex; ++previousUse) {
+                    provenanceValid = provenanceValid &&
+                        !(use.sample ==
+                          item.boundaryUses[previousUse].sample);
+                }
+                for (std::size_t previousVertex = 0;
+                     previousVertex < vertex; ++previousVertex) {
+                    for (const PlanarTrimBoundaryUse& previousUse :
+                         loop.vertices[previousVertex].boundaryUses) {
+                        provenanceValid = provenanceValid &&
+                            !(use.sample == previousUse.sample);
+                    }
+                }
+            }
+            if (!provenanceValid) {
                 valid = false;
                 addDiagnostic(result, "trim.loop.invalid_provenance",
-                              "every trim vertex requires canonical boundary provenance",
+                              "every trim vertex requires consistent canonical boundary-use provenance",
                               {domain.face, loop.wire});
             }
             if (!finite(item.uv)) {

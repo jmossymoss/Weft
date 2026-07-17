@@ -49,8 +49,8 @@ legality for every internal edge. Each family reports
 ## Invariants
 
 - no boundary constraint is flipped, resampled, snapped, welded, or omitted;
-- no new geometric point is constructed; all triangle vertices resolve to an
-  input canonical sample and working/source edge provenance;
+- no new geometric point is constructed; all triangle vertices resolve to one
+  or more input canonical samples and working/source edge provenance;
 - every triangle carries working and optional source face provenance;
 - strict positive incircle is the only flip trigger;
 - deterministic input and predicate results produce deterministic triangle

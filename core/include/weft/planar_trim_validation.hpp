@@ -26,10 +26,15 @@ enum class PlanarTrimLoopOrientation {
     Clockwise,
 };
 
-struct PlanarTrimVertex {
+struct PlanarTrimBoundaryUse {
     SampleId sample;
     StableId workingEdge;
     std::optional<StableId> sourceEdge;
+    PredicatePoint2 uv{};
+};
+
+struct PlanarTrimVertex {
+    std::vector<PlanarTrimBoundaryUse> boundaryUses;
     std::uint64_t canonicalVertexIndex = InvalidCanonicalVertexIndex;
     PredicatePoint2 uv{};
 };
@@ -41,6 +46,7 @@ struct PlanarTrimLoop {
     StableId wire;
     PlanarTrimLoopRole declaredRole = PlanarTrimLoopRole::Outer;
     bool closed = false;
+    bool reversedForCanonicalCdt = false;
     std::vector<PlanarTrimVertex> vertices;
 };
 

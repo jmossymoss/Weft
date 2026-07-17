@@ -39,11 +39,12 @@ weft::PlanarTrimLoop loop(
         const std::uint64_t workingEdgeOrdinal =
             ordinal * 100 + sampleOrdinal;
         result.vertices.push_back(
-            {{{weft::StableIdKind::Boundary, workingEdgeOrdinal},
-              sampleOrdinal},
-             {weft::StableIdKind::Edge, workingEdgeOrdinal},
-             weft::StableId{weft::StableIdKind::Edge,
-                            ordinal * 1000 + sampleOrdinal},
+            {{{{{weft::StableIdKind::Boundary, workingEdgeOrdinal},
+                sampleOrdinal},
+               {weft::StableIdKind::Edge, workingEdgeOrdinal},
+               weft::StableId{weft::StableIdKind::Edge,
+                              ordinal * 1000 + sampleOrdinal},
+               point}},
              workingEdgeOrdinal, point});
     }
     return result;
@@ -152,7 +153,7 @@ void testStructuralRefusals() {
     auto missingProvenanceLoop = loop(
         1, weft::PlanarTrimLoopRole::Outer,
         {{0.0, 0.0}, {1.0, 0.0}, {0.0, 1.0}});
-    missingProvenanceLoop.vertices[0].sample = {};
+    missingProvenanceLoop.vertices[0].boundaryUses.clear();
     missingProvenanceLoop.vertices[0].canonicalVertexIndex =
         weft::InvalidCanonicalVertexIndex;
     const auto missingProvenance = weft::validatePlanarTrimDomain(
@@ -160,6 +161,16 @@ void testStructuralRefusals() {
     CHECK(!missingProvenance);
     CHECK(hasDiagnostic(missingProvenance,
                         "trim.loop.invalid_provenance"));
+
+    auto repeatedSampleLoop = loop(
+        1, weft::PlanarTrimLoopRole::Outer,
+        {{0.0, 0.0}, {1.0, 0.0}, {0.0, 1.0}});
+    repeatedSampleLoop.vertices[1].boundaryUses.front().sample =
+        repeatedSampleLoop.vertices[0].boundaryUses.front().sample;
+    const auto repeatedSample = weft::validatePlanarTrimDomain(
+        domain({std::move(repeatedSampleLoop)}));
+    CHECK(!repeatedSample);
+    CHECK(hasDiagnostic(repeatedSample, "trim.loop.invalid_provenance"));
 
     auto repeatedLoop = loop(
         1, weft::PlanarTrimLoopRole::Outer,
