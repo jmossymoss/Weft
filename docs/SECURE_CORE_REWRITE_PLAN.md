@@ -1,6 +1,6 @@
 # Weft secure-core rewrite
 
-Status authority: `docs/governance/milestones.md`
+Status authority: `docs/governance/milestones.md`; per-item gate checklist: `docs/governance/GATES.md`
 
 This plan replaces the production geometry core while keeping Weft as the
 product repository and preserving its artist-facing workflows. The scientific
