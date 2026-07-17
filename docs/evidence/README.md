@@ -10,6 +10,9 @@ may supersede a result but must not rewrite what an earlier run proved.
 - `m0-windows-clean-legacy-removal-2026-07-17.md` - clean MSVC build/analyzer,
   retired source deletion, single-owner build graph, and secure CLI proof.
 - `m1-secure-import-2026-07-17.md` - processing-disabled source/working import contract evidence.
+- `m1-exact-occurrence-account-2026-07-17.md` - exact XDE
+  definition/instance ownership, recursive B-rep occurrences, coedge uses,
+  non-vacuous validation, and identity correspondence evidence.
 - `m2-reconnaissance-2026-07-17.md` - total face/edge classification and planar projection evidence.
 - `m3-interval-solver-2026-07-17.md` - exact equality/minimum/parity count assignment evidence.
 - `m3-canonical-boundaries-2026-07-17.md` - atomic shared-edge samples, UV uses, and azimuth registration evidence.

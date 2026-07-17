@@ -40,3 +40,6 @@ Current records:
   totals with deterministic complexity and unsupported-coupling refusals.
 - `ADR-0021-retire-legacy-production-generators.md` - physical removal of the
   retired geometry engines after secure routing and baseline capture.
+- `ADR-0022-xde-product-structure-and-brep-occurrences.md` - exact XDE
+  definitions/instances, recursive B-rep occurrences, coedge uses, and
+  selective assembly-container separation without geometric fallback.
