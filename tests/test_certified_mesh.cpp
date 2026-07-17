@@ -122,7 +122,7 @@ void verifyBoxMesh(const weft::CertifiedMeshAssemblyResult& result) {
     CHECK(result);
     CHECK(!result.failure);
     CHECK(result.validation.complete());
-    CHECK(result.validation.checks.size() == 9);
+    CHECK(result.validation.checks.size() == 10);
     if (!result.value) return;
     CHECK(result.value->vertices.size() == 20);
     CHECK(result.value->triangles.size() == 36);

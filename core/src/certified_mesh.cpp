@@ -29,6 +29,7 @@ enum CheckIndex : std::size_t {
     EdgeIncidence,
     EdgeWinding,
     TriangleIntersection,
+    EulerCharacteristic,
     Fingerprint,
 };
 
@@ -477,6 +478,7 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
         {"certified.edge_incidence", 0},
         {"certified.edge_winding", 0},
         {"certified.triangle_intersection", 0},
+        {"certified.euler_characteristic", 1},
         {"certified.fingerprint", 1},
     };
     if (!imported.meshable() || !imported.working ||
@@ -910,6 +912,57 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
                     return result;
                 }
             }
+        }
+    }
+
+    // Refinement preserves the Euler characteristic exactly, so the
+    // certified complex must report the same V - E + F as the source
+    // face-complex it refines; any drift means lost or invented topology.
+    {
+        ValidationCoverage& euler =
+            result.validation.checks[EulerCharacteristic];
+        std::set<StableId> sourceEdges;
+        std::set<StableId> sourceVertices;
+        std::map<StableId, std::set<StableId>> wiresByFace;
+        for (const CoedgeRecord& coedge :
+             imported.working->snapshot.coedges) {
+            if (expectedFaces.contains(coedge.faceId)) {
+                sourceEdges.insert(coedge.edgeId);
+                wiresByFace[coedge.faceId].insert(coedge.wireId);
+            }
+        }
+        for (const EdgeTopologyRecord& record :
+             imported.working->snapshot.edgeTopology) {
+            if (!sourceEdges.contains(record.id)) continue;
+            if (record.lowerVertex) sourceVertices.insert(*record.lowerVertex);
+            if (record.upperVertex) sourceVertices.insert(*record.upperVertex);
+        }
+        // A face with w boundary wires is homotopic to a disk with w-1
+        // holes and contributes 2-w, not 1, to the complex characteristic.
+        long long faceContribution = 0;
+        for (StableId face : expectedFaces) {
+            const auto wires = wiresByFace.find(face);
+            const long long wireCount =
+                wires == wiresByFace.end()
+                    ? 1
+                    : static_cast<long long>(wires->second.size());
+            faceContribution += 2 - wireCount;
+        }
+        const long long sourceCharacteristic =
+            static_cast<long long>(sourceVertices.size()) -
+            static_cast<long long>(sourceEdges.size()) + faceContribution;
+        const long long meshCharacteristic =
+            static_cast<long long>(mesh.vertices.size()) -
+            static_cast<long long>(edgeUses.size()) +
+            static_cast<long long>(mesh.triangles.size());
+        ++euler.checked;
+        if (sourceCharacteristic != meshCharacteristic) {
+            ++euler.failed;
+            setFailure(result, "certified.euler_characteristic_mismatch",
+                       "the certified complex changed the source Euler "
+                       "characteristic",
+                       {});
+            return result;
         }
     }
 
