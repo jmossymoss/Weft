@@ -3,10 +3,11 @@
 ## Proven increment
 
 The secure core now has an atomic pre-CDT planar-domain validator. It consumes
-canonical sample IDs, shared canonical vertex indices, lifted UV coordinates,
-and an explicit topology-closure witness. It checks complete intra-loop and
-inter-loop edge-pair sets with the exact dyadic predicate backend, then proves
-containment, direct nesting, declared roles, and canonical loop orientation.
+canonical sample IDs, working/source edge provenance, shared canonical vertex
+indices, lifted UV coordinates, and an explicit topology-closure witness. It
+checks complete intra-loop and inter-loop edge-pair sets with the exact dyadic
+predicate backend, then proves containment, direct nesting, declared roles, and
+canonical loop orientation.
 
 Successful output retains the exact input order and coordinates. Failure emits
 no validated domain and records stable diagnostics plus per-family

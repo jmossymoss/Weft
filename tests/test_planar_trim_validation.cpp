@@ -36,9 +36,15 @@ weft::PlanarTrimLoop loop(
     std::uint32_t sampleOrdinal = 0;
     for (weft::PredicatePoint2 point : points) {
         ++sampleOrdinal;
+        const std::uint64_t workingEdgeOrdinal =
+            ordinal * 100 + sampleOrdinal;
         result.vertices.push_back(
-            {{{weft::StableIdKind::Boundary, ordinal}, sampleOrdinal},
-             ordinal * 100 + sampleOrdinal, point});
+            {{{weft::StableIdKind::Boundary, workingEdgeOrdinal},
+              sampleOrdinal},
+             {weft::StableIdKind::Edge, workingEdgeOrdinal},
+             weft::StableId{weft::StableIdKind::Edge,
+                            ordinal * 1000 + sampleOrdinal},
+             workingEdgeOrdinal, point});
     }
     return result;
 }

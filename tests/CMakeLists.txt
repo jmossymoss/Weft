@@ -36,6 +36,12 @@ add_test(NAME planar_trim_validation
          COMMAND weft_planar_trim_validation_tests)
 weft_deploy_occt_dlls(weft_planar_trim_validation_tests)
 
+add_executable(weft_planar_cdt_tests test_planar_cdt.cpp)
+target_link_libraries(weft_planar_cdt_tests PRIVATE weft_core)
+weft_enable_strict_warnings(weft_planar_cdt_tests)
+add_test(NAME planar_cdt COMMAND weft_planar_cdt_tests)
+weft_deploy_occt_dlls(weft_planar_cdt_tests)
+
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(
   NAME secure_fixture_catalog

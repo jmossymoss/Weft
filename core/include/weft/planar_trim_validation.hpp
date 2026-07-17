@@ -28,6 +28,8 @@ enum class PlanarTrimLoopOrientation {
 
 struct PlanarTrimVertex {
     SampleId sample;
+    StableId workingEdge;
+    std::optional<StableId> sourceEdge;
     std::uint64_t canonicalVertexIndex = InvalidCanonicalVertexIndex;
     PredicatePoint2 uv{};
 };

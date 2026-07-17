@@ -242,6 +242,12 @@ PlanarTrimValidationResult validatePlanarTrimDomain(
         for (std::size_t vertex = 0; vertex < loop.vertices.size(); ++vertex) {
             const PlanarTrimVertex& item = loop.vertices[vertex];
             if (!item.sample.valid() ||
+                item.workingEdge.kind != StableIdKind::Edge ||
+                !item.workingEdge.valid() ||
+                item.sample.boundary.ordinal != item.workingEdge.ordinal ||
+                (item.sourceEdge &&
+                 (item.sourceEdge->kind != StableIdKind::Edge ||
+                  !item.sourceEdge->valid())) ||
                 item.canonicalVertexIndex == InvalidCanonicalVertexIndex) {
                 valid = false;
                 addDiagnostic(result, "trim.loop.invalid_provenance",

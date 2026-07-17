@@ -21,9 +21,10 @@ failed predicate behind a tolerance.
 ## Decision
 
 `validatePlanarTrimDomain` is the mandatory precondition for a planar CDT
-backend. Its input vertices carry canonical boundary sample IDs, canonical
-vertex indices, and lifted UV coordinates. A topology assembler must explicitly
-mark each wire closed; merely providing three points does not imply closure.
+backend. Its input vertices carry canonical boundary sample IDs, working and
+optional source edge IDs, canonical vertex indices, and lifted UV coordinates.
+A topology assembler must explicitly mark each wire closed; merely providing
+three points does not imply closure.
 
 The validator requires a backend that reports exact finite-double predicates
 and checks:
@@ -49,6 +50,7 @@ reports `expected`, `checked`, `skipped`, and `failed` counts.
 ## Invariants
 
 - no non-exact predicate backend may certify a trim domain;
+- every sample boundary ID must resolve to the vertex's working edge ID;
 - each input edge relation is checked exactly once in deterministic order;
 - boundary contact between separate loops is a failure, not a tolerance case;
 - a failed structural check causes dependent checks to be reported as skipped;
