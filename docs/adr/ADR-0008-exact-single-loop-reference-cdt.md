@@ -1,6 +1,6 @@
 # ADR-0008: Exact single-loop reference CDT
 
-- Status: Accepted
+- Status: Superseded
 - Date: 2026-07-17
 - Owners: Weft geometry core
 
@@ -88,3 +88,7 @@ graph, face/coedge loop assembly, surface lifting and adaptive error bounds,
 cross-face canonical assembly, self-intersection protection, and independent
 body validators remain required before M4 can pass or production routing can
 use the result.
+
+ADR-0011 supersedes the single-loop limitation with exact-predicate visibility
+bridges for directly contained planar holes. The single-loop construction and
+proofs in this record remain the foundation of that backend.

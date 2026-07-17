@@ -212,12 +212,13 @@ void testPerforatedPlanarFace(const weft::PlanarCdtBackend& cdt) {
             CHECK(assembled.value->loops[index].declaredRole ==
                   weft::PlanarTrimLoopRole::Hole);
         }
-        const weft::PlanarCdtResult refused = cdt.triangulate(*assembled.value);
-        CHECK(!refused);
-        CHECK(refused.trimValidation);
-        CHECK(refused.failure &&
-              refused.failure->code ==
-                  "cdt.holes_not_supported_by_reference");
+        const weft::PlanarCdtResult triangulated =
+            cdt.triangulate(*assembled.value);
+        CHECK(triangulated);
+        CHECK(triangulated.trimValidation);
+        CHECK(triangulated.value &&
+              triangulated.value->boundaryLoops.size() ==
+                  assembled.value->loops.size());
     }
     CHECK(sawPerforated);
 }

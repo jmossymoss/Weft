@@ -115,6 +115,33 @@ void testIncircle(const weft::GeometricPredicates& predicates) {
     CHECK(robust && *robust.value == weft::ExactSign::Positive);
 }
 
+void testSquaredDistanceComparison(
+    const weft::GeometricPredicates& predicates) {
+    const auto farther = predicates.compareSquaredDistance(
+        {0.0, 0.0}, {3.0, 4.0}, {1.0, 1.0});
+    CHECK(farther && *farther.value == weft::ExactSign::Positive);
+    const auto nearer = predicates.compareSquaredDistance(
+        {0.0, 0.0}, {1.0, 1.0}, {3.0, 4.0});
+    CHECK(nearer && *nearer.value == weft::ExactSign::Negative);
+    const auto tied = predicates.compareSquaredDistance(
+        {1.0, 1.0}, {2.0, 2.0}, {0.0, 0.0});
+    CHECK(tied && *tied.value == weft::ExactSign::Zero);
+
+    volatile double tinyInput = std::numeric_limits<double>::denorm_min();
+    const double tiny = tinyInput;
+    CHECK(tiny * tiny == 0.0);
+    const auto subnormal = predicates.compareSquaredDistance(
+        {0.0, 0.0}, {tiny, 0.0}, {0.0, 0.0});
+    CHECK(subnormal && *subnormal.value == weft::ExactSign::Positive);
+
+    const auto invalid = predicates.compareSquaredDistance(
+        {0.0, 0.0}, {std::numeric_limits<double>::infinity(), 0.0},
+        {0.0, 0.0});
+    CHECK(!invalid);
+    CHECK(invalid.failure &&
+          invalid.failure->code == "predicate.non_finite_input");
+}
+
 void testIntegerPropertyBattery(const weft::GeometricPredicates& predicates) {
     DeterministicLcg random(0xC0FFEE1234567890ULL);
     for (int iteration = 0; iteration < 1000; ++iteration) {
@@ -192,6 +219,7 @@ int main() {
     if (predicates) {
         testOrientation(*predicates);
         testIncircle(*predicates);
+        testSquaredDistanceComparison(*predicates);
         testIntegerPropertyBattery(*predicates);
         testSegmentIntersection(*predicates);
     }

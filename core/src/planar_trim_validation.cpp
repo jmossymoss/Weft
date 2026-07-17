@@ -278,6 +278,40 @@ PlanarTrimValidationResult validatePlanarTrimDomain(
                             !(use.sample == previousUse.sample);
                     }
                 }
+                for (std::size_t previousLoop = 0;
+                     previousLoop < loopIndex; ++previousLoop) {
+                    for (const PlanarTrimVertex& previousVertex :
+                         domain.loops[previousLoop].vertices) {
+                        for (const PlanarTrimBoundaryUse& previousUse :
+                             previousVertex.boundaryUses) {
+                            if (use.sample == previousUse.sample) {
+                                provenanceValid = false;
+                                addDiagnostic(
+                                    result,
+                                    "trim.domain.repeated_boundary_sample",
+                                    "one canonical boundary sample occurs in more than one loop",
+                                    {domain.face, loop.wire,
+                                     domain.loops[previousLoop].wire});
+                            }
+                        }
+                    }
+                }
+            }
+            for (std::size_t previousLoop = 0;
+                 previousLoop < loopIndex; ++previousLoop) {
+                for (const PlanarTrimVertex& previousVertex :
+                     domain.loops[previousLoop].vertices) {
+                    if (item.canonicalVertexIndex ==
+                        previousVertex.canonicalVertexIndex) {
+                        provenanceValid = false;
+                        addDiagnostic(
+                            result,
+                            "trim.domain.repeated_canonical_vertex",
+                            "one canonical vertex index occurs in more than one loop",
+                            {domain.face, loop.wire,
+                             domain.loops[previousLoop].wire});
+                    }
+                }
             }
             if (!provenanceValid) {
                 valid = false;

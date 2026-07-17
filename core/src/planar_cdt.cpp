@@ -8,7 +8,6 @@
 #include <limits>
 #include <map>
 #include <memory>
-#include <numeric>
 #include <set>
 #include <string>
 #include <utility>
@@ -90,12 +89,12 @@ PredicateResult<bool> pointInOrOnCounterClockwiseTriangle(
 
 std::optional<std::vector<Triangle>> earTriangulation(
     const std::vector<PlanarTrimVertex>& vertices,
+    const std::vector<VertexIndex>& boundaryWalk,
     const GeometricPredicates& predicates, PlanarCdtResult& result,
     StableId face) {
-    std::vector<VertexIndex> remaining(vertices.size());
-    std::iota(remaining.begin(), remaining.end(), VertexIndex{0});
+    std::vector<VertexIndex> remaining = boundaryWalk;
     std::vector<Triangle> triangles;
-    triangles.reserve(vertices.size() - 2);
+    triangles.reserve(boundaryWalk.size() - 2);
 
     while (remaining.size() > 3) {
         bool emitted = false;
@@ -176,6 +175,212 @@ std::optional<std::vector<Triangle>> earTriangulation(
     }
     triangles.push_back({remaining[0], remaining[1], remaining[2]});
     return triangles;
+}
+
+PredicateResult<bool> insideCcwCone(
+    const std::vector<PlanarTrimVertex>& vertices, VertexIndex current,
+    VertexIndex previous, VertexIndex next, VertexIndex target,
+    const GeometricPredicates& predicates) {
+    const PredicatePoint2 a = point(vertices, current);
+    const PredicatePoint2 before = point(vertices, previous);
+    const PredicatePoint2 after = point(vertices, next);
+    const PredicatePoint2 b = point(vertices, target);
+    const PredicateResult<ExactSign> corner =
+        predicates.orient2d(a, after, before);
+    if (!corner) return {std::nullopt, corner.failure};
+
+    PredicateResult<bool> result;
+    if (*corner.value != ExactSign::Negative) {
+        const PredicateResult<ExactSign> first =
+            predicates.orient2d(a, b, before);
+        const PredicateResult<ExactSign> second =
+            predicates.orient2d(b, a, after);
+        if (!first || !second) {
+            result.failure = first.failure ? first.failure : second.failure;
+            return result;
+        }
+        result.value = *first.value == ExactSign::Positive &&
+            *second.value == ExactSign::Positive;
+        return result;
+    }
+
+    const PredicateResult<ExactSign> first =
+        predicates.orient2d(a, b, after);
+    const PredicateResult<ExactSign> second =
+        predicates.orient2d(b, a, before);
+    if (!first || !second) {
+        result.failure = first.failure ? first.failure : second.failure;
+        return result;
+    }
+    result.value = !(*first.value != ExactSign::Negative &&
+                     *second.value != ExactSign::Negative);
+    return result;
+}
+
+PredicateResult<bool> bridgeDoesNotCross(
+    const std::vector<PlanarTrimVertex>& vertices, VertexIndex hole,
+    VertexIndex outer, const std::set<Edge>& constraints,
+    const std::vector<Edge>& bridges,
+    const GeometricPredicates& predicates) {
+    PredicateResult<bool> result;
+    result.value = true;
+    const auto checkEdge = [&](Edge candidate) -> bool {
+        const PredicateResult<SegmentIntersectionKind> relation =
+            predicates.segmentIntersection(
+                point(vertices, hole), point(vertices, outer),
+                point(vertices, candidate.lower),
+                point(vertices, candidate.upper));
+        if (!relation) {
+            result.value.reset();
+            result.failure = relation.failure;
+            return false;
+        }
+        if (*relation.value == SegmentIntersectionKind::None) return true;
+        const bool sharesEndpoint = candidate.lower == hole ||
+            candidate.upper == hole || candidate.lower == outer ||
+            candidate.upper == outer;
+        if (*relation.value == SegmentIntersectionKind::EndpointTouch &&
+            sharesEndpoint) {
+            return true;
+        }
+        result.value = false;
+        return false;
+    };
+    for (Edge constraint : constraints) {
+        if (!checkEdge(constraint)) return result;
+    }
+    for (Edge bridge : bridges) {
+        if (!checkEdge(bridge)) return result;
+    }
+    return result;
+}
+
+std::optional<std::vector<VertexIndex>> buildBoundaryWalk(
+    const std::vector<PlanarTrimVertex>& vertices,
+    const std::vector<std::vector<VertexIndex>>& loops,
+    const std::set<Edge>& constraints,
+    const GeometricPredicates& predicates, PlanarCdtResult& result,
+    StableId face) {
+    std::vector<VertexIndex> walk = loops.front();
+    std::vector<Edge> bridges;
+    const std::vector<VertexIndex>& outerLoop = loops.front();
+
+    for (std::size_t loopIndex = 1; loopIndex < loops.size(); ++loopIndex) {
+        const std::vector<VertexIndex>& holeLoop = loops[loopIndex];
+        const auto holePosition = std::min_element(
+            holeLoop.begin(), holeLoop.end(),
+            [&](VertexIndex left, VertexIndex right) {
+                const PredicatePoint2 a = point(vertices, left);
+                const PredicatePoint2 b = point(vertices, right);
+                if (a[0] != b[0]) return a[0] < b[0];
+                if (a[1] != b[1]) return a[1] < b[1];
+                return left < right;
+            });
+        const std::size_t holeLocal = static_cast<std::size_t>(
+            holePosition - holeLoop.begin());
+        const VertexIndex hole = *holePosition;
+
+        std::optional<VertexIndex> selectedOuter;
+        for (std::size_t outerLocal = 0; outerLocal < outerLoop.size();
+             ++outerLocal) {
+            const VertexIndex outer = outerLoop[outerLocal];
+            const PredicateResult<bool> outerCone = insideCcwCone(
+                vertices, outer,
+                outerLoop[(outerLocal + outerLoop.size() - 1) %
+                          outerLoop.size()],
+                outerLoop[(outerLocal + 1) % outerLoop.size()], hole,
+                predicates);
+            if (!outerCone) {
+                setFailure(result, "cdt.predicate_failure",
+                           outerCone.failure
+                               ? outerCone.failure->message
+                               : "outer bridge cone predicate failed",
+                           {face});
+                return std::nullopt;
+            }
+            if (!*outerCone.value) continue;
+
+            // The stored hole is clockwise. Swapping its previous/next
+            // neighbours presents its interior as a counter-clockwise cone;
+            // a valid domain bridge must leave that cone.
+            const PredicateResult<bool> holeInteriorCone = insideCcwCone(
+                vertices, hole,
+                holeLoop[(holeLocal + 1) % holeLoop.size()],
+                holeLoop[(holeLocal + holeLoop.size() - 1) %
+                         holeLoop.size()],
+                outer, predicates);
+            if (!holeInteriorCone) {
+                setFailure(result, "cdt.predicate_failure",
+                           holeInteriorCone.failure
+                               ? holeInteriorCone.failure->message
+                               : "hole bridge cone predicate failed",
+                           {face});
+                return std::nullopt;
+            }
+            if (*holeInteriorCone.value) continue;
+
+            const PredicateResult<bool> visible = bridgeDoesNotCross(
+                vertices, hole, outer, constraints, bridges, predicates);
+            if (!visible) {
+                setFailure(result, "cdt.predicate_failure",
+                           visible.failure
+                               ? visible.failure->message
+                               : "bridge visibility predicate failed",
+                           {face});
+                return std::nullopt;
+            }
+            if (!*visible.value) continue;
+
+            bool select = !selectedOuter;
+            if (selectedOuter) {
+                const PredicateResult<ExactSign> distanceOrder =
+                    predicates.compareSquaredDistance(
+                        point(vertices, hole), point(vertices, outer),
+                        point(vertices, *selectedOuter));
+                if (!distanceOrder) {
+                    setFailure(result, "cdt.predicate_failure",
+                               distanceOrder.failure
+                                   ? distanceOrder.failure->message
+                                   : "bridge distance predicate failed",
+                               {face});
+                    return std::nullopt;
+                }
+                select = *distanceOrder.value == ExactSign::Negative ||
+                    (*distanceOrder.value == ExactSign::Zero &&
+                     outer < *selectedOuter);
+            }
+            if (select) {
+                selectedOuter = outer;
+            }
+        }
+        if (!selectedOuter) {
+            setFailure(result, "cdt.hole_bridge_not_found",
+                       "no exact non-crossing in-domain bridge connects a hole to the outer loop",
+                       {face});
+            return std::nullopt;
+        }
+
+        const auto outerInWalk =
+            std::find(walk.begin(), walk.end(), *selectedOuter);
+        if (outerInWalk == walk.end()) {
+            setFailure(result, "cdt.hole_bridge_internal_failure",
+                       "selected bridge endpoint is absent from the cut walk",
+                       {face});
+            return std::nullopt;
+        }
+        std::vector<VertexIndex> insertion;
+        insertion.reserve(holeLoop.size() + 2);
+        insertion.push_back(hole);
+        for (std::size_t offset = 1; offset < holeLoop.size(); ++offset) {
+            insertion.push_back(
+                holeLoop[(holeLocal + offset) % holeLoop.size()]);
+        }
+        insertion.push_back(hole);
+        insertion.push_back(*selectedOuter);
+        walk.insert(outerInWalk + 1, insertion.begin(), insertion.end());
+        bridges.push_back(edge(hole, *selectedOuter));
+    }
+    return walk;
 }
 
 bool applyLawsonFlips(std::vector<Triangle>& triangles,
@@ -318,7 +523,11 @@ bool validateMesh(const PlanarCdtMesh& mesh,
 
     PlanarCdtValidationEvidence& triangleCount = result.validation[1];
     ++triangleCount.checked;
-    const std::size_t expectedTriangles = mesh.vertices.size() - 2;
+    const std::size_t holeCount = mesh.boundaryLoops.empty()
+        ? 0
+        : mesh.boundaryLoops.size() - 1;
+    const std::size_t expectedTriangles =
+        mesh.vertices.size() + 2 * holeCount - 2;
     if (mesh.triangles.size() != expectedTriangles) {
         ++triangleCount.failed;
         valid = false;
@@ -514,14 +723,14 @@ public:
         : predicates_(std::move(predicates)) {}
 
     const char* backendCode() const noexcept override {
-        return "exact_lawson_single_loop_reference";
+        return "exact_lawson_cut_bridge_reference";
     }
 
     bool exactPredicatesForFiniteDoubleInputs() const noexcept override {
         return predicates_ && predicates_->exactForFiniteDoubleInputs();
     }
 
-    bool supportsHoles() const noexcept override { return false; }
+    bool supportsHoles() const noexcept override { return true; }
 
     PlanarCdtResult triangulate(
         const PlanarTrimDomain& domain) const override {
@@ -542,17 +751,59 @@ public:
 
         const ValidatedPlanarTrimDomain& validated =
             *result.trimValidation.value;
-        if (validated.loops.size() != 1 ||
-            validated.loops.front().role != PlanarTrimLoopRole::Outer) {
-            setFailure(
-                result, "cdt.holes_not_supported_by_reference",
-                "the reference backend currently accepts exactly one outer loop",
-                {domain.face});
+        const auto outer = std::find_if(
+            validated.loops.begin(), validated.loops.end(),
+            [](const ValidatedPlanarTrimLoop& loop) {
+                return loop.role == PlanarTrimLoopRole::Outer;
+            });
+        if (outer == validated.loops.end()) {
+            setFailure(result, "cdt.outer_loop_missing",
+                       "the validated domain has no outer loop", {domain.face});
             return result;
         }
-        const std::vector<PlanarTrimVertex>& vertices =
-            validated.loops.front().vertices;
-        if (vertices.size() >
+
+        std::vector<const ValidatedPlanarTrimLoop*> orderedLoops{&*outer};
+        std::vector<const ValidatedPlanarTrimLoop*> holes;
+        for (const ValidatedPlanarTrimLoop& loop : validated.loops) {
+            if (loop.role == PlanarTrimLoopRole::Hole) holes.push_back(&loop);
+        }
+        std::sort(
+            holes.begin(), holes.end(),
+            [](const ValidatedPlanarTrimLoop* left,
+               const ValidatedPlanarTrimLoop* right) {
+                const auto leftMinimum = std::min_element(
+                    left->vertices.begin(), left->vertices.end(),
+                    [](const PlanarTrimVertex& a,
+                       const PlanarTrimVertex& b) {
+                        if (a.uv[0] != b.uv[0]) return a.uv[0] < b.uv[0];
+                        return a.uv[1] < b.uv[1];
+                    });
+                const auto rightMinimum = std::min_element(
+                    right->vertices.begin(), right->vertices.end(),
+                    [](const PlanarTrimVertex& a,
+                       const PlanarTrimVertex& b) {
+                        if (a.uv[0] != b.uv[0]) return a.uv[0] < b.uv[0];
+                        return a.uv[1] < b.uv[1];
+                    });
+                if (leftMinimum->uv != rightMinimum->uv) {
+                    return leftMinimum->uv < rightMinimum->uv;
+                }
+                return left->wire < right->wire;
+            });
+        orderedLoops.insert(orderedLoops.end(), holes.begin(), holes.end());
+
+        std::size_t totalVertices = 0;
+        for (const ValidatedPlanarTrimLoop* loop : orderedLoops) {
+            if (loop->vertices.size() >
+                std::numeric_limits<std::size_t>::max() - totalVertices) {
+                setFailure(result, "cdt.vertex_index_overflow",
+                           "the planar domain vertex count overflows",
+                           {domain.face});
+                return result;
+            }
+            totalVertices += loop->vertices.size();
+        }
+        if (totalVertices >
             static_cast<std::size_t>(std::numeric_limits<VertexIndex>::max())) {
             setFailure(result, "cdt.vertex_index_overflow",
                        "the planar domain exceeds the reference index width",
@@ -560,21 +811,40 @@ public:
             return result;
         }
 
-        const std::optional<std::vector<Triangle>> initial =
-            earTriangulation(vertices, *predicates_, result, domain.face);
-        if (!initial) return result;
-        std::vector<Triangle> triangles = *initial;
-
+        std::vector<PlanarTrimVertex> vertices;
+        vertices.reserve(totalVertices);
+        std::vector<std::vector<VertexIndex>> boundaryLoops;
+        boundaryLoops.reserve(orderedLoops.size());
         std::set<Edge> constraints;
         std::vector<std::array<VertexIndex, 2>> orderedConstraints;
-        orderedConstraints.reserve(vertices.size());
-        for (std::size_t index = 0; index < vertices.size(); ++index) {
-            const VertexIndex first = static_cast<VertexIndex>(index);
-            const VertexIndex second = static_cast<VertexIndex>(
-                (index + 1) % vertices.size());
-            constraints.insert(edge(first, second));
-            orderedConstraints.push_back({first, second});
+        orderedConstraints.reserve(totalVertices);
+        for (const ValidatedPlanarTrimLoop* loop : orderedLoops) {
+            std::vector<VertexIndex> indices;
+            indices.reserve(loop->vertices.size());
+            for (const PlanarTrimVertex& vertex : loop->vertices) {
+                indices.push_back(
+                    static_cast<VertexIndex>(vertices.size()));
+                vertices.push_back(vertex);
+            }
+            for (std::size_t index = 0; index < indices.size(); ++index) {
+                const VertexIndex first = indices[index];
+                const VertexIndex second =
+                    indices[(index + 1) % indices.size()];
+                constraints.insert(edge(first, second));
+                orderedConstraints.push_back({first, second});
+            }
+            boundaryLoops.push_back(std::move(indices));
         }
+
+        const std::optional<std::vector<VertexIndex>> boundaryWalk =
+            buildBoundaryWalk(vertices, boundaryLoops, constraints,
+                              *predicates_, result, domain.face);
+        if (!boundaryWalk) return result;
+        const std::optional<std::vector<Triangle>> initial =
+            earTriangulation(vertices, *boundaryWalk, *predicates_, result,
+                             domain.face);
+        if (!initial) return result;
+        std::vector<Triangle> triangles = *initial;
         if (!applyLawsonFlips(triangles, vertices, constraints, *predicates_,
                              result, domain.face)) {
             return result;
@@ -583,7 +853,8 @@ public:
         PlanarCdtMesh mesh;
         mesh.workingFace = validated.face;
         mesh.sourceFace = validated.sourceFace;
-        mesh.vertices = vertices;
+        mesh.vertices = std::move(vertices);
+        mesh.boundaryLoops = std::move(boundaryLoops);
         mesh.constrainedEdges = std::move(orderedConstraints);
         mesh.triangles.reserve(triangles.size());
         for (const Triangle& triangle : triangles) {

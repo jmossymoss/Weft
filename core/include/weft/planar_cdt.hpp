@@ -22,6 +22,7 @@ struct PlanarCdtMesh {
     StableId workingFace;
     std::optional<StableId> sourceFace;
     std::vector<PlanarTrimVertex> vertices;
+    std::vector<std::vector<std::uint32_t>> boundaryLoops;
     std::vector<std::array<std::uint32_t, 2>> constrainedEdges;
     std::vector<PlanarCdtTriangle> triangles;
 };
@@ -66,10 +67,9 @@ public:
         const PlanarTrimDomain& domain) const = 0;
 };
 
-// Distribution-safe reference backend for a validated single outer loop. It
-// creates a boundary-preserving ear triangulation and applies deterministic
-// Lawson flips using the exact predicate interface. Hole support remains a
-// named refusal until constraint recovery/cut-graph proof is implemented.
+// Distribution-safe reference backend. It creates a boundary-preserving ear
+// triangulation, joins holes through exact-predicate visibility bridges, and
+// applies deterministic Lawson flips without flipping input constraints.
 std::shared_ptr<const PlanarCdtBackend>
 makeExactLawsonReferencePlanarCdtBackend(
     std::shared_ptr<const GeometricPredicates> predicates =

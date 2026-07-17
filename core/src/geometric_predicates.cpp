@@ -337,6 +337,27 @@ public:
         return result;
     }
 
+    PredicateResult<ExactSign> compareSquaredDistance(
+        PredicatePoint2 origin, PredicatePoint2 first,
+        PredicatePoint2 second) const override {
+        if (!finite(origin) || !finite(first) || !finite(second)) {
+            return predicateFailure<ExactSign>(
+                "predicate.non_finite_input",
+                "squared-distance comparison requires finite IEEE-754 coordinates");
+        }
+        const ExactDyadic firstX = difference(first[0], origin[0]);
+        const ExactDyadic firstY = difference(first[1], origin[1]);
+        const ExactDyadic secondX = difference(second[0], origin[0]);
+        const ExactDyadic secondY = difference(second[1], origin[1]);
+        const ExactDyadic firstSquared = add(
+            multiply(firstX, firstX), multiply(firstY, firstY));
+        const ExactDyadic secondSquared = add(
+            multiply(secondX, secondX), multiply(secondY, secondY));
+        PredicateResult<ExactSign> result;
+        result.value = signOf(subtract(firstSquared, secondSquared));
+        return result;
+    }
+
     PredicateResult<SegmentIntersectionKind> segmentIntersection(
         PredicatePoint2 a, PredicatePoint2 b, PredicatePoint2 c,
         PredicatePoint2 d) const override {

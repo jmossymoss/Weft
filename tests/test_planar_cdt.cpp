@@ -39,11 +39,13 @@ weft::PlanarTrimLoop makeLoop(
             {{{{{weft::StableIdKind::Boundary, edgeOrdinal},
                 static_cast<std::uint32_t>(index)},
                {weft::StableIdKind::Edge, edgeOrdinal},
-               weft::StableId{weft::StableIdKind::Edge,
+             weft::StableId{weft::StableIdKind::Edge,
                               edgeOrdinal + 100000},
                {weft::StableIdKind::Coedge, edgeOrdinal},
                points[index], 0.0, 1e-7}},
-             static_cast<std::uint64_t>(index), points[index]});
+             (loopOrdinal - 1) * 100 +
+                 static_cast<std::uint64_t>(index),
+             points[index]});
     }
     return loop;
 }
@@ -69,13 +71,15 @@ const weft::PlanarCdtValidationEvidence* evidence(
 }
 
 void checkCertified(const weft::PlanarCdtResult& result,
-                    std::size_t expectedVertices) {
+                    std::size_t expectedVertices,
+                    std::size_t expectedHoles = 0) {
     CHECK(result);
     CHECK(!result.failure);
     CHECK(result.trimValidation);
     CHECK(result.value && result.value->vertices.size() == expectedVertices);
     CHECK(result.value &&
-          result.value->triangles.size() == expectedVertices - 2);
+          result.value->triangles.size() ==
+              expectedVertices + 2 * expectedHoles - 2);
     CHECK(result.value &&
           result.value->constrainedEdges.size() == expectedVertices);
     CHECK(result.validation.size() == 7);
@@ -86,9 +90,10 @@ void checkCertified(const weft::PlanarCdtResult& result,
         if (item.expected != 0) CHECK(item.checked != 0);
     }
     if (!result.value) return;
+    std::set<std::uint64_t> canonicalIndices;
     for (std::size_t index = 0; index < result.value->vertices.size(); ++index) {
         const weft::PlanarTrimVertex& vertex = result.value->vertices[index];
-        CHECK(vertex.canonicalVertexIndex == index);
+        CHECK(canonicalIndices.insert(vertex.canonicalVertexIndex).second);
         CHECK(!vertex.boundaryUses.empty());
         if (!vertex.boundaryUses.empty()) {
             CHECK(vertex.boundaryUses.front().sample.boundary.ordinal ==
@@ -117,9 +122,9 @@ std::set<std::pair<std::uint32_t, std::uint32_t>> meshEdges(
 
 void testBackendContract(const weft::PlanarCdtBackend& backend) {
     CHECK(std::string(backend.backendCode()) ==
-          "exact_lawson_single_loop_reference");
+          "exact_lawson_cut_bridge_reference");
     CHECK(backend.exactPredicatesForFiniteDoubleInputs());
-    CHECK(!backend.supportsHoles());
+    CHECK(backend.supportsHoles());
 }
 
 void testTriangleAndCocircularSquare(const weft::PlanarCdtBackend& backend) {
@@ -229,6 +234,17 @@ void testSubnormalDomain(const weft::PlanarCdtBackend& backend) {
     checkCertified(result, 4);
 }
 
+void testConcavePerforatedDomain(const weft::PlanarCdtBackend& backend) {
+    weft::PlanarTrimDomain concave = makeDomain(
+        {{0.0, 0.0}, {8.0, 0.0}, {8.0, 8.0}, {5.0, 8.0},
+         {5.0, 3.0}, {3.0, 3.0}, {3.0, 8.0}, {0.0, 8.0}});
+    concave.loops.push_back(makeLoop(
+        2, weft::PlanarTrimLoopRole::Hole,
+        {{1.0, 1.0}, {1.0, 2.0}, {2.0, 2.0}, {2.0, 1.0}}));
+    const auto result = backend.triangulate(concave);
+    checkCertified(result, 12, 1);
+}
+
 void testNamedRefusals(const weft::PlanarCdtBackend& backend) {
     const auto invalid = backend.triangulate(
         makeDomain({{0.0, 0.0}, {2.0, 2.0}, {0.0, 2.0}, {2.0, 0.0}}));
@@ -243,10 +259,35 @@ void testNamedRefusals(const weft::PlanarCdtBackend& backend) {
         2, weft::PlanarTrimLoopRole::Hole,
         {{1.0, 1.0}, {1.0, 3.0}, {3.0, 3.0}, {3.0, 1.0}}));
     const auto hole = backend.triangulate(perforated);
-    CHECK(!hole);
-    CHECK(hole.trimValidation);
-    CHECK(hole.failure &&
-          hole.failure->code == "cdt.holes_not_supported_by_reference");
+    checkCertified(hole, 8, 1);
+    CHECK(hole.value && hole.value->boundaryLoops.size() == 2);
+
+    weft::PlanarTrimDomain twoHoles = makeDomain(
+        {{0.0, 0.0}, {10.0, 0.0}, {10.0, 8.0}, {0.0, 8.0}});
+    twoHoles.loops.push_back(makeLoop(
+        2, weft::PlanarTrimLoopRole::Hole,
+        {{1.0, 1.0}, {1.0, 3.0}, {3.0, 3.0}, {3.0, 1.0}}));
+    twoHoles.loops.push_back(makeLoop(
+        3, weft::PlanarTrimLoopRole::Hole,
+        {{6.0, 2.0}, {6.0, 5.0}, {8.0, 5.0}, {8.0, 2.0}}));
+    const auto twicePerforated = backend.triangulate(twoHoles);
+    checkCertified(twicePerforated, 12, 2);
+    CHECK(twicePerforated.value &&
+          twicePerforated.value->boundaryLoops.size() == 3);
+
+    std::swap(twoHoles.loops[1], twoHoles.loops[2]);
+    const auto reordered = backend.triangulate(twoHoles);
+    checkCertified(reordered, 12, 2);
+    CHECK(twicePerforated.value && reordered.value &&
+          twicePerforated.value->triangles.size() ==
+              reordered.value->triangles.size());
+    if (twicePerforated.value && reordered.value) {
+        for (std::size_t index = 0;
+             index < twicePerforated.value->triangles.size(); ++index) {
+            CHECK(twicePerforated.value->triangles[index].vertices ==
+                  reordered.value->triangles[index].vertices);
+        }
+    }
 
     const auto unavailable =
         weft::makeExactLawsonReferencePlanarCdtBackend(nullptr);
@@ -273,6 +314,7 @@ int main() {
         testConcaveAndCollinearDomains(*backend);
         testStarPropertyBattery(*backend);
         testSubnormalDomain(*backend);
+        testConcavePerforatedDomain(*backend);
         testNamedRefusals(*backend);
     }
     if (failures == 0) {

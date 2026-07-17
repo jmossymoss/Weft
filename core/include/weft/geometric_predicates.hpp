@@ -52,6 +52,12 @@ public:
         PredicatePoint2 a, PredicatePoint2 b, PredicatePoint2 c,
         PredicatePoint2 d) const = 0;
 
+    // Compares squared distances from origin without rounding the products.
+    // Negative means first is nearer, positive means second is nearer.
+    virtual PredicateResult<ExactSign> compareSquaredDistance(
+        PredicatePoint2 origin, PredicatePoint2 first,
+        PredicatePoint2 second) const = 0;
+
     virtual PredicateResult<SegmentIntersectionKind> segmentIntersection(
         PredicatePoint2 a, PredicatePoint2 b, PredicatePoint2 c,
         PredicatePoint2 d) const = 0;

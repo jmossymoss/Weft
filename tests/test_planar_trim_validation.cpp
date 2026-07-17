@@ -215,6 +215,20 @@ void testSelfIntersectionRefusals() {
 }
 
 void testInterLoopAndNestingRefusals() {
+    auto repeatedCanonicalDomain = domain({
+        loop(1, weft::PlanarTrimLoopRole::Outer,
+             {{0.0, 0.0}, {4.0, 0.0}, {4.0, 4.0}, {0.0, 4.0}}),
+        loop(2, weft::PlanarTrimLoopRole::Hole,
+             {{1.0, 1.0}, {1.0, 3.0}, {3.0, 3.0}, {3.0, 1.0}}),
+    });
+    repeatedCanonicalDomain.loops[1].vertices[0].canonicalVertexIndex =
+        repeatedCanonicalDomain.loops[0].vertices[0].canonicalVertexIndex;
+    const auto repeatedCanonical =
+        weft::validatePlanarTrimDomain(repeatedCanonicalDomain);
+    CHECK(!repeatedCanonical);
+    CHECK(hasDiagnostic(repeatedCanonical,
+                        "trim.domain.repeated_canonical_vertex"));
+
     const auto crossing = weft::validatePlanarTrimDomain(domain({
         loop(1, weft::PlanarTrimLoopRole::Outer,
              {{0.0, 0.0}, {4.0, 0.0}, {4.0, 4.0}, {0.0, 4.0}}),

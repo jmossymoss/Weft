@@ -30,9 +30,10 @@ int failures = 0;
 
 class TemporaryStep {
 public:
-    TemporaryStep()
+    explicit TemporaryStep(
+        const std::string& stem = "weft_certified_mesh_box")
         : path_(weft::test::uniqueTempPath(
-              "weft_certified_mesh_box", ".step")) {}
+              stem, ".step")) {}
 
     ~TemporaryStep() {
         std::error_code ignored;
@@ -266,6 +267,83 @@ void testTamperedTriangleRefuses(const PreparedBox& prepared) {
               "certified.triangle_orientation_invalid");
 }
 
+void testPerforatedPlanarFaceProduct() {
+    TemporaryStep step("weft_certified_mesh_hole_face");
+    weft::writeStep(weft::makeFixture("hole"), step.path().string());
+    const weft::ImportedModel imported =
+        weft::importStepSecure(step.path().string());
+    const weft::ReconnaissanceReport reconnaissance =
+        weft::reconnoitre(imported);
+    CHECK(reconnaissance.complete);
+
+    weft::IntervalProblem intervalProblem;
+    for (const weft::EdgeTopologyRecord& edge :
+         imported.working->snapshot.edgeTopology) {
+        const weft::ExactGeometryClassification* classification =
+            reconnaissance.find(edge.id);
+        const bool circle = classification &&
+            classification->familyCode == "circle";
+        intervalProblem.variables.push_back(
+            {{weft::StableIdKind::Boundary, edge.id.ordinal},
+             circle ? 16.0 : 2.0, 1, false});
+    }
+    const weft::IntervalSolveResult intervals =
+        weft::solveIntervals(intervalProblem);
+    CHECK(intervals);
+    if (!intervals) return;
+    const weft::CanonicalBoundaryBuildResult boundaries =
+        weft::buildCanonicalBoundaries(
+            imported, reconnaissance, *intervals.solution);
+    CHECK(boundaries);
+    if (!boundaries) return;
+
+    const auto cdt = weft::makeExactLawsonReferencePlanarCdtBackend();
+    std::optional<weft::PlanarCdtMesh> perforated;
+    for (const weft::ExactGeometryClassification& record :
+         reconnaissance.records) {
+        if (record.taxonomy != weft::GeometryTaxonomy::Surface ||
+            record.familyCode != "plane") {
+            continue;
+        }
+        const weft::PlanarTrimAssemblyResult trim =
+            weft::assemblePlanarTrimDomain(
+                imported, reconnaissance, *boundaries.value,
+                record.subjectId);
+        CHECK(trim);
+        if (!trim.value || trim.value->loops.size() < 2) continue;
+        const weft::PlanarCdtResult triangulated =
+            cdt->triangulate(*trim.value);
+        CHECK(triangulated);
+        if (triangulated.value) perforated = *triangulated.value;
+        break;
+    }
+    CHECK(perforated.has_value());
+    if (!perforated) return;
+
+    const std::vector<weft::PlanarCdtMesh> faceMeshes{*perforated};
+    const std::vector<weft::StableId> expectedFaces{
+        perforated->workingFace};
+    weft::CertifiedMeshAssemblyConfiguration openFace;
+    openFace.requireClosedManifold = false;
+    const weft::CertifiedMeshAssemblyResult certified =
+        weft::assembleCertifiedPlanarMesh(
+            imported, *boundaries.value, faceMeshes, expectedFaces,
+            openFace);
+    CHECK(certified);
+    CHECK(certified.validation.complete());
+    CHECK(certified.value &&
+          certified.value->triangles.size() ==
+              perforated->triangles.size());
+
+    const weft::CertifiedMeshAssemblyResult closedRefusal =
+        weft::assembleCertifiedPlanarMesh(
+            imported, *boundaries.value, faceMeshes, expectedFaces);
+    CHECK(!closedRefusal);
+    CHECK(closedRefusal.failure &&
+          closedRefusal.failure->code ==
+              "certified.edge_incidence_invalid");
+}
+
 }  // namespace
 
 int main() {
@@ -278,6 +356,7 @@ int main() {
             testMissingAndDuplicateFaceRefuse(*prepared);
             testTamperedCanonicalPositionRefuses(*prepared);
             testTamperedTriangleRefuses(*prepared);
+            testPerforatedPlanarFaceProduct();
         }
     } catch (const std::exception& error) {
         std::printf("FAIL certified-mesh exception: %s\n", error.what());
