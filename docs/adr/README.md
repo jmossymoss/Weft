@@ -27,3 +27,5 @@ Current records:
 
 - `ADR-0015-certified-workflow-adapter-and-cli-routing.md` - lossless certified
   `PolyMesh` compatibility and the single secure `mesh` CLI route.
+- `ADR-0016-secure-app-and-live-link-routing.md` - audited app import, secure
+  async/export routing, recipe-conflict policy, and atomic Blender link.

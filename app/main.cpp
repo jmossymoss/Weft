@@ -4,7 +4,8 @@
 // B-rep with feature colouring, click faces to select, drag density controls
 // and watch the topology regenerate live. Orbit/pan/zoom like Blender.
 //
-//   weft_app [model.step] [--fixture demo] [--screenshot out.png]
+//   weft_app [model.step] [--fixture box] [--screenshot out.png]
+//            [--live-link out.obj]
 
 // windows.h + commdlg.h must come FIRST: OCCT's headers include windows.h
 // themselves with slimmed-down defines, and a later re-include is a no-op
@@ -51,6 +52,7 @@
 #include "weft/model.hpp"
 #include "weft/recipe.hpp"
 #include "weft/remap.hpp"
+#include "weft/secure_meshing.hpp"
 #include "weft/viz.hpp"
 
 #include <GLFW/glfw3.h>
@@ -615,10 +617,13 @@ struct App {
     std::string recipePath;  // <model>.recipe next to the source
     std::string status = "load a STEP file or a fixture";
     bool hasModel = false;
+    weft::RepairProfile repairProfile = weft::RepairProfile::Conservative;
+    weft::ImportedModel secureImported;
     weft::Model model;
     weft::Analysis analysis;
     weft::Recipe recipe;
     weft::PolyMesh mesh;
+    weft::MeshingResult secureResult;
     weft::GenerationReport report;
     weft::GenerationCache genCache;  // per-face reuse across regenerates
     std::vector<weft::EdgePolyline> brepEdges;
@@ -746,6 +751,9 @@ struct App {
     bool loadGenerateAfter = true;
     std::string loadPath;
     std::string loadError;
+    weft::RepairProfile loadRepairProfile =
+        weft::RepairProfile::Conservative;
+    weft::ImportedModel loadedSecureImported;
     weft::Model loadedModel;
     weft::Analysis loadedAnalysis;
     std::vector<weft::EdgePolyline> loadedBrepEdges;
@@ -758,11 +766,10 @@ struct App {
     std::atomic<int> genProgress{0};
     std::atomic<int> genTotal{0};
     double genStartTime = 0.0;
-    weft::MeshPipeline genPipeline = weft::MeshPipeline::Legacy;
-    weft::CompilerSettings genCompilerSettings;
     weft::GenerationSettings genSettings;
-    std::vector<weft::ManualOp> genOps;  // worker's frozen ops snapshot
+    weft::SecureMeshingConfiguration genSecureConfiguration;
     weft::PolyMesh genMesh;
+    weft::MeshingResult genSecureResult;
     weft::GenerationReport genReport;
     std::string genError;
     // A defaults control being hovered highlights the faces it drives —
@@ -810,6 +817,124 @@ struct App {
     char pathBuf[512] = "";
     char recipeBuf[512] = "session.recipe";
 };
+
+// The secure app route currently migrates only representation-independent
+// global density controls. Anything keyed to healed topology or any operation
+// that edits the certified output must wait for recipe v2 correspondence.
+static std::string secureRecipeConflict(const weft::Recipe& recipe) {
+    if (!recipe.settings.perFace.empty()) {
+        return "recipe v1 face overrides need recipe v2 correspondence";
+    }
+    if (!recipe.settings.perEdge.empty() ||
+        !recipe.compiler.perEdge.empty()) {
+        return "recipe v1 edge pins need recipe v2 correspondence";
+    }
+    if (!recipe.ops.empty()) {
+        return "manual operations need certified, surface-anchored recipe v2 "
+               "migration";
+    }
+
+    const weft::FaceMeshSettings baseline;
+    const weft::FaceMeshSettings& value = recipe.settings.defaults;
+    const bool unsupportedDefault =
+        value.gridU != baseline.gridU || value.gridV != baseline.gridV ||
+        value.cap != baseline.cap ||
+        value.filletLoops != baseline.filletLoops ||
+        value.filletHold != baseline.filletHold ||
+        value.junctionRings != baseline.junctionRings ||
+        value.quadDominant != baseline.quadDominant ||
+        value.pureTriFloor != baseline.pureTriFloor ||
+        value.minimal != baseline.minimal || value.exclude != baseline.exclude ||
+        value.forceMesher != baseline.forceMesher ||
+        value.linkRims != baseline.linkRims ||
+        value.minSize != baseline.minSize ||
+        value.relativeDeviation != baseline.relativeDeviation ||
+        value.weldTolerance != baseline.weldTolerance ||
+        value.squareCollar != baseline.squareCollar ||
+        value.coonsRotate != baseline.coonsRotate ||
+        value.boundary != baseline.boundary ||
+        value.adaptive != baseline.adaptive ||
+        value.cellCap != baseline.cellCap;
+    if (unsupportedDefault) {
+        return "legacy modelling defaults cannot be applied to certified "
+               "topology";
+    }
+
+    const weft::GenerationSettings settingsBaseline;
+    if (recipe.settings.weldTolerance != settingsBaseline.weldTolerance ||
+        recipe.settings.densityScale != settingsBaseline.densityScale ||
+        recipe.settings.parallelMeshing != settingsBaseline.parallelMeshing ||
+        recipe.settings.conformBorders != settingsBaseline.conformBorders ||
+        recipe.settings.canonicalEdgeContracts !=
+            settingsBaseline.canonicalEdgeContracts ||
+        recipe.settings.finalizeMesh != settingsBaseline.finalizeMesh ||
+        recipe.settings.decoupleSeams != settingsBaseline.decoupleSeams) {
+        return "legacy generation controls cannot be applied to the secure "
+               "pipeline";
+    }
+    return {};
+}
+
+static weft::SecureMeshingConfiguration secureConfiguration(
+    const weft::GenerationSettings& settings) {
+    const weft::FaceMeshSettings& defaults = settings.defaults;
+    if (defaults.radial < 3) {
+        throw std::runtime_error("radial count must be at least 3");
+    }
+    if (defaults.axial < 1) {
+        throw std::runtime_error("axial count must be positive");
+    }
+    if (!std::isfinite(defaults.chordTolerance) ||
+        defaults.chordTolerance <= 0.0) {
+        throw std::runtime_error("chord tolerance must be finite and positive");
+    }
+    if (!std::isfinite(defaults.angleToleranceDeg) ||
+        defaults.angleToleranceDeg <= 0.0 ||
+        defaults.angleToleranceDeg >= 180.0) {
+        throw std::runtime_error(
+            "normal angle tolerance must be between 0 and 180 degrees");
+    }
+
+    weft::SecureMeshingConfiguration result;
+    result.sampling.chordTolerance = defaults.chordTolerance;
+    result.sampling.normalAngleToleranceRadians =
+        defaults.angleToleranceDeg * 0.01745329251994329576923690768489;
+    result.sampling.minimumClosedCurveSegments =
+        static_cast<std::uint32_t>(defaults.radial);
+    result.sampling.maximumSegmentCount = std::max<std::uint32_t>(
+        4096U, result.sampling.minimumClosedCurveSegments);
+    result.cylinderAxialIntervals =
+        static_cast<std::uint32_t>(defaults.axial);
+    return result;
+}
+
+static std::runtime_error secureGenerationError(
+    const weft::SecureMeshingResult& result) {
+    const std::string code = result.failure
+        ? result.failure->code
+        : "secure_pipeline.unknown_refusal";
+    const std::string message = result.failure
+        ? result.failure->message
+        : "secure meshing produced neither a result nor a failure";
+    return std::runtime_error(
+        "secure meshing refused [" + code + "]: " + message);
+}
+
+static void replaceFileAtomically(const std::string& temporary,
+                                  const std::string& destination) {
+#ifdef _WIN32
+    const std::filesystem::path from(temporary);
+    const std::filesystem::path to(destination);
+    if (!MoveFileExW(from.c_str(), to.c_str(),
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        throw std::runtime_error(
+            "atomic live-link replace failed with Windows error " +
+            std::to_string(GetLastError()));
+    }
+#else
+    std::filesystem::rename(temporary, destination);
+#endif
+}
 
 static std::array<float, 3> faceColor(const weft::FaceInfo& f, bool selected) {
     std::array<float, 3> c{0.58f, 0.60f, 0.66f};  // plane / default
@@ -1291,33 +1416,30 @@ static void finishGenerate(App& app);
 // further edits leave `dirty` set and coalesce into the next run.
 static void startGenerate(App& app) {
     if (!app.hasModel || app.genBusy) return;
-    logLine("regenerate: begin (%s, %zu overrides, %zu edge pins, %zu ops)",
-            app.recipe.pipeline == weft::MeshPipeline::PrimitiveCompiler
-                ? "primitive compiler"
-                : "legacy",
-            app.recipe.settings.perFace.size(),
-            app.recipe.pipeline == weft::MeshPipeline::PrimitiveCompiler
-                ? app.recipe.compiler.perEdge.size()
-                : app.recipe.settings.perEdge.size(),
-            app.recipe.ops.size());
+    const std::string migrationConflict = secureRecipeConflict(app.recipe);
+    if (!migrationConflict.empty()) {
+        app.status = "secure workflow blocked: " + migrationConflict;
+        app.dirty = false;
+        logLine("regenerate: BLOCKED: %s", migrationConflict.c_str());
+        return;
+    }
+    try {
+        app.genSecureConfiguration = secureConfiguration(app.recipe.settings);
+    } catch (const std::exception& e) {
+        app.status = std::string("secure workflow blocked: ") + e.what();
+        app.dirty = false;
+        logLine("regenerate: BLOCKED: %s", e.what());
+        return;
+    }
+    logLine("regenerate: begin (secure certified, radial=%d, axial=%d, "
+            "chord=%g)",
+            app.recipe.settings.defaults.radial,
+            app.recipe.settings.defaults.axial,
+            app.recipe.settings.defaults.chordTolerance);
     if (app.genThread.joinable()) app.genThread.join();
-    app.genPipeline = app.recipe.pipeline;
-    app.genCompilerSettings = app.recipe.compiler;
     app.genSettings = app.recipe.settings;
-    // The viewport needs connected vertices for editing, but not the costly
-    // whole-model conformation/stitch/cleanup pass. Export regenerates from
-    // these cached face parts with finalization enabled.
-    app.genSettings.finalizeMesh = false;
-    // Ops frozen like settings: the UI thread mutates them mid-run
-    // (weld, undo, grab drags) and a live read is a use-after-free
-    // in the worker.
-    app.genOps = app.recipe.ops;
     app.genProgress = 0;
-    // Unknown until planning/density/cache lookup determines the affected
-    // border-connected set. Do not imply that every model face will remesh.
-    app.genTotal = -1;
-    app.genSettings.progressFaces = &app.genProgress;
-    app.genSettings.progressTotal = &app.genTotal;
+    app.genTotal = 1;
     app.genError.clear();
     app.genStartTime = glfwGetTime();
     app.genBusy = true;
@@ -1326,19 +1448,16 @@ static void startGenerate(App& app) {
     App* a = &app;  // outlives the thread (owned by main)
     app.genThread = std::thread([a] {
         try {
-            weft::GenerationReport report;
-            weft::PolyMesh mesh;
-            if (a->genPipeline == weft::MeshPipeline::PrimitiveCompiler) {
-                mesh = weft::generatePrimitiveAware(
-                    a->model, a->analysis, a->genCompilerSettings,
-                    a->genSettings, nullptr, &report, &a->genCache);
-            } else {
-                mesh = weft::generate(a->model, a->analysis, a->genSettings,
-                                      &report, &a->genCache);
+            weft::SecureMeshingResult generated = weft::generateSecureMesh(
+                a->secureImported, a->genSecureConfiguration);
+            if (!generated) {
+                throw secureGenerationError(generated);
             }
-            weft::applyOps(mesh, a->model, a->genOps);
-            a->genMesh = std::move(mesh);
-            a->genReport = std::move(report);
+            a->genSecureResult = std::move(*generated.value);
+            a->genMesh =
+                weft::makeCertifiedPolyMeshAdapter(a->genSecureResult);
+            a->genReport = a->genSecureResult.generation;
+            a->genProgress = 1;
         } catch (const std::exception& e) {
             a->genError = e.what();
         } catch (...) {
@@ -1366,7 +1485,8 @@ static void finishGenerate(App& app) {
             (glfwGetTime() - app.genStartTime) * 1000.0);
     {
         app.mesh = std::move(app.genMesh);
-        app.meshFinalized = app.genSettings.finalizeMesh;
+        app.secureResult = std::move(app.genSecureResult);
+        app.meshFinalized = true;
         app.gpuProxyPending = app.dirty && app.activeFace > 0;
         app.report = std::move(app.genReport);
         app.exactNormalCache.clear();  // vert indices died with the mesh
@@ -1451,14 +1571,11 @@ static void finishGenerate(App& app) {
     // the next run — clearing the flag here silently dropped them, so a
     // drag's landed value never meshed and an undo during a run restored
     // the recipe but left the stale mesh on screen.
-    logLine("regenerate: done (%zu verts, %zu polys; %d remeshed, %d reused)",
+    logLine("regenerate: done (%zu verts, %zu certified triangles; "
+            "certificate=%s)",
             app.mesh.vertexCount(), app.mesh.polygonCount(),
-            app.report.cacheMisses, app.report.cacheHits);
-    if (!firstMesh && app.report.cacheHits > 0) {
-        app.status = "updated " + std::to_string(app.report.cacheMisses) +
-                     " face(s), reused " +
-                     std::to_string(app.report.cacheHits);
-    }
+            app.secureResult.validation.complete() ? "complete" : "invalid");
+    if (!firstMesh) app.status = "secure certified mesh updated";
 
     // Blender live link: mirror every result to the watched OBJ. Written
     // to a temp file and renamed into place, so the addon's mtime poll
@@ -1467,7 +1584,7 @@ static void finishGenerate(App& app) {
         try {
             std::string tmp = app.livePath + ".tmp";
             weft::writeObj(app.mesh, tmp, &app.analysis.solidFaces);
-            std::filesystem::rename(tmp, app.livePath);
+            replaceFileAtomically(tmp, app.livePath);
         } catch (const std::exception& e) {
             app.status = std::string("live link write failed: ") + e.what();
         }
@@ -1537,6 +1654,7 @@ static void finishLoadModel(App& app) {
     // The main loop only adopts this result after the old model's generation
     // worker has drained, so moving the document cannot race the mesher.
     try {
+        app.secureImported = std::move(app.loadedSecureImported);
         app.model = std::move(app.loadedModel);
         app.analysis = std::move(app.loadedAnalysis);
         app.brepEdges = std::move(app.loadedBrepEdges);
@@ -1554,13 +1672,12 @@ static void finishLoadModel(App& app) {
         // build-health flags would render (and be clickable) against the
         // new model until the first async run lands.
         app.report = weft::GenerationReport();
+        app.secureResult = weft::MeshingResult();
+        app.mesh = weft::PolyMesh();
+        app.meshFinalized = false;
+        app.exactNormalCache.clear();
+        rebuildBuffers(app);
         app.recipe = {};
-        // New sessions solve curvature adaptively (deviation/angle drive
-        // each edge's count); saved recipes bring their own flag back.
-        app.recipe.settings.defaults.adaptive = true;
-        // Deviation relative to feature size: a 500mm bore and a 5mm bore
-        // carry the same ring topology, the angle criterion drives counts.
-        app.recipe.settings.defaults.relativeDeviation = true;
         frameModel(app);
         app.status = path + ": " + std::to_string(app.model.faceCount()) +
                      " faces, " + std::to_string(app.model.edgeCount()) +
@@ -1576,8 +1693,24 @@ static void finishLoadModel(App& app) {
         if (std::filesystem::exists(app.recipePath)) {
             try {
                 app.recipe = weft::loadRecipe(app.recipePath);
-                app.status += "  (recipe loaded)";
-                logLine("load: applied %s", app.recipePath.c_str());
+                const bool ignoredPipeline =
+                    app.recipe.pipeline ==
+                    weft::MeshPipeline::PrimitiveCompiler;
+                app.recipe.pipeline = weft::MeshPipeline::Legacy;
+                const std::string conflict =
+                    secureRecipeConflict(app.recipe);
+                if (conflict.empty()) {
+                    app.status += ignoredPipeline
+                        ? "  (recipe v1 globals migrated; pipeline ignored)"
+                        : "  (recipe v1 globals migrated)";
+                    logLine("load: migrated safe globals from %s",
+                            app.recipePath.c_str());
+                } else {
+                    app.status += "  (recipe migration conflict: " +
+                                  conflict + ")";
+                    logLine("load: recipe migration conflict: %s",
+                            conflict.c_str());
+                }
             } catch (const std::exception& e) {
                 app.status = std::string("recipe load failed: ") + e.what();
             }
@@ -1603,7 +1736,9 @@ static void loadModel(App& app, const std::string& path,
     logLine("load: %s", path.c_str());
     if (app.loadThread.joinable()) app.loadThread.join();
     app.loadPath = path;
+    app.loadRepairProfile = app.repairProfile;
     app.loadError.clear();
+    app.loadedSecureImported = {};
     app.loadedModel = {};
     app.loadedAnalysis = {};
     app.loadedBrepEdges.clear();
@@ -1615,10 +1750,13 @@ static void loadModel(App& app, const std::string& path,
     App* a = &app;
     app.loadThread = std::thread([a] {
         try {
-            weft::Model model = weft::loadStep(a->loadPath);
+            weft::ImportedModel imported = weft::importStepSecure(
+                a->loadPath, a->loadRepairProfile);
+            weft::Model model = imported.workingModel();
             weft::Analysis analysis = weft::analyze(model);
             std::vector<weft::EdgePolyline> edges =
                 weft::sampleEdges(model, 28);
+            a->loadedSecureImported = std::move(imported);
             a->loadedModel = std::move(model);
             a->loadedAnalysis = std::move(analysis);
             a->loadedBrepEdges = std::move(edges);
@@ -1639,6 +1777,12 @@ static void loadModel(App& app, const std::string& path,
 // same mapping. The undo stack refers to old ids, so it resets.
 static void reloadModel(App& app) {
     logLine("hot-reload: %s", app.sourcePath.c_str());
+    const std::string migrationConflict = secureRecipeConflict(app.recipe);
+    if (!migrationConflict.empty()) {
+        app.status = "hot-reload blocked: " + migrationConflict;
+        logLine("hot-reload: BLOCKED: %s", migrationConflict.c_str());
+        return;
+    }
     // Same rule as loadModel: never swap the model out from under a
     // running worker (the file watcher can fire mid-run).
     while (app.genBusy && !app.genReady) {
@@ -1646,12 +1790,27 @@ static void reloadModel(App& app) {
     }
     if (app.genReady) finishGenerate(app);
     try {
-        weft::Model fresh = weft::loadStep(app.sourcePath);
+        weft::ImportedModel freshImported = weft::importStepSecure(
+            app.sourcePath, app.repairProfile);
+        weft::Model fresh = freshImported.workingModel();
         weft::Analysis freshAnalysis = weft::analyze(fresh);
         weft::RemapReport rep;
         weft::Recipe remapped =
             weft::remapRecipe(app.recipe, app.model, app.analysis, fresh,
                               freshAnalysis, &rep);
+        const int dropped =
+            rep.facesDropped + rep.edgesDropped + rep.opsDropped;
+        if (dropped != 0) {
+            throw std::runtime_error(
+                "hot-reload correspondence was incomplete; old model kept");
+        }
+        remapped.pipeline = weft::MeshPipeline::Legacy;
+        const weft::SecureMeshingConfiguration preflightConfiguration =
+            secureConfiguration(remapped.settings);
+        const weft::SecureMeshingResult preflight =
+            weft::generateSecureMesh(freshImported, preflightConfiguration);
+        if (!preflight) throw secureGenerationError(preflight);
+        app.secureImported = std::move(freshImported);
         app.model = std::move(fresh);
         app.analysis = std::move(freshAnalysis);
         app.recipe = std::move(remapped);
@@ -1683,7 +1842,6 @@ static void reloadModel(App& app) {
         app.hoverValid = false;
         regenerate(app);
 
-        int dropped = rep.facesDropped + rep.edgesDropped + rep.opsDropped;
         char msg[256];
         if (dropped == 0) {
             std::snprintf(msg, sizeof msg,
@@ -1908,29 +2066,24 @@ static std::string tempDir() {
 }
 
 static weft::PolyMesh finalizedMeshForExport(App& app) {
-    // The generation cache is shared with the preview worker, so drain it
-    // before reusing the cached face parts for the authoritative final pass.
+    // Drain the preview worker before reading the immutable imported model and
+    // current recipe snapshot for the authoritative secure pass.
     while (app.genBusy && !app.genReady) {
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     if (app.genReady) finishGenerate(app);
 
-    weft::GenerationSettings settings = app.recipe.settings;
-    settings.finalizeMesh = true;
-    settings.progressFaces = nullptr;
-    settings.progressTotal = nullptr;
-    weft::GenerationReport report;
-    weft::PolyMesh mesh;
-    if (app.recipe.pipeline == weft::MeshPipeline::PrimitiveCompiler) {
-        mesh = weft::generatePrimitiveAware(
-            app.model, app.analysis, app.recipe.compiler, settings, nullptr,
-            &report, &app.genCache);
-    } else {
-        mesh = weft::generate(app.model, app.analysis, settings, &report,
-                              &app.genCache);
+    const std::string conflict = secureRecipeConflict(app.recipe);
+    if (!conflict.empty()) {
+        throw std::runtime_error(
+            "secure export blocked: " + conflict);
     }
-    weft::applyOps(mesh, app.model, app.recipe.ops);
-    return mesh;
+    const weft::SecureMeshingConfiguration configuration =
+        secureConfiguration(app.recipe.settings);
+    weft::SecureMeshingResult generated =
+        weft::generateSecureMesh(app.secureImported, configuration);
+    if (!generated) throw secureGenerationError(generated);
+    return weft::makeCertifiedPolyMeshAdapter(*generated.value);
 }
 
 static void exportObjTo(App& app, const std::string& out,
@@ -2017,6 +2170,16 @@ static void loadFixture(App& app, const std::string& name) {
 // Every recipe mutation goes through this so the undo stack can snapshot
 // the pre-edit state once per gesture (see the frame bookkeeping in main).
 static void markDirty(App& app) {
+    const std::string conflict = secureRecipeConflict(app.recipe);
+    if (!conflict.empty()) {
+        if (secureRecipeConflict(app.preFrame).empty()) {
+            app.recipe = app.preFrame;
+        }
+        app.status = "edit blocked: " + conflict;
+        app.dirty = false;
+        app.gpuProxyPending = false;
+        return;
+    }
     app.dirty = true;
     app.mutatedThisFrame = true;
     app.gpuProxyPending = app.activeFace > 0;
@@ -3766,7 +3929,7 @@ static void drawActiveFaceSettings(App& app) {
 // The primitive-aware compiler has its own topology contract and controls.
 // These values do not proxy through legacy FaceMeshSettings: the planner
 // consumes them directly when it creates canonical edge samples and patches.
-static void drawPrimitiveCompilerSettings(App& app) {
+[[maybe_unused]] static void drawPrimitiveCompilerSettings(App& app) {
     weft::CompilerSettings& c = app.recipe.compiler;
     bool changed = false;
 
@@ -3861,7 +4024,7 @@ static void drawPrimitiveCompilerSettings(App& app) {
 // wall of knobs. Hovering a tab label or any knob tints the faces it
 // drives (cyan) — the live "which parts does this change" map. All
 // controls edit recipe.settings.defaults; per-face overrides still win.
-static void drawMesherDefaultTabs(App& app) {
+[[maybe_unused]] static void drawMesherDefaultTabs(App& app) {
     using MK = weft::MesherKind;
     weft::FaceMeshSettings& d = app.recipe.settings.defaults;
     bool ch = false;
@@ -4853,7 +5016,56 @@ static void drawUi(App& app) {
                                  sizeof app.pathBuf);
         ImGui::SameLine();
         if (ImGui::Button("Load")) loadModel(app, app.pathBuf);
+        int repairSelection =
+            app.repairProfile == weft::RepairProfile::Conservative ? 0 : 1;
+        ImGui::SetNextItemWidth(170.0f * gUiScale);
+        if (ImGui::Combo("repair profile", &repairSelection,
+                         "conservative\0compatibility\0")) {
+            app.repairProfile = repairSelection == 0
+                ? weft::RepairProfile::Conservative
+                : weft::RepairProfile::Compatibility;
+            if (app.hasModel && !app.sourcePath.empty()) {
+                loadModel(app, app.sourcePath);
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "conservative is the default; compatibility repairs remain "
+                "certificate-gated and may refuse export");
+        }
         if (app.hasModel) {
+            if (ImGui::TreeNode("repair certificate")) {
+                const weft::RepairCertificate& certificate =
+                    app.secureImported.repair;
+                ImGui::Text("profile: %s",
+                            weft::repairProfileName(certificate.profile));
+                ImGui::Text("source valid: %s   working valid: %s",
+                            certificate.sourceValid ? "yes" : "no",
+                            certificate.workingValid ? "yes" : "no");
+                ImGui::Text("identity: %s   meshable: %s",
+                            certificate.identity ? "yes" : "no",
+                            certificate.meshable ? "yes" : "no");
+                ImGui::Text("correspondence: %s",
+                            certificate.correspondenceComplete
+                                ? "complete"
+                                : "incomplete");
+                ImGui::TextWrapped("source sha256: %s",
+                                   certificate.sourceShapeSha256.c_str());
+                ImGui::TextWrapped("working sha256: %s",
+                                   certificate.workingShapeSha256.c_str());
+                ImGui::Text("operations: %zu   tolerance changes: %zu",
+                            certificate.operations.size(),
+                            certificate.toleranceChanges.size());
+                ImGui::Text("representation changes: %zu",
+                            certificate.representationChanges.size());
+                ImGui::Separator();
+                ImGui::Text("mesh certificate: %s (%zu checks)",
+                            app.secureResult.validation.complete()
+                                ? "complete"
+                                : "not available",
+                            app.secureResult.validation.checks.size());
+                ImGui::TreePop();
+            }
             // Hot-reload: re-export from the CAD app over the same STEP
             // and Weft re-imports it, carrying the recipe across.
             if (ImGui::Checkbox("watch file (reload + remap recipe)",
@@ -4895,20 +5107,40 @@ static void drawUi(App& app) {
 
     if (app.hasModel &&
         ImGui::CollapsingHeader("Topology", ImGuiTreeNodeFlags_DefaultOpen)) {
-        int pipeline = usingPrimitiveCompiler(app) ? 0 : 1;
-        ImGui::SetNextItemWidth(190.0f * gUiScale);
-        if (ImGui::Combo("pipeline", &pipeline,
-                         "primitive compiler\0legacy meshers\0")) {
-            app.recipe.pipeline = pipeline == 0
-                                      ? weft::MeshPipeline::PrimitiveCompiler
-                                      : weft::MeshPipeline::Legacy;
+        app.recipe.pipeline = weft::MeshPipeline::Legacy;
+        ImGui::TextColored({0.4f, 0.9f, 0.45f, 1.0f},
+                           "secure certified pipeline");
+        ImGui::TextDisabled("legacy generator selection removed");
+        ImGui::SetNextItemWidth(150.0f * gUiScale);
+        if (ImGui::InputInt("minimum radial", &app.recipe.settings.defaults.radial,
+                            1, 8)) {
+            app.recipe.settings.defaults.radial =
+                std::max(3, app.recipe.settings.defaults.radial);
+            markDirty(app);
+        }
+        ImGui::SetNextItemWidth(150.0f * gUiScale);
+        if (ImGui::InputInt("cylinder axial", &app.recipe.settings.defaults.axial,
+                            1, 1)) {
+            app.recipe.settings.defaults.axial =
+                std::max(1, app.recipe.settings.defaults.axial);
             markDirty(app);
         }
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip(
-                "Primitive compiler: coordinated B-rep graph, canonical\n"
-                "edge samples, uniform cylinder spans. Legacy remains\n"
-                "available only for comparison and old recipes.");
+                "values above 1 refuse until interior axial samples carry "
+                "exact source provenance");
+        }
+        ImGui::SetNextItemWidth(150.0f * gUiScale);
+        if (ImGui::InputDouble("chord tolerance",
+                               &app.recipe.settings.defaults.chordTolerance,
+                               0.01, 0.1, "%.6g")) {
+            markDirty(app);
+        }
+        ImGui::SetNextItemWidth(150.0f * gUiScale);
+        if (ImGui::InputDouble("normal angle (deg)",
+                               &app.recipe.settings.defaults.angleToleranceDeg,
+                               1.0, 5.0, "%.4g")) {
+            markDirty(app);
         }
         ImGui::Text("%zu verts   %zu polys", app.mesh.vertexCount(),
                     app.mesh.polygonCount());
@@ -4979,7 +5211,9 @@ static void drawUi(App& app) {
             }
         }
         ImGui::Separator();
-        if (!usingPrimitiveCompiler(app)) {
+        if (ImGui::TreeNode("legacy controls (migration conflicts)")) {
+        ImGui::TextColored({1.0f, 0.6f, 0.3f, 1.0f},
+                           "changing these blocks certified regeneration");
         // One knob for the whole budget: scales every density proposal.
         float ds = float(app.recipe.settings.densityScale);
         if (ImGui::SliderFloat("density scale", &ds, 0.25f, 4.0f, "%.2fx",
@@ -5071,31 +5305,27 @@ static void drawUi(App& app) {
                               "local feature size so it can't collapse\n"
                               "real geometry.");
         }
+        ImGui::TreePop();
         }
     }
 
     // Global defaults live in their own left-panel section, one tab per
     // mesher family — cylinders, fillets, ribbons, rings, flat faces —
     // instead of a flat wall of every knob at once.
-    if (app.hasModel && usingPrimitiveCompiler(app) &&
-        ImGui::CollapsingHeader("Primitive compiler",
-                                ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::PushID("compiler");
-        drawPrimitiveCompilerSettings(app);
-        ImGui::PopID();
+    if (app.hasModel &&
+        ImGui::CollapsingHeader("Modelling controls (migration)")) {
+        ImGui::TextWrapped(
+            "Per-family and per-face controls are temporarily disabled. "
+            "They return with recipe v2 source/working correspondence; "
+            "certified triangles remain exportable now.");
     }
 
     // The old knobs are a separate pipeline, not aliases for compiler values.
-    if (app.hasModel && !usingPrimitiveCompiler(app) &&
-        ImGui::CollapsingHeader("Mesher defaults",
-                                ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::PushID("defaults");
-        drawMesherDefaultTabs(app);
-        ImGui::PopID();
-    }
-
     if (app.hasModel &&
         ImGui::CollapsingHeader("Selection", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::TextDisabled(
+            "selection is inspect-only until recipe v2 migration");
+        ImGui::BeginDisabled();
         if (app.selectMode == SelectMode::Edge) {
             if (app.selEdges.empty()) {
                 ImGui::TextDisabled("click edges (shift extends)");
@@ -5143,6 +5373,7 @@ static void drawUi(App& app) {
             drawActiveFaceSettings(app);
             ImGui::PopID();
         }
+        ImGui::EndDisabled();
     }
 
     if (ImGui::CollapsingHeader("Display")) {
@@ -5203,19 +5434,32 @@ static void drawUi(App& app) {
         if (app.hasModel && ImGui::TreeNode("Recipe")) {
             ImGui::InputText("##recipe", app.recipeBuf, sizeof app.recipeBuf);
             if (ImGui::Button("Save recipe")) {
-                try {
-                    weft::saveRecipe(app.recipe, app.recipeBuf);
-                    app.status = std::string("saved ") + app.recipeBuf;
-                } catch (const std::exception& e) {
-                    app.status = e.what();
-                }
+                app.status =
+                    "recipe save blocked: recipe v2 correspondence is not "
+                    "implemented; v1 is never written by the secure app";
             }
             ImGui::SameLine();
             if (ImGui::Button("Load recipe")) {
                 try {
-                    app.recipe = weft::loadRecipe(app.recipeBuf);
-                    markDirty(app);
-                    app.status = std::string("loaded ") + app.recipeBuf;
+                    weft::Recipe migrated =
+                        weft::loadRecipe(app.recipeBuf);
+                    const bool ignoredPipeline =
+                        migrated.pipeline ==
+                        weft::MeshPipeline::PrimitiveCompiler;
+                    migrated.pipeline = weft::MeshPipeline::Legacy;
+                    const std::string conflict =
+                        secureRecipeConflict(migrated);
+                    if (!conflict.empty()) {
+                        app.status = "recipe migration conflict: " + conflict;
+                    } else {
+                        app.recipe = std::move(migrated);
+                        markDirty(app);
+                        app.status = std::string("migrated recipe v1 globals ") +
+                                     app.recipeBuf +
+                                     (ignoredPipeline
+                                          ? " (pipeline ignored)"
+                                          : "");
+                    }
                 } catch (const std::exception& e) {
                     app.status = e.what();
                 }
@@ -5303,7 +5547,8 @@ int main(int argc, char** argv) {
     weft::setGenerateDebugLog(gDebugLog);
     logLine("weft_app start (built %s %s)", __DATE__, __TIME__);
 
-    std::string screenshotPath, startModel, startFixture = "demo";
+    std::string screenshotPath, startModel, startFixture = "box";
+    std::string startLiveLinkPath;
     int startSelect = 0, startMode = 0;
     bool startQuality = false, startMatcap = false, startSmooth = false;
     bool startProxy = false;
@@ -5314,6 +5559,9 @@ int main(int argc, char** argv) {
         std::string a = argv[i];
         if (a == "--screenshot" && i + 1 < argc) screenshotPath = argv[++i];
         else if (a == "--fixture" && i + 1 < argc) startFixture = argv[++i];
+        else if (a == "--live-link" && i + 1 < argc) {
+            startLiveLinkPath = argv[++i];
+        }
         else if (a == "--select" && i + 1 < argc) startSelect = std::stoi(argv[++i]);
         else if (a == "--yaw" && i + 1 < argc) startYaw = std::stof(argv[++i]);
         else if (a == "--pitch" && i + 1 < argc) startPitch = std::stof(argv[++i]);
@@ -5422,6 +5670,10 @@ int main(int argc, char** argv) {
 
     App app;
     app.livePath = gDataDir + "/weft_live.obj";
+    if (!startLiveLinkPath.empty()) {
+        app.livePath = startLiveLinkPath;
+        app.liveLink = true;
+    }
     bool startupLoadPending = !startModel.empty();
     if (startupLoadPending) loadModel(app, startModel, false);
     else loadFixture(app, startFixture);
@@ -5950,13 +6202,8 @@ int main(int argc, char** argv) {
             }
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false) &&
                 app.hasModel && !app.recipePath.empty()) {
-                try {
-                    weft::saveRecipe(app.recipe, app.recipePath);
-                    app.status = "saved " + app.recipePath;
-                    logLine("saved recipe %s", app.recipePath.c_str());
-                } catch (const std::exception& e) {
-                    app.status = std::string("save failed: ") + e.what();
-                }
+                app.status =
+                    "recipe save blocked: secure recipe v2 is not implemented";
             }
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_E, false) &&
                 app.hasModel) {
