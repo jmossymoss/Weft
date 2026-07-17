@@ -11,6 +11,7 @@
 
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepTools.hxx>
+#include <Geom_Plane.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <IFSelect_ReturnStatus.hxx>
@@ -1562,6 +1563,69 @@ void testStepOrientationRepairWitness() {
     std::filesystem::remove(path, ignored);
 }
 
+// An exact surface type the recognisers have never seen: geometrically a
+// plane, but with its own RTTI so every exact-type comparison misses.
+class WeftTest_UnknownSurface : public Geom_Plane {
+public:
+    explicit WeftTest_UnknownSurface(const gp_Pln& plane)
+        : Geom_Plane(plane) {}
+    DEFINE_STANDARD_RTTIEXT(WeftTest_UnknownSurface, Geom_Plane)
+};
+IMPLEMENT_STANDARD_RTTIEXT(WeftTest_UnknownSurface, Geom_Plane)
+
+void testUnknownFamilyInjection() {
+    TopoDS_Shape witness = readNativeFixture(
+        "baselines", "baseline.pathology.box.brep");
+    TopExp_Explorer faces(witness, TopAbs_FACE);
+    CHECK(faces.More());
+    if (!faces.More()) return;
+    TopoDS_Face face = TopoDS::Face(faces.Current());
+    const Handle(Geom_Plane) plane =
+        Handle(Geom_Plane)::DownCast(BRep_Tool::Surface(face));
+    CHECK(!plane.IsNull());
+    if (plane.IsNull()) return;
+    BRep_Builder builder;
+    builder.UpdateFace(face, new WeftTest_UnknownSurface(plane->Pln()),
+                       TopLoc_Location(), BRep_Tool::Tolerance(face));
+
+    const weft::ImportedModel imported = deriveNativeRepair(
+        witness, "reconnaissance.unknown_family_witness.brep");
+    const weft::ReconnaissanceReport report = weft::reconnoitre(imported);
+    CHECK(report.complete);
+    CHECK(report.unsupportedSubjects > 0);
+    const auto injected = std::find_if(
+        report.records.begin(), report.records.end(),
+        [](const weft::ExactGeometryClassification& record) {
+            return record.taxonomy == weft::GeometryTaxonomy::Surface &&
+                record.familyCode == "kernel_specific";
+        });
+    CHECK(injected != report.records.end());
+    if (injected == report.records.end()) return;
+    CHECK(injected->support !=
+          weft::GeometrySupportState::SupportedAnalyticTemplate);
+    CHECK(injected->support !=
+          weft::GeometrySupportState::DeferredResidualSurface);
+    // No kernel-specific record may ever be folded into a supported family.
+    CHECK(std::none_of(
+        report.records.begin(), report.records.end(),
+        [](const weft::ExactGeometryClassification& record) {
+            return record.familyCode == "kernel_specific" &&
+                (record.support ==
+                     weft::GeometrySupportState::SupportedAnalyticTemplate ||
+                 record.support ==
+                     weft::GeometrySupportState::DeferredResidualSurface);
+        }));
+    CHECK(std::any_of(
+        report.diagnostics.begin(), report.diagnostics.end(),
+        [&](const weft::ReconnaissanceDiagnostic& diagnostic) {
+            return diagnostic.subject == injected->subjectId &&
+                (diagnostic.code ==
+                     "reconnaissance.geometry.unrecognised" ||
+                 diagnostic.code == "reconnaissance.surface.failure" ||
+                 diagnostic.code == "reconnaissance.geometry.invalid");
+        }));
+}
+
 void testTotalReconnaissance(const std::filesystem::path& cylinderPath) {
     const weft::ImportedModel cylinder = weft::importStepSecure(
         cylinderPath.string(), weft::RepairProfile::Conservative);
@@ -1642,6 +1706,7 @@ int main() {
         testFaceAdjacencyOrientationRepair();
         testCoherentPolarityNormalization();
         testStepOrientationRepairWitness();
+        testUnknownFamilyInjection();
         testTotalReconnaissance(path);
         std::error_code ignored;
         std::filesystem::remove(path, ignored);

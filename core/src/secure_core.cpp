@@ -147,6 +147,11 @@ BRepSnapshot buildSnapshot(Model model) {
     std::uint64_t coedgeOrdinal = 0;
     for (int faceIndex = 1; faceIndex <= snapshot.model.faces.Extent(); ++faceIndex) {
         const TopoDS_Face face = TopoDS::Face(snapshot.model.faces(faceIndex));
+        // An unrecognised or defective exact surface can make the oriented
+        // wire walk throw; the face then simply contributes no evaluator
+        // coedges instead of crashing the import, and reconnaissance and
+        // native validity name the defect downstream.
+        try {
         for (TopExp_Explorer wireExplorer(face, TopAbs_WIRE);
              wireExplorer.More(); wireExplorer.Next()) {
             const TopoDS_Wire wire = TopoDS::Wire(wireExplorer.Current());
@@ -199,6 +204,8 @@ BRepSnapshot buildSnapshot(Model model) {
                 }
                 snapshot.coedges.push_back(std::move(coedge));
             }
+        }
+        } catch (const Standard_Failure&) {
         }
     }
     snapshot.topology = secure_detail::buildTopologyAccount(snapshot.model);
