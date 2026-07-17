@@ -1160,6 +1160,106 @@ void testFaceAdjacencyOrientationRepair() {
     CHECK(hasDiagnostic(tampered, "import.repair.validation_incomplete"));
 }
 
+void testCoherentPolarityNormalization() {
+    // A reversed shell occurrence leaves face adjacency coherent but turns
+    // the solid inside out. The repair must restore the exact pristine
+    // stored orientations, so the working digest equals the baseline's.
+    const weft::ImportedModel baseline = deriveNativeRepair(
+        readNativeFixture("baselines", "baseline.pathology.box.brep"),
+        "baseline.pathology.box.brep");
+    CHECK(baseline.repair.identity);
+    CHECK(baseline.repair.meshable);
+    CHECK(baseline.repair.shellOrientationRepairs.empty());
+    CHECK(baseline.repair.refusals.empty());
+
+    TopoDS_Shape invertedShellWitness = readNativeFixture(
+        "baselines", "baseline.pathology.box.brep");
+    rebuildStoredChildren(invertedShellWitness,
+                          [](std::size_t, TopoDS_Shape& child) {
+                              if (child.ShapeType() == TopAbs_SHELL) {
+                                  reverseStoredChild(child);
+                              }
+                              return true;
+                          });
+    const weft::ImportedModel restored = deriveNativeRepair(
+        invertedShellWitness, "orientation.inverted_shell_witness.brep");
+    // BRepCheck accepts an inside-out coherent solid, which is exactly why
+    // native validity cannot be the polarity oracle: without this repair the
+    // witness imported meshable with inward normals.
+    CHECK(restored.repair.sourceValid);
+    CHECK(restored.repair.workingValid);
+    CHECK(restored.repair.meshable);
+    CHECK(!restored.repair.identity);
+    CHECK(restored.repair.correspondenceComplete);
+    CHECK(restored.correspondence.topologyComplete);
+    CHECK(restored.repair.refusals.empty());
+    CHECK(restored.repair.shellOrientationRepairs.size() == 1);
+    if (restored.repair.shellOrientationRepairs.size() == 1) {
+        const weft::ShellOrientationRepair& repair =
+            restored.repair.shellOrientationRepairs.front();
+        CHECK(repair.shellOccurrenceReversed);
+        CHECK(repair.flippedFaces.empty());
+        CHECK(repair.shellFaceUses == 6);
+        CHECK(repair.expectedManifoldEdges == 12);
+        CHECK(repair.checkedManifoldEdges == 12);
+        CHECK(repair.signedVolume > 7679.0);
+        CHECK(repair.signedVolume < 7681.0);
+        CHECK(repair.infinitePointOutside);
+    }
+    // Exact restoration: the repaired working copy serializes to the same
+    // canonical bytes as the untouched baseline working copy.
+    CHECK(restored.repair.workingShapeSha256 ==
+          baseline.repair.workingShapeSha256);
+    CHECK(restored.repair.sourceShapeSha256 !=
+          restored.repair.workingShapeSha256);
+
+    // Uniformly reversed face occurrences are also coherent-but-inverted;
+    // the minimal occurrence repair is the single shell reversal.
+    TopoDS_Shape invertedFacesWitness = readNativeFixture(
+        "baselines", "baseline.pathology.box.brep");
+    {
+        TopExp_Explorer shells(invertedFacesWitness, TopAbs_SHELL);
+        CHECK(shells.More());
+        if (!shells.More()) return;
+        rebuildStoredChildren(shells.Current(),
+                              [](std::size_t, TopoDS_Shape& child) {
+                                  reverseStoredChild(child);
+                                  return true;
+                              });
+    }
+    const weft::ImportedModel shellFlip = deriveNativeRepair(
+        invertedFacesWitness, "orientation.inverted_faces_witness.brep");
+    CHECK(shellFlip.repair.workingValid);
+    CHECK(shellFlip.repair.meshable);
+    CHECK(shellFlip.repair.shellOrientationRepairs.size() == 1);
+    if (shellFlip.repair.shellOrientationRepairs.size() == 1) {
+        const weft::ShellOrientationRepair& repair =
+            shellFlip.repair.shellOrientationRepairs.front();
+        CHECK(repair.shellOccurrenceReversed);
+        CHECK(repair.flippedFaces.empty());
+        CHECK(repair.signedVolume > 7679.0);
+        CHECK(repair.signedVolume < 7681.0);
+    }
+
+    // A reversed solid occurrence is detectable but outside the bounded
+    // repair scope: it must refuse by name and stay an identity copy.
+    TopoDS_Shape reversedSolidWitness = readNativeFixture(
+        "baselines", "baseline.pathology.box.brep");
+    reversedSolidWitness.Reverse();
+    const weft::ImportedModel reversedSolid = deriveNativeRepair(
+        reversedSolidWitness, "orientation.reversed_solid_witness.brep");
+    CHECK(reversedSolid.repair.shellOrientationRepairs.empty());
+    CHECK(reversedSolid.repair.refusals.size() == 1);
+    if (reversedSolid.repair.refusals.size() == 1) {
+        CHECK(reversedSolid.repair.refusals.front().code ==
+              "repair.orientation.solid_occurrence_not_forward");
+    }
+    CHECK(!reversedSolid.repair.meshable);
+    CHECK(reversedSolid.repair.identity);
+    CHECK(hasDiagnostic(reversedSolid,
+                        "import.repair.face_orientation_unproven"));
+}
+
 void testTotalReconnaissance(const std::filesystem::path& cylinderPath) {
     const weft::ImportedModel cylinder = weft::importStepSecure(
         cylinderPath.string(), weft::RepairProfile::Conservative);
@@ -1236,6 +1336,7 @@ int main() {
         testMultipleFreeRootOccurrences();
         testBoundedParameterizationRepair();
         testFaceAdjacencyOrientationRepair();
+        testCoherentPolarityNormalization();
         testTotalReconnaissance(path);
         std::error_code ignored;
         std::filesystem::remove(path, ignored);

@@ -56,3 +56,7 @@ Current records:
   orientation repair from a two-manifold shared-edge parity proof with
   independent signed-volume/infinite-point polarity selection and named
   refusals.
+- `ADR-0027-coherent-shell-polarity-normalization.md` - inside-out
+  detection for parity-coherent shells by infinite-point classification,
+  repaired through the ADR-0026 proof chain because native validity accepts
+  inverted solids.

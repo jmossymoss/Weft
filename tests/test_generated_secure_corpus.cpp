@@ -83,7 +83,15 @@ int main() {
                     weft::importStepSecure(path.string());
                 CHECK(imported.source != nullptr);
                 CHECK(imported.working != nullptr);
-                if (!imported.repair.identity ||
+                // The pathology fixture with a faithfully round-tripped
+                // reversed shell is certified-repaired to outward polarity
+                // (BRepCheck accepted it inside-out, so it previously
+                // imported meshable with inward normals). Every other
+                // fixture must keep its exact identity certificate.
+                const bool orientationRepaired =
+                    path.filename() ==
+                    "solid.orientation.inverted_shell_face.step";
+                if ((!imported.repair.identity && !orientationRepaired) ||
                     !imported.repair.correspondenceComplete) {
                     std::fprintf(
                         stderr,
@@ -103,14 +111,35 @@ int main() {
                                      code.c_str());
                     }
                 }
-                CHECK(imported.repair.identity);
+                if (orientationRepaired) {
+                    CHECK(!imported.repair.identity);
+                    CHECK(imported.repair.sourceShapeSha256 !=
+                          imported.repair.workingShapeSha256);
+                    CHECK(imported.repair.meshable);
+                    CHECK(imported.repair.refusals.empty());
+                    CHECK(imported.repair.shellOrientationRepairs.size() ==
+                          1);
+                    if (imported.repair.shellOrientationRepairs.size() ==
+                        1) {
+                        const weft::ShellOrientationRepair& repair =
+                            imported.repair.shellOrientationRepairs.front();
+                        CHECK(repair.shellOccurrenceReversed);
+                        CHECK(repair.flippedFaces.empty());
+                        CHECK(repair.signedVolume > 3839.0);
+                        CHECK(repair.signedVolume < 3841.0);
+                        CHECK(repair.infinitePointOutside);
+                    }
+                } else {
+                    CHECK(imported.repair.identity);
+                    CHECK(imported.repair.sourceShapeSha256 ==
+                          imported.repair.workingShapeSha256);
+                    CHECK(imported.repair.shellOrientationRepairs.empty());
+                }
                 CHECK(imported.repair.correspondenceComplete);
                 CHECK(imported.source &&
                       imported.source->metadata.sourceSha256.size() == 64);
                 CHECK(imported.repair.sourceShapeSha256.size() == 64);
                 CHECK(imported.repair.workingShapeSha256.size() == 64);
-                CHECK(imported.repair.sourceShapeSha256 ==
-                      imported.repair.workingShapeSha256);
                 CHECK(imported.repair.toleranceChanges.empty());
                 CHECK(imported.repair.representationChanges.empty());
                 CHECK(imported.repair.topologyCardinalityChanges.empty());

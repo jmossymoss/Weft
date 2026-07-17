@@ -306,8 +306,9 @@ std::string repairDetail(const ShellOrientationRepair& repair) {
     std::ostringstream detail;
     detail.imbue(std::locale::classic());
     detail << std::setprecision(std::numeric_limits<double>::max_digits10)
-           << "restored coherent face adjacency over "
-           << repair.checkedManifoldEdges << " manifold edge(s) by flipping "
+           << "proved coherent face adjacency over "
+           << repair.checkedManifoldEdges
+           << " manifold edge(s); realized outward polarity by flipping "
            << repair.flippedFaces.size() << " of " << repair.shellFaceUses
            << " face occurrence(s)"
            << (repair.shellOccurrenceReversed
@@ -389,11 +390,32 @@ void repairShellOrientations(const Model& source,
                  "OCCT failed while collecting shell adjacency evidence"});
             continue;
         }
-        // Solids that are not even shell-structured, and shells whose
-        // face adjacency is already coherent, are not repair candidates;
-        // their validity remains BRepCheck's verdict.
+        // Solids that are not even shell-structured are never candidates.
         if (!analysis) continue;
-        if (!analysis->parityViolated) continue;
+        // A parity-coherent shell can still be inside-out as a whole. Detect
+        // that polarity defect with one infinite-point classification of the
+        // solid as stored; the classification is detection evidence only —
+        // acceptance still requires the independent trial-polarity proof. A
+        // classification failure or an ON/UNKNOWN verdict leaves the solid
+        // untouched for BRepCheck rather than guessing.
+        // A non-forward solid occurrence is out of repair scope but still
+        // detectable, so an inside-out solid behind it refuses by name
+        // instead of being skipped silently.
+        const bool detectableScope = !analysis->scopeRefusalCode ||
+            *analysis->scopeRefusalCode ==
+                "repair.orientation.solid_occurrence_not_forward";
+        bool coherentInverted = false;
+        if (!analysis->parityViolated && detectableScope &&
+            !analysis->faceUses.empty()) {
+            try {
+                BRepClass3d_SolidClassifier classifier(solid);
+                classifier.PerformInfinitePoint(Precision::Confusion());
+                coherentInverted = classifier.State() == TopAbs_IN;
+            } catch (const Standard_Failure&) {
+                coherentInverted = false;
+            }
+        }
+        if (!analysis->parityViolated && !coherentInverted) continue;
 
         const auto refuse = [&](std::string code, std::string detail) {
             derivation.refusals.push_back(
@@ -401,14 +423,14 @@ void repairShellOrientations(const Model& source,
         };
         if (analysis->scopeRefusalCode) {
             refuse(*analysis->scopeRefusalCode,
-                   "incoherent shell is outside the bounded conservative "
-                   "orientation repair scope");
+                   "orientation-defective shell is outside the bounded "
+                   "conservative orientation repair scope");
             continue;
         }
         if (shellDefinitionUses[analysis->storedShell.TShape().get()] > 1) {
             refuse("repair.orientation.shared_shell_definition",
-                   "incoherent shell definition is used by more than one "
-                   "solid");
+                   "orientation-defective shell definition is used by more "
+                   "than one solid");
             continue;
         }
         std::string parityRefusal;
