@@ -95,6 +95,9 @@ using EdgeUseMap =
     std::unordered_map<TopoDS_Shape, std::vector<EdgeUse>,
                        TopTools_ShapeMapHasher, TopTools_ShapeMapHasher>;
 
+PolarityMeasurement measurePolarity(const ShellAnalysis& analysis,
+                                    int globalSign);
+
 // Scans one shell's face uses and shared-edge adjacency into `analysis`,
 // which must already carry composedShell/storedShell. Returns early with a
 // scope refusal code when the shell leaves the bounded repair envelope.
@@ -208,13 +211,68 @@ std::optional<ShellAnalysis> analyseShell(const Model& source,
     }
     if (shells.empty()) return std::nullopt;
     if (shells.size() > 1) {
+        // Hollow solids are detection-only for now: every shell is scanned
+        // for parity, and the current-orientation trial volumes must give
+        // exactly one positive outer shell with every other shell negative
+        // (a cavity). Any provable defect refuses by name; the repair
+        // itself stays a named open scope.
+        bool measurable = true;
+        std::vector<double> currentVolumes;
         for (const auto& [composedShell, storedShell] : shells) {
-            if (orientationSign(composedShell.Orientation()) == 0) continue;
+            if (orientationSign(composedShell.Orientation()) == 0) {
+                measurable = false;
+                continue;
+            }
             ShellAnalysis scan;
             scan.composedShell = composedShell;
             scan.storedShell = storedShell;
             scanShellParity(source, scan);
             if (scan.parityViolated) analysis.parityViolated = true;
+            if (scan.scopeRefusalCode || scan.faceUses.empty()) {
+                measurable = false;
+                continue;
+            }
+            for (FaceUse& use : scan.faceUses) {
+                use.targetSign = use.currentSign;
+            }
+            try {
+                const PolarityMeasurement current =
+                    measurePolarity(scan, 1);
+                if (!std::isfinite(current.signedVolume) ||
+                    current.signedVolume == 0.0) {
+                    measurable = false;
+                } else {
+                    currentVolumes.push_back(current.signedVolume);
+                }
+            } catch (const Standard_Failure&) {
+                measurable = false;
+            }
+        }
+        if (measurable && !analysis.parityViolated &&
+            currentVolumes.size() == shells.size()) {
+            std::size_t outer = 0;
+            bool ambiguous = false;
+            for (std::size_t index = 1; index < currentVolumes.size();
+                 ++index) {
+                const double magnitude = std::abs(currentVolumes[index]);
+                const double best = std::abs(currentVolumes[outer]);
+                if (magnitude > best) {
+                    outer = index;
+                } else if (magnitude == best) {
+                    ambiguous = true;
+                }
+            }
+            if (!ambiguous) {
+                if (currentVolumes[outer] <= 0.0) {
+                    analysis.parityViolated = true;  // inverted outer shell
+                }
+                for (std::size_t index = 0; index < currentVolumes.size();
+                     ++index) {
+                    if (index != outer && currentVolumes[index] >= 0.0) {
+                        analysis.parityViolated = true;  // outward cavity
+                    }
+                }
+            }
         }
         analysis.scopeRefusalCode = "repair.orientation.multi_shell_solid";
         return analysis;
