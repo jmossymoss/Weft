@@ -123,7 +123,9 @@ void testConservativeIdentity(const std::filesystem::path& path) {
         }
     }
     CHECK(!imported.diagnostics.hasErrors());
-    CHECK(imported.source->snapshot.model.shape.IsSame(
+    CHECK(!imported.source->snapshot.model.shape.IsSame(
+        imported.working->snapshot.model.shape));
+    CHECK(!imported.source->snapshot.model.shape.IsPartner(
         imported.working->snapshot.model.shape));
     CHECK(imported.repair.sourceFaces == imported.repair.workingFaces);
     CHECK(imported.repair.sourceEdges == imported.repair.workingEdges);
@@ -162,6 +164,16 @@ void testConservativeIdentity(const std::filesystem::path& path) {
     }
     CHECK(sourceTopology.exactShapes.size() ==
           sourceTopology.occurrences.size());
+    for (const auto& [sourceId, sourceShape] : sourceTopology.exactShapes) {
+        const auto workingShape =
+            imported.working->snapshot.topology.exactShapes.find(sourceId);
+        CHECK(workingShape !=
+              imported.working->snapshot.topology.exactShapes.end());
+        if (workingShape !=
+            imported.working->snapshot.topology.exactShapes.end()) {
+            CHECK(!sourceShape.IsPartner(workingShape->second));
+        }
+    }
     CHECK(imported.correspondence.topologyOccurrenceRecords.size() ==
           sourceTopology.occurrences.size());
     CHECK(std::all_of(
@@ -225,14 +237,30 @@ void testConservativeIdentity(const std::filesystem::path& path) {
     if (!coedge) return;
 
     const auto domain = imported.sourceEvaluator->curveDomain(coedge->edgeId);
+    const auto workingDomain =
+        imported.workingEvaluator->curveDomain(coedge->edgeId);
     CHECK(static_cast<bool>(domain));
-    if (!domain || !domain.value->lower || !domain.value->upper) return;
+    CHECK(static_cast<bool>(workingDomain));
+    if (!domain || !workingDomain || !domain.value->lower ||
+        !domain.value->upper) {
+        return;
+    }
+    CHECK(domain.value->lower == workingDomain.value->lower);
+    CHECK(domain.value->upper == workingDomain.value->upper);
     const double parameter =
         (*domain.value->lower + *domain.value->upper) * 0.5;
 
     const auto curve =
         imported.sourceEvaluator->evaluateCurve(coedge->edgeId, parameter);
+    const auto workingCurve =
+        imported.workingEvaluator->evaluateCurve(coedge->edgeId, parameter);
     CHECK(static_cast<bool>(curve));
+    CHECK(static_cast<bool>(workingCurve));
+    if (curve && workingCurve) {
+        CHECK(curve.value->position == workingCurve.value->position);
+        CHECK(curve.value->firstDerivative ==
+              workingCurve.value->firstDerivative);
+    }
     const auto firstVertex = std::find_if(
         imported.source->snapshot.occurrences.begin(),
         imported.source->snapshot.occurrences.end(),
@@ -243,21 +271,59 @@ void testConservativeIdentity(const std::filesystem::path& path) {
     if (firstVertex != imported.source->snapshot.occurrences.end()) {
         const auto vertex = imported.sourceEvaluator->evaluateVertex(
             firstVertex->id);
+        const auto workingVertex = imported.workingEvaluator->evaluateVertex(
+            firstVertex->id);
         CHECK(static_cast<bool>(vertex));
+        CHECK(static_cast<bool>(workingVertex));
         CHECK(vertex && vertex.value->vertexId == firstVertex->id);
+        if (vertex && workingVertex) {
+            CHECK(vertex.value->position == workingVertex.value->position);
+        }
     }
     const weft::PcurveRef pcurveRef = coedge->pcurveRepresentations.front();
     const auto pcurve =
         imported.sourceEvaluator->evaluatePcurve(pcurveRef, parameter);
+    const auto workingPcurve =
+        imported.workingEvaluator->evaluatePcurve(pcurveRef, parameter);
     CHECK(static_cast<bool>(pcurve));
+    CHECK(static_cast<bool>(workingPcurve));
+    if (pcurve && workingPcurve) {
+        CHECK(pcurve.value->uv == workingPcurve.value->uv);
+        CHECK(pcurve.value->firstDerivative ==
+              workingPcurve.value->firstDerivative);
+    }
     const auto composed = imported.sourceEvaluator->evaluateCurveOnSurface(
         pcurveRef, parameter);
+    const auto workingComposed =
+        imported.workingEvaluator->evaluateCurveOnSurface(pcurveRef,
+                                                          parameter);
     CHECK(static_cast<bool>(composed));
+    CHECK(static_cast<bool>(workingComposed));
     if (composed) CHECK(composed.value->discrepancy <= 1e-7);
+    if (composed && workingComposed) {
+        CHECK(composed.value->curvePosition ==
+              workingComposed.value->curvePosition);
+        CHECK(composed.value->surfacePosition ==
+              workingComposed.value->surfacePosition);
+        CHECK(composed.value->discrepancy ==
+              workingComposed.value->discrepancy);
+    }
     if (pcurve) {
         const auto surface = imported.sourceEvaluator->evaluateSurface(
             coedge->faceId, pcurve.value->uv);
+        const auto workingSurface = imported.workingEvaluator->evaluateSurface(
+            coedge->faceId, pcurve.value->uv);
         CHECK(static_cast<bool>(surface));
+        CHECK(static_cast<bool>(workingSurface));
+        if (surface && workingSurface) {
+            CHECK(surface.value->position == workingSurface.value->position);
+            CHECK(surface.value->derivativeU ==
+                  workingSurface.value->derivativeU);
+            CHECK(surface.value->derivativeV ==
+                  workingSurface.value->derivativeV);
+            CHECK(surface.value->unitNormal ==
+                  workingSurface.value->unitNormal);
+        }
     }
 
     const auto invalid = imported.sourceEvaluator->evaluateCurve(

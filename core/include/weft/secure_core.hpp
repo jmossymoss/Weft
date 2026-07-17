@@ -414,9 +414,10 @@ struct ImportedModel {
 };
 
 // Secure STEP import. The default conservative profile retains the exact
-// transferred shape as both source and working geometry until a bounded,
-// separately proven repair stage is enabled. Compatibility runs the existing
-// Weft healing pipeline but exposes its changes through the certificate.
+// transferred representation as immutable source evidence and builds a
+// topology-isolated, representation-identical working copy. Compatibility
+// runs the existing Weft healing pipeline but exposes its changes through the
+// certificate.
 ImportedModel importStepSecure(
     const std::string& path,
     RepairProfile profile = RepairProfile::Conservative);

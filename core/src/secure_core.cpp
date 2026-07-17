@@ -741,6 +741,7 @@ template <typename Map>
 void addCorrespondenceForMap(const Map& source, const Map& working,
                              StableIdKind kind,
                              const Handle(BRepTools_History)& history,
+                             bool representationIdentity,
                              SourceWorkingMap& correspondence,
                              std::map<StableId, int>& workingUse) {
     for (int sourceIndex = 1; sourceIndex <= source.Extent(); ++sourceIndex) {
@@ -751,6 +752,14 @@ void addCorrespondenceForMap(const Map& source, const Map& working,
         if (identityIndex > 0) {
             record.workingIds.push_back(stableId(kind, identityIndex));
             record.relation = CorrespondenceRelation::Identity;
+        } else if (representationIdentity &&
+                   source.Extent() == working.Extent()) {
+            // Equal canonical native B-rep digests prove the same ordered
+            // representation even when the conservative identity copy owns
+            // distinct TShapes. BRepTools_History cannot store wire/shell
+            // relations, so identity copies use this structural lane.
+            record.workingIds.push_back(stableId(kind, sourceIndex));
+            record.relation = CorrespondenceRelation::Identity;
         } else if (!history.IsNull() && history->IsRemoved(sourceShape)) {
             record.relation = CorrespondenceRelation::Removed;
         } else if (!history.IsNull()) {
@@ -759,13 +768,25 @@ void addCorrespondenceForMap(const Map& source, const Map& working,
                 const int index = working.FindIndex(candidate);
                 if (index > 0) record.workingIds.push_back(stableId(kind, index));
             }
+            const auto& generated = history->Generated(sourceShape);
+            for (const TopoDS_Shape& candidate : generated) {
+                const int index = working.FindIndex(candidate);
+                if (index > 0) {
+                    record.workingIds.push_back(stableId(kind, index));
+                }
+            }
             std::sort(record.workingIds.begin(), record.workingIds.end());
             record.workingIds.erase(
                 std::unique(record.workingIds.begin(), record.workingIds.end()),
                 record.workingIds.end());
-            record.relation = record.workingIds.size() > 1
-                                  ? CorrespondenceRelation::Split
-                                  : CorrespondenceRelation::Modified;
+            if (representationIdentity && record.workingIds.size() == 1 &&
+                record.workingIds.front() == record.sourceId) {
+                record.relation = CorrespondenceRelation::Identity;
+            } else {
+                record.relation = record.workingIds.size() > 1
+                    ? CorrespondenceRelation::Split
+                    : CorrespondenceRelation::Modified;
+            }
         } else {
             record.relation = CorrespondenceRelation::Modified;
         }
@@ -783,16 +804,20 @@ void addCorrespondenceForMap(const Map& source, const Map& working,
 }
 
 SourceWorkingMap buildCorrespondence(const Model& source, const Model& working,
-                                     const Handle(BRepTools_History)& history) {
+                                     const Handle(BRepTools_History)& history,
+                                     bool representationIdentity) {
     SourceWorkingMap correspondence;
     std::map<StableId, int> workingUse;
     addCorrespondenceForMap(source.solids, working.solids,
-                            StableIdKind::Solid, history, correspondence,
+                            StableIdKind::Solid, history,
+                            representationIdentity, correspondence,
                             workingUse);
     addCorrespondenceForMap(source.faces, working.faces, StableIdKind::Face,
-                            history, correspondence, workingUse);
+                            history, representationIdentity, correspondence,
+                            workingUse);
     addCorrespondenceForMap(source.edges, working.edges, StableIdKind::Edge,
-                            history, correspondence, workingUse);
+                            history, representationIdentity, correspondence,
+                            workingUse);
     ShapeMap sourceWires;
     ShapeMap workingWires;
     ShapeMap sourceVertices;
@@ -802,9 +827,11 @@ SourceWorkingMap buildCorrespondence(const Model& source, const Model& working,
     TopExp::MapShapes(source.shape, TopAbs_VERTEX, sourceVertices);
     TopExp::MapShapes(working.shape, TopAbs_VERTEX, workingVertices);
     addCorrespondenceForMap(sourceWires, workingWires, StableIdKind::Wire,
-                            history, correspondence, workingUse);
+                            history, representationIdentity, correspondence,
+                            workingUse);
     addCorrespondenceForMap(sourceVertices, workingVertices,
-                            StableIdKind::Vertex, history, correspondence,
+                            StableIdKind::Vertex, history,
+                            representationIdentity, correspondence,
                             workingUse);
 
     for (CorrespondenceRecord& record : correspondence.records) {
@@ -895,9 +922,27 @@ bool sameAssemblyAccount(const TopologyAccount& source,
     return true;
 }
 
+bool historyMapsShape(const Handle(BRepTools_History)& history,
+                      const TopoDS_Shape& source,
+                      const TopoDS_Shape& working) {
+    if (source.IsSame(working)) return true;
+    if (history.IsNull() || history->IsRemoved(source)) return false;
+    const auto containsWorking = [&](const ShapeList& candidates) {
+        return std::any_of(
+            candidates.begin(), candidates.end(),
+            [&](const TopoDS_Shape& candidate) {
+                return candidate.IsSame(working);
+            });
+    };
+    return containsWorking(history->Modified(source)) ||
+        containsWorking(history->Generated(source));
+}
+
 void buildTopologyCorrespondence(SourceWorkingMap& correspondence,
                                  const TopologyAccount& source,
                                  const TopologyAccount& working,
+                                 const Handle(BRepTools_History)& history,
+                                 bool representationIdentity,
                                  bool sourceComplete,
                                  bool workingComplete) {
     std::set<StableId> mappedWorking;
@@ -922,10 +967,14 @@ void buildTopologyCorrespondence(SourceWorkingMap& correspondence,
         if (workingOccurrence != nullptr &&
             sourceShape != source.exactShapes.end() &&
             workingShape != working.exactShapes.end() &&
-            sourceShape->second.IsSame(workingShape->second) &&
+            (representationIdentity ||
+             historyMapsShape(history, sourceShape->second,
+                              workingShape->second)) &&
             sameTopologyOccurrence(sourceOccurrence, *workingOccurrence)) {
             record.workingIds.push_back(workingOccurrence->id);
-            record.relation = CorrespondenceRelation::Identity;
+            record.relation = representationIdentity
+                ? CorrespondenceRelation::Identity
+                : CorrespondenceRelation::Modified;
             mappedWorking.insert(workingOccurrence->id);
         } else {
             record.relation = CorrespondenceRelation::Modified;
@@ -1011,7 +1060,9 @@ ImportedModel buildImportedModel(
     const std::string sourceShapeDigest = exactShapeDigest(sourceModel.shape);
     const std::string workingShapeDigest = exactShapeDigest(workingModel.shape);
     imported.correspondence =
-        buildCorrespondence(sourceModel, workingModel, history);
+        buildCorrespondence(sourceModel, workingModel, history,
+                            !sourceShapeDigest.empty() &&
+                                sourceShapeDigest == workingShapeDigest);
 
     BRepSnapshot sourceSnapshot = buildSnapshot(std::move(sourceModel));
     BRepSnapshot workingSnapshot = buildSnapshot(std::move(workingModel));
@@ -1021,7 +1072,10 @@ ImportedModel buildImportedModel(
         validateTopologyAccount(workingSnapshot.topology);
     buildTopologyCorrespondence(
         imported.correspondence, sourceSnapshot.topology,
-        workingSnapshot.topology, sourceTopologyValidation.complete(),
+        workingSnapshot.topology, history,
+        !sourceShapeDigest.empty() &&
+            sourceShapeDigest == workingShapeDigest,
+        sourceTopologyValidation.complete(),
         workingTopologyValidation.complete());
     imported.sourceEvaluator =
         std::make_shared<OcctGeometryEvaluator>(
@@ -1193,7 +1247,8 @@ ImportedModel buildImportedModel(
              topologyIntroduced});
     if (imported.repair.operations.empty() && imported.repair.identity) {
         imported.repair.operations.push_back(
-            {"repair.identity", {}, {}, "working B-rep is the source B-rep"});
+            {"repair.identity", {}, {},
+             "working B-rep is an exact topology-isolated identity copy of the source B-rep"});
     }
 
     std::uint64_t diagnosticOrdinal = 0;

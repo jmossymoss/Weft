@@ -94,6 +94,14 @@ int main() {
                         imported.repair.sourceTopologyComplete,
                         imported.repair.workingTopologyComplete,
                         imported.correspondence.topologyComplete);
+                    const weft::TopologyAccountValidation workingValidation =
+                        weft::validateTopologyAccount(
+                            imported.working->snapshot.topology);
+                    for (const std::string& code :
+                         workingValidation.failureCodes) {
+                        std::fprintf(stderr, "  working topology: %s\n",
+                                     code.c_str());
+                    }
                 }
                 CHECK(imported.repair.identity);
                 CHECK(imported.repair.correspondenceComplete);
@@ -101,6 +109,27 @@ int main() {
                       imported.source->metadata.sourceSha256.size() == 64);
                 CHECK(imported.repair.sourceShapeSha256.size() == 64);
                 CHECK(imported.repair.workingShapeSha256.size() == 64);
+                CHECK(imported.repair.sourceShapeSha256 ==
+                      imported.repair.workingShapeSha256);
+                CHECK(imported.repair.toleranceChanges.empty());
+                CHECK(imported.repair.representationChanges.empty());
+                CHECK(imported.repair.topologyCardinalityChanges.empty());
+                if (imported.source && imported.working) {
+                    CHECK(!imported.source->snapshot.model.shape.IsPartner(
+                        imported.working->snapshot.model.shape));
+                    for (const auto& [sourceId, sourceShape] :
+                         imported.source->snapshot.topology.exactShapes) {
+                        const auto workingShape =
+                            imported.working->snapshot.topology.exactShapes.find(
+                                sourceId);
+                        CHECK(workingShape != imported.working->snapshot.topology
+                                                  .exactShapes.end());
+                        if (workingShape != imported.working->snapshot.topology
+                                                .exactShapes.end()) {
+                            CHECK(!sourceShape.IsPartner(workingShape->second));
+                        }
+                    }
+                }
                 if (path.filename() ==
                     "assembly.box.nested_repeated_instances.step") {
                     const auto& assembly = imported.source->snapshot.model.assembly;
