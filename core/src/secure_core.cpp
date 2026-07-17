@@ -6,14 +6,18 @@
 
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepClass3d_SolidClassifier.hxx>
+#include <BRepGProp.hxx>
 #include <BRepTools.hxx>
 #include <BRepTools_WireExplorer.hxx>
 #include <BRep_Tool.hxx>
 #include <ElSLib.hxx>
+#include <GProp_GProps.hxx>
 #include <GeomAbs_SurfaceType.hxx>
 #include <Geom2d_Curve.hxx>
 #include <Geom_Curve.hxx>
 #include <Geom_Surface.hxx>
+#include <Precision.hxx>
 #include <Standard_Failure.hxx>
 #include <TopAbs_Orientation.hxx>
 #include <TopExp.hxx>
@@ -21,6 +25,7 @@
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
+#include <TopoDS_Iterator.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <TopoDS_Wire.hxx>
 #include <gp_Pnt.hxx>
@@ -867,6 +872,46 @@ bool sameTopologyStructure(const TopologyOccurrence& source,
         source.worldTransform == working.worldTransform;
 }
 
+// The subjects of a certified occurrence-only orientation repair, keyed by
+// their source definition (TShape) pointers. Only these occurrences may map
+// across an exact FORWARD/REVERSED inversion.
+struct CertifiedOrientationFlips {
+    std::set<const void*> faceTShapes;
+    std::set<const void*> shellTShapes;
+};
+
+bool exactOrientationInversion(TopologyOrientation source,
+                               TopologyOrientation working) {
+    return (source == TopologyOrientation::Forward &&
+            working == TopologyOrientation::Reversed) ||
+        (source == TopologyOrientation::Reversed &&
+         working == TopologyOrientation::Forward);
+}
+
+bool certifiedOrientationRepairMatch(
+    const TopologyOccurrence& source, const TopologyOccurrence& working,
+    const TopoDS_Shape& sourceShape,
+    const CertifiedOrientationFlips& certifiedFlips) {
+    if (!exactOrientationInversion(source.orientation, working.orientation)) {
+        return false;
+    }
+    const void* definition = sourceShape.TShape().get();
+    const bool certified =
+        (source.id.kind == StableIdKind::Face &&
+         certifiedFlips.faceTShapes.contains(definition)) ||
+        (source.id.kind == StableIdKind::Shell &&
+         certifiedFlips.shellTShapes.contains(definition));
+    if (!certified) return false;
+    return source.id == working.id &&
+        source.underlyingId == working.underlyingId &&
+        source.parentId == working.parentId &&
+        source.childIds == working.childIds &&
+        source.hasExactRepresentation == working.hasExactRepresentation &&
+        source.instanceId == working.instanceId &&
+        source.localTransform == working.localTransform &&
+        source.worldTransform == working.worldTransform;
+}
+
 bool sameAssemblyAccount(const TopologyAccount& source,
                          const TopologyAccount& working) {
     if (source.assemblies.size() != working.assemblies.size() ||
@@ -936,7 +981,9 @@ void buildTopologyCorrespondence(SourceWorkingMap& correspondence,
                                      derivation,
                                  bool representationIdentity,
                                  bool sourceComplete,
-                                 bool workingComplete) {
+                                 bool workingComplete,
+                                 const CertifiedOrientationFlips&
+                                     certifiedFlips) {
     std::set<StableId> mappedWorking;
     std::map<StableId, const TopologyOccurrence*> workingOccurrences;
     for (const TopologyOccurrence& occurrence : working.occurrences) {
@@ -964,7 +1011,10 @@ void buildTopologyCorrespondence(SourceWorkingMap& correspondence,
                              workingShape->second) ||
              historyMapsShape(history, sourceShape->second,
                               workingShape->second)) &&
-            sameTopologyStructure(sourceOccurrence, *workingOccurrence)) {
+            (sameTopologyStructure(sourceOccurrence, *workingOccurrence) ||
+             certifiedOrientationRepairMatch(
+                 sourceOccurrence, *workingOccurrence, sourceShape->second,
+                 certifiedFlips))) {
             record.workingIds.push_back(workingOccurrence->id);
             record.relation = representationIdentity
                 ? CorrespondenceRelation::Identity
@@ -997,6 +1047,94 @@ void buildTopologyCorrespondence(SourceWorkingMap& correspondence,
                     });
     correspondence.complete =
         correspondence.complete && correspondence.topologyComplete;
+}
+
+// Independently re-audits one certified shell orientation repair against the
+// authoritative source and working snapshots: the stored occurrence
+// orientations must differ exactly at the certified subjects, and the
+// repaired working solid must pass a native positive-volume, outside
+// infinite-point polarity check that does not reuse the derivation's
+// measurements.
+bool auditShellOrientationRepair(const ShellOrientationRepair& repair,
+                                 const TopoDS_Shape& sourceSolid,
+                                 const TopoDS_Shape& workingSolid,
+                                 const BRepSnapshot& sourceSnapshot) {
+    TopoDS_Iterator sourceChildren(sourceSolid, false, false);
+    TopoDS_Iterator workingChildren(workingSolid, false, false);
+    TopoDS_Shape sourceShell;
+    TopoDS_Shape workingShell;
+    std::size_t shellChildren = 0;
+    for (; sourceChildren.More() && workingChildren.More();
+         sourceChildren.Next(), workingChildren.Next()) {
+        if (sourceChildren.Value().ShapeType() != TopAbs_SHELL ||
+            workingChildren.Value().ShapeType() != TopAbs_SHELL) {
+            return false;
+        }
+        ++shellChildren;
+        sourceShell = sourceChildren.Value();
+        workingShell = workingChildren.Value();
+    }
+    if (sourceChildren.More() || workingChildren.More() ||
+        shellChildren != 1) {
+        return false;
+    }
+    const bool shellInverted = sourceShell.Orientation() !=
+                               workingShell.Orientation();
+    if (shellInverted != repair.shellOccurrenceReversed) return false;
+    if (shellInverted &&
+        !((sourceShell.Orientation() == TopAbs_FORWARD &&
+           workingShell.Orientation() == TopAbs_REVERSED) ||
+          (sourceShell.Orientation() == TopAbs_REVERSED &&
+           workingShell.Orientation() == TopAbs_FORWARD))) {
+        return false;
+    }
+
+    // Walk the shell face occurrences in stored order; the source-composed
+    // face resolves the certified face-map identity.
+    TopoDS_Iterator sourceComposedShells(sourceSolid, true, true);
+    if (!sourceComposedShells.More()) return false;
+    TopoDS_Iterator sourceComposedFaces(sourceComposedShells.Value(), true,
+                                        true);
+    TopoDS_Iterator sourceFaces(sourceShell, false, false);
+    TopoDS_Iterator workingFaces(workingShell, false, false);
+    std::vector<StableId> observedFlips;
+    std::size_t faceUses = 0;
+    for (; sourceFaces.More() && workingFaces.More() &&
+           sourceComposedFaces.More();
+         sourceFaces.Next(), workingFaces.Next(),
+         sourceComposedFaces.Next()) {
+        ++faceUses;
+        const TopAbs_Orientation before = sourceFaces.Value().Orientation();
+        const TopAbs_Orientation after = workingFaces.Value().Orientation();
+        if (before == after) continue;
+        if (!((before == TopAbs_FORWARD && after == TopAbs_REVERSED) ||
+              (before == TopAbs_REVERSED && after == TopAbs_FORWARD))) {
+            return false;
+        }
+        const int faceIndex =
+            sourceSnapshot.model.faces.FindIndex(sourceComposedFaces.Value());
+        if (faceIndex <= 0) return false;
+        observedFlips.push_back(
+            {StableIdKind::Face, static_cast<std::uint64_t>(faceIndex)});
+    }
+    if (sourceFaces.More() || workingFaces.More() ||
+        sourceComposedFaces.More()) {
+        return false;
+    }
+    std::sort(observedFlips.begin(), observedFlips.end());
+    if (observedFlips != repair.flippedFaces ||
+        faceUses != repair.shellFaceUses) {
+        return false;
+    }
+
+    GProp_GProps properties;
+    BRepGProp::VolumeProperties(workingSolid, properties);
+    if (!std::isfinite(properties.Mass()) || properties.Mass() <= 0.0) {
+        return false;
+    }
+    BRepClass3d_SolidClassifier classifier(workingSolid);
+    classifier.PerformInfinitePoint(Precision::Confusion());
+    return classifier.State() == TopAbs_OUT;
 }
 
 }  // namespace
@@ -1052,7 +1190,9 @@ ImportedModel buildImportedModel(
     RepairProfile profile, const Handle(BRepTools_History)& history,
     const ExactShapeDerivationMap& exactShapeDerivation,
     std::vector<RepairOperation> operations,
-    std::vector<ParameterizationFlagChange> parameterizationFlagChanges) {
+    std::vector<ParameterizationFlagChange> parameterizationFlagChanges,
+    std::vector<ShellOrientationRepair> shellOrientationRepairs,
+    std::vector<RepairRefusal> refusals) {
     ImportedModel imported;
     const bool sourceValid = shapeIsValid(sourceModel.shape);
     const bool workingValid = shapeIsValid(workingModel.shape);
@@ -1063,6 +1203,38 @@ ImportedModel buildImportedModel(
                             exactShapeDerivation,
                             !sourceShapeDigest.empty() &&
                                 sourceShapeDigest == workingShapeDigest);
+
+    CertifiedOrientationFlips certifiedFlips;
+    for (const ShellOrientationRepair& repair : shellOrientationRepairs) {
+        for (StableId face : repair.flippedFaces) {
+            if (face.kind != StableIdKind::Face || face.ordinal == 0 ||
+                face.ordinal > static_cast<std::uint64_t>(
+                                   sourceModel.faces.Extent())) {
+                continue;
+            }
+            certifiedFlips.faceTShapes.insert(
+                sourceModel.faces(static_cast<int>(face.ordinal))
+                    .TShape()
+                    .get());
+        }
+        if (!repair.shellOccurrenceReversed) continue;
+        if (repair.sourceSolid.kind != StableIdKind::Solid ||
+            repair.sourceSolid.ordinal == 0 ||
+            repair.sourceSolid.ordinal >
+                static_cast<std::uint64_t>(sourceModel.solids.Extent())) {
+            continue;
+        }
+        for (TopoDS_Iterator child(
+                 sourceModel.solids(
+                     static_cast<int>(repair.sourceSolid.ordinal)),
+                 false, false);
+             child.More(); child.Next()) {
+            if (child.Value().ShapeType() == TopAbs_SHELL) {
+                certifiedFlips.shellTShapes.insert(
+                    child.Value().TShape().get());
+            }
+        }
+    }
 
     BRepSnapshot sourceSnapshot = buildSnapshot(std::move(sourceModel));
     BRepSnapshot workingSnapshot = buildSnapshot(std::move(workingModel));
@@ -1076,7 +1248,7 @@ ImportedModel buildImportedModel(
         !sourceShapeDigest.empty() &&
             sourceShapeDigest == workingShapeDigest,
         sourceTopologyValidation.complete(),
-        workingTopologyValidation.complete());
+        workingTopologyValidation.complete(), certifiedFlips);
     imported.sourceEvaluator =
         std::make_shared<OcctGeometryEvaluator>(
             evaluatorSnapshot(sourceSnapshot));
@@ -1121,6 +1293,9 @@ ImportedModel buildImportedModel(
     imported.repair.operations = std::move(operations);
     imported.repair.parameterizationFlagChanges =
         std::move(parameterizationFlagChanges);
+    imported.repair.shellOrientationRepairs =
+        std::move(shellOrientationRepairs);
+    imported.repair.refusals = std::move(refusals);
 
     for (StableIdKind kind : {
              StableIdKind::Assembly, StableIdKind::Instance,
@@ -1248,6 +1423,62 @@ ImportedModel buildImportedModel(
         }
     }
 
+    std::size_t orientationExpected = 0;
+    std::size_t orientationChecked = 0;
+    std::size_t orientationFailed = 0;
+    for (const ShellOrientationRepair& repair :
+         imported.repair.shellOrientationRepairs) {
+        const std::size_t evidenceUnits =
+            std::max<std::size_t>(repair.expectedManifoldEdges, 1);
+        orientationExpected += evidenceUnits;
+        const TopoDS_Shape* sourceSolid =
+            shapeForId(imported.source->snapshot, repair.sourceSolid);
+        const TopoDS_Shape* workingSolid =
+            shapeForId(imported.working->snapshot, repair.workingSolid);
+        const bool operationRecorded = std::any_of(
+            imported.repair.operations.begin(),
+            imported.repair.operations.end(),
+            [&](const RepairOperation& operation) {
+                return operation.code ==
+                           "repair.face_adjacency_orientation" &&
+                    std::find(operation.sourceSubjects.begin(),
+                              operation.sourceSubjects.end(),
+                              repair.sourceSolid) !=
+                        operation.sourceSubjects.end() &&
+                    std::find(operation.workingSubjects.begin(),
+                              operation.workingSubjects.end(),
+                              repair.workingSolid) !=
+                        operation.workingSubjects.end();
+            });
+        bool valid =
+            repair.sourceSolid.kind == StableIdKind::Solid &&
+            repair.workingSolid.kind == StableIdKind::Solid &&
+            repair.sourceSolid == repair.workingSolid &&
+            sourceSolid != nullptr && workingSolid != nullptr &&
+            operationRecorded && repair.shellFaceUses > 0 &&
+            repair.expectedManifoldEdges > 0 &&
+            repair.checkedManifoldEdges == repair.expectedManifoldEdges &&
+            (!repair.flippedFaces.empty() ||
+             repair.shellOccurrenceReversed) &&
+            repair.flippedFaces.size() <= repair.shellFaceUses &&
+            std::isfinite(repair.signedVolume) &&
+            repair.signedVolume > 0.0 && repair.infinitePointOutside;
+        if (valid) {
+            try {
+                valid = auditShellOrientationRepair(
+                    repair, *sourceSolid, *workingSolid,
+                    imported.source->snapshot);
+            } catch (const Standard_Failure&) {
+                valid = false;
+            }
+        }
+        if (valid) {
+            orientationChecked += evidenceUnits;
+        } else {
+            orientationFailed += evidenceUnits;
+        }
+    }
+
     imported.repair.validationEvidence = {
         {"repair.exact_shape_hash", 2,
          static_cast<std::size_t>(!sourceShapeDigest.empty()) +
@@ -1264,6 +1495,8 @@ ImportedModel buildImportedModel(
         {"repair.same_parameter_range_reconciliation",
          parameterizationExpected, parameterizationChecked, 0,
          parameterizationFailed},
+        {"repair.face_adjacency_orientation", orientationExpected,
+         orientationChecked, 0, orientationFailed},
     };
     for (const TopologyAccountCheck& sourceCheck :
          sourceTopologyValidation.checks) {
@@ -1355,6 +1588,14 @@ ImportedModel buildImportedModel(
                  "existing edge parameter/range data did not satisfy the bounded conservative reconciliation proof"});
             imported.repair.meshable = false;
         }
+    }
+    for (const RepairRefusal& refusal : imported.repair.refusals) {
+        imported.diagnostics.events.push_back(
+            {{StableIdKind::Diagnostic, ++diagnosticOrdinal},
+             "import.repair.face_orientation_unproven",
+             DiagnosticSeverity::Error, refusal.subjects,
+             refusal.code + ": " + refusal.detail});
+        imported.repair.meshable = false;
     }
     if (!sourceTopologyValidation.complete()) {
         const std::string detail =

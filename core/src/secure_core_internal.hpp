@@ -54,6 +54,8 @@ struct ConservativeWorkingDerivation {
     ExactShapeDerivationMap exactShapes;
     std::vector<RepairOperation> operations;
     std::vector<ParameterizationFlagChange> parameterizationFlagChanges;
+    std::vector<ShellOrientationRepair> shellOrientationRepairs;
+    std::vector<RepairRefusal> refusals;
 };
 
 struct CompatibilityWorkingDerivation {
@@ -67,6 +69,15 @@ ConservativeWorkingDerivation deriveConservativeWorking(
 CompatibilityWorkingDerivation deriveCompatibilityWorking(
     const Model& source);
 
+// Occurrence-only face-adjacency orientation repair. Solids whose single
+// closed two-manifold shell violates shared-edge parity are repaired by
+// flipping only shell/face occurrence orientations in the working copy when
+// a unique coherent parity solution exists and an independent signed-volume
+// and infinite-point classification proves the outward polarity; every other
+// candidate produces a named refusal and no change.
+void repairShellOrientations(const Model& source,
+                             ConservativeWorkingDerivation& derivation);
+
 TopologyAccount buildTopologyAccount(const Model& model);
 
 SourceMetadata readSourceMetadata(const std::string& path,
@@ -77,6 +88,8 @@ ImportedModel buildImportedModel(
     RepairProfile profile, const Handle(BRepTools_History)& history,
     const ExactShapeDerivationMap& exactShapeDerivation = {},
     std::vector<RepairOperation> operations = {},
-    std::vector<ParameterizationFlagChange> parameterizationFlagChanges = {});
+    std::vector<ParameterizationFlagChange> parameterizationFlagChanges = {},
+    std::vector<ShellOrientationRepair> shellOrientationRepairs = {},
+    std::vector<RepairRefusal> refusals = {});
 
 }  // namespace weft::secure_detail

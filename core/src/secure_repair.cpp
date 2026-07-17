@@ -309,6 +309,7 @@ ConservativeWorkingDerivation deriveConservativeWorking(
              proof->maximumDiscrepancy,
              proof->toleranceEnvelope});
     }
+    repairShellOrientations(source, derivation);
     return derivation;
 }
 

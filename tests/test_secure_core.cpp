@@ -21,7 +21,10 @@
 #include <TCollection_ExtendedString.hxx>
 #include <TDataStd_Name.hxx>
 #include <TDocStd_Document.hxx>
+#include <TopAbs_Orientation.hxx>
+#include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Iterator.hxx>
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
 #include <gp_Pnt.hxx>
@@ -96,7 +99,9 @@ weft::ImportedModel deriveNativeRepair(
         std::move(source), std::move(working), std::move(metadata),
         weft::RepairProfile::Conservative, derivation.history,
         derivation.exactShapes, std::move(derivation.operations),
-        std::move(derivation.parameterizationFlagChanges));
+        std::move(derivation.parameterizationFlagChanges),
+        std::move(derivation.shellOrientationRepairs),
+        std::move(derivation.refusals));
 }
 
 weft::ImportedModel importNativeRepairFixture(std::string_view filename) {
@@ -183,7 +188,8 @@ void testConservativeIdentity(const std::filesystem::path& path) {
         }
     }
     for (std::string_view code : {
-             "repair.topology.assemblies", "repair.topology.instances"}) {
+             "repair.topology.assemblies", "repair.topology.instances",
+             "repair.face_adjacency_orientation"}) {
         const weft::RepairValidationEvidence* checked = evidence(code);
         CHECK(checked != nullptr);
         if (checked) {
@@ -192,6 +198,8 @@ void testConservativeIdentity(const std::filesystem::path& path) {
             CHECK(checked->complete());
         }
     }
+    CHECK(imported.repair.shellOrientationRepairs.empty());
+    CHECK(imported.repair.refusals.empty());
     CHECK(!imported.diagnostics.hasErrors());
     CHECK(!imported.source->snapshot.model.shape.IsSame(
         imported.working->snapshot.model.shape));
@@ -930,6 +938,228 @@ void testBoundedParameterizationRepair() {
     CHECK(hasDiagnostic(beyondTolerance, "import.working.non_meshable"));
 }
 
+// Rebuilds one stored child list in place, applying `mutate(ordinal, child)`
+// to every child. Used to author orientation witnesses from the reviewed
+// baselines without touching the frozen fixture snapshot.
+template <typename Mutator>
+void rebuildStoredChildren(const TopoDS_Shape& parent, Mutator mutate) {
+    std::vector<TopoDS_Shape> children;
+    for (TopoDS_Iterator child(parent, false, false); child.More();
+         child.Next()) {
+        children.push_back(child.Value());
+    }
+    TopoDS_Shape mutableParent = parent;
+    mutableParent.Orientation(TopAbs_FORWARD);
+    mutableParent.Location(TopLoc_Location());
+    const bool wasFree = mutableParent.Free();
+    mutableParent.Free(true);
+    BRep_Builder builder;
+    for (const TopoDS_Shape& child : children) {
+        builder.Remove(mutableParent, child);
+    }
+    for (std::size_t ordinal = 0; ordinal < children.size(); ++ordinal) {
+        TopoDS_Shape child = children[ordinal];
+        if (mutate(ordinal, child)) builder.Add(mutableParent, child);
+    }
+    mutableParent.Free(wasFree);
+}
+
+TopoDS_Shape firstStoredChild(const TopoDS_Shape& parent,
+                              TopAbs_ShapeEnum kind) {
+    for (TopoDS_Iterator child(parent, false, false); child.More();
+         child.Next()) {
+        if (child.Value().ShapeType() == kind) return child.Value();
+    }
+    throw std::runtime_error("orientation witness is missing a child kind");
+}
+
+void reverseStoredChild(TopoDS_Shape& child) {
+    child.Orientation(child.Orientation() == TopAbs_FORWARD
+                          ? TopAbs_REVERSED
+                          : TopAbs_FORWARD);
+}
+
+void testFaceAdjacencyOrientationRepair() {
+    const weft::ImportedModel repaired = importNativeRepairFixture(
+        "corrupt.orientation.inverted_shell_face.brep");
+    CHECK(repaired.source != nullptr);
+    CHECK(repaired.working != nullptr);
+    CHECK(!repaired.repair.sourceValid);
+    CHECK(repaired.repair.workingValid);
+    CHECK(repaired.repair.correspondenceComplete);
+    CHECK(repaired.correspondence.topologyComplete);
+    CHECK(!repaired.repair.identity);
+    CHECK(repaired.repair.meshable);
+    CHECK(repaired.repair.sourceShapeSha256 !=
+          repaired.repair.workingShapeSha256);
+    CHECK(repaired.repair.toleranceChanges.empty());
+    CHECK(repaired.repair.representationChanges.empty());
+    CHECK(repaired.repair.topologyCardinalityChanges.empty());
+    CHECK(repaired.repair.parameterizationFlagChanges.empty());
+    CHECK(repaired.repair.refusals.empty());
+    CHECK(repaired.repair.shellOrientationRepairs.size() == 1);
+    CHECK(!repaired.diagnostics.hasErrors());
+    CHECK(hasDiagnostic(repaired, "import.source.invalid"));
+    CHECK(!hasDiagnostic(repaired,
+                         "import.repair.face_orientation_unproven"));
+    CHECK(std::any_of(
+        repaired.repair.operations.begin(), repaired.repair.operations.end(),
+        [](const weft::RepairOperation& operation) {
+            return operation.code == "repair.face_adjacency_orientation";
+        }));
+    if (repaired.repair.shellOrientationRepairs.size() == 1) {
+        const weft::ShellOrientationRepair& repair =
+            repaired.repair.shellOrientationRepairs.front();
+        CHECK(repair.sourceSolid.kind == weft::StableIdKind::Solid);
+        CHECK(repair.sourceSolid == repair.workingSolid);
+        CHECK(repair.shellFaceUses == 6);
+        CHECK(repair.expectedManifoldEdges == 12);
+        CHECK(repair.checkedManifoldEdges == 12);
+        CHECK(repair.shellOccurrenceReversed);
+        CHECK(repair.flippedFaces.size() == 1);
+        // The corrupted source integrates to -5120 mm^3 because one face
+        // contribution flips sign; the repaired 24x20x16 baseline box must
+        // recover its full positive volume.
+        CHECK(std::isfinite(repair.signedVolume));
+        CHECK(repair.signedVolume > 7679.0);
+        CHECK(repair.signedVolume < 7681.0);
+        CHECK(repair.infinitePointOutside);
+    }
+    const auto orientationEvidence = std::find_if(
+        repaired.repair.validationEvidence.begin(),
+        repaired.repair.validationEvidence.end(),
+        [](const weft::RepairValidationEvidence& item) {
+            return item.code == "repair.face_adjacency_orientation";
+        });
+    CHECK(orientationEvidence != repaired.repair.validationEvidence.end());
+    if (orientationEvidence != repaired.repair.validationEvidence.end()) {
+        CHECK(orientationEvidence->expected > 0);
+        CHECK(orientationEvidence->complete());
+    }
+    CHECK(std::all_of(
+        repaired.correspondence.topologyOccurrenceRecords.begin(),
+        repaired.correspondence.topologyOccurrenceRecords.end(),
+        [](const weft::CorrespondenceRecord& record) {
+            return record.sourceId.valid() &&
+                record.workingIds.size() == 1 &&
+                record.relation == weft::CorrespondenceRelation::Modified;
+        }));
+    if (repaired.source && repaired.working &&
+        repaired.repair.shellOrientationRepairs.size() == 1) {
+        const weft::ShellOrientationRepair& repair =
+            repaired.repair.shellOrientationRepairs.front();
+        const TopoDS_Shape sourceSolid =
+            repaired.source->snapshot.model.solids(
+                static_cast<int>(repair.sourceSolid.ordinal));
+        const TopoDS_Shape workingSolid =
+            repaired.working->snapshot.model.solids(
+                static_cast<int>(repair.workingSolid.ordinal));
+        const TopoDS_Shape sourceShell =
+            firstStoredChild(sourceSolid, TopAbs_SHELL);
+        const TopoDS_Shape workingShell =
+            firstStoredChild(workingSolid, TopAbs_SHELL);
+        CHECK(sourceShell.Orientation() != workingShell.Orientation());
+        std::size_t faceFlips = 0;
+        TopoDS_Iterator sourceFaces(sourceShell, false, false);
+        TopoDS_Iterator workingFaces(workingShell, false, false);
+        for (; sourceFaces.More() && workingFaces.More();
+             sourceFaces.Next(), workingFaces.Next()) {
+            if (sourceFaces.Value().Orientation() !=
+                workingFaces.Value().Orientation()) {
+                ++faceFlips;
+            }
+        }
+        CHECK(!sourceFaces.More());
+        CHECK(!workingFaces.More());
+        CHECK(faceFlips == 1);
+    }
+
+    // An incoherent shell that is also open must refuse by name and stay
+    // unchanged instead of guessing a polarity.
+    TopoDS_Shape openWitness = readNativeFixture(
+        "baselines", "baseline.pathology.box.brep");
+    {
+        TopExp_Explorer shells(openWitness, TopAbs_SHELL);
+        CHECK(shells.More());
+        if (!shells.More()) return;
+        rebuildStoredChildren(shells.Current(), [](std::size_t ordinal,
+                                                   TopoDS_Shape& child) {
+            if (ordinal == 0) return false;  // drop one face: open shell
+            if (ordinal == 1) reverseStoredChild(child);  // break parity
+            return true;
+        });
+    }
+    const weft::ImportedModel openRefused = deriveNativeRepair(
+        openWitness, "orientation.open_incoherent_witness.brep");
+    CHECK(openRefused.repair.refusals.size() == 1);
+    if (openRefused.repair.refusals.size() == 1) {
+        CHECK(openRefused.repair.refusals.front().code ==
+              "repair.orientation.shell_open");
+    }
+    CHECK(openRefused.repair.shellOrientationRepairs.empty());
+    CHECK(!openRefused.repair.meshable);
+    CHECK(openRefused.repair.identity);
+    CHECK(hasDiagnostic(openRefused,
+                        "import.repair.face_orientation_unproven"));
+    CHECK(hasDiagnostic(openRefused, "import.working.non_meshable"));
+
+    // Reversing one edge occurrence inside one wire produces a winding whose
+    // parity system has no solution; the repair must refuse it as
+    // non-orientable rather than flip any face.
+    TopoDS_Shape nonOrientableWitness = readNativeFixture(
+        "baselines", "baseline.pathology.box.brep");
+    {
+        TopExp_Explorer wires(nonOrientableWitness, TopAbs_WIRE);
+        CHECK(wires.More());
+        if (!wires.More()) return;
+        rebuildStoredChildren(wires.Current(), [](std::size_t ordinal,
+                                                  TopoDS_Shape& child) {
+            if (ordinal == 0) reverseStoredChild(child);
+            return true;
+        });
+    }
+    const weft::ImportedModel nonOrientable = deriveNativeRepair(
+        nonOrientableWitness, "orientation.non_orientable_witness.brep");
+    CHECK(nonOrientable.repair.refusals.size() == 1);
+    if (nonOrientable.repair.refusals.size() == 1) {
+        CHECK(nonOrientable.repair.refusals.front().code ==
+              "repair.orientation.non_orientable");
+    }
+    CHECK(nonOrientable.repair.shellOrientationRepairs.empty());
+    CHECK(!nonOrientable.repair.meshable);
+    CHECK(hasDiagnostic(nonOrientable,
+                        "import.repair.face_orientation_unproven"));
+
+    // A structurally applied repair whose certificate is tampered to claim
+    // zero checked manifold edges must fail the validation audit.
+    const TopoDS_Shape tamperedSourceShape = readNativeFixture(
+        "derived", "corrupt.orientation.inverted_shell_face.brep");
+    weft::Model tamperedSource = weft::indexShape(tamperedSourceShape);
+    weft::secure_detail::ConservativeWorkingDerivation tamperedDerivation =
+        weft::secure_detail::deriveConservativeWorking(tamperedSource);
+    CHECK(tamperedDerivation.shellOrientationRepairs.size() == 1);
+    if (tamperedDerivation.shellOrientationRepairs.size() == 1) {
+        tamperedDerivation.shellOrientationRepairs.front()
+            .checkedManifoldEdges = 0;
+    }
+    weft::Model tamperedWorking =
+        weft::indexShape(tamperedDerivation.shape);
+    weft::SourceMetadata tamperedMetadata;
+    tamperedMetadata.sourceName = "tampered-orientation-certificate";
+    const weft::ImportedModel tampered =
+        weft::secure_detail::buildImportedModel(
+            std::move(tamperedSource), std::move(tamperedWorking),
+            std::move(tamperedMetadata), weft::RepairProfile::Conservative,
+            tamperedDerivation.history, tamperedDerivation.exactShapes,
+            std::move(tamperedDerivation.operations),
+            std::move(tamperedDerivation.parameterizationFlagChanges),
+            std::move(tamperedDerivation.shellOrientationRepairs),
+            std::move(tamperedDerivation.refusals));
+    CHECK(tampered.repair.workingValid);
+    CHECK(!tampered.repair.meshable);
+    CHECK(hasDiagnostic(tampered, "import.repair.validation_incomplete"));
+}
+
 void testTotalReconnaissance(const std::filesystem::path& cylinderPath) {
     const weft::ImportedModel cylinder = weft::importStepSecure(
         cylinderPath.string(), weft::RepairProfile::Conservative);
@@ -1005,6 +1235,7 @@ int main() {
         testNativeBRepSecureImport();
         testMultipleFreeRootOccurrences();
         testBoundedParameterizationRepair();
+        testFaceAdjacencyOrientationRepair();
         testTotalReconnaissance(path);
         std::error_code ignored;
         std::filesystem::remove(path, ignored);

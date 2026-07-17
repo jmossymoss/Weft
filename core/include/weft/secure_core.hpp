@@ -294,6 +294,33 @@ struct TopologyCardinalityChange {
     std::size_t after = 0;
 };
 
+// Evidence for an occurrence-only face-adjacency orientation repair of one
+// closed two-manifold shell. Geometry, tolerances, p-curves, and topology
+// cardinality remain unchanged; every non-degenerate shell edge participates
+// in the two-use parity proof, and the global polarity is selected by an
+// independent signed-volume and infinite-point classification of the
+// candidate assignment.
+struct ShellOrientationRepair {
+    StableId sourceSolid;
+    StableId workingSolid;
+    bool shellOccurrenceReversed = false;
+    std::size_t shellFaceUses = 0;
+    std::vector<StableId> flippedFaces;
+    std::size_t expectedManifoldEdges = 0;
+    std::size_t checkedManifoldEdges = 0;
+    double signedVolume = 0.0;
+    bool infinitePointOutside = false;
+};
+
+// A named conservative repair refusal: a candidate defect was detected but
+// its repair could not be proved within the conservative envelope, so the
+// working copy was left unchanged and the import stays fail-closed.
+struct RepairRefusal {
+    std::string code;
+    std::vector<StableId> subjects;
+    std::string detail;
+};
+
 struct RepairValidationEvidence {
     std::string code;
     std::size_t expected = 0;
@@ -326,6 +353,8 @@ struct RepairCertificate {
     std::vector<ToleranceChange> toleranceChanges;
     std::vector<RepresentationChange> representationChanges;
     std::vector<ParameterizationFlagChange> parameterizationFlagChanges;
+    std::vector<ShellOrientationRepair> shellOrientationRepairs;
+    std::vector<RepairRefusal> refusals;
     std::vector<TopologyCardinalityChange> topologyCardinalityChanges;
     std::vector<RepairValidationEvidence> validationEvidence;
 };

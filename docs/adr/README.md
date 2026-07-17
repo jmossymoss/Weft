@@ -52,3 +52,7 @@ Current records:
 - `ADR-0025-snapshot-protected-native-brep-import.md` - immutable-byte native
   B-rep parsing, explicit missing-unit provenance, isolated repair derivation,
   and fail-closed secure-reader defaults.
+- `ADR-0026-face-adjacency-orientation-repair.md` - occurrence-only shell
+  orientation repair from a two-manifold shared-edge parity proof with
+  independent signed-volume/infinite-point polarity selection and named
+  refusals.
