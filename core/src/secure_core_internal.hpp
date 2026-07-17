@@ -56,7 +56,15 @@ struct ConservativeWorkingDerivation {
     std::vector<ParameterizationFlagChange> parameterizationFlagChanges;
 };
 
+struct CompatibilityWorkingDerivation {
+    TopoDS_Shape shape;
+    Handle(BRepTools_History) history;
+    std::vector<RepairOperation> operations;
+};
+
 ConservativeWorkingDerivation deriveConservativeWorking(
+    const Model& source);
+CompatibilityWorkingDerivation deriveCompatibilityWorking(
     const Model& source);
 
 TopologyAccount buildTopologyAccount(const Model& model);

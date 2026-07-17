@@ -1395,13 +1395,10 @@ ImportedModel buildImportedModel(
 
 namespace io {
 
-ImportedModel Reader::transferSecure(RepairProfile profile) {
-    Model model = transfer();
-    SourceMetadata metadata;
-    metadata.importerVersion = "weft-reader-identity-0.1";
-    Handle(BRepTools_History) history = new BRepTools_History();
-    return secure_detail::buildImportedModel(
-        model, model, std::move(metadata), profile, history);
+ImportedModel Reader::transferSecure(RepairProfile) {
+    throw SecureImportError(
+        "import.secure.reader_unsupported",
+        "this format reader has no immutable-source secure transfer contract");
 }
 
 }  // namespace io
@@ -1438,6 +1435,43 @@ ImportedModel importStepSecure(const std::string& path, RepairProfile profile) {
             "import.step.transfer_failed",
             "OCCT failed during processing-disabled STEP transfer for " +
                 path + ": " + occtFailureMessage(error));
+    }
+}
+
+ImportedModel importBRepSecure(const std::string& path,
+                               RepairProfile profile) {
+    io::System system;
+    io::bootstrapIo(system);
+    std::unique_ptr<io::Reader> reader =
+        system.createReader(io::Format::Brep);
+    if (!reader) {
+        throw SecureImportError("import.brep.read_failed",
+                                "failed to read B-rep file securely: " + path);
+    }
+    try {
+        if (!reader->readFile(path)) {
+            throw SecureImportError(
+                "import.brep.read_failed",
+                "failed to read B-rep file securely: " + path);
+        }
+    } catch (const SecureImportError&) {
+        throw;
+    } catch (const Standard_Failure& error) {
+        throw SecureImportError(
+            "import.brep.read_failed",
+            "OCCT failed while reading native B-rep source " + path + ": " +
+                occtFailureMessage(error));
+    }
+
+    try {
+        return reader->transferSecure(profile);
+    } catch (const SecureImportError&) {
+        throw;
+    } catch (const Standard_Failure& error) {
+        throw SecureImportError(
+            "import.brep.transfer_failed",
+            "OCCT failed during native B-rep secure transfer for " + path +
+                ": " + occtFailureMessage(error));
     }
 }
 

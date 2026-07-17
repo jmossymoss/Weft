@@ -22,9 +22,9 @@ struct Reader {
     virtual ~Reader() = default;
     virtual bool readFile(const std::string& path) = 0;  // parse into reader state
     virtual Model transfer() = 0;                        // materialize -> Model
-    // Secure-core seam. Format readers that can retain an immutable source
-    // representation override this; the default records an identity
-    // source/working pair for formats whose import is already materialized.
+    // Secure-core seam. A reader must override this only when it can bind
+    // provenance and parsing to one immutable source snapshot and derive a
+    // topology-isolated working representation. The default refuses.
     virtual ImportedModel transferSecure(RepairProfile profile);
     virtual void applyParams(const ParamGroup&) {}       // no-op default (Stage A)
 };

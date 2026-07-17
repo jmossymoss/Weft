@@ -6,6 +6,7 @@
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Curve2d.hxx>
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
 #include <BRepTools_History.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
@@ -14,6 +15,7 @@
 #include <GeomLib_CheckCurveOnSurface.hxx>
 #include <Standard_Failure.hxx>
 #include <TopAbs_Orientation.hxx>
+#include <TopExp.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
@@ -219,6 +221,40 @@ std::string proofDetail(const ParameterizationProof& proof) {
     return detail.str();
 }
 
+Handle(BRepTools_History) composeCopyRepairHistory(
+    const TopoDS_Shape& sourceShape, const BRepBuilderAPI_Copy& copier,
+    const Handle(BRepTools_History)& repairHistory) {
+    Handle(BRepTools_History) composed = new BRepTools_History();
+    ShapeMap sourceShapes;
+    sourceShapes.Add(sourceShape);
+    TopExp::MapShapes(sourceShape, sourceShapes);
+    for (int index = 1; index <= sourceShapes.Extent(); ++index) {
+        const TopoDS_Shape& source = sourceShapes(index);
+        if (!BRepTools_History::IsSupportedType(source)) continue;
+        const TopoDS_Shape copied = copier.ModifiedShape(source);
+        if (copied.IsNull() ||
+            (!repairHistory.IsNull() && repairHistory->IsRemoved(copied))) {
+            composed->Remove(source);
+            continue;
+        }
+        bool mapped = false;
+        if (!repairHistory.IsNull()) {
+            for (const TopoDS_Shape& finalShape :
+                 repairHistory->Modified(copied)) {
+                composed->AddModified(source, finalShape);
+                mapped = true;
+            }
+            for (const TopoDS_Shape& finalShape :
+                 repairHistory->Generated(copied)) {
+                composed->AddGenerated(source, finalShape);
+                mapped = true;
+            }
+        }
+        if (!mapped) composed->AddModified(source, copied);
+    }
+    return composed;
+}
+
 }  // namespace
 
 ConservativeWorkingDerivation deriveConservativeWorking(
@@ -273,6 +309,20 @@ ConservativeWorkingDerivation deriveConservativeWorking(
              proof->maximumDiscrepancy,
              proof->toleranceEnvelope});
     }
+    return derivation;
+}
+
+CompatibilityWorkingDerivation deriveCompatibilityWorking(
+    const Model& source) {
+    CompatibilityWorkingDerivation derivation;
+    BRepBuilderAPI_Copy copier(source.shape, true, false);
+    Handle(BRepTools_History) repairHistory;
+    derivation.shape = healWithHistory(copier.Shape(), repairHistory);
+    derivation.history = composeCopyRepairHistory(
+        source.shape, copier, repairHistory);
+    derivation.operations.push_back({
+        "repair.compatibility_pipeline", {}, {},
+        "historical Weft healing pipeline applied to a geometry-deep working copy after immutable source capture"});
     return derivation;
 }
 

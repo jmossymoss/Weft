@@ -76,6 +76,7 @@ struct SourceMetadata {
     std::string sourceName;
     std::string sourceSha256;
     std::uint64_t sourceByteLength = 0;
+    std::optional<double> lengthUnitMm;
     std::optional<std::string> stepSchema;
     std::string importerVersion;
     std::vector<std::string> effectiveTranslatorConfiguration;
@@ -435,6 +436,13 @@ struct ImportedModel {
 // runs the existing Weft healing pipeline but exposes its changes through the
 // certificate.
 ImportedModel importStepSecure(
+    const std::string& path,
+    RepairProfile profile = RepairProfile::Conservative);
+
+// Secure native OCCT ASCII B-rep import. Parsing, source-byte provenance, and
+// geometry transfer all consume one immutable byte snapshot; the working
+// topology is derived through the same audited repair stages as STEP.
+ImportedModel importBRepSecure(
     const std::string& path,
     RepairProfile profile = RepairProfile::Conservative);
 

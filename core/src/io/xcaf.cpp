@@ -5,7 +5,6 @@
 #include <Standard_Version.hxx>
 
 #include <BRepAdaptor_Surface.hxx>
-#include <BRepBuilderAPI_Copy.hxx>
 #include <BRepGProp.hxx>
 #include <Bnd_Box.hxx>
 #include <BRepBndLib.hxx>
@@ -598,40 +597,6 @@ void applyCapturedMeta(Model& model, const TopoDS_Shape& sourceShape,
     model.assembly = std::move(meta.assembly);
 }
 
-Handle(BRepTools_History) composeCopyRepairHistory(
-    const TopoDS_Shape& sourceShape, const BRepBuilderAPI_Copy& copier,
-    const Handle(BRepTools_History)& repairHistory) {
-    Handle(BRepTools_History) composed = new BRepTools_History();
-    ShapeMap sourceShapes;
-    sourceShapes.Add(sourceShape);
-    TopExp::MapShapes(sourceShape, sourceShapes);
-    for (int index = 1; index <= sourceShapes.Extent(); ++index) {
-        const TopoDS_Shape& source = sourceShapes(index);
-        if (!BRepTools_History::IsSupportedType(source)) continue;
-        const TopoDS_Shape copied = copier.ModifiedShape(source);
-        if (copied.IsNull() ||
-            (!repairHistory.IsNull() && repairHistory->IsRemoved(copied))) {
-            composed->Remove(source);
-            continue;
-        }
-        bool mapped = false;
-        if (!repairHistory.IsNull()) {
-            for (const TopoDS_Shape& finalShape :
-                 repairHistory->Modified(copied)) {
-                composed->AddModified(source, finalShape);
-                mapped = true;
-            }
-            for (const TopoDS_Shape& finalShape :
-                 repairHistory->Generated(copied)) {
-                composed->AddGenerated(source, finalShape);
-                mapped = true;
-            }
-        }
-        if (!mapped) composed->AddModified(source, copied);
-    }
-    return composed;
-}
-
 }  // namespace
 
 ImportedModel cafToImportedModel(const TopoDS_Shape& oneShape,
@@ -642,6 +607,7 @@ ImportedModel cafToImportedModel(const TopoDS_Shape& oneShape,
     ImportMeta captured;
     captureMeta(xc, xc.topLevelFreeShapes(), captured);
     captured.lengthUnitMm = readLengthUnit(doc);
+    metadata.lengthUnitMm = captured.lengthUnitMm;
 
     // Build source evidence directly from the processing-disabled transfer.
     // An empty history deliberately means every source entity is an identity.
@@ -666,16 +632,11 @@ ImportedModel cafToImportedModel(const TopoDS_Shape& oneShape,
             std::move(derivation.parameterizationFlagChanges);
         remapAssemblyExactUses(workingMeta, exactShapeDerivation);
     } else {
-        // Compatibility may mutate geometry, so it receives a geometry-deep
-        // copy before the historical repair pipeline.
-        BRepBuilderAPI_Copy copier(oneShape, true, false);
-        Handle(BRepTools_History) repairHistory;
-        workingShape = weft::healWithHistory(copier.Shape(), repairHistory);
-        workingHistory = composeCopyRepairHistory(
-            oneShape, copier, repairHistory);
-        operations.push_back({
-            "repair.compatibility_pipeline", {}, {},
-            "historical Weft healing pipeline applied to a geometry-deep working copy after immutable source capture"});
+        secure_detail::CompatibilityWorkingDerivation derivation =
+            secure_detail::deriveCompatibilityWorking(source);
+        workingShape = std::move(derivation.shape);
+        workingHistory = std::move(derivation.history);
+        operations = std::move(derivation.operations);
     }
 
     Model working = weft::indexShape(workingShape);

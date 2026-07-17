@@ -30,6 +30,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -61,11 +62,16 @@ const weft::CoedgeRecord* firstExactCoedge(const weft::BRepSnapshot& snapshot) {
     return found == snapshot.coedges.end() ? nullptr : &*found;
 }
 
+std::filesystem::path nativeFixturePath(std::string_view directory,
+                                        std::string_view filename) {
+    return std::filesystem::path(WEFT_SECURE_FIXTURE_DIR) / directory /
+        filename;
+}
+
 TopoDS_Shape readNativeFixture(std::string_view directory,
                                std::string_view filename) {
     const std::filesystem::path path =
-        std::filesystem::path(WEFT_SECURE_FIXTURE_DIR) / directory /
-        filename;
+        nativeFixturePath(directory, filename);
     TopoDS_Shape sourceShape;
     BRep_Builder builder;
     if (!BRepTools::Read(sourceShape, path.string().c_str(), builder) ||
@@ -93,8 +99,9 @@ weft::ImportedModel deriveNativeRepair(
 }
 
 weft::ImportedModel importNativeRepairFixture(std::string_view filename) {
-    return deriveNativeRepair(readNativeFixture("derived", filename),
-                              filename);
+    return weft::importBRepSecure(
+        nativeFixturePath("derived", filename).string(),
+        weft::RepairProfile::Conservative);
 }
 
 bool hasDiagnostic(const weft::ImportedModel& imported,
@@ -120,6 +127,11 @@ void testConservativeIdentity(const std::filesystem::path& path) {
     CHECK(imported.source->metadata.sourceSha256.size() == 64);
     CHECK(imported.source->metadata.sourceByteLength ==
           std::filesystem::file_size(path));
+    CHECK(imported.source->metadata.lengthUnitMm.has_value());
+    if (imported.source->metadata.lengthUnitMm) {
+        CHECK(*imported.source->metadata.lengthUnitMm ==
+              imported.source->snapshot.model.lengthUnitMm);
+    }
     CHECK(imported.source->metadata.stepSchema.has_value());
     CHECK(std::find(imported.source->metadata.effectiveTranslatorConfiguration.begin(),
                     imported.source->metadata.effectiveTranslatorConfiguration.end(),
@@ -449,7 +461,9 @@ void testSourceSnapshotPreventsPathReplacement() {
         system.createReader(weft::io::Format::Step);
     CHECK(reader != nullptr);
     if (!reader) return;
-    CHECK(reader->readFile(path.string()));
+    const bool readSnapshot = reader->readFile(path.string());
+    CHECK(readSnapshot);
+    if (!readSnapshot) return;
 
     // Replace the path after parse. The already-read source bytes must remain
     // the bytes transferred and hashed by this reader.
@@ -465,6 +479,133 @@ void testSourceSnapshotPreventsPathReplacement() {
 
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
+}
+
+void testNativeBRepSecureImport() {
+    constexpr std::string_view kRepairArtifactSha256 =
+        "c400ae0bb2102165a07673bb0df8ba28a17e998c84daf1ade7b4bc95a963ba1e";
+    constexpr std::string_view kBoxArtifactSha256 =
+        "bdf9bdd95e8b40373f26c929e855528deadd4808756537c4803e3d78062be461";
+    const std::filesystem::path repairFixture = nativeFixturePath(
+        "derived", "corrupt.edge.sameparameter_samerange_false.brep");
+    const std::filesystem::path boxFixture = nativeFixturePath(
+        "baselines", "baseline.pathology.box.brep");
+    const std::filesystem::path path = weft::test::uniqueTempPath(
+        "weft_secure_native_snapshot", ".brep");
+    std::error_code filesystemError;
+    std::filesystem::copy_file(
+        repairFixture, path, std::filesystem::copy_options::overwrite_existing,
+        filesystemError);
+    CHECK(!filesystemError);
+    if (filesystemError) return;
+
+    weft::io::System system;
+    weft::io::bootstrapIo(system);
+    std::unique_ptr<weft::io::Reader> reader =
+        system.createReader(weft::io::Format::Brep);
+    CHECK(reader != nullptr);
+    if (!reader) return;
+    CHECK(reader->readFile(path.string()));
+
+    // Replacing the path cannot change either the parsed shape or its recorded
+    // source digest because both came from the reader's retained byte snapshot.
+    filesystemError.clear();
+    std::filesystem::copy_file(
+        boxFixture, path, std::filesystem::copy_options::overwrite_existing,
+        filesystemError);
+    CHECK(!filesystemError);
+    if (filesystemError) return;
+    const weft::ImportedModel snapshot =
+        reader->transferSecure(weft::RepairProfile::Conservative);
+    const weft::ImportedModel fresh = weft::importBRepSecure(
+        path.string(), weft::RepairProfile::Conservative);
+    CHECK(snapshot.source != nullptr);
+    CHECK(fresh.source != nullptr);
+    CHECK(snapshot.repair.sourceFaces == 3);
+    CHECK(fresh.repair.sourceFaces == 6);
+    if (snapshot.source && fresh.source) {
+        CHECK(snapshot.source->metadata.sourceSha256 ==
+              kRepairArtifactSha256);
+        CHECK(snapshot.source->metadata.sourceByteLength ==
+              std::filesystem::file_size(repairFixture));
+        CHECK(snapshot.source->metadata.importerVersion ==
+              "weft-secure-brep-0.1");
+        CHECK(!snapshot.source->metadata.lengthUnitMm.has_value());
+        CHECK(!snapshot.source->metadata.stepSchema.has_value());
+        CHECK(std::find(
+                  snapshot.source->metadata.effectiveTranslatorConfiguration.begin(),
+                  snapshot.source->metadata.effectiveTranslatorConfiguration.end(),
+                  "OCCT ASCII B-rep stream parse from immutable byte snapshot") !=
+              snapshot.source->metadata.effectiveTranslatorConfiguration.end());
+        CHECK(fresh.source->metadata.sourceSha256 == kBoxArtifactSha256);
+        CHECK(snapshot.source->metadata.sourceSha256 !=
+              fresh.source->metadata.sourceSha256);
+    }
+    CHECK(snapshot.repair.workingValid);
+    CHECK(snapshot.repair.meshable);
+    CHECK(snapshot.repair.parameterizationFlagChanges.size() == 1);
+    CHECK(hasDiagnostic(snapshot, "import.brep.length_unit_unspecified"));
+    CHECK(fresh.repair.identity);
+    CHECK(fresh.repair.meshable);
+
+    const weft::ImportedModel compatibility = weft::importBRepSecure(
+        path.string(), weft::RepairProfile::Compatibility);
+    CHECK(compatibility.source != nullptr);
+    CHECK(compatibility.working != nullptr);
+    CHECK(compatibility.repair.profile ==
+          weft::RepairProfile::Compatibility);
+    CHECK(!compatibility.repair.meshable);
+    CHECK(std::any_of(
+        compatibility.repair.operations.begin(),
+        compatibility.repair.operations.end(),
+        [](const weft::RepairOperation& operation) {
+            return operation.code == "repair.compatibility_pipeline";
+        }));
+    if (compatibility.source && compatibility.working) {
+        CHECK(compatibility.source->metadata.sourceSha256 ==
+              kBoxArtifactSha256);
+        CHECK(!compatibility.source->snapshot.model.shape.IsSame(
+            compatibility.working->snapshot.model.shape));
+    }
+
+    const std::filesystem::path malformed = weft::test::uniqueTempPath(
+        "weft_secure_native_malformed", ".brep");
+    {
+        std::ofstream output(malformed, std::ios::binary);
+        output << "not an OCCT ASCII B-rep\n";
+    }
+    try {
+        (void)weft::importBRepSecure(
+            malformed.string(), weft::RepairProfile::Conservative);
+        CHECK(false);
+    } catch (const weft::SecureImportError& error) {
+        CHECK(error.code() == "import.brep.read_failed");
+    }
+    try {
+        (void)weft::importBRepSecure(
+            malformed.string() + ".missing",
+            weft::RepairProfile::Conservative);
+        CHECK(false);
+    } catch (const weft::SecureImportError& error) {
+        CHECK(error.code() == "import.brep.read_failed");
+    }
+
+    std::unique_ptr<weft::io::Reader> unsupported =
+        system.createReader(weft::io::Format::Iges);
+    CHECK(unsupported != nullptr);
+    if (unsupported) {
+        try {
+            (void)unsupported->transferSecure(
+                weft::RepairProfile::Conservative);
+            CHECK(false);
+        } catch (const weft::SecureImportError& error) {
+            CHECK(error.code() == "import.secure.reader_unsupported");
+        }
+    }
+
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    std::filesystem::remove(malformed, ignored);
 }
 
 void testMultipleFreeRootOccurrences() {
@@ -555,6 +696,14 @@ void testBoundedParameterizationRepair() {
     CHECK(hasDiagnostic(repaired, "import.source.invalid"));
     CHECK(!hasDiagnostic(
         repaired, "import.repair.same_parameter_range_unproven"));
+    if (repaired.source) {
+        CHECK(repaired.source->metadata.sourceName ==
+              "corrupt.edge.sameparameter_samerange_false.brep");
+        CHECK(repaired.source->metadata.sourceSha256 ==
+              "c400ae0bb2102165a07673bb0df8ba28a17e998c84daf1ade7b4bc95a963ba1e");
+        CHECK(repaired.source->metadata.importerVersion ==
+              "weft-secure-brep-0.1");
+    }
     if (repaired.source && repaired.working) {
         CHECK(!repaired.source->snapshot.model.shape.IsPartner(
             repaired.working->snapshot.model.shape));
@@ -827,6 +976,7 @@ int main() {
         testCompatibilityIsAudited(path);
         testReadFailureIsNamed(path);
         testSourceSnapshotPreventsPathReplacement();
+        testNativeBRepSecureImport();
         testMultipleFreeRootOccurrences();
         testBoundedParameterizationRepair();
         testTotalReconnaissance(path);
