@@ -14,6 +14,7 @@
 #include "weft/io/system.hpp"
 #include "weft/recipe.hpp"
 #include "weft/secure_meshing.hpp"
+#include "weft/secure_recipe.hpp"
 #include "weft/validate.hpp"
 
 #include <BRep_Builder.hxx>
@@ -27,6 +28,7 @@
 #include <algorithm>
 #include <chrono>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -118,10 +120,10 @@ void usage() {
         "                      mesh edge nearest (u,v) on B-rep face ID, at\n"
         "                      fraction t; anchored to the CAD, so it replays\n"
         "                      after density changes\n"
-        "    --recipe FILE     load settings + manual ops from a saved recipe\n"
-        "                      (flags given after it override)\n"
+        "    --recipe FILE     load recipe v2, or migrate v1 with conflicts\n"
+        "                      blocking export; later flags still override\n"
         "    --save-recipe FILE\n"
-        "                      persist settings AND manual ops, keyed to CAD IDs\n"
+        "                      save only recipe v2: source refs + fingerprints\n"
         "\n"
         "  Divisions are density-matched: edges shared between parametric\n"
         "  faces resolve to one count (max of the faces' proposals), so\n"
@@ -348,6 +350,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
     std::string input = args[0];
     std::string output;
     std::string recipeOut;
+    std::string recipeInputPath;
     std::string meshReportPath;
     bool validate = validateOnly;
     bool noNormals = false;
@@ -359,6 +362,12 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
     weft::Recipe recipe;
     weft::GenerationSettings& gs = recipe.settings;
     std::vector<std::string> faceSpecs;
+    std::vector<std::function<void(weft::Recipe&)>> postRecipeOverrides;
+    std::vector<std::string> postRecipeFaceSpecs;
+    auto applyAndRecord = [&](std::function<void(weft::Recipe&)> action) {
+        action(recipe);
+        if (recipeLoaded) postRecipeOverrides.push_back(std::move(action));
+    };
 
     for (size_t i = 1; i < args.size(); ++i) {
         const std::string& a = args[i];
@@ -367,67 +376,109 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
             return args[++i];
         };
         if (a == "-o" || a == "--output") output = next();
-        else if (a == "--radial") gs.defaults.radial = std::stoi(next());
-        else if (a == "--axial") gs.defaults.axial = std::stoi(next());
-        else if (a == "--chord") gs.defaults.chordTolerance = std::stod(next());
+        else if (a == "--radial") {
+            const int value = std::stoi(next());
+            applyAndRecord([value](weft::Recipe& target) {
+                target.settings.defaults.radial = value;
+            });
+        }
+        else if (a == "--axial") {
+            const int value = std::stoi(next());
+            applyAndRecord([value](weft::Recipe& target) {
+                target.settings.defaults.axial = value;
+            });
+        }
+        else if (a == "--chord") {
+            const double value = std::stod(next());
+            applyAndRecord([value](weft::Recipe& target) {
+                target.settings.defaults.chordTolerance = value;
+            });
+        }
         else if (a == "--cap") {
-            weft::applySetting(gs.defaults, "cap", next());
+            const std::string value = next();
+            applyAndRecord([value](weft::Recipe& target) {
+                weft::applySetting(target.settings.defaults, "cap", value);
+            });
             ignoredMigrationControl = true;
         }
         else if (a == "--loops") {
-            gs.defaults.filletLoops = std::stoi(next());
+            const int value = std::stoi(next());
+            applyAndRecord([value](weft::Recipe& target) {
+                target.settings.defaults.filletLoops = value;
+            });
             ignoredMigrationControl = true;
         }
         else if (a == "--hold") {
-            gs.defaults.filletHold = std::stod(next());
+            const double value = std::stod(next());
+            applyAndRecord([value](weft::Recipe& target) {
+                target.settings.defaults.filletHold = value;
+            });
             ignoredMigrationControl = true;
         }
         else if (a == "--rings") {
-            gs.defaults.junctionRings = std::stoi(next());
+            const int value = std::stoi(next());
+            applyAndRecord([value](weft::Recipe& target) {
+                target.settings.defaults.junctionRings = value;
+            });
             ignoredMigrationControl = true;
         }
         else if (a == "--pure-tris") {
-            gs.defaults.quadDominant = false;
-            gs.defaults.pureTriFloor = true;
+            applyAndRecord([](weft::Recipe& target) {
+                target.settings.defaults.quadDominant = false;
+                target.settings.defaults.pureTriFloor = true;
+            });
             ignoredMigrationControl = true;
         }
         else if (a == "--quads") {
-            gs.defaults.quadDominant = true;
+            applyAndRecord([](weft::Recipe& target) {
+                target.settings.defaults.quadDominant = true;
+            });
             ignoredMigrationControl = true;
         }
         else if (a == "--flat-quads") {
-            gs.defaults.minimal = false;
+            applyAndRecord([](weft::Recipe& target) {
+                target.settings.defaults.minimal = false;
+            });
             ignoredMigrationControl = true;
         }
         else if (a == "--adaptive") {
-            gs.defaults.adaptive = true;
+            applyAndRecord([](weft::Recipe& target) {
+                target.settings.defaults.adaptive = true;
+            });
             ignoredMigrationControl = true;
         }
         else if (a == "--density") {
             // One dial re-budgets the whole model: scales every
             // solved count (adaptive ones too) before the group
             // solve, and fallback tolerances to match.
-            gs.densityScale = std::stod(next());
+            const double value = std::stod(next());
+            applyAndRecord([value](weft::Recipe& target) {
+                target.settings.densityScale = value;
+            });
             ignoredMigrationControl = true;
         }
         else if (a == "--weld") {
             // Global weld tolerance (mm): how far apart coincident border
             // verts may sit and still fuse. Loosening it closes seams on
             // sloppy CAD / off-curve fallback borders.
-            gs.weldTolerance = std::stod(next());
+            const double value = std::stod(next());
+            applyAndRecord([value](weft::Recipe& target) {
+                target.settings.weldTolerance = value;
+            });
             ignoredMigrationControl = true;
         }
         else if (a == "--profile") {
             std::string prof = next();
             if (prof == "cad") {
-                // Handoff step 3: minimal (default) + adaptive + strips.
-                gs.defaults.minimal = true;
-                gs.defaults.adaptive = true;
-                // Game topology: deviation relative to feature size, so
-                // ring counts follow the ANGLE criterion at every scale.
-                gs.defaults.relativeDeviation = true;
+                applyAndRecord([](weft::Recipe& target) {
+                    target.settings.defaults.minimal = true;
+                    target.settings.defaults.adaptive = true;
+                    target.settings.defaults.relativeDeviation = true;
+                });
             } else if (prof == "dense") {
-                gs.defaults.minimal = false;
+                applyAndRecord([](weft::Recipe& target) {
+                    target.settings.defaults.minimal = false;
+                });
             } else {
                 throw std::runtime_error("unknown profile: " + prof);
             }
@@ -453,11 +504,15 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
         else if (a == "--mesh-report") meshReportPath = next();
         else if (a == "--validate") validate = true;
         else if (a == "--preview") {
-            gs.finalizeMesh = false;
+            applyAndRecord([](weft::Recipe& target) {
+                target.settings.finalizeMesh = false;
+            });
             ignoredMigrationControl = true;
         }
         else if (a == "--stitch") {
-            gs.decoupleSeams = true;
+            applyAndRecord([](weft::Recipe& target) {
+                target.settings.decoupleSeams = true;
+            });
             ignoredMigrationControl = true;
         }
         else if (a == "--debug") ignoredMigrationControl = true;
@@ -475,8 +530,10 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
             }
         }
         else if (a == "--recipe") {
-            recipe = weft::loadRecipe(next());
+            recipeInputPath = next();
             recipeLoaded = true;
+            postRecipeOverrides.clear();
+            postRecipeFaceSpecs.clear();
         }
         else if (a == "--save-recipe") recipeOut = next();
         else if (a == "--op-loop") {
@@ -500,26 +557,36 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
             op.u = std::stod(rest.substr(0, c1));
             op.v = std::stod(rest.substr(c1 + 1, c2 - c1 - 1));
             op.t = std::stod(rest.substr(c2 + 1));
-            recipe.ops.push_back(op);
+            applyAndRecord([op](weft::Recipe& target) {
+                target.ops.push_back(op);
+            });
         }
         else if (a == "--grid") {
             std::string g = next();
             size_t x = g.find('x');
-            gs.defaults.gridU = std::stoi(g.substr(0, x));
-            gs.defaults.gridV =
-                x == std::string::npos ? gs.defaults.gridU
-                                       : std::stoi(g.substr(x + 1));
+            const int gridU = std::stoi(g.substr(0, x));
+            const int gridV =
+                x == std::string::npos ? gridU : std::stoi(g.substr(x + 1));
+            applyAndRecord([gridU, gridV](weft::Recipe& target) {
+                target.settings.defaults.gridU = gridU;
+                target.settings.defaults.gridV = gridV;
+            });
             ignoredMigrationControl = true;
         } else if (a == "--face") {
-            faceSpecs.push_back(next());  // parsed after defaults are final
+            const std::string spec = next();
+            faceSpecs.push_back(spec);  // parsed after defaults are final
+            if (recipeLoaded) postRecipeFaceSpecs.push_back(spec);
         } else if (a == "--edge") {
             std::string spec = next();
             size_t colon = spec.find(':');
             if (colon == std::string::npos) {
                 throw std::runtime_error("--edge expects ID:N, got " + spec);
             }
-            gs.perEdge[std::stoi(spec.substr(0, colon))] =
-                std::stoi(spec.substr(colon + 1));
+            const int edgeId = std::stoi(spec.substr(0, colon));
+            const int count = std::stoi(spec.substr(colon + 1));
+            applyAndRecord([edgeId, count](weft::Recipe& target) {
+                target.settings.perEdge[edgeId] = count;
+            });
         } else {
             throw std::runtime_error("unknown option: " + a);
         }
@@ -533,12 +600,6 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
             "--mesh-report with --lods is unavailable until per-tier secure "
             "reports are defined");
     }
-    if (recipeLoaded || !recipeOut.empty() || !recipe.ops.empty() ||
-        !gs.perFace.empty() || !gs.perEdge.empty()) {
-        throw std::runtime_error(
-            "secure recipe/manual/per-face migration conflict: export blocked "
-            "until recipe v2 correspondence migration is implemented");
-    }
     if (ignoredMigrationControl) {
         std::fprintf(
             stderr,
@@ -548,6 +609,114 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
 
     const weft::ImportedModel secureImported =
         weft::importStepSecure(input, repairProfile);
+    weft::RecipeV2 effectiveRecipe;
+    bool hasEffectiveRecipe = false;
+    std::vector<weft::RecipeMigrationIssue> migrationIssues;
+    if (recipeLoaded) {
+        const int version = weft::recipeFileVersion(recipeInputPath);
+        if (version == 1) {
+            const weft::RecipeV2MigrationResult migrated =
+                weft::migrateRecipeV1(
+                    secureImported, weft::loadRecipe(recipeInputPath));
+            effectiveRecipe = migrated.recipe;
+            migrationIssues = migrated.issues;
+        } else {
+            effectiveRecipe = weft::loadRecipeV2(recipeInputPath);
+        }
+        hasEffectiveRecipe = true;
+    } else if (!recipeOut.empty() || !recipe.ops.empty() ||
+               !gs.perFace.empty() || !gs.perEdge.empty()) {
+        const weft::RecipeV2MigrationResult migrated =
+            weft::captureRecipeV2(secureImported, recipe);
+        effectiveRecipe = migrated.recipe;
+        migrationIssues = migrated.issues;
+        hasEffectiveRecipe = true;
+    }
+
+    auto firstConflict = [](const std::vector<weft::RecipeMigrationIssue>& issues)
+        -> const weft::RecipeMigrationIssue* {
+        const auto found = std::find_if(
+            issues.begin(), issues.end(), [](const auto& issue) {
+                return issue.severity == weft::RecipeIssueSeverity::Conflict;
+            });
+        return found == issues.end() ? nullptr : &*found;
+    };
+    if (const weft::RecipeMigrationIssue* conflict =
+            firstConflict(migrationIssues)) {
+        throw std::runtime_error(
+            "recipe migration conflict [" + conflict->code + "]: " +
+            conflict->message);
+    }
+    for (const weft::RecipeMigrationIssue& issue : migrationIssues) {
+        if (issue.severity == weft::RecipeIssueSeverity::Warning) {
+            std::fprintf(stderr, "warning: %s: %s\n", issue.code.c_str(),
+                         issue.message.c_str());
+        }
+    }
+
+    if (hasEffectiveRecipe) {
+        weft::RecipeV2Resolution resolved =
+            weft::resolveRecipeV2(secureImported, effectiveRecipe);
+        if (const weft::RecipeMigrationIssue* conflict =
+                firstConflict(resolved.issues)) {
+            throw std::runtime_error(
+                "recipe resolution conflict [" + conflict->code + "]: " +
+                conflict->message);
+        }
+        for (const weft::RecipeMigrationIssue& issue : resolved.issues) {
+            if (issue.severity == weft::RecipeIssueSeverity::Warning) {
+                std::fprintf(stderr, "warning: %s: %s\n", issue.code.c_str(),
+                             issue.message.c_str());
+            }
+        }
+        recipe.settings = resolved.settings;
+        recipe.ops = resolved.operations;
+
+        if (!postRecipeOverrides.empty() ||
+            !postRecipeFaceSpecs.empty()) {
+            for (const auto& apply : postRecipeOverrides) apply(recipe);
+            for (const std::string& spec : postRecipeFaceSpecs) {
+                parseFaceOverride(recipe.settings, spec);
+            }
+            const weft::RecipeV2MigrationResult captured =
+                weft::captureRecipeV2(secureImported, recipe);
+            if (const weft::RecipeMigrationIssue* conflict =
+                    firstConflict(captured.issues)) {
+                throw std::runtime_error(
+                    "recipe override conflict [" + conflict->code + "]: " +
+                    conflict->message);
+            }
+            for (const weft::RecipeMigrationIssue& issue : captured.issues) {
+                if (issue.severity == weft::RecipeIssueSeverity::Warning) {
+                    std::fprintf(stderr, "warning: %s: %s\n",
+                                 issue.code.c_str(), issue.message.c_str());
+                }
+            }
+            effectiveRecipe = captured.recipe;
+            resolved =
+                weft::resolveRecipeV2(secureImported, effectiveRecipe);
+            if (const weft::RecipeMigrationIssue* conflict =
+                    firstConflict(resolved.issues)) {
+                throw std::runtime_error(
+                    "recipe override resolution conflict [" +
+                    conflict->code + "]: " + conflict->message);
+            }
+        }
+        if (!recipeOut.empty()) {
+            weft::saveRecipeV2(effectiveRecipe, recipeOut);
+            std::printf("saved recipe v2 %s\n", recipeOut.c_str());
+        }
+        const std::vector<weft::RecipeMigrationIssue> applicationIssues =
+            weft::validateSecureRecipeApplication(resolved);
+        if (const weft::RecipeMigrationIssue* conflict =
+                firstConflict(applicationIssues)) {
+            throw std::runtime_error(
+                "recipe application conflict [" + conflict->code + "]: " +
+                conflict->message);
+        }
+        recipe.settings = resolved.settings;
+        recipe.ops = resolved.operations;
+    }
     const weft::Model& model = secureImported.workingModel();
     weft::Analysis analysis = weft::analyze(model);
     objOpts.objectNames = &model.solidNames;

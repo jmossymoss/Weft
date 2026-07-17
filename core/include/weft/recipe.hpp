@@ -41,6 +41,10 @@ void applySetting(FaceMeshSettings& s, const std::string& key,
 // Apply a comma-separated "key=val,key=val" list.
 void applySettingsList(FaceMeshSettings& s, const std::string& list);
 
+// Canonical, locale-independent persistence form shared by recipe v1 and the
+// source-referenced recipe v2 contract.
+std::string formatSettingsList(const FaceMeshSettings& settings);
+
 void saveRecipe(const Recipe& recipe, const std::string& path);
 Recipe loadRecipe(const std::string& path);
 

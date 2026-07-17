@@ -1,12 +1,30 @@
 #include "weft/recipe.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <cstdio>
 #include <fstream>
+#include <iomanip>
+#include <locale>
 #include <sstream>
 #include <stdexcept>
 
 namespace weft {
+
+namespace {
+
+double parseReal(const std::string& value) {
+    double result = 0.0;
+    const char* const begin = value.data();
+    const char* const end = begin + value.size();
+    const auto parsed = std::from_chars(begin, end, result);
+    if (parsed.ec != std::errc() || parsed.ptr != end) {
+        throw std::runtime_error("invalid real value: " + value);
+    }
+    return result;
+}
+
+}  // namespace
 
 void applySetting(FaceMeshSettings& s, const std::string& key,
                   const std::string& value) {
@@ -14,10 +32,10 @@ void applySetting(FaceMeshSettings& s, const std::string& key,
     else if (key == "axial") s.axial = std::stoi(value);
     else if (key == "gridu") s.gridU = std::stoi(value);
     else if (key == "gridv") s.gridV = std::stoi(value);
-    else if (key == "chord") s.chordTolerance = std::stod(value);
-    else if (key == "angle") s.angleToleranceDeg = std::stod(value);
+    else if (key == "chord") s.chordTolerance = parseReal(value);
+    else if (key == "angle") s.angleToleranceDeg = parseReal(value);
     else if (key == "loops") s.filletLoops = std::stoi(value);
-    else if (key == "hold") s.filletHold = std::stod(value);
+    else if (key == "hold") s.filletHold = parseReal(value);
     else if (key == "rings") s.junctionRings = std::stoi(value);
     else if (key == "quads") s.quadDominant = std::stoi(value) != 0;
     else if (key == "puretris") s.pureTriFloor = std::stoi(value) != 0;
@@ -25,10 +43,11 @@ void applySetting(FaceMeshSettings& s, const std::string& key,
     else if (key == "skip") s.exclude = std::stoi(value) != 0;
     else if (key == "mesher") s.forceMesher = std::stoi(value);
     else if (key == "linkrims") s.linkRims = std::stoi(value) != 0;
-    else if (key == "minsize") s.minSize = std::stod(value);
-    else if (key == "weld") s.weldTolerance = std::stod(value);
+    else if (key == "minsize") s.minSize = parseReal(value);
+    else if (key == "weld") s.weldTolerance = parseReal(value);
     else if (key == "reldev") s.relativeDeviation = std::stoi(value) != 0;
     else if (key == "adapt") s.adaptive = std::stoi(value) != 0;
+    else if (key == "cellcap") s.cellCap = std::stoi(value);
     else if (key == "boundary") s.boundary = std::stoi(value);
     else if (key == "sqcollar") s.squareCollar = std::stoi(value) != 0;
     else if (key == "crot") s.coonsRotate = std::stoi(value);
@@ -57,8 +76,8 @@ void applySettingsList(FaceMeshSettings& s, const std::string& list) {
 
 static void applyCompilerSetting(CompilerSettings& s, const std::string& key,
                                  const std::string& value) {
-    if (key == "chord") s.chordTolerance = std::stod(value);
-    else if (key == "angle") s.angleToleranceDeg = std::stod(value);
+    if (key == "chord") s.chordTolerance = parseReal(value);
+    else if (key == "angle") s.angleToleranceDeg = parseReal(value);
     else if (key == "radial") s.radialSegments = std::stoi(value);
     else if (key == "axial") s.axialSegments = std::stoi(value);
     else if (key == "fillet") s.filletAcrossSegments = std::stoi(value);
@@ -95,23 +114,31 @@ static void applyCompilerSettingsList(CompilerSettings& s,
         std::max(s.minimumClosedCurveSegments, s.maximumEdgeSegments);
 }
 
-static std::string settingsToString(const FaceMeshSettings& s) {
-    char buf[448];
-    std::snprintf(buf, sizeof buf,
-                  "radial=%d,axial=%d,gridu=%d,gridv=%d,cap=%s,chord=%g,"
-                  "angle=%g,loops=%d,hold=%g,rings=%d,quads=%d,minimal=%d,"
-                  "skip=%d,mesher=%d,linkrims=%d,minsize=%g,reldev=%d,"
-                  "adapt=%d,boundary=%d,sqcollar=%d,crot=%d,puretris=%d,"
-                  "weld=%g",
-                  s.radial, s.axial, s.gridU, s.gridV,
-                  s.cap == CapStyle::Fan ? "fan" : "ngon", s.chordTolerance,
-                  s.angleToleranceDeg, s.filletLoops, s.filletHold,
-                  s.junctionRings, s.quadDominant ? 1 : 0, s.minimal ? 1 : 0,
-                  s.exclude ? 1 : 0, s.forceMesher, s.linkRims ? 1 : 0,
-                  s.minSize, s.relativeDeviation ? 1 : 0,
-                  s.adaptive ? 1 : 0, s.boundary, s.squareCollar ? 1 : 0,
-                  s.coonsRotate, s.pureTriFloor ? 1 : 0, s.weldTolerance);
-    return buf;
+std::string formatSettingsList(const FaceMeshSettings& s) {
+    std::ostringstream output;
+    output.imbue(std::locale::classic());
+    output << std::setprecision(17)
+           << "radial=" << s.radial << ",axial=" << s.axial
+           << ",gridu=" << s.gridU << ",gridv=" << s.gridV
+           << ",cap=" << (s.cap == CapStyle::Fan ? "fan" : "ngon")
+           << ",chord=" << s.chordTolerance
+           << ",angle=" << s.angleToleranceDeg
+           << ",loops=" << s.filletLoops << ",hold=" << s.filletHold
+           << ",rings=" << s.junctionRings
+           << ",quads=" << (s.quadDominant ? 1 : 0)
+           << ",minimal=" << (s.minimal ? 1 : 0)
+           << ",skip=" << (s.exclude ? 1 : 0)
+           << ",mesher=" << s.forceMesher
+           << ",linkrims=" << (s.linkRims ? 1 : 0)
+           << ",minsize=" << s.minSize
+           << ",reldev=" << (s.relativeDeviation ? 1 : 0)
+           << ",adapt=" << (s.adaptive ? 1 : 0)
+           << ",cellcap=" << s.cellCap << ",boundary=" << s.boundary
+           << ",sqcollar=" << (s.squareCollar ? 1 : 0)
+           << ",crot=" << s.coonsRotate
+           << ",puretris=" << (s.pureTriFloor ? 1 : 0)
+           << ",weld=" << s.weldTolerance;
+    return output.str();
 }
 
 static std::string compilerSettingsToString(const CompilerSettings& s) {
@@ -138,7 +165,7 @@ void saveRecipe(const Recipe& recipe, const std::string& path) {
     for (const auto& [eid, count] : recipe.compiler.perEdge) {
         out << "compiler-edge " << eid << " " << count << "\n";
     }
-    out << "default " << settingsToString(recipe.settings.defaults) << "\n";
+    out << "default " << formatSettingsList(recipe.settings.defaults) << "\n";
     if (recipe.settings.densityScale != 1.0) {
         out << "scale " << recipe.settings.densityScale << "\n";
     }
@@ -146,7 +173,7 @@ void saveRecipe(const Recipe& recipe, const std::string& path) {
         out << "weld " << recipe.settings.weldTolerance << "\n";
     }
     for (const auto& [fid, s] : recipe.settings.perFace) {
-        out << "face " << fid << " " << settingsToString(s) << "\n";
+        out << "face " << fid << " " << formatSettingsList(s) << "\n";
     }
     for (const auto& [eid, count] : recipe.settings.perEdge) {
         out << "edge " << eid << " " << count << "\n";

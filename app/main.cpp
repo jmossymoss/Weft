@@ -53,6 +53,7 @@
 #include "weft/recipe.hpp"
 #include "weft/remap.hpp"
 #include "weft/secure_meshing.hpp"
+#include "weft/secure_recipe.hpp"
 #include "weft/viz.hpp"
 
 #include <GLFW/glfw3.h>
@@ -622,6 +623,11 @@ struct App {
     weft::Model model;
     weft::Analysis analysis;
     weft::Recipe recipe;
+    bool hasRecipeV2 = false;
+    bool recipeV2Persistable = false;
+    bool recipeV2Resolved = false;
+    weft::RecipeV2 recipeV2;
+    std::string recipeMigrationConflict;
     weft::PolyMesh mesh;
     weft::MeshingResult secureResult;
     weft::GenerationReport report;
@@ -818,20 +824,19 @@ struct App {
     char recipeBuf[512] = "session.recipe";
 };
 
-// The secure app route currently migrates only representation-independent
-// global density controls. Anything keyed to healed topology or any operation
-// that edits the certified output must wait for recipe v2 correspondence.
+// The secure app route currently applies only representation-independent
+// global density controls. Recipe v2 can persist referenced edits, but their
+// certified topology consumers remain gated.
 static std::string secureRecipeConflict(const weft::Recipe& recipe) {
     if (!recipe.settings.perFace.empty()) {
-        return "recipe v1 face overrides need recipe v2 correspondence";
+        return "per-face certified-template settings are not implemented";
     }
     if (!recipe.settings.perEdge.empty() ||
         !recipe.compiler.perEdge.empty()) {
-        return "recipe v1 edge pins need recipe v2 correspondence";
+        return "per-edge certified count constraints are not implemented";
     }
     if (!recipe.ops.empty()) {
-        return "manual operations need certified, surface-anchored recipe v2 "
-               "migration";
+        return "certified surface-anchored editing is not implemented";
     }
 
     const weft::FaceMeshSettings baseline;
@@ -873,6 +878,118 @@ static std::string secureRecipeConflict(const weft::Recipe& recipe) {
                "pipeline";
     }
     return {};
+}
+
+static const weft::RecipeMigrationIssue* firstRecipeConflict(
+    const std::vector<weft::RecipeMigrationIssue>& issues) {
+    const auto found = std::find_if(
+        issues.begin(), issues.end(), [](const auto& issue) {
+            return issue.severity == weft::RecipeIssueSeverity::Conflict;
+        });
+    return found == issues.end() ? nullptr : &*found;
+}
+
+static std::string recipeIssueText(
+    const weft::RecipeMigrationIssue& issue) {
+    return issue.code + ": " + issue.message;
+}
+
+static void logRecipeWarnings(
+    const std::vector<weft::RecipeMigrationIssue>& issues) {
+    for (const weft::RecipeMigrationIssue& issue : issues) {
+        if (issue.severity == weft::RecipeIssueSeverity::Warning) {
+            logLine("recipe warning: %s", recipeIssueText(issue).c_str());
+        }
+    }
+}
+
+static bool adoptRecipeV2(
+    App& app, weft::RecipeV2 recipe,
+    std::vector<weft::RecipeMigrationIssue> migrationIssues = {}) {
+    app.recipeV2 = std::move(recipe);
+    app.hasRecipeV2 = true;
+    app.recipeV2Persistable = firstRecipeConflict(migrationIssues) == nullptr;
+    app.recipeV2Resolved = false;
+    logRecipeWarnings(migrationIssues);
+    if (const weft::RecipeMigrationIssue* conflict =
+            firstRecipeConflict(migrationIssues)) {
+        app.recipeMigrationConflict = recipeIssueText(*conflict);
+        return false;
+    }
+
+    const weft::RecipeV2Resolution resolved =
+        weft::resolveRecipeV2(app.secureImported, app.recipeV2);
+    logRecipeWarnings(resolved.issues);
+    if (const weft::RecipeMigrationIssue* conflict =
+            firstRecipeConflict(resolved.issues)) {
+        app.recipeMigrationConflict = recipeIssueText(*conflict);
+        return false;
+    }
+
+    app.recipe = {};
+    app.recipe.pipeline = weft::MeshPipeline::Legacy;
+    app.recipe.settings = resolved.settings;
+    app.recipe.ops = resolved.operations;
+    app.recipeV2Resolved = true;
+    const std::vector<weft::RecipeMigrationIssue> applicationIssues =
+        weft::validateSecureRecipeApplication(resolved);
+    if (const weft::RecipeMigrationIssue* conflict =
+            firstRecipeConflict(applicationIssues)) {
+        app.recipeMigrationConflict = recipeIssueText(*conflict);
+        return false;
+    }
+    app.recipeMigrationConflict.clear();
+    return true;
+}
+
+static bool loadAndAdoptRecipe(App& app, const std::string& path) {
+    if (weft::recipeFileVersion(path) == 1) {
+        const weft::RecipeV2MigrationResult migrated =
+            weft::migrateRecipeV1(
+                app.secureImported, weft::loadRecipe(path));
+        return adoptRecipeV2(
+            app, migrated.recipe, migrated.issues);
+    }
+    return adoptRecipeV2(app, weft::loadRecipeV2(path));
+}
+
+static void syncRecipeV2Globals(App& app) {
+    if (!app.hasRecipeV2) return;
+    app.recipeV2.defaults = app.recipe.settings.defaults;
+    app.recipeV2.densityScale = app.recipe.settings.densityScale;
+    app.recipeV2.weldTolerance = app.recipe.settings.weldTolerance;
+}
+
+static bool saveCurrentRecipeV2(App& app, const std::string& path) {
+    if (app.hasRecipeV2 && !app.recipeV2Persistable) {
+        app.status =
+            "recipe save blocked: incomplete v1 migration would lose data";
+        return false;
+    }
+
+    if (app.hasRecipeV2 && !app.recipeV2Resolved) {
+        app.status =
+            "recipe save blocked: unresolved v2 references cannot be "
+            "recaptured without loss";
+        return false;
+    }
+
+    const weft::RecipeV2MigrationResult captured =
+        weft::captureRecipeV2(app.secureImported, app.recipe);
+    logRecipeWarnings(captured.issues);
+    if (const weft::RecipeMigrationIssue* conflict =
+            firstRecipeConflict(captured.issues)) {
+        app.recipeMigrationConflict = recipeIssueText(*conflict);
+        app.status = "recipe save blocked: " + app.recipeMigrationConflict;
+        return false;
+    }
+
+    app.recipeV2 = captured.recipe;
+    app.hasRecipeV2 = true;
+    app.recipeV2Persistable = true;
+    weft::saveRecipeV2(app.recipeV2, path);
+    (void)adoptRecipeV2(app, app.recipeV2);
+    return true;
 }
 
 static weft::SecureMeshingConfiguration secureConfiguration(
@@ -1416,6 +1533,13 @@ static void finishGenerate(App& app);
 // further edits leave `dirty` set and coalesce into the next run.
 static void startGenerate(App& app) {
     if (!app.hasModel || app.genBusy) return;
+    if (!app.recipeMigrationConflict.empty()) {
+        app.status = "recipe conflict: " + app.recipeMigrationConflict;
+        app.dirty = false;
+        logLine("regenerate: BLOCKED recipe conflict: %s",
+                app.recipeMigrationConflict.c_str());
+        return;
+    }
     const std::string migrationConflict = secureRecipeConflict(app.recipe);
     if (!migrationConflict.empty()) {
         app.status = "secure workflow blocked: " + migrationConflict;
@@ -1678,6 +1802,11 @@ static void finishLoadModel(App& app) {
         app.exactNormalCache.clear();
         rebuildBuffers(app);
         app.recipe = {};
+        app.hasRecipeV2 = false;
+        app.recipeV2Persistable = false;
+        app.recipeV2Resolved = false;
+        app.recipeV2 = {};
+        app.recipeMigrationConflict.clear();
         frameModel(app);
         app.status = path + ": " + std::to_string(app.model.faceCount()) +
                      " faces, " + std::to_string(app.model.edgeCount()) +
@@ -1692,24 +1821,15 @@ static void finishLoadModel(App& app) {
                       app.recipePath.c_str());
         if (std::filesystem::exists(app.recipePath)) {
             try {
-                app.recipe = weft::loadRecipe(app.recipePath);
-                const bool ignoredPipeline =
-                    app.recipe.pipeline ==
-                    weft::MeshPipeline::PrimitiveCompiler;
-                app.recipe.pipeline = weft::MeshPipeline::Legacy;
-                const std::string conflict =
-                    secureRecipeConflict(app.recipe);
-                if (conflict.empty()) {
-                    app.status += ignoredPipeline
-                        ? "  (recipe v1 globals migrated; pipeline ignored)"
-                        : "  (recipe v1 globals migrated)";
-                    logLine("load: migrated safe globals from %s",
+                if (loadAndAdoptRecipe(app, app.recipePath)) {
+                    app.status += "  (recipe v2 ready)";
+                    logLine("load: resolved recipe v2 %s",
                             app.recipePath.c_str());
                 } else {
                     app.status += "  (recipe migration conflict: " +
-                                  conflict + ")";
+                                  app.recipeMigrationConflict + ")";
                     logLine("load: recipe migration conflict: %s",
-                            conflict.c_str());
+                            app.recipeMigrationConflict.c_str());
                 }
             } catch (const std::exception& e) {
                 app.status = std::string("recipe load failed: ") + e.what();
@@ -1777,6 +1897,12 @@ static void loadModel(App& app, const std::string& path,
 // same mapping. The undo stack refers to old ids, so it resets.
 static void reloadModel(App& app) {
     logLine("hot-reload: %s", app.sourcePath.c_str());
+    if (!app.recipeMigrationConflict.empty()) {
+        app.status = "hot-reload blocked: " + app.recipeMigrationConflict;
+        logLine("hot-reload: BLOCKED: %s",
+                app.recipeMigrationConflict.c_str());
+        return;
+    }
     const std::string migrationConflict = secureRecipeConflict(app.recipe);
     if (!migrationConflict.empty()) {
         app.status = "hot-reload blocked: " + migrationConflict;
@@ -1795,9 +1921,35 @@ static void reloadModel(App& app) {
         weft::Model fresh = freshImported.workingModel();
         weft::Analysis freshAnalysis = weft::analyze(fresh);
         weft::RemapReport rep;
-        weft::Recipe remapped =
-            weft::remapRecipe(app.recipe, app.model, app.analysis, fresh,
-                              freshAnalysis, &rep);
+        weft::Recipe remapped;
+        (void)weft::remapRecipe(app.recipe, app.model, app.analysis, fresh,
+                                freshAnalysis, &rep);
+        if (app.hasRecipeV2) {
+            syncRecipeV2Globals(app);
+            const weft::RecipeV2Resolution resolved =
+                weft::resolveRecipeV2(freshImported, app.recipeV2);
+            logRecipeWarnings(resolved.issues);
+            if (const weft::RecipeMigrationIssue* conflict =
+                    firstRecipeConflict(resolved.issues)) {
+                throw std::runtime_error(
+                    "recipe v2 hot-reload conflict: " +
+                    recipeIssueText(*conflict));
+            }
+            const std::vector<weft::RecipeMigrationIssue> applicationIssues =
+                weft::validateSecureRecipeApplication(resolved);
+            if (const weft::RecipeMigrationIssue* conflict =
+                    firstRecipeConflict(applicationIssues)) {
+                throw std::runtime_error(
+                    "recipe v2 application conflict: " +
+                    recipeIssueText(*conflict));
+            }
+            remapped.settings = resolved.settings;
+            remapped.ops = resolved.operations;
+        } else {
+            remapped = weft::remapRecipe(
+                app.recipe, app.model, app.analysis, fresh, freshAnalysis,
+                nullptr);
+        }
         const int dropped =
             rep.facesDropped + rep.edgesDropped + rep.opsDropped;
         if (dropped != 0) {
@@ -1814,6 +1966,7 @@ static void reloadModel(App& app) {
         app.model = std::move(fresh);
         app.analysis = std::move(freshAnalysis);
         app.recipe = std::move(remapped);
+        app.recipeMigrationConflict.clear();
 
         auto mapSet = [](std::set<int>& ids, const std::map<int, int>& m) {
             std::set<int> out;
@@ -2073,6 +2226,11 @@ static weft::PolyMesh finalizedMeshForExport(App& app) {
     }
     if (app.genReady) finishGenerate(app);
 
+    if (!app.recipeMigrationConflict.empty()) {
+        throw std::runtime_error(
+            "secure export blocked: recipe conflict: " +
+            app.recipeMigrationConflict);
+    }
     const std::string conflict = secureRecipeConflict(app.recipe);
     if (!conflict.empty()) {
         throw std::runtime_error(
@@ -5434,37 +5592,47 @@ static void drawUi(App& app) {
         if (app.hasModel && ImGui::TreeNode("Recipe")) {
             ImGui::InputText("##recipe", app.recipeBuf, sizeof app.recipeBuf);
             if (ImGui::Button("Save recipe")) {
-                app.status =
-                    "recipe save blocked: recipe v2 correspondence is not "
-                    "implemented; v1 is never written by the secure app";
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Load recipe")) {
                 try {
-                    weft::Recipe migrated =
-                        weft::loadRecipe(app.recipeBuf);
-                    const bool ignoredPipeline =
-                        migrated.pipeline ==
-                        weft::MeshPipeline::PrimitiveCompiler;
-                    migrated.pipeline = weft::MeshPipeline::Legacy;
-                    const std::string conflict =
-                        secureRecipeConflict(migrated);
-                    if (!conflict.empty()) {
-                        app.status = "recipe migration conflict: " + conflict;
-                    } else {
-                        app.recipe = std::move(migrated);
-                        markDirty(app);
-                        app.status = std::string("migrated recipe v1 globals ") +
-                                     app.recipeBuf +
-                                     (ignoredPipeline
-                                          ? " (pipeline ignored)"
-                                          : "");
+                    if (saveCurrentRecipeV2(app, app.recipeBuf)) {
+                        app.status = std::string("saved recipe v2 ") +
+                                     app.recipeBuf;
+                        if (!app.recipeMigrationConflict.empty()) {
+                            app.status += " (inspectable conflict: " +
+                                          app.recipeMigrationConflict + ")";
+                        }
                     }
                 } catch (const std::exception& e) {
                     app.status = e.what();
                 }
             }
-            ImGui::Text("%zu manual op(s) recorded", app.recipe.ops.size());
+            ImGui::SameLine();
+            if (ImGui::Button("Load recipe")) {
+                try {
+                    if (loadAndAdoptRecipe(app, app.recipeBuf)) {
+                        markDirty(app);
+                        app.status = std::string("loaded recipe v2 ") +
+                                     app.recipeBuf;
+                    } else {
+                        app.status = "recipe migration conflict: " +
+                                     app.recipeMigrationConflict;
+                    }
+                } catch (const std::exception& e) {
+                    app.status = e.what();
+                }
+            }
+            if (app.hasRecipeV2) {
+                ImGui::Text("recipe v2: %zu face, %zu edge, %zu operation",
+                            app.recipeV2.faceSettings.size(),
+                            app.recipeV2.edgeSettings.size(),
+                            app.recipeV2.operations.size());
+                if (!app.recipeMigrationConflict.empty()) {
+                    ImGui::TextWrapped("conflict: %s",
+                                       app.recipeMigrationConflict.c_str());
+                }
+            } else {
+                ImGui::Text("%zu edit(s) awaiting recipe v2 capture",
+                            app.recipe.ops.size());
+            }
             ImGui::TreePop();
         }
         if (ImGui::TreeNode("Debug")) {
@@ -6202,8 +6370,17 @@ int main(int argc, char** argv) {
             }
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false) &&
                 app.hasModel && !app.recipePath.empty()) {
-                app.status =
-                    "recipe save blocked: secure recipe v2 is not implemented";
+                try {
+                    if (saveCurrentRecipeV2(app, app.recipePath)) {
+                        app.status = "saved recipe v2 " + app.recipePath;
+                        if (!app.recipeMigrationConflict.empty()) {
+                            app.status += " (inspectable conflict: " +
+                                          app.recipeMigrationConflict + ")";
+                        }
+                    }
+                } catch (const std::exception& e) {
+                    app.status = e.what();
+                }
             }
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_E, false) &&
                 app.hasModel) {

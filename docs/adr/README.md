@@ -31,3 +31,5 @@ Current records:
   async/export routing, recipe-conflict policy, and atomic Blender link.
 - `ADR-0017-secure-cli-utility-routing.md` - certified conversion and sweep,
   source-backed inspection/extraction, and explicit cache refusal.
+- `ADR-0018-source-referenced-recipe-v2.md` - immutable source references,
+  strict fingerprint relocation, v1 migration, and working-to-source capture.

@@ -15,6 +15,7 @@ add_library(weft_core
   src/planar_cdt.cpp
   src/cylinder_template.cpp
   src/secure_meshing.cpp
+  src/secure_recipe.cpp
   src/certified_mesh.cpp
   src/model.cpp
   src/analysis.cpp

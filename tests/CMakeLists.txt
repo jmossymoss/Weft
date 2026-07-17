@@ -68,6 +68,12 @@ weft_enable_strict_warnings(weft_secure_meshing_tests)
 add_test(NAME secure_meshing COMMAND weft_secure_meshing_tests)
 weft_deploy_occt_dlls(weft_secure_meshing_tests)
 
+add_executable(weft_secure_recipe_tests test_secure_recipe.cpp)
+target_link_libraries(weft_secure_recipe_tests PRIVATE weft_core)
+weft_enable_strict_warnings(weft_secure_recipe_tests)
+add_test(NAME secure_recipe COMMAND weft_secure_recipe_tests)
+weft_deploy_occt_dlls(weft_secure_recipe_tests)
+
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(
   NAME secure_fixture_catalog

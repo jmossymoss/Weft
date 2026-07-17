@@ -23,4 +23,5 @@ may supersede a result but must not rewrite what an earlier run proved.
 - `m7-secure-cli-routing-2026-07-17.md` - lossless certified export adapter, secure CLI routing, report coverage, and named workflow refusals.
 - `m7-secure-app-live-link-2026-07-17.md` - secure app preview/export/hot-reload routing, visual proof, and deterministic atomic Blender link.
 - `m0-m7-secure-cli-utilities-2026-07-17.md` - secure conversion/sweep routing, source inspection/extraction, and cache refusal evidence.
+- `m7-secure-recipe-v2-2026-07-17.md` - source-referenced v2 persistence, v1 migration, correspondence-aware app capture, deterministic replay, and named application conflicts.
 - `m1-m2-frozen-corpus-2026-07-17.md` - frozen 106-record catalogue, committed STEP outcomes, and 77-fixture import/accounting evidence.
