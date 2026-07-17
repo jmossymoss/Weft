@@ -35,6 +35,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -640,6 +641,89 @@ void testNativeBRepSecureImport() {
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
     std::filesystem::remove(malformed, ignored);
+}
+
+void testNativeUnitResolution() {
+    const std::filesystem::path boxFixture = nativeFixturePath(
+        "baselines", "baseline.pathology.box.brep");
+    const weft::ImportedModel unresolved = weft::importBRepSecure(
+        boxFixture.string(), weft::RepairProfile::Conservative);
+    CHECK(unresolved.source != nullptr);
+    if (!unresolved.source) return;
+    CHECK(!unresolved.source->metadata.lengthUnitMm.has_value());
+    CHECK(hasDiagnostic(unresolved, "import.brep.length_unit_unspecified"));
+
+    weft::NativeUnitResolution inches;
+    inches.millimetresPerModelUnit = 25.4;
+    inches.authority = "test-harness project declaration";
+    const weft::ImportedModel resolved = weft::importBRepSecure(
+        boxFixture.string(), weft::RepairProfile::Conservative, inches);
+    CHECK(resolved.source != nullptr);
+    CHECK(resolved.working != nullptr);
+    if (!resolved.source || !resolved.working) return;
+    CHECK(resolved.source->metadata.lengthUnitMm.has_value());
+    if (resolved.source->metadata.lengthUnitMm) {
+        CHECK(*resolved.source->metadata.lengthUnitMm == 25.4);
+    }
+    CHECK(resolved.source->snapshot.model.lengthUnitMm == 25.4);
+    CHECK(resolved.working->snapshot.model.lengthUnitMm == 25.4);
+    CHECK(!hasDiagnostic(resolved, "import.brep.length_unit_unspecified"));
+    CHECK(hasDiagnostic(resolved, "import.brep.length_unit_resolved"));
+    CHECK(!resolved.diagnostics.hasErrors());
+    CHECK(resolved.repair.identity);
+    CHECK(resolved.repair.meshable);
+    // The resolution is metadata evidence only; the exact representation
+    // bytes cannot change.
+    CHECK(resolved.repair.sourceShapeSha256 ==
+          unresolved.repair.sourceShapeSha256);
+    CHECK(resolved.repair.workingShapeSha256 ==
+          unresolved.repair.workingShapeSha256);
+    const auto& configuration =
+        resolved.source->metadata.effectiveTranslatorConfiguration;
+    CHECK(std::any_of(
+        configuration.begin(), configuration.end(),
+        [](const std::string& entry) {
+            return entry.find("length unit: caller-resolved ") !=
+                       std::string::npos &&
+                entry.find("authority: test-harness project declaration") !=
+                    std::string::npos;
+        }));
+
+    for (const weft::NativeUnitResolution& invalid : {
+             weft::NativeUnitResolution{0.0, "zero"},
+             weft::NativeUnitResolution{-25.4, "negative"},
+             weft::NativeUnitResolution{
+                 std::numeric_limits<double>::quiet_NaN(), "nan"},
+             weft::NativeUnitResolution{
+                 std::numeric_limits<double>::infinity(), "infinite"},
+             weft::NativeUnitResolution{25.4, ""},
+         }) {
+        try {
+            (void)weft::importBRepSecure(
+                boxFixture.string(), weft::RepairProfile::Conservative,
+                invalid);
+            CHECK(false);
+        } catch (const weft::SecureImportError& error) {
+            CHECK(error.code() == "import.brep.unit_resolution_invalid");
+        }
+    }
+
+    // Formats with source-declared units can never accept a caller
+    // override of their unit evidence.
+    weft::io::System system;
+    weft::io::bootstrapIo(system);
+    std::unique_ptr<weft::io::Reader> stepReader =
+        system.createReader(weft::io::Format::Step);
+    CHECK(stepReader != nullptr);
+    if (stepReader) {
+        try {
+            stepReader->resolveNativeLengthUnit(inches);
+            CHECK(false);
+        } catch (const weft::SecureImportError& error) {
+            CHECK(error.code() ==
+                  "import.secure.unit_resolution_unsupported");
+        }
+    }
 }
 
 void testMultipleFreeRootOccurrences() {
@@ -1333,6 +1417,7 @@ int main() {
         testReadFailureIsNamed(path);
         testSourceSnapshotPreventsPathReplacement();
         testNativeBRepSecureImport();
+        testNativeUnitResolution();
         testMultipleFreeRootOccurrences();
         testBoundedParameterizationRepair();
         testFaceAdjacencyOrientationRepair();

@@ -468,11 +468,24 @@ ImportedModel importStepSecure(
     const std::string& path,
     RepairProfile profile = RepairProfile::Conservative);
 
+// Explicit caller-side resolution of the physical length unit for a native
+// B-rep import. Native ASCII B-rep declares no unit, so the resolution is
+// external evidence: it is recorded together with its authority in the
+// source metadata, coordinates remain unchanged, and no unit is ever
+// inferred from the bytes.
+struct NativeUnitResolution {
+    double millimetresPerModelUnit = 1.0;
+    std::string authority;
+};
+
 // Secure native OCCT ASCII B-rep import. Parsing, source-byte provenance, and
 // geometry transfer all consume one immutable byte snapshot; the working
-// topology is derived through the same audited repair stages as STEP.
+// topology is derived through the same audited repair stages as STEP. An
+// absent unit resolution keeps the explicit missing-unit diagnostic; an
+// invalid one refuses by name before any bytes are read.
 ImportedModel importBRepSecure(
     const std::string& path,
-    RepairProfile profile = RepairProfile::Conservative);
+    RepairProfile profile = RepairProfile::Conservative,
+    const std::optional<NativeUnitResolution>& unitResolution = std::nullopt);
 
 }  // namespace weft

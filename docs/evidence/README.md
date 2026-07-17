@@ -31,6 +31,9 @@ may supersede a result but must not rewrite what an earlier run proved.
 - `m1-coherent-polarity-normalization-2026-07-17.md` - inside-out coherent
   shell detection and repair, exact-restoration digest proof, and the
   corpus fixture that was silently meshable with inward normals.
+- `m1-native-unit-resolution-2026-07-17.md` - caller-side unit evidence
+  with named authority, byte-identical digest proof, invalid-resolution
+  refusals, and the protected STEP unit contract.
 - `m2-reconnaissance-2026-07-17.md` - total face/edge classification and planar projection evidence.
 - `m3-interval-solver-2026-07-17.md` - exact equality/minimum/parity count assignment evidence.
 - `m3-canonical-boundaries-2026-07-17.md` - atomic shared-edge samples, UV uses, and azimuth registration evidence.

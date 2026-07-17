@@ -9,9 +9,14 @@
 #include <BRep_Builder.hxx>
 #include <TopoDS_Shape.hxx>
 
+#include <cmath>
 #include <fstream>
+#include <iomanip>
 #include <iterator>
+#include <limits>
+#include <locale>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -67,6 +72,19 @@ public:
         return weft::indexShape(healed);
     }
 
+    void resolveNativeLengthUnit(
+        const NativeUnitResolution& resolution) override {
+        if (!std::isfinite(resolution.millimetresPerModelUnit) ||
+            resolution.millimetresPerModelUnit <= 0.0 ||
+            resolution.authority.empty()) {
+            throw SecureImportError(
+                "import.brep.unit_resolution_invalid",
+                "a native unit resolution needs a finite positive "
+                "millimetre scale and a non-empty resolving authority");
+        }
+        m_unitResolution = resolution;
+    }
+
     ImportedModel transferSecure(RepairProfile repairProfile) override {
         if (m_shape.IsNull()) {
             throw SecureImportError(
@@ -77,15 +95,32 @@ public:
         SourceMetadata metadata = secure_detail::readSourceMetadata(
             m_path, m_sourceBytes);
         metadata.importerVersion = "weft-secure-brep-0.1";
+        std::string unitConfiguration =
+            "length unit: unspecified native model units";
+        if (m_unitResolution) {
+            metadata.lengthUnitMm = m_unitResolution->millimetresPerModelUnit;
+            std::ostringstream resolved;
+            resolved.imbue(std::locale::classic());
+            resolved << std::setprecision(
+                            std::numeric_limits<double>::max_digits10)
+                     << "length unit: caller-resolved "
+                     << m_unitResolution->millimetresPerModelUnit
+                     << " mm per model unit (authority: "
+                     << m_unitResolution->authority << ")";
+            unitConfiguration = resolved.str();
+        }
         metadata.effectiveTranslatorConfiguration = {
             "OCCT ASCII B-rep stream parse from immutable byte snapshot",
             "shape processing: none",
-            "length unit: unspecified native model units",
+            unitConfiguration,
             "repair profile: " +
                 std::string(repairProfileName(repairProfile)),
         };
 
         Model source = weft::indexShape(m_shape);
+        if (m_unitResolution) {
+            source.lengthUnitMm = m_unitResolution->millimetresPerModelUnit;
+        }
         TopoDS_Shape workingShape;
         Handle(BRepTools_History) workingHistory;
         secure_detail::ExactShapeDerivationMap exactShapeDerivation;
@@ -114,19 +149,36 @@ public:
         }
 
         Model working = weft::indexShape(workingShape);
+        if (m_unitResolution) {
+            working.lengthUnitMm =
+                m_unitResolution->millimetresPerModelUnit;
+        }
         ImportedModel imported = secure_detail::buildImportedModel(
             std::move(source), std::move(working), std::move(metadata),
             repairProfile, workingHistory, exactShapeDerivation,
             std::move(operations),
             std::move(parameterizationFlagChanges),
             std::move(shellOrientationRepairs), std::move(refusals));
-        imported.diagnostics.events.push_back({
-            {StableIdKind::Diagnostic,
-             static_cast<std::uint64_t>(imported.diagnostics.events.size() + 1)},
-            "import.brep.length_unit_unspecified",
-            DiagnosticSeverity::Warning,
-            {{StableIdKind::Model, 1}},
-            "native OCCT ASCII B-rep declares no physical length unit; coordinates remain unchanged in source model units"});
+        if (m_unitResolution) {
+            imported.diagnostics.events.push_back({
+                {StableIdKind::Diagnostic,
+                 static_cast<std::uint64_t>(
+                     imported.diagnostics.events.size() + 1)},
+                "import.brep.length_unit_resolved",
+                DiagnosticSeverity::Info,
+                {{StableIdKind::Model, 1}},
+                "native length unit resolved by caller evidence; "
+                "coordinates remain unchanged in source model units"});
+        } else {
+            imported.diagnostics.events.push_back({
+                {StableIdKind::Diagnostic,
+                 static_cast<std::uint64_t>(
+                     imported.diagnostics.events.size() + 1)},
+                "import.brep.length_unit_unspecified",
+                DiagnosticSeverity::Warning,
+                {{StableIdKind::Model, 1}},
+                "native OCCT ASCII B-rep declares no physical length unit; coordinates remain unchanged in source model units"});
+        }
         return imported;
     }
 
@@ -134,6 +186,7 @@ private:
     TopoDS_Shape m_shape;
     std::string m_path;
     std::string m_sourceBytes;
+    std::optional<NativeUnitResolution> m_unitResolution;
 };
 
 }  // namespace

@@ -60,3 +60,6 @@ Current records:
   detection for parity-coherent shells by infinite-point classification,
   repaired through the ADR-0026 proof chain because native validity accepts
   inverted solids.
+- `ADR-0028-native-unit-resolution.md` - caller-side unit evidence with a
+  named authority for unit-less native B-rep, byte-identical digests, and a
+  refusing default that protects source-declared units.

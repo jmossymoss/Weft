@@ -10,6 +10,7 @@
 
 namespace weft {
 struct ImportedModel;
+struct NativeUnitResolution;
 enum class RepairProfile;
 }  // namespace weft
 
@@ -26,6 +27,10 @@ struct Reader {
     // provenance and parsing to one immutable source snapshot and derive a
     // topology-isolated working representation. The default refuses.
     virtual ImportedModel transferSecure(RepairProfile profile);
+    // Caller-side physical-unit resolution for unit-less native formats.
+    // Formats with source-declared units must keep the refusing default so
+    // a caller can never override source evidence.
+    virtual void resolveNativeLengthUnit(const NativeUnitResolution&);
     virtual void applyParams(const ParamGroup&) {}       // no-op default (Stage A)
 };
 

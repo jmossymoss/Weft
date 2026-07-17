@@ -1642,6 +1642,13 @@ ImportedModel Reader::transferSecure(RepairProfile) {
         "this format reader has no immutable-source secure transfer contract");
 }
 
+void Reader::resolveNativeLengthUnit(const NativeUnitResolution&) {
+    throw SecureImportError(
+        "import.secure.unit_resolution_unsupported",
+        "this format reader carries source-declared units or has no "
+        "caller-side unit resolution contract");
+}
+
 }  // namespace io
 
 ImportedModel importStepSecure(const std::string& path, RepairProfile profile) {
@@ -1679,8 +1686,9 @@ ImportedModel importStepSecure(const std::string& path, RepairProfile profile) {
     }
 }
 
-ImportedModel importBRepSecure(const std::string& path,
-                               RepairProfile profile) {
+ImportedModel importBRepSecure(
+    const std::string& path, RepairProfile profile,
+    const std::optional<NativeUnitResolution>& unitResolution) {
     io::System system;
     io::bootstrapIo(system);
     std::unique_ptr<io::Reader> reader =
@@ -1688,6 +1696,9 @@ ImportedModel importBRepSecure(const std::string& path,
     if (!reader) {
         throw SecureImportError("import.brep.read_failed",
                                 "failed to read B-rep file securely: " + path);
+    }
+    if (unitResolution) {
+        reader->resolveNativeLengthUnit(*unitResolution);
     }
     try {
         if (!reader->readFile(path)) {
