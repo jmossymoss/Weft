@@ -10,3 +10,4 @@
 | BR-006 | CGAL-backed distribution | Prototype policy permits GPL/commercial packages only for local research | Commercial license or permissive replacement plus license audit | OPEN |
 | BR-007 | Unreviewed twisted-cylinder fixture import | The current fixture work in `D:/weftocct` is uncommitted user work | Independent review and committed evidence before copying | OPEN |
 | BR-008 | Non-rigid STEP transform without a typed account | XDE may drop scale/reflection unless retention or baking is independently proven | Retained-affine or baked-geometry account with composition and parity validation | ENFORCED |
+| BR-009 | Fail-open or tolerance-only trim validation | A triangulator cannot repair ambiguous crossings, contacts, nesting, or missing provenance without changing meaning | Exact full-pair loop/domain evidence with non-vacuous coverage before CDT | ENFORCED |

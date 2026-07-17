@@ -10,6 +10,7 @@ add_library(weft_core
   src/interval_solver.cpp
   src/canonical_boundary.cpp
   src/geometric_predicates.cpp
+  src/planar_trim_validation.cpp
   src/model.cpp
   src/analysis.cpp
   src/compiler.cpp
