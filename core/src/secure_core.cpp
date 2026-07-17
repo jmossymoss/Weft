@@ -741,6 +741,8 @@ template <typename Map>
 void addCorrespondenceForMap(const Map& source, const Map& working,
                              StableIdKind kind,
                              const Handle(BRepTools_History)& history,
+                             const secure_detail::ExactShapeDerivationMap&
+                                 derivation,
                              bool representationIdentity,
                              SourceWorkingMap& correspondence,
                              std::map<StableId, int>& workingUse) {
@@ -752,14 +754,14 @@ void addCorrespondenceForMap(const Map& source, const Map& working,
         if (identityIndex > 0) {
             record.workingIds.push_back(stableId(kind, identityIndex));
             record.relation = CorrespondenceRelation::Identity;
-        } else if (representationIdentity &&
-                   source.Extent() == working.Extent()) {
-            // Equal canonical native B-rep digests prove the same ordered
-            // representation even when the conservative identity copy owns
-            // distinct TShapes. BRepTools_History cannot store wire/shell
-            // relations, so identity copies use this structural lane.
-            record.workingIds.push_back(stableId(kind, sourceIndex));
-            record.relation = CorrespondenceRelation::Identity;
+        } else if (const TopoDS_Shape derived =
+                       derivation.mapped(sourceShape);
+                   !derived.IsNull() && working.FindIndex(derived) > 0) {
+            record.workingIds.push_back(
+                stableId(kind, working.FindIndex(derived)));
+            record.relation = representationIdentity
+                ? CorrespondenceRelation::Identity
+                : CorrespondenceRelation::Modified;
         } else if (!history.IsNull() && history->IsRemoved(sourceShape)) {
             record.relation = CorrespondenceRelation::Removed;
         } else if (!history.IsNull()) {
@@ -805,19 +807,21 @@ void addCorrespondenceForMap(const Map& source, const Map& working,
 
 SourceWorkingMap buildCorrespondence(const Model& source, const Model& working,
                                      const Handle(BRepTools_History)& history,
+                                     const secure_detail::ExactShapeDerivationMap&
+                                         derivation,
                                      bool representationIdentity) {
     SourceWorkingMap correspondence;
     std::map<StableId, int> workingUse;
     addCorrespondenceForMap(source.solids, working.solids,
                             StableIdKind::Solid, history,
-                            representationIdentity, correspondence,
+                            derivation, representationIdentity, correspondence,
                             workingUse);
     addCorrespondenceForMap(source.faces, working.faces, StableIdKind::Face,
-                            history, representationIdentity, correspondence,
-                            workingUse);
+                            history, derivation, representationIdentity,
+                            correspondence, workingUse);
     addCorrespondenceForMap(source.edges, working.edges, StableIdKind::Edge,
-                            history, representationIdentity, correspondence,
-                            workingUse);
+                            history, derivation, representationIdentity,
+                            correspondence, workingUse);
     ShapeMap sourceWires;
     ShapeMap workingWires;
     ShapeMap sourceVertices;
@@ -827,10 +831,10 @@ SourceWorkingMap buildCorrespondence(const Model& source, const Model& working,
     TopExp::MapShapes(source.shape, TopAbs_VERTEX, sourceVertices);
     TopExp::MapShapes(working.shape, TopAbs_VERTEX, workingVertices);
     addCorrespondenceForMap(sourceWires, workingWires, StableIdKind::Wire,
-                            history, representationIdentity, correspondence,
-                            workingUse);
+                            history, derivation, representationIdentity,
+                            correspondence, workingUse);
     addCorrespondenceForMap(sourceVertices, workingVertices,
-                            StableIdKind::Vertex, history,
+                            StableIdKind::Vertex, history, derivation,
                             representationIdentity, correspondence,
                             workingUse);
 
@@ -847,30 +851,17 @@ SourceWorkingMap buildCorrespondence(const Model& source, const Model& working,
             return record.relation != CorrespondenceRelation::Removed &&
                    !record.workingIds.empty();
         });
-    // Identity inputs have no introduced records and every source resolves.
-    if (source.faces.Extent() == working.faces.Extent() &&
-        source.edges.Extent() == working.edges.Extent()) {
-        correspondence.complete = std::all_of(
-            correspondence.records.begin(), correspondence.records.end(),
-            [](const CorrespondenceRecord& record) {
-                return record.sourceId.valid() &&
-                       record.relation == CorrespondenceRelation::Identity &&
-                       record.workingIds.size() == 1;
-            });
-    }
     return correspondence;
 }
 
-bool sameTopologyOccurrence(const TopologyOccurrence& source,
-                            const TopologyOccurrence& working) {
+bool sameTopologyStructure(const TopologyOccurrence& source,
+                           const TopologyOccurrence& working) {
     return source.id == working.id &&
         source.underlyingId == working.underlyingId &&
         source.parentId == working.parentId &&
         source.childIds == working.childIds &&
         source.orientation == working.orientation &&
-        source.tolerance == working.tolerance &&
         source.hasExactRepresentation == working.hasExactRepresentation &&
-        source.conditionCodes == working.conditionCodes &&
         source.instanceId == working.instanceId &&
         source.localTransform == working.localTransform &&
         source.worldTransform == working.worldTransform;
@@ -914,8 +905,7 @@ bool sameAssemblyAccount(const TopologyAccount& source,
             first.instanceId != second.instanceId ||
             first.ordinalInWire != second.ordinalInWire ||
             first.orientation != second.orientation ||
-            first.pcurveRepresentations != second.pcurveRepresentations ||
-            first.conditionCodes != second.conditionCodes) {
+            first.pcurveRepresentations != second.pcurveRepresentations) {
             return false;
         }
     }
@@ -942,6 +932,8 @@ void buildTopologyCorrespondence(SourceWorkingMap& correspondence,
                                  const TopologyAccount& source,
                                  const TopologyAccount& working,
                                  const Handle(BRepTools_History)& history,
+                                 const secure_detail::ExactShapeDerivationMap&
+                                     derivation,
                                  bool representationIdentity,
                                  bool sourceComplete,
                                  bool workingComplete) {
@@ -967,10 +959,12 @@ void buildTopologyCorrespondence(SourceWorkingMap& correspondence,
         if (workingOccurrence != nullptr &&
             sourceShape != source.exactShapes.end() &&
             workingShape != working.exactShapes.end() &&
-            (representationIdentity ||
+            (sourceShape->second.IsSame(workingShape->second) ||
+             derivation.maps(sourceShape->second,
+                             workingShape->second) ||
              historyMapsShape(history, sourceShape->second,
                               workingShape->second)) &&
-            sameTopologyOccurrence(sourceOccurrence, *workingOccurrence)) {
+            sameTopologyStructure(sourceOccurrence, *workingOccurrence)) {
             record.workingIds.push_back(workingOccurrence->id);
             record.relation = representationIdentity
                 ? CorrespondenceRelation::Identity
@@ -995,7 +989,10 @@ void buildTopologyCorrespondence(SourceWorkingMap& correspondence,
                     correspondence.topologyOccurrenceRecords.end(),
                     [](const CorrespondenceRecord& record) {
                         return record.sourceId.valid() &&
-                            record.relation == CorrespondenceRelation::Identity &&
+                            (record.relation ==
+                                 CorrespondenceRelation::Identity ||
+                             record.relation ==
+                                 CorrespondenceRelation::Modified) &&
                             record.workingIds.size() == 1;
                     });
     correspondence.complete =
@@ -1053,7 +1050,9 @@ SourceMetadata readSourceMetadata(const std::string& path,
 ImportedModel buildImportedModel(
     Model sourceModel, Model workingModel, SourceMetadata metadata,
     RepairProfile profile, const Handle(BRepTools_History)& history,
-    std::vector<RepairOperation> operations) {
+    const ExactShapeDerivationMap& exactShapeDerivation,
+    std::vector<RepairOperation> operations,
+    std::vector<ParameterizationFlagChange> parameterizationFlagChanges) {
     ImportedModel imported;
     const bool sourceValid = shapeIsValid(sourceModel.shape);
     const bool workingValid = shapeIsValid(workingModel.shape);
@@ -1061,6 +1060,7 @@ ImportedModel buildImportedModel(
     const std::string workingShapeDigest = exactShapeDigest(workingModel.shape);
     imported.correspondence =
         buildCorrespondence(sourceModel, workingModel, history,
+                            exactShapeDerivation,
                             !sourceShapeDigest.empty() &&
                                 sourceShapeDigest == workingShapeDigest);
 
@@ -1072,7 +1072,7 @@ ImportedModel buildImportedModel(
         validateTopologyAccount(workingSnapshot.topology);
     buildTopologyCorrespondence(
         imported.correspondence, sourceSnapshot.topology,
-        workingSnapshot.topology, history,
+        workingSnapshot.topology, history, exactShapeDerivation,
         !sourceShapeDigest.empty() &&
             sourceShapeDigest == workingShapeDigest,
         sourceTopologyValidation.complete(),
@@ -1119,6 +1119,8 @@ ImportedModel buildImportedModel(
         sourceTopologyValidation.complete() &&
         workingTopologyValidation.complete();
     imported.repair.operations = std::move(operations);
+    imported.repair.parameterizationFlagChanges =
+        std::move(parameterizationFlagChanges);
 
     for (StableIdKind kind : {
              StableIdKind::Assembly, StableIdKind::Instance,
@@ -1195,6 +1197,57 @@ ImportedModel buildImportedModel(
         }
     }
 
+    std::size_t parameterizationExpected = 0;
+    std::size_t parameterizationChecked = 0;
+    std::size_t parameterizationFailed = 0;
+    for (const ParameterizationFlagChange& change :
+         imported.repair.parameterizationFlagChanges) {
+        const std::size_t evidenceUnits =
+            std::max<std::size_t>(change.expectedPcurveUses, 1);
+        parameterizationExpected += evidenceUnits;
+        const TopoDS_Shape* sourceEdge =
+            shapeForId(imported.source->snapshot, change.sourceEdge);
+        const TopoDS_Shape* workingEdge =
+            shapeForId(imported.working->snapshot, change.workingEdge);
+        const bool operationRecorded = std::any_of(
+            imported.repair.operations.begin(),
+            imported.repair.operations.end(),
+            [&](const RepairOperation& operation) {
+                return operation.code ==
+                           "repair.same_parameter_range_flags" &&
+                    std::find(operation.sourceSubjects.begin(),
+                              operation.sourceSubjects.end(),
+                              change.sourceEdge) !=
+                        operation.sourceSubjects.end() &&
+                    std::find(operation.workingSubjects.begin(),
+                              operation.workingSubjects.end(),
+                              change.workingEdge) !=
+                        operation.workingSubjects.end();
+            });
+        const bool valid =
+            change.sourceEdge.kind == StableIdKind::Edge &&
+            change.workingEdge.kind == StableIdKind::Edge &&
+            sourceEdge != nullptr && workingEdge != nullptr &&
+            operationRecorded &&
+            !change.sourceSameParameter && !change.sourceSameRange &&
+            change.workingSameParameter && change.workingSameRange &&
+            change.expectedPcurveUses != 0 &&
+            change.checkedPcurveUses == change.expectedPcurveUses &&
+            std::isfinite(change.maximumDiscrepancy) &&
+            std::isfinite(change.toleranceEnvelope) &&
+            change.toleranceEnvelope >= 0.0 &&
+            change.maximumDiscrepancy <= change.toleranceEnvelope &&
+            !BRep_Tool::SameParameter(TopoDS::Edge(*sourceEdge)) &&
+            !BRep_Tool::SameRange(TopoDS::Edge(*sourceEdge)) &&
+            BRep_Tool::SameParameter(TopoDS::Edge(*workingEdge)) &&
+            BRep_Tool::SameRange(TopoDS::Edge(*workingEdge));
+        if (valid) {
+            parameterizationChecked += evidenceUnits;
+        } else {
+            parameterizationFailed += evidenceUnits;
+        }
+    }
+
     imported.repair.validationEvidence = {
         {"repair.exact_shape_hash", 2,
          static_cast<std::size_t>(!sourceShapeDigest.empty()) +
@@ -1208,6 +1261,9 @@ ImportedModel buildImportedModel(
          toleranceSkipped, 0},
         {"repair.representation_audit", representationExpected,
          representationChecked, representationSkipped, 0},
+        {"repair.same_parameter_range_reconciliation",
+         parameterizationExpected, parameterizationChecked, 0,
+         parameterizationFailed},
     };
     for (const TopologyAccountCheck& sourceCheck :
          sourceTopologyValidation.checks) {
@@ -1230,7 +1286,8 @@ ImportedModel buildImportedModel(
             [](const CorrespondenceRecord& record) {
                 return record.sourceId.valid() &&
                     record.workingIds.size() == 1 &&
-                    record.relation == CorrespondenceRelation::Identity;
+                    (record.relation == CorrespondenceRelation::Identity ||
+                     record.relation == CorrespondenceRelation::Modified);
             }));
     const std::size_t topologyIntroduced =
         static_cast<std::size_t>(std::count_if(
@@ -1245,6 +1302,14 @@ ImportedModel buildImportedModel(
          topologyMappedExpected -
                  std::min(topologyMappedExpected, topologyMappedChecked) +
              topologyIntroduced});
+    const bool repairAuditComplete = std::all_of(
+        imported.repair.validationEvidence.begin(),
+        imported.repair.validationEvidence.end(),
+        [](const RepairValidationEvidence& evidence) {
+            return evidence.complete();
+        });
+    imported.repair.meshable =
+        imported.repair.meshable && repairAuditComplete;
     if (imported.repair.operations.empty() && imported.repair.identity) {
         imported.repair.operations.push_back(
             {"repair.identity", {}, {},
@@ -1265,6 +1330,31 @@ ImportedModel buildImportedModel(
     if (!workingValid) {
         diagnostic("import.working.invalid", DiagnosticSeverity::Error,
                    "the derived working B-rep is invalid");
+    }
+    if (!repairAuditComplete) {
+        diagnostic("import.repair.validation_incomplete",
+                   DiagnosticSeverity::Error,
+                   "the repair certificate has incomplete validation evidence");
+    }
+    if (profile == RepairProfile::Conservative) {
+        for (int edgeIndex = 1;
+             edgeIndex <= imported.working->snapshot.model.edges.Extent();
+             ++edgeIndex) {
+            const TopoDS_Edge edge = TopoDS::Edge(
+                imported.working->snapshot.model.edges(edgeIndex));
+            if (BRep_Tool::SameParameter(edge) &&
+                BRep_Tool::SameRange(edge)) {
+                continue;
+            }
+            imported.diagnostics.events.push_back(
+                {{StableIdKind::Diagnostic, ++diagnosticOrdinal},
+                 "import.repair.same_parameter_range_unproven",
+                 DiagnosticSeverity::Error,
+                 {{StableIdKind::Edge,
+                   static_cast<std::uint64_t>(edgeIndex)}},
+                 "existing edge parameter/range data did not satisfy the bounded conservative reconciliation proof"});
+            imported.repair.meshable = false;
+        }
     }
     if (!sourceTopologyValidation.complete()) {
         const std::string detail =

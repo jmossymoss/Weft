@@ -272,6 +272,21 @@ struct RepresentationChange {
     std::size_t workingStoredPcurveUses = 0;
 };
 
+// Evidence for a flag-only repair; curve, p-curve, and tolerance data remain
+// unchanged and every existing p-curve use must be checked.
+struct ParameterizationFlagChange {
+    StableId sourceEdge;
+    StableId workingEdge;
+    bool sourceSameParameter = false;
+    bool sourceSameRange = false;
+    bool workingSameParameter = false;
+    bool workingSameRange = false;
+    std::size_t expectedPcurveUses = 0;
+    std::size_t checkedPcurveUses = 0;
+    double maximumDiscrepancy = 0.0;
+    double toleranceEnvelope = 0.0;
+};
+
 struct TopologyCardinalityChange {
     StableIdKind kind = StableIdKind::Invalid;
     std::size_t before = 0;
@@ -309,6 +324,7 @@ struct RepairCertificate {
     std::vector<RepairOperation> operations;
     std::vector<ToleranceChange> toleranceChanges;
     std::vector<RepresentationChange> representationChanges;
+    std::vector<ParameterizationFlagChange> parameterizationFlagChanges;
     std::vector<TopologyCardinalityChange> topologyCardinalityChanges;
     std::vector<RepairValidationEvidence> validationEvidence;
 };

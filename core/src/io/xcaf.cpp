@@ -6,7 +6,6 @@
 
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
-#include <BRep_Builder.hxx>
 #include <BRepGProp.hxx>
 #include <Bnd_Box.hxx>
 #include <BRepBndLib.hxx>
@@ -16,13 +15,11 @@
 #include <TDataStd_Name.hxx>
 #include <TDF_Tool.hxx>
 #include <TDocStd_Document.hxx>
-#include <TopAbs_Orientation.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
-#include <TopoDS_Iterator.hxx>
 #include <UnitsMethods.hxx>
 #include <XCAFDoc.hxx>
 #include <XCAFDoc_ColorTool.hxx>
@@ -563,80 +560,15 @@ Model cafToModel(const TopoDS_Shape& oneShape, const Handle(TDocStd_Document)& d
 
 namespace {
 
-class TopologyIdentityCopier {
-public:
-    TopologyIdentityCopier()
-        : history_(new BRepTools_History()) {}
-
-    TopoDS_Shape copy(const TopoDS_Shape& source) {
-        if (source.IsNull()) return {};
-        const void* key = source.TShape().get();
-        const auto existing = copies_.find(key);
-        if (existing != copies_.end()) {
-            TopoDS_Shape result = source;
-            result.TShape(existing->second.TShape());
-            record(source, result);
-            return result;
-        }
-
-        // TopoDS_Builder expects the parent occurrence to be forward and at
-        // identity while it stores relative children in the new TShape.
-        TopoDS_Shape prototype = source.EmptyCopied();
-        prototype.Orientation(TopAbs_FORWARD);
-        prototype.Location(TopLoc_Location());
-        prototype.Free(true);
-        for (TopoDS_Iterator child(source, false, false); child.More();
-             child.Next()) {
-            const TopoDS_Shape copiedChild = copy(child.Value());
-            builder_.Add(prototype, copiedChild);
-        }
-        // Builder mutation changes bookkeeping flags. They are part of the
-        // native B-rep representation, so restore the source values exactly.
-        prototype.Free(source.Free());
-        prototype.Modified(source.Modified());
-        prototype.Checked(source.Checked());
-        prototype.Orientable(source.Orientable());
-        prototype.Closed(source.Closed());
-        prototype.Infinite(source.Infinite());
-        prototype.Convex(source.Convex());
-        copies_.emplace(key, prototype);
-        TopoDS_Shape result = source;
-        result.TShape(prototype.TShape());
-        record(source, result);
-        return result;
-    }
-
-    const Handle(BRepTools_History)& history() const noexcept {
-        return history_;
-    }
-
-    void remapAssemblyExactUses(ImportMeta& meta) {
-        for (AssemblyNode& node : meta.assembly) {
-            if (!node.exactUse.IsNull()) {
-                node.exactUse = copy(node.exactUse);
-            }
+void remapAssemblyExactUses(
+    ImportMeta& meta,
+    const secure_detail::ExactShapeDerivationMap& exactShapes) {
+    for (AssemblyNode& node : meta.assembly) {
+        if (!node.exactUse.IsNull()) {
+            node.exactUse = exactShapes.mapped(node.exactUse);
         }
     }
-
-private:
-    void record(const TopoDS_Shape& source, const TopoDS_Shape& working) {
-        // OCCT history deliberately records only vertices, edges, faces and
-        // solids. Higher-order identity is proved by the separately validated
-        // byte-identical topology account.
-        if (!BRepTools_History::IsSupportedType(source)) return;
-        const ShapeList& existing = history_->Modified(source);
-        if (std::none_of(existing.begin(), existing.end(),
-                         [&](const TopoDS_Shape& candidate) {
-                             return candidate.IsSame(working);
-                         })) {
-            history_->AddModified(source, working);
-        }
-    }
-
-    BRep_Builder builder_;
-    std::unordered_map<const void*, TopoDS_Shape> copies_;
-    Handle(BRepTools_History) history_;
-};
+}
 
 void remapAssemblyExactUses(ImportMeta& meta,
                             const BRepTools_History& history) {
@@ -719,16 +651,20 @@ ImportedModel cafToImportedModel(const TopoDS_Shape& oneShape,
 
     TopoDS_Shape workingShape;
     Handle(BRepTools_History) workingHistory;
+    secure_detail::ExactShapeDerivationMap exactShapeDerivation;
     ImportMeta workingMeta = captured;
     std::vector<RepairOperation> operations;
+    std::vector<ParameterizationFlagChange> parameterizationFlagChanges;
     if (profile == RepairProfile::Conservative) {
-        // EmptyCopied() preserves the exact curve/surface representation and
-        // sharing graph. Rebuilding only the topology gives WorkingBRep new
-        // TShapes without materializing computed p-curves as stored evidence.
-        TopologyIdentityCopier copier;
-        workingShape = copier.copy(oneShape);
-        copier.remapAssemblyExactUses(workingMeta);
-        workingHistory = copier.history();
+        secure_detail::ConservativeWorkingDerivation derivation =
+            secure_detail::deriveConservativeWorking(source);
+        workingShape = std::move(derivation.shape);
+        workingHistory = std::move(derivation.history);
+        exactShapeDerivation = std::move(derivation.exactShapes);
+        operations = std::move(derivation.operations);
+        parameterizationFlagChanges =
+            std::move(derivation.parameterizationFlagChanges);
+        remapAssemblyExactUses(workingMeta, exactShapeDerivation);
     } else {
         // Compatibility may mutate geometry, so it receives a geometry-deep
         // copy before the historical repair pipeline.
@@ -747,7 +683,8 @@ ImportedModel cafToImportedModel(const TopoDS_Shape& oneShape,
                       *workingHistory);
     return secure_detail::buildImportedModel(
         std::move(source), std::move(working), std::move(metadata), profile,
-        workingHistory, std::move(operations));
+        workingHistory, exactShapeDerivation, std::move(operations),
+        std::move(parameterizationFlagChanges));
 }
 
 }  // namespace weft::io

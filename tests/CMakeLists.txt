@@ -1,5 +1,8 @@
 add_executable(weft_secure_core_tests test_secure_core.cpp)
 target_link_libraries(weft_secure_core_tests PRIVATE weft_core)
+target_compile_definitions(
+  weft_secure_core_tests
+  PRIVATE WEFT_SECURE_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/secure_core_fixtures")
 weft_enable_strict_warnings(weft_secure_core_tests)
 add_test(NAME secure_core COMMAND weft_secure_core_tests)
 weft_deploy_occt_dlls(weft_secure_core_tests)

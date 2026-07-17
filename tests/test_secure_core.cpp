@@ -4,9 +4,15 @@
 #include "weft/secure_core.hpp"
 #include "weft/secure_reconnaissance.hpp"
 
+#include "../core/src/secure_core_internal.hpp"
+#include "../core/src/io/xcaf.hpp"
+
 #include "test_temp_path.hpp"
 
 #include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepTools.hxx>
+#include <BRep_Builder.hxx>
+#include <BRep_Tool.hxx>
 #include <IFSelect_ReturnStatus.hxx>
 #include <STEPCAFControl_Writer.hxx>
 #include <STEPControl_StepModelType.hxx>
@@ -14,6 +20,7 @@
 #include <TCollection_ExtendedString.hxx>
 #include <TDataStd_Name.hxx>
 #include <TDocStd_Document.hxx>
+#include <TopoDS.hxx>
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
 #include <gp_Pnt.hxx>
@@ -24,10 +31,15 @@
 #include <cstdlib>
 #include <filesystem>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
 namespace {
+
+#ifndef WEFT_SECURE_FIXTURE_DIR
+#error "WEFT_SECURE_FIXTURE_DIR must identify the frozen fixture snapshot"
+#endif
 
 int failures = 0;
 
@@ -47,6 +59,51 @@ const weft::CoedgeRecord* firstExactCoedge(const weft::BRepSnapshot& snapshot) {
             return !coedge.pcurveRepresentations.empty();
         });
     return found == snapshot.coedges.end() ? nullptr : &*found;
+}
+
+TopoDS_Shape readNativeFixture(std::string_view directory,
+                               std::string_view filename) {
+    const std::filesystem::path path =
+        std::filesystem::path(WEFT_SECURE_FIXTURE_DIR) / directory /
+        filename;
+    TopoDS_Shape sourceShape;
+    BRep_Builder builder;
+    if (!BRepTools::Read(sourceShape, path.string().c_str(), builder) ||
+        sourceShape.IsNull()) {
+        throw std::runtime_error("failed to read native repair fixture: " +
+                                 path.string());
+    }
+    return sourceShape;
+}
+
+weft::ImportedModel deriveNativeRepair(
+    const TopoDS_Shape& sourceShape, std::string_view sourceName) {
+    weft::Model source = weft::indexShape(sourceShape);
+    weft::secure_detail::ConservativeWorkingDerivation derivation =
+        weft::secure_detail::deriveConservativeWorking(source);
+    weft::Model working = weft::indexShape(derivation.shape);
+    weft::SourceMetadata metadata;
+    metadata.sourceName = std::string(sourceName);
+    metadata.importerVersion = "weft-native-repair-fixture-0.1";
+    return weft::secure_detail::buildImportedModel(
+        std::move(source), std::move(working), std::move(metadata),
+        weft::RepairProfile::Conservative, derivation.history,
+        derivation.exactShapes, std::move(derivation.operations),
+        std::move(derivation.parameterizationFlagChanges));
+}
+
+weft::ImportedModel importNativeRepairFixture(std::string_view filename) {
+    return deriveNativeRepair(readNativeFixture("derived", filename),
+                              filename);
+}
+
+bool hasDiagnostic(const weft::ImportedModel& imported,
+                   std::string_view code) {
+    return std::any_of(
+        imported.diagnostics.events.begin(), imported.diagnostics.events.end(),
+        [code](const weft::ImportDiagnostic& diagnostic) {
+            return diagnostic.code == code;
+        });
 }
 
 void testConservativeIdentity(const std::filesystem::path& path) {
@@ -477,6 +534,227 @@ void testMultipleFreeRootOccurrences() {
     std::filesystem::remove(path, ignored);
 }
 
+void testBoundedParameterizationRepair() {
+    const weft::ImportedModel repaired = importNativeRepairFixture(
+        "corrupt.edge.sameparameter_samerange_false.brep");
+    CHECK(repaired.source != nullptr);
+    CHECK(repaired.working != nullptr);
+    CHECK(!repaired.repair.sourceValid);
+    CHECK(repaired.repair.workingValid);
+    CHECK(repaired.repair.correspondenceComplete);
+    CHECK(repaired.correspondence.topologyComplete);
+    CHECK(!repaired.repair.identity);
+    CHECK(repaired.repair.meshable);
+    CHECK(repaired.repair.sourceShapeSha256 !=
+          repaired.repair.workingShapeSha256);
+    CHECK(repaired.repair.toleranceChanges.empty());
+    CHECK(repaired.repair.representationChanges.empty());
+    CHECK(repaired.repair.topologyCardinalityChanges.empty());
+    CHECK(repaired.repair.parameterizationFlagChanges.size() == 1);
+    CHECK(!repaired.diagnostics.hasErrors());
+    CHECK(hasDiagnostic(repaired, "import.source.invalid"));
+    CHECK(!hasDiagnostic(
+        repaired, "import.repair.same_parameter_range_unproven"));
+    if (repaired.source && repaired.working) {
+        CHECK(!repaired.source->snapshot.model.shape.IsPartner(
+            repaired.working->snapshot.model.shape));
+        for (const auto& [sourceId, sourceShape] :
+             repaired.source->snapshot.topology.exactShapes) {
+            const auto workingShape =
+                repaired.working->snapshot.topology.exactShapes.find(
+                    sourceId);
+            CHECK(workingShape !=
+                  repaired.working->snapshot.topology.exactShapes.end());
+            if (workingShape !=
+                repaired.working->snapshot.topology.exactShapes.end()) {
+                CHECK(!sourceShape.IsPartner(workingShape->second));
+            }
+        }
+    }
+
+    if (repaired.source && repaired.working &&
+        repaired.repair.parameterizationFlagChanges.size() == 1) {
+        const weft::ParameterizationFlagChange& change =
+            repaired.repair.parameterizationFlagChanges.front();
+        CHECK(change.sourceEdge == change.workingEdge);
+        CHECK(!change.sourceSameParameter);
+        CHECK(!change.sourceSameRange);
+        CHECK(change.workingSameParameter);
+        CHECK(change.workingSameRange);
+        CHECK(change.expectedPcurveUses > 0);
+        CHECK(change.checkedPcurveUses == change.expectedPcurveUses);
+        CHECK(change.maximumDiscrepancy == 0.0);
+        CHECK(change.maximumDiscrepancy <= change.toleranceEnvelope);
+        const weft::CorrespondenceRecord* correspondence =
+            repaired.correspondence.find(change.sourceEdge);
+        CHECK(correspondence != nullptr);
+        if (correspondence) {
+            CHECK(correspondence->relation ==
+                  weft::CorrespondenceRelation::Modified);
+            CHECK(correspondence->workingIds.size() == 1);
+        }
+        const auto evidence = std::find_if(
+            repaired.repair.validationEvidence.begin(),
+            repaired.repair.validationEvidence.end(),
+            [](const weft::RepairValidationEvidence& item) {
+                return item.code ==
+                    "repair.same_parameter_range_reconciliation";
+            });
+        CHECK(evidence != repaired.repair.validationEvidence.end());
+        if (evidence != repaired.repair.validationEvidence.end()) {
+            CHECK(evidence->expected > 0);
+            CHECK(evidence->complete());
+        }
+        const TopoDS_Edge sourceEdge = TopoDS::Edge(
+            repaired.source->snapshot.model.edges(
+                static_cast<int>(change.sourceEdge.ordinal)));
+        const TopoDS_Edge workingEdge = TopoDS::Edge(
+            repaired.working->snapshot.model.edges(
+                static_cast<int>(change.workingEdge.ordinal)));
+        CHECK(!BRep_Tool::SameParameter(sourceEdge));
+        CHECK(!BRep_Tool::SameRange(sourceEdge));
+        CHECK(BRep_Tool::SameParameter(workingEdge));
+        CHECK(BRep_Tool::SameRange(workingEdge));
+
+        const auto coedge = std::find_if(
+            repaired.source->snapshot.coedges.begin(),
+            repaired.source->snapshot.coedges.end(),
+            [&](const weft::CoedgeRecord& item) {
+                return item.edgeId == change.sourceEdge &&
+                    !item.pcurveRepresentations.empty();
+            });
+        CHECK(coedge != repaired.source->snapshot.coedges.end());
+        if (coedge != repaired.source->snapshot.coedges.end()) {
+            const auto domain = repaired.workingEvaluator->curveDomain(
+                change.workingEdge);
+            CHECK(domain && domain.value->lower && domain.value->upper);
+            if (domain && domain.value->lower && domain.value->upper) {
+                const double parameter =
+                    (*domain.value->lower + *domain.value->upper) * 0.5;
+                const weft::PcurveRef reference =
+                    coedge->pcurveRepresentations.front();
+                const auto sourceEvaluation =
+                    repaired.sourceEvaluator->evaluateCurveOnSurface(
+                        reference, parameter);
+                const auto workingEvaluation =
+                    repaired.workingEvaluator->evaluateCurveOnSurface(
+                        reference, parameter);
+                CHECK(!sourceEvaluation);
+                CHECK(sourceEvaluation.failure.has_value());
+                if (sourceEvaluation.failure) {
+                    CHECK(sourceEvaluation.failure->code ==
+                          "geometry.curve_on_surface_parameter_unproven");
+                }
+                CHECK(static_cast<bool>(workingEvaluation));
+                if (workingEvaluation) {
+                    CHECK(workingEvaluation.value->discrepancy <=
+                          change.toleranceEnvelope);
+                }
+            }
+        }
+    }
+
+    CHECK(std::any_of(
+        repaired.repair.operations.begin(), repaired.repair.operations.end(),
+        [](const weft::RepairOperation& operation) {
+            return operation.code == "repair.same_parameter_range_flags";
+        }));
+    CHECK(std::all_of(
+        repaired.correspondence.topologyOccurrenceRecords.begin(),
+        repaired.correspondence.topologyOccurrenceRecords.end(),
+        [](const weft::CorrespondenceRecord& record) {
+            return record.sourceId.valid() &&
+                record.workingIds.size() == 1 &&
+                record.relation == weft::CorrespondenceRelation::Modified;
+        }));
+
+    const TopoDS_Shape tamperedSourceShape = readNativeFixture(
+        "derived", "corrupt.edge.sameparameter_samerange_false.brep");
+    weft::Model tamperedSource = weft::indexShape(tamperedSourceShape);
+    weft::secure_detail::ConservativeWorkingDerivation tamperedDerivation =
+        weft::secure_detail::deriveConservativeWorking(tamperedSource);
+    CHECK(tamperedDerivation.parameterizationFlagChanges.size() == 1);
+    if (tamperedDerivation.parameterizationFlagChanges.size() == 1) {
+        tamperedDerivation.parameterizationFlagChanges.front()
+            .checkedPcurveUses = 0;
+    }
+    weft::Model tamperedWorking =
+        weft::indexShape(tamperedDerivation.shape);
+    weft::SourceMetadata tamperedMetadata;
+    tamperedMetadata.sourceName = "tampered-parameterization-certificate";
+    const weft::ImportedModel tampered =
+        weft::secure_detail::buildImportedModel(
+            std::move(tamperedSource), std::move(tamperedWorking),
+            std::move(tamperedMetadata),
+            weft::RepairProfile::Conservative, tamperedDerivation.history,
+            tamperedDerivation.exactShapes,
+            std::move(tamperedDerivation.operations),
+            std::move(tamperedDerivation.parameterizationFlagChanges));
+    CHECK(tampered.repair.workingValid);
+    CHECK(!tampered.repair.meshable);
+    CHECK(hasDiagnostic(tampered, "import.repair.validation_incomplete"));
+
+    TopoDS_Shape seamShape = readNativeFixture(
+        "baselines", "face.cylinder.seam_dual_pcurve.brep");
+    const weft::Model seamSource = weft::indexShape(seamShape);
+    TopoDS_Edge seamEdge;
+    for (int edgeIndex = 1;
+         edgeIndex <= seamSource.edges.Extent() && seamEdge.IsNull();
+         ++edgeIndex) {
+        const TopoDS_Edge edge =
+            TopoDS::Edge(seamSource.edges(edgeIndex));
+        const int ownerIndex = seamSource.edgeToFaces.FindIndex(edge);
+        if (ownerIndex <= 0) continue;
+        for (const TopoDS_Shape& owner :
+             seamSource.edgeToFaces.FindFromIndex(ownerIndex)) {
+            if (owner.ShapeType() == TopAbs_FACE &&
+                BRep_Tool::IsClosed(edge, TopoDS::Face(owner))) {
+                seamEdge = edge;
+                break;
+            }
+        }
+    }
+    CHECK(!seamEdge.IsNull());
+    if (!seamEdge.IsNull()) {
+        BRep_Builder builder;
+        builder.SameRange(seamEdge, false);
+        builder.SameParameter(seamEdge, false);
+        const weft::ImportedModel seamRepaired = deriveNativeRepair(
+            seamShape, "face.cylinder.seam_dual_pcurve.false_flags.brep");
+        CHECK(!seamRepaired.repair.sourceValid);
+        CHECK(seamRepaired.repair.workingValid);
+        CHECK(seamRepaired.repair.meshable);
+        CHECK(seamRepaired.correspondence.topologyComplete);
+        CHECK(seamRepaired.repair.parameterizationFlagChanges.size() == 1);
+        if (seamRepaired.repair.parameterizationFlagChanges.size() == 1) {
+            const weft::ParameterizationFlagChange& change =
+                seamRepaired.repair.parameterizationFlagChanges.front();
+            CHECK(change.expectedPcurveUses == 2);
+            CHECK(change.checkedPcurveUses == 2);
+            CHECK(change.maximumDiscrepancy <= change.toleranceEnvelope);
+        }
+    }
+
+    const weft::ImportedModel rangeMismatch = importNativeRepairFixture(
+        "corrupt.edge.range_mismatch.brep");
+    CHECK(!rangeMismatch.repair.workingValid);
+    CHECK(!rangeMismatch.repair.meshable);
+    CHECK(rangeMismatch.repair.identity);
+    CHECK(rangeMismatch.repair.parameterizationFlagChanges.empty());
+    CHECK(hasDiagnostic(
+        rangeMismatch, "import.repair.same_parameter_range_unproven"));
+    CHECK(hasDiagnostic(rangeMismatch, "import.working.non_meshable"));
+
+    const weft::ImportedModel beyondTolerance = importNativeRepairFixture(
+        "corrupt.edge.pcurve_disagreement_beyond_tolerance.brep");
+    CHECK(!beyondTolerance.repair.workingValid);
+    CHECK(!beyondTolerance.repair.meshable);
+    CHECK(beyondTolerance.repair.identity);
+    CHECK(beyondTolerance.repair.parameterizationFlagChanges.empty());
+    CHECK(hasDiagnostic(beyondTolerance, "import.working.invalid"));
+    CHECK(hasDiagnostic(beyondTolerance, "import.working.non_meshable"));
+}
+
 void testTotalReconnaissance(const std::filesystem::path& cylinderPath) {
     const weft::ImportedModel cylinder = weft::importStepSecure(
         cylinderPath.string(), weft::RepairProfile::Conservative);
@@ -550,6 +828,7 @@ int main() {
         testReadFailureIsNamed(path);
         testSourceSnapshotPreventsPathReplacement();
         testMultipleFreeRootOccurrences();
+        testBoundedParameterizationRepair();
         testTotalReconnaissance(path);
         std::error_code ignored;
         std::filesystem::remove(path, ignored);
