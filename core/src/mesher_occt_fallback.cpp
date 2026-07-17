@@ -23,7 +23,7 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         // meshing the live model mutates the B-rep, so an identical warm-cache
         // generation can solve different adaptive counts than the cold run.
         // Mesh an isolated topology copy while sharing the exact geometry.
-        BRepBuilderAPI_Copy copier(face, Standard_False, Standard_False);
+        BRepBuilderAPI_Copy copier(face, false, false);
         const TopoDS_Face triangulationFace =
             TopoDS::Face(copier.Shape());
         BRepTools::Clean(triangulationFace);
@@ -48,9 +48,9 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         }
         mp.Deflection = defl;
         mp.Angle = s.angleToleranceDeg * M_PI / 180.0;
-        mp.Relative = Standard_False;
+        mp.Relative = false;
         if (s.minSize > 0) mp.MinSize = s.minSize;
-        mp.InParallel = Standard_True;
+        mp.InParallel = true;
         BRepMesh_IncrementalMesh mesher(triangulationFace, mp);
         tri = BRep_Tool::Triangulation(triangulationFace, loc);
     }

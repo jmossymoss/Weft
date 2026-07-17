@@ -1,20 +1,22 @@
 #include "xcaf.hpp"
 
+#include "../secure_core_internal.hpp"
+
 #include <Standard_Version.hxx>
 
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
 #include <BRepGProp.hxx>
 #include <Bnd_Box.hxx>
 #include <BRepBndLib.hxx>
 #include <GProp_GProps.hxx>
+#include <NCollection_HSequence.hxx>
 #include <TCollection_ExtendedString.hxx>
-#include <TColStd_HSequenceOfExtendedString.hxx>
 #include <TDataStd_Name.hxx>
 #include <TDocStd_Document.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopLoc_Location.hxx>
-#include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
 #include <UnitsMethods.hxx>
@@ -51,8 +53,8 @@ Handle(XCAFDoc_MaterialTool) XCaf::materialTool() const {
     return XCAFDoc_DocumentTool::MaterialTool(m_main);
 }
 
-TDF_LabelSequence XCaf::topLevelFreeShapes() const {
-    TDF_LabelSequence seq;
+LabelSequence XCaf::topLevelFreeShapes() const {
+    LabelSequence seq;
     shapeTool()->GetFreeShapes(seq);
     return seq;
 }
@@ -61,13 +63,13 @@ bool XCaf::isShapeAssembly(const TDF_Label& l) { return XCAFDoc_ShapeTool::IsAss
 bool XCaf::isShapeReference(const TDF_Label& l) { return XCAFDoc_ShapeTool::IsReference(l); }
 bool XCaf::isShapeSimple(const TDF_Label& l) { return XCAFDoc_ShapeTool::IsSimpleShape(l); }
 
-TDF_LabelSequence XCaf::shapeComponents(const TDF_Label& l) {
-    TDF_LabelSequence seq;
+LabelSequence XCaf::shapeComponents(const TDF_Label& l) {
+    LabelSequence seq;
     XCAFDoc_ShapeTool::GetComponents(l, seq);
     return seq;
 }
-TDF_LabelSequence XCaf::shapeSubs(const TDF_Label& l) {
-    TDF_LabelSequence seq;
+LabelSequence XCaf::shapeSubs(const TDF_Label& l) {
+    LabelSequence seq;
     XCAFDoc_ShapeTool::GetSubShapes(l, seq);
     return seq;
 }
@@ -100,7 +102,7 @@ std::string XCaf::labelName(const TDF_Label& label) {
     Handle(TDataStd_Name) nameAttr;
     if (!label.FindAttribute(TDataStd_Name::GetID(), nameAttr)) return {};
     const TCollection_ExtendedString& es = nameAttr->Get();
-    const Standard_Integer len = es.LengthOfCString();
+    const int len = es.LengthOfCString();
     if (len <= 0) return {};
     std::string out(static_cast<size_t>(len) + 1, '\0');
     Standard_PCharacter p = out.data();
@@ -111,10 +113,10 @@ std::string XCaf::labelName(const TDF_Label& label) {
 
 std::string XCaf::layerName(const TDF_Label& l) const {
     Handle(XCAFDoc_LayerTool) lt = layerTool();
-    Handle(TColStd_HSequenceOfExtendedString) layers;
+    occ::handle<NCollection_HSequence<TCollection_ExtendedString>> layers;
     if (!lt->GetLayers(l, layers) || layers.IsNull() || layers->IsEmpty()) return {};
     const TCollection_ExtendedString& es = layers->Value(1);
-    const Standard_Integer len = es.LengthOfCString();
+    const int len = es.LengthOfCString();
     if (len <= 0) return {};
     std::string out(static_cast<size_t>(len) + 1, '\0');
     Standard_PCharacter p = out.data();
@@ -208,10 +210,10 @@ static void recordSolidMeta(const TopoDS_Shape& sh, const Inherited& inh, Import
 }
 
 static const void* firstBodyKey(const TopoDS_Shape& sh) {
-    for (TopExp_Explorer sx(sh, TopAbs_SOLID); sx.More(); sx.Next())
-        return sx.Current().TShape().get();
-    for (TopExp_Explorer sx(sh, TopAbs_SHELL, TopAbs_SOLID); sx.More(); sx.Next())
-        return sx.Current().TShape().get();
+    TopExp_Explorer solid(sh, TopAbs_SOLID);
+    if (solid.More()) return solid.Current().TShape().get();
+    TopExp_Explorer shell(sh, TopAbs_SHELL, TopAbs_SOLID);
+    if (shell.More()) return shell.Current().TShape().get();
     return nullptr;
 }
 
@@ -301,10 +303,10 @@ static int walkLabel(const XCaf& xc, const TDF_Label& label, const TopLoc_Locati
 
 // ---------------------------------------------------------- entry points ----
 
-void captureMeta(const XCaf& xc, const TDF_LabelSequence& roots, ImportMeta& out) {
+void captureMeta(const XCaf& xc, const LabelSequence& roots, ImportMeta& out) {
     int leaves = 0;
     bool sawAssembly = false;
-    for (Standard_Integer i = 1; i <= roots.Length(); ++i)
+    for (int i = 1; i <= roots.Length(); ++i)
         walkLabel(xc, roots.Value(i), TopLoc_Location(), Inherited{}, out, leaves, sawAssembly);
 }
 
@@ -324,7 +326,7 @@ static std::vector<TopoDS_Shape> mappedFinals(const BRepTools_History& hist,
                                               const TopoDS_Shape& s) {
     std::vector<TopoDS_Shape> out;
     if (hist.IsRemoved(s)) return out;
-    const TopTools_ListOfShape& mod = hist.Modified(s);
+    const ShapeList& mod = hist.Modified(s);
     if (!mod.IsEmpty()) {
         // Range-based iteration over the NCollection list — portable across
         // OCCT versions/platforms (the dedicated
@@ -473,7 +475,7 @@ static void resolveAssemblySolidIds(const TopoDS_Shape& origShape, const Model& 
 
 Model cafToModel(const TopoDS_Shape& oneShape, const Handle(TDocStd_Document)& doc) {
     XCaf xc(doc);
-    TDF_LabelSequence roots = xc.topLevelFreeShapes();
+    LabelSequence roots = xc.topLevelFreeShapes();
 
     ImportMeta meta;
     captureMeta(xc, roots, meta);
@@ -495,6 +497,92 @@ Model cafToModel(const TopoDS_Shape& oneShape, const Handle(TDocStd_Document)& d
     }
     m.assembly = std::move(meta.assembly);
     return m;
+}
+
+namespace {
+
+void applyCapturedMeta(Model& model, const TopoDS_Shape& sourceShape,
+                       ImportMeta meta, const BRepTools_History& history) {
+    reassociateMeta(model, sourceShape, meta, history);
+    fillSolidMetaFromCaf(model, sourceShape, meta);
+    model.lengthUnitMm = meta.lengthUnitMm;
+
+    // Hierarchy is metadata only; a flat single body keeps assembly empty.
+    if (model.solids.Extent() <= 1) {
+        meta.assembly.clear();
+    } else {
+        resolveAssemblySolidIds(sourceShape, model, meta);
+    }
+    model.assembly = std::move(meta.assembly);
+}
+
+Handle(BRepTools_History) composeCopyRepairHistory(
+    const TopoDS_Shape& sourceShape, const BRepBuilderAPI_Copy& copier,
+    const Handle(BRepTools_History)& repairHistory) {
+    Handle(BRepTools_History) composed = new BRepTools_History();
+    for (TopAbs_ShapeEnum kind : {TopAbs_FACE, TopAbs_EDGE}) {
+        for (TopExp_Explorer explorer(sourceShape, kind); explorer.More();
+             explorer.Next()) {
+            const TopoDS_Shape& source = explorer.Current();
+            const TopoDS_Shape copied = copier.ModifiedShape(source);
+            if (copied.IsNull() ||
+                (!repairHistory.IsNull() && repairHistory->IsRemoved(copied))) {
+                composed->Remove(source);
+                continue;
+            }
+            bool mapped = false;
+            if (!repairHistory.IsNull()) {
+                const ShapeList& repaired = repairHistory->Modified(copied);
+                for (const TopoDS_Shape& finalShape : repaired) {
+                    composed->AddModified(source, finalShape);
+                    mapped = true;
+                }
+            }
+            if (!mapped) composed->AddModified(source, copied);
+        }
+    }
+    return composed;
+}
+
+}  // namespace
+
+ImportedModel cafToImportedModel(const TopoDS_Shape& oneShape,
+                                 const Handle(TDocStd_Document)& doc,
+                                 SourceMetadata metadata,
+                                 RepairProfile profile) {
+    XCaf xc(doc);
+    ImportMeta captured;
+    captureMeta(xc, xc.topLevelFreeShapes(), captured);
+    captured.lengthUnitMm = readLengthUnit(doc);
+
+    // Build source evidence directly from the processing-disabled transfer.
+    // An empty history deliberately means every source entity is an identity.
+    Handle(BRepTools_History) sourceHistory = new BRepTools_History();
+    Model source = weft::indexShape(oneShape);
+    applyCapturedMeta(source, oneShape, captured, *sourceHistory);
+
+    TopoDS_Shape workingShape = oneShape;
+    Handle(BRepTools_History) workingHistory = new BRepTools_History();
+    std::vector<RepairOperation> operations;
+    if (profile == RepairProfile::Compatibility) {
+        // Compatibility APIs receive a geometry-deep working copy. A repair
+        // can therefore never alter a TShape or geometry handle retained by
+        // SourceBRep. Compose copy and repair mappings back to source IDs.
+        BRepBuilderAPI_Copy copier(oneShape, true, false);
+        Handle(BRepTools_History) repairHistory;
+        workingShape = weft::healWithHistory(copier.Shape(), repairHistory);
+        workingHistory = composeCopyRepairHistory(
+            oneShape, copier, repairHistory);
+        operations.push_back({
+            "repair.compatibility_pipeline", {}, {},
+            "historical Weft healing pipeline applied to a geometry-deep working copy after immutable source capture"});
+    }
+
+    Model working = weft::indexShape(workingShape);
+    applyCapturedMeta(working, oneShape, captured, *workingHistory);
+    return secure_detail::buildImportedModel(
+        std::move(source), std::move(working), std::move(metadata), profile,
+        workingHistory, std::move(operations));
 }
 
 }  // namespace weft::io

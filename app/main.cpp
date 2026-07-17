@@ -3235,18 +3235,6 @@ static int pickFace(App& app, GLuint flatProg, const Mat4& mvp, int px, int py,
     return int(rgba[0]) + (int(rgba[1]) << 8);
 }
 
-// All face ids whose pick pixels appear inside the given screen rect.
-static std::set<int> pickFacesInRect(App& app, GLuint flatProg,
-                                     const Mat4& mvp, int x0, int y0, int x1,
-                                     int y1, int fbw, int fbh) {
-    std::set<int> hits;
-    PickRect pr = readPickRect(app, flatProg, mvp, x0, y0, x1, y1, fbw, fbh);
-    for (int fid : pr.fid) {
-        if (fid > 0) hits.insert(fid);
-    }
-    return hits;
-}
-
 // ---------------------------------------------------------------------------
 // UI.
 
@@ -6589,8 +6577,10 @@ int main(int argc, char** argv) {
                 needDockLayout = false;
                 ImGui::DockBuilderRemoveNode(dockspace);
                 ImGui::DockBuilderAddNode(
-                    dockspace, ImGuiDockNodeFlags_PassthruCentralNode |
-                                   ImGuiDockNodeFlags_DockSpace);
+                    dockspace,
+                    static_cast<ImGuiDockNodeFlags>(
+                        static_cast<int>(ImGuiDockNodeFlags_PassthruCentralNode) |
+                        static_cast<int>(ImGuiDockNodeFlags_DockSpace)));
                 ImGui::DockBuilderSetNodeSize(
                     dockspace, ImGui::GetMainViewport()->WorkSize);
                 ImGuiID center = dockspace;

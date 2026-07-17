@@ -21,8 +21,6 @@
 #include <TopAbs_ShapeEnum.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
-#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
-#include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
@@ -65,7 +63,7 @@ Model indexShape(const TopoDS_Shape& shape) {
 static Handle(BRepTools_History) historyOfSewing(const TopoDS_Shape& before,
                                                  BRepBuilderAPI_Sewing& sew) {
     Handle(BRepTools_History) h = new BRepTools_History();
-    TopTools_IndexedMapOfShape faces;
+    ShapeMap faces;
     TopExp::MapShapes(before, TopAbs_FACE, faces);
     for (int i = 1; i <= faces.Extent(); ++i) {
         const TopoDS_Shape& s = faces(i);
@@ -75,7 +73,7 @@ static Handle(BRepTools_History) historyOfSewing(const TopoDS_Shape& before,
                 h->AddModified(s, r);
         }
     }
-    TopTools_IndexedMapOfShape edges;
+    ShapeMap edges;
     TopExp::MapShapes(before, TopAbs_EDGE, edges);
     for (int i = 1; i <= edges.Extent(); ++i) {
         const TopoDS_Shape& s = edges(i);
@@ -95,7 +93,7 @@ static Handle(BRepTools_History) historyOfReShape(const TopoDS_Shape& before,
     Handle(BRepTools_History) h = new BRepTools_History();
     if (ctx.IsNull()) return h;
     for (TopAbs_ShapeEnum type : {TopAbs_FACE, TopAbs_EDGE}) {
-        TopTools_IndexedMapOfShape map;
+        ShapeMap map;
         TopExp::MapShapes(before, type, map);
         for (int i = 1; i <= map.Extent(); ++i) {
             const TopoDS_Shape& s = map(i);
@@ -112,7 +110,7 @@ static Handle(BRepTools_History) historyOfReShape(const TopoDS_Shape& before,
 // Count a shape's open-shell edges: non-degenerate edges bordering fewer
 // than two faces. The watertightness gate for the capping pass below.
 static int countOpenShellEdges(const TopoDS_Shape& shape) {
-    TopTools_IndexedDataMapOfShapeListOfShape e2f;
+    EdgeFaceMap e2f;
     TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, e2f);
     int open = 0;
     for (int i = 1; i <= e2f.Extent(); ++i) {
@@ -140,7 +138,7 @@ static TopoDS_Shape capDroppedFaces(const TopoDS_Shape& shape,
                                     Handle(BRepTools_History)& outHist) {
     std::vector<TopoDS_Shape> caps;
     for (TopExp_Explorer sx(shape, TopAbs_SHELL); sx.More(); sx.Next()) {
-        TopTools_IndexedDataMapOfShapeListOfShape e2f;
+        EdgeFaceMap e2f;
         TopExp::MapShapesAndAncestors(sx.Current(), TopAbs_EDGE, TopAbs_FACE,
                                       e2f);
         std::vector<TopoDS_Edge> boundary;
@@ -193,7 +191,7 @@ static TopoDS_Shape capDroppedFaces(const TopoDS_Shape& shape,
                 TopoDS_Face cap;
                 {
                     // A planar loop takes an exact planar cap.
-                    BRepBuilderAPI_MakeFace mf(wire, Standard_True);
+                    BRepBuilderAPI_MakeFace mf(wire, true);
                     if (mf.IsDone()) cap = mf.Face();
                 }
                 if (cap.IsNull()) {
@@ -245,7 +243,7 @@ TopoDS_Shape healWithHistory(const TopoDS_Shape& input, Handle(BRepTools_History
     };
     outHist = new BRepTools_History();
     TopoDS_Shape shape = input;
-    TopTools_IndexedMapOfShape inputFaces;
+    ShapeMap inputFaces;
     TopExp::MapShapes(input, TopAbs_FACE, inputFaces);
     // ShapeFix reconstructs the whole compound. On multi-thousand-face
     // assemblies this is an unbounded serial tax (MP9: about nine seconds),

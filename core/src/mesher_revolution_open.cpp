@@ -1309,10 +1309,10 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
             // per cavity segment carrying every hole sample in its span
             // — a quad or a grouped n-gon, never a triangle fan (the
             // notch webs' absorption pattern).
-            const double dir = tc[nc] > tc[0] ? 1.0 : -1.0;
+            const double angularDirection = tc[nc] > tc[0] ? 1.0 : -1.0;
             auto off = [&](double h, double c) {
                 // angular offset h-c, wrapped to the nearest turn
-                double d = (h - c) * dir;
+                double d = (h - c) * angularDirection;
                 while (d > M_PI) d -= 2.0 * M_PI;
                 while (d < -M_PI) d += 2.0 * M_PI;
                 return std::abs(d);

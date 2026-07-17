@@ -981,9 +981,6 @@ void pinCastellatedRims(const Model& model,
         }
         if (int(uk.size()) != nu) continue;
         std::sort(uk.begin(), uk.end());
-        const double vCut =
-            std::abs(vPlain - v0) < std::abs(vPlain - v1) ? v1 : v0;
-
         // Per-edge pcurve box (u-span, v-range) + the wall azimuths (the
         // two notch corners). Classify: an azimuthal arc (base arc / floor)
         // spans u at ~constant v; a wall spans v at ~constant u.

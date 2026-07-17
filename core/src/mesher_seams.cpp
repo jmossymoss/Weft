@@ -1053,7 +1053,6 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
             auto bit = faceBoundary.find(fids[s2]);
             if (bit == faceBoundary.end()) continue;
             const auto& pitch = facePitch[fids[s2]];
-            const auto& pitchMin = facePitchMin[fids[s2]];
             const auto& home = faceHome[fids[s2]];
             std::set<uint32_t> seen;
             for (const auto& [a, b] : bit->second) {
@@ -1062,9 +1061,6 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
                     auto pit = pitch.find(v);
                     const double pv =
                         pit != pitch.end() ? pit->second : 0.0;
-                    auto pmt = pitchMin.find(v);
-                    const double pvMin =
-                        pmt != pitchMin.end() ? pmt->second : 0.0;
                     // 35%: coons rails' UV-interpolated resampling on
                     // curved bsplines drifts past the sagitta model
                     // (teleporter face 301: 27% of pitch off its rail

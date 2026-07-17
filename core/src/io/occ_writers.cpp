@@ -184,7 +184,7 @@ std::unique_ptr<FactoryWriter> makeOccFactoryWriter() {
 PolyMesh tessellate(const Model& model) {
     PolyMesh mesh;
     if (model.shape.IsNull()) return mesh;
-    BRepMesh_IncrementalMesh mesher(model.shape, 0.1, Standard_False, 0.5, Standard_True);
+    BRepMesh_IncrementalMesh mesher(model.shape, 0.1, false, 0.5, true);
     mesher.Perform();
     for (int fid = 1; fid <= model.faces.Extent(); ++fid) {
         TopoDS_Face face = TopoDS::Face(model.faces(fid));

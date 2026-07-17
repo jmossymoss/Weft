@@ -4,6 +4,8 @@ if(MSVC)
 endif()
 
 add_library(weft_core
+  src/secure_core.cpp
+  src/secure_core_internal.hpp
   src/model.cpp
   src/analysis.cpp
   src/compiler.cpp
@@ -72,6 +74,7 @@ target_include_directories(weft_core
 # headers must compile as C++20 too. Propagate the requirement through the
 # target instead of making each CLI/app/test target rediscover it manually.
 target_compile_features(weft_core PUBLIC cxx_std_20)
+weft_enable_strict_warnings(weft_core)
 
 # OCCT 7.8 merged TKSTEP/TKSTEPBase/TKSTEPAttr/TKSTEP209 into TKDESTEP.
 if(TARGET TKDESTEP)

@@ -18,10 +18,10 @@
 #include <BRep_Builder.hxx>
 #include <GeomAPI_PointsToBSpline.hxx>
 #include <GeomAPI_PointsToBSplineSurface.hxx>
-#include <TColgp_Array1OfPnt.hxx>
-#include <TColgp_Array2OfPnt.hxx>
+#include <NCollection_Array1.hxx>
+#include <NCollection_Array2.hxx>
+#include <NCollection_List.hxx>
 #include <TopExp_Explorer.hxx>
-#include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Edge.hxx>
@@ -250,7 +250,7 @@ TopoDS_Shape makeFixture(const std::string& name) {
         // axial lines (easy to notch); the S in Y and the hump in Z make
         // the surface a genuine freeform bspline the rails must be swept
         // across, not a plane or a cylinder.
-        TColgp_Array2OfPnt net(1, N, 1, 2);
+        NCollection_Array2<gp_Pnt> net(1, N, 1, 2);
         for (int i = 0; i < N; ++i) {
             const double t = double(i) / (N - 1);
             const double cx = Lx * t;
@@ -316,7 +316,7 @@ TopoDS_Shape makeFixture(const std::string& name) {
         // but is not TYPED as one, so it takes coons patchwork unless the
         // planner detects revolution geometry from the shape itself
         // (MVP demand #2).
-        TColgp_Array1OfPnt pts(1, 6);
+        NCollection_Array1<gp_Pnt> pts(1, 6);
         pts.SetValue(1, gp_Pnt(14.0, 0.0, 0.0));
         pts.SetValue(2, gp_Pnt(15.5, 0.0, 8.0));
         pts.SetValue(3, gp_Pnt(16.0, 0.0, 20.0));
@@ -343,7 +343,7 @@ TopoDS_Shape makeFixture(const std::string& name) {
                 .Shape();
         // Hollow it: remove the top cap so the shell opens like a can —
         // the remaining walls are offset surfaces of the revolve.
-        TopTools_ListOfShape toRemove;
+        NCollection_List<TopoDS_Shape> toRemove;
         for (TopExp_Explorer ex(vase, TopAbs_FACE); ex.More(); ex.Next()) {
             const TopoDS_Face f = TopoDS::Face(ex.Current());
             // The flat annular top at z=48.

@@ -2037,7 +2037,9 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
         }
 
         std::vector<uint32_t> ringIdx(ringPts.size());
-        for (size_t i = 0; i < ringIdx.size(); ++i) ringIdx[i] = i;
+        for (size_t i = 0; i < ringIdx.size(); ++i) {
+            ringIdx[i] = static_cast<uint32_t>(i);
+        }
         size_t emitted = 0;
         for (const auto& t : triangulatePoly(ringPts, ringIdx)) {
             uint32_t a = ringIds[t[0]], b = ringIds[t[1]],

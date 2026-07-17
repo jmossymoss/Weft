@@ -1959,13 +1959,13 @@ void testWeldVerts() {
     // Weld two ADJACENT verts (a mesh edge's ends) at their center: the
     // two polygons sharing that edge lose a corner, everything else
     // remaps, and the solid stays closed.
-    uint32_t va = 0, vb = 0;
+    uint32_t pickedA = 0, pickedB = 0;
     bool found = false;
     for (size_t pp = 0; pp < mesh.polygons.size() && !found; ++pp) {
         const auto& poly = mesh.polygons[pp];
         if (poly.size() == 4) {
-            va = poly[0];
-            vb = poly[1];
+            pickedA = poly[0];
+            pickedB = poly[1];
             found = true;
         }
     }
@@ -1973,8 +1973,8 @@ void testWeldVerts() {
     weft::ManualOp weld;
     weld.kind = weft::ManualOp::Kind::WeldVerts;
     weld.weldMode = 0;  // center
-    weld.weldPoints.push_back(mesh.vertices[va]);
-    weld.weldPoints.push_back(mesh.vertices[vb]);
+    weld.weldPoints.push_back(mesh.vertices[pickedA]);
+    weld.weldPoints.push_back(mesh.vertices[pickedB]);
     const size_t polysBefore = mesh.polygonCount();
     weft::PolyMesh welded = mesh;
     CHECK_EQ(weft::weldVerts(welded, weld), 2);
@@ -1990,9 +1990,9 @@ void testWeldVerts() {
     weft::ManualOp toLast = weld;
     toLast.weldMode = 1;
     weft::PolyMesh w2 = mesh;
-    std::array<double, 3> lastPos = mesh.vertices[vb];
+    std::array<double, 3> lastPos = mesh.vertices[pickedB];
     CHECK_EQ(weft::weldVerts(w2, toLast), 2);
-    CHECK(w2.vertices[va] == lastPos);
+    CHECK(w2.vertices[pickedA] == lastPos);
 
     // Recipe round trip carries mode and points.
     weft::Recipe recipe;

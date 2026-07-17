@@ -1,13 +1,16 @@
 #include "occ_rollback.hpp"
 #include "xcaf.hpp"
+#include "../secure_core_internal.hpp"
 
 #include "weft/io/reader.hpp"
 
 #include <Standard_Version.hxx>
 
+#include <APIHeaderSection_MakeHeader.hxx>
 #include <IFSelect_ReturnStatus.hxx>
 #include <Interface_InterfaceModel.hxx>
 #include <Resource_FormatType.hxx>
+#include <ShapeProcess.hxx>
 #include <STEPCAFControl_Controller.hxx>
 #include <STEPCAFControl_Reader.hxx>
 #include <STEPControl_Reader.hxx>
@@ -29,11 +32,16 @@
 #include <XSControl_TransferReader.hxx>
 #include <XSControl_WorkSession.hxx>
 
+#include <algorithm>
 #include <map>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <iterator>
 #include <memory>
+#include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -132,6 +140,38 @@ static void applyLegacySolidNames(Model& m, const TopoDS_Shape& oneShape,
 
 namespace {
 
+std::optional<std::string> stepSchema(const STEPCAFControl_Reader& reader) {
+    const auto model = reader.Reader().StepModel();
+    if (model.IsNull()) return std::nullopt;
+    APIHeaderSection_MakeHeader header(model);
+    if (!header.HasFs() || header.NbSchemaIdentifiers() <= 0) {
+        return std::nullopt;
+    }
+    const auto identifier = header.SchemaIdentifiersValue(1);
+    if (identifier.IsNull() || identifier->Length() == 0) {
+        return std::nullopt;
+    }
+    std::string schema = identifier->ToCString();
+    std::transform(schema.begin(), schema.end(), schema.begin(), [](char value) {
+        return value >= 'a' && value <= 'z'
+                   ? static_cast<char>(value - 'a' + 'A')
+                   : value;
+    });
+    if (schema.find("AP242") != std::string::npos ||
+        schema.find("MANAGED_MODEL_BASED_3D_ENGINEERING") != std::string::npos) {
+        return "AP242";
+    }
+    if (schema.find("AP214") != std::string::npos ||
+        schema.find("AUTOMOTIVE_DESIGN") != std::string::npos) {
+        return "AP214";
+    }
+    if (schema.find("AP203") != std::string::npos ||
+        schema.find("CONFIG_CONTROL_DESIGN") != std::string::npos) {
+        return "AP203";
+    }
+    return schema;
+}
+
 void applyStepReadStatics(OccStaticVariablesRollback& rb) {
     // These OCCT defaults are already 1 (all products/levels/representations),
     // so setting them changes nothing about the geometry transfer; the guard
@@ -161,7 +201,18 @@ public:
         OccStaticVariablesRollback rb;
         applyStepReadStatics(rb);
         m_path = path;
-        const bool ok = m_reader.ReadFile(path.c_str()) == IFSelect_RetDone;
+        // Bind provenance and translation to one immutable byte snapshot.
+        // Reopening the path after hashing would permit a concurrent replace
+        // to make the recorded digest describe different source bytes.
+        std::ifstream input(path, std::ios::binary);
+        if (!input) return false;
+        m_sourceBytes.assign(std::istreambuf_iterator<char>(input),
+                             std::istreambuf_iterator<char>());
+        if (input.bad()) return false;
+        std::istringstream source(
+            m_sourceBytes, std::ios::in | std::ios::binary);
+        const bool ok =
+            m_reader.ReadStream(path.c_str(), source) == IFSelect_RetDone;
         if (std::getenv("WEFT_PROFILE_IMPORT")) {
             std::fprintf(stderr, "import profile: %-24s %8lld ms\n", "STEP parse",
                          static_cast<long long>(
@@ -207,9 +258,82 @@ public:
         return m;
     }
 
+    ImportedModel transferSecure(RepairProfile repairProfile) override {
+        OccStaticVariablesRollback rb;
+        applyStepReadStatics(rb);
+
+        // The transfer result below is evidence, not a convenience shape.
+        // Freeze both the XDE reader and its base STEP reader to an empty
+        // processing policy and verify OCCT retained that request.
+        const ShapeProcess::OperationsFlags noShapeProcessing;
+        m_reader.SetShapeProcessFlags(noShapeProcessing);
+        m_reader.ChangeReader().SetShapeProcessFlags(noShapeProcessing);
+        const auto xdeProcessing = m_reader.GetShapeProcessFlags();
+        const auto baseProcessing = m_reader.ChangeReader().GetShapeProcessFlags();
+        if (!xdeProcessing.second || xdeProcessing.first.any() ||
+            !baseProcessing.second || baseProcessing.first.any()) {
+            throw SecureImportError(
+                "import.processing.not_disabled",
+                "OCCT did not retain the processing-disabled STEP policy: " + m_path);
+        }
+
+        const int requestedRootCount = m_reader.NbRootsForTransfer();
+        if (requestedRootCount <= 0) {
+            throw SecureImportError(
+                "import.step.no_transfer_roots",
+                "STEP source contains no transferable product roots: " + m_path);
+        }
+
+        Handle(TDocStd_Document) doc;
+        XCAFApp_Application::GetApplication()->NewDocument("BinXCAF", doc);
+        if (!m_reader.Transfer(doc)) {
+            XCAFApp_Application::GetApplication()->Close(doc);
+            throw SecureImportError("import.step.transfer_failed",
+                                    "STEP/XDE secure transfer failed: " + m_path);
+        }
+
+        if (m_reader.Reader().NbShapes() != requestedRootCount) {
+            XCAFApp_Application::GetApplication()->Close(doc);
+            throw SecureImportError(
+                "import.step.partial_transfer",
+                "STEP/XDE did not retain one source result for every requested root: " +
+                    m_path);
+        }
+
+        TopoDS_Shape sourceShape = m_reader.Reader().OneShape();
+        if (sourceShape.IsNull()) {
+            XCAFApp_Application::GetApplication()->Close(doc);
+            throw SecureImportError(
+                "import.step.no_source_shape",
+                "STEP file contained no processing-disabled source shape: " + m_path);
+        }
+
+        SourceMetadata metadata =
+            secure_detail::readSourceMetadata(m_path, m_sourceBytes);
+        metadata.stepSchema = stepSchema(m_reader);
+        metadata.effectiveTranslatorConfiguration = {
+            "STEP/XDE transfer",
+            "XDE shape processing: disabled",
+            "base STEP shape processing: disabled",
+            "requested roots: " + std::to_string(requestedRootCount),
+            "repair profile: " + std::string(repairProfileName(repairProfile)),
+        };
+
+        try {
+            ImportedModel imported = cafToImportedModel(
+                sourceShape, doc, std::move(metadata), repairProfile);
+            XCAFApp_Application::GetApplication()->Close(doc);
+            return imported;
+        } catch (...) {
+            XCAFApp_Application::GetApplication()->Close(doc);
+            throw;
+        }
+    }
+
 private:
     STEPCAFControl_Reader m_reader;
     std::string m_path;
+    std::string m_sourceBytes;
 };
 
 }  // namespace

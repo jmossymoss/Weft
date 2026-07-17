@@ -209,6 +209,7 @@ bool meshOrthogonalLocalComb(const TopoDS_Face& face,
                              const std::vector<int>& solvedEdge, int faceId,
                              int nu, int nv, int cellCap, MeshBuilder& out,
                              const PinnedEdges* pins) {
+    (void)plan;
     nu = std::max(1, nu);
     nv = std::max(1, nv);
     const double u0 = surf.FirstUParameter(), u1 = surf.LastUParameter();

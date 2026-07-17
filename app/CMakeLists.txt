@@ -60,7 +60,19 @@ if(TRUE)
   )
 endif()
 
-add_executable(weft_app main.cpp ${WEFT_BACKEND_SRC})
+add_library(weft_imgui_backends STATIC ${WEFT_BACKEND_SRC})
+target_include_directories(weft_imgui_backends PRIVATE
+  ${WEFT_IMGUI_INC}
+  ${WEFT_IMGUI_INC}/backends
+)
+target_link_libraries(weft_imgui_backends PRIVATE
+  ${WEFT_IMGUI_LIB}
+  glfw
+  OpenGL::GL
+)
+
+add_executable(weft_app main.cpp)
+weft_enable_strict_warnings(weft_app)
 
 target_include_directories(weft_app PRIVATE
   ${WEFT_IMGUI_INC}
@@ -71,6 +83,7 @@ target_include_directories(weft_app PRIVATE
 target_link_libraries(weft_app PRIVATE
   weft_core
   ${WEFT_IMGUI_LIB}
+  weft_imgui_backends
   glfw
   OpenGL::GL
 )

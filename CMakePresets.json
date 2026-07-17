@@ -1,0 +1,99 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "vs2022",
+      "displayName": "Windows MSVC 2022 strict",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/vs2022",
+      "cacheVariables": {
+        "WEFT_WARNINGS_AS_ERRORS": "ON",
+        "WEFT_STATIC_ANALYSIS": "OFF"
+      }
+    },
+    {
+      "name": "vs2022-static-analysis",
+      "displayName": "Windows MSVC 2022 static analysis",
+      "inherits": "vs2022",
+      "binaryDir": "${sourceDir}/build/vs2022-static-analysis",
+      "cacheVariables": {
+        "WEFT_STATIC_ANALYSIS": "ON"
+      }
+    },
+    {
+      "name": "linux-gcc",
+      "displayName": "Linux GCC strict",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-gcc",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_COMPILER": "g++",
+        "WEFT_WARNINGS_AS_ERRORS": "ON",
+        "WEFT_STATIC_ANALYSIS": "OFF"
+      }
+    },
+    {
+      "name": "linux-gcc-static-analysis",
+      "displayName": "Linux GCC static analysis",
+      "inherits": "linux-gcc",
+      "binaryDir": "${sourceDir}/build/linux-gcc-static-analysis",
+      "cacheVariables": {
+        "WEFT_STATIC_ANALYSIS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "vs2022",
+      "configurePreset": "vs2022",
+      "configuration": "Release",
+      "jobs": 4
+    },
+    {
+      "name": "vs2022-static-analysis",
+      "configurePreset": "vs2022-static-analysis",
+      "configuration": "Release",
+      "jobs": 4
+    },
+    {
+      "name": "linux-gcc",
+      "configurePreset": "linux-gcc",
+      "jobs": 4
+    },
+    {
+      "name": "linux-gcc-static-analysis",
+      "configurePreset": "linux-gcc-static-analysis",
+      "jobs": 4
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "vs2022",
+      "configurePreset": "vs2022",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "vs2022-static-analysis",
+      "configurePreset": "vs2022-static-analysis",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "linux-gcc",
+      "configurePreset": "linux-gcc",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "linux-gcc-static-analysis",
+      "configurePreset": "linux-gcc-static-analysis",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

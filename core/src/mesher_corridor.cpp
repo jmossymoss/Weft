@@ -329,7 +329,7 @@ bool findTrimCorridor(const TopoDS_Face& face,
     // Only the best few cheap candidates pay for BRep face classification.
     // A valid corridor has a decisive rail/cap split; dozens of near ties are
     // evidence that this is not the narrow topology class handled here.
-    const int testN = std::min<int>(16, candidates.size());
+    const int testN = std::min(16, static_cast<int>(candidates.size()));
     for (int ci = 0; ci < testN; ++ci) {
         const Meta& m = candidates[ci];
         std::vector<int> rawA = corridorRingArc(n, m.i, m.j, +1);
@@ -612,7 +612,7 @@ bool findSectionStrip(const TopoDS_Face& face,
               });
 
     const double tol = std::max(1e-9, BRep_Tool::Tolerance(face));
-    const int testN = std::min<int>(24, candidates.size());
+    const int testN = std::min(24, static_cast<int>(candidates.size()));
     for (int ci = 0; ci < testN; ++ci) {
         Candidate& c = candidates[ci];
         const std::vector<double> da = arcPrefix(c.a);

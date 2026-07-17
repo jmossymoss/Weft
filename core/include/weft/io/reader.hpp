@@ -8,6 +8,11 @@
 #include <span>
 #include <string>
 
+namespace weft {
+struct ImportedModel;
+enum class RepairProfile;
+}  // namespace weft
+
 namespace weft::io {
 
 // Two-phase like Mayo: readFile parses the file into reader state, transfer
@@ -17,6 +22,10 @@ struct Reader {
     virtual ~Reader() = default;
     virtual bool readFile(const std::string& path) = 0;  // parse into reader state
     virtual Model transfer() = 0;                        // materialize -> Model
+    // Secure-core seam. Format readers that can retain an immutable source
+    // representation override this; the default records an identity
+    // source/working pair for formats whose import is already materialized.
+    virtual ImportedModel transferSecure(RepairProfile profile);
     virtual void applyParams(const ParamGroup&) {}       // no-op default (Stage A)
 };
 

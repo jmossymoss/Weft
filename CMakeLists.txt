@@ -4,6 +4,34 @@ project(weft VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+option(WEFT_WARNINGS_AS_ERRORS "Treat warnings in Weft-owned targets as errors" OFF)
+option(WEFT_STATIC_ANALYSIS "Enable the compiler's built-in static analyzer" OFF)
+
+function(weft_enable_strict_warnings target)
+  if(MSVC)
+    target_compile_options(${target} PRIVATE /W4 /external:anglebrackets /external:W0)
+    if(WEFT_WARNINGS_AS_ERRORS)
+      target_compile_options(${target} PRIVATE /WX)
+    endif()
+    if(WEFT_STATIC_ANALYSIS)
+      # Weft's interactive app reserves an 8 MiB stack; keep the analyzer's
+      # stack-frame gate conservative without its 16 KiB default rejecting
+      # established orchestration functions. Large byte buffers still belong
+      # on the heap and are fixed rather than hidden by this threshold.
+      target_compile_options(${target} PRIVATE /analyze /analyze:external-
+                                                /analyze:stacksize 65536)
+    endif()
+  elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+    if(WEFT_WARNINGS_AS_ERRORS)
+      target_compile_options(${target} PRIVATE -Werror)
+    endif()
+    if(WEFT_STATIC_ANALYSIS AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+      target_compile_options(${target} PRIVATE -fanalyzer)
+    endif()
+  endif()
+endfunction()
+
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()

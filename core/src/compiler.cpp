@@ -292,7 +292,7 @@ BrepGraph buildGraph(const Model& model, const Analysis& analysis) {
         node.degenerate = BRep_Tool::Degenerated(edge);
         node.length = analysis.edges[eid - 1].length;
         TopoDS_Vertex first, last;
-        TopExp::Vertices(edge, first, last, Standard_True);
+        TopExp::Vertices(edge, first, last, true);
         node.firstVertex = first.IsNull() ? 0 : vertexMap.FindIndex(first);
         node.lastVertex = last.IsNull() ? 0 : vertexMap.FindIndex(last);
         node.closed = node.firstVertex > 0 &&

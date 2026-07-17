@@ -4,12 +4,13 @@
 // metadata capture / re-association helpers shared by the B-rep readers.
 
 #include "weft/model.hpp"
+#include "weft/secure_core.hpp"
 
 #include <BRepTools_History.hxx>
 #include <Quantity_Color.hxx>
 #include <Standard_Handle.hxx>
+#include <NCollection_Sequence.hxx>
 #include <TDF_Label.hxx>
-#include <TDF_LabelSequence.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopoDS_Shape.hxx>
 
@@ -27,6 +28,8 @@ class XCAFDoc_Material;
 
 namespace weft::io {
 
+using LabelSequence = NCollection_Sequence<TDF_Label>;
+
 // Port of Mayo's XCaf: fetches XDE tools on demand from doc->Main() and
 // exposes typed helpers. Stateless beyond the main label.
 class XCaf {
@@ -40,13 +43,13 @@ public:
     Handle(XCAFDoc_LayerTool) layerTool() const;
     Handle(XCAFDoc_MaterialTool) materialTool() const;
 
-    TDF_LabelSequence topLevelFreeShapes() const;  // shapeTool()->GetFreeShapes()
+    LabelSequence topLevelFreeShapes() const;  // shapeTool()->GetFreeShapes()
 
     static bool isShapeAssembly(const TDF_Label&);   // IsAssembly
     static bool isShapeReference(const TDF_Label&);  // IsReference (instance + placement)
     static bool isShapeSimple(const TDF_Label&);     // IsSimpleShape
-    static TDF_LabelSequence shapeComponents(const TDF_Label&);  // GetComponents
-    static TDF_LabelSequence shapeSubs(const TDF_Label&);        // GetSubShapes (per-face labels)
+    static LabelSequence shapeComponents(const TDF_Label&);  // GetComponents
+    static LabelSequence shapeSubs(const TDF_Label&);        // GetSubShapes (per-face labels)
     static TDF_Label shapeReferred(const TDF_Label&);           // GetReferredShape
     static TopoDS_Shape shape(const TDF_Label&);                // GetShape
     static TopLoc_Location shapeReferenceLocation(const TDF_Label&);
@@ -81,7 +84,7 @@ struct ImportMeta {
 
 // Walk the assembly, resolving colors/names/layers/materials onto the
 // original faces/solids and building the assembly tree.
-void captureMeta(const XCaf& xc, const TDF_LabelSequence& roots, ImportMeta& out);
+void captureMeta(const XCaf& xc, const LabelSequence& roots, ImportMeta& out);
 
 // Recover the file's declared length unit as millimetres-per-model-unit
 // (1.0 for a mm file, 25.4 for inch, 1000 for metre). OCCT keeps geometry in
@@ -104,6 +107,15 @@ void fillSolidMetaFromCaf(Model& m, const TopoDS_Shape& origShape, const ImportM
 // re-associate. solidNames are filled from XCAF here; STEP overrides them with
 // its legacy STEP-entity names afterward to keep byte-identical output.
 Model cafToModel(const TopoDS_Shape& oneShape, const Handle(TDocStd_Document)& doc);
+
+// Secure-core import path. `oneShape` is the processing-disabled XDE transfer
+// result and is always retained as the immutable source model. Conservative
+// import derives an identity working copy; compatibility import runs the
+// historical Weft heal pipeline as an explicit, certified repair stage.
+ImportedModel cafToImportedModel(const TopoDS_Shape& oneShape,
+                                 const Handle(TDocStd_Document)& doc,
+                                 SourceMetadata metadata,
+                                 RepairProfile profile);
 
 }  // namespace weft::io
 

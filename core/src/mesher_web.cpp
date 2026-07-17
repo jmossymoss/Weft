@@ -382,8 +382,7 @@ bool earClip(std::vector<WebPoint> poly, int faceId, bool flip,
 // (doubled bridge verts share ids, so the bridge edges cancel pairwise
 // and the result stays watertight). Returns one simple "keyhole" ring.
 std::vector<WebPoint> mergeHolesIntoRing(
-    std::vector<WebPoint> outer, std::vector<std::vector<WebPoint>> holes,
-    int faceId, bool flip, MeshBuilder& out) {
+    std::vector<WebPoint> outer, std::vector<std::vector<WebPoint>> holes) {
     auto maxX = [](const std::vector<WebPoint>& ring) {
         size_t best = 0;
         for (size_t i = 1; i < ring.size(); ++i) {
@@ -575,7 +574,7 @@ bool triangulateWeb(std::vector<WebPoint> outer,
                     bool flip, MeshBuilder& out) {
     if (delaunayWeb(outer, holes, faceId, flip, out)) return true;
     std::vector<WebPoint> ring = mergeHolesIntoRing(
-        std::move(outer), std::move(holes), faceId, flip, out);
+        std::move(outer), std::move(holes));
     if (ring.size() < 3) return false;
     return earClip(std::move(ring), faceId, flip, out);
 }
@@ -1229,7 +1228,7 @@ bool meshMinimalPlanar(const TopoDS_Face& face, const Model& model,
     }
     // Pathological visibility: keep the keyhole as a last resort.
     std::vector<WebPoint> ring = mergeHolesIntoRing(
-        std::move(webOuter), std::move(webHoles), faceId, flip, out);
+        std::move(webOuter), std::move(webHoles));
     std::vector<uint32_t> poly;
     poly.reserve(ring.size());
     for (const WebPoint& w : ring) poly.push_back(w.vert);

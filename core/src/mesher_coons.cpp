@@ -1114,14 +1114,14 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
         const int segCount = int(rim.size()) - 1;
         int t = 0;
         while (t < segCount) {
-            const int left = segCount - t;
-            if (left == 3 && flat(t) && flat(t + 1)) {
+            const int remaining = segCount - t;
+            if (remaining == 3 && flat(t) && flat(t + 1)) {
                 // Pentagon soaks up the odd tail across three flat rungs.
                 out.addPolygon({fan.apex, rim[t], rim[t + 1], rim[t + 2],
                                 rim[t + 3]},
                                faceId, flip);
                 t += 3;
-            } else if (left >= 2 && flat(t)) {
+            } else if (remaining >= 2 && flat(t)) {
                 out.addPolygon({fan.apex, rim[t], rim[t + 1], rim[t + 2]},
                                faceId, flip);
                 t += 2;
