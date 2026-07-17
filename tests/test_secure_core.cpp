@@ -90,6 +90,8 @@ TopoDS_Shape readNativeFixture(std::string_view directory,
 weft::ImportedModel deriveNativeRepair(
     const TopoDS_Shape& sourceShape, std::string_view sourceName) {
     weft::Model source = weft::indexShape(sourceShape);
+    const std::string sourceDigestAtCapture =
+        weft::secure_detail::exactShapeDigest(source.shape);
     weft::secure_detail::ConservativeWorkingDerivation derivation =
         weft::secure_detail::deriveConservativeWorking(source);
     weft::Model working = weft::indexShape(derivation.shape);
@@ -102,7 +104,7 @@ weft::ImportedModel deriveNativeRepair(
         derivation.exactShapes, std::move(derivation.operations),
         std::move(derivation.parameterizationFlagChanges),
         std::move(derivation.shellOrientationRepairs),
-        std::move(derivation.refusals));
+        std::move(derivation.refusals), sourceDigestAtCapture);
 }
 
 weft::ImportedModel importNativeRepairFixture(std::string_view filename) {
@@ -1500,6 +1502,66 @@ void testCoherentPolarityNormalization() {
                         "import.repair.face_orientation_unproven"));
 }
 
+// Every repair witness so far is native B-rep; this proves a certified
+// conservative repair fires on the public STEP path too.
+void testStepOrientationRepairWitness() {
+    TopoDS_Shape witness = readNativeFixture(
+        "baselines", "baseline.pathology.box.brep");
+    rebuildStoredChildren(witness, [](std::size_t, TopoDS_Shape& child) {
+        if (child.ShapeType() == TopAbs_SHELL) reverseStoredChild(child);
+        return true;
+    });
+    const std::filesystem::path path = weft::test::uniqueTempPath(
+        "weft_step_orientation_witness", ".step");
+    weft::writeStep(witness, path.string());
+
+    const weft::ImportedModel imported = weft::importStepSecure(
+        path.string(), weft::RepairProfile::Conservative);
+    CHECK(imported.source != nullptr);
+    CHECK(imported.working != nullptr);
+    if (!imported.source || !imported.working) return;
+
+    // The witness must be non-vacuous: the defect has to survive STEP
+    // translation, otherwise this test would pass while proving nothing.
+    CHECK(imported.repair.shellOrientationRepairs.size() == 1);
+    if (imported.repair.shellOrientationRepairs.size() != 1) {
+        std::printf(
+            "FAIL STEP witness was normalized away by translation\n");
+        ++failures;
+        return;
+    }
+    const weft::ShellOrientationRepair& repair =
+        imported.repair.shellOrientationRepairs.front();
+    CHECK(repair.shellOccurrenceReversed || !repair.flippedFaces.empty());
+    CHECK(repair.expectedManifoldEdges == 12);
+    CHECK(repair.checkedManifoldEdges == 12);
+    CHECK(repair.signedVolume > 7679.0);
+    CHECK(repair.signedVolume < 7681.0);
+    CHECK(repair.infinitePointOutside);
+    CHECK(!imported.repair.identity);
+    CHECK(imported.repair.meshable);
+    CHECK(imported.repair.correspondenceComplete);
+    CHECK(imported.correspondence.topologyComplete);
+    CHECK(imported.repair.refusals.empty());
+    CHECK(imported.repair.toleranceChanges.empty());
+    CHECK(imported.repair.representationChanges.empty());
+    CHECK(imported.repair.topologyCardinalityChanges.empty());
+    const auto evidence = std::find_if(
+        imported.repair.validationEvidence.begin(),
+        imported.repair.validationEvidence.end(),
+        [](const weft::RepairValidationEvidence& item) {
+            return item.code == "repair.face_adjacency_orientation";
+        });
+    CHECK(evidence != imported.repair.validationEvidence.end());
+    if (evidence != imported.repair.validationEvidence.end()) {
+        CHECK(evidence->expected > 0);
+        CHECK(evidence->complete());
+    }
+
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 void testTotalReconnaissance(const std::filesystem::path& cylinderPath) {
     const weft::ImportedModel cylinder = weft::importStepSecure(
         cylinderPath.string(), weft::RepairProfile::Conservative);
@@ -1579,6 +1641,7 @@ int main() {
         testBoundedParameterizationRepair();
         testFaceAdjacencyOrientationRepair();
         testCoherentPolarityNormalization();
+        testStepOrientationRepairWitness();
         testTotalReconnaissance(path);
         std::error_code ignored;
         std::filesystem::remove(path, ignored);

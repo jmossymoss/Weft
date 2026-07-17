@@ -614,6 +614,8 @@ ImportedModel cafToImportedModel(const TopoDS_Shape& oneShape,
     Handle(BRepTools_History) sourceHistory = new BRepTools_History();
     Model source = weft::indexShape(oneShape);
     applyCapturedMeta(source, oneShape, captured, *sourceHistory);
+    const std::string sourceDigestAtCapture =
+        secure_detail::exactShapeDigest(source.shape);
 
     TopoDS_Shape workingShape;
     Handle(BRepTools_History) workingHistory;
@@ -651,7 +653,8 @@ ImportedModel cafToImportedModel(const TopoDS_Shape& oneShape,
         std::move(source), std::move(working), std::move(metadata), profile,
         workingHistory, exactShapeDerivation, std::move(operations),
         std::move(parameterizationFlagChanges),
-        std::move(shellOrientationRepairs), std::move(refusals));
+        std::move(shellOrientationRepairs), std::move(refusals),
+        sourceDigestAtCapture);
 }
 
 }  // namespace weft::io

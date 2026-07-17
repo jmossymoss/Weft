@@ -1169,6 +1169,10 @@ const Model& ImportedModel::workingModel() const {
 
 namespace secure_detail {
 
+std::string exactShapeDigest(const TopoDS_Shape& shape) {
+    return weft::exactShapeDigest(shape);
+}
+
 SourceMetadata readSourceMetadata(const std::string& path,
                                   std::string_view sourceBytes) {
     SourceMetadata metadata;
@@ -1192,7 +1196,8 @@ ImportedModel buildImportedModel(
     std::vector<RepairOperation> operations,
     std::vector<ParameterizationFlagChange> parameterizationFlagChanges,
     std::vector<ShellOrientationRepair> shellOrientationRepairs,
-    std::vector<RepairRefusal> refusals) {
+    std::vector<RepairRefusal> refusals,
+    std::string sourceDigestAtCapture) {
     ImportedModel imported;
     const bool sourceValid = shapeIsValid(sourceModel.shape);
     const bool workingValid = shapeIsValid(workingModel.shape);
@@ -1497,6 +1502,18 @@ ImportedModel buildImportedModel(
          parameterizationFailed},
         {"repair.face_adjacency_orientation", orientationExpected,
          orientationChecked, 0, orientationFailed},
+        // The immutable source must serialize to the same bytes it had when
+        // captured, before any derivation or repair stage ran.
+        {"repair.source_immutability", 1,
+         static_cast<std::size_t>(!sourceDigestAtCapture.empty() &&
+                                  !sourceShapeDigest.empty() &&
+                                  sourceDigestAtCapture ==
+                                      sourceShapeDigest),
+         0,
+         static_cast<std::size_t>(sourceDigestAtCapture.empty() ||
+                                  sourceShapeDigest.empty() ||
+                                  sourceDigestAtCapture !=
+                                      sourceShapeDigest)},
     };
     for (const TopologyAccountCheck& sourceCheck :
          sourceTopologyValidation.checks) {
@@ -1588,6 +1605,13 @@ ImportedModel buildImportedModel(
                  "existing edge parameter/range data did not satisfy the bounded conservative reconciliation proof"});
             imported.repair.meshable = false;
         }
+    }
+    if (!sourceDigestAtCapture.empty() && !sourceShapeDigest.empty() &&
+        sourceDigestAtCapture != sourceShapeDigest) {
+        diagnostic("import.source.mutated_after_capture",
+                   DiagnosticSeverity::Fatal,
+                   "the immutable source B-rep serialized differently after "
+                   "the repair stages ran");
     }
     for (const RepairRefusal& refusal : imported.repair.refusals) {
         imported.diagnostics.events.push_back(

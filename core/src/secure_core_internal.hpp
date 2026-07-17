@@ -83,6 +83,12 @@ TopologyAccount buildTopologyAccount(const Model& model);
 SourceMetadata readSourceMetadata(const std::string& path,
                                   std::string_view sourceBytes);
 
+// Canonical exact-representation digest of a shape (empty on failure).
+// Callers capture it on the source immediately after indexing and BEFORE any
+// derivation stage so buildImportedModel can prove the immutable source was
+// never touched by a repair.
+std::string exactShapeDigest(const TopoDS_Shape& shape);
+
 ImportedModel buildImportedModel(
     Model source, Model working, SourceMetadata metadata,
     RepairProfile profile, const Handle(BRepTools_History)& history,
@@ -90,6 +96,7 @@ ImportedModel buildImportedModel(
     std::vector<RepairOperation> operations = {},
     std::vector<ParameterizationFlagChange> parameterizationFlagChanges = {},
     std::vector<ShellOrientationRepair> shellOrientationRepairs = {},
-    std::vector<RepairRefusal> refusals = {});
+    std::vector<RepairRefusal> refusals = {},
+    std::string sourceDigestAtCapture = {});
 
 }  // namespace weft::secure_detail

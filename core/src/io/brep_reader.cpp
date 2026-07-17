@@ -121,6 +121,8 @@ public:
         if (m_unitResolution) {
             source.lengthUnitMm = m_unitResolution->millimetresPerModelUnit;
         }
+        const std::string sourceDigestAtCapture =
+            secure_detail::exactShapeDigest(source.shape);
         TopoDS_Shape workingShape;
         Handle(BRepTools_History) workingHistory;
         secure_detail::ExactShapeDerivationMap exactShapeDerivation;
@@ -158,7 +160,8 @@ public:
             repairProfile, workingHistory, exactShapeDerivation,
             std::move(operations),
             std::move(parameterizationFlagChanges),
-            std::move(shellOrientationRepairs), std::move(refusals));
+            std::move(shellOrientationRepairs), std::move(refusals),
+            sourceDigestAtCapture);
         if (m_unitResolution) {
             imported.diagnostics.events.push_back({
                 {StableIdKind::Diagnostic,
