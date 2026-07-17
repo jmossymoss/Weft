@@ -43,3 +43,6 @@ Current records:
 - `ADR-0022-xde-product-structure-and-brep-occurrences.md` - exact XDE
   definitions/instances, recursive B-rep occurrences, coedge uses, and
   selective assembly-container separation without geometric fallback.
+- `ADR-0023-topology-isolated-conservative-working-copy.md` - faithful
+  topology isolation without p-curve materialization, exact-use rebinding, and
+  independently certified identity correspondence.

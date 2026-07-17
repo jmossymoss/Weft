@@ -13,6 +13,9 @@ may supersede a result but must not rewrite what an earlier run proved.
 - `m1-exact-occurrence-account-2026-07-17.md` - exact XDE
   definition/instance ownership, recursive B-rep occurrences, coedge uses,
   non-vacuous validation, and identity correspondence evidence.
+- `m1-topology-isolated-working-copy-2026-07-17.md` - byte-identical but
+  TShape-distinct conservative working topology, rejected OCCT copy routes,
+  exact-use rebinding, and full Windows corpus proof.
 - `m2-reconnaissance-2026-07-17.md` - total face/edge classification and planar projection evidence.
 - `m3-interval-solver-2026-07-17.md` - exact equality/minimum/parity count assignment evidence.
 - `m3-canonical-boundaries-2026-07-17.md` - atomic shared-edge samples, UV uses, and azimuth registration evidence.
