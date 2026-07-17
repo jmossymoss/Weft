@@ -4,6 +4,8 @@
 #include "weft/secure_core.hpp"
 #include "weft/secure_reconnaissance.hpp"
 
+#include "test_temp_path.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -24,11 +26,6 @@ int failures = 0;
             ++failures;                                                   \
         }                                                                 \
     } while (false)
-
-std::filesystem::path temporaryStepPath() {
-    std::filesystem::path directory = std::filesystem::temp_directory_path();
-    return directory / "weft_secure_core_cylinder.step";
-}
 
 const weft::CoedgeRecord* firstExactCoedge(const weft::BRepSnapshot& snapshot) {
     const auto found = std::find_if(
@@ -165,9 +162,8 @@ void testReadFailureIsNamed(const std::filesystem::path& path) {
 }
 
 void testSourceSnapshotPreventsPathReplacement() {
-    const std::filesystem::path path =
-        std::filesystem::temp_directory_path() /
-        "weft_secure_core_snapshot.step";
+    const std::filesystem::path path = weft::test::uniqueTempPath(
+        "weft_secure_core_snapshot", ".step");
     weft::writeStep(weft::makeFixture("cylinder"), path.string());
 
     weft::io::System system;
@@ -231,9 +227,8 @@ void testTotalReconnaissance(const std::filesystem::path& cylinderPath) {
     CHECK(planes == 2);
     CHECK(cylinders == 1);
 
-    const std::filesystem::path boxPath =
-        std::filesystem::temp_directory_path() /
-        "weft_secure_core_recon_box.step";
+    const std::filesystem::path boxPath = weft::test::uniqueTempPath(
+        "weft_secure_core_recon_box", ".step");
     weft::writeStep(weft::makeFixture("box"), boxPath.string());
     const weft::ImportedModel box = weft::importStepSecure(
         boxPath.string(), weft::RepairProfile::Conservative);
@@ -259,7 +254,8 @@ void testTotalReconnaissance(const std::filesystem::path& cylinderPath) {
 }  // namespace
 
 int main() {
-    const std::filesystem::path path = temporaryStepPath();
+    const std::filesystem::path path = weft::test::uniqueTempPath(
+        "weft_secure_core_cylinder", ".step");
     try {
         weft::writeStep(weft::makeFixture("cylinder"), path.string());
         testConservativeIdentity(path);

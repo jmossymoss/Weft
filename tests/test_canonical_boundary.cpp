@@ -2,6 +2,8 @@
 #include "weft/fixture.hpp"
 #include "weft/model.hpp"
 
+#include "test_temp_path.hpp"
+
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
@@ -237,14 +239,12 @@ void testPartialPeriodicCurveIsOpen(const std::filesystem::path& path) {
 }  // namespace
 
 int main() {
-    const std::filesystem::path directory =
-        std::filesystem::temp_directory_path();
-    const std::filesystem::path boxPath =
-        directory / "weft_canonical_boundary_box.step";
-    const std::filesystem::path cylinderPath =
-        directory / "weft_canonical_boundary_cylinder.step";
-    const std::filesystem::path partialArcPath =
-        directory / "weft_canonical_boundary_partial_arc.step";
+    const std::filesystem::path boxPath = weft::test::uniqueTempPath(
+        "weft_canonical_boundary_box", ".step");
+    const std::filesystem::path cylinderPath = weft::test::uniqueTempPath(
+        "weft_canonical_boundary_cylinder", ".step");
+    const std::filesystem::path partialArcPath = weft::test::uniqueTempPath(
+        "weft_canonical_boundary_partial_arc", ".step");
     try {
         verifyCanonicalModel("box", boxPath, true, false);
         verifyCanonicalModel("cylinder", cylinderPath, true, true);

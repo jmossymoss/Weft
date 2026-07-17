@@ -3,8 +3,9 @@
 #include "weft/secure_core.hpp"
 #include "weft/secure_reconnaissance.hpp"
 
+#include "test_temp_path.hpp"
+
 #include <algorithm>
-#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -28,11 +29,8 @@ int failures = 0;
 class TemporaryCorpus {
 public:
     TemporaryCorpus() {
-        const auto nonce = std::chrono::high_resolution_clock::now()
-                               .time_since_epoch()
-                               .count();
-        path_ = std::filesystem::temp_directory_path() /
-            ("weft_generated_secure_corpus_" + std::to_string(nonce));
+        path_ = weft::test::uniqueTempPath(
+            "weft_generated_secure_corpus");
         if (!std::filesystem::create_directory(path_)) {
             throw std::runtime_error("failed to create temporary corpus");
         }
