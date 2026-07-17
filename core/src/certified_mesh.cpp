@@ -28,8 +28,217 @@ enum CheckIndex : std::size_t {
     TriangleGeometry,
     EdgeIncidence,
     EdgeWinding,
+    TriangleIntersection,
     Fingerprint,
 };
+
+std::array<double, 3> triangleNormal(const std::array<double, 3>& a,
+                                     const std::array<double, 3>& b,
+                                     const std::array<double, 3>& c);
+
+// Exact triangle/triangle disjointness over finite doubles. Any contact —
+// crossing, touching, or coplanar overlap — reports non-disjoint; a
+// predicate failure reports nothing so callers can fail closed.
+std::size_t dominantNormalAxis(const std::array<PredicatePoint3, 3>& triangle) {
+    const std::array<double, 3> normal =
+        triangleNormal(triangle[0], triangle[1], triangle[2]);
+    std::size_t dropAxis = 0;
+    for (std::size_t axis = 1; axis < 3; ++axis) {
+        if (std::abs(normal[axis]) > std::abs(normal[dropAxis])) {
+            dropAxis = axis;
+        }
+    }
+    return dropAxis;
+}
+
+PredicatePoint2 flattenPoint(PredicatePoint3 point, std::size_t dropAxis) {
+    PredicatePoint2 flat{};
+    std::size_t out = 0;
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+        if (axis != dropAxis) flat[out++] = point[axis];
+    }
+    return flat;
+}
+
+// Inclusive 2D point-in-triangle: boundary contact counts as inside.
+std::optional<bool> pointMeetsTriangle2d(
+    const GeometricPredicates& predicates,
+    const std::array<PredicatePoint2, 3>& triangle, PredicatePoint2 point) {
+    const auto winding =
+        predicates.orient2d(triangle[0], triangle[1], triangle[2]);
+    if (!winding) return std::nullopt;
+    if (*winding.value == ExactSign::Zero) return std::nullopt;
+    for (std::size_t edge = 0; edge < 3; ++edge) {
+        const auto side = predicates.orient2d(
+            triangle[edge], triangle[(edge + 1) % 3], point);
+        if (!side) return std::nullopt;
+        if (*side.value != ExactSign::Zero &&
+            *side.value != *winding.value) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::optional<bool> segmentMeetsTriangle(
+    const GeometricPredicates& predicates, PredicatePoint3 p,
+    PredicatePoint3 q, const std::array<PredicatePoint3, 3>& triangle) {
+    const auto pSide =
+        predicates.orient3d(triangle[0], triangle[1], triangle[2], p);
+    const auto qSide =
+        predicates.orient3d(triangle[0], triangle[1], triangle[2], q);
+    if (!pSide || !qSide) return std::nullopt;
+    const bool pOnPlane = *pSide.value == ExactSign::Zero;
+    const bool qOnPlane = *qSide.value == ExactSign::Zero;
+    if (pOnPlane || qOnPlane) {
+        // The segment meets the supporting plane at the on-plane endpoints
+        // (or along itself when coplanar); contact exists only where those
+        // points actually lie on the triangle.
+        const std::size_t dropAxis = dominantNormalAxis(triangle);
+        const std::array<PredicatePoint2, 3> flat{
+            flattenPoint(triangle[0], dropAxis),
+            flattenPoint(triangle[1], dropAxis),
+            flattenPoint(triangle[2], dropAxis)};
+        if (pOnPlane && qOnPlane) {
+            const PredicatePoint2 p2 = flattenPoint(p, dropAxis);
+            const PredicatePoint2 q2 = flattenPoint(q, dropAxis);
+            for (std::size_t edge = 0; edge < 3; ++edge) {
+                const auto crossing = predicates.segmentIntersection(
+                    p2, q2, flat[edge], flat[(edge + 1) % 3]);
+                if (!crossing) return std::nullopt;
+                if (*crossing.value != SegmentIntersectionKind::None) {
+                    return true;
+                }
+            }
+            const auto pInside = pointMeetsTriangle2d(predicates, flat, p2);
+            const auto qInside = pointMeetsTriangle2d(predicates, flat, q2);
+            if (!pInside || !qInside) return std::nullopt;
+            return *pInside || *qInside;
+        }
+        const PredicatePoint3 onPlane = pOnPlane ? p : q;
+        return pointMeetsTriangle2d(predicates, flat,
+                                    flattenPoint(onPlane, dropAxis));
+    }
+    if (*pSide.value == *qSide.value) return false;
+    // The segment pierces the supporting plane at one interior point; the
+    // signs around the triangle edges decide where that point lies. Mixed
+    // strict signs put it outside; otherwise it is inside or exactly on the
+    // boundary, both of which are contact.
+    bool sawPositive = false;
+    bool sawNegative = false;
+    for (std::size_t edge = 0; edge < 3; ++edge) {
+        const auto side = predicates.orient3d(
+            p, q, triangle[edge], triangle[(edge + 1) % 3]);
+        if (!side) return std::nullopt;
+        if (*side.value == ExactSign::Positive) sawPositive = true;
+        if (*side.value == ExactSign::Negative) sawNegative = true;
+    }
+    return !(sawPositive && sawNegative);
+}
+
+std::optional<bool> coplanarTrianglesDisjoint(
+    const GeometricPredicates& predicates,
+    const std::array<PredicatePoint3, 3>& one,
+    const std::array<PredicatePoint3, 3>& two) {
+    const std::array<double, 3> normal = triangleNormal(one[0], one[1], one[2]);
+    std::size_t dropAxis = 0;
+    for (std::size_t axis = 1; axis < 3; ++axis) {
+        if (std::abs(normal[axis]) > std::abs(normal[dropAxis])) {
+            dropAxis = axis;
+        }
+    }
+    const auto flatten = [dropAxis](PredicatePoint3 point) {
+        PredicatePoint2 flat{};
+        std::size_t out = 0;
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            if (axis != dropAxis) flat[out++] = point[axis];
+        }
+        return flat;
+    };
+    std::array<PredicatePoint2, 3> first;
+    std::array<PredicatePoint2, 3> second;
+    for (std::size_t corner = 0; corner < 3; ++corner) {
+        first[corner] = flatten(one[corner]);
+        second[corner] = flatten(two[corner]);
+    }
+    for (std::size_t a = 0; a < 3; ++a) {
+        for (std::size_t b = 0; b < 3; ++b) {
+            const auto crossing = predicates.segmentIntersection(
+                first[a], first[(a + 1) % 3], second[b],
+                second[(b + 1) % 3]);
+            if (!crossing) return std::nullopt;
+            if (*crossing.value != SegmentIntersectionKind::None) {
+                return false;
+            }
+        }
+    }
+    const auto containsStrictly =
+        [&](const std::array<PredicatePoint2, 3>& outer,
+            PredicatePoint2 candidate) -> std::optional<bool> {
+        const auto winding =
+            predicates.orient2d(outer[0], outer[1], outer[2]);
+        if (!winding) return std::nullopt;
+        if (*winding.value == ExactSign::Zero) return false;
+        for (std::size_t edge = 0; edge < 3; ++edge) {
+            const auto side = predicates.orient2d(
+                outer[edge], outer[(edge + 1) % 3], candidate);
+            if (!side) return std::nullopt;
+            if (*side.value != *winding.value) return false;
+        }
+        return true;
+    };
+    for (std::size_t corner = 0; corner < 3; ++corner) {
+        const auto inside = containsStrictly(first, second[corner]);
+        const auto reverse = containsStrictly(second, first[corner]);
+        if (!inside || !reverse) return std::nullopt;
+        if (*inside || *reverse) return false;
+    }
+    return true;
+}
+
+std::optional<bool> trianglesDisjoint(
+    const GeometricPredicates& predicates,
+    const std::array<PredicatePoint3, 3>& one,
+    const std::array<PredicatePoint3, 3>& two) {
+    std::array<ExactSign, 3> twoAgainstOne{};
+    std::array<ExactSign, 3> oneAgainstTwo{};
+    for (std::size_t corner = 0; corner < 3; ++corner) {
+        const auto sideTwo =
+            predicates.orient3d(one[0], one[1], one[2], two[corner]);
+        const auto sideOne =
+            predicates.orient3d(two[0], two[1], two[2], one[corner]);
+        if (!sideTwo || !sideOne) return std::nullopt;
+        twoAgainstOne[corner] = *sideTwo.value;
+        oneAgainstTwo[corner] = *sideOne.value;
+    }
+    const auto strictlyOneSide = [](const std::array<ExactSign, 3>& signs) {
+        return (signs[0] == ExactSign::Positive &&
+                signs[1] == ExactSign::Positive &&
+                signs[2] == ExactSign::Positive) ||
+            (signs[0] == ExactSign::Negative &&
+             signs[1] == ExactSign::Negative &&
+             signs[2] == ExactSign::Negative);
+    };
+    if (strictlyOneSide(twoAgainstOne) || strictlyOneSide(oneAgainstTwo)) {
+        return true;
+    }
+    const auto allZero = [](const std::array<ExactSign, 3>& signs) {
+        return signs[0] == ExactSign::Zero && signs[1] == ExactSign::Zero &&
+            signs[2] == ExactSign::Zero;
+    };
+    if (allZero(twoAgainstOne) && allZero(oneAgainstTwo)) {
+        return coplanarTrianglesDisjoint(predicates, one, two);
+    }
+    for (std::size_t edge = 0; edge < 3; ++edge) {
+        const auto oneEdge = segmentMeetsTriangle(
+            predicates, one[edge], one[(edge + 1) % 3], two);
+        const auto twoEdge = segmentMeetsTriangle(
+            predicates, two[edge], two[(edge + 1) % 3], one);
+        if (!oneEdge || !twoEdge) return std::nullopt;
+        if (*oneEdge || *twoEdge) return false;
+    }
+    return true;
+}
 
 struct Edge {
     std::uint32_t lower = 0;
@@ -267,6 +476,7 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
         {"certified.triangle_geometry", 0},
         {"certified.edge_incidence", 0},
         {"certified.edge_winding", 0},
+        {"certified.triangle_intersection", 0},
         {"certified.fingerprint", 1},
     };
     if (!imported.meshable() || !imported.working ||
@@ -610,6 +820,98 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
         }
     }
     if (incidence.failed != 0 || winding.failed != 0) return result;
+
+    // Exact cross-face disjointness: triangles from different working faces
+    // that share no global vertex must neither cross nor touch anywhere. Any
+    // contact without shared canonical identity is a T-junction or a pierce
+    // and fails closed; an unprovable pair also fails closed.
+    {
+        const std::shared_ptr<const GeometricPredicates> predicates =
+            makeExactDyadicPredicates();
+        ValidationCoverage& disjointness =
+            result.validation.checks[TriangleIntersection];
+        struct TriangleBounds {
+            std::array<double, 3> lower{};
+            std::array<double, 3> upper{};
+        };
+        std::vector<TriangleBounds> bounds;
+        bounds.reserve(mesh.triangles.size());
+        for (const CertifiedTriangle& triangle : mesh.triangles) {
+            TriangleBounds box;
+            for (std::size_t axis = 0; axis < 3; ++axis) {
+                box.lower[axis] = std::numeric_limits<double>::infinity();
+                box.upper[axis] = -std::numeric_limits<double>::infinity();
+            }
+            for (std::uint32_t vertex : triangle.vertices) {
+                const std::array<double, 3>& position =
+                    mesh.vertices[vertex].position;
+                for (std::size_t axis = 0; axis < 3; ++axis) {
+                    box.lower[axis] =
+                        std::min(box.lower[axis], position[axis]);
+                    box.upper[axis] =
+                        std::max(box.upper[axis], position[axis]);
+                }
+            }
+            bounds.push_back(box);
+        }
+        const auto trianglePoints = [&](const CertifiedTriangle& triangle) {
+            std::array<PredicatePoint3, 3> points;
+            for (std::size_t corner = 0; corner < 3; ++corner) {
+                points[corner] =
+                    mesh.vertices[triangle.vertices[corner]].position;
+            }
+            return points;
+        };
+        for (std::size_t first = 0;
+             first < mesh.triangles.size() && disjointness.failed == 0;
+             ++first) {
+            for (std::size_t second = first + 1;
+                 second < mesh.triangles.size(); ++second) {
+                const CertifiedTriangle& one = mesh.triangles[first];
+                const CertifiedTriangle& two = mesh.triangles[second];
+                if (one.workingFace == two.workingFace) continue;
+                bool sharesVertex = false;
+                for (std::uint32_t a : one.vertices) {
+                    for (std::uint32_t b : two.vertices) {
+                        if (a == b) sharesVertex = true;
+                    }
+                }
+                if (sharesVertex) continue;
+                bool boxesDisjoint = false;
+                for (std::size_t axis = 0; axis < 3; ++axis) {
+                    if (bounds[first].upper[axis] <
+                            bounds[second].lower[axis] ||
+                        bounds[second].upper[axis] <
+                            bounds[first].lower[axis]) {
+                        boxesDisjoint = true;
+                    }
+                }
+                if (boxesDisjoint) continue;
+                ++disjointness.expected;
+                const std::optional<bool> disjoint = trianglesDisjoint(
+                    *predicates, trianglePoints(one), trianglePoints(two));
+                if (!disjoint) {
+                    ++disjointness.failed;
+                    setFailure(result,
+                               "certified.triangle_intersection_unproven",
+                               "a cross-face triangle pair could not be "
+                               "proven disjoint",
+                               {one.workingFace, two.workingFace});
+                    return result;
+                }
+                ++disjointness.checked;
+                if (!*disjoint) {
+                    ++disjointness.failed;
+                    setFailure(result,
+                               "certified.triangle_intersection_found",
+                               "two non-adjacent certified triangles from "
+                               "different faces touch or cross",
+                               {one.workingFace, two.workingFace});
+                    return result;
+                }
+            }
+        }
+    }
 
     mesh.topologyFingerprint = fingerprintOf(mesh);
     ValidationCoverage& fingerprint = result.validation.checks[Fingerprint];

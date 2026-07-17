@@ -8,6 +8,7 @@
 namespace weft {
 
 using PredicatePoint2 = std::array<double, 2>;
+using PredicatePoint3 = std::array<double, 3>;
 
 enum class ExactSign {
     Negative = -1,
@@ -46,6 +47,12 @@ public:
     virtual PredicateResult<ExactSign> orient2d(
         PredicatePoint2 a, PredicatePoint2 b,
         PredicatePoint2 c) const = 0;
+
+    // Positive means d lies below the plane of a,b,c (viewed so a,b,c wind
+    // counter-clockwise); zero means d is exactly on that plane.
+    virtual PredicateResult<ExactSign> orient3d(
+        PredicatePoint3 a, PredicatePoint3 b, PredicatePoint3 c,
+        PredicatePoint3 d) const = 0;
 
     // For counter-clockwise a,b,c, positive means d is inside their circle.
     virtual PredicateResult<ExactSign> incircle(

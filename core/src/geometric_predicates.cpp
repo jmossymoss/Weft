@@ -305,6 +305,35 @@ public:
         return result;
     }
 
+    PredicateResult<ExactSign> orient3d(
+        PredicatePoint3 a, PredicatePoint3 b, PredicatePoint3 c,
+        PredicatePoint3 d) const override {
+        const auto finite3 = [](PredicatePoint3 point) {
+            return std::isfinite(point[0]) && std::isfinite(point[1]) &&
+                std::isfinite(point[2]);
+        };
+        if (!finite3(a) || !finite3(b) || !finite3(c) || !finite3(d)) {
+            return predicateFailure<ExactSign>(
+                "predicate.non_finite_input",
+                "orientation requires finite IEEE-754 coordinates");
+        }
+        const ExactDyadic adx = difference(a[0], d[0]);
+        const ExactDyadic ady = difference(a[1], d[1]);
+        const ExactDyadic adz = difference(a[2], d[2]);
+        const ExactDyadic bdx = difference(b[0], d[0]);
+        const ExactDyadic bdy = difference(b[1], d[1]);
+        const ExactDyadic bdz = difference(b[2], d[2]);
+        const ExactDyadic cdx = difference(c[0], d[0]);
+        const ExactDyadic cdy = difference(c[1], d[1]);
+        const ExactDyadic cdz = difference(c[2], d[2]);
+        const ExactDyadic determinant = add(
+            add(multiply(adx, cross(bdy, bdz, cdy, cdz)),
+                multiply(ady, cross(bdz, bdx, cdz, cdx))),
+            multiply(adz, cross(bdx, bdy, cdx, cdy)));
+        return PredicateResult<ExactSign>{signOf(determinant),
+                                          std::nullopt};
+    }
+
     PredicateResult<ExactSign> incircle(
         PredicatePoint2 a, PredicatePoint2 b, PredicatePoint2 c,
         PredicatePoint2 d) const override {
