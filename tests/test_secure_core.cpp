@@ -17,6 +17,7 @@
 #include <STEPCAFControl_Writer.hxx>
 #include <STEPControl_StepModelType.hxx>
 #include <ShapeProcess.hxx>
+#include <Standard_Failure.hxx>
 #include <TCollection_ExtendedString.hxx>
 #include <TDataStd_Name.hxx>
 #include <TDocStd_Document.hxx>
@@ -581,6 +582,31 @@ void testNativeBRepSecureImport() {
     } catch (const weft::SecureImportError& error) {
         CHECK(error.code() == "import.brep.read_failed");
     }
+
+    std::unique_ptr<weft::io::Reader> failedStateReader =
+        system.createReader(weft::io::Format::Brep);
+    CHECK(failedStateReader != nullptr);
+    if (failedStateReader) {
+        const bool readValid = failedStateReader->readFile(path.string());
+        CHECK(readValid);
+        bool malformedAccepted = false;
+        try {
+            malformedAccepted = failedStateReader->readFile(
+                malformed.string());
+        } catch (const Standard_Failure&) {
+            // A parser exception is allowed, but the retained shape must still
+            // have been cleared before it escaped.
+        }
+        CHECK(!malformedAccepted);
+        try {
+            (void)failedStateReader->transferSecure(
+                weft::RepairProfile::Conservative);
+            CHECK(false);
+        } catch (const weft::SecureImportError& error) {
+            CHECK(error.code() == "import.brep.no_source_shape");
+        }
+    }
+
     try {
         (void)weft::importBRepSecure(
             malformed.string() + ".missing",
