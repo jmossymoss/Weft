@@ -29,3 +29,5 @@ Current records:
   `PolyMesh` compatibility and the single secure `mesh` CLI route.
 - `ADR-0016-secure-app-and-live-link-routing.md` - audited app import, secure
   async/export routing, recipe-conflict policy, and atomic Blender link.
+- `ADR-0017-secure-cli-utility-routing.md` - certified conversion and sweep,
+  source-backed inspection/extraction, and explicit cache refusal.

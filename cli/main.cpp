@@ -60,17 +60,15 @@ void usage() {
         "\n"
         "  weft convert <in> -o <out>\n"
         "      import then export with no retopo: B-rep->B-rep serializes the\n"
-        "      shape (step/iges/brep); B-rep->mesh tessellates (obj/glb/stl/fbx)\n"
+        "      shape; STEP->mesh delegates to the certified secure pipeline\n"
         "\n"
         "  weft sweep <in.step> [--profile cad] [--radials 8,16,24,...]\n"
-        "      adversarial density harness: bump every revolution-family\n"
-        "      face's radial through the list, re-validating each result —\n"
-        "      an edit must never open a seam, demote a face to raw\n"
-        "      triangulation, or leave one empty; exits 1 on any failure\n"
+        "      secure global density/property harness: every count must produce\n"
+        "      a complete deterministic certified result; exits 1 on failure\n"
         "\n"
         "  weft cache-check <in.step> --face ID:key=value[,key=value...] [--preview]\n"
-        "      generate once, apply one face edit, and report exact remesh\n"
-        "      face ids plus cold, edit and identical-warm timings\n"
+        "      reserved for recipe-v2 secure dependency-cache verification;\n"
+        "      currently refuses by name instead of using the legacy cache\n"
         "\n"
         "  weft mesh <in.step> -o <out.obj|out.glb|out.stl|out.fbx> [options]\n"
         "      generate topology and export OBJ (groups carry face IDs)\n"
@@ -161,9 +159,15 @@ int cmdInspect(const std::vector<std::string>& args) {
             compilerFace = std::stoi(args[++i]);
         }
     }
-    weft::Model model = weft::loadStep(args[0]);
+    const weft::ImportedModel imported = weft::importStepSecure(args[0]);
+    const weft::Model& model = imported.source->snapshot.model;
     weft::Analysis a = weft::analyze(model);
 
+    if (compilerFace > 0) {
+        throw std::runtime_error(
+            "secure inspect retired --compiler-face; use source topology "
+            "and reconnaissance reports instead");
+    }
     if (compilerFace > 0) {
         if (compilerFace > model.faceCount()) {
             throw std::runtime_error("compiler face id is out of range");
@@ -268,7 +272,8 @@ int cmdExtract(const std::vector<std::string>& args) {
         throw std::runtime_error("--rings must be between 0 and 8");
     }
 
-    weft::Model model = weft::loadStep(input);
+    const weft::ImportedModel imported = weft::importStepSecure(input);
+    const weft::Model& model = imported.source->snapshot.model;
     weft::Analysis analysis = weft::analyze(model);
     for (int fid : selected) {
         if (fid < 1 || fid > model.faceCount()) {
@@ -302,8 +307,11 @@ int cmdExtract(const std::vector<std::string>& args) {
     return 0;
 }
 
-// weft convert <in> -o <out> — pure import -> export, no retopo. B-rep -> B-rep
-// serializes Model::shape; B-rep -> mesh uses a default BRepMesh tessellation.
+// Pure representation conversion. STEP -> mesh delegates to the certified
+// command; no B-rep reader may substitute kernel triangle soup.
+int cmdMesh(const std::vector<std::string>& args,
+            bool validateOnly = false);
+
 int cmdConvert(const std::vector<std::string>& args) {
     if (args.empty()) { usage(); return 2; }
     std::string input = args[0];
@@ -319,14 +327,23 @@ int cmdConvert(const std::vector<std::string>& args) {
 
     weft::io::System sys;
     weft::io::bootstrapIo(sys);
-    weft::io::Format out = sys.probeFormatForOutput(output);
+    const weft::io::Format in = sys.probeFormat(input);
+    const weft::io::Format out = sys.probeFormatForOutput(output);
+    if (weft::io::formatProvidesBRep(in) &&
+        weft::io::formatProvidesMesh(out)) {
+        if (in != weft::io::Format::Step) {
+            throw std::runtime_error(
+                "secure B-rep-to-mesh convert currently requires STEP input");
+        }
+        return cmdMesh({input, "-o", output});
+    }
     weft::io::convertFile(sys, input, output);
     std::printf("%s -> %s (%s)\n", input.c_str(), output.c_str(),
                 std::string(weft::io::formatIdentifier(out)).c_str());
     return 0;
 }
 
-int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
+int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
     if (args.empty()) { usage(); return 2; }
     std::string input = args[0];
     std::string output;
@@ -725,7 +742,8 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     return 0;
 }
 
-int cmdCacheCheck(const std::vector<std::string>& args) {
+// Frozen pre-rewrite benchmark body; no command dispatch reaches it.
+[[maybe_unused]] int legacyCacheCheck(const std::vector<std::string>& args) {
     if (args.empty()) { usage(); return 2; }
     const std::string input = args[0];
     std::string faceSpec;
@@ -792,13 +810,36 @@ int cmdCacheCheck(const std::vector<std::string>& args) {
     return 0;
 }
 
-// weft sweep — the adversarial density harness (MVP plan §8 / P0.1):
+int cmdCacheCheck(const std::vector<std::string>& args) {
+    if (args.empty()) { usage(); return 2; }
+    bool hasFaceEdit = false;
+    for (std::size_t index = 1; index < args.size(); ++index) {
+        if (args[index] == "--face" && index + 1 < args.size()) {
+            (void)args[++index];
+            hasFaceEdit = true;
+        } else if (args[index] != "--preview") {
+            throw std::runtime_error(
+                "unknown cache-check option: " + args[index]);
+        }
+    }
+    if (!hasFaceEdit) {
+        throw std::runtime_error(
+            "cache-check needs --face ID:key=value");
+    }
+    throw std::runtime_error(
+        "secure cache-check refused "
+        "[secure_cache.incremental_dependency_unimplemented]: per-face "
+        "recipe v2 references and certified dependency caching are not yet "
+        "implemented");
+}
+
+// Frozen pre-rewrite sweep retained only for baseline archaeology:
 // meshes the model at its base settings, then bumps every curved /
 // revolution face's radial through a sweep of counts, re-validating each
 // time. The per-face override must never open a seam, never demote any
 // face to raw triangulation, and never leave a face empty. The
 // generation cache keeps each iteration to the faces the edit touches.
-int cmdSweep(const std::vector<std::string>& args) {
+[[maybe_unused]] int legacySweep(const std::vector<std::string>& args) {
     if (args.empty()) { usage(); return 2; }
     std::string input = args[0];
     weft::GenerationSettings gs;
@@ -943,6 +984,115 @@ int cmdSweep(const std::vector<std::string>& args) {
     }
     std::printf("sweep: %zu runs, %d failure(s)\n", runs, failures);
     return failures ? 1 : 0;
+}
+
+int cmdSweep(const std::vector<std::string>& args) {
+    if (args.empty()) { usage(); return 2; }
+    const std::string input = args[0];
+    std::vector<int> radials = {8, 16, 24, 32, 40, 48};
+    bool verbose = false;
+    bool ignoredProfile = false;
+    for (std::size_t index = 1; index < args.size(); ++index) {
+        const std::string& option = args[index];
+        if (option == "--profile" && index + 1 < args.size()) {
+            const std::string profile = args[++index];
+            if (profile != "cad" && profile != "dense") {
+                throw std::runtime_error("unknown profile: " + profile);
+            }
+            ignoredProfile = true;
+        } else if (option == "--radials" && index + 1 < args.size()) {
+            radials.clear();
+            const std::string list = args[++index];
+            for (std::size_t position = 0; position < list.size();) {
+                std::size_t comma = list.find(',', position);
+                if (comma == std::string::npos) comma = list.size();
+                radials.push_back(
+                    std::stoi(list.substr(position, comma - position)));
+                position = comma + 1;
+            }
+        } else if (option == "--verbose") {
+            verbose = true;
+        } else {
+            throw std::runtime_error("unknown sweep option: " + option);
+        }
+    }
+    if (radials.empty()) {
+        throw std::runtime_error("--radials must contain at least one count");
+    }
+    for (int radial : radials) {
+        if (radial < 3) {
+            throw std::runtime_error("sweep radial counts must be at least 3");
+        }
+    }
+    if (ignoredProfile) {
+        std::fprintf(
+            stderr,
+            "warning: --profile is accepted as ignored migration input; "
+            "the secure sweep varies only the global canonical-boundary "
+            "minimum\n");
+    }
+
+    const weft::ImportedModel imported = weft::importStepSecure(input);
+    const weft::Model& model = imported.workingModel();
+    std::size_t completed = 0;
+    int failures = 0;
+    for (int radial : radials) {
+        weft::SecureMeshingConfiguration configuration;
+        configuration.sampling.chordTolerance = 0.1;
+        configuration.sampling.normalAngleToleranceRadians =
+            28.0 * 0.01745329251994329576923690768489;
+        configuration.sampling.minimumClosedCurveSegments =
+            static_cast<std::uint32_t>(radial);
+        configuration.sampling.maximumSegmentCount = std::max<std::uint32_t>(
+            4096U, configuration.sampling.minimumClosedCurveSegments);
+
+        const weft::SecureMeshingResult first =
+            weft::generateSecureMesh(imported, configuration);
+        const weft::SecureMeshingResult repeated =
+            weft::generateSecureMesh(imported, configuration);
+        if (!first || !repeated) {
+            const weft::SecureMeshingResult& refused = !first ? first : repeated;
+            const std::string code = refused.failure
+                ? refused.failure->code
+                : "secure_pipeline.unknown_refusal";
+            std::printf("FAIL radial %d: %s\n", radial, code.c_str());
+            ++failures;
+            continue;
+        }
+
+        const weft::MeshingResult& firstValue = *first.value;
+        const weft::MeshingResult& repeatedValue = *repeated.value;
+        std::string failure;
+        if (!firstValue.validation.complete() ||
+            !repeatedValue.validation.complete()) {
+            failure = "incomplete-certificate";
+        } else if (firstValue.certified.topologyFingerprint !=
+                   repeatedValue.certified.topologyFingerprint) {
+            failure = "nondeterministic-topology-fingerprint";
+        }
+
+        const weft::PolyMesh adapter =
+            weft::makeCertifiedPolyMeshAdapter(firstValue);
+        const weft::ValidationReport workflow =
+            weft::validateMesh(adapter, &model);
+        if (failure.empty() && !workflow.watertight()) {
+            failure = "workflow-watertightness";
+        }
+        if (!failure.empty()) {
+            std::printf("FAIL radial %d: %s\n", radial, failure.c_str());
+            ++failures;
+        } else {
+            ++completed;
+            if (verbose) {
+                std::printf("ok   radial %d (%zu certified triangles, %s)\n",
+                            radial, firstValue.certified.triangles.size(),
+                            firstValue.certified.topologyFingerprint.c_str());
+            }
+        }
+    }
+    std::printf("secure sweep: %zu completed, %d failure(s)\n",
+                completed, failures);
+    return failures == 0 ? 0 : 1;
 }
 
 }  // namespace
