@@ -83,37 +83,60 @@ int main() {
                     weft::importStepSecure(path.string());
                 CHECK(imported.source != nullptr);
                 CHECK(imported.working != nullptr);
-                if (!imported.repair.identity ||
-                    !imported.repair.correspondenceComplete) {
+                const bool certifiedToleranceOnly =
+                    !imported.repair.identity &&
+                    imported.repair.correspondenceComplete &&
+                    imported.repair.workingValid &&
+                    imported.repair.meshable &&
+                    imported.repair.sourceShapeSha256 !=
+                        imported.repair.workingShapeSha256 &&
+                    !imported.repair.toleranceChanges.empty() &&
+                    imported.repair.parameterizationFlagChanges.empty() &&
+                    imported.repair.orientationChanges.empty() &&
+                    imported.repair.representationChanges.empty() &&
+                    imported.repair.topologyCardinalityChanges.empty() &&
+                    std::all_of(
+                        imported.repair.toleranceChanges.begin(),
+                        imported.repair.toleranceChanges.end(),
+                        [](const weft::ToleranceChange& change) {
+                            return change.expectedPcurveUses != 0 &&
+                                change.checkedPcurveUses ==
+                                    change.expectedPcurveUses &&
+                                change.after > change.before &&
+                                change.maximumDiscrepancy == change.after;
+                        }) &&
+                    std::any_of(
+                        imported.repair.operations.begin(),
+                        imported.repair.operations.end(),
+                        [](const weft::RepairOperation& operation) {
+                            return operation.code ==
+                                "repair.tolerance_envelope";
+                        });
+                if (!imported.repair.identity && !certifiedToleranceOnly) {
                     std::fprintf(
                         stderr,
-                        "identity refusal: %s identity=%d correspondence=%d source_topology=%d working_topology=%d topology_correspondence=%d\n",
+                        "identity refusal: %s identity=%d correspondence=%d meshable=%d tol=%zu\n",
                         path.filename().string().c_str(),
                         imported.repair.identity,
                         imported.repair.correspondenceComplete,
-                        imported.repair.sourceTopologyComplete,
-                        imported.repair.workingTopologyComplete,
-                        imported.correspondence.topologyComplete);
-                    const weft::TopologyAccountValidation workingValidation =
-                        weft::validateTopologyAccount(
-                            imported.working->snapshot.topology);
-                    for (const std::string& code :
-                         workingValidation.failureCodes) {
-                        std::fprintf(stderr, "  working topology: %s\n",
-                                     code.c_str());
-                    }
+                        imported.repair.meshable,
+                        imported.repair.toleranceChanges.size());
                 }
-                CHECK(imported.repair.identity);
+                CHECK(imported.repair.identity || certifiedToleranceOnly);
                 CHECK(imported.repair.correspondenceComplete);
                 CHECK(imported.source &&
                       imported.source->metadata.sourceSha256.size() == 64);
                 CHECK(imported.repair.sourceShapeSha256.size() == 64);
                 CHECK(imported.repair.workingShapeSha256.size() == 64);
-                CHECK(imported.repair.sourceShapeSha256 ==
-                      imported.repair.workingShapeSha256);
-                CHECK(imported.repair.toleranceChanges.empty());
-                CHECK(imported.repair.representationChanges.empty());
-                CHECK(imported.repair.topologyCardinalityChanges.empty());
+                if (imported.repair.identity) {
+                    CHECK(imported.repair.sourceShapeSha256 ==
+                          imported.repair.workingShapeSha256);
+                    CHECK(imported.repair.toleranceChanges.empty());
+                    CHECK(imported.repair.representationChanges.empty());
+                    CHECK(imported.repair.topologyCardinalityChanges.empty());
+                } else {
+                    CHECK(certifiedToleranceOnly);
+                }
                 if (imported.source && imported.working) {
                     CHECK(!imported.source->snapshot.model.shape.IsPartner(
                         imported.working->snapshot.model.shape));

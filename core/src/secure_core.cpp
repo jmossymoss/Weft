@@ -855,12 +855,14 @@ SourceWorkingMap buildCorrespondence(const Model& source, const Model& working,
 }
 
 bool sameTopologyStructure(const TopologyOccurrence& source,
-                           const TopologyOccurrence& working) {
+                           const TopologyOccurrence& working,
+                           bool requireEqualOrientation) {
     return source.id == working.id &&
         source.underlyingId == working.underlyingId &&
         source.parentId == working.parentId &&
         source.childIds == working.childIds &&
-        source.orientation == working.orientation &&
+        (!requireEqualOrientation ||
+         source.orientation == working.orientation) &&
         source.hasExactRepresentation == working.hasExactRepresentation &&
         source.instanceId == working.instanceId &&
         source.localTransform == working.localTransform &&
@@ -914,18 +916,45 @@ bool sameAssemblyAccount(const TopologyAccount& source,
 
 bool historyMapsShape(const Handle(BRepTools_History)& history,
                       const TopoDS_Shape& source,
-                      const TopoDS_Shape& working) {
+                      const TopoDS_Shape& working,
+                      bool allowOrientationDelta) {
     if (source.IsSame(working)) return true;
+    if (allowOrientationDelta && source.IsPartner(working) &&
+        source.Location().IsEqual(working.Location())) {
+        return true;
+    }
     if (history.IsNull() || history->IsRemoved(source)) return false;
     const auto containsWorking = [&](const ShapeList& candidates) {
         return std::any_of(
             candidates.begin(), candidates.end(),
             [&](const TopoDS_Shape& candidate) {
-                return candidate.IsSame(working);
+                return allowOrientationDelta
+                    ? candidate.IsPartner(working) &&
+                        candidate.Location().IsEqual(working.Location())
+                    : candidate.IsSame(working);
             });
     };
     return containsWorking(history->Modified(source)) ||
         containsWorking(history->Generated(source));
+}
+
+bool shapesCorrespond(const TopoDS_Shape& source, const TopoDS_Shape& working,
+                      const Handle(BRepTools_History)& history,
+                      const secure_detail::ExactShapeDerivationMap&
+                          derivation,
+                      bool allowOrientationDelta) {
+    if (source.IsSame(working)) return true;
+    if (derivation.maps(source, working)) return true;
+    if (historyMapsShape(history, source, working, allowOrientationDelta)) {
+        return true;
+    }
+    if (!allowOrientationDelta) return false;
+    if (source.IsPartner(working) &&
+        source.Location().IsEqual(working.Location())) {
+        return true;
+    }
+    return derivation.mapsPartner(source, working) &&
+        source.Location().IsEqual(working.Location());
 }
 
 void buildTopologyCorrespondence(SourceWorkingMap& correspondence,
@@ -959,14 +988,16 @@ void buildTopologyCorrespondence(SourceWorkingMap& correspondence,
         if (workingOccurrence != nullptr &&
             sourceShape != source.exactShapes.end() &&
             workingShape != working.exactShapes.end() &&
-            (sourceShape->second.IsSame(workingShape->second) ||
-             derivation.maps(sourceShape->second,
-                             workingShape->second) ||
-             historyMapsShape(history, sourceShape->second,
-                              workingShape->second)) &&
-            sameTopologyStructure(sourceOccurrence, *workingOccurrence)) {
+            shapesCorrespond(sourceShape->second, workingShape->second,
+                             history, derivation, true) &&
+            sameTopologyStructure(sourceOccurrence, *workingOccurrence,
+                                  false)) {
             record.workingIds.push_back(workingOccurrence->id);
-            record.relation = representationIdentity
+            const bool orientationChanged =
+                sourceOccurrence.orientation !=
+                workingOccurrence->orientation;
+            record.relation =
+                representationIdentity && !orientationChanged
                 ? CorrespondenceRelation::Identity
                 : CorrespondenceRelation::Modified;
             mappedWorking.insert(workingOccurrence->id);
@@ -1052,7 +1083,9 @@ ImportedModel buildImportedModel(
     RepairProfile profile, const Handle(BRepTools_History)& history,
     const ExactShapeDerivationMap& exactShapeDerivation,
     std::vector<RepairOperation> operations,
-    std::vector<ParameterizationFlagChange> parameterizationFlagChanges) {
+    std::vector<ParameterizationFlagChange> parameterizationFlagChanges,
+    std::vector<OrientationChange> orientationChanges,
+    std::vector<ToleranceChange> certifiedToleranceChanges) {
     ImportedModel imported;
     const bool sourceValid = shapeIsValid(sourceModel.shape);
     const bool workingValid = shapeIsValid(workingModel.shape);
@@ -1121,6 +1154,8 @@ ImportedModel buildImportedModel(
     imported.repair.operations = std::move(operations);
     imported.repair.parameterizationFlagChanges =
         std::move(parameterizationFlagChanges);
+    imported.repair.orientationChanges = std::move(orientationChanges);
+    imported.repair.toleranceChanges = std::move(certifiedToleranceChanges);
 
     for (StableIdKind kind : {
              StableIdKind::Assembly, StableIdKind::Instance,
@@ -1180,8 +1215,19 @@ ImportedModel buildImportedModel(
         const double before = shapeTolerance(*sourceShape);
         const double after = shapeTolerance(*workingShape);
         if (before != after) {
-            imported.repair.toleranceChanges.push_back(
-                {record.sourceId, workingId, before, after});
+            const bool certified = std::any_of(
+                imported.repair.toleranceChanges.begin(),
+                imported.repair.toleranceChanges.end(),
+                [&](const ToleranceChange& change) {
+                    return change.sourceId == record.sourceId &&
+                        change.workingId == workingId &&
+                        change.before == before && change.after == after &&
+                        change.expectedPcurveUses != 0;
+                });
+            if (!certified) {
+                imported.repair.toleranceChanges.push_back(
+                    {record.sourceId, workingId, before, after});
+            }
         }
         if (record.sourceId.kind == StableIdKind::Edge) {
             ++representationExpected;
@@ -1192,8 +1238,108 @@ ImportedModel buildImportedModel(
                 imported.working->snapshot, workingId);
             if (sourceUses != workingUses) {
                 imported.repair.representationChanges.push_back(
-                    {record.sourceId, workingId, sourceUses, workingUses});
+                    {record.sourceId, workingId, sourceUses, workingUses,
+                     false});
             }
+        }
+    }
+
+    std::size_t sharedGeometryExpected = 0;
+    std::size_t sharedGeometryChecked = 0;
+    std::size_t sharedGeometryFailed = 0;
+    std::size_t sharedGeometrySkipped = 0;
+    if (imported.repair.profile == RepairProfile::Conservative) {
+        for (const CorrespondenceRecord& record :
+             imported.correspondence.records) {
+            if (!record.sourceId.valid() || record.workingIds.size() != 1) {
+                continue;
+            }
+            const StableId workingId = record.workingIds.front();
+            const TopoDS_Shape* sourceShape =
+                shapeForId(imported.source->snapshot, record.sourceId);
+            const TopoDS_Shape* workingShape =
+                shapeForId(imported.working->snapshot, workingId);
+            if (!sourceShape || !workingShape) {
+                ++sharedGeometrySkipped;
+                continue;
+            }
+            if (record.sourceId.kind == StableIdKind::Edge) {
+                const bool certifiedCow = std::any_of(
+                    imported.repair.representationChanges.begin(),
+                    imported.repair.representationChanges.end(),
+                    [&](const RepresentationChange& change) {
+                        return change.sourceEdge == record.sourceId &&
+                            change.workingEdge == workingId &&
+                            change.certifiedCopyOnWrite;
+                    });
+                if (certifiedCow) {
+                    continue;
+                }
+                ++sharedGeometryExpected;
+                try {
+                    double sourceFirst = 0.0;
+                    double sourceLast = 0.0;
+                    double workingFirst = 0.0;
+                    double workingLast = 0.0;
+                    const Handle(Geom_Curve) sourceCurve = BRep_Tool::Curve(
+                        TopoDS::Edge(*sourceShape), sourceFirst, sourceLast);
+                    const Handle(Geom_Curve) workingCurve = BRep_Tool::Curve(
+                        TopoDS::Edge(*workingShape), workingFirst,
+                        workingLast);
+                    if (sourceCurve == workingCurve) {
+                        ++sharedGeometryChecked;
+                    } else {
+                        ++sharedGeometryFailed;
+                    }
+                } catch (const Standard_Failure&) {
+                    ++sharedGeometryFailed;
+                }
+            } else if (record.sourceId.kind == StableIdKind::Face) {
+                ++sharedGeometryExpected;
+                try {
+                    const Handle(Geom_Surface) sourceSurface =
+                        BRep_Tool::Surface(TopoDS::Face(*sourceShape));
+                    const Handle(Geom_Surface) workingSurface =
+                        BRep_Tool::Surface(TopoDS::Face(*workingShape));
+                    if (sourceSurface == workingSurface) {
+                        ++sharedGeometryChecked;
+                    } else {
+                        ++sharedGeometryFailed;
+                    }
+                } catch (const Standard_Failure&) {
+                    ++sharedGeometryFailed;
+                }
+            }
+        }
+    }
+
+    std::size_t representationCowExpected = 0;
+    std::size_t representationCowChecked = 0;
+    std::size_t representationCowFailed = 0;
+    for (const RepresentationChange& change :
+         imported.repair.representationChanges) {
+        ++representationCowExpected;
+        const bool operationRecorded = std::any_of(
+            imported.repair.operations.begin(),
+            imported.repair.operations.end(),
+            [&](const RepairOperation& operation) {
+                return operation.code ==
+                           "repair.representation_copy_on_write" &&
+                    std::find(operation.sourceSubjects.begin(),
+                              operation.sourceSubjects.end(),
+                              change.sourceEdge) !=
+                        operation.sourceSubjects.end() &&
+                    std::find(operation.workingSubjects.begin(),
+                              operation.workingSubjects.end(),
+                              change.workingEdge) !=
+                        operation.workingSubjects.end();
+            });
+        if (change.certifiedCopyOnWrite && operationRecorded &&
+            change.sourceEdge.kind == StableIdKind::Edge &&
+            change.workingEdge.kind == StableIdKind::Edge) {
+            ++representationCowChecked;
+        } else {
+            ++representationCowFailed;
         }
     }
 
@@ -1248,6 +1394,106 @@ ImportedModel buildImportedModel(
         }
     }
 
+    std::size_t orientationExpected = 0;
+    std::size_t orientationChecked = 0;
+    std::size_t orientationFailed = 0;
+    for (const OrientationChange& change :
+         imported.repair.orientationChanges) {
+        const std::size_t evidenceUnits =
+            std::max<std::size_t>(change.manifoldEdgesChecked, 1) +
+            std::max<std::size_t>(change.polarityChecks, 1);
+        orientationExpected += evidenceUnits;
+        const TopoDS_Shape* sourceShape =
+            shapeForId(imported.source->snapshot, change.sourceId);
+        const TopoDS_Shape* workingShape =
+            shapeForId(imported.working->snapshot, change.workingId);
+        const bool operationRecorded = std::any_of(
+            imported.repair.operations.begin(),
+            imported.repair.operations.end(),
+            [](const RepairOperation& operation) {
+                return operation.code ==
+                    "repair.orientation_face_adjacency";
+            });
+        const bool valid =
+            change.sourceId.valid() && change.workingId.valid() &&
+            change.sourceId == change.workingId &&
+            (change.sourceId.kind == StableIdKind::Face ||
+             change.sourceId.kind == StableIdKind::Solid) &&
+            sourceShape != nullptr && workingShape != nullptr &&
+            operationRecorded &&
+            change.sourceOrientation != change.workingOrientation &&
+            (change.sourceOrientation == TopologyOrientation::Forward ||
+             change.sourceOrientation == TopologyOrientation::Reversed) &&
+            (change.workingOrientation == TopologyOrientation::Forward ||
+             change.workingOrientation == TopologyOrientation::Reversed) &&
+            change.manifoldEdgesChecked != 0 &&
+            change.polarityChecks != 0;
+        if (valid) {
+            orientationChecked += evidenceUnits;
+        } else {
+            orientationFailed += evidenceUnits;
+        }
+    }
+
+    std::size_t toleranceEnvelopeExpected = 0;
+    std::size_t toleranceEnvelopeChecked = 0;
+    std::size_t toleranceEnvelopeFailed = 0;
+    for (const ToleranceChange& change : imported.repair.toleranceChanges) {
+        if (change.expectedPcurveUses == 0 &&
+            change.checkedPcurveUses == 0 &&
+            change.maximumDiscrepancy == 0.0) {
+            // Inferred unexplained edge delta fails envelope reconciliation.
+            // Vertex/face side-effects from UpdateEdge are audited but not
+            // treated as a separate unproven envelope operation.
+            if (change.sourceId.kind != StableIdKind::Edge) {
+                continue;
+            }
+            ++toleranceEnvelopeExpected;
+            ++toleranceEnvelopeFailed;
+            continue;
+        }
+        const std::size_t evidenceUnits =
+            std::max<std::size_t>(change.expectedPcurveUses, 1);
+        toleranceEnvelopeExpected += evidenceUnits;
+        const TopoDS_Shape* sourceEdge =
+            shapeForId(imported.source->snapshot, change.sourceId);
+        const TopoDS_Shape* workingEdge =
+            shapeForId(imported.working->snapshot, change.workingId);
+        const bool operationRecorded = std::any_of(
+            imported.repair.operations.begin(),
+            imported.repair.operations.end(),
+            [&](const RepairOperation& operation) {
+                return operation.code == "repair.tolerance_envelope" &&
+                    std::find(operation.sourceSubjects.begin(),
+                              operation.sourceSubjects.end(),
+                              change.sourceId) !=
+                        operation.sourceSubjects.end() &&
+                    std::find(operation.workingSubjects.begin(),
+                              operation.workingSubjects.end(),
+                              change.workingId) !=
+                        operation.workingSubjects.end();
+            });
+        const bool valid =
+            change.sourceId.kind == StableIdKind::Edge &&
+            change.workingId.kind == StableIdKind::Edge &&
+            sourceEdge != nullptr && workingEdge != nullptr &&
+            operationRecorded &&
+            std::isfinite(change.before) && std::isfinite(change.after) &&
+            change.after > change.before &&
+            change.expectedPcurveUses != 0 &&
+            change.checkedPcurveUses == change.expectedPcurveUses &&
+            std::isfinite(change.maximumDiscrepancy) &&
+            change.maximumDiscrepancy == change.after &&
+            change.maximumDiscrepancy > change.before &&
+            shapeTolerance(*sourceEdge) == change.before &&
+            shapeTolerance(*workingEdge) == change.after;
+        if (valid) {
+            toleranceEnvelopeChecked += evidenceUnits;
+        } else {
+            toleranceEnvelopeFailed += evidenceUnits;
+        }
+    }
+
     imported.repair.validationEvidence = {
         {"repair.exact_shape_hash", 2,
          static_cast<std::size_t>(!sourceShapeDigest.empty()) +
@@ -1261,9 +1507,19 @@ ImportedModel buildImportedModel(
          toleranceSkipped, 0},
         {"repair.representation_audit", representationExpected,
          representationChecked, representationSkipped, 0},
+        {"repair.shared_geometry_immutable", sharedGeometryExpected,
+         sharedGeometryChecked, sharedGeometrySkipped, sharedGeometryFailed},
+        {"repair.representation_copy_on_write_reconciliation",
+         representationCowExpected, representationCowChecked, 0,
+         representationCowFailed},
         {"repair.same_parameter_range_reconciliation",
          parameterizationExpected, parameterizationChecked, 0,
          parameterizationFailed},
+        {"repair.orientation_reconciliation", orientationExpected,
+         orientationChecked, 0, orientationFailed},
+        {"repair.tolerance_envelope_reconciliation",
+         toleranceEnvelopeExpected, toleranceEnvelopeChecked, 0,
+         toleranceEnvelopeFailed},
     };
     for (const TopologyAccountCheck& sourceCheck :
          sourceTopologyValidation.checks) {
@@ -1438,8 +1694,53 @@ ImportedModel importStepSecure(const std::string& path, RepairProfile profile) {
     }
 }
 
+ImportedModel importIgesSecure(const std::string& path, RepairProfile profile) {
+    io::System system;
+    io::bootstrapIo(system);
+    std::unique_ptr<io::Reader> reader = system.createReader(io::Format::Iges);
+    if (!reader) {
+        throw SecureImportError("import.iges.read_failed",
+                                "failed to read IGES file securely: " + path);
+    }
+    try {
+        if (!reader->readFile(path)) {
+            throw SecureImportError(
+                "import.iges.read_failed",
+                "failed to read IGES file securely: " + path);
+        }
+    } catch (const SecureImportError&) {
+        throw;
+    } catch (const Standard_Failure& error) {
+        throw SecureImportError(
+            "import.iges.read_failed",
+            "OCCT failed while reading IGES source " + path + ": " +
+                occtFailureMessage(error));
+    }
+
+    try {
+        return reader->transferSecure(profile);
+    } catch (const SecureImportError&) {
+        throw;
+    } catch (const Standard_Failure& error) {
+        throw SecureImportError(
+            "import.iges.transfer_failed",
+            "OCCT failed during processing-disabled IGES transfer for " + path +
+                ": " + occtFailureMessage(error));
+    }
+}
+
 ImportedModel importBRepSecure(const std::string& path,
-                               RepairProfile profile) {
+                               RepairProfile profile,
+                               std::optional<double> lengthUnitMm) {
+    if (lengthUnitMm.has_value()) {
+        if (!std::isfinite(*lengthUnitMm) || !(*lengthUnitMm > 0.0)) {
+            throw SecureImportError(
+                "import.brep.length_unit_invalid",
+                "explicit native B-rep length unit must be a finite positive "
+                "millimetre scale");
+        }
+    }
+
     io::System system;
     io::bootstrapIo(system);
     std::unique_ptr<io::Reader> reader =
@@ -1464,7 +1765,55 @@ ImportedModel importBRepSecure(const std::string& path,
     }
 
     try {
-        return reader->transferSecure(profile);
+        ImportedModel imported = reader->transferSecure(profile);
+        if (!lengthUnitMm.has_value()) {
+            return imported;
+        }
+        if (!imported.source || !imported.working) {
+            throw SecureImportError(
+                "import.brep.length_unit_unresolved",
+                "native B-rep import produced no source/working model for "
+                "explicit unit resolution");
+        }
+        if (imported.source->metadata.lengthUnitMm.has_value() &&
+            !imported.source->metadata.lengthUnitExplicitlyResolved &&
+            *imported.source->metadata.lengthUnitMm != *lengthUnitMm) {
+            throw SecureImportError(
+                "import.brep.length_unit_conflict",
+                "explicit native B-rep length unit conflicts with a declared "
+                "source unit");
+        }
+
+        auto source = std::make_shared<SourceBRep>(*imported.source);
+        auto working = std::make_shared<WorkingBRep>(*imported.working);
+        source->metadata.lengthUnitMm = *lengthUnitMm;
+        source->metadata.lengthUnitExplicitlyResolved = true;
+        source->snapshot.model.lengthUnitMm = *lengthUnitMm;
+        working->snapshot.model.lengthUnitMm = *lengthUnitMm;
+        source->metadata.effectiveTranslatorConfiguration.push_back(
+            "length unit: explicitly resolved to millimetres by caller");
+        imported.source = std::move(source);
+        imported.working = std::move(working);
+
+        imported.diagnostics.events.erase(
+            std::remove_if(
+                imported.diagnostics.events.begin(),
+                imported.diagnostics.events.end(),
+                [](const ImportDiagnostic& diagnostic) {
+                    return diagnostic.code ==
+                        "import.brep.length_unit_unspecified";
+                }),
+            imported.diagnostics.events.end());
+        imported.diagnostics.events.push_back({
+            {StableIdKind::Diagnostic,
+             static_cast<std::uint64_t>(
+                 imported.diagnostics.events.size() + 1)},
+            "import.brep.length_unit_resolved",
+            DiagnosticSeverity::Info,
+            {{StableIdKind::Model, 1}},
+            "caller supplied an explicit millimetre scale for native B-rep "
+            "model units; coordinates remain unchanged"});
+        return imported;
     } catch (const SecureImportError&) {
         throw;
     } catch (const Standard_Failure& error) {

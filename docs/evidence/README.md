@@ -24,6 +24,18 @@ may supersede a result but must not rewrite what an earlier run proved.
   visibility, and fail-closed unsupported readers.
 - `m1-orientation-reconnaissance-2026-07-17.md` - experimental rejection of
   whole-solid reversal as a general shell/face orientation repair.
+- `m1-face-adjacency-orientation-repair-2026-07-17.md` - two-manifold
+  face-adjacency orientation repair, polarity check, and PAT-009 proof.
+- `m1-multi-body-orientation-repair-2026-07-17.md` - orientation repair of
+  invalid free solids inside compound/compsolid roots.
+- `m1-bounded-tolerance-envelope-repair-2026-07-17.md` - raise working edge
+  tolerance to proven curve-on-surface maximum for beyond-threshold witnesses.
+- `m1-copy-on-write-representation-rules-2026-07-17.md` - shared geometry
+  handle immutability and unexplained representation refusal.
+- `m1-explicit-native-brep-unit-resolution-2026-07-17.md` - caller-supplied
+  native millimetre scale without invented units or coordinate rescaling.
+- `m1-secure-iges-import-2026-07-17.md` - immutable-byte IGES secure import,
+  processing-disabled transfer, and path-replacement proof.
 - `m2-reconnaissance-2026-07-17.md` - total face/edge classification and planar projection evidence.
 - `m3-interval-solver-2026-07-17.md` - exact equality/minimum/parity count assignment evidence.
 - `m3-canonical-boundaries-2026-07-17.md` - atomic shared-edge samples, UV uses, and azimuth registration evidence.

@@ -35,6 +35,10 @@ millimetres would be provenance loss.
   declared XDE scale; native ASCII B-rep leaves it absent and emits
   `import.brep.length_unit_unspecified`. Coordinates remain unchanged in
   native model units; no physical unit is inferred.
+- Callers may supply an explicit positive millimetre scale to
+  `importBRepSecure`. That value is provenance/export metadata only
+  (`lengthUnitExplicitlyResolved`, `import.brep.length_unit_resolved`); see
+  ADR-0029. Coordinates are still never rescaled.
 - Conservative native import uses the same topology-isolated derivation and
   bounded repairs as STEP. Compatibility native import uses the same
   geometry-deep historical repair derivation and remains non-meshable while
@@ -97,7 +101,6 @@ core, CLI, desktop app, and all tests, then pass all 14 registered tests.
 
 Reviewed native repair evidence now traverses a production core API without
 bypassing immutable import. STEP and native B-rep share repair ownership, and
-unimplemented readers fail closed. M1 remains in progress: native B-rep needs
-an explicit external physical-unit resolution contract before workflow/export
-routing, IGES still lacks a secure import override, and the remaining bounded
-repair families are unchanged.
+unimplemented readers fail closed. Explicit caller unit resolution is defined
+in ADR-0029. M1 remains in progress: IGES still lacks a secure import
+override, and remaining bounded repair families such as sewing are unchanged.

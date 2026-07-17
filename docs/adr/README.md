@@ -52,3 +52,13 @@ Current records:
 - `ADR-0025-snapshot-protected-native-brep-import.md` - immutable-byte native
   B-rep parsing, explicit missing-unit provenance, isolated repair derivation,
   and fail-closed secure-reader defaults.
+- `ADR-0026-face-adjacency-orientation-repair.md` - two-manifold closed-shell
+  orientation repair with independent polarity and validity-gated commit.
+- `ADR-0027-bounded-tolerance-envelope-repair.md` - raise working edge
+  tolerance only to a proven curve-on-surface maximum.
+- `ADR-0028-copy-on-write-representation-rules.md` - shared geometry handle
+  immutability and certified representation replacement.
+- `ADR-0029-explicit-native-brep-unit-resolution.md` - caller-supplied
+  millimetre scale for native B-rep without inventing or rescaling units.
+- `ADR-0030-snapshot-protected-secure-iges-import.md` - immutable-byte IGES
+  secure import through processing-disabled XDE transfer.

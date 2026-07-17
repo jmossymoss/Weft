@@ -14,6 +14,8 @@
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <IFSelect_ReturnStatus.hxx>
+#include <IGESControl_Controller.hxx>
+#include <IGESControl_Writer.hxx>
 #include <STEPCAFControl_Writer.hxx>
 #include <STEPControl_StepModelType.hxx>
 #include <ShapeProcess.hxx>
@@ -22,6 +24,7 @@
 #include <TDataStd_Name.hxx>
 #include <TDocStd_Document.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Compound.hxx>
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
 #include <gp_Pnt.hxx>
@@ -96,7 +99,9 @@ weft::ImportedModel deriveNativeRepair(
         std::move(source), std::move(working), std::move(metadata),
         weft::RepairProfile::Conservative, derivation.history,
         derivation.exactShapes, std::move(derivation.operations),
-        std::move(derivation.parameterizationFlagChanges));
+        std::move(derivation.parameterizationFlagChanges),
+        std::move(derivation.orientationChanges),
+        std::move(derivation.toleranceChanges));
 }
 
 weft::ImportedModel importNativeRepairFixture(std::string_view filename) {
@@ -549,6 +554,56 @@ void testNativeBRepSecureImport() {
     CHECK(fresh.repair.identity);
     CHECK(fresh.repair.meshable);
 
+    const weft::ImportedModel resolvedUnit = weft::importBRepSecure(
+        path.string(), weft::RepairProfile::Conservative, 1.0);
+    CHECK(resolvedUnit.source != nullptr);
+    CHECK(resolvedUnit.repair.identity);
+    CHECK(resolvedUnit.repair.meshable);
+    if (resolvedUnit.source) {
+        CHECK(resolvedUnit.source->metadata.lengthUnitMm.has_value());
+        CHECK(resolvedUnit.source->metadata.lengthUnitExplicitlyResolved);
+        if (resolvedUnit.source->metadata.lengthUnitMm) {
+            CHECK(*resolvedUnit.source->metadata.lengthUnitMm == 1.0);
+            CHECK(resolvedUnit.source->snapshot.model.lengthUnitMm == 1.0);
+        }
+        CHECK(resolvedUnit.working != nullptr);
+        if (resolvedUnit.working) {
+            CHECK(resolvedUnit.working->snapshot.model.lengthUnitMm == 1.0);
+        }
+        CHECK(std::find(
+                  resolvedUnit.source->metadata.effectiveTranslatorConfiguration
+                      .begin(),
+                  resolvedUnit.source->metadata.effectiveTranslatorConfiguration
+                      .end(),
+                  "length unit: explicitly resolved to millimetres by caller") !=
+              resolvedUnit.source->metadata.effectiveTranslatorConfiguration
+                  .end());
+    }
+    CHECK(hasDiagnostic(resolvedUnit, "import.brep.length_unit_resolved"));
+    CHECK(!hasDiagnostic(resolvedUnit, "import.brep.length_unit_unspecified"));
+    CHECK(std::any_of(
+        resolvedUnit.repair.validationEvidence.begin(),
+        resolvedUnit.repair.validationEvidence.end(),
+        [](const weft::RepairValidationEvidence& evidence) {
+            return evidence.code == "repair.shared_geometry_immutable" &&
+                evidence.complete() && evidence.expected != 0;
+        }));
+
+    try {
+        (void)weft::importBRepSecure(
+            path.string(), weft::RepairProfile::Conservative, 0.0);
+        CHECK(false);
+    } catch (const weft::SecureImportError& error) {
+        CHECK(error.code() == "import.brep.length_unit_invalid");
+    }
+    try {
+        (void)weft::importBRepSecure(
+            path.string(), weft::RepairProfile::Conservative, -2.0);
+        CHECK(false);
+    } catch (const weft::SecureImportError& error) {
+        CHECK(error.code() == "import.brep.length_unit_invalid");
+    }
+
     const weft::ImportedModel compatibility = weft::importBRepSecure(
         path.string(), weft::RepairProfile::Compatibility);
     CHECK(compatibility.source != nullptr);
@@ -616,18 +671,79 @@ void testNativeBRepSecureImport() {
         CHECK(error.code() == "import.brep.read_failed");
     }
 
-    std::unique_ptr<weft::io::Reader> unsupported =
+    std::unique_ptr<weft::io::Reader> unreadIges =
         system.createReader(weft::io::Format::Iges);
-    CHECK(unsupported != nullptr);
-    if (unsupported) {
+    CHECK(unreadIges != nullptr);
+    if (unreadIges) {
         try {
-            (void)unsupported->transferSecure(
+            (void)unreadIges->transferSecure(
                 weft::RepairProfile::Conservative);
             CHECK(false);
         } catch (const weft::SecureImportError& error) {
-            CHECK(error.code() == "import.secure.reader_unsupported");
+            CHECK(error.code() == "import.iges.no_source_shape");
         }
     }
+
+    const std::filesystem::path igesPath = weft::test::uniqueTempPath(
+        "weft_secure_iges_box", ".igs");
+    {
+        IGESControl_Controller::Init();
+        IGESControl_Writer writer("MM", 1);
+        CHECK(writer.AddShape(BRepPrimAPI_MakeBox(10.0, 20.0, 30.0).Shape()));
+        writer.ComputeModel();
+        CHECK(writer.Write(igesPath.string().c_str()));
+    }
+    const weft::ImportedModel iges = weft::importIgesSecure(
+        igesPath.string(), weft::RepairProfile::Conservative);
+    CHECK(iges.source != nullptr);
+    CHECK(iges.working != nullptr);
+    CHECK(iges.repair.identity);
+    CHECK(iges.repair.meshable);
+    CHECK(iges.repair.correspondenceComplete);
+    if (iges.source) {
+        CHECK(iges.source->metadata.sourceSha256.size() == 64);
+        CHECK(iges.source->metadata.sourceByteLength ==
+              std::filesystem::file_size(igesPath));
+        CHECK(iges.source->metadata.importerVersion == "weft-secure-iges-0.1");
+        CHECK(std::find(
+                  iges.source->metadata.effectiveTranslatorConfiguration.begin(),
+                  iges.source->metadata.effectiveTranslatorConfiguration.end(),
+                  "IGES shape processing: disabled") !=
+              iges.source->metadata.effectiveTranslatorConfiguration.end());
+    }
+
+    std::unique_ptr<weft::io::Reader> igesSnapshotReader =
+        system.createReader(weft::io::Format::Iges);
+    CHECK(igesSnapshotReader != nullptr);
+    if (igesSnapshotReader) {
+        CHECK(igesSnapshotReader->readFile(igesPath.string()));
+        {
+            IGESControl_Controller::Init();
+            IGESControl_Writer writer("MM", 1);
+            CHECK(writer.AddShape(
+                BRepPrimAPI_MakeBox(1.0, 1.0, 1.0).Shape()));
+            writer.ComputeModel();
+            CHECK(writer.Write(igesPath.string().c_str()));
+        }
+        const weft::ImportedModel igesSnapshot =
+            igesSnapshotReader->transferSecure(
+                weft::RepairProfile::Conservative);
+        const weft::ImportedModel igesFresh = weft::importIgesSecure(
+            igesPath.string(), weft::RepairProfile::Conservative);
+        CHECK(igesSnapshot.source != nullptr);
+        CHECK(igesFresh.source != nullptr);
+        if (igesSnapshot.source && igesFresh.source) {
+            CHECK(igesSnapshot.source->metadata.sourceSha256 ==
+                  iges.source->metadata.sourceSha256);
+            CHECK(igesSnapshot.source->metadata.sourceSha256 !=
+                  igesFresh.source->metadata.sourceSha256);
+        }
+        CHECK(igesSnapshot.repair.identity);
+        CHECK(igesFresh.repair.identity);
+    }
+
+    std::error_code igesIgnored;
+    std::filesystem::remove(igesPath, igesIgnored);
 
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
@@ -718,6 +834,21 @@ void testBoundedParameterizationRepair() {
     CHECK(repaired.repair.representationChanges.empty());
     CHECK(repaired.repair.topologyCardinalityChanges.empty());
     CHECK(repaired.repair.parameterizationFlagChanges.size() == 1);
+    CHECK(std::any_of(
+        repaired.repair.validationEvidence.begin(),
+        repaired.repair.validationEvidence.end(),
+        [](const weft::RepairValidationEvidence& evidence) {
+            return evidence.code == "repair.shared_geometry_immutable" &&
+                evidence.complete() && evidence.expected != 0;
+        }));
+    CHECK(std::any_of(
+        repaired.repair.validationEvidence.begin(),
+        repaired.repair.validationEvidence.end(),
+        [](const weft::RepairValidationEvidence& evidence) {
+            return evidence.code ==
+                       "repair.representation_copy_on_write_reconciliation" &&
+                evidence.complete() && evidence.expected == 0;
+        }));
     CHECK(!repaired.diagnostics.hasErrors());
     CHECK(hasDiagnostic(repaired, "import.source.invalid"));
     CHECK(!hasDiagnostic(
@@ -864,7 +995,9 @@ void testBoundedParameterizationRepair() {
             weft::RepairProfile::Conservative, tamperedDerivation.history,
             tamperedDerivation.exactShapes,
             std::move(tamperedDerivation.operations),
-            std::move(tamperedDerivation.parameterizationFlagChanges));
+            std::move(tamperedDerivation.parameterizationFlagChanges),
+            std::move(tamperedDerivation.orientationChanges),
+            std::move(tamperedDerivation.toleranceChanges));
     CHECK(tampered.repair.workingValid);
     CHECK(!tampered.repair.meshable);
     CHECK(hasDiagnostic(tampered, "import.repair.validation_incomplete"));
@@ -922,12 +1055,211 @@ void testBoundedParameterizationRepair() {
 
     const weft::ImportedModel beyondTolerance = importNativeRepairFixture(
         "corrupt.edge.pcurve_disagreement_beyond_tolerance.brep");
-    CHECK(!beyondTolerance.repair.workingValid);
-    CHECK(!beyondTolerance.repair.meshable);
-    CHECK(beyondTolerance.repair.identity);
+    CHECK(!beyondTolerance.repair.sourceValid);
+    CHECK(beyondTolerance.repair.workingValid);
+    CHECK(beyondTolerance.repair.meshable);
+    CHECK(!beyondTolerance.repair.identity);
+    CHECK(beyondTolerance.repair.toleranceChanges.size() == 1);
     CHECK(beyondTolerance.repair.parameterizationFlagChanges.empty());
-    CHECK(hasDiagnostic(beyondTolerance, "import.working.invalid"));
-    CHECK(hasDiagnostic(beyondTolerance, "import.working.non_meshable"));
+    CHECK(std::any_of(
+        beyondTolerance.repair.operations.begin(),
+        beyondTolerance.repair.operations.end(),
+        [](const weft::RepairOperation& operation) {
+            return operation.code == "repair.tolerance_envelope";
+        }));
+    if (beyondTolerance.repair.toleranceChanges.size() == 1) {
+        const weft::ToleranceChange& change =
+            beyondTolerance.repair.toleranceChanges.front();
+        CHECK(change.after > change.before);
+        CHECK(change.expectedPcurveUses > 0);
+        CHECK(change.checkedPcurveUses == change.expectedPcurveUses);
+        CHECK(change.maximumDiscrepancy == change.after);
+        CHECK(change.maximumDiscrepancy > change.before);
+    }
+    const auto envelopeEvidence = std::find_if(
+        beyondTolerance.repair.validationEvidence.begin(),
+        beyondTolerance.repair.validationEvidence.end(),
+        [](const weft::RepairValidationEvidence& item) {
+            return item.code == "repair.tolerance_envelope_reconciliation";
+        });
+    CHECK(envelopeEvidence !=
+          beyondTolerance.repair.validationEvidence.end());
+    if (envelopeEvidence !=
+        beyondTolerance.repair.validationEvidence.end()) {
+        CHECK(envelopeEvidence->expected > 0);
+        CHECK(envelopeEvidence->complete());
+    }
+    CHECK(!hasDiagnostic(beyondTolerance, "import.working.invalid"));
+    CHECK(!hasDiagnostic(beyondTolerance, "import.working.non_meshable"));
+
+    weft::Model tolTamperSource = weft::indexShape(readNativeFixture(
+        "derived", "corrupt.edge.pcurve_disagreement_beyond_tolerance.brep"));
+    weft::secure_detail::ConservativeWorkingDerivation tolTamperDerivation =
+        weft::secure_detail::deriveConservativeWorking(tolTamperSource);
+    CHECK(tolTamperDerivation.toleranceChanges.size() == 1);
+    if (tolTamperDerivation.toleranceChanges.size() == 1) {
+        tolTamperDerivation.toleranceChanges.front().checkedPcurveUses = 0;
+    }
+    weft::Model tolTamperWorking =
+        weft::indexShape(tolTamperDerivation.shape);
+    weft::SourceMetadata tolTamperMetadata;
+    tolTamperMetadata.sourceName = "tampered-tolerance-certificate";
+    const weft::ImportedModel tolTampered =
+        weft::secure_detail::buildImportedModel(
+            std::move(tolTamperSource), std::move(tolTamperWorking),
+            std::move(tolTamperMetadata),
+            weft::RepairProfile::Conservative, tolTamperDerivation.history,
+            tolTamperDerivation.exactShapes,
+            std::move(tolTamperDerivation.operations),
+            std::move(tolTamperDerivation.parameterizationFlagChanges),
+            std::move(tolTamperDerivation.orientationChanges),
+            std::move(tolTamperDerivation.toleranceChanges));
+    CHECK(tolTampered.repair.workingValid);
+    CHECK(!tolTampered.repair.meshable);
+    CHECK(hasDiagnostic(tolTampered, "import.repair.validation_incomplete"));
+
+    const weft::ImportedModel withinTolerance = importNativeRepairFixture(
+        "corrupt.edge.pcurve_disagreement_within_tolerance.brep");
+    CHECK(withinTolerance.repair.sourceValid);
+    CHECK(withinTolerance.repair.workingValid);
+    CHECK(withinTolerance.repair.identity);
+    CHECK(withinTolerance.repair.meshable);
+    CHECK(withinTolerance.repair.toleranceChanges.empty());
+    CHECK(!std::any_of(
+        withinTolerance.repair.operations.begin(),
+        withinTolerance.repair.operations.end(),
+        [](const weft::RepairOperation& operation) {
+            return operation.code == "repair.tolerance_envelope";
+        }));
+}
+
+void testFaceAdjacencyOrientationRepair() {
+    const weft::ImportedModel repaired = importNativeRepairFixture(
+        "corrupt.orientation.inverted_shell_face.brep");
+    CHECK(repaired.source != nullptr);
+    CHECK(repaired.working != nullptr);
+    CHECK(!repaired.repair.sourceValid);
+    CHECK(repaired.repair.workingValid);
+    CHECK(repaired.repair.correspondenceComplete);
+    CHECK(repaired.correspondence.topologyComplete);
+    CHECK(!repaired.repair.identity);
+    CHECK(repaired.repair.meshable);
+    CHECK(repaired.repair.sourceShapeSha256 !=
+          repaired.repair.workingShapeSha256);
+    CHECK(repaired.repair.toleranceChanges.empty());
+    CHECK(repaired.repair.representationChanges.empty());
+    CHECK(repaired.repair.topologyCardinalityChanges.empty());
+    CHECK(!repaired.repair.orientationChanges.empty());
+    CHECK(!repaired.diagnostics.hasErrors());
+    CHECK(hasDiagnostic(repaired, "import.source.invalid"));
+    CHECK(std::any_of(
+        repaired.repair.operations.begin(), repaired.repair.operations.end(),
+        [](const weft::RepairOperation& operation) {
+            return operation.code == "repair.orientation_face_adjacency";
+        }));
+    const auto evidence = std::find_if(
+        repaired.repair.validationEvidence.begin(),
+        repaired.repair.validationEvidence.end(),
+        [](const weft::RepairValidationEvidence& item) {
+            return item.code == "repair.orientation_reconciliation";
+        });
+    CHECK(evidence != repaired.repair.validationEvidence.end());
+    if (evidence != repaired.repair.validationEvidence.end()) {
+        CHECK(evidence->expected > 0);
+        CHECK(evidence->complete());
+    }
+    for (const weft::OrientationChange& change :
+         repaired.repair.orientationChanges) {
+        CHECK(change.sourceId == change.workingId);
+        CHECK(change.sourceOrientation != change.workingOrientation);
+        CHECK(change.manifoldEdgesChecked > 0);
+        CHECK(change.polarityChecks > 0);
+    }
+    CHECK(std::all_of(
+        repaired.correspondence.topologyOccurrenceRecords.begin(),
+        repaired.correspondence.topologyOccurrenceRecords.end(),
+        [](const weft::CorrespondenceRecord& record) {
+            return record.sourceId.valid() &&
+                record.workingIds.size() == 1 &&
+                (record.relation == weft::CorrespondenceRelation::Identity ||
+                 record.relation == weft::CorrespondenceRelation::Modified);
+        }));
+
+    weft::Model tamperedSource = weft::indexShape(readNativeFixture(
+        "derived", "corrupt.orientation.inverted_shell_face.brep"));
+    weft::secure_detail::ConservativeWorkingDerivation tamperedDerivation =
+        weft::secure_detail::deriveConservativeWorking(tamperedSource);
+    CHECK(!tamperedDerivation.orientationChanges.empty());
+    if (!tamperedDerivation.orientationChanges.empty()) {
+        tamperedDerivation.orientationChanges.front().manifoldEdgesChecked =
+            0;
+    }
+    weft::Model tamperedWorking =
+        weft::indexShape(tamperedDerivation.shape);
+    weft::SourceMetadata tamperedMetadata;
+    tamperedMetadata.sourceName = "tampered-orientation-certificate";
+    const weft::ImportedModel tampered =
+        weft::secure_detail::buildImportedModel(
+            std::move(tamperedSource), std::move(tamperedWorking),
+            std::move(tamperedMetadata),
+            weft::RepairProfile::Conservative, tamperedDerivation.history,
+            tamperedDerivation.exactShapes,
+            std::move(tamperedDerivation.operations),
+            std::move(tamperedDerivation.parameterizationFlagChanges),
+            std::move(tamperedDerivation.orientationChanges),
+            std::move(tamperedDerivation.toleranceChanges));
+    CHECK(tampered.repair.workingValid);
+    CHECK(!tampered.repair.meshable);
+    CHECK(hasDiagnostic(tampered, "import.repair.validation_incomplete"));
+
+    const TopoDS_Shape inverted = readNativeFixture(
+        "derived", "corrupt.orientation.inverted_shell_face.brep");
+    const TopoDS_Shape box = readNativeFixture(
+        "baselines", "baseline.pathology.box.brep");
+    BRep_Builder compoundBuilder;
+    TopoDS_Compound compound;
+    compoundBuilder.MakeCompound(compound);
+    compoundBuilder.Add(compound, inverted);
+    compoundBuilder.Add(compound, box);
+    const std::filesystem::path multiBodyPath = weft::test::uniqueTempPath(
+        "weft_secure_multi_body_orientation", ".brep");
+    CHECK(BRepTools::Write(compound, multiBodyPath.string().c_str()));
+    const weft::ImportedModel multiBody = weft::importBRepSecure(
+        multiBodyPath.string(), weft::RepairProfile::Conservative);
+    CHECK(multiBody.source != nullptr);
+    CHECK(multiBody.working != nullptr);
+    CHECK(multiBody.repair.sourceFaces > repaired.repair.sourceFaces);
+    CHECK(multiBody.repair.sourceEdges > repaired.repair.sourceEdges);
+    CHECK(!multiBody.repair.sourceValid);
+    CHECK(multiBody.repair.workingValid);
+    CHECK(multiBody.repair.meshable);
+    CHECK(multiBody.repair.correspondenceComplete);
+    CHECK(!multiBody.repair.identity);
+    CHECK(!multiBody.repair.orientationChanges.empty());
+    CHECK(std::any_of(
+        multiBody.repair.operations.begin(), multiBody.repair.operations.end(),
+        [](const weft::RepairOperation& operation) {
+            return operation.code == "repair.orientation_face_adjacency";
+        }));
+    CHECK(std::any_of(
+        multiBody.repair.validationEvidence.begin(),
+        multiBody.repair.validationEvidence.end(),
+        [](const weft::RepairValidationEvidence& evidence) {
+            return evidence.code == "repair.shared_geometry_immutable" &&
+                evidence.complete() && evidence.expected != 0;
+        }));
+    std::error_code multiBodyIgnored;
+    std::filesystem::remove(multiBodyPath, multiBodyIgnored);
+
+    const weft::ImportedModel wireInconsistent = importNativeRepairFixture(
+        "corrupt.wire.inconsistent_orientation.brep");
+    CHECK(wireInconsistent.repair.orientationChanges.empty());
+    CHECK(!std::any_of(
+        wireInconsistent.repair.operations.begin(),
+        wireInconsistent.repair.operations.end(),
+        [](const weft::RepairOperation& operation) {
+            return operation.code == "repair.orientation_face_adjacency";
+        }));
 }
 
 void testTotalReconnaissance(const std::filesystem::path& cylinderPath) {
@@ -1005,6 +1337,7 @@ int main() {
         testNativeBRepSecureImport();
         testMultipleFreeRootOccurrences();
         testBoundedParameterizationRepair();
+        testFaceAdjacencyOrientationRepair();
         testTotalReconnaissance(path);
         std::error_code ignored;
         std::filesystem::remove(path, ignored);

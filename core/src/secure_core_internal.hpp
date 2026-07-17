@@ -24,6 +24,14 @@ public:
         }
     }
 
+    void rebind(const TopoDS_Shape& source, const TopoDS_Shape& working) {
+        if (source.IsNull() || working.IsNull()) {
+            throw std::logic_error(
+                "exact-shape rebind requires non-null source and working");
+        }
+        workingBySourceTShape_[source.TShape().get()] = working;
+    }
+
     TopoDS_Shape mapped(const TopoDS_Shape& source) const {
         if (source.IsNull()) return {};
         const auto found =
@@ -40,6 +48,12 @@ public:
         return !candidate.IsNull() && candidate.IsSame(working);
     }
 
+    bool mapsPartner(const TopoDS_Shape& source,
+                     const TopoDS_Shape& working) const {
+        const TopoDS_Shape candidate = mapped(source);
+        return !candidate.IsNull() && candidate.IsPartner(working);
+    }
+
     std::size_t size() const noexcept {
         return workingBySourceTShape_.size();
     }
@@ -54,6 +68,8 @@ struct ConservativeWorkingDerivation {
     ExactShapeDerivationMap exactShapes;
     std::vector<RepairOperation> operations;
     std::vector<ParameterizationFlagChange> parameterizationFlagChanges;
+    std::vector<OrientationChange> orientationChanges;
+    std::vector<ToleranceChange> toleranceChanges;
 };
 
 struct CompatibilityWorkingDerivation {
@@ -77,6 +93,8 @@ ImportedModel buildImportedModel(
     RepairProfile profile, const Handle(BRepTools_History)& history,
     const ExactShapeDerivationMap& exactShapeDerivation = {},
     std::vector<RepairOperation> operations = {},
-    std::vector<ParameterizationFlagChange> parameterizationFlagChanges = {});
+    std::vector<ParameterizationFlagChange> parameterizationFlagChanges = {},
+    std::vector<OrientationChange> orientationChanges = {},
+    std::vector<ToleranceChange> toleranceChanges = {});
 
 }  // namespace weft::secure_detail

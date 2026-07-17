@@ -91,6 +91,8 @@ public:
         secure_detail::ExactShapeDerivationMap exactShapeDerivation;
         std::vector<RepairOperation> operations;
         std::vector<ParameterizationFlagChange> parameterizationFlagChanges;
+        std::vector<OrientationChange> orientationChanges;
+        std::vector<ToleranceChange> toleranceChanges;
         if (repairProfile == RepairProfile::Conservative) {
             secure_detail::ConservativeWorkingDerivation derivation =
                 secure_detail::deriveConservativeWorking(source);
@@ -100,6 +102,8 @@ public:
             operations = std::move(derivation.operations);
             parameterizationFlagChanges =
                 std::move(derivation.parameterizationFlagChanges);
+            orientationChanges = std::move(derivation.orientationChanges);
+            toleranceChanges = std::move(derivation.toleranceChanges);
         } else {
             secure_detail::CompatibilityWorkingDerivation derivation =
                 secure_detail::deriveCompatibilityWorking(source);
@@ -113,7 +117,9 @@ public:
             std::move(source), std::move(working), std::move(metadata),
             repairProfile, workingHistory, exactShapeDerivation,
             std::move(operations),
-            std::move(parameterizationFlagChanges));
+            std::move(parameterizationFlagChanges),
+            std::move(orientationChanges),
+            std::move(toleranceChanges));
         imported.diagnostics.events.push_back({
             {StableIdKind::Diagnostic,
              static_cast<std::uint64_t>(imported.diagnostics.events.size() + 1)},

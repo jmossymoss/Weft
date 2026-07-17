@@ -621,6 +621,8 @@ ImportedModel cafToImportedModel(const TopoDS_Shape& oneShape,
     ImportMeta workingMeta = captured;
     std::vector<RepairOperation> operations;
     std::vector<ParameterizationFlagChange> parameterizationFlagChanges;
+    std::vector<OrientationChange> orientationChanges;
+    std::vector<ToleranceChange> toleranceChanges;
     if (profile == RepairProfile::Conservative) {
         secure_detail::ConservativeWorkingDerivation derivation =
             secure_detail::deriveConservativeWorking(source);
@@ -630,6 +632,8 @@ ImportedModel cafToImportedModel(const TopoDS_Shape& oneShape,
         operations = std::move(derivation.operations);
         parameterizationFlagChanges =
             std::move(derivation.parameterizationFlagChanges);
+        orientationChanges = std::move(derivation.orientationChanges);
+        toleranceChanges = std::move(derivation.toleranceChanges);
         remapAssemblyExactUses(workingMeta, exactShapeDerivation);
     } else {
         secure_detail::CompatibilityWorkingDerivation derivation =
@@ -645,7 +649,9 @@ ImportedModel cafToImportedModel(const TopoDS_Shape& oneShape,
     return secure_detail::buildImportedModel(
         std::move(source), std::move(working), std::move(metadata), profile,
         workingHistory, exactShapeDerivation, std::move(operations),
-        std::move(parameterizationFlagChanges));
+        std::move(parameterizationFlagChanges),
+        std::move(orientationChanges),
+        std::move(toleranceChanges));
 }
 
 }  // namespace weft::io

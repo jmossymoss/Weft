@@ -77,6 +77,9 @@ struct SourceMetadata {
     std::string sourceSha256;
     std::uint64_t sourceByteLength = 0;
     std::optional<double> lengthUnitMm;
+    // True when lengthUnitMm was supplied by an explicit caller resolution
+    // rather than declared by the source format.
+    bool lengthUnitExplicitlyResolved = false;
     std::optional<std::string> stepSchema;
     std::string importerVersion;
     std::vector<std::string> effectiveTranslatorConfiguration;
@@ -264,6 +267,11 @@ struct ToleranceChange {
     StableId workingId;
     double before = 0.0;
     double after = 0.0;
+    // Non-zero only for certified envelope repairs; inferred audits leave these
+    // at zero so vacuous proof cannot pass validation.
+    std::size_t expectedPcurveUses = 0;
+    std::size_t checkedPcurveUses = 0;
+    double maximumDiscrepancy = 0.0;
 };
 
 struct RepresentationChange {
@@ -271,6 +279,9 @@ struct RepresentationChange {
     StableId workingEdge;
     std::size_t sourceStoredPcurveUses = 0;
     std::size_t workingStoredPcurveUses = 0;
+    // True only when a certified copy-on-write geometry replacement produced
+    // this delta. Unexplained representation deltas fail validation.
+    bool certifiedCopyOnWrite = false;
 };
 
 // Evidence for a flag-only repair; curve, p-curve, and tolerance data remain
@@ -286,6 +297,18 @@ struct ParameterizationFlagChange {
     std::size_t checkedPcurveUses = 0;
     double maximumDiscrepancy = 0.0;
     double toleranceEnvelope = 0.0;
+};
+
+// Evidence for an occurrence-orientation-only repair. Geometry handles,
+// tolerances, stored representations, and topology cardinality remain
+// unchanged; only TopoDS occurrence orientations may differ.
+struct OrientationChange {
+    StableId sourceId;
+    StableId workingId;
+    TopologyOrientation sourceOrientation = TopologyOrientation::Forward;
+    TopologyOrientation workingOrientation = TopologyOrientation::Forward;
+    std::size_t manifoldEdgesChecked = 0;
+    std::size_t polarityChecks = 0;
 };
 
 struct TopologyCardinalityChange {
@@ -326,6 +349,7 @@ struct RepairCertificate {
     std::vector<ToleranceChange> toleranceChanges;
     std::vector<RepresentationChange> representationChanges;
     std::vector<ParameterizationFlagChange> parameterizationFlagChanges;
+    std::vector<OrientationChange> orientationChanges;
     std::vector<TopologyCardinalityChange> topologyCardinalityChanges;
     std::vector<RepairValidationEvidence> validationEvidence;
 };
@@ -439,11 +463,21 @@ ImportedModel importStepSecure(
     const std::string& path,
     RepairProfile profile = RepairProfile::Conservative);
 
+// Secure IGES import. Parsing and provenance consume one immutable byte
+// snapshot; working topology uses the same audited repair derivation as STEP.
+ImportedModel importIgesSecure(
+    const std::string& path,
+    RepairProfile profile = RepairProfile::Conservative);
+
 // Secure native OCCT ASCII B-rep import. Parsing, source-byte provenance, and
 // geometry transfer all consume one immutable byte snapshot; the working
 // topology is derived through the same audited repair stages as STEP.
+//
+// Native B-rep declares no physical unit. Callers may supply an explicit
+// millimetre scale for export/provenance; coordinates are never rescaled.
 ImportedModel importBRepSecure(
     const std::string& path,
-    RepairProfile profile = RepairProfile::Conservative);
+    RepairProfile profile = RepairProfile::Conservative,
+    std::optional<double> lengthUnitMm = std::nullopt);
 
 }  // namespace weft

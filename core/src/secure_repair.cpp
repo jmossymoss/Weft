@@ -7,19 +7,28 @@
 #include <BRepAdaptor_Curve2d.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
+#include <BRepCheck_Analyzer.hxx>
+#include <BRepClass3d_SolidClassifier.hxx>
+#include <BRepGProp.hxx>
 #include <BRepTools_History.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
+#include <GProp_GProps.hxx>
 #include <Geom2d_Curve.hxx>
 #include <Geom_Curve.hxx>
 #include <GeomLib_CheckCurveOnSurface.hxx>
 #include <Standard_Failure.hxx>
+#include <TopAbs.hxx>
 #include <TopAbs_Orientation.hxx>
 #include <TopExp.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Iterator.hxx>
+#include <TopoDS_Shell.hxx>
+#include <TopoDS_Solid.hxx>
+#include <TopoDS_Vertex.hxx>
+#include <TopExp.hxx>
 
 #include <algorithm>
 #include <cmath>
@@ -30,6 +39,8 @@
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace weft::secure_detail {
 namespace {
@@ -101,11 +112,11 @@ private:
     ExactShapeDerivationMap exactShapes_;
 };
 
-struct ParameterizationProof {
+struct CurveOnSurfaceProof {
     std::size_t expectedPcurveUses = 0;
     std::size_t checkedPcurveUses = 0;
     double maximumDiscrepancy = 0.0;
-    double toleranceEnvelope = 0.0;
+    double sourceTolerance = 0.0;
 };
 
 bool exactRange(double first, double last, double candidateFirst,
@@ -115,12 +126,9 @@ bool exactRange(double first, double last, double candidateFirst,
         first < last && first == candidateFirst && last == candidateLast;
 }
 
-std::optional<ParameterizationProof> proveExistingParameterization(
+std::optional<CurveOnSurfaceProof> measureStoredCurveOnSurface(
     const Model& source, const TopoDS_Edge& edge) {
-    if (BRep_Tool::Degenerated(edge) ||
-        BRep_Tool::SameParameter(edge) || BRep_Tool::SameRange(edge)) {
-        return std::nullopt;
-    }
+    if (BRep_Tool::Degenerated(edge)) return std::nullopt;
 
     double curveFirst = 0.0;
     double curveLast = 0.0;
@@ -141,10 +149,10 @@ std::optional<ParameterizationProof> proveExistingParameterization(
     for (const TopoDS_Shape& owner : owners) uniqueOwners.Add(owner);
     if (uniqueOwners.IsEmpty()) return std::nullopt;
 
-    ParameterizationProof proof;
-    proof.toleranceEnvelope = BRep_Tool::Tolerance(edge);
-    if (!std::isfinite(proof.toleranceEnvelope) ||
-        proof.toleranceEnvelope < 0.0) {
+    CurveOnSurfaceProof proof;
+    proof.sourceTolerance = BRep_Tool::Tolerance(edge);
+    if (!std::isfinite(proof.sourceTolerance) ||
+        proof.sourceTolerance < 0.0) {
         return std::nullopt;
     }
 
@@ -183,7 +191,7 @@ std::optional<ParameterizationProof> proveExistingParameterization(
                     check.Perform(curveOnSurface);
                     if (!check.IsDone() ||
                         !std::isfinite(check.MaxDistance()) ||
-                        check.MaxDistance() > proof.toleranceEnvelope) {
+                        check.MaxDistance() < 0.0) {
                         return false;
                     }
                     proof.maximumDiscrepancy = std::max(
@@ -209,7 +217,32 @@ std::optional<ParameterizationProof> proveExistingParameterization(
     return proof;
 }
 
-std::string proofDetail(const ParameterizationProof& proof) {
+std::optional<CurveOnSurfaceProof> proveExistingParameterization(
+    const Model& source, const TopoDS_Edge& edge) {
+    if (BRep_Tool::SameParameter(edge) || BRep_Tool::SameRange(edge)) {
+        return std::nullopt;
+    }
+    std::optional<CurveOnSurfaceProof> proof =
+        measureStoredCurveOnSurface(source, edge);
+    if (!proof) return std::nullopt;
+    if (proof->maximumDiscrepancy > proof->sourceTolerance) {
+        return std::nullopt;
+    }
+    return proof;
+}
+
+std::optional<CurveOnSurfaceProof> proveToleranceEnvelopeRaise(
+    const Model& source, const TopoDS_Edge& edge) {
+    std::optional<CurveOnSurfaceProof> proof =
+        measureStoredCurveOnSurface(source, edge);
+    if (!proof) return std::nullopt;
+    if (!(proof->maximumDiscrepancy > proof->sourceTolerance)) {
+        return std::nullopt;
+    }
+    return proof;
+}
+
+std::string parameterizationProofDetail(const CurveOnSurfaceProof& proof) {
     std::ostringstream detail;
     detail.imbue(std::locale::classic());
     detail << std::setprecision(std::numeric_limits<double>::max_digits10)
@@ -217,7 +250,19 @@ std::string proofDetail(const ParameterizationProof& proof) {
            << proof.checkedPcurveUses
            << " stored p-curve use(s); maximum discrepancy="
            << proof.maximumDiscrepancy
-           << ", source tolerance envelope=" << proof.toleranceEnvelope;
+           << ", source tolerance envelope=" << proof.sourceTolerance;
+    return detail.str();
+}
+
+std::string toleranceProofDetail(const CurveOnSurfaceProof& proof) {
+    std::ostringstream detail;
+    detail.imbue(std::locale::classic());
+    detail << std::setprecision(std::numeric_limits<double>::max_digits10)
+           << "raise working edge tolerance to measured curve-on-surface "
+           << "maximum after checking " << proof.checkedPcurveUses
+           << " stored p-curve use(s); maximum discrepancy="
+           << proof.maximumDiscrepancy
+           << ", source tolerance=" << proof.sourceTolerance;
     return detail.str();
 }
 
@@ -255,6 +300,406 @@ Handle(BRepTools_History) composeCopyRepairHistory(
     return composed;
 }
 
+bool workingShapeIsValid(const TopoDS_Shape& shape) {
+    // BRepCheck_Analyzer mutates Checked flags on the input shape. Probe a
+    // disposable geometry-deep copy so identity digests stay stable.
+    BRepBuilderAPI_Copy probe(shape, true, false);
+    if (probe.Shape().IsNull()) return false;
+    return BRepCheck_Analyzer(probe.Shape(), true).IsValid();
+}
+
+TopologyOrientation topologyOrientationOf(TopAbs_Orientation orientation) {
+    switch (orientation) {
+        case TopAbs_FORWARD: return TopologyOrientation::Forward;
+        case TopAbs_REVERSED: return TopologyOrientation::Reversed;
+        case TopAbs_INTERNAL: return TopologyOrientation::Internal;
+        case TopAbs_EXTERNAL: return TopologyOrientation::External;
+    }
+    return TopologyOrientation::Forward;
+}
+
+struct FaceEdgeUse {
+    std::size_t faceIndex = 0;
+    TopAbs_Orientation composedOrientation = TopAbs_FORWARD;
+};
+
+struct ShellOrientationSolution {
+    std::vector<TopoDS_Face> faces;
+    std::vector<TopAbs_Orientation> sourceOrientations;
+    std::vector<TopAbs_Orientation> solvedOrientations;
+    std::size_t manifoldEdgesChecked = 0;
+    bool polarityFlipped = false;
+};
+
+std::optional<ShellOrientationSolution> solveClosedShellOrientation(
+    const TopoDS_Shell& shell) {
+    if (shell.IsNull() || !shell.Closed()) return std::nullopt;
+
+    ShellOrientationSolution solution;
+    for (TopoDS_Iterator faceIt(shell, false, false); faceIt.More();
+         faceIt.Next()) {
+        if (faceIt.Value().ShapeType() != TopAbs_FACE) return std::nullopt;
+        const TopoDS_Face face = TopoDS::Face(faceIt.Value());
+        if (face.Orientation() != TopAbs_FORWARD &&
+            face.Orientation() != TopAbs_REVERSED) {
+            return std::nullopt;
+        }
+        solution.faces.push_back(face);
+        solution.sourceOrientations.push_back(face.Orientation());
+        solution.solvedOrientations.push_back(face.Orientation());
+    }
+    if (solution.faces.size() < 2) return std::nullopt;
+
+    std::unordered_map<const void*, std::vector<FaceEdgeUse>> usesByEdge;
+    for (std::size_t faceIndex = 0; faceIndex < solution.faces.size();
+         ++faceIndex) {
+        const TopoDS_Face& face = solution.faces[faceIndex];
+        for (TopoDS_Iterator wireIt(face, false, false); wireIt.More();
+             wireIt.Next()) {
+            if (wireIt.Value().ShapeType() != TopAbs_WIRE) continue;
+            for (TopoDS_Iterator edgeIt(wireIt.Value(), false, false);
+                 edgeIt.More(); edgeIt.Next()) {
+                if (edgeIt.Value().ShapeType() != TopAbs_EDGE) continue;
+                const TopoDS_Edge edge = TopoDS::Edge(edgeIt.Value());
+                if (BRep_Tool::Degenerated(edge)) continue;
+                if (edge.Orientation() != TopAbs_FORWARD &&
+                    edge.Orientation() != TopAbs_REVERSED) {
+                    return std::nullopt;
+                }
+                usesByEdge[edge.TShape().get()].push_back(
+                    {faceIndex,
+                     TopAbs::Compose(face.Orientation(),
+                                     edge.Orientation())});
+            }
+        }
+    }
+    if (usesByEdge.empty()) return std::nullopt;
+
+    std::vector<std::vector<std::pair<std::size_t, bool>>> adjacency(
+        solution.faces.size());
+    for (const auto& [edgeKey, uses] : usesByEdge) {
+        (void)edgeKey;
+        if (uses.size() != 2) return std::nullopt;
+        ++solution.manifoldEdgesChecked;
+        const FaceEdgeUse& first = uses[0];
+        const FaceEdgeUse& second = uses[1];
+        const bool sameSense =
+            first.composedOrientation == second.composedOrientation;
+        adjacency[first.faceIndex].push_back(
+            {second.faceIndex, sameSense});
+        adjacency[second.faceIndex].push_back(
+            {first.faceIndex, sameSense});
+    }
+
+    std::vector<char> visited(solution.faces.size(), 0);
+    std::vector<char> reverseRelative(solution.faces.size(), 0);
+    for (std::size_t root = 0; root < solution.faces.size(); ++root) {
+        if (visited[root]) continue;
+        std::vector<std::size_t> stack;
+        stack.push_back(root);
+        visited[root] = 1;
+        reverseRelative[root] = 0;
+        while (!stack.empty()) {
+            const std::size_t faceIndex = stack.back();
+            stack.pop_back();
+            for (const auto& [neighbor, needsRelativeReverse] :
+                 adjacency[faceIndex]) {
+                const char required =
+                    static_cast<char>(reverseRelative[faceIndex] ^
+                                      (needsRelativeReverse ? 1 : 0));
+                if (!visited[neighbor]) {
+                    visited[neighbor] = 1;
+                    reverseRelative[neighbor] = required;
+                    stack.push_back(neighbor);
+                    continue;
+                }
+                if (reverseRelative[neighbor] != required) {
+                    return std::nullopt;
+                }
+            }
+        }
+    }
+
+    for (std::size_t faceIndex = 0; faceIndex < solution.faces.size();
+         ++faceIndex) {
+        if (reverseRelative[faceIndex]) {
+            solution.solvedOrientations[faceIndex] = TopAbs::Reverse(
+                solution.sourceOrientations[faceIndex]);
+        }
+    }
+    return solution;
+}
+
+bool solidNeedsOppositePolarity(const TopoDS_Solid& solid) {
+    GProp_GProps props;
+    BRepGProp::VolumeProperties(solid, props);
+    const double mass = props.Mass();
+    if (!std::isfinite(mass) || mass <= 0.0) return true;
+
+    BRepClass3d_SolidClassifier classifier(solid);
+    classifier.PerformInfinitePoint(1.0e-7);
+    return classifier.State() == TopAbs_IN;
+}
+
+TopoDS_Shell rebuildShell(const ShellOrientationSolution& solution) {
+    BRep_Builder builder;
+    TopoDS_Shell shell;
+    builder.MakeShell(shell);
+    for (std::size_t faceIndex = 0; faceIndex < solution.faces.size();
+         ++faceIndex) {
+        TopoDS_Face face = solution.faces[faceIndex];
+        face.Orientation(solution.solvedOrientations[faceIndex]);
+        builder.Add(shell, face);
+    }
+    shell.Closed(true);
+    shell.Orientation(TopAbs_FORWARD);
+    return shell;
+}
+
+TopoDS_Solid rebuildSolidWithShell(const TopoDS_Shell& shell) {
+    BRep_Builder builder;
+    TopoDS_Solid solid;
+    builder.MakeSolid(solid);
+    builder.Add(solid, shell);
+    return solid;
+}
+
+bool replaceSolidInWorkingRoot(TopoDS_Shape& root,
+                               const TopoDS_Solid& oldSolid,
+                               const TopoDS_Solid& newSolid,
+                               ConservativeWorkingDerivation* derivation,
+                               const TopoDS_Shape& sourceRoot) {
+    if (root.IsNull() || oldSolid.IsNull() || newSolid.IsNull()) {
+        return false;
+    }
+    if (root.ShapeType() == TopAbs_SOLID) {
+        if (!root.IsPartner(oldSolid) && !root.IsSame(oldSolid)) {
+            return false;
+        }
+        TopoDS_Shape replacement = root;
+        replacement.TShape(newSolid.TShape());
+        root = replacement;
+        return true;
+    }
+    if (root.ShapeType() != TopAbs_COMPOUND &&
+        root.ShapeType() != TopAbs_COMPSOLID) {
+        return false;
+    }
+
+    const TopoDS_Shape previousRoot = root;
+    BRep_Builder builder;
+    TopoDS_Shape rebuilt = root.EmptyCopied();
+    bool replaced = false;
+    for (TopoDS_Iterator it(root, false, false); it.More(); it.Next()) {
+        const TopoDS_Shape& child = it.Value();
+        if (child.ShapeType() == TopAbs_SOLID &&
+            (child.IsPartner(oldSolid) || child.IsSame(oldSolid))) {
+            TopoDS_Shape replacement = child;
+            replacement.TShape(newSolid.TShape());
+            builder.Add(rebuilt, replacement);
+            replaced = true;
+            continue;
+        }
+        builder.Add(rebuilt, child);
+    }
+    if (!replaced) return false;
+    rebuilt.Orientation(root.Orientation());
+    rebuilt.Location(root.Location());
+    root = rebuilt;
+    if (derivation != nullptr && !sourceRoot.IsNull() &&
+        derivation->exactShapes.mapsPartner(sourceRoot, previousRoot)) {
+        derivation->exactShapes.rebind(sourceRoot, root);
+        if (!derivation->history.IsNull()) {
+            derivation->history->AddModified(sourceRoot, root);
+        }
+    }
+    return true;
+}
+
+bool applyRootSolidOrientationRepair(
+    ConservativeWorkingDerivation& derivation, const Model& source,
+    const Model& working, const TopoDS_Solid& sourceSolid,
+    TopoDS_Solid workingSolid) {
+    TopoDS_Shell sourceShell;
+    TopoDS_Shell workingShell;
+    int shellCount = 0;
+    for (TopoDS_Iterator it(workingSolid, false, false); it.More();
+         it.Next()) {
+        if (it.Value().ShapeType() != TopAbs_SHELL) return false;
+        workingShell = TopoDS::Shell(it.Value());
+        ++shellCount;
+    }
+    if (shellCount != 1 || workingShell.IsNull() || !workingShell.Closed()) {
+        return false;
+    }
+    for (TopoDS_Iterator it(sourceSolid, false, false); it.More();
+         it.Next()) {
+        if (it.Value().ShapeType() != TopAbs_SHELL) return false;
+        sourceShell = TopoDS::Shell(it.Value());
+    }
+    if (sourceShell.IsNull()) return false;
+
+    const TopAbs_Orientation shellSourceOrientation =
+        workingShell.Orientation();
+    std::vector<TopAbs_Orientation> localSourceOrientations;
+    TopoDS_Shell effectiveShell;
+    BRep_Builder shellBuilder;
+    shellBuilder.MakeShell(effectiveShell);
+    for (TopoDS_Iterator faceIt(workingShell, false, false); faceIt.More();
+         faceIt.Next()) {
+        if (faceIt.Value().ShapeType() != TopAbs_FACE) return false;
+        TopoDS_Face face = TopoDS::Face(faceIt.Value());
+        localSourceOrientations.push_back(face.Orientation());
+        face.Orientation(TopAbs::Compose(shellSourceOrientation,
+                                         face.Orientation()));
+        shellBuilder.Add(effectiveShell, face);
+    }
+    effectiveShell.Closed(workingShell.Closed());
+    effectiveShell.Orientation(TopAbs_FORWARD);
+
+    std::optional<ShellOrientationSolution> solution =
+        solveClosedShellOrientation(effectiveShell);
+    if (!solution) return false;
+    if (localSourceOrientations.size() != solution->faces.size()) {
+        return false;
+    }
+
+    bool faceChanged = false;
+    for (std::size_t faceIndex = 0; faceIndex < solution->faces.size();
+         ++faceIndex) {
+        if (localSourceOrientations[faceIndex] !=
+            solution->solvedOrientations[faceIndex]) {
+            faceChanged = true;
+            break;
+        }
+    }
+    const bool shellNeedsNormalize =
+        shellSourceOrientation != TopAbs_FORWARD;
+    // Refuse polarity-only mutation: whole-solid polarity without an
+    // adjacency or shell-occurrence change is BR-015 territory.
+    if (!faceChanged && !shellNeedsNormalize) {
+        return true;
+    }
+
+    TopoDS_Shell repairedShell = rebuildShell(*solution);
+    TopoDS_Solid repairedSolid = rebuildSolidWithShell(repairedShell);
+    std::size_t polarityChecks = 1;
+    if (solidNeedsOppositePolarity(repairedSolid)) {
+        for (TopAbs_Orientation& orientation :
+             solution->solvedOrientations) {
+            orientation = TopAbs::Reverse(orientation);
+        }
+        repairedShell = rebuildShell(*solution);
+        repairedSolid = rebuildSolidWithShell(repairedShell);
+        solution->polarityFlipped = true;
+        if (solidNeedsOppositePolarity(repairedSolid)) return false;
+    }
+    // Commit only when the rebuilt solid is independently valid. A solver
+    // proposal that leaves other pathologies in place must not rewrite
+    // identity copies of non-orientation failures.
+    if (!workingShapeIsValid(repairedSolid)) {
+        return false;
+    }
+
+    const int solidIndex = source.solids.FindIndex(sourceSolid);
+    if (solidIndex <= 0) return false;
+    const StableId solidId{StableIdKind::Solid,
+                           static_cast<std::uint64_t>(solidIndex)};
+
+    std::size_t faceChangeCount = 0;
+    for (std::size_t faceIndex = 0; faceIndex < solution->faces.size();
+         ++faceIndex) {
+        if (localSourceOrientations[faceIndex] ==
+            solution->solvedOrientations[faceIndex]) {
+            continue;
+        }
+        const int faceIndexInModel =
+            working.faces.FindIndex(solution->faces[faceIndex]);
+        if (faceIndexInModel <= 0) return false;
+        const StableId faceId{StableIdKind::Face,
+                              static_cast<std::uint64_t>(faceIndexInModel)};
+        derivation.orientationChanges.push_back(
+            {faceId, faceId,
+             topologyOrientationOf(localSourceOrientations[faceIndex]),
+             topologyOrientationOf(solution->solvedOrientations[faceIndex]),
+             solution->manifoldEdgesChecked, polarityChecks});
+        ++faceChangeCount;
+    }
+    if (faceChangeCount == 0 &&
+        shellSourceOrientation != TopAbs_FORWARD) {
+        // Shell-only absorption still mutates occurrence orientations through
+        // the rebuilt forward shell; record the solid subject as witness.
+        derivation.orientationChanges.push_back(
+            {solidId, solidId,
+             topologyOrientationOf(shellSourceOrientation),
+             TopologyOrientation::Forward, solution->manifoldEdgesChecked,
+             polarityChecks});
+    }
+
+    if (!replaceSolidInWorkingRoot(derivation.shape, workingSolid,
+                                   repairedSolid, &derivation,
+                                   source.shape)) {
+        return false;
+    }
+
+    derivation.exactShapes.rebind(sourceSolid, repairedSolid);
+    derivation.exactShapes.rebind(sourceShell, repairedShell);
+    if (!derivation.history.IsNull()) {
+        derivation.history->AddModified(sourceSolid, repairedSolid);
+        derivation.history->AddModified(sourceShell, repairedShell);
+    }
+
+    std::ostringstream detail;
+    detail.imbue(std::locale::classic());
+    detail << "face-adjacency orientation repair on closed solid; "
+           << "manifold edges checked=" << solution->manifoldEdgesChecked
+           << ", polarity checks=" << polarityChecks
+           << ", face orientation changes=" << faceChangeCount
+           << ", shell normalized="
+           << (shellSourceOrientation != TopAbs_FORWARD ? "yes" : "no");
+    derivation.operations.push_back(
+        {"repair.orientation_face_adjacency", {solidId}, {solidId},
+         detail.str()});
+    return true;
+}
+
+void repairRootSolidOrientations(ConservativeWorkingDerivation& derivation,
+                                 const Model& source,
+                                 const Model& working) {
+    if (derivation.shape.IsNull() || source.solids.Extent() == 0 ||
+        source.solids.Extent() != working.solids.Extent()) {
+        return;
+    }
+    const TopAbs_ShapeEnum rootType = derivation.shape.ShapeType();
+    if (rootType != TopAbs_SOLID && rootType != TopAbs_COMPOUND &&
+        rootType != TopAbs_COMPSOLID) {
+        return;
+    }
+    if (rootType == TopAbs_SOLID && source.solids.Extent() != 1) {
+        return;
+    }
+    // Only attempt orientation repair when the isolated working body is
+    // already invalid. Valid identity imports must remain byte-stable.
+    if (workingShapeIsValid(derivation.shape)) return;
+
+    for (int solidIndex = 1; solidIndex <= source.solids.Extent();
+         ++solidIndex) {
+        const TopoDS_Solid sourceSolid =
+            TopoDS::Solid(source.solids(solidIndex));
+        const TopoDS_Shape mapped =
+            derivation.exactShapes.mapped(sourceSolid);
+        if (mapped.IsNull() || mapped.ShapeType() != TopAbs_SOLID) {
+            continue;
+        }
+        const TopoDS_Solid workingSolid = TopoDS::Solid(mapped);
+        if (workingShapeIsValid(workingSolid)) {
+            continue;
+        }
+        applyRootSolidOrientationRepair(derivation, source, working,
+                                        sourceSolid, workingSolid);
+    }
+}
+
 }  // namespace
 
 ConservativeWorkingDerivation deriveConservativeWorking(
@@ -278,7 +723,7 @@ ConservativeWorkingDerivation deriveConservativeWorking(
         const TopoDS_Edge workingEdge =
             TopoDS::Edge(working.edges(edgeIndex));
         if (!derivation.exactShapes.maps(sourceEdge, workingEdge)) continue;
-        const std::optional<ParameterizationProof> proof =
+        const std::optional<CurveOnSurfaceProof> proof =
             proveExistingParameterization(source, sourceEdge);
         if (!proof) continue;
 
@@ -296,7 +741,7 @@ ConservativeWorkingDerivation deriveConservativeWorking(
                               static_cast<std::uint64_t>(edgeIndex)};
         derivation.operations.push_back(
             {"repair.same_parameter_range_flags", {edgeId}, {edgeId},
-             proofDetail(*proof)});
+             parameterizationProofDetail(*proof)});
         derivation.parameterizationFlagChanges.push_back(
             {edgeId,
              edgeId,
@@ -307,8 +752,70 @@ ConservativeWorkingDerivation deriveConservativeWorking(
              proof->expectedPcurveUses,
              proof->checkedPcurveUses,
              proof->maximumDiscrepancy,
-             proof->toleranceEnvelope});
+             proof->sourceTolerance});
     }
+
+    if (!workingShapeIsValid(derivation.shape)) {
+        for (int edgeIndex = 1; edgeIndex <= source.edges.Extent();
+             ++edgeIndex) {
+            if (workingShapeIsValid(derivation.shape)) {
+                break;
+            }
+            const TopoDS_Edge sourceEdge =
+                TopoDS::Edge(source.edges(edgeIndex));
+            const TopoDS_Edge workingEdge =
+                TopoDS::Edge(working.edges(edgeIndex));
+            if (!derivation.exactShapes.maps(sourceEdge, workingEdge)) {
+                continue;
+            }
+            const std::optional<CurveOnSurfaceProof> proof =
+                proveToleranceEnvelopeRaise(source, sourceEdge);
+            if (!proof) continue;
+
+            const double before = BRep_Tool::Tolerance(workingEdge);
+            const double after = proof->maximumDiscrepancy;
+            if (!(after > before) || !std::isfinite(after)) continue;
+
+            // Trial the raise on a disposable deep copy first. Failed
+            // UpdateEdge attempts can leave vertex-tolerance residue on the
+            // live working shape even after an edge revert.
+            BRepBuilderAPI_Copy probeCopy(derivation.shape, true, false);
+            if (probeCopy.Shape().IsNull()) continue;
+            Model probeModel = indexShape(probeCopy.Shape());
+            if (probeModel.edges.Extent() < edgeIndex) continue;
+            const TopoDS_Edge probeEdge =
+                TopoDS::Edge(probeModel.edges(edgeIndex));
+            builder.UpdateEdge(probeEdge, after);
+            if (!workingShapeIsValid(probeCopy.Shape())) {
+                continue;
+            }
+
+            builder.UpdateEdge(workingEdge, after);
+            if (BRep_Tool::Tolerance(sourceEdge) != proof->sourceTolerance ||
+                BRep_Tool::Tolerance(workingEdge) != after) {
+                throw std::logic_error(
+                    "bounded tolerance repair violated source/working isolation");
+            }
+            if (!workingShapeIsValid(derivation.shape)) {
+                throw std::logic_error(
+                    "tolerance probe validated but live working shape did not");
+            }
+
+            const StableId edgeId{StableIdKind::Edge,
+                                  static_cast<std::uint64_t>(edgeIndex)};
+            derivation.operations.push_back(
+                {"repair.tolerance_envelope", {edgeId}, {edgeId},
+                 toleranceProofDetail(*proof)});
+            derivation.toleranceChanges.push_back(
+                {edgeId, edgeId, before, after, proof->expectedPcurveUses,
+                 proof->checkedPcurveUses, proof->maximumDiscrepancy});
+        }
+    }
+
+    // Re-index after tolerance mutations so orientation repair sees current
+    // working solids/faces if the root shape stayed partner-identical.
+    working = indexShape(derivation.shape);
+    repairRootSolidOrientations(derivation, source, working);
     return derivation;
 }
 
