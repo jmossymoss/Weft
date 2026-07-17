@@ -2,12 +2,14 @@
 #include "weft/io/system.hpp"
 #include "weft/model.hpp"
 #include "weft/secure_core.hpp"
+#include "weft/secure_reconnaissance.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <set>
 #include <string>
 
 namespace {
@@ -192,6 +194,68 @@ void testSourceSnapshotPreventsPathReplacement() {
     std::filesystem::remove(path, ignored);
 }
 
+void testTotalReconnaissance(const std::filesystem::path& cylinderPath) {
+    const weft::ImportedModel cylinder = weft::importStepSecure(
+        cylinderPath.string(), weft::RepairProfile::Conservative);
+    const weft::ReconnaissanceReport report = weft::reconnoitre(cylinder);
+    CHECK(report.complete);
+    CHECK(report.expectedSubjects == report.checkedSubjects);
+    CHECK(report.records.size() ==
+          static_cast<std::size_t>(cylinder.working->snapshot.model.faceCount() +
+                                   cylinder.working->snapshot.model.edgeCount()));
+    CHECK(report.regions.size() == 3);
+    std::set<weft::StableId> classifiedSubjects;
+
+    int planes = 0;
+    int cylinders = 0;
+    for (const weft::ExactGeometryClassification& record : report.records) {
+        CHECK(record.subjectId.valid());
+        CHECK(classifiedSubjects.insert(record.subjectId).second);
+        CHECK(record.sourceSubjects.size() == 1);
+        CHECK(!record.familyCode.empty());
+        CHECK(record.familyCode != "kernel_specific");
+        if (record.taxonomy != weft::GeometryTaxonomy::Surface) continue;
+        if (record.familyCode == "plane") {
+            ++planes;
+            CHECK(record.support ==
+                  weft::GeometrySupportState::SupportedAnalyticTemplate);
+            CHECK(record.strategyOrReasonCode == "strategy.surface.plane");
+        }
+        if (record.familyCode == "cylinder") {
+            ++cylinders;
+            CHECK(record.support ==
+                  weft::GeometrySupportState::SupportedAnalyticTemplate);
+            CHECK(record.strategyOrReasonCode == "strategy.surface.cylinder");
+        }
+    }
+    CHECK(planes == 2);
+    CHECK(cylinders == 1);
+
+    const std::filesystem::path boxPath =
+        std::filesystem::temp_directory_path() /
+        "weft_secure_core_recon_box.step";
+    weft::writeStep(weft::makeFixture("box"), boxPath.string());
+    const weft::ImportedModel box = weft::importStepSecure(
+        boxPath.string(), weft::RepairProfile::Conservative);
+    const weft::ReconnaissanceReport boxReport = weft::reconnoitre(box);
+    CHECK(boxReport.complete);
+    const bool hasMissingStoredPcurve = std::any_of(
+        box.working->snapshot.coedges.begin(), box.working->snapshot.coedges.end(),
+        [](const weft::CoedgeRecord& coedge) {
+            return coedge.pcurveRepresentations.empty();
+        });
+    CHECK(hasMissingStoredPcurve);
+    for (const weft::ExactGeometryClassification& record : boxReport.records) {
+        if (record.taxonomy == weft::GeometryTaxonomy::Surface) {
+            CHECK(record.familyCode == "plane");
+            CHECK(record.support ==
+                  weft::GeometrySupportState::SupportedAnalyticTemplate);
+        }
+    }
+    std::error_code ignored;
+    std::filesystem::remove(boxPath, ignored);
+}
+
 }  // namespace
 
 int main() {
@@ -202,6 +266,7 @@ int main() {
         testCompatibilityIsAudited(path);
         testReadFailureIsNamed(path);
         testSourceSnapshotPreventsPathReplacement();
+        testTotalReconnaissance(path);
         std::error_code ignored;
         std::filesystem::remove(path, ignored);
     } catch (const std::exception& error) {
