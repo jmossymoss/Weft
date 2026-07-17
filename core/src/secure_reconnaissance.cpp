@@ -1,4 +1,5 @@
 #include "weft/secure_reconnaissance.hpp"
+#include "weft/occt_failure.hpp"
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
@@ -326,7 +327,8 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
             record.support = GeometrySupportState::InvalidImportedGeometry;
             record.strategyOrReasonCode = "reason.invalid_imported_geometry";
             report.diagnostics.push_back(
-                {"reconnaissance.curve.failure", edgeId, error.what()});
+                {"reconnaissance.curve.failure", edgeId,
+                 occtFailureMessage(error)});
             ++report.unsupportedSubjects;
         }
         report.records.push_back(std::move(record));
@@ -377,7 +379,8 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
             record.support = GeometrySupportState::InvalidImportedGeometry;
             record.strategyOrReasonCode = "reason.invalid_imported_geometry";
             report.diagnostics.push_back(
-                {"reconnaissance.surface.failure", faceId, error.what()});
+                {"reconnaissance.surface.failure", faceId,
+                 occtFailureMessage(error)});
             ++report.unsupportedSubjects;
         }
         report.records.push_back(std::move(record));

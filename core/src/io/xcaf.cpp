@@ -10,7 +10,6 @@
 #include <Bnd_Box.hxx>
 #include <BRepBndLib.hxx>
 #include <GProp_GProps.hxx>
-#include <NCollection_HSequence.hxx>
 #include <TCollection_ExtendedString.hxx>
 #include <TDataStd_Name.hxx>
 #include <TDocStd_Document.hxx>
@@ -113,8 +112,8 @@ std::string XCaf::labelName(const TDF_Label& label) {
 
 std::string XCaf::layerName(const TDF_Label& l) const {
     Handle(XCAFDoc_LayerTool) lt = layerTool();
-    occ::handle<NCollection_HSequence<TCollection_ExtendedString>> layers;
-    if (!lt->GetLayers(l, layers) || layers.IsNull() || layers->IsEmpty()) return {};
+    const auto layers = lt->GetLayers(l);
+    if (layers.IsNull() || layers->IsEmpty()) return {};
     const TCollection_ExtendedString& es = layers->Value(1);
     const int len = es.LengthOfCString();
     if (len <= 0) return {};
@@ -391,7 +390,8 @@ static void fillUnresolvedByGeometry(Model& m, const TopoDS_Shape& origShape,
 }
 
 void reassociateMeta(Model& m, const TopoDS_Shape& origShape, const ImportMeta& meta,
-                     const BRepTools_History& hist) {
+                     const BRepTools_History& hist,
+                     bool allowGeometricFallback) {
     const int nf = m.faces.Extent();
     m.faceColors.assign(nf, std::array<float, 3>{});
     m.faceHasColor.assign(nf, 0);
@@ -414,8 +414,11 @@ void reassociateMeta(Model& m, const TopoDS_Shape& origShape, const ImportMeta& 
             m.faceHasColor[fid - 1] = 1;
         }
     }
-    // Safety net for faces history could not chain (sewing can drop records).
-    fillUnresolvedByGeometry(m, origShape, meta);
+    // The legacy healing adapter retains its historical safety net. Secure
+    // import forbids it: geometry proximity cannot prove source provenance.
+    if (allowGeometricFallback) {
+        fillUnresolvedByGeometry(m, origShape, meta);
+    }
 }
 
 void fillSolidMetaFromCaf(Model& m, const TopoDS_Shape& origShape, const ImportMeta& meta) {
@@ -503,7 +506,7 @@ namespace {
 
 void applyCapturedMeta(Model& model, const TopoDS_Shape& sourceShape,
                        ImportMeta meta, const BRepTools_History& history) {
-    reassociateMeta(model, sourceShape, meta, history);
+    reassociateMeta(model, sourceShape, meta, history, false);
     fillSolidMetaFromCaf(model, sourceShape, meta);
     model.lengthUnitMm = meta.lengthUnitMm;
 

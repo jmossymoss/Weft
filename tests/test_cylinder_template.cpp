@@ -75,7 +75,7 @@ weft::IntervalSolveResult solveCounts(
         }
         problem.variables.push_back(
             {{weft::StableIdKind::Boundary, edge.id.ordinal},
-             static_cast<double>(count), count, false});
+             static_cast<double>(count), count, false, std::nullopt});
     }
     return weft::solveIntervals(problem);
 }

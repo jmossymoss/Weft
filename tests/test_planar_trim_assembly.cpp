@@ -68,7 +68,7 @@ std::optional<PreparedFixture> prepare(const std::string& fixture,
             classification->familyCode == "circle";
         intervals.variables.push_back(
             {{weft::StableIdKind::Boundary, edge.id.ordinal},
-             circle ? 16.0 : 2.0, 1, false});
+             circle ? 16.0 : 2.0, 1, false, std::nullopt});
     }
     const weft::IntervalSolveResult solved = weft::solveIntervals(intervals);
     CHECK(solved);

@@ -19,28 +19,7 @@ add_library(weft_core
   src/certified_mesh.cpp
   src/model.cpp
   src/analysis.cpp
-  src/compiler.cpp
   src/mesh.cpp
-  src/meshers.cpp
-  src/mesher_internal.hpp
-  src/mesher_boundary.cpp
-  src/mesher_coons.cpp
-  src/mesher_annulus.cpp
-  src/mesher_web.cpp
-  src/mesher_ribbon.cpp
-  src/mesher_corridor.cpp
-  src/mesher_fallback.cpp
-  src/mesher_planning.cpp
-  src/mesher_density.cpp
-  src/mesher_revolution_common.cpp
-  src/mesher_revolution_open.cpp
-  src/mesher_revolution_grid.cpp
-  src/mesher_orthogonal.cpp
-  src/mesher_analytic.cpp
-  src/mesher_edge_contracts.cpp
-  src/mesher_occt_fallback.cpp
-  src/mesher_seams.cpp
-  src/mesher_sampling.cpp
   src/mesher_trace.cpp
   src/mesher_utils.cpp
   src/mesh_diagnostics.cpp

@@ -3,6 +3,7 @@
 #include "fixture_contract.hpp"
 #include "fixture_observer.hpp"
 #include "fixture_recipe_modules.hpp"
+#include "weft/occt_failure.hpp"
 
 #include <APIHeaderSection_MakeHeader.hxx>
 #include <BOPAlgo_Builder.hxx>
@@ -36,7 +37,11 @@
 #include <Geom_Curve.hxx>
 #include <Geom_Surface.hxx>
 #include <IFSelect_ReturnStatus.hxx>
+#if OCC_VERSION_HEX >= 0x080000
 #include <NCollection_HArray1.hxx>
+#else
+#include <Interface_HArray1OfHAsciiString.hxx>
+#endif
 #include <NCollection_List.hxx>
 #include <NCollection_Sequence.hxx>
 #include <STEPCAFControl_Reader.hxx>
@@ -142,6 +147,17 @@ struct ToleranceRange final {
   std::optional<double> minimum_mm;
   std::optional<double> maximum_mm;
 };
+
+bool tolerance_observations_equal(const std::optional<double>& left,
+                                  const std::optional<double>& right) {
+  if (!left.has_value() || !right.has_value()) {
+    return left.has_value() == right.has_value();
+  }
+  const double roundoff =
+      8.0 * std::numeric_limits<double>::epsilon() *
+      std::max({std::abs(*left), std::abs(*right), kToleranceQuantumMm});
+  return std::abs(*left - *right) <= kToleranceQuantumMm + roundoff;
+}
 
 struct EdgeOccurrence final {
   std::string id;
@@ -347,12 +363,18 @@ bool structurally_equal(const ShapeSummary& left, const ShapeSummary& right,
       left.free_boundary_edges == right.free_boundary_edges &&
       left.nonmanifold_edges == right.nonmanifold_edges;
   const bool tolerances_equal =
-      left.vertex_tolerance.minimum_mm == right.vertex_tolerance.minimum_mm &&
-      left.vertex_tolerance.maximum_mm == right.vertex_tolerance.maximum_mm &&
-      left.edge_tolerance.minimum_mm == right.edge_tolerance.minimum_mm &&
-      left.edge_tolerance.maximum_mm == right.edge_tolerance.maximum_mm &&
-      left.face_tolerance.minimum_mm == right.face_tolerance.minimum_mm &&
-      left.face_tolerance.maximum_mm == right.face_tolerance.maximum_mm;
+      tolerance_observations_equal(left.vertex_tolerance.minimum_mm,
+                                   right.vertex_tolerance.minimum_mm) &&
+      tolerance_observations_equal(left.vertex_tolerance.maximum_mm,
+                                   right.vertex_tolerance.maximum_mm) &&
+      tolerance_observations_equal(left.edge_tolerance.minimum_mm,
+                                   right.edge_tolerance.minimum_mm) &&
+      tolerance_observations_equal(left.edge_tolerance.maximum_mm,
+                                   right.edge_tolerance.maximum_mm) &&
+      tolerance_observations_equal(left.face_tolerance.minimum_mm,
+                                   right.face_tolerance.minimum_mm) &&
+      tolerance_observations_equal(left.face_tolerance.maximum_mm,
+                                   right.face_tolerance.maximum_mm);
   return left.valid == right.valid &&
          (!contract.topology_counts ||
           (left.root_shape_type == right.root_shape_type &&
@@ -519,12 +541,14 @@ std::string first_structural_difference(const ShapeSummary& actual, const ShapeS
   const auto tolerance_difference =
       [](const std::string_view family, const ToleranceRange& actual_range,
          const ToleranceRange& expected_range) -> std::optional<std::string> {
-    if (actual_range.minimum_mm != expected_range.minimum_mm) {
+    if (!tolerance_observations_equal(actual_range.minimum_mm,
+                                      expected_range.minimum_mm)) {
       return "tolerances." + std::string(family) +
              ".minimum_mm (source=" + optional_double_text(expected_range.minimum_mm) +
              ", roundtrip=" + optional_double_text(actual_range.minimum_mm) + ")";
     }
-    if (actual_range.maximum_mm != expected_range.maximum_mm) {
+    if (!tolerance_observations_equal(actual_range.maximum_mm,
+                                      expected_range.maximum_mm)) {
       return "tolerances." + std::string(family) +
              ".maximum_mm (source=" + optional_double_text(expected_range.maximum_mm) +
              ", roundtrip=" + optional_double_text(actual_range.maximum_mm) + ")";
@@ -1913,7 +1937,15 @@ DESTEP_Parameters step_parameters(const StepIoProfile& profile) {
                                     : DESTEP_Parameters::RWMode_Tessellated_Off;
   parameters.WriteSurfaceCurMode = profile.surface_curve_mode;
   parameters.WriteProductName = "CAD Mesher deterministic fixture";
+#if OCC_VERSION_HEX >= 0x080000
   parameters.CleanDuplicates = profile.clean_duplicates;
+#else
+  if (profile.clean_duplicates) {
+    throw GeneratorError(
+        "unsupported-step-option",
+        "clean duplicate processing requires OCCT 8.0 or newer");
+  }
+#endif
   parameters.ReadSameParamMode = profile.same_parameter_repair;
   parameters.ReadSurfaceCurveMode = DESTEP_Parameters::ReadMode_SurfaceCurve_Default;
   parameters.ReadTessellated = profile.tessellated_geometry
@@ -1944,7 +1976,11 @@ void normalize_header(STEPControl_Writer& writer, const std::string_view fixture
   header.SetTimeStamp(header_string(kFixedTimestamp));
 
   using HeaderString = occ::handle<TCollection_HAsciiString>;
+#if OCC_VERSION_HEX >= 0x080000
   using HeaderStrings = NCollection_HArray1<HeaderString>;
+#else
+  using HeaderStrings = Interface_HArray1OfHAsciiString;
+#endif
   const occ::handle<HeaderStrings> authors = new HeaderStrings(1, 1);
   authors->SetValue(1, header_string("CAD Mesher fixture factory"));
   header.SetAuthor(authors);
@@ -2191,7 +2227,9 @@ StepReadback write_and_read_step(const Recipe& recipe, const TopoDS_Shape& sourc
     writer.SetLayerMode(false);
     writer.SetPropsMode(false);
     writer.SetNameMode(true);
+#if OCC_VERSION_HEX >= 0x080000
     writer.SetCleanDuplicates(recipe.step_io.clean_duplicates);
+#endif
     writer.SetShapeProcessFlags(no_shape_processing);
     writer.ChangeWriter().SetShapeProcessFlags(no_shape_processing);
     require_no_shape_processing(writer.GetShapeProcessFlags(), "STEP XDE writer");
@@ -3187,11 +3225,6 @@ void generate(const Recipe& recipe, const std::filesystem::path& output) {
                  readback.xde, paths.metadata);
 }
 
-std::string standard_failure_message(const Standard_Failure& failure) {
-  const char* const message = failure.what();
-  return message == nullptr ? "OCCT raised an unnamed failure" : message;
-}
-
 } // namespace
 
 const std::vector<std::string_view>& fixture_ids() {
@@ -3221,7 +3254,7 @@ bool generate_fixture(const std::string_view fixture_id, const std::filesystem::
   } catch (const GeneratorError& exception) {
     failure = GenerationFailure{exception.code(), exception.what()};
   } catch (const Standard_Failure& exception) {
-    failure = GenerationFailure{"occt", standard_failure_message(exception)};
+    failure = GenerationFailure{"occt", weft::occtFailureMessage(exception)};
   } catch (const std::filesystem::filesystem_error& exception) {
     failure = GenerationFailure{"filesystem", exception.what()};
   } catch (const std::exception& exception) {
@@ -3253,7 +3286,7 @@ bool inspect_step(const std::filesystem::path& input, const std::filesystem::pat
   } catch (const GeneratorError& exception) {
     failure = GenerationFailure{exception.code(), exception.what()};
   } catch (const Standard_Failure& exception) {
-    failure = GenerationFailure{"occt", standard_failure_message(exception)};
+    failure = GenerationFailure{"occt", weft::occtFailureMessage(exception)};
   } catch (const std::filesystem::filesystem_error& exception) {
     failure = GenerationFailure{"filesystem", exception.what()};
   } catch (const std::exception& exception) {

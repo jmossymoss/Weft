@@ -71,6 +71,14 @@ target_link_libraries(weft_imgui_backends PRIVATE
   OpenGL::GL
 )
 
+# stb_image_write is vendored third-party code. Compile its implementation in
+# an isolated target so warnings originating inside that dependency do not
+# weaken the warnings-as-errors contract applied to Weft-owned sources.
+add_library(weft_stb_image_write STATIC stb_image_write.cpp)
+target_include_directories(weft_stb_image_write PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/third_party
+)
+
 add_executable(weft_app main.cpp)
 weft_enable_strict_warnings(weft_app)
 
@@ -84,6 +92,7 @@ target_link_libraries(weft_app PRIVATE
   weft_core
   ${WEFT_IMGUI_LIB}
   weft_imgui_backends
+  weft_stb_image_write
   glfw
   OpenGL::GL
 )

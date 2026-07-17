@@ -2,6 +2,7 @@
 
 #include "weft/io/reader.hpp"
 #include "weft/io/system.hpp"
+#include "weft/occt_failure.hpp"
 
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepAdaptor_Surface.hxx>
@@ -235,7 +236,8 @@ public:
             return EvaluationResult<ParameterDomain>{domain, std::nullopt};
         } catch (const Standard_Failure& error) {
             return evaluationFailure<ParameterDomain>(
-                "geometry.curve_domain_failure", error.what(), edge);
+                "geometry.curve_domain_failure", occtFailureMessage(error),
+                edge);
         }
     }
 
@@ -256,7 +258,8 @@ public:
                                                        std::nullopt};
         } catch (const Standard_Failure& error) {
             return evaluationFailure<VertexEvaluation>(
-                "geometry.vertex_evaluation_failure", error.what(), vertex);
+                "geometry.vertex_evaluation_failure",
+                occtFailureMessage(error), vertex);
         }
     }
 
@@ -289,7 +292,8 @@ public:
             return EvaluationResult<CurveEvaluation>{evaluation, std::nullopt};
         } catch (const Standard_Failure& error) {
             return evaluationFailure<CurveEvaluation>(
-                "geometry.curve_evaluation_failure", error.what(), edge);
+                "geometry.curve_evaluation_failure",
+                occtFailureMessage(error), edge);
         }
     }
 
@@ -331,7 +335,8 @@ public:
             return EvaluationResult<PcurveEvaluation>{evaluation, std::nullopt};
         } catch (const Standard_Failure& error) {
             return evaluationFailure<PcurveEvaluation>(
-                "geometry.pcurve_evaluation_failure", error.what(),
+                "geometry.pcurve_evaluation_failure",
+                occtFailureMessage(error),
                 representation.coedgeId);
         }
     }
@@ -370,7 +375,8 @@ public:
             return EvaluationResult<SurfaceEvaluation>{evaluation, std::nullopt};
         } catch (const Standard_Failure& error) {
             return evaluationFailure<SurfaceEvaluation>(
-                "geometry.surface_evaluation_failure", error.what(), faceId);
+                "geometry.surface_evaluation_failure",
+                occtFailureMessage(error), faceId);
         }
     }
 
@@ -420,7 +426,8 @@ public:
                                                                  std::nullopt};
         } catch (const Standard_Failure& error) {
             return evaluationFailure<PlanarProjectionEvaluation>(
-                "geometry.planar_projection_failure", error.what(), faceId);
+                "geometry.planar_projection_failure",
+                occtFailureMessage(error), faceId);
         }
     }
 
@@ -476,7 +483,7 @@ public:
         } catch (const Standard_Failure& error) {
             return evaluationFailure<CurveOnSurfaceEvaluation>(
                 "geometry.curve_on_surface_evaluation_failure",
-                error.what(), representation.coedgeId);
+                occtFailureMessage(error), representation.coedgeId);
         }
     }
 
@@ -1038,11 +1045,35 @@ ImportedModel importStepSecure(const std::string& path, RepairProfile profile) {
     io::System system;
     io::bootstrapIo(system);
     std::unique_ptr<io::Reader> reader = system.createReader(io::Format::Step);
-    if (!reader || !reader->readFile(path)) {
+    if (!reader) {
         throw SecureImportError("import.step.read_failed",
                                 "failed to read STEP file securely: " + path);
     }
-    return reader->transferSecure(profile);
+    try {
+        if (!reader->readFile(path)) {
+            throw SecureImportError(
+                "import.step.read_failed",
+                "failed to read STEP file securely: " + path);
+        }
+    } catch (const SecureImportError&) {
+        throw;
+    } catch (const Standard_Failure& error) {
+        throw SecureImportError(
+            "import.step.read_failed",
+            "OCCT failed while reading STEP source " + path + ": " +
+                occtFailureMessage(error));
+    }
+
+    try {
+        return reader->transferSecure(profile);
+    } catch (const SecureImportError&) {
+        throw;
+    } catch (const Standard_Failure& error) {
+        throw SecureImportError(
+            "import.step.transfer_failed",
+            "OCCT failed during processing-disabled STEP transfer for " +
+                path + ": " + occtFailureMessage(error));
+    }
 }
 
 }  // namespace weft

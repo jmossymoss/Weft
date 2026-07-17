@@ -1,5 +1,7 @@
 #pragma once
 
+#include "occt_compat.hpp"
+
 #include <TopoDS_Shape.hxx>
 #include <iosfwd>
 #include <optional>

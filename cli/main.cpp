@@ -921,7 +921,10 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
     return 0;
 }
 
-// Frozen pre-rewrite benchmark body; no command dispatch reaches it.
+#if 0
+// Frozen pre-rewrite benchmark bodies are retained only until their tracked
+// source deletion commit. They are excluded from every production build now;
+// the reproducible baseline lives in docs/evidence and Git history.
 [[maybe_unused]] int legacyCacheCheck(const std::vector<std::string>& args) {
     if (args.empty()) { usage(); return 2; }
     const std::string input = args[0];
@@ -988,6 +991,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
     }
     return 0;
 }
+#endif
 
 int cmdCacheCheck(const std::vector<std::string>& args) {
     if (args.empty()) { usage(); return 2; }
@@ -1012,6 +1016,7 @@ int cmdCacheCheck(const std::vector<std::string>& args) {
         "implemented");
 }
 
+#if 0
 // Frozen pre-rewrite sweep retained only for baseline archaeology:
 // meshes the model at its base settings, then bumps every curved /
 // revolution face's radial through a sweep of counts, re-validating each
@@ -1164,6 +1169,7 @@ int cmdCacheCheck(const std::vector<std::string>& args) {
     std::printf("sweep: %zu runs, %d failure(s)\n", runs, failures);
     return failures ? 1 : 0;
 }
+#endif
 
 int cmdSweep(const std::vector<std::string>& args) {
     if (args.empty()) { usage(); return 2; }

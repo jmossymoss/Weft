@@ -13,6 +13,7 @@
       "architecture": "x64",
       "binaryDir": "${sourceDir}/build/vs2022",
       "cacheVariables": {
+        "OpenCASCADE_DIR": "C:/OCCT/cmake",
         "WEFT_WARNINGS_AS_ERRORS": "ON",
         "WEFT_STATIC_ANALYSIS": "OFF"
       }

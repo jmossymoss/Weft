@@ -859,7 +859,8 @@ public:
         mesh.triangles.reserve(triangles.size());
         for (const Triangle& triangle : triangles) {
             mesh.triangles.push_back(
-                {validated.face, validated.sourceFace, triangle});
+                {validated.face, validated.sourceFace, triangle,
+                 std::nullopt});
         }
 
         if (!validateMesh(mesh, *predicates_, result)) return result;

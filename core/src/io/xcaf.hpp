@@ -91,11 +91,13 @@ void captureMeta(const XCaf& xc, const LabelSequence& roots, ImportMeta& out);
 // mm regardless; this is metadata only.
 double readLengthUnit(const Handle(TDocStd_Document)& doc);
 
-// Re-associate captured face colors/layers onto the healed model faces
-// through `hist` (original -> healed), with a geometric midpoint fallback for
-// faces history could not chain.
+// Re-associate captured face colors/layers onto model faces through `hist`
+// (original -> working). The legacy healed-model path may opt into its
+// geometric midpoint fallback; secure source/working models must not because
+// proximity is not a provenance certificate.
 void reassociateMeta(Model& m, const TopoDS_Shape& origShape, const ImportMeta& meta,
-                     const BRepTools_History& hist);
+                     const BRepTools_History& hist,
+                     bool allowGeometricFallback = true);
 
 // Fill Model::solidNames / solidColors / solidLayers / solidMaterials from the
 // captured metadata, pairing original solids with healed solids by traversal

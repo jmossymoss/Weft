@@ -35,17 +35,24 @@ weft::PlanarTrimLoop makeLoop(
     for (std::size_t index = 0; index < points.size(); ++index) {
         const std::uint64_t edgeOrdinal =
             loopOrdinal * 1000 + static_cast<std::uint64_t>(index) + 1;
-        loop.vertices.push_back(
-            {{{{{weft::StableIdKind::Boundary, edgeOrdinal},
-                static_cast<std::uint32_t>(index)},
-               {weft::StableIdKind::Edge, edgeOrdinal},
-             weft::StableId{weft::StableIdKind::Edge,
-                              edgeOrdinal + 100000},
-               {weft::StableIdKind::Coedge, edgeOrdinal},
-               points[index], 0.0, 1e-7}},
-             (loopOrdinal - 1) * 100 +
-                 static_cast<std::uint64_t>(index),
-             points[index]});
+        weft::PlanarTrimBoundaryUse use;
+        use.sample = {{weft::StableIdKind::Boundary, edgeOrdinal},
+                      static_cast<std::uint32_t>(index)};
+        use.workingEdge = {weft::StableIdKind::Edge, edgeOrdinal};
+        use.sourceEdge = weft::StableId{
+            weft::StableIdKind::Edge, edgeOrdinal + 100000};
+        use.coedge = {weft::StableIdKind::Coedge, edgeOrdinal};
+        use.uv = points[index];
+        use.measuredCurveOnSurfaceDiscrepancy = 0.0;
+        use.allowedCurveOnSurfaceDiscrepancy = 1e-7;
+        use.representation = std::nullopt;
+
+        weft::PlanarTrimVertex vertex;
+        vertex.boundaryUses.push_back(std::move(use));
+        vertex.canonicalVertexIndex =
+            (loopOrdinal - 1) * 100 + static_cast<std::uint64_t>(index);
+        vertex.uv = points[index];
+        loop.vertices.push_back(std::move(vertex));
     }
     return loop;
 }
@@ -104,6 +111,7 @@ void checkCertified(const weft::PlanarCdtResult& result,
          result.value->triangles) {
         CHECK(triangle.workingFace == result.value->workingFace);
         CHECK(triangle.sourceFace == result.value->sourceFace);
+        CHECK(!triangle.cornerUv);
     }
 }
 

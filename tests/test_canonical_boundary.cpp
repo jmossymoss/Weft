@@ -43,7 +43,8 @@ weft::IntervalSolution intervalsFor(const weft::ImportedModel& imported,
         const weft::StableId edge =
             imported.working->snapshot.edgeTopology[index].id;
         problem.variables.push_back(
-            {{weft::StableIdKind::Boundary, edge.ordinal}, 4.0, 1, false});
+            {{weft::StableIdKind::Boundary, edge.ordinal}, 4.0, 1, false,
+             std::nullopt});
     }
     const weft::IntervalSolveResult solved = weft::solveIntervals(problem);
     CHECK(solved);

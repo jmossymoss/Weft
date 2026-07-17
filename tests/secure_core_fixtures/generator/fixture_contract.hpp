@@ -1,6 +1,7 @@
 #pragma once
 
-#include <Standard_Handle.hxx>
+#include "occt_compat.hpp"
+
 #include <TDocStd_Document.hxx>
 #include <TopoDS_Shape.hxx>
 #include <functional>

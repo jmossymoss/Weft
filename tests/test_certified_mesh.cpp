@@ -67,7 +67,7 @@ std::optional<PreparedBox> prepareBox(const std::filesystem::path& path) {
          prepared.imported.working->snapshot.edgeTopology) {
         intervalProblem.variables.push_back(
             {{weft::StableIdKind::Boundary, edge.id.ordinal},
-             2.0, 1, false});
+             2.0, 1, false, std::nullopt});
     }
     const weft::IntervalSolveResult intervals =
         weft::solveIntervals(intervalProblem);
@@ -285,7 +285,7 @@ void testPerforatedPlanarFaceProduct() {
             classification->familyCode == "circle";
         intervalProblem.variables.push_back(
             {{weft::StableIdKind::Boundary, edge.id.ordinal},
-             circle ? 16.0 : 2.0, 1, false});
+             circle ? 16.0 : 2.0, 1, false, std::nullopt});
     }
     const weft::IntervalSolveResult intervals =
         weft::solveIntervals(intervalProblem);

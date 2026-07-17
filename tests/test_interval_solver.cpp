@@ -29,7 +29,7 @@ weft::StableId boundary(std::uint64_t ordinal) {
 weft::IntervalVariable variable(std::uint64_t ordinal, double desired,
                                 std::uint32_t minimum = 1,
                                 bool even = false) {
-    return {boundary(ordinal), desired, minimum, even};
+    return {boundary(ordinal), desired, minimum, even, std::nullopt};
 }
 
 weft::IntervalEquality equality(

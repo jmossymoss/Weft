@@ -1,9 +1,3 @@
-add_executable(weft_tests test_pipeline.cpp)
-target_link_libraries(weft_tests PRIVATE weft_core)
-weft_enable_strict_warnings(weft_tests)
-add_test(NAME pipeline COMMAND weft_tests)
-weft_deploy_occt_dlls(weft_tests)
-
 add_executable(weft_secure_core_tests test_secure_core.cpp)
 target_link_libraries(weft_secure_core_tests PRIVATE weft_core)
 weft_enable_strict_warnings(weft_secure_core_tests)

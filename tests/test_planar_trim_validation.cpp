@@ -7,6 +7,7 @@
 #include <initializer_list>
 #include <limits>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -38,15 +39,23 @@ weft::PlanarTrimLoop loop(
         ++sampleOrdinal;
         const std::uint64_t workingEdgeOrdinal =
             ordinal * 100 + sampleOrdinal;
-        result.vertices.push_back(
-            {{{{{weft::StableIdKind::Boundary, workingEdgeOrdinal},
-                sampleOrdinal},
-               {weft::StableIdKind::Edge, workingEdgeOrdinal},
-               weft::StableId{weft::StableIdKind::Edge,
-                              ordinal * 1000 + sampleOrdinal},
-               {weft::StableIdKind::Coedge, workingEdgeOrdinal},
-               point, 0.0, 1e-7}},
-             workingEdgeOrdinal, point});
+        weft::PlanarTrimBoundaryUse use;
+        use.sample = {{weft::StableIdKind::Boundary, workingEdgeOrdinal},
+                      sampleOrdinal};
+        use.workingEdge = {weft::StableIdKind::Edge, workingEdgeOrdinal};
+        use.sourceEdge = weft::StableId{
+            weft::StableIdKind::Edge, ordinal * 1000 + sampleOrdinal};
+        use.coedge = {weft::StableIdKind::Coedge, workingEdgeOrdinal};
+        use.uv = point;
+        use.measuredCurveOnSurfaceDiscrepancy = 0.0;
+        use.allowedCurveOnSurfaceDiscrepancy = 1e-7;
+        use.representation = std::nullopt;
+
+        weft::PlanarTrimVertex vertex;
+        vertex.boundaryUses.push_back(std::move(use));
+        vertex.canonicalVertexIndex = workingEdgeOrdinal;
+        vertex.uv = point;
+        result.vertices.push_back(std::move(vertex));
     }
     return result;
 }
