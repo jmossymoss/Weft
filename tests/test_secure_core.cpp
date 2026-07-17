@@ -9,6 +9,7 @@
 
 #include "test_temp_path.hpp"
 
+#include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepTools.hxx>
 #include <BRep_Builder.hxx>
@@ -26,6 +27,7 @@
 #include <TDocStd_Document.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
+#include <gp_Pln.hxx>
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
 #include <gp_Pnt.hxx>
@@ -1171,6 +1173,50 @@ void testProductStepOrientationRepairWitness() {
     std::filesystem::remove(stepPath, ignored);
 }
 
+void testBoundedSewingRepair() {
+    BRepBuilderAPI_MakeFace left(gp_Pln(gp::XOY()), 0.0, 1.0, 0.0, 1.0);
+    BRepBuilderAPI_MakeFace right(gp_Pln(gp::XOY()), 1.0 + 1.0e-5, 2.0 + 1.0e-5,
+                                  0.0, 1.0);
+    CHECK(left.IsDone());
+    CHECK(right.IsDone());
+    BRep_Builder builder;
+    TopoDS_Compound compound;
+    builder.MakeCompound(compound);
+    builder.Add(compound, left.Face());
+    builder.Add(compound, right.Face());
+    const std::filesystem::path path = weft::test::uniqueTempPath(
+        "weft_secure_sewing_faces", ".brep");
+    CHECK(BRepTools::Write(compound, path.string().c_str()));
+
+    const weft::ImportedModel repaired = weft::importBRepSecure(
+        path.string(), weft::RepairProfile::Conservative);
+    CHECK(repaired.source != nullptr);
+    CHECK(repaired.working != nullptr);
+    CHECK(!repaired.repair.identity);
+    CHECK(std::any_of(
+        repaired.repair.operations.begin(), repaired.repair.operations.end(),
+        [](const weft::RepairOperation& operation) {
+            return operation.code == "repair.sewing_one_to_one";
+        }));
+    CHECK(repaired.repair.workingEdges < repaired.repair.sourceEdges);
+    CHECK(repaired.repair.workingFaces == repaired.repair.sourceFaces);
+    // Face-preserving free-edge merge is proven. Absorbed edge/vertex
+    // StableId correspondence is still incomplete, so meshable stays false.
+    CHECK(!repaired.repair.correspondenceComplete);
+    CHECK(!repaired.repair.meshable);
+
+    const weft::ImportedModel gap = importNativeRepairFixture(
+        "corrupt.wire.gap_within_beyond.brep");
+    CHECK(std::none_of(
+        gap.repair.operations.begin(), gap.repair.operations.end(),
+        [](const weft::RepairOperation& operation) {
+            return operation.code == "repair.sewing_one_to_one";
+        }));
+
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 void testFaceAdjacencyOrientationRepair() {
     const weft::ImportedModel repaired = importNativeRepairFixture(
         "corrupt.orientation.inverted_shell_face.brep");
@@ -1376,6 +1422,7 @@ int main() {
         testMultipleFreeRootOccurrences();
         testBoundedParameterizationRepair();
         testProductStepOrientationRepairWitness();
+        testBoundedSewingRepair();
         testFaceAdjacencyOrientationRepair();
         testTotalReconnaissance(path);
         std::error_code ignored;

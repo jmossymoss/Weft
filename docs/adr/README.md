@@ -64,3 +64,5 @@ Current records:
   secure import through processing-disabled XDE transfer.
 - `ADR-0031-compatibility-correspondence-valid-deep-copy.md` - exact-shape
   map and sew-skip for valid Compatibility deep copies.
+- `ADR-0032-bounded-one-to-one-face-sewing.md` - face-preserving free-edge
+  sew for open compounds/shells; meshable correspondence still open.

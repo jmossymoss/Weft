@@ -856,13 +856,28 @@ SourceWorkingMap buildCorrespondence(const Model& source, const Model& working,
 
 bool sameTopologyStructure(const TopologyOccurrence& source,
                            const TopologyOccurrence& working,
-                           bool requireEqualOrientation) {
-    return source.id == working.id &&
-        source.underlyingId == working.underlyingId &&
-        source.parentId == working.parentId &&
-        source.childIds == working.childIds &&
-        (!requireEqualOrientation ||
-         source.orientation == working.orientation) &&
+                           bool requireEqualOrientation,
+                           bool requireEqualIds = true) {
+    if (requireEqualIds) {
+        if (source.id != working.id ||
+            source.underlyingId != working.underlyingId ||
+            source.parentId != working.parentId ||
+            source.childIds != working.childIds) {
+            return false;
+        }
+    } else if (source.id.kind != working.id.kind &&
+               !((source.id.kind == StableIdKind::Compound ||
+                  source.id.kind == StableIdKind::Shell) &&
+                 (working.id.kind == StableIdKind::Compound ||
+                  working.id.kind == StableIdKind::Shell))) {
+        return false;
+    }
+    if (!requireEqualIds) {
+        return source.hasExactRepresentation ==
+            working.hasExactRepresentation;
+    }
+    return (!requireEqualOrientation ||
+            source.orientation == working.orientation) &&
         source.hasExactRepresentation == working.hasExactRepresentation &&
         source.instanceId == working.instanceId &&
         source.localTransform == working.localTransform &&
@@ -874,11 +889,20 @@ bool sameAssemblyAccount(const TopologyAccount& source,
                          bool requireEqualPcurves) {
     if (source.assemblies.size() != working.assemblies.size() ||
         source.instances.size() != working.instances.size() ||
-        source.assemblyRoots != working.assemblyRoots ||
-        source.topologyRoots != working.topologyRoots ||
-        source.uniqueEntityIds != working.uniqueEntityIds ||
-        source.coedges.size() != working.coedges.size()) {
+        source.assemblyRoots != working.assemblyRoots) {
         return false;
+    }
+    if (requireEqualPcurves &&
+        (source.topologyRoots != working.topologyRoots ||
+         source.uniqueEntityIds != working.uniqueEntityIds ||
+         source.coedges.size() != working.coedges.size())) {
+        return false;
+    }
+    if (!requireEqualPcurves &&
+        source.coedges.size() != working.coedges.size()) {
+        // Cardinality-changing repairs (for example sewing) may drop coedges
+        // when free edges merge. Assembly/instance identity still holds above.
+        return true;
     }
     for (std::size_t index = 0; index < source.assemblies.size(); ++index) {
         if (source.assemblies[index].id != working.assemblies[index].id ||
@@ -1005,6 +1029,49 @@ void buildTopologyCorrespondence(SourceWorkingMap& correspondence,
                 ? CorrespondenceRelation::Identity
                 : CorrespondenceRelation::Modified;
             mappedWorking.insert(workingOccurrence->id);
+        } else if (!representationIdentity &&
+                   sourceShape != source.exactShapes.end()) {
+            // Cardinality-changing repairs can shift StableId ordinals. Fall
+            // back to a unique same-kind working occurrence proved by history
+            // or the exact derivation map. Multiple sources may share one
+            // working id when sewing merges free edges.
+            const TopologyOccurrence* unique = nullptr;
+            StableId uniqueId;
+            bool ambiguous = false;
+            for (const auto& [candidateId, candidate] : workingOccurrences) {
+                const bool kindOk =
+                    candidateId.kind == sourceOccurrence.id.kind ||
+                    ((sourceOccurrence.id.kind == StableIdKind::Compound ||
+                      sourceOccurrence.id.kind == StableIdKind::Shell) &&
+                     (candidateId.kind == StableIdKind::Compound ||
+                      candidateId.kind == StableIdKind::Shell));
+                if (!kindOk) continue;
+                const auto candidateShape =
+                    working.exactShapes.find(candidateId);
+                if (candidateShape == working.exactShapes.end()) continue;
+                if (!shapesCorrespond(sourceShape->second,
+                                      candidateShape->second, history,
+                                      derivation, true)) {
+                    continue;
+                }
+                if (!sameTopologyStructure(sourceOccurrence, *candidate, false,
+                                           false)) {
+                    continue;
+                }
+                if (unique != nullptr && uniqueId != candidateId) {
+                    ambiguous = true;
+                    break;
+                }
+                unique = candidate;
+                uniqueId = candidateId;
+            }
+            if (!ambiguous && unique != nullptr) {
+                record.workingIds.push_back(uniqueId);
+                record.relation = CorrespondenceRelation::Modified;
+                mappedWorking.insert(uniqueId);
+            } else {
+                record.relation = CorrespondenceRelation::Modified;
+            }
         } else {
             record.relation = CorrespondenceRelation::Modified;
         }
@@ -1019,7 +1086,6 @@ void buildTopologyCorrespondence(SourceWorkingMap& correspondence,
     }
     correspondence.topologyComplete = sourceComplete && workingComplete &&
         sameAssemblyAccount(source, working, representationIdentity) &&
-        source.occurrences.size() == working.occurrences.size() &&
         std::all_of(correspondence.topologyOccurrenceRecords.begin(),
                     correspondence.topologyOccurrenceRecords.end(),
                     [](const CorrespondenceRecord& record) {

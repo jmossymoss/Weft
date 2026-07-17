@@ -7,6 +7,7 @@
 #include <BRepAdaptor_Curve2d.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
+#include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepGProp.hxx>
@@ -663,6 +664,209 @@ bool applyRootSolidOrientationRepair(
     return true;
 }
 
+int countFreeEdges(const TopoDS_Shape& shape) {
+    EdgeFaceMap edgeToFaces;
+    TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, edgeToFaces);
+    int freeEdges = 0;
+    for (int index = 1; index <= edgeToFaces.Extent(); ++index) {
+        const TopoDS_Edge edge = TopoDS::Edge(edgeToFaces.FindKey(index));
+        if (BRep_Tool::Degenerated(edge)) continue;
+        if (edgeToFaces(index).Extent() < 2) ++freeEdges;
+    }
+    return freeEdges;
+}
+
+bool repairBoundedSewing(ConservativeWorkingDerivation& derivation,
+                         const Model& source) {
+    if (derivation.shape.IsNull()) return false;
+    const TopAbs_ShapeEnum rootType = derivation.shape.ShapeType();
+    // Only open face compounds/shells. Never sew an already-closed solid:
+    // legacy sew can demote solids and destroy StableId alignment.
+    if (rootType != TopAbs_COMPOUND && rootType != TopAbs_SHELL) {
+        return false;
+    }
+    if (source.solids.Extent() != 0) return false;
+    if (source.faces.Extent() < 2) return false;
+
+    const int freeBefore = countFreeEdges(derivation.shape);
+    if (freeBefore < 2) return false;
+
+    constexpr double kSewToleranceMm = 1.0e-4;
+    BRepBuilderAPI_Sewing sewer(kSewToleranceMm, true, true, true, false);
+    if (rootType == TopAbs_COMPOUND) {
+        bool addedFace = false;
+        for (TopoDS_Iterator it(derivation.shape, false, false); it.More();
+             it.Next()) {
+            if (it.Value().ShapeType() == TopAbs_FACE) {
+                sewer.Add(it.Value());
+                addedFace = true;
+            } else if (it.Value().ShapeType() == TopAbs_SHELL) {
+                sewer.Add(it.Value());
+                addedFace = true;
+            }
+        }
+        if (!addedFace) return false;
+    } else {
+        sewer.Add(derivation.shape);
+    }
+    sewer.Perform();
+    const TopoDS_Shape sewed = sewer.SewedShape();
+    if (sewed.IsNull()) return false;
+
+    ShapeMap sourceFaces;
+    TopExp::MapShapes(derivation.shape, TopAbs_FACE, sourceFaces);
+    ShapeMap sewedFaces;
+    TopExp::MapShapes(sewed, TopAbs_FACE, sewedFaces);
+    if (sourceFaces.Extent() == 0 ||
+        sourceFaces.Extent() != sewedFaces.Extent()) {
+        return false;
+    }
+
+    Handle(BRepTools_History) sewHistory = new BRepTools_History();
+    for (int sourceIndex = 1; sourceIndex <= source.faces.Extent();
+         ++sourceIndex) {
+        const TopoDS_Face sourceFace = TopoDS::Face(source.faces(sourceIndex));
+        const TopoDS_Shape workingFace =
+            derivation.exactShapes.mapped(sourceFace);
+        if (workingFace.IsNull() || workingFace.ShapeType() != TopAbs_FACE) {
+            return false;
+        }
+        TopoDS_Shape mapped = workingFace;
+        if (sewer.IsModified(workingFace)) {
+            mapped = sewer.Modified(workingFace);
+        }
+        if (mapped.IsNull() || mapped.ShapeType() != TopAbs_FACE ||
+            !sewedFaces.Contains(mapped)) {
+            return false;
+        }
+        sewHistory->AddModified(sourceFace, mapped);
+        derivation.exactShapes.rebind(sourceFace, mapped);
+
+        // Pair face-local wires by iterator order after the face rebind.
+        std::vector<TopoDS_Shape> sourceWires;
+        std::vector<TopoDS_Shape> mappedWires;
+        for (TopoDS_Iterator it(sourceFace, false, false); it.More();
+             it.Next()) {
+            if (it.Value().ShapeType() == TopAbs_WIRE) {
+                sourceWires.push_back(it.Value());
+            }
+        }
+        for (TopoDS_Iterator it(mapped, false, false); it.More(); it.Next()) {
+            if (it.Value().ShapeType() == TopAbs_WIRE) {
+                mappedWires.push_back(it.Value());
+            }
+        }
+        if (sourceWires.size() != mappedWires.size()) return false;
+        for (std::size_t wireIndex = 0; wireIndex < sourceWires.size();
+             ++wireIndex) {
+            // Wires are not a BRepTools_History supported family; exact-shape
+            // rebind alone feeds shapesCorrespond for topology matching.
+            derivation.exactShapes.rebind(sourceWires[wireIndex],
+                                          mappedWires[wireIndex]);
+        }
+    }
+
+    for (int sourceIndex = 1; sourceIndex <= source.edges.Extent();
+         ++sourceIndex) {
+        const TopoDS_Edge sourceEdge = TopoDS::Edge(source.edges(sourceIndex));
+        const TopoDS_Shape workingEdge =
+            derivation.exactShapes.mapped(sourceEdge);
+        if (workingEdge.IsNull() || workingEdge.ShapeType() != TopAbs_EDGE) {
+            continue;
+        }
+        TopoDS_Shape mapped = workingEdge;
+        if (sewer.IsModifiedSubShape(workingEdge)) {
+            mapped = sewer.ModifiedSubShape(workingEdge);
+        }
+        if (mapped.IsNull() || mapped.ShapeType() != TopAbs_EDGE) continue;
+        ShapeMap sewedEdges;
+        TopExp::MapShapes(sewed, TopAbs_EDGE, sewedEdges);
+        if (!sewedEdges.Contains(mapped)) continue;
+        sewHistory->AddModified(sourceEdge, mapped);
+        derivation.exactShapes.rebind(sourceEdge, mapped);
+
+        TopoDS_Vertex sourceV1;
+        TopoDS_Vertex sourceV2;
+        TopExp::Vertices(sourceEdge, sourceV1, sourceV2);
+        TopoDS_Vertex mappedV1;
+        TopoDS_Vertex mappedV2;
+        TopExp::Vertices(TopoDS::Edge(mapped), mappedV1, mappedV2);
+        if (!sourceV1.IsNull() && !mappedV1.IsNull()) {
+            sewHistory->AddModified(sourceV1, mappedV1);
+            derivation.exactShapes.rebind(sourceV1, mappedV1);
+        }
+        if (!sourceV2.IsNull() && !mappedV2.IsNull()) {
+            sewHistory->AddModified(sourceV2, mappedV2);
+            derivation.exactShapes.rebind(sourceV2, mappedV2);
+        }
+    }
+
+    // Second pass: free edges absorbed into the unique shared edge.
+    {
+        EdgeFaceMap sewedEdgeFaces;
+        TopExp::MapShapesAndAncestors(sewed, TopAbs_EDGE, TopAbs_FACE,
+                                      sewedEdgeFaces);
+        std::vector<TopoDS_Shape> sharedEdges;
+        for (int index = 1; index <= sewedEdgeFaces.Extent(); ++index) {
+            if (sewedEdgeFaces(index).Extent() == 2) {
+                sharedEdges.push_back(sewedEdgeFaces.FindKey(index));
+            }
+        }
+        if (sharedEdges.size() == 1) {
+            ShapeMap sewedEdges;
+            TopExp::MapShapes(sewed, TopAbs_EDGE, sewedEdges);
+            for (int sourceIndex = 1; sourceIndex <= source.edges.Extent();
+                 ++sourceIndex) {
+                const TopoDS_Edge sourceEdge =
+                    TopoDS::Edge(source.edges(sourceIndex));
+                const TopoDS_Shape current =
+                    derivation.exactShapes.mapped(sourceEdge);
+                if (!current.IsNull() && sewedEdges.Contains(current)) {
+                    continue;
+                }
+                sewHistory->AddModified(sourceEdge, sharedEdges.front());
+                derivation.exactShapes.rebind(sourceEdge, sharedEdges.front());
+                TopoDS_Vertex sourceV1;
+                TopoDS_Vertex sourceV2;
+                TopExp::Vertices(sourceEdge, sourceV1, sourceV2);
+                TopoDS_Vertex mappedV1;
+                TopoDS_Vertex mappedV2;
+                TopExp::Vertices(TopoDS::Edge(sharedEdges.front()), mappedV1,
+                                 mappedV2);
+                if (!sourceV1.IsNull() && !mappedV1.IsNull()) {
+                    sewHistory->AddModified(sourceV1, mappedV1);
+                    derivation.exactShapes.rebind(sourceV1, mappedV1);
+                }
+                if (!sourceV2.IsNull() && !mappedV2.IsNull()) {
+                    sewHistory->AddModified(sourceV2, mappedV2);
+                    derivation.exactShapes.rebind(sourceV2, mappedV2);
+                }
+            }
+        }
+    }
+
+    const int freeAfter = countFreeEdges(sewed);
+    if (!(freeAfter < freeBefore)) return false;
+
+    if (!derivation.history.IsNull()) {
+        derivation.history->Merge(*sewHistory);
+    } else {
+        derivation.history = sewHistory;
+    }
+    derivation.exactShapes.rebind(source.shape, sewed);
+    derivation.shape = sewed;
+
+    std::ostringstream detail;
+    detail.imbue(std::locale::classic());
+    detail << "bounded sewing of open face compound/shell; free edges "
+           << freeBefore << " -> " << freeAfter
+           << ", faces preserved=" << sourceFaces.Extent()
+           << ", sew tolerance mm=" << kSewToleranceMm;
+    derivation.operations.push_back(
+        {"repair.sewing_one_to_one", {}, {}, detail.str()});
+    return true;
+}
+
 void repairRootSolidOrientations(ConservativeWorkingDerivation& derivation,
                                  const Model& source,
                                  const Model& working) {
@@ -812,8 +1016,10 @@ ConservativeWorkingDerivation deriveConservativeWorking(
         }
     }
 
-    // Re-index after tolerance mutations so orientation repair sees current
-    // working solids/faces if the root shape stayed partner-identical.
+    // Re-index after tolerance mutations so sewing and orientation repairs
+    // see current working faces/edges if the root shape stayed partner-identical.
+    working = indexShape(derivation.shape);
+    repairBoundedSewing(derivation, source);
     working = indexShape(derivation.shape);
     repairRootSolidOrientations(derivation, source, working);
     return derivation;
