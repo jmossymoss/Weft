@@ -36,3 +36,5 @@ Current records:
 - `ADR-0019-certified-per-edge-interval-constraints.md` - exact recipe-v2
   edge counts reconciled through the canonical interval solver and shared
   boundary identity.
+- `ADR-0020-bounded-exact-chain-sums.md` - exact independent boundary-chain
+  totals with deterministic complexity and unsupported-coupling refusals.

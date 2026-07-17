@@ -74,10 +74,11 @@ struct SegmentCountResult {
     explicit operator bool() const noexcept { return count.has_value(); }
 };
 
-// Exact over equality/minimum/even-parity/fixed-count constraints: every
-// feasible integer count is considered within the configured cap, and the
-// smallest L1-optimal value wins ties. Sum constraints are contract-present
-// but fail by name until the bounded exact extension is implemented.
+// Exact over equality/minimum/even-parity/fixed-count constraints and
+// independent chain-sum equalities. Every feasible count is bounded by the
+// configured cap and the smallest L1-optimal common total wins ties. Coupled
+// or aliased sum systems outside the guarded exact allocation model refuse by
+// stable code rather than being approximated.
 IntervalSolveResult solveIntervals(
     const IntervalProblem& problem,
     const SamplingConfiguration& configuration = {});
