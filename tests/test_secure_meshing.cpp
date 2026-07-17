@@ -91,6 +91,25 @@ void checkSuccessfulResult(const weft::SecureMeshingResult& result) {
         CHECK(coverage.failed == 0);
         CHECK(coverage.skipped == 0);
     }
+    if (result.value) {
+        const weft::PolyMesh adapter =
+            weft::makeCertifiedPolyMeshAdapter(*result.value);
+        CHECK(adapter.vertices.size() ==
+              result.value->certified.vertices.size());
+        CHECK(adapter.polygons.size() ==
+              result.value->certified.triangles.size());
+        CHECK(adapter.polygonCornerAnchors.size() ==
+              adapter.polygons.size());
+        CHECK(adapter.certifiedTriangles.size() == adapter.polygons.size());
+        CHECK(adapter.countTris() == adapter.polygonCount());
+        for (std::size_t index = 0; index < adapter.polygons.size(); ++index) {
+            CHECK(adapter.polygons[index].size() == 3);
+            CHECK(adapter.polygonCornerAnchors[index].size() == 3);
+            CHECK(adapter.certifiedTriangles[index].size() == 1);
+            CHECK(adapter.certifiedTriangles[index].front() ==
+                  result.value->certified.triangles[index].vertices);
+        }
+    }
 }
 
 void testPlanarBox() {
@@ -150,6 +169,15 @@ void testUnsupportedAndConfigurationRefusals() {
     CHECK(!refused);
     CHECK(refused.failure &&
           refused.failure->code == "interval.invalid_configuration");
+
+    weft::SecureMeshingConfiguration axial = configuration();
+    axial.cylinderAxialIntervals = 2;
+    const weft::SecureMeshingResult axialRefusal =
+        generateFixture("cylinder", axial);
+    CHECK(!axialRefusal);
+    CHECK(axialRefusal.failure &&
+          axialRefusal.failure->code ==
+              "cylinder.axial_samples_require_interior_provenance");
 }
 
 }  // namespace

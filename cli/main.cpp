@@ -13,6 +13,7 @@
 #include "weft/export_gltf.hpp"
 #include "weft/io/system.hpp"
 #include "weft/recipe.hpp"
+#include "weft/secure_meshing.hpp"
 #include "weft/validate.hpp"
 
 #include <BRep_Builder.hxx>
@@ -21,9 +22,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 #include <stdexcept>
 #include <algorithm>
 #include <chrono>
+#include <fstream>
 #include <map>
 #include <set>
 #include <string>
@@ -90,10 +93,11 @@ void usage() {
         "    --profile cad     the CAD n-gon profile: minimal flats + adaptive\n"
         "                      curvature counts + natural strips ('dense'\n"
         "                      restores grid flats)\n"
-        "    --pipeline compiler\n"
-        "                      experimental primitive-aware B-rep compiler:\n"
-        "                      canonical shared-edge plans + semantic regions;\n"
-        "                      legacy remains the default comparison path\n"
+        "    --repair conservative|compatibility\n"
+        "                      audited working-copy repair profile\n"
+        "    --mesh-report FILE write the complete secure validation coverage\n"
+        "    --pipeline legacy|compiler\n"
+        "                      accepted as ignored migration input with warning\n"
         "    --adaptive        curvature-driven border counts (the CAD profile;\n"
         "                      big arcs get more segments, straights get 1)\n"
 "    --flat-quads      dense grids on flat faces too (default: flats\n"
@@ -327,9 +331,12 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     std::string input = args[0];
     std::string output;
     std::string recipeOut;
+    std::string meshReportPath;
     bool validate = validateOnly;
     bool noNormals = false;
-    bool primitiveCompiler = false;
+    bool recipeLoaded = false;
+    bool ignoredMigrationControl = false;
+    weft::RepairProfile repairProfile = weft::RepairProfile::Conservative;
     std::vector<double> lods;
     weft::ObjExportOptions objOpts;
     weft::Recipe recipe;
@@ -346,28 +353,52 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         else if (a == "--radial") gs.defaults.radial = std::stoi(next());
         else if (a == "--axial") gs.defaults.axial = std::stoi(next());
         else if (a == "--chord") gs.defaults.chordTolerance = std::stod(next());
-        else if (a == "--cap") weft::applySetting(gs.defaults, "cap", next());
-        else if (a == "--loops") gs.defaults.filletLoops = std::stoi(next());
-        else if (a == "--hold") gs.defaults.filletHold = std::stod(next());
-        else if (a == "--rings") gs.defaults.junctionRings = std::stoi(next());
+        else if (a == "--cap") {
+            weft::applySetting(gs.defaults, "cap", next());
+            ignoredMigrationControl = true;
+        }
+        else if (a == "--loops") {
+            gs.defaults.filletLoops = std::stoi(next());
+            ignoredMigrationControl = true;
+        }
+        else if (a == "--hold") {
+            gs.defaults.filletHold = std::stod(next());
+            ignoredMigrationControl = true;
+        }
+        else if (a == "--rings") {
+            gs.defaults.junctionRings = std::stoi(next());
+            ignoredMigrationControl = true;
+        }
         else if (a == "--pure-tris") {
             gs.defaults.quadDominant = false;
             gs.defaults.pureTriFloor = true;
+            ignoredMigrationControl = true;
         }
-        else if (a == "--quads") gs.defaults.quadDominant = true;
-        else if (a == "--flat-quads") gs.defaults.minimal = false;
-        else if (a == "--adaptive") gs.defaults.adaptive = true;
+        else if (a == "--quads") {
+            gs.defaults.quadDominant = true;
+            ignoredMigrationControl = true;
+        }
+        else if (a == "--flat-quads") {
+            gs.defaults.minimal = false;
+            ignoredMigrationControl = true;
+        }
+        else if (a == "--adaptive") {
+            gs.defaults.adaptive = true;
+            ignoredMigrationControl = true;
+        }
         else if (a == "--density") {
             // One dial re-budgets the whole model: scales every
             // solved count (adaptive ones too) before the group
             // solve, and fallback tolerances to match.
             gs.densityScale = std::stod(next());
+            ignoredMigrationControl = true;
         }
         else if (a == "--weld") {
             // Global weld tolerance (mm): how far apart coincident border
             // verts may sit and still fuse. Loosening it closes seams on
             // sloppy CAD / off-curve fallback borders.
             gs.weldTolerance = std::stod(next());
+            ignoredMigrationControl = true;
         }
         else if (a == "--profile") {
             std::string prof = next();
@@ -383,17 +414,36 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
             } else {
                 throw std::runtime_error("unknown profile: " + prof);
             }
+            ignoredMigrationControl = true;
         }
         else if (a == "--pipeline") {
             const std::string pipeline = next();
-            if (pipeline == "compiler") primitiveCompiler = true;
-            else if (pipeline == "legacy") primitiveCompiler = false;
-            else throw std::runtime_error("unknown pipeline: " + pipeline);
+            if (pipeline != "compiler" && pipeline != "legacy") {
+                throw std::runtime_error("unknown pipeline: " + pipeline);
+            }
+            ignoredMigrationControl = true;
         }
+        else if (a == "--repair") {
+            const std::string repair = next();
+            if (repair == "conservative") {
+                repairProfile = weft::RepairProfile::Conservative;
+            } else if (repair == "compatibility") {
+                repairProfile = weft::RepairProfile::Compatibility;
+            } else {
+                throw std::runtime_error("unknown repair profile: " + repair);
+            }
+        }
+        else if (a == "--mesh-report") meshReportPath = next();
         else if (a == "--validate") validate = true;
-        else if (a == "--preview") gs.finalizeMesh = false;
-        else if (a == "--stitch") gs.decoupleSeams = true;  // experiment
-        else if (a == "--debug") weft::setGenerateDebugLog(stderr);
+        else if (a == "--preview") {
+            gs.finalizeMesh = false;
+            ignoredMigrationControl = true;
+        }
+        else if (a == "--stitch") {
+            gs.decoupleSeams = true;
+            ignoredMigrationControl = true;
+        }
+        else if (a == "--debug") ignoredMigrationControl = true;
         else if (a == "--no-normals") noNormals = true;
         else if (a == "--triangulate") objOpts.triangulate = true;
         else if (a == "--yup") objOpts.yUp = true;
@@ -407,7 +457,10 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
                 pos = comma == std::string::npos ? comma : comma + 1;
             }
         }
-        else if (a == "--recipe") recipe = weft::loadRecipe(next());
+        else if (a == "--recipe") {
+            recipe = weft::loadRecipe(next());
+            recipeLoaded = true;
+        }
         else if (a == "--save-recipe") recipeOut = next();
         else if (a == "--op-loop") {
             // faceId:u,v,t — insert a loop crossing the mesh edge nearest
@@ -439,6 +492,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
             gs.defaults.gridV =
                 x == std::string::npos ? gs.defaults.gridU
                                        : std::stoi(g.substr(x + 1));
+            ignoredMigrationControl = true;
         } else if (a == "--face") {
             faceSpecs.push_back(next());  // parsed after defaults are final
         } else if (a == "--edge") {
@@ -457,12 +511,27 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         throw std::runtime_error("missing -o <out.obj>");
     }
     for (const std::string& spec : faceSpecs) parseFaceOverride(gs, spec);
-    if (!recipeOut.empty()) {
-        weft::saveRecipe(recipe, recipeOut);
-        std::printf("saved recipe %s\n", recipeOut.c_str());
+    if (!lods.empty() && !meshReportPath.empty()) {
+        throw std::runtime_error(
+            "--mesh-report with --lods is unavailable until per-tier secure "
+            "reports are defined");
+    }
+    if (recipeLoaded || !recipeOut.empty() || !recipe.ops.empty() ||
+        !gs.perFace.empty() || !gs.perEdge.empty()) {
+        throw std::runtime_error(
+            "secure recipe/manual/per-face migration conflict: export blocked "
+            "until recipe v2 correspondence migration is implemented");
+    }
+    if (ignoredMigrationControl) {
+        std::fprintf(
+            stderr,
+            "warning: one or more legacy modelling controls were accepted as "
+            "migration input but are ignored by the secure pipeline\n");
     }
 
-    weft::Model model = weft::loadStep(input);
+    const weft::ImportedModel secureImported =
+        weft::importStepSecure(input, repairProfile);
+    const weft::Model& model = secureImported.workingModel();
     weft::Analysis analysis = weft::analyze(model);
     objOpts.objectNames = &model.solidNames;
     if (!noNormals) objOpts.model = &model;
@@ -491,13 +560,56 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         weft::io::WriteInput in{&m, &model, &analysis.solidFaces};
         weft::io::exportFile(sys, out, in, path, &pg);
     };
+    weft::MeshingResult latestSecureResult;
     auto generateSelected = [&](const weft::GenerationSettings& selected,
                                 weft::GenerationReport* report,
                                 weft::CompilerPlan* plan = nullptr) {
-        return primitiveCompiler
-                   ? weft::generatePrimitiveAware(model, analysis, selected,
-                                                   plan, report)
-                   : weft::generate(model, analysis, selected, report);
+        (void)report;
+        (void)plan;
+        if (selected.defaults.radial < 3) {
+            throw std::runtime_error("--radial must be at least 3");
+        }
+        if (selected.defaults.axial < 1) {
+            throw std::runtime_error("--axial must be positive");
+        }
+        if (!std::isfinite(selected.defaults.chordTolerance) ||
+            selected.defaults.chordTolerance <= 0.0) {
+            throw std::runtime_error("--chord must be finite and positive");
+        }
+        if (!std::isfinite(selected.defaults.angleToleranceDeg) ||
+            selected.defaults.angleToleranceDeg <= 0.0 ||
+            selected.defaults.angleToleranceDeg >= 180.0) {
+            throw std::runtime_error(
+                "normal angle tolerance must be between 0 and 180 degrees");
+        }
+
+        weft::SecureMeshingConfiguration configuration;
+        configuration.sampling.chordTolerance =
+            selected.defaults.chordTolerance;
+        configuration.sampling.normalAngleToleranceRadians =
+            selected.defaults.angleToleranceDeg *
+            0.01745329251994329576923690768489;
+        configuration.sampling.minimumClosedCurveSegments =
+            static_cast<std::uint32_t>(selected.defaults.radial);
+        configuration.sampling.maximumSegmentCount = std::max<std::uint32_t>(
+            4096U, configuration.sampling.minimumClosedCurveSegments);
+        configuration.cylinderAxialIntervals =
+            static_cast<std::uint32_t>(selected.defaults.axial);
+
+        weft::SecureMeshingResult generated =
+            weft::generateSecureMesh(secureImported, configuration);
+        if (!generated) {
+            const std::string code = generated.failure
+                ? generated.failure->code
+                : "secure_pipeline.unknown_refusal";
+            const std::string message = generated.failure
+                ? generated.failure->message
+                : "secure meshing produced neither a result nor a failure";
+            throw std::runtime_error(
+                "secure meshing refused [" + code + "]: " + message);
+        }
+        latestSecureResult = std::move(*generated.value);
+        return weft::makeCertifiedPolyMeshAdapter(latestSecureResult);
     };
 
     // LOD tiers: one control setup, one export per density factor.
@@ -522,7 +634,6 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
             scaleSet(scaled.defaults);
             for (auto& [fid, fs] : scaled.perFace) scaleSet(fs);
             weft::PolyMesh lod = generateSelected(scaled, nullptr);
-            weft::applyOps(lod, model, recipe.ops);
             size_t dot = output.rfind('.');
             std::string lodPath =
                 dot == std::string::npos
@@ -541,11 +652,39 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         return rc;
     }
 
-    weft::GenerationReport report;
-    weft::CompilerPlan compilerPlan;
-    weft::PolyMesh mesh = generateSelected(
-        gs, &report, primitiveCompiler ? &compilerPlan : nullptr);
-    weft::applyOps(mesh, model, recipe.ops);
+    weft::PolyMesh mesh = generateSelected(gs, nullptr);
+    if (!meshReportPath.empty()) {
+        std::ofstream reportFile(meshReportPath, std::ios::binary);
+        if (!reportFile) {
+            throw std::runtime_error(
+                "cannot open secure mesh report: " + meshReportPath);
+        }
+        reportFile << "weft-secure-mesh-report 1\n"
+                   << "repair-profile "
+                   << weft::repairProfileName(secureImported.repair.profile)
+                   << "\n"
+                   << "source-sha256 "
+                   << secureImported.repair.sourceShapeSha256 << "\n"
+                   << "working-sha256 "
+                   << secureImported.repair.workingShapeSha256 << "\n"
+                   << "repair-identity "
+                   << (secureImported.repair.identity ? 1 : 0) << "\n"
+                   << "complete "
+                   << (latestSecureResult.validation.complete() ? 1 : 0)
+                   << "\n";
+        for (const weft::ValidationCoverage& coverage :
+             latestSecureResult.validation.checks) {
+            reportFile << coverage.code << " expected=" << coverage.expected
+                       << " checked=" << coverage.checked
+                       << " skipped=" << coverage.skipped
+                       << " failed=" << coverage.failed << "\n";
+        }
+        reportFile.close();
+        if (!reportFile) {
+            throw std::runtime_error(
+                "failed to write secure mesh report: " + meshReportPath);
+        }
+    }
     if (!output.empty()) {
         exportMesh(mesh, output);
         std::printf("%s -> %s\n", input.c_str(), output.c_str());
@@ -555,34 +694,6 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     std::printf("  %zu vertices, %zu polygons (%zu quads, %zu tris, %zu n-gons)\n",
                 mesh.vertexCount(), mesh.polygonCount(), mesh.countQuads(),
                 mesh.countTris(), mesh.countNgons());
-    if (primitiveCompiler) {
-        std::printf("  compiler: %zu regions, %zu coedges, %zu global count constraints\n",
-                    compilerPlan.regions.size(), compilerPlan.graph.coedges.size(),
-                    compilerPlan.countConstraints.size());
-        std::map<weft::PatchKind, int> patchCounts;
-        std::map<weft::PatchFallbackReason, int> fallbackReasons;
-        for (const weft::PatchPlan& patch : compilerPlan.patches) {
-            ++patchCounts[patch.kind];
-            if (patch.kind == weft::PatchKind::TriangleFallback) {
-                ++fallbackReasons[patch.fallbackReason];
-            }
-        }
-        std::printf("  compiler core: %zu native faces, %zu isolated fallbacks; patches",
-                    compilerPlan.nativeFaceIds.size(),
-                    compilerPlan.patches.size() - compilerPlan.nativeFaceIds.size());
-        for (const auto& [kind, count] : patchCounts) {
-            std::printf(" %s=%d", weft::patchKindName(kind), count);
-        }
-        std::printf("\n");
-        if (!fallbackReasons.empty()) {
-            std::printf("  isolated fallback reasons:");
-            for (const auto& [reason, count] : fallbackReasons) {
-                std::printf(" %s=%d",
-                            weft::patchFallbackReasonName(reason), count);
-            }
-            std::printf("\n");
-        }
-    }
     {
         const auto folded = weft::foldedPolys(model, mesh);
         size_t nf = 0;
@@ -610,59 +721,6 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         weft::ValidationReport vr = weft::validateMesh(mesh, &model);
         std::printf("%s", weft::formatReport(vr).c_str());
         if (!vr.watertight()) return 1;
-    }
-    if (report.faceMesher.size() <= 48 || std::getenv("WEFT_FACE_KINDS")) {
-        for (const auto& [fid, kind] : report.faceMesher) {
-            std::printf("  face #%-3d %s\n", fid, weft::mesherKindName(kind));
-        }
-    } else {
-        std::map<std::string, int> byKind;
-        for (const auto& [fid, kind] : report.faceMesher) {
-            ++byKind[weft::mesherKindName(kind)];
-        }
-        for (const auto& [name, count] : byKind) {
-            std::printf("  %6d x %s\n", count, name.c_str());
-        }
-    }
-    // Build honesty: the kinds above show the PLAN; say when a face's
-    // planned mesher couldn't build (contract floor keeps exact borders,
-    // raw triangulation is the tri-soup last resort, empty is a hole).
-    {
-        int floor = 0, raw = 0, empty = 0;
-        std::vector<int> rawFaces, emptyFaces;
-        for (const auto& [fid, how] : report.faceBuild) {
-            if (how == 2) ++floor;
-            if (how == 1) {
-                ++raw;
-                rawFaces.push_back(fid);
-            }
-            if (how == -1) {
-                ++empty;
-                emptyFaces.push_back(fid);
-            }
-        }
-        if (floor || raw || empty) {
-            std::printf("  demoted: %d to contract floor, %d to raw "
-                        "triangulation, %d emitted nothing\n",
-                        floor, raw, empty);
-            if (!rawFaces.empty()) {
-                std::printf("    raw face ids:");
-                for (int fid : rawFaces) std::printf(" %d", fid);
-                std::printf("\n");
-            }
-            if (!emptyFaces.empty()) {
-                std::printf("    empty face ids:");
-                for (int fid : emptyFaces) std::printf(" %d", fid);
-                std::printf("\n");
-            }
-        }
-    }
-    if (!report.edgeDivisions.empty()) {
-        std::printf("  density-matched edges:");
-        for (const auto& [eid, div] : report.edgeDivisions) {
-            std::printf(" #%d=%d", eid, div);
-        }
-        std::printf("\n");
     }
     return 0;
 }

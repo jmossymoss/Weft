@@ -55,10 +55,31 @@ struct IntervalProblemResult {
 IntervalProblemResult buildIntervalProblem(
     const ImportedModel& imported,
     const ReconnaissanceReport& reconnaissance,
-    const SamplingConfiguration& configuration) {
+    const SecureMeshingConfiguration& configuration) {
     IntervalProblemResult result;
+    if (configuration.cylinderAxialIntervals == 0) {
+        result.failure = SecureMeshingFailure{
+            "secure_pipeline.axial_count_invalid",
+            "cylinder axial intervals must be positive", {}};
+        return result;
+    }
     IntervalProblem problem;
     const BRepSnapshot& snapshot = imported.working->snapshot;
+    std::set<StableId> cylinderAxialEdges;
+    for (const ExactGeometryClassification& face : reconnaissance.records) {
+        if (face.taxonomy != GeometryTaxonomy::Surface ||
+            face.familyCode != "cylinder") {
+            continue;
+        }
+        for (const CoedgeRecord& coedge : snapshot.coedges) {
+            const ExactGeometryClassification* edge =
+                reconnaissance.find(coedge.edgeId);
+            if (coedge.faceId == face.subjectId && edge &&
+                edge->familyCode == "line") {
+                cylinderAxialEdges.insert(coedge.edgeId);
+            }
+        }
+    }
     for (const EdgeTopologyRecord& topology : snapshot.edgeTopology) {
         const ExactGeometryClassification* classification =
             reconnaissance.find(topology.id);
@@ -72,7 +93,9 @@ IntervalProblemResult buildIntervalProblem(
         }
         std::uint32_t count = 0;
         if (classification->familyCode == "line") {
-            count = lineSegmentCount();
+            count = cylinderAxialEdges.contains(topology.id)
+                ? configuration.cylinderAxialIntervals
+                : lineSegmentCount();
         } else if (classification->familyCode == "circle") {
             const EvaluationResult<ParameterDomain> domain =
                 imported.workingEvaluator->curveDomain(topology.id);
@@ -97,7 +120,7 @@ IntervalProblemResult buildIntervalProblem(
                 *topology.lowerVertex == *topology.upperVertex;
             const SegmentCountResult demanded = circularArcSegmentCount(
                 radius, *domain.value->upper - *domain.value->lower,
-                fullCircle, configuration);
+                fullCircle, configuration.sampling);
             if (!demanded) {
                 result.failure = SecureMeshingFailure{
                     demanded.failure ? demanded.failure->code
@@ -186,7 +209,7 @@ SecureMeshingResult generateSecureMesh(
     }
 
     const IntervalProblemResult intervalProblem = buildIntervalProblem(
-        imported, reconnaissance, configuration.sampling);
+        imported, reconnaissance, configuration);
     if (!intervalProblem.value) {
         result.failure = intervalProblem.failure;
         return result;
@@ -379,6 +402,51 @@ SecureMeshingResult generateSecureMesh(
         *assembled.value, result.validation, {},
         "structured modeling topology is not yet proven for every face");
     return result;
+}
+
+PolyMesh makeCertifiedPolyMeshAdapter(const MeshingResult& result) {
+    PolyMesh adapter;
+    adapter.vertices.reserve(result.certified.vertices.size());
+    adapter.anchors.reserve(result.certified.vertices.size());
+    adapter.constraints.reserve(result.certified.vertices.size());
+    for (const CertifiedVertex& vertex : result.certified.vertices) {
+        adapter.vertices.push_back(vertex.position);
+        Anchor anchor;
+        MeshConstraint constraint;
+        if (!vertex.provenance.empty()) {
+            const CertifiedVertexUse& use = vertex.provenance.front();
+            anchor.faceId = static_cast<int>(use.workingFace.ordinal);
+            anchor.u = use.boundary.uv[0];
+            anchor.v = use.boundary.uv[1];
+            constraint.type = MeshConstraintType::BrepFace;
+            constraint.ownerId = anchor.faceId;
+            constraint.u = anchor.u;
+            constraint.v = anchor.v;
+        }
+        adapter.anchors.push_back(anchor);
+        adapter.constraints.push_back(constraint);
+    }
+
+    adapter.polygons.reserve(result.certified.triangles.size());
+    adapter.polygonFaceId.reserve(result.certified.triangles.size());
+    adapter.polygonCornerAnchors.reserve(result.certified.triangles.size());
+    adapter.certifiedTriangles.reserve(result.certified.triangles.size());
+    for (const CertifiedTriangle& triangle : result.certified.triangles) {
+        adapter.polygons.push_back(
+            {triangle.vertices.begin(), triangle.vertices.end()});
+        adapter.polygonFaceId.push_back(
+            static_cast<int>(triangle.workingFace.ordinal));
+        std::vector<Anchor> corners;
+        corners.reserve(3);
+        for (const PredicatePoint2& uv : triangle.cornerUv) {
+            corners.push_back(
+                {static_cast<int>(triangle.workingFace.ordinal), uv[0],
+                 uv[1]});
+        }
+        adapter.polygonCornerAnchors.push_back(std::move(corners));
+        adapter.certifiedTriangles.push_back({triangle.vertices});
+    }
+    return adapter;
 }
 
 }  // namespace weft

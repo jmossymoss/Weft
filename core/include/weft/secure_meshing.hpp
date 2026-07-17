@@ -13,6 +13,7 @@ namespace weft {
 struct SecureMeshingConfiguration {
     SamplingConfiguration sampling;
     CertifiedMeshAssemblyConfiguration assembly;
+    std::uint32_t cylinderAxialIntervals = 1;
 };
 
 struct SecureMeshingFailure {
@@ -36,5 +37,9 @@ struct SecureMeshingResult {
 SecureMeshingResult generateSecureMesh(
     const ImportedModel& imported,
     const SecureMeshingConfiguration& configuration = {});
+
+// Workflow/export adapter. Certified triangles and their face-corner UVs are
+// copied verbatim; no weld, topology edit, or downstream triangulation occurs.
+PolyMesh makeCertifiedPolyMeshAdapter(const MeshingResult& result);
 
 }  // namespace weft
