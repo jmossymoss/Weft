@@ -297,7 +297,15 @@ bool validateMesh(const PlanarCdtMesh& mesh,
                 (!use.sourceEdge ||
                  (use.sourceEdge->kind == StableIdKind::Edge &&
                   use.sourceEdge->valid())) &&
-                use.uv == vertex.uv;
+                use.coedge.kind == StableIdKind::Coedge &&
+                use.coedge.valid() &&
+                use.uv == vertex.uv &&
+                std::isfinite(use.measuredCurveOnSurfaceDiscrepancy) &&
+                use.measuredCurveOnSurfaceDiscrepancy >= 0.0 &&
+                std::isfinite(use.allowedCurveOnSurfaceDiscrepancy) &&
+                use.allowedCurveOnSurfaceDiscrepancy >= 0.0 &&
+                use.measuredCurveOnSurfaceDiscrepancy <=
+                    use.allowedCurveOnSurfaceDiscrepancy;
         }
         if (!vertexValid) {
             ++provenance.failed;

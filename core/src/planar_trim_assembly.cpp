@@ -354,7 +354,9 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
                 PlanarTrimVertex vertex;
                 vertex.boundaryUses.push_back(
                     {sample.id, sample.workingEdge, sample.sourceEdge,
-                     uvUse.liftedUv});
+                     coedge.id, uvUse.liftedUv,
+                     uvUse.measuredCurveOnSurfaceDiscrepancy,
+                     uvUse.allowedCurveOnSurfaceDiscrepancy});
                 vertex.canonicalVertexIndex = sample.canonicalVertexIndex;
                 vertex.uv = uvUse.liftedUv;
 

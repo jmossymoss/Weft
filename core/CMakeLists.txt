@@ -13,6 +13,7 @@ add_library(weft_core
   src/planar_trim_validation.cpp
   src/planar_trim_assembly.cpp
   src/planar_cdt.cpp
+  src/certified_mesh.cpp
   src/model.cpp
   src/analysis.cpp
   src/compiler.cpp

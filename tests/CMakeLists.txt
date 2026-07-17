@@ -50,6 +50,12 @@ weft_enable_strict_warnings(weft_planar_cdt_tests)
 add_test(NAME planar_cdt COMMAND weft_planar_cdt_tests)
 weft_deploy_occt_dlls(weft_planar_cdt_tests)
 
+add_executable(weft_certified_mesh_tests test_certified_mesh.cpp)
+target_link_libraries(weft_certified_mesh_tests PRIVATE weft_core)
+weft_enable_strict_warnings(weft_certified_mesh_tests)
+add_test(NAME certified_mesh COMMAND weft_certified_mesh_tests)
+weft_deploy_occt_dlls(weft_certified_mesh_tests)
+
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(
   NAME secure_fixture_catalog

@@ -392,6 +392,7 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                         {edgeId, mapping.coedge->id,
                          mapping.coedge->faceId});
                 }
+                use.allowedCurveOnSurfaceDiscrepancy = allowed;
 
                 for (std::size_t axis = 0; axis < use.uv.size(); ++axis) {
                     std::int64_t lift = 0;

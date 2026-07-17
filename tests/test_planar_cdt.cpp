@@ -41,7 +41,8 @@ weft::PlanarTrimLoop makeLoop(
                {weft::StableIdKind::Edge, edgeOrdinal},
                weft::StableId{weft::StableIdKind::Edge,
                               edgeOrdinal + 100000},
-               points[index]}},
+               {weft::StableIdKind::Coedge, edgeOrdinal},
+               points[index], 0.0, 1e-7}},
              static_cast<std::uint64_t>(index), points[index]});
     }
     return loop;

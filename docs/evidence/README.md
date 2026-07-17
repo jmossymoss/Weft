@@ -15,4 +15,5 @@ may supersede a result but must not rewrite what an earlier run proved.
 - `m3-planar-trim-validation-2026-07-17.md` - exact pre-CDT loop, intersection, containment, orientation, and coverage evidence.
 - `m3-planar-trim-assembly-2026-07-17.md` - real B-rep planar coedge/wire assembly and shared-corner provenance evidence.
 - `m4-single-loop-reference-cdt-2026-07-17.md` - exact-predicate boundary-preserving reference CDT and independent certificate evidence.
+- `m4-certified-planar-box-2026-07-17.md` - no-weld global canonical assembly, closed-box incidence, provenance, and MeshingResult evidence.
 - `m1-m2-frozen-corpus-2026-07-17.md` - frozen 106-record catalogue, committed STEP outcomes, and 77-fixture import/accounting evidence.

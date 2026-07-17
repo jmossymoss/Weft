@@ -30,7 +30,10 @@ struct PlanarTrimBoundaryUse {
     SampleId sample;
     StableId workingEdge;
     std::optional<StableId> sourceEdge;
+    StableId coedge;
     PredicatePoint2 uv{};
+    double measuredCurveOnSurfaceDiscrepancy = 0.0;
+    double allowedCurveOnSurfaceDiscrepancy = 0.0;
 };
 
 struct PlanarTrimVertex {

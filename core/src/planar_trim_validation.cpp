@@ -254,7 +254,16 @@ PlanarTrimValidationResult validatePlanarTrimDomain(
                     (!use.sourceEdge ||
                      (use.sourceEdge->kind == StableIdKind::Edge &&
                       use.sourceEdge->valid())) &&
-                    finite(use.uv) && equal(use.uv, item.uv);
+                    use.coedge.kind == StableIdKind::Coedge &&
+                    use.coedge.valid() &&
+                    finite(use.uv) && equal(use.uv, item.uv) &&
+                    std::isfinite(
+                        use.measuredCurveOnSurfaceDiscrepancy) &&
+                    use.measuredCurveOnSurfaceDiscrepancy >= 0.0 &&
+                    std::isfinite(use.allowedCurveOnSurfaceDiscrepancy) &&
+                    use.allowedCurveOnSurfaceDiscrepancy >= 0.0 &&
+                    use.measuredCurveOnSurfaceDiscrepancy <=
+                        use.allowedCurveOnSurfaceDiscrepancy;
                 for (std::size_t previousUse = 0;
                      previousUse < useIndex; ++previousUse) {
                     provenanceValid = provenanceValid &&

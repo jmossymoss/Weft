@@ -40,6 +40,7 @@ struct CoedgeUvUse {
     std::array<double, 2> liftedUv{};
     TopologyOrientation traversalOrientation = TopologyOrientation::Forward;
     double measuredCurveOnSurfaceDiscrepancy = 0.0;
+    double allowedCurveOnSurfaceDiscrepancy = 0.0;
 };
 
 struct CanonicalBoundarySample {

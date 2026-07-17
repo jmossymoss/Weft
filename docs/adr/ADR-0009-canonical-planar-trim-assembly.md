@@ -31,8 +31,8 @@ For a proven planar face it:
 - requires exactly one matching lifted UV use for every coedge/sample pair;
 - merges adjacent endpoints only when their canonical vertex indices and lifted
   UV doubles agree exactly;
-- retains all incident `(sample, working edge, source edge, UV)` records on the
-  merged trim vertex;
+- retains all incident `(sample, working edge, source edge, coedge, UV)` records
+  on the merged trim vertex;
 - recognises a one-coedge closed canonical boundary without inventing a
   duplicate endpoint;
 - obtains the outer-wire identity from exact OCCT face topology and labels all

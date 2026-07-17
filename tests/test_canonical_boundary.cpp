@@ -116,6 +116,11 @@ void verifyCanonicalModel(const std::string& fixtureName,
                 CHECK(std::isfinite(
                     use.measuredCurveOnSurfaceDiscrepancy));
                 CHECK(use.measuredCurveOnSurfaceDiscrepancy <= 1e-3);
+                CHECK(std::isfinite(
+                    use.allowedCurveOnSurfaceDiscrepancy));
+                CHECK(use.allowedCurveOnSurfaceDiscrepancy <= 1e-3);
+                CHECK(use.measuredCurveOnSurfaceDiscrepancy <=
+                      use.allowedCurveOnSurfaceDiscrepancy);
                 sawPlanarProjection = sawPlanarProjection ||
                     use.mappingKind ==
                         weft::BoundaryUvMappingKind::DerivedPlanarProjection;

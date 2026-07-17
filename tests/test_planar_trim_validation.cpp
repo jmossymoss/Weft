@@ -44,7 +44,8 @@ weft::PlanarTrimLoop loop(
                {weft::StableIdKind::Edge, workingEdgeOrdinal},
                weft::StableId{weft::StableIdKind::Edge,
                               ordinal * 1000 + sampleOrdinal},
-               point}},
+               {weft::StableIdKind::Coedge, workingEdgeOrdinal},
+               point, 0.0, 1e-7}},
              workingEdgeOrdinal, point});
     }
     return result;
