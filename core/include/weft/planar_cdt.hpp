@@ -16,6 +16,9 @@ struct PlanarCdtTriangle {
     StableId workingFace;
     std::optional<StableId> sourceFace;
     std::array<std::uint32_t, 3> vertices{};
+    // Curved templates may need a different periodic lift per triangle.
+    // Planar CDT leaves this empty and consumes the vertex UVs directly.
+    std::optional<std::array<PredicatePoint2, 3>> cornerUv;
 };
 
 struct PlanarCdtMesh {

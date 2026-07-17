@@ -106,9 +106,18 @@ struct CertifiedMeshAssemblyResult {
     explicit operator bool() const noexcept { return value.has_value(); }
 };
 
-// Assembles already certified planar face meshes by canonical vertex identity.
-// No spatial search or weld is performed. `expectedWorkingFaces` prevents a
-// caller from presenting a partial face set as a complete body.
+// Assembles boundary-exact face triangle products by canonical vertex
+// identity. No spatial search or weld is performed. Curved templates provide
+// per-triangle periodic corner lifts; planar CDT uses vertex UVs directly.
+// `expectedWorkingFaces` prevents a partial face set claiming a complete body.
+CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
+    const ImportedModel& imported,
+    const CanonicalBoundarySet& boundaries,
+    std::span<const PlanarCdtMesh> faceMeshes,
+    std::span<const StableId> expectedWorkingFaces,
+    const CertifiedMeshAssemblyConfiguration& configuration = {});
+
+// Compatibility name for the first planar-only callers.
 CertifiedMeshAssemblyResult assembleCertifiedPlanarMesh(
     const ImportedModel& imported,
     const CanonicalBoundarySet& boundaries,

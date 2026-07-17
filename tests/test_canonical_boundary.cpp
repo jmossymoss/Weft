@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <map>
 #include <vector>
 
 namespace {
@@ -77,9 +78,13 @@ void verifyCanonicalModel(const std::string& fixtureName,
     CHECK(set.validation.expectedEdges == set.validation.checkedEdges);
     CHECK(set.validation.expectedSamples == set.validation.checkedSamples);
     CHECK(set.validation.expectedUvUses == set.validation.checkedUvUses);
+    CHECK(set.validation.expectedVertexCurveChecks ==
+          set.validation.checkedVertexCurveChecks);
+    CHECK(set.validation.checkedVertexCurveChecks != 0);
 
     bool sawPlanarProjection = false;
     bool sawStoredPcurve = false;
+    std::map<std::uint64_t, std::array<double, 3>> canonicalPositions;
     for (const weft::EdgeTopologyRecord& topology :
          imported.working->snapshot.edgeTopology) {
         const weft::CanonicalBoundary* boundary = set.find(topology.id);
@@ -107,6 +112,9 @@ void verifyCanonicalModel(const std::string& fixtureName,
             CHECK(sample.sourceEdge.has_value());
             CHECK(!sample.faceUses.empty());
             CHECK(sample.canonicalVertexIndex < set.canonicalVertexCount);
+            const auto [position, inserted] = canonicalPositions.emplace(
+                sample.canonicalVertexIndex, sample.position);
+            CHECK(inserted || position->second == sample.position);
             for (const weft::CoedgeUvUse& use : sample.faceUses) {
                 CHECK(use.sourceFace.has_value());
                 CHECK(std::isfinite(use.uv[0]));

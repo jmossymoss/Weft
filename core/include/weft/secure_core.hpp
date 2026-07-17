@@ -134,6 +134,8 @@ struct EdgeTopologyRecord {
 
 struct BRepSnapshot {
     Model model;
+    ShapeMap wires;
+    ShapeMap vertices;
     std::vector<TopologyOccurrence> occurrences;
     std::vector<CoedgeRecord> coedges;
     std::vector<EdgeTopologyRecord> edgeTopology;
@@ -246,6 +248,11 @@ struct CurveEvaluation {
     std::array<double, 3> firstDerivative{};
 };
 
+struct VertexEvaluation {
+    StableId vertexId;
+    std::array<double, 3> position{};
+};
+
 struct PcurveEvaluation {
     PcurveRef reference;
     double parameter = 0.0;
@@ -299,6 +306,8 @@ public:
     virtual ~GeometryEvaluator() = default;
 
     virtual EvaluationResult<ParameterDomain> curveDomain(StableId edge) const = 0;
+    virtual EvaluationResult<VertexEvaluation> evaluateVertex(
+        StableId vertex) const = 0;
     virtual EvaluationResult<CurveEvaluation> evaluateCurve(
         StableId edge, double parameter) const = 0;
     virtual EvaluationResult<PcurveEvaluation> evaluatePcurve(

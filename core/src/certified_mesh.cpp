@@ -95,6 +95,7 @@ bool resolvesFaceUse(const CanonicalBoundarySample& sample,
             return faceUse.face == use.workingFace &&
                 faceUse.sourceFace == use.sourceFace &&
                 faceUse.coedge == use.boundary.coedge &&
+                faceUse.representation == use.boundary.representation &&
                 faceUse.liftedUv == use.boundary.uv &&
                 faceUse.measuredCurveOnSurfaceDiscrepancy ==
                     use.boundary.measuredCurveOnSurfaceDiscrepancy &&
@@ -111,6 +112,7 @@ bool sameProvenance(const CertifiedVertexUse& first,
         first.boundary.workingEdge == second.boundary.workingEdge &&
         first.boundary.sourceEdge == second.boundary.sourceEdge &&
         first.boundary.coedge == second.boundary.coedge &&
+        first.boundary.representation == second.boundary.representation &&
         first.boundary.uv == second.boundary.uv &&
         first.boundary.measuredCurveOnSurfaceDiscrepancy ==
             second.boundary.measuredCurveOnSurfaceDiscrepancy &&
@@ -128,6 +130,7 @@ bool provenanceLess(const CertifiedVertexUse& first,
                       first.boundary.workingEdge,
                       optionalId(first.boundary.sourceEdge),
                       first.boundary.coedge,
+                      first.boundary.representation,
                       first.boundary.sample.boundary,
                       first.boundary.sample.ordinal, first.boundary.uv,
                       first.boundary.measuredCurveOnSurfaceDiscrepancy,
@@ -136,6 +139,7 @@ bool provenanceLess(const CertifiedVertexUse& first,
                    second.boundary.workingEdge,
                    optionalId(second.boundary.sourceEdge),
                    second.boundary.coedge,
+                   second.boundary.representation,
                    second.boundary.sample.boundary,
                    second.boundary.sample.ordinal, second.boundary.uv,
                    second.boundary.measuredCurveOnSurfaceDiscrepancy,
@@ -248,7 +252,7 @@ MeshingResult makeCertifiedFloorMeshingResult(
     return result;
 }
 
-CertifiedMeshAssemblyResult assembleCertifiedPlanarMesh(
+CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
     const ImportedModel& imported,
     const CanonicalBoundarySet& boundaries,
     std::span<const PlanarCdtMesh> faceMeshes,
@@ -486,7 +490,9 @@ CertifiedMeshAssemblyResult assembleCertifiedPlanarMesh(
                     faceMesh.vertices[localIndex];
                 triangle.vertices[corner] = canonicalToGlobal.at(
                     localVertex.canonicalVertexIndex);
-                triangle.cornerUv[corner] = localVertex.uv;
+                triangle.cornerUv[corner] = localTriangle.cornerUv
+                    ? (*localTriangle.cornerUv)[corner]
+                    : localVertex.uv;
             }
             if (*orientation == TopologyOrientation::Reversed) {
                 std::swap(triangle.vertices[1], triangle.vertices[2]);
@@ -515,7 +521,7 @@ CertifiedMeshAssemblyResult assembleCertifiedPlanarMesh(
             if (!surface || !surface.value->unitNormal) {
                 ++triangleGeometry.failed;
                 setFailure(result, "certified.surface_normal_unavailable",
-                           "the exact planar surface has no evaluable normal",
+                           "the exact surface has no evaluable normal",
                            {face});
                 return result;
             }
@@ -550,7 +556,7 @@ CertifiedMeshAssemblyResult assembleCertifiedPlanarMesh(
                         evaluated.value->position) > maximumSquared) {
                     ++triangleGeometry.failed;
                     setFailure(result, "certified.vertex_off_surface",
-                               "a triangle vertex exceeds the exact planar surface discrepancy limit",
+                               "a triangle vertex exceeds its exact surface discrepancy limit",
                                {face});
                     return result;
                 }
@@ -621,6 +627,17 @@ CertifiedMeshAssemblyResult assembleCertifiedPlanarMesh(
     }
     result.value = std::move(mesh);
     return result;
+}
+
+CertifiedMeshAssemblyResult assembleCertifiedPlanarMesh(
+    const ImportedModel& imported,
+    const CanonicalBoundarySet& boundaries,
+    std::span<const PlanarCdtMesh> faceMeshes,
+    std::span<const StableId> expectedWorkingFaces,
+    const CertifiedMeshAssemblyConfiguration& configuration) {
+    return assembleCertifiedBoundaryMesh(
+        imported, boundaries, faceMeshes, expectedWorkingFaces,
+        configuration);
 }
 
 }  // namespace weft

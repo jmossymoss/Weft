@@ -80,10 +80,9 @@ BRepSnapshot buildSnapshot(Model model) {
     BRepSnapshot snapshot;
     snapshot.model = std::move(model);
 
-    ShapeMap wires;
-    ShapeMap vertices;
-    TopExp::MapShapes(snapshot.model.shape, TopAbs_WIRE, wires);
-    TopExp::MapShapes(snapshot.model.shape, TopAbs_VERTEX, vertices);
+    TopExp::MapShapes(snapshot.model.shape, TopAbs_WIRE, snapshot.wires);
+    TopExp::MapShapes(snapshot.model.shape, TopAbs_VERTEX,
+                      snapshot.vertices);
 
     auto addOccurrences = [&](const ShapeMap& shapes, StableIdKind kind) {
         for (int i = 1; i <= shapes.Extent(); ++i) {
@@ -95,9 +94,9 @@ BRepSnapshot buildSnapshot(Model model) {
     };
     addOccurrences(snapshot.model.solids, StableIdKind::Solid);
     addOccurrences(snapshot.model.faces, StableIdKind::Face);
-    addOccurrences(wires, StableIdKind::Wire);
+    addOccurrences(snapshot.wires, StableIdKind::Wire);
     addOccurrences(snapshot.model.edges, StableIdKind::Edge);
-    addOccurrences(vertices, StableIdKind::Vertex);
+    addOccurrences(snapshot.vertices, StableIdKind::Vertex);
 
     snapshot.edgeTopology.reserve(
         static_cast<std::size_t>(snapshot.model.edges.Extent()));
@@ -115,7 +114,7 @@ BRepSnapshot buildSnapshot(Model model) {
             const auto vertexId = [&](const TopoDS_Vertex& vertex)
                 -> std::optional<StableId> {
                 if (vertex.IsNull()) return std::nullopt;
-                const int index = vertices.FindIndex(vertex);
+                const int index = snapshot.vertices.FindIndex(vertex);
                 if (index <= 0) return std::nullopt;
                 return stableId(StableIdKind::Vertex, index);
             };
@@ -144,7 +143,7 @@ BRepSnapshot buildSnapshot(Model model) {
         for (TopExp_Explorer wireExplorer(face, TopAbs_WIRE);
              wireExplorer.More(); wireExplorer.Next()) {
             const TopoDS_Wire wire = TopoDS::Wire(wireExplorer.Current());
-            const int wireIndex = wires.FindIndex(wire);
+            const int wireIndex = snapshot.wires.FindIndex(wire);
             std::uint32_t ordinalInWire = 0;
             for (BRepTools_WireExplorer edgeExplorer(wire, face);
                  edgeExplorer.More(); edgeExplorer.Next(), ++ordinalInWire) {
@@ -237,6 +236,27 @@ public:
         } catch (const Standard_Failure& error) {
             return evaluationFailure<ParameterDomain>(
                 "geometry.curve_domain_failure", error.what(), edge);
+        }
+    }
+
+    EvaluationResult<VertexEvaluation> evaluateVertex(
+        StableId vertex) const override {
+        const TopoDS_Vertex shape = vertexShape(vertex);
+        if (shape.IsNull()) {
+            return evaluationFailure<VertexEvaluation>(
+                "geometry.vertex_not_found", "vertex id does not resolve",
+                vertex);
+        }
+        try {
+            const gp_Pnt point = BRep_Tool::Pnt(shape);
+            VertexEvaluation evaluation;
+            evaluation.vertexId = vertex;
+            evaluation.position = {point.X(), point.Y(), point.Z()};
+            return EvaluationResult<VertexEvaluation>{evaluation,
+                                                       std::nullopt};
+        } catch (const Standard_Failure& error) {
+            return evaluationFailure<VertexEvaluation>(
+                "geometry.vertex_evaluation_failure", error.what(), vertex);
         }
     }
 
@@ -461,6 +481,16 @@ public:
     }
 
 private:
+    TopoDS_Vertex vertexShape(StableId id) const {
+        if (id.kind != StableIdKind::Vertex || id.ordinal == 0) return {};
+        if (id.ordinal >
+            static_cast<std::uint64_t>(snapshot_.vertices.Extent())) {
+            return {};
+        }
+        return TopoDS::Vertex(
+            snapshot_.vertices(static_cast<int>(id.ordinal)));
+    }
+
     TopoDS_Edge edgeShape(StableId id) const {
         if (id.kind != StableIdKind::Edge || id.ordinal == 0 ||
             id.ordinal > static_cast<std::uint64_t>(snapshot_.model.edges.Extent())) {
@@ -642,13 +672,25 @@ std::size_t occurrenceCount(const BRepSnapshot& snapshot,
 const TopoDS_Shape* shapeForId(const BRepSnapshot& snapshot, StableId id) {
     if (id.ordinal == 0) return nullptr;
     const int ordinal = static_cast<int>(id.ordinal);
+    if (id.kind == StableIdKind::Solid &&
+        ordinal <= snapshot.model.solids.Extent()) {
+        return &snapshot.model.solids(ordinal);
+    }
     if (id.kind == StableIdKind::Face &&
         ordinal <= snapshot.model.faces.Extent()) {
         return &snapshot.model.faces(ordinal);
     }
+    if (id.kind == StableIdKind::Wire &&
+        ordinal <= snapshot.wires.Extent()) {
+        return &snapshot.wires(ordinal);
+    }
     if (id.kind == StableIdKind::Edge &&
         ordinal <= snapshot.model.edges.Extent()) {
         return &snapshot.model.edges(ordinal);
+    }
+    if (id.kind == StableIdKind::Vertex &&
+        ordinal <= snapshot.vertices.Extent()) {
+        return &snapshot.vertices(ordinal);
     }
     return nullptr;
 }
@@ -713,10 +755,26 @@ SourceWorkingMap buildCorrespondence(const Model& source, const Model& working,
                                      const Handle(BRepTools_History)& history) {
     SourceWorkingMap correspondence;
     std::map<StableId, int> workingUse;
+    addCorrespondenceForMap(source.solids, working.solids,
+                            StableIdKind::Solid, history, correspondence,
+                            workingUse);
     addCorrespondenceForMap(source.faces, working.faces, StableIdKind::Face,
                             history, correspondence, workingUse);
     addCorrespondenceForMap(source.edges, working.edges, StableIdKind::Edge,
                             history, correspondence, workingUse);
+    ShapeMap sourceWires;
+    ShapeMap workingWires;
+    ShapeMap sourceVertices;
+    ShapeMap workingVertices;
+    TopExp::MapShapes(source.shape, TopAbs_WIRE, sourceWires);
+    TopExp::MapShapes(working.shape, TopAbs_WIRE, workingWires);
+    TopExp::MapShapes(source.shape, TopAbs_VERTEX, sourceVertices);
+    TopExp::MapShapes(working.shape, TopAbs_VERTEX, workingVertices);
+    addCorrespondenceForMap(sourceWires, workingWires, StableIdKind::Wire,
+                            history, correspondence, workingUse);
+    addCorrespondenceForMap(sourceVertices, workingVertices,
+                            StableIdKind::Vertex, history, correspondence,
+                            workingUse);
 
     for (CorrespondenceRecord& record : correspondence.records) {
         if (record.sourceId.valid() && record.workingIds.size() == 1 &&

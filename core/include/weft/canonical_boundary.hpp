@@ -74,12 +74,16 @@ struct CanonicalBoundaryReport {
     std::size_t checkedSamples = 0;
     std::size_t expectedUvUses = 0;
     std::size_t checkedUvUses = 0;
+    std::size_t expectedVertexCurveChecks = 0;
+    std::size_t checkedVertexCurveChecks = 0;
     std::size_t failed = 0;
 
     bool complete() const noexcept {
         return expectedEdges != 0 && checkedEdges == expectedEdges &&
             checkedSamples == expectedSamples &&
-            checkedUvUses == expectedUvUses && failed == 0;
+            checkedUvUses == expectedUvUses &&
+            checkedVertexCurveChecks == expectedVertexCurveChecks &&
+            failed == 0;
     }
 };
 

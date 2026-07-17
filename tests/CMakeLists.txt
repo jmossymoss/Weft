@@ -56,6 +56,12 @@ weft_enable_strict_warnings(weft_certified_mesh_tests)
 add_test(NAME certified_mesh COMMAND weft_certified_mesh_tests)
 weft_deploy_occt_dlls(weft_certified_mesh_tests)
 
+add_executable(weft_cylinder_template_tests test_cylinder_template.cpp)
+target_link_libraries(weft_cylinder_template_tests PRIVATE weft_core)
+weft_enable_strict_warnings(weft_cylinder_template_tests)
+add_test(NAME cylinder_template COMMAND weft_cylinder_template_tests)
+weft_deploy_occt_dlls(weft_cylinder_template_tests)
+
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(
   NAME secure_fixture_catalog

@@ -227,6 +227,7 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                 "an open working edge must resolve both topological endpoints",
                 {edgeId});
         }
+        report.expectedVertexCurveChecks += closed ? 1U : 2U;
 
         const std::optional<StableId> sourceEdge =
             sourceForWorking(imported, edgeId);
@@ -313,13 +314,54 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
             sample.sourceEdge = sourceEdge;
             sample.curveParameter = parameter;
             sample.position = curve.value->position;
+            std::optional<StableId> endpointVertex;
             if (sampleIndex == 0 && topology.lowerVertex) {
+                endpointVertex = topology.lowerVertex;
                 sample.canonicalVertexIndex = topology.lowerVertex->ordinal - 1U;
             } else if (!closed && sampleIndex + 1U == sampleCount &&
                        topology.upperVertex) {
+                endpointVertex = topology.upperVertex;
                 sample.canonicalVertexIndex = topology.upperVertex->ordinal - 1U;
             } else {
                 sample.canonicalVertexIndex = nextInteriorVertex++;
+            }
+            double sourceVertexTolerance = 0.0;
+            if (endpointVertex) {
+                const auto vertex =
+                    imported.workingEvaluator->evaluateVertex(*endpointVertex);
+                const std::optional<StableId> sourceVertex =
+                    sourceForWorking(imported, *endpointVertex);
+                if (!vertex || !sourceVertex ||
+                    sourceVertex->kind != StableIdKind::Vertex) {
+                    return buildFailure(
+                        report, "boundary.vertex_evaluation_failed",
+                        "a canonical endpoint does not resolve through its exact working and source vertices",
+                        {edgeId, *endpointVertex});
+                }
+                sourceVertexTolerance = occurrenceTolerance(
+                    imported.source->snapshot, *sourceVertex);
+                const double endpointAllowed = std::max(
+                    configuration.minimumDiscrepancyTolerance,
+                    configuration.sourceToleranceScale *
+                        (sourceEdgeTolerance + sourceVertexTolerance));
+                const double endpointDiscrepancy = norm(subtract(
+                    vectorOf(curve.value->position),
+                    vectorOf(vertex.value->position)));
+                if (!std::isfinite(endpointAllowed) ||
+                    endpointAllowed >
+                        configuration.maximumDiscrepancyTolerance ||
+                    !std::isfinite(endpointDiscrepancy) ||
+                    endpointDiscrepancy > endpointAllowed) {
+                    return buildFailure(
+                        report, "boundary.vertex_curve_discrepancy",
+                        "an exact B-rep vertex lies outside its source edge tolerance envelope",
+                        {edgeId, *endpointVertex, *sourceVertex});
+                }
+                // One authoritative topological vertex position is shared by
+                // every incident edge sample. Curve evaluations remain the
+                // evidence used to prove that this normalization is bounded.
+                sample.position = vertex.value->position;
+                ++report.checkedVertexCurveChecks;
             }
             sample.faceUses.reserve(mappings.size());
 
@@ -371,8 +413,9 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
 
                 const double sourceEnvelope =
                     configuration.sourceToleranceScale *
-                    (sourceEdgeTolerance + occurrenceTolerance(
-                         imported.source->snapshot, *use.sourceFace));
+                    (sourceEdgeTolerance + sourceVertexTolerance +
+                     occurrenceTolerance(imported.source->snapshot,
+                                         *use.sourceFace));
                 const double allowed = std::max(
                     configuration.minimumDiscrepancyTolerance,
                     sourceEnvelope);

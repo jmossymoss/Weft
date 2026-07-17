@@ -97,7 +97,12 @@ The target passes MSVC warnings-as-errors and `/analyze` builds and tests.
 ## Consequences
 
 The secure core now has a non-welded authoritative result contract and one
-closed-body proof. This does not route the existing app/CLI/export workflows,
-support non-planar faces or holes, prove 3D triangle/triangle
+closed-body proof. At the time of this decision it does not route the existing
+app/CLI/export workflows, support non-planar faces or holes, prove 3D triangle/triangle
 self-intersection, or complete the independent M5 validator family. `PolyMesh`
 remains a future application/export adapter only.
+
+ADR-0013 generalizes the assembler entry point to
+`assembleCertifiedBoundaryMesh` and adds explicit per-triangle periodic UV
+lifts for curved products. The planar function remains a compatibility wrapper;
+the no-weld and provenance invariants in this record are unchanged.

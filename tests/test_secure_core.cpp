@@ -104,6 +104,19 @@ void testConservativeIdentity(const std::filesystem::path& path) {
     const auto curve =
         imported.sourceEvaluator->evaluateCurve(coedge->edgeId, parameter);
     CHECK(static_cast<bool>(curve));
+    const auto firstVertex = std::find_if(
+        imported.source->snapshot.occurrences.begin(),
+        imported.source->snapshot.occurrences.end(),
+        [](const weft::TopologyOccurrence& occurrence) {
+            return occurrence.id.kind == weft::StableIdKind::Vertex;
+        });
+    CHECK(firstVertex != imported.source->snapshot.occurrences.end());
+    if (firstVertex != imported.source->snapshot.occurrences.end()) {
+        const auto vertex = imported.sourceEvaluator->evaluateVertex(
+            firstVertex->id);
+        CHECK(static_cast<bool>(vertex));
+        CHECK(vertex && vertex.value->vertexId == firstVertex->id);
+    }
     const weft::PcurveRef pcurveRef = coedge->pcurveRepresentations.front();
     const auto pcurve =
         imported.sourceEvaluator->evaluatePcurve(pcurveRef, parameter);

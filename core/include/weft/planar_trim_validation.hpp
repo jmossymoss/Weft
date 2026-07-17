@@ -34,6 +34,7 @@ struct PlanarTrimBoundaryUse {
     PredicatePoint2 uv{};
     double measuredCurveOnSurfaceDiscrepancy = 0.0;
     double allowedCurveOnSurfaceDiscrepancy = 0.0;
+    std::optional<PcurveRef> representation;
 };
 
 struct PlanarTrimVertex {
