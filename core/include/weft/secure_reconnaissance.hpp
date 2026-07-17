@@ -68,9 +68,24 @@ struct ReconnaissanceDiagnostic {
     std::string message;
 };
 
+// Evidence that a set of per-face logical regions is one artificial split of
+// a single analytic region: every member face carries the bit-identical
+// stored plane and consistent orientation, joined across shared two-use
+// edges. Per-face regions are never removed; this is additive evidence.
+struct RegionMergeEvidence {
+    StableId id;
+    std::string code;
+    std::string proofCode;
+    std::vector<StableId> memberRegions;
+    std::vector<StableId> workingFaces;
+    std::vector<StableId> interiorEdges;
+    std::vector<StableId> boundaryEdges;
+};
+
 struct ReconnaissanceReport {
     std::vector<ExactGeometryClassification> records;
     std::vector<LogicalRegion> regions;
+    std::vector<RegionMergeEvidence> mergedRegions;
     std::vector<ReconnaissanceDiagnostic> diagnostics;
     std::size_t expectedSubjects = 0;
     std::size_t checkedSubjects = 0;

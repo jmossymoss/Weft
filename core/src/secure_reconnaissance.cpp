@@ -7,18 +7,25 @@
 #include <BRep_Tool.hxx>
 #include <Geom_OffsetCurve.hxx>
 #include <Geom_OffsetSurface.hxx>
+#include <Geom_Plane.hxx>
 #include <Geom_RectangularTrimmedSurface.hxx>
 #include <Geom_TrimmedCurve.hxx>
 #include <Standard_Failure.hxx>
+#include <TopAbs_Orientation.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Iterator.hxx>
 #include <TopoDS_Wire.hxx>
+#include <gp_Dir.hxx>
+#include <gp_Pnt.hxx>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <functional>
+#include <map>
 #include <set>
 #include <utility>
 
@@ -387,6 +394,7 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
     }
 
     std::uint64_t regionOrdinal = 0;
+    std::map<StableId, StableId> regionByFace;
     for (const ExactGeometryClassification& record : report.records) {
         if (record.taxonomy != GeometryTaxonomy::Surface) continue;
         LogicalRegion region;
@@ -399,7 +407,147 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
             if (coedge.faceId == record.subjectId) edges.insert(coedge.edgeId);
         }
         region.boundaryEdges.assign(edges.begin(), edges.end());
+        regionByFace.emplace(record.subjectId, region.id);
         report.regions.push_back(std::move(region));
+    }
+
+    // Merge artificially split coplanar regions: supported plane faces whose
+    // stored planes are bit-identical, joined across shared two-use edges.
+    // Near-misses refuse by name; nothing is ever removed or recomputed.
+    {
+        std::map<StableId, std::array<double, 6>> planeByFace;
+        std::map<StableId, bool> reversedByFace;
+        for (const ExactGeometryClassification& record : report.records) {
+            if (record.taxonomy != GeometryTaxonomy::Surface ||
+                record.familyCode != "plane" ||
+                record.support !=
+                    GeometrySupportState::SupportedAnalyticTemplate) {
+                continue;
+            }
+            const int ordinal = static_cast<int>(record.subjectId.ordinal);
+            if (ordinal <= 0 || ordinal > snapshot.model.faces.Extent()) {
+                continue;
+            }
+            const TopoDS_Face face =
+                TopoDS::Face(snapshot.model.faces(ordinal));
+            Handle(Geom_Plane) plane;
+            try {
+                plane = Handle(Geom_Plane)::DownCast(BRep_Tool::Surface(face));
+            } catch (const Standard_Failure&) {
+                continue;
+            }
+            if (plane.IsNull()) continue;
+            const gp_Pnt location = plane->Position().Location();
+            const gp_Dir normal = plane->Position().Direction();
+            planeByFace.emplace(
+                record.subjectId,
+                std::array<double, 6>{location.X(), location.Y(),
+                                      location.Z(), normal.X(), normal.Y(),
+                                      normal.Z()});
+            reversedByFace.emplace(record.subjectId,
+                                   face.Orientation() == TopAbs_REVERSED);
+        }
+
+        std::map<StableId, std::vector<StableId>> facesByEdge;
+        for (const CoedgeRecord& coedge : snapshot.coedges) {
+            if (planeByFace.contains(coedge.faceId)) {
+                facesByEdge[coedge.edgeId].push_back(coedge.faceId);
+            }
+        }
+        std::map<StableId, StableId> mergeParent;
+        const std::function<StableId(StableId)> mergeRoot =
+            [&](StableId face) -> StableId {
+            const auto parent = mergeParent.find(face);
+            if (parent == mergeParent.end() || parent->second == face) {
+                return face;
+            }
+            return parent->second = mergeRoot(parent->second);
+        };
+        std::set<StableId> interiorMergeEdges;
+        for (const auto& [edgeId, faces] : facesByEdge) {
+            if (faces.size() < 2) continue;
+            if (faces.size() > 2) {
+                report.diagnostics.push_back(
+                    {"reconnaissance.region.merge_refused."
+                     "nonmanifold_interface",
+                     edgeId,
+                     "more than two coplanar-candidate face uses share this "
+                     "edge"});
+                continue;
+            }
+            const StableId first = std::min(faces[0], faces[1]);
+            const StableId second = std::max(faces[0], faces[1]);
+            if (first == second) continue;  // seam use of one face
+            const std::array<double, 6>& a = planeByFace.at(first);
+            const std::array<double, 6>& b = planeByFace.at(second);
+            if (a != b) {
+                // Silent for genuinely different planes; a near-parallel
+                // pair that is not bit-identical is a named near-miss.
+                const double dot = a[3] * b[3] + a[4] * b[4] + a[5] * b[5];
+                if (dot > 1.0 - 1.0e-12) {
+                    report.diagnostics.push_back(
+                        {"reconnaissance.region.merge_refused."
+                         "plane_mismatch",
+                         edgeId,
+                         "adjacent plane faces are near-parallel but their "
+                         "stored planes are not bit-identical"});
+                }
+                continue;
+            }
+            if (reversedByFace.at(first) != reversedByFace.at(second)) {
+                report.diagnostics.push_back(
+                    {"reconnaissance.region.merge_refused."
+                     "orientation_mismatch",
+                     edgeId,
+                     "bit-identical planes joined with disagreeing face "
+                     "orientations"});
+                continue;
+            }
+            const StableId rootA = mergeRoot(
+                mergeParent.try_emplace(first, first).first->second);
+            const StableId rootB = mergeRoot(
+                mergeParent.try_emplace(second, second).first->second);
+            if (rootA != rootB) {
+                mergeParent[std::max(rootA, rootB)] =
+                    std::min(rootA, rootB);
+            }
+            interiorMergeEdges.insert(edgeId);
+        }
+
+        std::map<StableId, std::vector<StableId>> componentFaces;
+        for (const auto& [face, parent] : mergeParent) {
+            componentFaces[mergeRoot(face)].push_back(face);
+        }
+        for (auto& [root, members] : componentFaces) {
+            if (members.size() < 2) continue;
+            std::sort(members.begin(), members.end());
+            RegionMergeEvidence merged;
+            merged.id = {StableIdKind::Region, ++regionOrdinal};
+            merged.code = "region.merged.coplanar";
+            merged.proofCode = "region.merge.proof.exact_plane_equality";
+            merged.workingFaces = members;
+            const std::set<StableId> memberSet(members.begin(),
+                                               members.end());
+            std::set<StableId> interior;
+            std::set<StableId> boundary;
+            for (const CoedgeRecord& coedge : snapshot.coedges) {
+                if (!memberSet.contains(coedge.faceId)) continue;
+                const auto uses = facesByEdge.find(coedge.edgeId);
+                const bool interiorEdge =
+                    interiorMergeEdges.contains(coedge.edgeId) &&
+                    uses != facesByEdge.end() && uses->second.size() == 2 &&
+                    memberSet.contains(uses->second[0]) &&
+                    memberSet.contains(uses->second[1]);
+                (interiorEdge ? interior : boundary)
+                    .insert(coedge.edgeId);
+            }
+            merged.interiorEdges.assign(interior.begin(), interior.end());
+            merged.boundaryEdges.assign(boundary.begin(), boundary.end());
+            for (StableId member : members) {
+                merged.memberRegions.push_back(regionByFace.at(member));
+            }
+            report.mergedRegions.push_back(std::move(merged));
+        }
     }
 
     report.checkedSubjects = report.records.size();
