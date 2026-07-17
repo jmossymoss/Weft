@@ -72,6 +72,13 @@ struct VertexToleranceEvidence {
 VertexToleranceEvidence measureVertexToleranceEvidence(
     const Model& model, const TopoDS_Shape& vertex);
 
+// Reconnaissance for unproven sewing candidates: duplicate coincident
+// vertex/edge definitions inside one wire refuse by name because merging
+// them needs a one-to-one Merged correspondence proof the conservative
+// profile does not have. No change is ever applied.
+void detectUnprovenSewing(const Model& source,
+                          ConservativeWorkingDerivation& derivation);
+
 struct CompatibilityWorkingDerivation {
     TopoDS_Shape shape;
     Handle(BRepTools_History) history;

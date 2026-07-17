@@ -428,6 +428,7 @@ ConservativeWorkingDerivation deriveConservativeWorking(
     }
     repairShellOrientations(source, derivation);
     reconcileVertexTolerances(source, derivation);
+    detectUnprovenSewing(source, derivation);
     return derivation;
 }
 

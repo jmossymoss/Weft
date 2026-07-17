@@ -1693,12 +1693,16 @@ ImportedModel buildImportedModel(
             refusal.code.rfind("repair.orientation.", 0) == 0;
         const bool toleranceFamily =
             refusal.code.rfind("repair.tolerance.", 0) == 0;
+        const bool sewingFamily =
+            refusal.code.rfind("repair.sewing.", 0) == 0;
         imported.diagnostics.events.push_back(
             {{StableIdKind::Diagnostic, ++diagnosticOrdinal},
              orientationFamily
                  ? "import.repair.face_orientation_unproven"
-                 : toleranceFamily ? "import.repair.tolerance_unproven"
-                                   : "import.repair.refused",
+                 : toleranceFamily
+                       ? "import.repair.tolerance_unproven"
+                       : sewingFamily ? "import.repair.sewing_unproven"
+                                      : "import.repair.refused",
              DiagnosticSeverity::Error, refusal.subjects,
              refusal.code + ": " + refusal.detail});
         imported.repair.meshable = false;

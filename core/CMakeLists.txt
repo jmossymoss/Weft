@@ -8,6 +8,7 @@ add_library(weft_core
   src/secure_core_internal.hpp
   src/secure_repair.cpp
   src/secure_orientation.cpp
+  src/secure_sewing.cpp
   src/secure_topology.cpp
   src/secure_reconnaissance.cpp
   src/interval_solver.cpp
