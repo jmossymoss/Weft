@@ -24,6 +24,10 @@ may supersede a result but must not rewrite what an earlier run proved.
   visibility, and fail-closed unsupported readers.
 - `m1-orientation-reconnaissance-2026-07-17.md` - experimental rejection of
   whole-solid reversal as a general shell/face orientation repair.
+- `m1-face-adjacency-orientation-2026-07-17.md` - occurrence-only shell
+  orientation repair with two-manifold parity proof, independent polarity
+  selection, certificate re-audit, and named open/non-orientable/tamper
+  refusals.
 - `m2-reconnaissance-2026-07-17.md` - total face/edge classification and planar projection evidence.
 - `m3-interval-solver-2026-07-17.md` - exact equality/minimum/parity count assignment evidence.
 - `m3-canonical-boundaries-2026-07-17.md` - atomic shared-edge samples, UV uses, and azimuth registration evidence.
