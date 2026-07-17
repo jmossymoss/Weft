@@ -640,7 +640,9 @@ ImportedModel cafToImportedModel(const TopoDS_Shape& oneShape,
             secure_detail::deriveCompatibilityWorking(source);
         workingShape = std::move(derivation.shape);
         workingHistory = std::move(derivation.history);
+        exactShapeDerivation = std::move(derivation.exactShapes);
         operations = std::move(derivation.operations);
+        remapAssemblyExactUses(workingMeta, exactShapeDerivation);
     }
 
     Model working = weft::indexShape(workingShape);

@@ -62,3 +62,5 @@ Current records:
   millimetre scale for native B-rep without inventing or rescaling units.
 - `ADR-0030-snapshot-protected-secure-iges-import.md` - immutable-byte IGES
   secure import through processing-disabled XDE transfer.
+- `ADR-0031-compatibility-correspondence-valid-deep-copy.md` - exact-shape
+  map and sew-skip for valid Compatibility deep copies.

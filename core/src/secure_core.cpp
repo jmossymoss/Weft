@@ -870,7 +870,8 @@ bool sameTopologyStructure(const TopologyOccurrence& source,
 }
 
 bool sameAssemblyAccount(const TopologyAccount& source,
-                         const TopologyAccount& working) {
+                         const TopologyAccount& working,
+                         bool requireEqualPcurves) {
     if (source.assemblies.size() != working.assemblies.size() ||
         source.instances.size() != working.instances.size() ||
         source.assemblyRoots != working.assemblyRoots ||
@@ -906,7 +907,10 @@ bool sameAssemblyAccount(const TopologyAccount& source,
             first.wireId != second.wireId || first.faceId != second.faceId ||
             first.instanceId != second.instanceId ||
             first.ordinalInWire != second.ordinalInWire ||
-            first.orientation != second.orientation ||
+            first.orientation != second.orientation) {
+            return false;
+        }
+        if (requireEqualPcurves &&
             first.pcurveRepresentations != second.pcurveRepresentations) {
             return false;
         }
@@ -1014,7 +1018,7 @@ void buildTopologyCorrespondence(SourceWorkingMap& correspondence,
         }
     }
     correspondence.topologyComplete = sourceComplete && workingComplete &&
-        sameAssemblyAccount(source, working) &&
+        sameAssemblyAccount(source, working, representationIdentity) &&
         source.occurrences.size() == working.occurrences.size() &&
         std::all_of(correspondence.topologyOccurrenceRecords.begin(),
                     correspondence.topologyOccurrenceRecords.end(),
@@ -1316,30 +1320,32 @@ ImportedModel buildImportedModel(
     std::size_t representationCowExpected = 0;
     std::size_t representationCowChecked = 0;
     std::size_t representationCowFailed = 0;
-    for (const RepresentationChange& change :
-         imported.repair.representationChanges) {
-        ++representationCowExpected;
-        const bool operationRecorded = std::any_of(
-            imported.repair.operations.begin(),
-            imported.repair.operations.end(),
-            [&](const RepairOperation& operation) {
-                return operation.code ==
-                           "repair.representation_copy_on_write" &&
-                    std::find(operation.sourceSubjects.begin(),
-                              operation.sourceSubjects.end(),
-                              change.sourceEdge) !=
-                        operation.sourceSubjects.end() &&
-                    std::find(operation.workingSubjects.begin(),
-                              operation.workingSubjects.end(),
-                              change.workingEdge) !=
-                        operation.workingSubjects.end();
-            });
-        if (change.certifiedCopyOnWrite && operationRecorded &&
-            change.sourceEdge.kind == StableIdKind::Edge &&
-            change.workingEdge.kind == StableIdKind::Edge) {
-            ++representationCowChecked;
-        } else {
-            ++representationCowFailed;
+    if (imported.repair.profile == RepairProfile::Conservative) {
+        for (const RepresentationChange& change :
+             imported.repair.representationChanges) {
+            ++representationCowExpected;
+            const bool operationRecorded = std::any_of(
+                imported.repair.operations.begin(),
+                imported.repair.operations.end(),
+                [&](const RepairOperation& operation) {
+                    return operation.code ==
+                               "repair.representation_copy_on_write" &&
+                        std::find(operation.sourceSubjects.begin(),
+                                  operation.sourceSubjects.end(),
+                                  change.sourceEdge) !=
+                            operation.sourceSubjects.end() &&
+                        std::find(operation.workingSubjects.begin(),
+                                  operation.workingSubjects.end(),
+                                  change.workingEdge) !=
+                            operation.workingSubjects.end();
+                });
+            if (change.certifiedCopyOnWrite && operationRecorded &&
+                change.sourceEdge.kind == StableIdKind::Edge &&
+                change.workingEdge.kind == StableIdKind::Edge) {
+                ++representationCowChecked;
+            } else {
+                ++representationCowFailed;
+            }
         }
     }
 

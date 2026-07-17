@@ -36,6 +36,10 @@ may supersede a result but must not rewrite what an earlier run proved.
   native millimetre scale without invented units or coordinate rescaling.
 - `m1-secure-iges-import-2026-07-17.md` - immutable-byte IGES secure import,
   processing-disabled transfer, and path-replacement proof.
+- `m1-compatibility-correspondence-2026-07-17.md` - valid Compatibility deep
+  copies with complete topology correspondence.
+- `m1-product-step-orientation-repair-2026-07-17.md` - STEP round-trip of the
+  PAT-009 orientation pathology as a product-format repair witness.
 - `m2-reconnaissance-2026-07-17.md` - total face/edge classification and planar projection evidence.
 - `m3-interval-solver-2026-07-17.md` - exact equality/minimum/parity count assignment evidence.
 - `m3-canonical-boundaries-2026-07-17.md` - atomic shared-edge samples, UV uses, and azimuth registration evidence.

@@ -75,6 +75,7 @@ struct ConservativeWorkingDerivation {
 struct CompatibilityWorkingDerivation {
     TopoDS_Shape shape;
     Handle(BRepTools_History) history;
+    ExactShapeDerivationMap exactShapes;
     std::vector<RepairOperation> operations;
 };
 

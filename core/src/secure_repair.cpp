@@ -823,13 +823,75 @@ CompatibilityWorkingDerivation deriveCompatibilityWorking(
     const Model& source) {
     CompatibilityWorkingDerivation derivation;
     BRepBuilderAPI_Copy copier(source.shape, true, false);
+    const TopoDS_Shape copiedRoot = copier.Shape();
+
+    // Bind every unique source TShape through the deep copy first. Valid copies
+    // keep this map and skip the historical sew/ShapeFix pass so StableId
+    // occurrence ordinals stay one-to-one. Invalid copies still heal, and the
+    // map is rebound only through one-to-one Modified/Generated results.
+    ShapeMap sourceShapes;
+    sourceShapes.Add(source.shape);
+    TopExp::MapShapes(source.shape, sourceShapes);
+    for (int index = 1; index <= sourceShapes.Extent(); ++index) {
+        const TopoDS_Shape& sourceShape = sourceShapes(index);
+        const TopoDS_Shape copied = copier.ModifiedShape(sourceShape);
+        if (!copied.IsNull()) {
+            derivation.exactShapes.bind(sourceShape, copied);
+        }
+    }
+
     Handle(BRepTools_History) repairHistory;
-    derivation.shape = healWithHistory(copier.Shape(), repairHistory);
+    if (workingShapeIsValid(copiedRoot)) {
+        derivation.shape = copiedRoot;
+        derivation.history =
+            composeCopyRepairHistory(source.shape, copier, repairHistory);
+        derivation.operations.push_back({
+            "repair.compatibility_pipeline", {}, {},
+            "geometry-deep working copy retained without sew/ShapeFix because "
+            "the copy is already BRepCheck-valid"});
+        return derivation;
+    }
+
+    derivation.shape = healWithHistory(copiedRoot, repairHistory);
     derivation.history = composeCopyRepairHistory(
         source.shape, copier, repairHistory);
+
+    ExactShapeDerivationMap healedShapes;
+    for (int index = 1; index <= sourceShapes.Extent(); ++index) {
+        const TopoDS_Shape& sourceShape = sourceShapes(index);
+        const TopoDS_Shape copied = copier.ModifiedShape(sourceShape);
+        if (copied.IsNull()) continue;
+        if (!repairHistory.IsNull() && repairHistory->IsRemoved(copied)) {
+            continue;
+        }
+        TopoDS_Shape finalShape = copied;
+        bool mapped = false;
+        if (!repairHistory.IsNull()) {
+            const auto& modified = repairHistory->Modified(copied);
+            if (modified.Size() == 1) {
+                finalShape = modified.First();
+                mapped = true;
+            } else if (modified.Size() > 1) {
+                continue;
+            }
+            if (!mapped) {
+                const auto& generated = repairHistory->Generated(copied);
+                if (generated.Size() == 1) {
+                    finalShape = generated.First();
+                    mapped = true;
+                } else if (generated.Size() > 1) {
+                    continue;
+                }
+            }
+        }
+        if (finalShape.IsNull()) continue;
+        healedShapes.bind(sourceShape, finalShape);
+    }
+    derivation.exactShapes = std::move(healedShapes);
     derivation.operations.push_back({
         "repair.compatibility_pipeline", {}, {},
-        "historical Weft healing pipeline applied to a geometry-deep working copy after immutable source capture"});
+        "historical Weft healing pipeline applied to a geometry-deep working "
+        "copy after immutable source capture"});
     return derivation;
 }
 

@@ -18,6 +18,7 @@
 #include <IGESControl_Writer.hxx>
 #include <STEPCAFControl_Writer.hxx>
 #include <STEPControl_StepModelType.hxx>
+#include <STEPControl_Writer.hxx>
 #include <ShapeProcess.hxx>
 #include <Standard_Failure.hxx>
 #include <TCollection_ExtendedString.hxx>
@@ -420,10 +421,9 @@ void testCompatibilityIsAudited(const std::filesystem::path& path) {
     CHECK(imported.repair.profile == weft::RepairProfile::Compatibility);
     CHECK(imported.repair.sourceTopologyComplete);
     CHECK(imported.repair.workingTopologyComplete);
-    CHECK(!imported.correspondence.topologyComplete);
-    CHECK(!imported.repair.correspondenceComplete);
+    CHECK(imported.correspondence.topologyComplete);
+    CHECK(imported.repair.correspondenceComplete);
     CHECK(!imported.repair.identity);
-    CHECK(!imported.repair.meshable);
     CHECK(imported.source && imported.source->metadata.sourceSha256.size() == 64);
     if (imported.source && imported.working) {
         CHECK(!imported.source->snapshot.model.shape.IsSame(
@@ -437,12 +437,10 @@ void testCompatibilityIsAudited(const std::filesystem::path& path) {
                           return operation.code ==
                                  "repair.compatibility_pipeline";
                       }));
-    CHECK(std::any_of(
-        imported.diagnostics.events.begin(), imported.diagnostics.events.end(),
-        [](const weft::ImportDiagnostic& diagnostic) {
-            return diagnostic.code ==
-                "import.topology_correspondence.incomplete";
-        }));
+    // Valid deep copies keep correspondence without sew; meshability follows
+    // the usual certificate gates once topology correspondence is complete.
+    CHECK(imported.repair.meshable);
+    CHECK(!imported.diagnostics.hasErrors());
 }
 
 void testReadFailureIsNamed(const std::filesystem::path& path) {
@@ -610,7 +608,18 @@ void testNativeBRepSecureImport() {
     CHECK(compatibility.working != nullptr);
     CHECK(compatibility.repair.profile ==
           weft::RepairProfile::Compatibility);
-    CHECK(!compatibility.repair.meshable);
+    CHECK(compatibility.repair.correspondenceComplete);
+    CHECK(compatibility.correspondence.topologyComplete);
+    CHECK(compatibility.repair.meshable);
+    // Native box deep copies may remain representation-identical; either
+    // identity or modified correspondence is acceptable once complete.
+    CHECK(compatibility.repair.identity ||
+          std::any_of(
+              compatibility.repair.operations.begin(),
+              compatibility.repair.operations.end(),
+              [](const weft::RepairOperation& operation) {
+                  return operation.code == "repair.compatibility_pipeline";
+              }));
     CHECK(std::any_of(
         compatibility.repair.operations.begin(),
         compatibility.repair.operations.end(),
@@ -1133,6 +1142,35 @@ void testBoundedParameterizationRepair() {
         }));
 }
 
+void testProductStepOrientationRepairWitness() {
+    const TopoDS_Shape native = readNativeFixture(
+        "derived", "corrupt.orientation.inverted_shell_face.brep");
+    const std::filesystem::path stepPath = weft::test::uniqueTempPath(
+        "weft_secure_product_step_orientation", ".step");
+    {
+        STEPControl_Writer writer;
+        CHECK(writer.Transfer(native, STEPControl_AsIs) == IFSelect_RetDone);
+        CHECK(writer.Write(stepPath.string().c_str()) == IFSelect_RetDone);
+    }
+    const weft::ImportedModel repaired = weft::importStepSecure(
+        stepPath.string(), weft::RepairProfile::Conservative);
+    CHECK(repaired.source != nullptr);
+    CHECK(repaired.working != nullptr);
+    CHECK(!repaired.repair.sourceValid);
+    CHECK(repaired.repair.workingValid);
+    CHECK(repaired.repair.correspondenceComplete);
+    CHECK(!repaired.repair.identity);
+    CHECK(repaired.repair.meshable);
+    CHECK(!repaired.repair.orientationChanges.empty());
+    CHECK(std::any_of(
+        repaired.repair.operations.begin(), repaired.repair.operations.end(),
+        [](const weft::RepairOperation& operation) {
+            return operation.code == "repair.orientation_face_adjacency";
+        }));
+    std::error_code ignored;
+    std::filesystem::remove(stepPath, ignored);
+}
+
 void testFaceAdjacencyOrientationRepair() {
     const weft::ImportedModel repaired = importNativeRepairFixture(
         "corrupt.orientation.inverted_shell_face.brep");
@@ -1337,6 +1375,7 @@ int main() {
         testNativeBRepSecureImport();
         testMultipleFreeRootOccurrences();
         testBoundedParameterizationRepair();
+        testProductStepOrientationRepairWitness();
         testFaceAdjacencyOrientationRepair();
         testTotalReconnaissance(path);
         std::error_code ignored;
