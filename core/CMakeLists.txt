@@ -9,6 +9,7 @@ add_library(weft_core
   src/secure_reconnaissance.cpp
   src/interval_solver.cpp
   src/canonical_boundary.cpp
+  src/geometric_predicates.cpp
   src/model.cpp
   src/analysis.cpp
   src/compiler.cpp
