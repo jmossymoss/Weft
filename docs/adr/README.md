@@ -49,3 +49,6 @@ Current records:
 - `ADR-0024-bounded-parameterization-flag-reconciliation.md` - flag-only
   SameParameter/SameRange reconciliation after complete stored-p-curve range
   and source-tolerance proof.
+- `ADR-0025-snapshot-protected-native-brep-import.md` - immutable-byte native
+  B-rep parsing, explicit missing-unit provenance, isolated repair derivation,
+  and fail-closed secure-reader defaults.
