@@ -488,4 +488,13 @@ ImportedModel importBRepSecure(
     RepairProfile profile = RepairProfile::Conservative,
     const std::optional<NativeUnitResolution>& unitResolution = std::nullopt);
 
+// Secure IGES import. Parsing and source-byte provenance consume one
+// immutable byte snapshot; the post-transfer shape-processing policy is
+// frozen empty and verified, the intrinsic translator conversion is recorded
+// as such, and the working topology is derived through the same audited
+// repair stages as STEP.
+ImportedModel importIgesSecure(
+    const std::string& path,
+    RepairProfile profile = RepairProfile::Conservative);
+
 }  // namespace weft

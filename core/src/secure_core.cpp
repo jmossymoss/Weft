@@ -1686,6 +1686,43 @@ ImportedModel importStepSecure(const std::string& path, RepairProfile profile) {
     }
 }
 
+ImportedModel importIgesSecure(const std::string& path,
+                               RepairProfile profile) {
+    io::System system;
+    io::bootstrapIo(system);
+    std::unique_ptr<io::Reader> reader =
+        system.createReader(io::Format::Iges);
+    if (!reader) {
+        throw SecureImportError("import.iges.read_failed",
+                                "failed to read IGES file securely: " + path);
+    }
+    try {
+        if (!reader->readFile(path)) {
+            throw SecureImportError(
+                "import.iges.read_failed",
+                "failed to read IGES file securely: " + path);
+        }
+    } catch (const SecureImportError&) {
+        throw;
+    } catch (const Standard_Failure& error) {
+        throw SecureImportError(
+            "import.iges.read_failed",
+            "OCCT failed while reading IGES source " + path + ": " +
+                occtFailureMessage(error));
+    }
+
+    try {
+        return reader->transferSecure(profile);
+    } catch (const SecureImportError&) {
+        throw;
+    } catch (const Standard_Failure& error) {
+        throw SecureImportError(
+            "import.iges.transfer_failed",
+            "OCCT failed during processing-disabled IGES transfer for " +
+                path + ": " + occtFailureMessage(error));
+    }
+}
+
 ImportedModel importBRepSecure(
     const std::string& path, RepairProfile profile,
     const std::optional<NativeUnitResolution>& unitResolution) {

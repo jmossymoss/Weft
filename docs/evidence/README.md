@@ -34,6 +34,9 @@ may supersede a result but must not rewrite what an earlier run proved.
 - `m1-native-unit-resolution-2026-07-17.md` - caller-side unit evidence
   with named authority, byte-identical digest proof, invalid-resolution
   refusals, and the protected STEP unit contract.
+- `m1-secure-iges-import-2026-07-17.md` - snapshot-verified IGES parsing,
+  roots-gated refusals for the lenient parser, shared XDE certificate
+  chain, path-replacement proof, and committed box/cylinder witnesses.
 - `m2-reconnaissance-2026-07-17.md` - total face/edge classification and planar projection evidence.
 - `m3-interval-solver-2026-07-17.md` - exact equality/minimum/parity count assignment evidence.
 - `m3-canonical-boundaries-2026-07-17.md` - atomic shared-edge samples, UV uses, and azimuth registration evidence.

@@ -625,16 +625,172 @@ void testNativeBRepSecureImport() {
         CHECK(error.code() == "import.brep.read_failed");
     }
 
-    std::unique_ptr<weft::io::Reader> unsupported =
+    // The base reader contract itself must keep failing closed for any
+    // format without an explicit immutable-source override.
+    struct UnsupportedReader final : weft::io::Reader {
+        bool readFile(const std::string&) override { return true; }
+        weft::Model transfer() override { return {}; }
+    } unsupported;
+    try {
+        (void)unsupported.transferSecure(weft::RepairProfile::Conservative);
+        CHECK(false);
+    } catch (const weft::SecureImportError& error) {
+        CHECK(error.code() == "import.secure.reader_unsupported");
+    }
+
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    std::filesystem::remove(malformed, ignored);
+}
+
+void testSecureIgesImport() {
+#ifndef WEFT_TEST_FIXTURE_DIR
+#error "WEFT_TEST_FIXTURE_DIR must identify the plain fixture directory"
+#endif
+    const std::filesystem::path boxPath =
+        std::filesystem::path(WEFT_TEST_FIXTURE_DIR) / "secure_box.igs";
+    const std::filesystem::path cylinderPath =
+        std::filesystem::path(WEFT_TEST_FIXTURE_DIR) /
+        "secure_cylinder.igs";
+
+    const weft::ImportedModel imported =
+        weft::importIgesSecure(boxPath.string());
+    CHECK(imported.source != nullptr);
+    CHECK(imported.working != nullptr);
+    if (!imported.source || !imported.working) return;
+    CHECK(imported.source->metadata.sourceSha256.size() == 64);
+    CHECK(imported.source->metadata.sourceByteLength ==
+          std::filesystem::file_size(boxPath));
+    CHECK(imported.source->metadata.importerVersion ==
+          "weft-secure-iges-0.1");
+    CHECK(std::find(
+              imported.source->metadata.effectiveTranslatorConfiguration
+                  .begin(),
+              imported.source->metadata.effectiveTranslatorConfiguration
+                  .end(),
+              "IGES/XDE transfer from immutable byte snapshot") !=
+          imported.source->metadata.effectiveTranslatorConfiguration.end());
+    CHECK(imported.repair.identity);
+    CHECK(imported.repair.correspondenceComplete);
+    CHECK(imported.correspondence.topologyComplete);
+    CHECK(imported.repair.sourceValid);
+    CHECK(imported.repair.workingValid);
+    CHECK(imported.repair.meshable);
+    CHECK(imported.repair.sourceShapeSha256 ==
+          imported.repair.workingShapeSha256);
+    // IGES mode-0 face soup: six independent faces, each carrying its own
+    // four edges. No sewing happens on the conservative path.
+    CHECK(imported.repair.sourceFaces == 6);
+    CHECK(imported.repair.sourceEdges == 24);
+    CHECK(imported.source->metadata.lengthUnitMm.has_value());
+    if (imported.source->metadata.lengthUnitMm) {
+        CHECK(*imported.source->metadata.lengthUnitMm == 1.0);
+    }
+    CHECK(imported.repair.toleranceChanges.empty());
+    CHECK(imported.repair.representationChanges.empty());
+    CHECK(imported.repair.topologyCardinalityChanges.empty());
+    CHECK(!imported.source->snapshot.model.shape.IsPartner(
+        imported.working->snapshot.model.shape));
+
+    // Path replacement after the snapshot read cannot change the parsed
+    // source or its recorded digest.
+    const std::filesystem::path path = weft::test::uniqueTempPath(
+        "weft_secure_iges_snapshot", ".igs");
+    std::error_code filesystemError;
+    std::filesystem::copy_file(
+        boxPath, path, std::filesystem::copy_options::overwrite_existing,
+        filesystemError);
+    CHECK(!filesystemError);
+    if (filesystemError) return;
+    weft::io::System system;
+    weft::io::bootstrapIo(system);
+    std::unique_ptr<weft::io::Reader> reader =
         system.createReader(weft::io::Format::Iges);
-    CHECK(unsupported != nullptr);
-    if (unsupported) {
+    CHECK(reader != nullptr);
+    if (!reader) return;
+    CHECK(reader->readFile(path.string()));
+    filesystemError.clear();
+    std::filesystem::copy_file(
+        cylinderPath, path,
+        std::filesystem::copy_options::overwrite_existing, filesystemError);
+    CHECK(!filesystemError);
+    const weft::ImportedModel snapshot =
+        reader->transferSecure(weft::RepairProfile::Conservative);
+    const weft::ImportedModel fresh =
+        weft::importIgesSecure(path.string());
+    CHECK(snapshot.repair.sourceFaces == 6);
+    CHECK(fresh.repair.sourceFaces == 3);
+    CHECK(snapshot.source && fresh.source &&
+          snapshot.source->metadata.sourceSha256 !=
+              fresh.source->metadata.sourceSha256);
+
+    // Compatibility stays audited and non-meshable, exactly as STEP/B-rep.
+    const weft::ImportedModel compatibility = weft::importIgesSecure(
+        path.string(), weft::RepairProfile::Compatibility);
+    CHECK(compatibility.repair.profile ==
+          weft::RepairProfile::Compatibility);
+    CHECK(!compatibility.repair.meshable);
+    CHECK(std::any_of(
+        compatibility.repair.operations.begin(),
+        compatibility.repair.operations.end(),
+        [](const weft::RepairOperation& operation) {
+            return operation.code == "repair.compatibility_pipeline";
+        }));
+
+    // OCCT's IGES file parser accepts arbitrary bytes and only fails at
+    // the transfer-roots gate, so non-IGES content refuses there by name.
+    const std::filesystem::path malformed = weft::test::uniqueTempPath(
+        "weft_secure_iges_malformed", ".igs");
+    {
+        std::ofstream output(malformed, std::ios::binary);
+        output << "not an IGES file\n";
+    }
+    try {
+        (void)weft::importIgesSecure(malformed.string());
+        CHECK(false);
+    } catch (const weft::SecureImportError& error) {
+        CHECK(error.code() == "import.iges.no_transfer_roots");
+    }
+
+    // A failed snapshot read invalidates any previously retained state, so
+    // a stale reader can never transfer its old model.
+    std::unique_ptr<weft::io::Reader> staleReader =
+        system.createReader(weft::io::Format::Iges);
+    CHECK(staleReader != nullptr);
+    if (staleReader) {
+        CHECK(staleReader->readFile(path.string()));
+        CHECK(!staleReader->readFile(path.string() + ".missing"));
         try {
-            (void)unsupported->transferSecure(
+            (void)staleReader->transferSecure(
                 weft::RepairProfile::Conservative);
             CHECK(false);
         } catch (const weft::SecureImportError& error) {
-            CHECK(error.code() == "import.secure.reader_unsupported");
+            CHECK(error.code() == "import.iges.no_source_snapshot");
+        }
+    }
+
+    try {
+        (void)weft::importIgesSecure(malformed.string() + ".missing");
+        CHECK(false);
+    } catch (const weft::SecureImportError& error) {
+        CHECK(error.code() == "import.iges.read_failed");
+    }
+
+    // IGES declares its own units; the caller-side native unit contract
+    // must stay refused.
+    std::unique_ptr<weft::io::Reader> unitReader =
+        system.createReader(weft::io::Format::Iges);
+    CHECK(unitReader != nullptr);
+    if (unitReader) {
+        weft::NativeUnitResolution resolution;
+        resolution.millimetresPerModelUnit = 25.4;
+        resolution.authority = "test";
+        try {
+            unitReader->resolveNativeLengthUnit(resolution);
+            CHECK(false);
+        } catch (const weft::SecureImportError& error) {
+            CHECK(error.code() ==
+                  "import.secure.unit_resolution_unsupported");
         }
     }
 
@@ -1417,6 +1573,7 @@ int main() {
         testReadFailureIsNamed(path);
         testSourceSnapshotPreventsPathReplacement();
         testNativeBRepSecureImport();
+        testSecureIgesImport();
         testNativeUnitResolution();
         testMultipleFreeRootOccurrences();
         testBoundedParameterizationRepair();

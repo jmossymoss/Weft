@@ -63,3 +63,6 @@ Current records:
 - `ADR-0028-native-unit-resolution.md` - caller-side unit evidence with a
   named authority for unit-less native B-rep, byte-identical digests, and a
   refusing default that protects source-declared units.
+- `ADR-0029-secure-iges-import.md` - snapshot-verified scratch-file IGES
+  parsing, roots-gated lenient-parser refusals, shared XDE certificate
+  chain, and no conservative sewing of translated face soups.
