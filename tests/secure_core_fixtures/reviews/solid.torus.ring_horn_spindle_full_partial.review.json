@@ -1,0 +1,32 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "6fc7a9d2f3f93ed3e3f5b7a223b41f4be0ce5b4830a472cff67aacb3426974d6",
+  "finding_disposition": "Accepted as the procedural surface-only PAT-017 contribution: the source Geom_ToroidalSurface with R=3 mm and r=5 mm independently yields two axis-collapse points at local z=+/-4 mm, while the hash-bound no-processing STEP readback is explicitly Geom_SurfaceOfRevolution. No curve, trim-loop, or shell self-intersection variant is asserted; the native-BRep digest remains transitively locked by the source contract.",
+  "fixture_id": "solid.torus.ring_horn_spindle_full_partial",
+  "producer_id": "producer.fixture_surface_recipes",
+  "review_id": "review.solid_torus_ring_horn_spindle_full_partial.revision_6_pat_017",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.pat_017_surface_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "claims.profile_binding",
+    "construction.parameters",
+    "geometry.source_and_imported",
+    "normalization.contract",
+    "pathology.spindle_torus_axis_collapse",
+    "provenance.native_brep_hash",
+    "representation_loss.source_to_imported",
+    "support.assignment",
+    "topology.counts",
+    "units.tolerances"
+  ],
+  "source_binding": {
+    "artifact_sha256": "5bcd428bbffae693e0b579f195b29960ade039f8054fb4576e5dbca19a7afd3e",
+    "construction_parameters_sha256": "3312006cb909d5f8293c60e52696021d5385f36c51662b883279d625be25a4cf",
+    "generator_revision": 6,
+    "kind": "occt_procedural",
+    "source_contract_sha256": "a36cc4f1b2b17620dea40c31739a531d6d401e171e37273bf01e35383d2c2994",
+    "summary_sha256": "0c750c21190917c92628342486907e7e4502570c9e02563a498119b74a22921b"
+  }
+}

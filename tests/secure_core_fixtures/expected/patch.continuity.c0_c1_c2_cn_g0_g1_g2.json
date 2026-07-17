@@ -1,0 +1,6075 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "expected": {
+    "boundary_loops": [
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0001",
+        "id": "boundary_loop.l0001",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 1.0,
+          "u_min": 0.0,
+          "v_max": 1.0,
+          "v_min": 0.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0002",
+        "id": "boundary_loop.l0002",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 1.0,
+          "u_min": 0.0,
+          "v_max": 1.0,
+          "v_min": 0.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0003",
+        "id": "boundary_loop.l0003",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 1.0,
+          "u_min": 0.0,
+          "v_max": 1.0,
+          "v_min": 0.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0004",
+        "id": "boundary_loop.l0004",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 1.0,
+          "u_min": 0.0,
+          "v_max": 1.0,
+          "v_min": 0.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0005",
+        "id": "boundary_loop.l0005",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 1.0,
+          "u_min": 0.0,
+          "v_max": 1.0,
+          "v_min": 0.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0006",
+        "id": "boundary_loop.l0006",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 1.0,
+          "u_min": 0.0,
+          "v_max": 1.0,
+          "v_min": 0.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0007",
+        "id": "boundary_loop.l0007",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 1.0,
+          "u_min": 0.0,
+          "v_max": 1.0,
+          "v_min": 0.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0008",
+        "id": "boundary_loop.l0008",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 1.0,
+          "u_min": 0.0,
+          "v_max": 1.0,
+          "v_min": 0.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0009",
+        "id": "boundary_loop.l0009",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 1.0,
+          "u_min": 0.0,
+          "v_max": 1.0,
+          "v_min": 0.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0010",
+        "id": "boundary_loop.l0010",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 1.0,
+          "u_min": 0.0,
+          "v_max": 1.0,
+          "v_min": 0.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0011",
+        "id": "boundary_loop.l0011",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 1.0,
+          "u_min": 0.0,
+          "v_max": 1.0,
+          "v_min": 0.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0012",
+        "id": "boundary_loop.l0012",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 1.0,
+          "u_min": 0.0,
+          "v_max": 1.0,
+          "v_min": 0.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0013",
+        "id": "boundary_loop.l0013",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 1.0,
+          "u_min": 0.0,
+          "v_max": 1.0,
+          "v_min": 0.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0014",
+        "id": "boundary_loop.l0014",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 1.0,
+          "u_min": 0.0,
+          "v_max": 1.0,
+          "v_min": 0.0
+        }
+      }
+    ],
+    "brep_valid": true,
+    "claims": [
+      {
+        "id": "claim.rec_005.continuity_periodicity_trim_matrix",
+        "obligation_id": "REC-005",
+        "predicate_codes": [
+          "predicate.reconnaissance.analytic_conditions"
+        ],
+        "statement": "The M1 structured-patch oracle jointly pins continuity classes, periodicity and singularity disposition, and trim domains for later M3 reconnaissance checks.",
+        "subject_refs": [
+          {
+            "id": "observation.continuity.join_01_c0",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.continuity.join_02_c1",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.continuity.join_03_c2",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.continuity.join_04_cn",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.continuity.join_05_g0",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.continuity.join_06_g1",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.continuity.join_07_g2",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.periodicity.surface_matrix",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.l0001",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.l0002",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.l0003",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.l0004",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.l0005",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.l0006",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.l0007",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.l0008",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.l0009",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.l0010",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.l0011",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.l0012",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.l0013",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.l0014",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.srf_025.surface_contract",
+        "obligation_id": "SRF-025",
+        "predicate_codes": [
+          "predicate.surface.continuity_matrix_recorded"
+        ],
+        "statement": "At every imported shared boundary, compare positions, one-sided derivatives, normals, and curvature using independent evaluations. Derive C0, C1, C2, CN, G0, G1, and G2 classifications from measured relations rather than stored continuity labels.",
+        "subject_refs": [
+          {
+            "id": "observation.continuity.join_01_c0",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.continuity.join_02_c1",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.continuity.join_03_c2",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.continuity.join_04_cn",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.continuity.join_05_g0",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.continuity.join_06_g1",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.continuity.join_07_g2",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.imported.face.f0001",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.imported.face.f0002",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.imported.face.f0003",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.imported.face.f0004",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.imported.face.f0005",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.imported.face.f0006",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.imported.face.f0007",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.imported.face.f0008",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.imported.face.f0009",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.imported.face.f0010",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.imported.face.f0011",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.imported.face.f0012",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.imported.face.f0013",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.imported.face.f0014",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.source.face.f0001",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.source.face.f0002",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.source.face.f0003",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.source.face.f0004",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.source.face.f0005",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.source.face.f0006",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.source.face.f0007",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.source.face.f0008",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.source.face.f0009",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.source.face.f0010",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.source.face.f0011",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.source.face.f0012",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.source.face.f0013",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.source.face.f0014",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.continuity_sample_count",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.topology_validity",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.sup_005.surface_contract",
+        "obligation_id": "SUP-005",
+        "predicate_codes": [
+          "predicate.support.unsupported_topology_present"
+        ],
+        "statement": "At every imported shared boundary, compare positions, one-sided derivatives, normals, and curvature using independent evaluations. Derive C0, C1, C2, CN, G0, G1, and G2 classifications from measured relations rather than stored continuity labels.",
+        "subject_refs": [
+          {
+            "id": "observation.consumer.support_assignment",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.continuity_sample_count",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.topology_validity",
+            "kind": "observation"
+          },
+          {
+            "id": "support.edge.bucket_01_bspline_unsupportedtopology",
+            "kind": "support"
+          },
+          {
+            "id": "support.face.bucket_01_bspline_unsupportedtopology",
+            "kind": "support"
+          },
+          {
+            "id": "support.logical_region.bucket_01_bspline_unsupportedtopology",
+            "kind": "support"
+          }
+        ]
+      }
+    ],
+    "curve_variants": [
+      {
+        "concrete_type": "Geom_BSplineCurve",
+        "condition_codes": [
+          "bounded",
+          "imported.no_processing"
+        ],
+        "count": 49,
+        "family_code": "bspline",
+        "label": "curve.bspline",
+        "wrapper_stack": []
+      }
+    ],
+    "import_outcome": "success",
+    "model_classes": [
+      "procedural_surface_matrix"
+    ],
+    "model_topology": {
+      "closed_shells": 0,
+      "coincident_solid_signature_pairs": 0,
+      "free_edges": 0,
+      "free_wires": 0,
+      "inner_shells": 0,
+      "isolated_vertices": 0,
+      "maximum_faces_per_edge": 2,
+      "nonmanifold_vertices": 0,
+      "open_shells": 7,
+      "outer_shells": 0,
+      "shared_faces_between_solids": 0,
+      "standalone_shells": 7
+    },
+    "orientation_states": [
+      "FORWARD",
+      "REVERSED"
+    ],
+    "periodicity": [
+      {
+        "label": "surface.continuity_patch_matrix",
+        "u_closed": false,
+        "u_periodic": false,
+        "v_closed": false,
+        "v_periodic": false
+      }
+    ],
+    "semantic_candidates": [],
+    "singularity_codes": [],
+    "subject_universe": {
+      "edge_occurrence_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004",
+        "edge_occurrence.e0005",
+        "edge_occurrence.e0006",
+        "edge_occurrence.e0007",
+        "edge_occurrence.e0008",
+        "edge_occurrence.e0009",
+        "edge_occurrence.e0010",
+        "edge_occurrence.e0011",
+        "edge_occurrence.e0012",
+        "edge_occurrence.e0013",
+        "edge_occurrence.e0014",
+        "edge_occurrence.e0015",
+        "edge_occurrence.e0016",
+        "edge_occurrence.e0017",
+        "edge_occurrence.e0018",
+        "edge_occurrence.e0019",
+        "edge_occurrence.e0020",
+        "edge_occurrence.e0021",
+        "edge_occurrence.e0022",
+        "edge_occurrence.e0023",
+        "edge_occurrence.e0024",
+        "edge_occurrence.e0025",
+        "edge_occurrence.e0026",
+        "edge_occurrence.e0027",
+        "edge_occurrence.e0028",
+        "edge_occurrence.e0029",
+        "edge_occurrence.e0030",
+        "edge_occurrence.e0031",
+        "edge_occurrence.e0032",
+        "edge_occurrence.e0033",
+        "edge_occurrence.e0034",
+        "edge_occurrence.e0035",
+        "edge_occurrence.e0036",
+        "edge_occurrence.e0037",
+        "edge_occurrence.e0038",
+        "edge_occurrence.e0039",
+        "edge_occurrence.e0040",
+        "edge_occurrence.e0041",
+        "edge_occurrence.e0042",
+        "edge_occurrence.e0043",
+        "edge_occurrence.e0044",
+        "edge_occurrence.e0045",
+        "edge_occurrence.e0046",
+        "edge_occurrence.e0047",
+        "edge_occurrence.e0048",
+        "edge_occurrence.e0049",
+        "edge_occurrence.e0050",
+        "edge_occurrence.e0051",
+        "edge_occurrence.e0052",
+        "edge_occurrence.e0053",
+        "edge_occurrence.e0054",
+        "edge_occurrence.e0055",
+        "edge_occurrence.e0056"
+      ],
+      "face_occurrence_ids": [
+        "face_occurrence.f0001",
+        "face_occurrence.f0002",
+        "face_occurrence.f0003",
+        "face_occurrence.f0004",
+        "face_occurrence.f0005",
+        "face_occurrence.f0006",
+        "face_occurrence.f0007",
+        "face_occurrence.f0008",
+        "face_occurrence.f0009",
+        "face_occurrence.f0010",
+        "face_occurrence.f0011",
+        "face_occurrence.f0012",
+        "face_occurrence.f0013",
+        "face_occurrence.f0014"
+      ],
+      "logical_region_ids": [
+        "logical_region.r0001",
+        "logical_region.r0002",
+        "logical_region.r0003",
+        "logical_region.r0004",
+        "logical_region.r0005",
+        "logical_region.r0006",
+        "logical_region.r0007",
+        "logical_region.r0008",
+        "logical_region.r0009",
+        "logical_region.r0010",
+        "logical_region.r0011",
+        "logical_region.r0012",
+        "logical_region.r0013",
+        "logical_region.r0014"
+      ]
+    },
+    "support": [
+      {
+        "geometry_family_code": "bspline",
+        "label": "support.edge.bucket_01_bspline_unsupportedtopology",
+        "selection_code": "reason.standalone_surface_route_unproven",
+        "state": "UnsupportedTopology",
+        "subject_count": 56,
+        "subject_ids": [
+          "edge_occurrence.e0001",
+          "edge_occurrence.e0002",
+          "edge_occurrence.e0003",
+          "edge_occurrence.e0004",
+          "edge_occurrence.e0005",
+          "edge_occurrence.e0006",
+          "edge_occurrence.e0007",
+          "edge_occurrence.e0008",
+          "edge_occurrence.e0009",
+          "edge_occurrence.e0010",
+          "edge_occurrence.e0011",
+          "edge_occurrence.e0012",
+          "edge_occurrence.e0013",
+          "edge_occurrence.e0014",
+          "edge_occurrence.e0015",
+          "edge_occurrence.e0016",
+          "edge_occurrence.e0017",
+          "edge_occurrence.e0018",
+          "edge_occurrence.e0019",
+          "edge_occurrence.e0020",
+          "edge_occurrence.e0021",
+          "edge_occurrence.e0022",
+          "edge_occurrence.e0023",
+          "edge_occurrence.e0024",
+          "edge_occurrence.e0025",
+          "edge_occurrence.e0026",
+          "edge_occurrence.e0027",
+          "edge_occurrence.e0028",
+          "edge_occurrence.e0029",
+          "edge_occurrence.e0030",
+          "edge_occurrence.e0031",
+          "edge_occurrence.e0032",
+          "edge_occurrence.e0033",
+          "edge_occurrence.e0034",
+          "edge_occurrence.e0035",
+          "edge_occurrence.e0036",
+          "edge_occurrence.e0037",
+          "edge_occurrence.e0038",
+          "edge_occurrence.e0039",
+          "edge_occurrence.e0040",
+          "edge_occurrence.e0041",
+          "edge_occurrence.e0042",
+          "edge_occurrence.e0043",
+          "edge_occurrence.e0044",
+          "edge_occurrence.e0045",
+          "edge_occurrence.e0046",
+          "edge_occurrence.e0047",
+          "edge_occurrence.e0048",
+          "edge_occurrence.e0049",
+          "edge_occurrence.e0050",
+          "edge_occurrence.e0051",
+          "edge_occurrence.e0052",
+          "edge_occurrence.e0053",
+          "edge_occurrence.e0054",
+          "edge_occurrence.e0055",
+          "edge_occurrence.e0056"
+        ],
+        "subject_kind": "edge"
+      },
+      {
+        "geometry_family_code": "bspline",
+        "label": "support.face.bucket_01_bspline_unsupportedtopology",
+        "selection_code": "reason.standalone_surface_route_unproven",
+        "state": "UnsupportedTopology",
+        "subject_count": 14,
+        "subject_ids": [
+          "face_occurrence.f0001",
+          "face_occurrence.f0002",
+          "face_occurrence.f0003",
+          "face_occurrence.f0004",
+          "face_occurrence.f0005",
+          "face_occurrence.f0006",
+          "face_occurrence.f0007",
+          "face_occurrence.f0008",
+          "face_occurrence.f0009",
+          "face_occurrence.f0010",
+          "face_occurrence.f0011",
+          "face_occurrence.f0012",
+          "face_occurrence.f0013",
+          "face_occurrence.f0014"
+        ],
+        "subject_kind": "face"
+      },
+      {
+        "geometry_family_code": "bspline",
+        "label": "support.logical_region.bucket_01_bspline_unsupportedtopology",
+        "selection_code": "reason.standalone_surface_route_unproven",
+        "state": "UnsupportedTopology",
+        "subject_count": 14,
+        "subject_ids": [
+          "logical_region.r0001",
+          "logical_region.r0002",
+          "logical_region.r0003",
+          "logical_region.r0004",
+          "logical_region.r0005",
+          "logical_region.r0006",
+          "logical_region.r0007",
+          "logical_region.r0008",
+          "logical_region.r0009",
+          "logical_region.r0010",
+          "logical_region.r0011",
+          "logical_region.r0012",
+          "logical_region.r0013",
+          "logical_region.r0014"
+        ],
+        "subject_kind": "logical_region"
+      }
+    ],
+    "surface_variants": [
+      {
+        "concrete_type": "Geom_BSplineSurface",
+        "condition_codes": [
+          "bounded",
+          "continuity.matrix",
+          "imported.no_processing"
+        ],
+        "count": 14,
+        "family_code": "bspline",
+        "label": "surface.continuity_patch_matrix",
+        "trim_domain_class": "convex_simple_region",
+        "wrapper_stack": []
+      }
+    ],
+    "topology_occurrences": {
+      "assembly_products": 8,
+      "compounds": 1,
+      "compsolids": 0,
+      "edges": 56,
+      "faces": 14,
+      "instances": 7,
+      "shells": 7,
+      "solids": 0,
+      "vertices": 112,
+      "wires": 14
+    },
+    "unique_topology": {
+      "assembly_products": 8,
+      "compounds": 1,
+      "compsolids": 0,
+      "edges": 49,
+      "faces": 14,
+      "instances": 7,
+      "shells": 7,
+      "solids": 0,
+      "vertices": 42,
+      "wires": 14
+    },
+    "validation_findings": [
+      {
+        "code": "support.unsupported_topology",
+        "evidence": "Standalone face topology has no applicable solid-region strategy and is classified explicitly.",
+        "expectation": "present",
+        "subject_kind": "face"
+      },
+      {
+        "code": "topology.valid",
+        "evidence": "BRepCheck_Analyzer result from the deterministic no-processing readback.",
+        "expectation": "present",
+        "subject_kind": "model"
+      }
+    ]
+  },
+  "fixture_id": "patch.continuity.c0_c1_c2_cn_g0_g1_g2",
+  "instances": [
+    {
+      "component_label": "component.c0001",
+      "label": "instance.i0001",
+      "local_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "parent_label": null,
+      "target_definition": "definition.d0002",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    },
+    {
+      "component_label": "component.c0002",
+      "label": "instance.i0002",
+      "local_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "parent_label": null,
+      "target_definition": "definition.d0003",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    },
+    {
+      "component_label": "component.c0003",
+      "label": "instance.i0003",
+      "local_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "parent_label": null,
+      "target_definition": "definition.d0004",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    },
+    {
+      "component_label": "component.c0004",
+      "label": "instance.i0004",
+      "local_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "parent_label": null,
+      "target_definition": "definition.d0005",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    },
+    {
+      "component_label": "component.c0005",
+      "label": "instance.i0005",
+      "local_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "parent_label": null,
+      "target_definition": "definition.d0006",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    },
+    {
+      "component_label": "component.c0006",
+      "label": "instance.i0006",
+      "local_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "parent_label": null,
+      "target_definition": "definition.d0007",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    },
+    {
+      "component_label": "component.c0007",
+      "label": "instance.i0007",
+      "local_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "parent_label": null,
+      "target_definition": "definition.d0008",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    }
+  ],
+  "observations": [
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "assignment.total",
+        "processing.disabled",
+        "reason.free_topology"
+      ],
+      "consumer_code": "consumer.fixture_oracle",
+      "consumer_kind": "inventory",
+      "evidence": "Every imported edge, face, and logical region is assigned once under the frozen M1 support-state contract.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.support_assignment",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004",
+        "edge_occurrence.e0005",
+        "edge_occurrence.e0006",
+        "edge_occurrence.e0007",
+        "edge_occurrence.e0008",
+        "edge_occurrence.e0009",
+        "edge_occurrence.e0010",
+        "edge_occurrence.e0011",
+        "edge_occurrence.e0012",
+        "edge_occurrence.e0013",
+        "edge_occurrence.e0014",
+        "edge_occurrence.e0015",
+        "edge_occurrence.e0016",
+        "edge_occurrence.e0017",
+        "edge_occurrence.e0018",
+        "edge_occurrence.e0019",
+        "edge_occurrence.e0020",
+        "edge_occurrence.e0021",
+        "edge_occurrence.e0022",
+        "edge_occurrence.e0023",
+        "edge_occurrence.e0024",
+        "edge_occurrence.e0025",
+        "edge_occurrence.e0026",
+        "edge_occurrence.e0027",
+        "edge_occurrence.e0028",
+        "edge_occurrence.e0029",
+        "edge_occurrence.e0030",
+        "edge_occurrence.e0031",
+        "edge_occurrence.e0032",
+        "edge_occurrence.e0033",
+        "edge_occurrence.e0034",
+        "edge_occurrence.e0035",
+        "edge_occurrence.e0036",
+        "edge_occurrence.e0037",
+        "edge_occurrence.e0038",
+        "edge_occurrence.e0039",
+        "edge_occurrence.e0040",
+        "edge_occurrence.e0041",
+        "edge_occurrence.e0042",
+        "edge_occurrence.e0043",
+        "edge_occurrence.e0044",
+        "edge_occurrence.e0045",
+        "edge_occurrence.e0046",
+        "edge_occurrence.e0047",
+        "edge_occurrence.e0048",
+        "edge_occurrence.e0049",
+        "edge_occurrence.e0050",
+        "edge_occurrence.e0051",
+        "edge_occurrence.e0052",
+        "edge_occurrence.e0053",
+        "edge_occurrence.e0054",
+        "edge_occurrence.e0055",
+        "edge_occurrence.e0056",
+        "face_occurrence.f0001",
+        "face_occurrence.f0002",
+        "face_occurrence.f0003",
+        "face_occurrence.f0004",
+        "face_occurrence.f0005",
+        "face_occurrence.f0006",
+        "face_occurrence.f0007",
+        "face_occurrence.f0008",
+        "face_occurrence.f0009",
+        "face_occurrence.f0010",
+        "face_occurrence.f0011",
+        "face_occurrence.f0012",
+        "face_occurrence.f0013",
+        "face_occurrence.f0014",
+        "logical_region.r0001",
+        "logical_region.r0002",
+        "logical_region.r0003",
+        "logical_region.r0004",
+        "logical_region.r0005",
+        "logical_region.r0006",
+        "logical_region.r0007",
+        "logical_region.r0008",
+        "logical_region.r0009",
+        "logical_region.r0010",
+        "logical_region.r0011",
+        "logical_region.r0012",
+        "logical_region.r0013",
+        "logical_region.r0014"
+      ]
+    },
+    {
+      "continuity_class": "C0",
+      "id": "observation.continuity.join_01_c0",
+      "join_code": "join.c0",
+      "kind": "continuity",
+      "max_curvature_residual_inverse_metres": null,
+      "max_position_residual_metres": 0,
+      "max_tangent_angle_residual_radians": null,
+      "measurements": [],
+      "phase": "source",
+      "sample_count": 5,
+      "subject_ids": [
+        "source.face.f0001",
+        "source.face.f0002"
+      ]
+    },
+    {
+      "continuity_class": "C1",
+      "id": "observation.continuity.join_02_c1",
+      "join_code": "join.c1",
+      "kind": "continuity",
+      "max_curvature_residual_inverse_metres": null,
+      "max_position_residual_metres": 0,
+      "max_tangent_angle_residual_radians": 0,
+      "measurements": [],
+      "phase": "source",
+      "sample_count": 5,
+      "subject_ids": [
+        "source.face.f0003",
+        "source.face.f0004"
+      ]
+    },
+    {
+      "continuity_class": "C2",
+      "id": "observation.continuity.join_03_c2",
+      "join_code": "join.c2",
+      "kind": "continuity",
+      "max_curvature_residual_inverse_metres": 0,
+      "max_position_residual_metres": 0,
+      "max_tangent_angle_residual_radians": 0,
+      "measurements": [],
+      "phase": "source",
+      "sample_count": 5,
+      "subject_ids": [
+        "source.face.f0005",
+        "source.face.f0006"
+      ]
+    },
+    {
+      "continuity_class": "CN",
+      "id": "observation.continuity.join_04_cn",
+      "join_code": "join.cn",
+      "kind": "continuity",
+      "max_curvature_residual_inverse_metres": 0,
+      "max_position_residual_metres": 0,
+      "max_tangent_angle_residual_radians": 0,
+      "measurements": [],
+      "phase": "source",
+      "sample_count": 5,
+      "subject_ids": [
+        "source.face.f0007",
+        "source.face.f0008"
+      ]
+    },
+    {
+      "continuity_class": "G0",
+      "id": "observation.continuity.join_05_g0",
+      "join_code": "join.g0",
+      "kind": "continuity",
+      "max_curvature_residual_inverse_metres": null,
+      "max_position_residual_metres": 0,
+      "max_tangent_angle_residual_radians": null,
+      "measurements": [],
+      "phase": "source",
+      "sample_count": 5,
+      "subject_ids": [
+        "source.face.f0009",
+        "source.face.f0010"
+      ]
+    },
+    {
+      "continuity_class": "G1",
+      "id": "observation.continuity.join_06_g1",
+      "join_code": "join.g1",
+      "kind": "continuity",
+      "max_curvature_residual_inverse_metres": null,
+      "max_position_residual_metres": 0,
+      "max_tangent_angle_residual_radians": 0,
+      "measurements": [],
+      "phase": "source",
+      "sample_count": 5,
+      "subject_ids": [
+        "source.face.f0011",
+        "source.face.f0012"
+      ]
+    },
+    {
+      "continuity_class": "G2",
+      "id": "observation.continuity.join_07_g2",
+      "join_code": "join.g2",
+      "kind": "continuity",
+      "max_curvature_residual_inverse_metres": 0,
+      "max_position_residual_metres": 0,
+      "max_tangent_angle_residual_radians": 0,
+      "measurements": [],
+      "phase": "source",
+      "sample_count": 5,
+      "subject_ids": [
+        "source.face.f0013",
+        "source.face.f0014"
+      ]
+    },
+    {
+      "concrete_type": "Geom_BSplineSurface",
+      "condition_codes": [
+        "phase.imported",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bspline",
+      "id": "observation.geometry.imported.face.f0001",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bspline.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "imported",
+      "subject_id": "face_occurrence.f0001",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BSplineSurface",
+      "condition_codes": [
+        "phase.imported",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bspline",
+      "id": "observation.geometry.imported.face.f0002",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bspline.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "imported",
+      "subject_id": "face_occurrence.f0002",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BSplineSurface",
+      "condition_codes": [
+        "phase.imported",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bspline",
+      "id": "observation.geometry.imported.face.f0003",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bspline.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "imported",
+      "subject_id": "face_occurrence.f0003",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BSplineSurface",
+      "condition_codes": [
+        "phase.imported",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bspline",
+      "id": "observation.geometry.imported.face.f0004",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bspline.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "imported",
+      "subject_id": "face_occurrence.f0004",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BSplineSurface",
+      "condition_codes": [
+        "phase.imported",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bspline",
+      "id": "observation.geometry.imported.face.f0005",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bspline.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "imported",
+      "subject_id": "face_occurrence.f0005",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BSplineSurface",
+      "condition_codes": [
+        "phase.imported",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bspline",
+      "id": "observation.geometry.imported.face.f0006",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bspline.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "imported",
+      "subject_id": "face_occurrence.f0006",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BSplineSurface",
+      "condition_codes": [
+        "phase.imported",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bspline",
+      "id": "observation.geometry.imported.face.f0007",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bspline.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "imported",
+      "subject_id": "face_occurrence.f0007",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BSplineSurface",
+      "condition_codes": [
+        "phase.imported",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bspline",
+      "id": "observation.geometry.imported.face.f0008",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bspline.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "imported",
+      "subject_id": "face_occurrence.f0008",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BSplineSurface",
+      "condition_codes": [
+        "phase.imported",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bspline",
+      "id": "observation.geometry.imported.face.f0009",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bspline.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "imported",
+      "subject_id": "face_occurrence.f0009",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BSplineSurface",
+      "condition_codes": [
+        "phase.imported",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bspline",
+      "id": "observation.geometry.imported.face.f0010",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bspline.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "imported",
+      "subject_id": "face_occurrence.f0010",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BSplineSurface",
+      "condition_codes": [
+        "phase.imported",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bspline",
+      "id": "observation.geometry.imported.face.f0011",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bspline.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "imported",
+      "subject_id": "face_occurrence.f0011",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BSplineSurface",
+      "condition_codes": [
+        "phase.imported",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bspline",
+      "id": "observation.geometry.imported.face.f0012",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bspline.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "imported",
+      "subject_id": "face_occurrence.f0012",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BSplineSurface",
+      "condition_codes": [
+        "phase.imported",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bspline",
+      "id": "observation.geometry.imported.face.f0013",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bspline.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "imported",
+      "subject_id": "face_occurrence.f0013",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BSplineSurface",
+      "condition_codes": [
+        "phase.imported",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bspline",
+      "id": "observation.geometry.imported.face.f0014",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bspline.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_knot_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "imported",
+      "subject_id": "face_occurrence.f0014",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BezierSurface",
+      "condition_codes": [
+        "phase.source",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bezier",
+      "id": "observation.geometry.source.face.f0001",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bezier.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bezier.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "source",
+      "subject_id": "source.face.f0001",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BezierSurface",
+      "condition_codes": [
+        "phase.source",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bezier",
+      "id": "observation.geometry.source.face.f0002",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bezier.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bezier.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "source",
+      "subject_id": "source.face.f0002",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BezierSurface",
+      "condition_codes": [
+        "phase.source",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bezier",
+      "id": "observation.geometry.source.face.f0003",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bezier.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bezier.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "source",
+      "subject_id": "source.face.f0003",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BezierSurface",
+      "condition_codes": [
+        "phase.source",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bezier",
+      "id": "observation.geometry.source.face.f0004",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bezier.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bezier.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "source",
+      "subject_id": "source.face.f0004",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BezierSurface",
+      "condition_codes": [
+        "phase.source",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bezier",
+      "id": "observation.geometry.source.face.f0005",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bezier.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bezier.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "source",
+      "subject_id": "source.face.f0005",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BezierSurface",
+      "condition_codes": [
+        "phase.source",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bezier",
+      "id": "observation.geometry.source.face.f0006",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bezier.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bezier.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "source",
+      "subject_id": "source.face.f0006",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BezierSurface",
+      "condition_codes": [
+        "phase.source",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bezier",
+      "id": "observation.geometry.source.face.f0007",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bezier.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bezier.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "source",
+      "subject_id": "source.face.f0007",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BezierSurface",
+      "condition_codes": [
+        "phase.source",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bezier",
+      "id": "observation.geometry.source.face.f0008",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bezier.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bezier.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "source",
+      "subject_id": "source.face.f0008",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BezierSurface",
+      "condition_codes": [
+        "phase.source",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bezier",
+      "id": "observation.geometry.source.face.f0009",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bezier.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bezier.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "source",
+      "subject_id": "source.face.f0009",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BezierSurface",
+      "condition_codes": [
+        "phase.source",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bezier",
+      "id": "observation.geometry.source.face.f0010",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bezier.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bezier.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "source",
+      "subject_id": "source.face.f0010",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BezierSurface",
+      "condition_codes": [
+        "phase.source",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bezier",
+      "id": "observation.geometry.source.face.f0011",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bezier.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bezier.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "source",
+      "subject_id": "source.face.f0011",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BezierSurface",
+      "condition_codes": [
+        "phase.source",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bezier",
+      "id": "observation.geometry.source.face.f0012",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bezier.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bezier.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "source",
+      "subject_id": "source.face.f0012",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BezierSurface",
+      "condition_codes": [
+        "phase.source",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bezier",
+      "id": "observation.geometry.source.face.f0013",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bezier.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bezier.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "source",
+      "subject_id": "source.face.f0013",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BezierSurface",
+      "condition_codes": [
+        "phase.source",
+        "processing.disabled"
+      ],
+      "exact_evaluator_kind": "evaluator.occt.geom_surface",
+      "family_code": "bezier",
+      "id": "observation.geometry.source.face.f0014",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bezier.u_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.u_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bezier.v_degree",
+          "value": {
+            "unit": "unitless",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_pole_count",
+          "value": {
+            "unit": "unitless",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bezier.v_rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.orientation_reversed",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "face.tolerance",
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-07,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "source",
+      "subject_id": "source.face.f0014",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "evidence": "Seven independently constructed shared-boundary pairs cover the requested continuity matrix.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.continuity_sample_count",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "continuity.join_count",
+          "comparison": "exact",
+          "sample_count": 7,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 7,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "surface.continuity_matrix",
+      "phase": "source",
+      "subject_ids": [
+        "source.face.f0001",
+        "source.face.f0002"
+      ]
+    },
+    {
+      "evidence": "BRepCheck_Analyzer result from the deterministic no-processing AP242 readback.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.topology_validity",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "brep.valid",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": true,
+            "value_type": "boolean"
+          }
+        }
+      ],
+      "pathology_code": "topology.validity",
+      "phase": "imported",
+      "subject_ids": [
+        "face_occurrence.f0001"
+      ]
+    },
+    {
+      "axes": [
+        {
+          "axis": "u",
+          "closed": false,
+          "period": null,
+          "periodic": false,
+          "principal_lower": null,
+          "principal_upper": null,
+          "seam_parameters": [],
+          "unit": "unitless"
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "period": null,
+          "periodic": false,
+          "principal_lower": null,
+          "principal_upper": null,
+          "seam_parameters": [],
+          "unit": "unitless"
+        }
+      ],
+      "id": "observation.periodicity.surface_matrix",
+      "kind": "periodicity_singularity",
+      "phase": "imported",
+      "singularities": [],
+      "subject_id": "surface.matrix"
+    },
+    {
+      "accepted_normalization_codes": [
+        "step.curve.bezier_promoted_to_bspline",
+        "step.surface.bezier_promoted_to_bspline",
+        "step.surface.continuity_metadata_recomputed",
+        "step.surface.shared_edge_resegmented"
+      ],
+      "changes": [
+        {
+          "disposition": "canonicalized",
+          "field_path": "/roundtrip/normalization/n0001",
+          "imported_value": {
+            "value": "state.accepted_normalization",
+            "value_type": "code"
+          },
+          "normalization_code": "step.curve.bezier_promoted_to_bspline",
+          "source_value": {
+            "value": "state.source_contract",
+            "value_type": "code"
+          }
+        },
+        {
+          "disposition": "canonicalized",
+          "field_path": "/roundtrip/normalization/n0002",
+          "imported_value": {
+            "value": "state.accepted_normalization",
+            "value_type": "code"
+          },
+          "normalization_code": "step.surface.bezier_promoted_to_bspline",
+          "source_value": {
+            "value": "state.source_contract",
+            "value_type": "code"
+          }
+        },
+        {
+          "disposition": "canonicalized",
+          "field_path": "/roundtrip/normalization/n0003",
+          "imported_value": {
+            "value": "state.accepted_normalization",
+            "value_type": "code"
+          },
+          "normalization_code": "step.surface.continuity_metadata_recomputed",
+          "source_value": {
+            "value": "state.source_contract",
+            "value_type": "code"
+          }
+        },
+        {
+          "disposition": "canonicalized",
+          "field_path": "/roundtrip/normalization/n0004",
+          "imported_value": {
+            "value": "state.accepted_normalization",
+            "value_type": "code"
+          },
+          "normalization_code": "step.surface.shared_edge_resegmented",
+          "source_value": {
+            "value": "state.source_contract",
+            "value_type": "code"
+          }
+        }
+      ],
+      "equivalence": "geometrically_equivalent",
+      "geometry_equivalent": true,
+      "id": "observation.normalization.source_to_imported",
+      "imported_subject_ids": [
+        "face_occurrence.f0001",
+        "face_occurrence.f0002",
+        "face_occurrence.f0003",
+        "face_occurrence.f0004",
+        "face_occurrence.f0005",
+        "face_occurrence.f0006",
+        "face_occurrence.f0007",
+        "face_occurrence.f0008",
+        "face_occurrence.f0009",
+        "face_occurrence.f0010",
+        "face_occurrence.f0011",
+        "face_occurrence.f0012",
+        "face_occurrence.f0013",
+        "face_occurrence.f0014"
+      ],
+      "kind": "source_import_normalization",
+      "outcome": "canonicalized",
+      "source_subject_ids": [
+        "source.face.f0001",
+        "source.face.f0002",
+        "source.face.f0003",
+        "source.face.f0004",
+        "source.face.f0005",
+        "source.face.f0006",
+        "source.face.f0007",
+        "source.face.f0008",
+        "source.face.f0009",
+        "source.face.f0010",
+        "source.face.f0011",
+        "source.face.f0012",
+        "source.face.f0013",
+        "source.face.f0014"
+      ],
+      "topology_equivalent": true
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "shell_role.standalone"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.f0001",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [],
+      "source_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "subject_id": "face_occurrence.f0001",
+      "tolerance_metres": 1e-10,
+      "topology_kind": "face",
+      "underlying_id": "face.partner_0001",
+      "world_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "shell_role.standalone"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.f0002",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [],
+      "source_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "subject_id": "face_occurrence.f0002",
+      "tolerance_metres": 1e-10,
+      "topology_kind": "face",
+      "underlying_id": "face.partner_0002",
+      "world_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "shell_role.standalone"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.f0003",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [],
+      "source_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "subject_id": "face_occurrence.f0003",
+      "tolerance_metres": 1e-10,
+      "topology_kind": "face",
+      "underlying_id": "face.partner_0003",
+      "world_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "shell_role.standalone"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.f0004",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [],
+      "source_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "subject_id": "face_occurrence.f0004",
+      "tolerance_metres": 1e-10,
+      "topology_kind": "face",
+      "underlying_id": "face.partner_0004",
+      "world_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "shell_role.standalone"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.f0005",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [],
+      "source_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "subject_id": "face_occurrence.f0005",
+      "tolerance_metres": 1e-10,
+      "topology_kind": "face",
+      "underlying_id": "face.partner_0005",
+      "world_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "shell_role.standalone"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.f0006",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [],
+      "source_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "subject_id": "face_occurrence.f0006",
+      "tolerance_metres": 1e-10,
+      "topology_kind": "face",
+      "underlying_id": "face.partner_0006",
+      "world_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "shell_role.standalone"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.f0007",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [],
+      "source_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "subject_id": "face_occurrence.f0007",
+      "tolerance_metres": 1e-10,
+      "topology_kind": "face",
+      "underlying_id": "face.partner_0007",
+      "world_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "shell_role.standalone"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.f0008",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [],
+      "source_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "subject_id": "face_occurrence.f0008",
+      "tolerance_metres": 1e-10,
+      "topology_kind": "face",
+      "underlying_id": "face.partner_0008",
+      "world_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "shell_role.standalone"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.f0009",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [],
+      "source_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "subject_id": "face_occurrence.f0009",
+      "tolerance_metres": 1e-10,
+      "topology_kind": "face",
+      "underlying_id": "face.partner_0009",
+      "world_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "shell_role.standalone"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.f0010",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [],
+      "source_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "subject_id": "face_occurrence.f0010",
+      "tolerance_metres": 1e-10,
+      "topology_kind": "face",
+      "underlying_id": "face.partner_0010",
+      "world_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "shell_role.standalone"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.f0011",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [],
+      "source_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "subject_id": "face_occurrence.f0011",
+      "tolerance_metres": 1e-10,
+      "topology_kind": "face",
+      "underlying_id": "face.partner_0011",
+      "world_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "shell_role.standalone"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.f0012",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [],
+      "source_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "subject_id": "face_occurrence.f0012",
+      "tolerance_metres": 1e-10,
+      "topology_kind": "face",
+      "underlying_id": "face.partner_0012",
+      "world_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "shell_role.standalone"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.f0013",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [],
+      "source_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "subject_id": "face_occurrence.f0013",
+      "tolerance_metres": 1e-10,
+      "topology_kind": "face",
+      "underlying_id": "face.partner_0013",
+      "world_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "shell_role.standalone"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.f0014",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [],
+      "source_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "subject_id": "face_occurrence.f0014",
+      "tolerance_metres": 1e-10,
+      "topology_kind": "face",
+      "underlying_id": "face.partner_0014",
+      "world_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "condition_codes": [
+        "boundary.closed"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "face_occurrence.f0001",
+      "id": "observation.trim.l0001",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "coedge.l0001.c0001",
+            "coedge.l0001.c0002",
+            "coedge.l0001.c0003",
+            "coedge.l0001.c0004"
+          ],
+          "loop_id": "boundary_loop.l0001",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 1.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 1.0,
+            "u_min": 0.0,
+            "v_max": 1.0,
+            "v_min": 0.0
+          },
+          "wire_id": "wire.l0001"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    },
+    {
+      "condition_codes": [
+        "boundary.closed"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "face_occurrence.f0002",
+      "id": "observation.trim.l0002",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "coedge.l0002.c0001",
+            "coedge.l0002.c0002",
+            "coedge.l0002.c0003",
+            "coedge.l0002.c0004"
+          ],
+          "loop_id": "boundary_loop.l0002",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 1.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 1.0,
+            "u_min": 0.0,
+            "v_max": 1.0,
+            "v_min": 0.0
+          },
+          "wire_id": "wire.l0002"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    },
+    {
+      "condition_codes": [
+        "boundary.closed"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "face_occurrence.f0003",
+      "id": "observation.trim.l0003",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "coedge.l0003.c0001",
+            "coedge.l0003.c0002",
+            "coedge.l0003.c0003",
+            "coedge.l0003.c0004"
+          ],
+          "loop_id": "boundary_loop.l0003",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 1.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 1.0,
+            "u_min": 0.0,
+            "v_max": 1.0,
+            "v_min": 0.0
+          },
+          "wire_id": "wire.l0003"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    },
+    {
+      "condition_codes": [
+        "boundary.closed"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "face_occurrence.f0004",
+      "id": "observation.trim.l0004",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "coedge.l0004.c0001",
+            "coedge.l0004.c0002",
+            "coedge.l0004.c0003",
+            "coedge.l0004.c0004"
+          ],
+          "loop_id": "boundary_loop.l0004",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 1.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 1.0,
+            "u_min": 0.0,
+            "v_max": 1.0,
+            "v_min": 0.0
+          },
+          "wire_id": "wire.l0004"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    },
+    {
+      "condition_codes": [
+        "boundary.closed"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "face_occurrence.f0005",
+      "id": "observation.trim.l0005",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "coedge.l0005.c0001",
+            "coedge.l0005.c0002",
+            "coedge.l0005.c0003",
+            "coedge.l0005.c0004"
+          ],
+          "loop_id": "boundary_loop.l0005",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 1.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 1.0,
+            "u_min": 0.0,
+            "v_max": 1.0,
+            "v_min": 0.0
+          },
+          "wire_id": "wire.l0005"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    },
+    {
+      "condition_codes": [
+        "boundary.closed"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "face_occurrence.f0006",
+      "id": "observation.trim.l0006",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "coedge.l0006.c0001",
+            "coedge.l0006.c0002",
+            "coedge.l0006.c0003",
+            "coedge.l0006.c0004"
+          ],
+          "loop_id": "boundary_loop.l0006",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 1.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 1.0,
+            "u_min": 0.0,
+            "v_max": 1.0,
+            "v_min": 0.0
+          },
+          "wire_id": "wire.l0006"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    },
+    {
+      "condition_codes": [
+        "boundary.closed"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "face_occurrence.f0007",
+      "id": "observation.trim.l0007",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "coedge.l0007.c0001",
+            "coedge.l0007.c0002",
+            "coedge.l0007.c0003",
+            "coedge.l0007.c0004"
+          ],
+          "loop_id": "boundary_loop.l0007",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 1.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 1.0,
+            "u_min": 0.0,
+            "v_max": 1.0,
+            "v_min": 0.0
+          },
+          "wire_id": "wire.l0007"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    },
+    {
+      "condition_codes": [
+        "boundary.closed"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "face_occurrence.f0008",
+      "id": "observation.trim.l0008",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "coedge.l0008.c0001",
+            "coedge.l0008.c0002",
+            "coedge.l0008.c0003",
+            "coedge.l0008.c0004"
+          ],
+          "loop_id": "boundary_loop.l0008",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 1.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 1.0,
+            "u_min": 0.0,
+            "v_max": 1.0,
+            "v_min": 0.0
+          },
+          "wire_id": "wire.l0008"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    },
+    {
+      "condition_codes": [
+        "boundary.closed"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "face_occurrence.f0009",
+      "id": "observation.trim.l0009",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "coedge.l0009.c0001",
+            "coedge.l0009.c0002",
+            "coedge.l0009.c0003",
+            "coedge.l0009.c0004"
+          ],
+          "loop_id": "boundary_loop.l0009",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 1.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 1.0,
+            "u_min": 0.0,
+            "v_max": 1.0,
+            "v_min": 0.0
+          },
+          "wire_id": "wire.l0009"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    },
+    {
+      "condition_codes": [
+        "boundary.closed"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "face_occurrence.f0010",
+      "id": "observation.trim.l0010",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "coedge.l0010.c0001",
+            "coedge.l0010.c0002",
+            "coedge.l0010.c0003",
+            "coedge.l0010.c0004"
+          ],
+          "loop_id": "boundary_loop.l0010",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 1.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 1.0,
+            "u_min": 0.0,
+            "v_max": 1.0,
+            "v_min": 0.0
+          },
+          "wire_id": "wire.l0010"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    },
+    {
+      "condition_codes": [
+        "boundary.closed"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "face_occurrence.f0011",
+      "id": "observation.trim.l0011",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "coedge.l0011.c0001",
+            "coedge.l0011.c0002",
+            "coedge.l0011.c0003",
+            "coedge.l0011.c0004"
+          ],
+          "loop_id": "boundary_loop.l0011",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 1.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 1.0,
+            "u_min": 0.0,
+            "v_max": 1.0,
+            "v_min": 0.0
+          },
+          "wire_id": "wire.l0011"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    },
+    {
+      "condition_codes": [
+        "boundary.closed"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "face_occurrence.f0012",
+      "id": "observation.trim.l0012",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "coedge.l0012.c0001",
+            "coedge.l0012.c0002",
+            "coedge.l0012.c0003",
+            "coedge.l0012.c0004"
+          ],
+          "loop_id": "boundary_loop.l0012",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 1.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 1.0,
+            "u_min": 0.0,
+            "v_max": 1.0,
+            "v_min": 0.0
+          },
+          "wire_id": "wire.l0012"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    },
+    {
+      "condition_codes": [
+        "boundary.closed"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "face_occurrence.f0013",
+      "id": "observation.trim.l0013",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "coedge.l0013.c0001",
+            "coedge.l0013.c0002",
+            "coedge.l0013.c0003",
+            "coedge.l0013.c0004"
+          ],
+          "loop_id": "boundary_loop.l0013",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 1.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 1.0,
+            "u_min": 0.0,
+            "v_max": 1.0,
+            "v_min": 0.0
+          },
+          "wire_id": "wire.l0013"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    },
+    {
+      "condition_codes": [
+        "boundary.closed"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "face_occurrence.f0014",
+      "id": "observation.trim.l0014",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "coedge.l0014.c0001",
+            "coedge.l0014.c0002",
+            "coedge.l0014.c0003",
+            "coedge.l0014.c0004"
+          ],
+          "loop_id": "boundary_loop.l0014",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 1.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 1.0,
+            "u_min": 0.0,
+            "v_max": 1.0,
+            "v_min": 0.0
+          },
+          "wire_id": "wire.l0014"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    }
+  ],
+  "oracle": {
+    "independent_from_production_classifier": true,
+    "method": "analytic_derivation",
+    "references": [
+      "fixtures/generator/fixture_surface_recipes.cpp recipe patch.continuity.c0_c1_c2_cn_g0_g1_g2",
+      "fixtures/procedural-recipe-authoring-map.json recipe patch.continuity.c0_c1_c2_cn_g0_g1_g2",
+      "out/m1-corpus/revision-6-candidate-07/patch.continuity.c0_c1_c2_cn_g0_g1_g2.json no-processing readback cross-check"
+    ],
+    "statement": "At every imported shared boundary, compare positions, one-sided derivatives, normals, and curvature using independent evaluations. Derive C0, C1, C2, CN, G0, G1, and G2 classifications from measured relations rather than stored continuity labels."
+  },
+  "schema_version": "1.0.0",
+  "tolerances": {
+    "edges_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "faces_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "vertices_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    }
+  },
+  "units": {
+    "coordinate_space": "right_handed_si_metres_radians",
+    "scale_to_metres": 0.001,
+    "source_unit": "millimetre"
+  }
+}

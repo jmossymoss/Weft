@@ -1,0 +1,23 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "6f161311d9164221475b6df6c457cf71c608493e9bc0153ad6f4dc607207f67a",
+  "finding_disposition": "Accepted as the exact source-bound PAT-017 variant. The checked baseline, deterministic mutation runner, native artifact, DRAWEXE inspection, independent measurement, topology identity, and failure boundary are hash-bound.",
+  "fixture_id": "corrupt.self_intersection.surface",
+  "producer_id": "producer.m1_derived_pathology_oracle",
+  "review_id": "review.corrupt.self_intersection.surface.revision_1",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.derived_pathology_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "artifact.hash",
+    "mutation.exact_ascii_patch",
+    "oracle.independent_measurement",
+    "source.provenance"
+  ],
+  "source_binding": {
+    "artifact_sha256": "74f937c77ba949cd7533bdc2b3028296175a9d541e4ae688b82c23836039ce0f",
+    "kind": "derived_corruption",
+    "source_contract_sha256": "79614cf2a976590498bf55618b6e00a87839df87b6c772b6368ed3f8bde18194"
+  }
+}

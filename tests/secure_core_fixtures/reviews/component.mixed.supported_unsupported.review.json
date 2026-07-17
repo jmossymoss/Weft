@@ -1,0 +1,29 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "f4fa9b4d75a924e3e8a16bcf1de08de176e52d58b35a5438f4e7c7279e0f01ba",
+  "finding_disposition": "Fresh-context construction, imported inventory, support partition, processing-disabled normalization, STEP, BRep, summary, and claim-profile bindings were reviewed; impossible authoring-map claims are excluded and itemised in the batch contradiction notes.",
+  "fixture_id": "component.mixed.supported_unsupported",
+  "producer_id": "producer.m1_trim_support_oracles",
+  "review_id": "review.component_mixed_supported_unsupported.revision_6",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.trim_support_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "artifact.brep",
+    "artifact.step",
+    "construction.parameters",
+    "import.processing_disabled",
+    "oracle.independent",
+    "source.contract",
+    "summary.imported"
+  ],
+  "source_binding": {
+    "artifact_sha256": "5bb5f3c4cbe5ebcaa8c47cdea6e0129f8b53da0e27bb39245172279cc8e81af8",
+    "construction_parameters_sha256": "4c5e56bc112fed67bb342546a5a5462a60227f4ab4ef2714544ae83a661e0784",
+    "generator_revision": 6,
+    "kind": "occt_procedural",
+    "source_contract_sha256": "ea85083448b7f86ad81bbb13cc54d99307001dbbcbc905ca2fa89a3ca4a0bb9d",
+    "summary_sha256": "d25cf962d67a0251992a5ff35023c5b881365268d6846d10390e50a594801cdb"
+  }
+}

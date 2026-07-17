@@ -1,0 +1,23 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "ccff38b8b78f4981f238b4aeacb47855aef419223c1598d66a3f617e43e0016b",
+  "finding_disposition": "Accepted as an exact mirrored source-transform and representation-loss witness. No claim is made that OCCT preserved the non-rigid transform in TopLoc_Location or baked geometry.",
+  "fixture_id": "assembly.nist_ctc_01.mirrored_mapped_item",
+  "producer_id": "producer.m1_external_derived_oracle",
+  "review_id": "review.assembly.nist_ctc_01.mirrored_mapped_item.revision_1",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.nonrigid_import_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "artifact.hash",
+    "import.invalid_brep",
+    "source.provenance",
+    "transform.representation_loss"
+  ],
+  "source_binding": {
+    "artifact_sha256": "f6f64328a93d21777dafa367334d53bb892ce911f4df754d74b9c53efc514570",
+    "kind": "derived_corruption",
+    "source_contract_sha256": "3e8b8f23917511fbd54965083809bfd9e7ea95da5474c9e43ae2ee03a454930d"
+  }
+}

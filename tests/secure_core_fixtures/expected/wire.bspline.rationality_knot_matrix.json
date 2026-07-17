@@ -1,0 +1,1206 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "expected": {
+    "boundary_loops": [],
+    "brep_valid": true,
+    "claims": [
+      {
+        "id": "claim.crv_007.bspline_matrix",
+        "obligation_id": "CRV-007",
+        "predicate_codes": [
+          "predicate.curve.bspline_matrix"
+        ],
+        "statement": "The source contains a non-rational quadratic B-spline with knots [0, 0.38, 1], a rational cubic with knots [0, 0.24, 0.71, 1] and inner weights 0.48, and a periodic quadratic five-pole curve with period 5. Mathematical periodicity is independently separated from topological closure.",
+        "subject_refs": [
+          {
+            "id": "observation.source_geometry.bspline.cubic.rational",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.source_geometry.bspline.quadratic.nonrational",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.source_geometry.bspline.quadratic.periodic",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.source_periodicity.bspline.cubic.rational",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.source_periodicity.bspline.quadratic.nonrational",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.source_periodicity.bspline.quadratic.periodic",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.crv_013.periodic_closed_distinguished",
+        "obligation_id": "CRV-013",
+        "predicate_codes": [
+          "predicate.curve.periodic_closed_distinguished"
+        ],
+        "statement": "The degree-two five-pole B-spline is mathematically periodic with period 5 and its source edge is topologically closed.",
+        "subject_refs": [
+          {
+            "id": "bspline.periodic",
+            "kind": "curve_variant"
+          },
+          {
+            "id": "observation.source_geometry.bspline.quadratic.periodic",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.source_periodicity.bspline.quadratic.periodic",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.sup_005.unsupported_topology",
+        "obligation_id": "SUP-005",
+        "predicate_codes": [
+          "predicate.support.unsupported_topology_present"
+        ],
+        "statement": "Every imported free or disconnected topological subject is identified exactly once and assigned an explicit UnsupportedTopology reason.",
+        "subject_refs": [
+          {
+            "id": "observation.consumer.edge.bspline.free_topology",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p1",
+            "kind": "observation"
+          },
+          {
+            "id": "edge.bspline.free_topology",
+            "kind": "support"
+          }
+        ]
+      }
+    ],
+    "curve_variants": [
+      {
+        "concrete_type": "Geom_BSplineCurve",
+        "condition_codes": [
+          "bounded",
+          "nonperiodic"
+        ],
+        "count": 2,
+        "family_code": "bspline",
+        "label": "bspline.nonperiodic_matrix",
+        "wrapper_stack": []
+      },
+      {
+        "concrete_type": "Geom_BSplineCurve",
+        "condition_codes": [
+          "basis_periodic",
+          "closed",
+          "periodic"
+        ],
+        "count": 1,
+        "family_code": "bspline",
+        "label": "bspline.periodic",
+        "wrapper_stack": []
+      }
+    ],
+    "import_outcome": "success",
+    "model_classes": [
+      "free_topology"
+    ],
+    "model_topology": {
+      "closed_shells": 0,
+      "coincident_solid_signature_pairs": 0,
+      "free_edges": 3,
+      "free_wires": 0,
+      "inner_shells": 0,
+      "isolated_vertices": 0,
+      "maximum_faces_per_edge": 0,
+      "nonmanifold_vertices": 0,
+      "open_shells": 0,
+      "outer_shells": 0,
+      "shared_faces_between_solids": 0,
+      "standalone_shells": 0
+    },
+    "orientation_states": [
+      "FORWARD",
+      "REVERSED"
+    ],
+    "periodicity": [],
+    "semantic_candidates": [],
+    "singularity_codes": [],
+    "subject_universe": {
+      "edge_occurrence_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003"
+      ],
+      "face_occurrence_ids": [],
+      "logical_region_ids": []
+    },
+    "support": [
+      {
+        "geometry_family_code": "bspline",
+        "label": "edge.bspline.free_topology",
+        "selection_code": "reason.free_topology",
+        "state": "UnsupportedTopology",
+        "subject_count": 3,
+        "subject_ids": [
+          "edge_occurrence.e0001",
+          "edge_occurrence.e0002",
+          "edge_occurrence.e0003"
+        ],
+        "subject_kind": "edge"
+      }
+    ],
+    "surface_variants": [],
+    "topology_occurrences": {
+      "assembly_products": 4,
+      "compounds": 1,
+      "compsolids": 0,
+      "edges": 3,
+      "faces": 0,
+      "instances": 3,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 6,
+      "wires": 0
+    },
+    "unique_topology": {
+      "assembly_products": 4,
+      "compounds": 1,
+      "compsolids": 0,
+      "edges": 3,
+      "faces": 0,
+      "instances": 3,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 5,
+      "wires": 0
+    },
+    "validation_findings": [
+      {
+        "code": "topology.valid",
+        "evidence": "Independent BRepCheck construction guard and processing-disabled STEP readback both report a valid imported B-rep.",
+        "expectation": "present",
+        "subject_kind": "model"
+      }
+    ]
+  },
+  "fixture_id": "wire.bspline.rationality_knot_matrix",
+  "instances": [
+    {
+      "component_label": "component.c0001",
+      "label": "instance.i0001",
+      "local_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "parent_label": null,
+      "target_definition": "definition.d0002",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    },
+    {
+      "component_label": "component.c0002",
+      "label": "instance.i0002",
+      "local_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "parent_label": null,
+      "target_definition": "definition.d0003",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    },
+    {
+      "component_label": "component.c0003",
+      "label": "instance.i0003",
+      "local_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "parent_label": null,
+      "target_definition": "definition.d0004",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    }
+  ],
+  "observations": [
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "reason.free_topology"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 3 edge subjects to UnsupportedTopology using reason.free_topology.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.edge.bspline.free_topology",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003"
+      ]
+    },
+    {
+      "concrete_type": "Geom_BSplineCurve",
+      "condition_codes": [
+        "bounded",
+        "rational",
+        "source_recipe_derived"
+      ],
+      "exact_evaluator_kind": "occt.exact_curve",
+      "family_code": "bspline",
+      "id": "observation.source_geometry.bspline.cubic.rational",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "curve",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bspline.degree",
+          "value": {
+            "unit": "count",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.knot_count",
+          "value": {
+            "unit": "count",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.knots",
+          "value": {
+            "unit": "parameter",
+            "value": [
+              0,
+              0.24,
+              0.71,
+              1
+            ],
+            "value_type": "number_list"
+          }
+        },
+        {
+          "name": "bspline.multiplicities",
+          "value": {
+            "unit": "count",
+            "value": [
+              4,
+              1,
+              1,
+              4
+            ],
+            "value_type": "integer_list"
+          }
+        },
+        {
+          "name": "bspline.periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.pole_count",
+          "value": {
+            "unit": "count",
+            "value": 6,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.rational",
+          "value": {
+            "value": true,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.weights",
+          "value": {
+            "unit": "unitless",
+            "value": [
+              1,
+              1,
+              0.48,
+              0.48,
+              1,
+              1
+            ],
+            "value_type": "number_list"
+          }
+        }
+      ],
+      "phase": "source",
+      "subject_id": "source.curve.bspline.cubic.rational",
+      "taxonomy": "Curve",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BSplineCurve",
+      "condition_codes": [
+        "bounded",
+        "nonrational",
+        "source_recipe_derived"
+      ],
+      "exact_evaluator_kind": "occt.exact_curve",
+      "family_code": "bspline",
+      "id": "observation.source_geometry.bspline.quadratic.nonrational",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "curve",
+          "closed": false,
+          "lower": 0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bspline.degree",
+          "value": {
+            "unit": "count",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.knot_count",
+          "value": {
+            "unit": "count",
+            "value": 3,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.knots",
+          "value": {
+            "unit": "parameter",
+            "value": [
+              0,
+              0.38,
+              1
+            ],
+            "value_type": "number_list"
+          }
+        },
+        {
+          "name": "bspline.multiplicities",
+          "value": {
+            "unit": "count",
+            "value": [
+              3,
+              1,
+              3
+            ],
+            "value_type": "integer_list"
+          }
+        },
+        {
+          "name": "bspline.periodic",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.pole_count",
+          "value": {
+            "unit": "count",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.weights",
+          "value": {
+            "unit": "count",
+            "value": [
+              1,
+              1,
+              1,
+              1
+            ],
+            "value_type": "integer_list"
+          }
+        }
+      ],
+      "phase": "source",
+      "subject_id": "source.curve.bspline.quadratic.nonrational",
+      "taxonomy": "Curve",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BSplineCurve",
+      "condition_codes": [
+        "basis_periodic",
+        "bounded",
+        "closed",
+        "nonrational",
+        "periodic",
+        "source_recipe_derived"
+      ],
+      "exact_evaluator_kind": "occt.exact_curve",
+      "family_code": "bspline",
+      "id": "observation.source_geometry.bspline.quadratic.periodic",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "curve",
+          "closed": true,
+          "lower": 0,
+          "period": 5,
+          "periodic": true,
+          "seam_parameters": [
+            0
+          ],
+          "unit": "unitless",
+          "upper": 5
+        }
+      ],
+      "parameters": [
+        {
+          "name": "bspline.degree",
+          "value": {
+            "unit": "count",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.knot_count",
+          "value": {
+            "unit": "count",
+            "value": 6,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.knots",
+          "value": {
+            "unit": "count",
+            "value": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "value_type": "integer_list"
+          }
+        },
+        {
+          "name": "bspline.multiplicities",
+          "value": {
+            "unit": "count",
+            "value": [
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ],
+            "value_type": "integer_list"
+          }
+        },
+        {
+          "name": "bspline.periodic",
+          "value": {
+            "value": true,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.pole_count",
+          "value": {
+            "unit": "count",
+            "value": 5,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "bspline.rational",
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "name": "bspline.weights",
+          "value": {
+            "unit": "count",
+            "value": [
+              1,
+              1,
+              1,
+              1,
+              1
+            ],
+            "value_type": "integer_list"
+          }
+        }
+      ],
+      "phase": "source",
+      "subject_id": "source.curve.bspline.quadratic.periodic",
+      "taxonomy": "Curve",
+      "wrappers": []
+    },
+    {
+      "evidence": "Independent BRepCheck construction guard and processing-disabled STEP readback both report a valid imported B-rep.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.p1",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "topology.valid.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 1,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "topology.valid",
+      "phase": "imported",
+      "subject_ids": [
+        "oracle.finding.p1"
+      ]
+    },
+    {
+      "axes": [
+        {
+          "axis": "curve",
+          "closed": false,
+          "period": null,
+          "periodic": false,
+          "principal_lower": 0,
+          "principal_upper": 1,
+          "seam_parameters": [],
+          "unit": "unitless"
+        }
+      ],
+      "id": "observation.source_periodicity.bspline.cubic.rational",
+      "kind": "periodicity_singularity",
+      "phase": "source",
+      "singularities": [],
+      "subject_id": "source.curve.bspline.cubic.rational"
+    },
+    {
+      "axes": [
+        {
+          "axis": "curve",
+          "closed": false,
+          "period": null,
+          "periodic": false,
+          "principal_lower": 0,
+          "principal_upper": 1,
+          "seam_parameters": [],
+          "unit": "unitless"
+        }
+      ],
+      "id": "observation.source_periodicity.bspline.quadratic.nonrational",
+      "kind": "periodicity_singularity",
+      "phase": "source",
+      "singularities": [],
+      "subject_id": "source.curve.bspline.quadratic.nonrational"
+    },
+    {
+      "axes": [
+        {
+          "axis": "curve",
+          "closed": true,
+          "period": 5,
+          "periodic": true,
+          "principal_lower": 0,
+          "principal_upper": 5,
+          "seam_parameters": [
+            0
+          ],
+          "unit": "unitless"
+        }
+      ],
+      "id": "observation.source_periodicity.bspline.quadratic.periodic",
+      "kind": "periodicity_singularity",
+      "phase": "source",
+      "singularities": [],
+      "subject_id": "source.curve.bspline.quadratic.periodic"
+    },
+    {
+      "accepted_normalization_codes": [
+        "step.free_wire_container_flattened"
+      ],
+      "changes": [],
+      "equivalence": "geometrically_equivalent",
+      "geometry_equivalent": true,
+      "id": "observation.normalization.model",
+      "imported_subject_ids": [
+        "imported.model"
+      ],
+      "kind": "source_import_normalization",
+      "outcome": "canonicalized",
+      "source_subject_ids": [
+        "source.model"
+      ],
+      "topology_equivalent": false
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.compound",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 1
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.compounds"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.compounds",
+      "tolerance_metres": 0,
+      "topology_kind": "compound",
+      "underlying_id": "topology.compounds",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.edge",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 3
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.edges"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.edges",
+      "tolerance_metres": 0,
+      "topology_kind": "edge",
+      "underlying_id": "topology.edges",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.vertex",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 5
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.vertices"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.vertices",
+      "tolerance_metres": 0,
+      "topology_kind": "vertex",
+      "underlying_id": "topology.vertices",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "baked_geometry_matrix_row_major": null,
+      "disposition": "retained_as_location",
+      "handedness": "right_handed",
+      "id": "observation.transform.instance.i0001",
+      "imported_location_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "instance_id": "instance.i0001",
+      "kind": "transform",
+      "linear_determinant": 1.0,
+      "parent_instance_id": null,
+      "source_affine_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "source_unit_scale_to_metres": 0.001,
+      "target_definition_id": "definition.d0002",
+      "transform_kind": "identity",
+      "world_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "baked_geometry_matrix_row_major": null,
+      "disposition": "retained_as_location",
+      "handedness": "right_handed",
+      "id": "observation.transform.instance.i0002",
+      "imported_location_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "instance_id": "instance.i0002",
+      "kind": "transform",
+      "linear_determinant": 1.0,
+      "parent_instance_id": null,
+      "source_affine_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "source_unit_scale_to_metres": 0.001,
+      "target_definition_id": "definition.d0003",
+      "transform_kind": "identity",
+      "world_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "baked_geometry_matrix_row_major": null,
+      "disposition": "retained_as_location",
+      "handedness": "right_handed",
+      "id": "observation.transform.instance.i0003",
+      "imported_location_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "instance_id": "instance.i0003",
+      "kind": "transform",
+      "linear_determinant": 1.0,
+      "parent_instance_id": null,
+      "source_affine_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "source_unit_scale_to_metres": 0.001,
+      "target_definition_id": "definition.d0004",
+      "transform_kind": "identity",
+      "world_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    }
+  ],
+  "oracle": {
+    "independent_from_production_classifier": true,
+    "method": "analytic_derivation",
+    "references": [
+      "final revision-6 processing-disabled STEP readback summary wire.bspline.rationality_knot_matrix.json used only for exact import binding",
+      "fixtures/generator/fixture_curve_recipes.cpp recipe wire.bspline.rationality_knot_matrix",
+      "independent parameter, incidence, and analytic derivation stated in the wire.bspline.rationality_knot_matrix oracle"
+    ],
+    "statement": "The source contains a non-rational quadratic B-spline with knots [0, 0.38, 1], a rational cubic with knots [0, 0.24, 0.71, 1] and inner weights 0.48, and a periodic quadratic five-pole curve with period 5. Mathematical periodicity is independently separated from topological closure."
+  },
+  "schema_version": "1.0.0",
+  "tolerances": {
+    "edges_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "faces_metres": {
+      "maximum": null,
+      "minimum": null
+    },
+    "vertices_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    }
+  },
+  "units": {
+    "coordinate_space": "right_handed_si_metres_radians",
+    "scale_to_metres": 0.001,
+    "source_unit": "millimetre"
+  }
+}

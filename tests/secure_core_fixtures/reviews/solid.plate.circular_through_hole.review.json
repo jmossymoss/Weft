@@ -1,0 +1,33 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "704e60929d745b9381c2cd2089329645a9f576a2222232965a3f0b6ee15d5a2e",
+  "finding_disposition": "Fresh-context topology, loop-UV, semantic, support-state, and coverage audits passed after all findings were resolved; no P0 or P1 finding remains for corpus revision 4.",
+  "fixture_id": "solid.plate.circular_through_hole",
+  "producer_id": "producer.m1_planar_trim_tranche",
+  "review_id": "review.solid_plate_circular_through_hole.revision_1",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.m1_planar_trim_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "claims.typed_binding",
+    "construction.parameters",
+    "geometry.conditions",
+    "geometry.taxonomy",
+    "provenance.xde_readback",
+    "semantics.feature_evidence",
+    "support.occurrence_identity",
+    "topology.boundary_loops",
+    "topology.counts",
+    "trims.inner_loops",
+    "units.tolerances"
+  ],
+  "source_binding": {
+    "artifact_sha256": "d38093b439437b5611b4731947e74cabcb42fb273a4f127e63ed462090f23775",
+    "construction_parameters_sha256": "c3d150119a30ab2414c192e184becaf9a2e887d85d3ca53d3d5eca1f43fa471e",
+    "generator_revision": 3,
+    "kind": "occt_procedural",
+    "source_contract_sha256": "c22d739975fb9a3e62be21dfbdd2f7361d32e438c80a8ee9564bc4694016d553",
+    "summary_sha256": "aa2098f9357f67ad8390055ac9e7a4cadbc161eb71e893cf47d0a388a0cf69e0"
+  }
+}

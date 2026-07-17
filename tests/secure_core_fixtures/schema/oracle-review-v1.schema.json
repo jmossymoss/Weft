@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.weftocct.example/v1/oracle-review-v1.schema.json",
+  "title": "CAD mesher independent fixture oracle review v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "canonicalization",
+    "review_id",
+    "fixture_id",
+    "reviewer_id",
+    "producer_id",
+    "reviewed_on",
+    "decision",
+    "expectation_sha256",
+    "source_binding",
+    "scope",
+    "finding_disposition"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "canonicalization": { "const": "sorted-pretty-json-v1" },
+    "review_id": { "$ref": "#/$defs/stable_code" },
+    "fixture_id": { "$ref": "#/$defs/stable_code" },
+    "reviewer_id": { "$ref": "#/$defs/stable_code" },
+    "producer_id": { "$ref": "#/$defs/stable_code" },
+    "reviewed_on": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+    "decision": { "const": "accepted" },
+    "expectation_sha256": { "$ref": "#/$defs/sha256" },
+    "source_binding": {
+      "oneOf": [
+        { "$ref": "#/$defs/procedural_binding" },
+        { "$ref": "#/$defs/artifact_binding" },
+        { "$ref": "#/$defs/native_binding" }
+      ]
+    },
+    "scope": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/stable_code" },
+      "uniqueItems": true,
+      "x-canonical-order": "ascending review scope code"
+    },
+    "finding_disposition": { "type": "string", "minLength": 1 }
+  },
+  "$defs": {
+    "stable_code": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*$"
+    },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "procedural_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "source_contract_sha256",
+        "artifact_sha256",
+        "summary_sha256",
+        "generator_revision",
+        "construction_parameters_sha256"
+      ],
+      "properties": {
+        "kind": { "const": "occt_procedural" },
+        "source_contract_sha256": { "$ref": "#/$defs/sha256" },
+        "artifact_sha256": { "$ref": "#/$defs/sha256" },
+        "summary_sha256": { "$ref": "#/$defs/sha256" },
+        "generator_revision": { "type": "integer", "minimum": 1 },
+        "construction_parameters_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "artifact_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "source_contract_sha256", "artifact_sha256"],
+      "properties": {
+        "kind": { "enum": ["audited_external", "derived_corruption"] },
+        "source_contract_sha256": { "$ref": "#/$defs/sha256" },
+        "artifact_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "native_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "source_contract_sha256",
+        "harness_source_sha256",
+        "test_id",
+        "fault_code"
+      ],
+      "properties": {
+        "kind": { "const": "native_fault_injection" },
+        "source_contract_sha256": { "$ref": "#/$defs/sha256" },
+        "harness_source_sha256": { "$ref": "#/$defs/sha256" },
+        "test_id": { "$ref": "#/$defs/stable_code" },
+        "fault_code": { "$ref": "#/$defs/stable_code" }
+      }
+    }
+  }
+}

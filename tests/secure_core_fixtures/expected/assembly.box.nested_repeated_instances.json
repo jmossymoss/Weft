@@ -1,0 +1,4487 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "expected": {
+    "boundary_loops": [
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0001",
+        "id": "boundary_loop.l0001",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 5,
+          "u_min": 0,
+          "v_max": 6,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0002",
+        "id": "boundary_loop.l0002",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 5,
+          "u_min": 0,
+          "v_max": 6,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0003",
+        "id": "boundary_loop.l0003",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 5,
+          "u_min": 0,
+          "v_max": 6,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0004",
+        "id": "boundary_loop.l0004",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 5,
+          "u_min": 0,
+          "v_max": 6,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0005",
+        "id": "boundary_loop.l0005",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 5,
+          "u_min": 0,
+          "v_max": 6,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0006",
+        "id": "boundary_loop.l0006",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 5,
+          "u_min": 0,
+          "v_max": 6,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0007",
+        "id": "boundary_loop.l0007",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7,
+          "u_min": 0,
+          "v_max": 0,
+          "v_min": -6
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0008",
+        "id": "boundary_loop.l0008",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7,
+          "u_min": 0,
+          "v_max": 0,
+          "v_min": -6
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0009",
+        "id": "boundary_loop.l0009",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7,
+          "u_min": 0,
+          "v_max": 0,
+          "v_min": -6
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0010",
+        "id": "boundary_loop.l0010",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7,
+          "u_min": 0,
+          "v_max": 0,
+          "v_min": -6
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0011",
+        "id": "boundary_loop.l0011",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7,
+          "u_min": 0,
+          "v_max": 0,
+          "v_min": -6
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0012",
+        "id": "boundary_loop.l0012",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7,
+          "u_min": 0,
+          "v_max": 0,
+          "v_min": -6
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0013",
+        "id": "boundary_loop.l0013",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7,
+          "u_min": 0,
+          "v_max": 5,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0014",
+        "id": "boundary_loop.l0014",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7,
+          "u_min": 0,
+          "v_max": 5,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0015",
+        "id": "boundary_loop.l0015",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7,
+          "u_min": 0,
+          "v_max": 5,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0016",
+        "id": "boundary_loop.l0016",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7,
+          "u_min": 0,
+          "v_max": 5,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0017",
+        "id": "boundary_loop.l0017",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7,
+          "u_min": 0,
+          "v_max": 5,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0018",
+        "id": "boundary_loop.l0018",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7,
+          "u_min": 0,
+          "v_max": 5,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0019",
+        "id": "boundary_loop.l0019",
+        "orientation": "REVERSED",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 5,
+          "u_min": 0,
+          "v_max": 6,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0020",
+        "id": "boundary_loop.l0020",
+        "orientation": "REVERSED",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 5,
+          "u_min": 0,
+          "v_max": 6,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0021",
+        "id": "boundary_loop.l0021",
+        "orientation": "REVERSED",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 5,
+          "u_min": 0,
+          "v_max": 6,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0022",
+        "id": "boundary_loop.l0022",
+        "orientation": "REVERSED",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 5,
+          "u_min": 0,
+          "v_max": 6,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0023",
+        "id": "boundary_loop.l0023",
+        "orientation": "REVERSED",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 5,
+          "u_min": 0,
+          "v_max": 6,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0024",
+        "id": "boundary_loop.l0024",
+        "orientation": "REVERSED",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 5,
+          "u_min": 0,
+          "v_max": 6,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0025",
+        "id": "boundary_loop.l0025",
+        "orientation": "REVERSED",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7,
+          "u_min": 0,
+          "v_max": 0,
+          "v_min": -6
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0026",
+        "id": "boundary_loop.l0026",
+        "orientation": "REVERSED",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7,
+          "u_min": 0,
+          "v_max": 0,
+          "v_min": -6
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0027",
+        "id": "boundary_loop.l0027",
+        "orientation": "REVERSED",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7,
+          "u_min": 0,
+          "v_max": 0,
+          "v_min": -6
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0028",
+        "id": "boundary_loop.l0028",
+        "orientation": "REVERSED",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7,
+          "u_min": 0,
+          "v_max": 0,
+          "v_min": -6
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0029",
+        "id": "boundary_loop.l0029",
+        "orientation": "REVERSED",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7,
+          "u_min": 0,
+          "v_max": 0,
+          "v_min": -6
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0030",
+        "id": "boundary_loop.l0030",
+        "orientation": "REVERSED",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7,
+          "u_min": 0,
+          "v_max": 0,
+          "v_min": -6
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0031",
+        "id": "boundary_loop.l0031",
+        "orientation": "REVERSED",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7,
+          "u_min": 0,
+          "v_max": 5,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0032",
+        "id": "boundary_loop.l0032",
+        "orientation": "REVERSED",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7,
+          "u_min": 0,
+          "v_max": 5,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0033",
+        "id": "boundary_loop.l0033",
+        "orientation": "REVERSED",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7,
+          "u_min": 0,
+          "v_max": 5,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0034",
+        "id": "boundary_loop.l0034",
+        "orientation": "REVERSED",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7,
+          "u_min": 0,
+          "v_max": 5,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0035",
+        "id": "boundary_loop.l0035",
+        "orientation": "REVERSED",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7,
+          "u_min": 0,
+          "v_max": 5,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0036",
+        "id": "boundary_loop.l0036",
+        "orientation": "REVERSED",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7,
+          "u_min": 0,
+          "v_max": 5,
+          "v_min": 0
+        }
+      }
+    ],
+    "brep_valid": true,
+    "claims": [
+      {
+        "id": "claim.crv_012.located_occurrences",
+        "obligation_id": "CRV-012",
+        "predicate_codes": [
+          "predicate.curve.located_occurrences"
+        ],
+        "statement": "The six expanded box occurrences retain exact line bases while their accumulated XDE instance paths place those bases in distinct world locations.",
+        "subject_refs": [
+          {
+            "id": "line.located_rectilinear_edges",
+            "kind": "curve_variant"
+          },
+          {
+            "id": "instance.i0002",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0003",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0004",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0006",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0007",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0008",
+            "kind": "instance"
+          },
+          {
+            "id": "observation.geometry.line.located_rectilinear_edges",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0002",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0003",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0004",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0006",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0007",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0008",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.srf_014.located_occurrences",
+        "obligation_id": "SRF-014",
+        "predicate_codes": [
+          "predicate.surface.located_occurrences"
+        ],
+        "statement": "The six expanded box occurrences retain exact plane bases while their accumulated XDE instance paths place those bases in distinct world locations.",
+        "subject_refs": [
+          {
+            "id": "instance.i0002",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0003",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0004",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0006",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0007",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0008",
+            "kind": "instance"
+          },
+          {
+            "id": "observation.geometry.plane.located_rectangular_faces",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0002",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0003",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0004",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0006",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0007",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0008",
+            "kind": "observation"
+          },
+          {
+            "id": "plane.located_rectangular_faces",
+            "kind": "surface_variant"
+          }
+        ]
+      },
+      {
+        "id": "claim.sup_009.assignment_total",
+        "obligation_id": "SUP-009",
+        "predicate_codes": [
+          "predicate.support.assignment_total"
+        ],
+        "statement": "Every imported edge, face, and logical-region occurrence is assigned exactly once to its analytic line or plane strategy.",
+        "subject_refs": [
+          {
+            "id": "observation.consumer.edge.lines",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.face.planes",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.region.planes",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.compound",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.edge",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.face",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.shell",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.solid",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.vertex",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.wire",
+            "kind": "observation"
+          },
+          {
+            "id": "subject_universe.edge_occurrences",
+            "kind": "subject_universe"
+          },
+          {
+            "id": "subject_universe.face_occurrences",
+            "kind": "subject_universe"
+          },
+          {
+            "id": "subject_universe.logical_regions",
+            "kind": "subject_universe"
+          },
+          {
+            "id": "edge.lines",
+            "kind": "support"
+          },
+          {
+            "id": "face.planes",
+            "kind": "support"
+          },
+          {
+            "id": "region.planes",
+            "kind": "support"
+          }
+        ]
+      },
+      {
+        "id": "claim.top_001.product_children",
+        "obligation_id": "TOP-001",
+        "predicate_codes": [
+          "predicate.topology.product_children"
+        ],
+        "statement": "One root product contains two subassembly occurrences; each expands to three box children, and every product-child path is recorded.",
+        "subject_refs": [
+          {
+            "id": "instance.i0001",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0002",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0003",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0004",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0005",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0006",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0007",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0008",
+            "kind": "instance"
+          },
+          {
+            "id": "observation.normalization.model",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.compound",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0001",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0002",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0003",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0004",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0005",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0006",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0007",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0008",
+            "kind": "observation"
+          },
+          {
+            "id": "topology.assembly_products",
+            "kind": "topology"
+          },
+          {
+            "id": "topology.compounds",
+            "kind": "topology"
+          },
+          {
+            "id": "topology.instances",
+            "kind": "topology"
+          }
+        ]
+      },
+      {
+        "id": "claim.top_011.nested_rigid_instances",
+        "obligation_id": "TOP-011",
+        "predicate_codes": [
+          "predicate.topology.nested_rigid_instances"
+        ],
+        "statement": "Two root-level rigid placements accumulate with three reused subassembly components to produce eight deterministic paths and six solid occurrences.",
+        "subject_refs": [
+          {
+            "id": "instance.i0001",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0002",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0003",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0004",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0005",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0006",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0007",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0008",
+            "kind": "instance"
+          },
+          {
+            "id": "observation.topology.compound",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.edge",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.face",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.shell",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.solid",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.vertex",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.wire",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0001",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0002",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0003",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0004",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0005",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0006",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0007",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.instance.i0008",
+            "kind": "observation"
+          },
+          {
+            "id": "topology.instances",
+            "kind": "topology"
+          }
+        ]
+      },
+      {
+        "id": "claim.top_012.assembly",
+        "obligation_id": "TOP-012",
+        "predicate_codes": [
+          "predicate.model.assembly"
+        ],
+        "statement": "The XDE document is an assembly with one root, one nested assembly definition, and one reused simple-shape definition.",
+        "subject_refs": [
+          {
+            "id": "instance.i0001",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0002",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0003",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0004",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0005",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0006",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0007",
+            "kind": "instance"
+          },
+          {
+            "id": "instance.i0008",
+            "kind": "instance"
+          },
+          {
+            "id": "assembly",
+            "kind": "model_class"
+          },
+          {
+            "id": "observation.normalization.model",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.compound",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.edge",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.face",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.shell",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.solid",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.vertex",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.wire",
+            "kind": "observation"
+          }
+        ]
+      }
+    ],
+    "curve_variants": [
+      {
+        "concrete_type": "Geom_Line",
+        "condition_codes": [
+          "bounded",
+          "located_occurrence",
+          "mathematically_unbounded_basis",
+          "trimmed_by_edge_range"
+        ],
+        "count": 12,
+        "family_code": "line",
+        "label": "line.located_rectilinear_edges",
+        "wrapper_stack": []
+      }
+    ],
+    "import_outcome": "success",
+    "model_classes": [
+      "assembly",
+      "closed_manifold",
+      "outer_shell_only",
+      "repeated_instances"
+    ],
+    "model_topology": {
+      "closed_shells": 1,
+      "coincident_solid_signature_pairs": 0,
+      "free_edges": 0,
+      "free_wires": 0,
+      "inner_shells": 0,
+      "isolated_vertices": 0,
+      "maximum_faces_per_edge": 2,
+      "nonmanifold_vertices": 0,
+      "open_shells": 0,
+      "outer_shells": 1,
+      "shared_faces_between_solids": 0,
+      "standalone_shells": 0
+    },
+    "orientation_states": [
+      "FORWARD",
+      "REVERSED"
+    ],
+    "periodicity": [
+      {
+        "label": "plane.located_rectangular_faces",
+        "u_closed": false,
+        "u_periodic": false,
+        "v_closed": false,
+        "v_periodic": false
+      }
+    ],
+    "semantic_candidates": [],
+    "singularity_codes": [],
+    "subject_universe": {
+      "edge_occurrence_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004",
+        "edge_occurrence.e0005",
+        "edge_occurrence.e0006",
+        "edge_occurrence.e0007",
+        "edge_occurrence.e0008",
+        "edge_occurrence.e0009",
+        "edge_occurrence.e0010",
+        "edge_occurrence.e0011",
+        "edge_occurrence.e0012",
+        "edge_occurrence.e0013",
+        "edge_occurrence.e0014",
+        "edge_occurrence.e0015",
+        "edge_occurrence.e0016",
+        "edge_occurrence.e0017",
+        "edge_occurrence.e0018",
+        "edge_occurrence.e0019",
+        "edge_occurrence.e0020",
+        "edge_occurrence.e0021",
+        "edge_occurrence.e0022",
+        "edge_occurrence.e0023",
+        "edge_occurrence.e0024",
+        "edge_occurrence.e0025",
+        "edge_occurrence.e0026",
+        "edge_occurrence.e0027",
+        "edge_occurrence.e0028",
+        "edge_occurrence.e0029",
+        "edge_occurrence.e0030",
+        "edge_occurrence.e0031",
+        "edge_occurrence.e0032",
+        "edge_occurrence.e0033",
+        "edge_occurrence.e0034",
+        "edge_occurrence.e0035",
+        "edge_occurrence.e0036",
+        "edge_occurrence.e0037",
+        "edge_occurrence.e0038",
+        "edge_occurrence.e0039",
+        "edge_occurrence.e0040",
+        "edge_occurrence.e0041",
+        "edge_occurrence.e0042",
+        "edge_occurrence.e0043",
+        "edge_occurrence.e0044",
+        "edge_occurrence.e0045",
+        "edge_occurrence.e0046",
+        "edge_occurrence.e0047",
+        "edge_occurrence.e0048",
+        "edge_occurrence.e0049",
+        "edge_occurrence.e0050",
+        "edge_occurrence.e0051",
+        "edge_occurrence.e0052",
+        "edge_occurrence.e0053",
+        "edge_occurrence.e0054",
+        "edge_occurrence.e0055",
+        "edge_occurrence.e0056",
+        "edge_occurrence.e0057",
+        "edge_occurrence.e0058",
+        "edge_occurrence.e0059",
+        "edge_occurrence.e0060",
+        "edge_occurrence.e0061",
+        "edge_occurrence.e0062",
+        "edge_occurrence.e0063",
+        "edge_occurrence.e0064",
+        "edge_occurrence.e0065",
+        "edge_occurrence.e0066",
+        "edge_occurrence.e0067",
+        "edge_occurrence.e0068",
+        "edge_occurrence.e0069",
+        "edge_occurrence.e0070",
+        "edge_occurrence.e0071",
+        "edge_occurrence.e0072",
+        "edge_occurrence.e0073",
+        "edge_occurrence.e0074",
+        "edge_occurrence.e0075",
+        "edge_occurrence.e0076",
+        "edge_occurrence.e0077",
+        "edge_occurrence.e0078",
+        "edge_occurrence.e0079",
+        "edge_occurrence.e0080",
+        "edge_occurrence.e0081",
+        "edge_occurrence.e0082",
+        "edge_occurrence.e0083",
+        "edge_occurrence.e0084",
+        "edge_occurrence.e0085",
+        "edge_occurrence.e0086",
+        "edge_occurrence.e0087",
+        "edge_occurrence.e0088",
+        "edge_occurrence.e0089",
+        "edge_occurrence.e0090",
+        "edge_occurrence.e0091",
+        "edge_occurrence.e0092",
+        "edge_occurrence.e0093",
+        "edge_occurrence.e0094",
+        "edge_occurrence.e0095",
+        "edge_occurrence.e0096",
+        "edge_occurrence.e0097",
+        "edge_occurrence.e0098",
+        "edge_occurrence.e0099",
+        "edge_occurrence.e0100",
+        "edge_occurrence.e0101",
+        "edge_occurrence.e0102",
+        "edge_occurrence.e0103",
+        "edge_occurrence.e0104",
+        "edge_occurrence.e0105",
+        "edge_occurrence.e0106",
+        "edge_occurrence.e0107",
+        "edge_occurrence.e0108",
+        "edge_occurrence.e0109",
+        "edge_occurrence.e0110",
+        "edge_occurrence.e0111",
+        "edge_occurrence.e0112",
+        "edge_occurrence.e0113",
+        "edge_occurrence.e0114",
+        "edge_occurrence.e0115",
+        "edge_occurrence.e0116",
+        "edge_occurrence.e0117",
+        "edge_occurrence.e0118",
+        "edge_occurrence.e0119",
+        "edge_occurrence.e0120",
+        "edge_occurrence.e0121",
+        "edge_occurrence.e0122",
+        "edge_occurrence.e0123",
+        "edge_occurrence.e0124",
+        "edge_occurrence.e0125",
+        "edge_occurrence.e0126",
+        "edge_occurrence.e0127",
+        "edge_occurrence.e0128",
+        "edge_occurrence.e0129",
+        "edge_occurrence.e0130",
+        "edge_occurrence.e0131",
+        "edge_occurrence.e0132",
+        "edge_occurrence.e0133",
+        "edge_occurrence.e0134",
+        "edge_occurrence.e0135",
+        "edge_occurrence.e0136",
+        "edge_occurrence.e0137",
+        "edge_occurrence.e0138",
+        "edge_occurrence.e0139",
+        "edge_occurrence.e0140",
+        "edge_occurrence.e0141",
+        "edge_occurrence.e0142",
+        "edge_occurrence.e0143",
+        "edge_occurrence.e0144"
+      ],
+      "face_occurrence_ids": [
+        "face_occurrence.f0001",
+        "face_occurrence.f0002",
+        "face_occurrence.f0003",
+        "face_occurrence.f0004",
+        "face_occurrence.f0005",
+        "face_occurrence.f0006",
+        "face_occurrence.f0007",
+        "face_occurrence.f0008",
+        "face_occurrence.f0009",
+        "face_occurrence.f0010",
+        "face_occurrence.f0011",
+        "face_occurrence.f0012",
+        "face_occurrence.f0013",
+        "face_occurrence.f0014",
+        "face_occurrence.f0015",
+        "face_occurrence.f0016",
+        "face_occurrence.f0017",
+        "face_occurrence.f0018",
+        "face_occurrence.f0019",
+        "face_occurrence.f0020",
+        "face_occurrence.f0021",
+        "face_occurrence.f0022",
+        "face_occurrence.f0023",
+        "face_occurrence.f0024",
+        "face_occurrence.f0025",
+        "face_occurrence.f0026",
+        "face_occurrence.f0027",
+        "face_occurrence.f0028",
+        "face_occurrence.f0029",
+        "face_occurrence.f0030",
+        "face_occurrence.f0031",
+        "face_occurrence.f0032",
+        "face_occurrence.f0033",
+        "face_occurrence.f0034",
+        "face_occurrence.f0035",
+        "face_occurrence.f0036"
+      ],
+      "logical_region_ids": [
+        "logical_region.r0001",
+        "logical_region.r0002",
+        "logical_region.r0003",
+        "logical_region.r0004",
+        "logical_region.r0005",
+        "logical_region.r0006",
+        "logical_region.r0007",
+        "logical_region.r0008",
+        "logical_region.r0009",
+        "logical_region.r0010",
+        "logical_region.r0011",
+        "logical_region.r0012",
+        "logical_region.r0013",
+        "logical_region.r0014",
+        "logical_region.r0015",
+        "logical_region.r0016",
+        "logical_region.r0017",
+        "logical_region.r0018",
+        "logical_region.r0019",
+        "logical_region.r0020",
+        "logical_region.r0021",
+        "logical_region.r0022",
+        "logical_region.r0023",
+        "logical_region.r0024",
+        "logical_region.r0025",
+        "logical_region.r0026",
+        "logical_region.r0027",
+        "logical_region.r0028",
+        "logical_region.r0029",
+        "logical_region.r0030",
+        "logical_region.r0031",
+        "logical_region.r0032",
+        "logical_region.r0033",
+        "logical_region.r0034",
+        "logical_region.r0035",
+        "logical_region.r0036"
+      ]
+    },
+    "support": [
+      {
+        "geometry_family_code": "line",
+        "label": "edge.lines",
+        "selection_code": "strategy.curve.exact_line",
+        "state": "SupportedAnalyticTemplate",
+        "subject_count": 144,
+        "subject_ids": [
+          "edge_occurrence.e0001",
+          "edge_occurrence.e0002",
+          "edge_occurrence.e0003",
+          "edge_occurrence.e0004",
+          "edge_occurrence.e0005",
+          "edge_occurrence.e0006",
+          "edge_occurrence.e0007",
+          "edge_occurrence.e0008",
+          "edge_occurrence.e0009",
+          "edge_occurrence.e0010",
+          "edge_occurrence.e0011",
+          "edge_occurrence.e0012",
+          "edge_occurrence.e0013",
+          "edge_occurrence.e0014",
+          "edge_occurrence.e0015",
+          "edge_occurrence.e0016",
+          "edge_occurrence.e0017",
+          "edge_occurrence.e0018",
+          "edge_occurrence.e0019",
+          "edge_occurrence.e0020",
+          "edge_occurrence.e0021",
+          "edge_occurrence.e0022",
+          "edge_occurrence.e0023",
+          "edge_occurrence.e0024",
+          "edge_occurrence.e0025",
+          "edge_occurrence.e0026",
+          "edge_occurrence.e0027",
+          "edge_occurrence.e0028",
+          "edge_occurrence.e0029",
+          "edge_occurrence.e0030",
+          "edge_occurrence.e0031",
+          "edge_occurrence.e0032",
+          "edge_occurrence.e0033",
+          "edge_occurrence.e0034",
+          "edge_occurrence.e0035",
+          "edge_occurrence.e0036",
+          "edge_occurrence.e0037",
+          "edge_occurrence.e0038",
+          "edge_occurrence.e0039",
+          "edge_occurrence.e0040",
+          "edge_occurrence.e0041",
+          "edge_occurrence.e0042",
+          "edge_occurrence.e0043",
+          "edge_occurrence.e0044",
+          "edge_occurrence.e0045",
+          "edge_occurrence.e0046",
+          "edge_occurrence.e0047",
+          "edge_occurrence.e0048",
+          "edge_occurrence.e0049",
+          "edge_occurrence.e0050",
+          "edge_occurrence.e0051",
+          "edge_occurrence.e0052",
+          "edge_occurrence.e0053",
+          "edge_occurrence.e0054",
+          "edge_occurrence.e0055",
+          "edge_occurrence.e0056",
+          "edge_occurrence.e0057",
+          "edge_occurrence.e0058",
+          "edge_occurrence.e0059",
+          "edge_occurrence.e0060",
+          "edge_occurrence.e0061",
+          "edge_occurrence.e0062",
+          "edge_occurrence.e0063",
+          "edge_occurrence.e0064",
+          "edge_occurrence.e0065",
+          "edge_occurrence.e0066",
+          "edge_occurrence.e0067",
+          "edge_occurrence.e0068",
+          "edge_occurrence.e0069",
+          "edge_occurrence.e0070",
+          "edge_occurrence.e0071",
+          "edge_occurrence.e0072",
+          "edge_occurrence.e0073",
+          "edge_occurrence.e0074",
+          "edge_occurrence.e0075",
+          "edge_occurrence.e0076",
+          "edge_occurrence.e0077",
+          "edge_occurrence.e0078",
+          "edge_occurrence.e0079",
+          "edge_occurrence.e0080",
+          "edge_occurrence.e0081",
+          "edge_occurrence.e0082",
+          "edge_occurrence.e0083",
+          "edge_occurrence.e0084",
+          "edge_occurrence.e0085",
+          "edge_occurrence.e0086",
+          "edge_occurrence.e0087",
+          "edge_occurrence.e0088",
+          "edge_occurrence.e0089",
+          "edge_occurrence.e0090",
+          "edge_occurrence.e0091",
+          "edge_occurrence.e0092",
+          "edge_occurrence.e0093",
+          "edge_occurrence.e0094",
+          "edge_occurrence.e0095",
+          "edge_occurrence.e0096",
+          "edge_occurrence.e0097",
+          "edge_occurrence.e0098",
+          "edge_occurrence.e0099",
+          "edge_occurrence.e0100",
+          "edge_occurrence.e0101",
+          "edge_occurrence.e0102",
+          "edge_occurrence.e0103",
+          "edge_occurrence.e0104",
+          "edge_occurrence.e0105",
+          "edge_occurrence.e0106",
+          "edge_occurrence.e0107",
+          "edge_occurrence.e0108",
+          "edge_occurrence.e0109",
+          "edge_occurrence.e0110",
+          "edge_occurrence.e0111",
+          "edge_occurrence.e0112",
+          "edge_occurrence.e0113",
+          "edge_occurrence.e0114",
+          "edge_occurrence.e0115",
+          "edge_occurrence.e0116",
+          "edge_occurrence.e0117",
+          "edge_occurrence.e0118",
+          "edge_occurrence.e0119",
+          "edge_occurrence.e0120",
+          "edge_occurrence.e0121",
+          "edge_occurrence.e0122",
+          "edge_occurrence.e0123",
+          "edge_occurrence.e0124",
+          "edge_occurrence.e0125",
+          "edge_occurrence.e0126",
+          "edge_occurrence.e0127",
+          "edge_occurrence.e0128",
+          "edge_occurrence.e0129",
+          "edge_occurrence.e0130",
+          "edge_occurrence.e0131",
+          "edge_occurrence.e0132",
+          "edge_occurrence.e0133",
+          "edge_occurrence.e0134",
+          "edge_occurrence.e0135",
+          "edge_occurrence.e0136",
+          "edge_occurrence.e0137",
+          "edge_occurrence.e0138",
+          "edge_occurrence.e0139",
+          "edge_occurrence.e0140",
+          "edge_occurrence.e0141",
+          "edge_occurrence.e0142",
+          "edge_occurrence.e0143",
+          "edge_occurrence.e0144"
+        ],
+        "subject_kind": "edge"
+      },
+      {
+        "geometry_family_code": "plane",
+        "label": "face.planes",
+        "selection_code": "strategy.surface.planar",
+        "state": "SupportedAnalyticTemplate",
+        "subject_count": 36,
+        "subject_ids": [
+          "face_occurrence.f0001",
+          "face_occurrence.f0002",
+          "face_occurrence.f0003",
+          "face_occurrence.f0004",
+          "face_occurrence.f0005",
+          "face_occurrence.f0006",
+          "face_occurrence.f0007",
+          "face_occurrence.f0008",
+          "face_occurrence.f0009",
+          "face_occurrence.f0010",
+          "face_occurrence.f0011",
+          "face_occurrence.f0012",
+          "face_occurrence.f0013",
+          "face_occurrence.f0014",
+          "face_occurrence.f0015",
+          "face_occurrence.f0016",
+          "face_occurrence.f0017",
+          "face_occurrence.f0018",
+          "face_occurrence.f0019",
+          "face_occurrence.f0020",
+          "face_occurrence.f0021",
+          "face_occurrence.f0022",
+          "face_occurrence.f0023",
+          "face_occurrence.f0024",
+          "face_occurrence.f0025",
+          "face_occurrence.f0026",
+          "face_occurrence.f0027",
+          "face_occurrence.f0028",
+          "face_occurrence.f0029",
+          "face_occurrence.f0030",
+          "face_occurrence.f0031",
+          "face_occurrence.f0032",
+          "face_occurrence.f0033",
+          "face_occurrence.f0034",
+          "face_occurrence.f0035",
+          "face_occurrence.f0036"
+        ],
+        "subject_kind": "face"
+      },
+      {
+        "geometry_family_code": "plane",
+        "label": "region.planes",
+        "selection_code": "strategy.surface.planar",
+        "state": "SupportedAnalyticTemplate",
+        "subject_count": 36,
+        "subject_ids": [
+          "logical_region.r0001",
+          "logical_region.r0002",
+          "logical_region.r0003",
+          "logical_region.r0004",
+          "logical_region.r0005",
+          "logical_region.r0006",
+          "logical_region.r0007",
+          "logical_region.r0008",
+          "logical_region.r0009",
+          "logical_region.r0010",
+          "logical_region.r0011",
+          "logical_region.r0012",
+          "logical_region.r0013",
+          "logical_region.r0014",
+          "logical_region.r0015",
+          "logical_region.r0016",
+          "logical_region.r0017",
+          "logical_region.r0018",
+          "logical_region.r0019",
+          "logical_region.r0020",
+          "logical_region.r0021",
+          "logical_region.r0022",
+          "logical_region.r0023",
+          "logical_region.r0024",
+          "logical_region.r0025",
+          "logical_region.r0026",
+          "logical_region.r0027",
+          "logical_region.r0028",
+          "logical_region.r0029",
+          "logical_region.r0030",
+          "logical_region.r0031",
+          "logical_region.r0032",
+          "logical_region.r0033",
+          "logical_region.r0034",
+          "logical_region.r0035",
+          "logical_region.r0036"
+        ],
+        "subject_kind": "logical_region"
+      }
+    ],
+    "surface_variants": [
+      {
+        "concrete_type": "Geom_Plane",
+        "condition_codes": [
+          "bounded",
+          "located_occurrence",
+          "outer_loop",
+          "rectangular_trim"
+        ],
+        "count": 6,
+        "family_code": "plane",
+        "label": "plane.located_rectangular_faces",
+        "trim_domain_class": "convex_simple_region",
+        "wrapper_stack": []
+      }
+    ],
+    "topology_occurrences": {
+      "assembly_products": 9,
+      "compounds": 1,
+      "compsolids": 0,
+      "edges": 144,
+      "faces": 36,
+      "instances": 8,
+      "shells": 6,
+      "solids": 6,
+      "vertices": 288,
+      "wires": 36
+    },
+    "unique_topology": {
+      "assembly_products": 3,
+      "compounds": 1,
+      "compsolids": 0,
+      "edges": 12,
+      "faces": 6,
+      "instances": 5,
+      "shells": 1,
+      "solids": 1,
+      "vertices": 8,
+      "wires": 6
+    },
+    "validation_findings": [
+      {
+        "code": "edge.degenerated",
+        "evidence": "The reused cuboid has twelve positive-length straight edges.",
+        "expectation": "absent",
+        "subject_kind": "edge"
+      },
+      {
+        "code": "edge.missing_3d_curve",
+        "evidence": "Each unique cuboid edge has an exact three-dimensional line representation.",
+        "expectation": "absent",
+        "subject_kind": "edge"
+      },
+      {
+        "code": "tolerance.uniform_kernel_precision",
+        "evidence": "All unique vertices, edges, and faces retain the same 1e-7 millimetre imported tolerance.",
+        "expectation": "present",
+        "subject_kind": "model"
+      },
+      {
+        "code": "topology.closed_shell",
+        "evidence": "The reused box definition has one closed outer shell whose twelve edges each have two face uses.",
+        "expectation": "present",
+        "subject_kind": "shell"
+      },
+      {
+        "code": "topology.repeated_instances",
+        "evidence": "Five component labels expand into eight paths, including repeated identity children and two occurrences of the nested assembly.",
+        "expectation": "present",
+        "subject_kind": "assembly"
+      },
+      {
+        "code": "topology.valid",
+        "evidence": "The shared box definition is valid and every expanded rigid occurrence preserves that topology.",
+        "expectation": "present",
+        "subject_kind": "model"
+      }
+    ]
+  },
+  "fixture_id": "assembly.box.nested_repeated_instances",
+  "instances": [
+    {
+      "component_label": "component.c0001",
+      "label": "instance.i0001",
+      "local_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        10,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        10,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "parent_label": null,
+      "target_definition": "definition.d0002",
+      "target_kind": "assembly",
+      "transform_kind": "rigid"
+    },
+    {
+      "component_label": "component.c0003",
+      "label": "instance.i0002",
+      "local_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        10,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "parent_label": "instance.i0001",
+      "target_definition": "definition.d0003",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    },
+    {
+      "component_label": "component.c0004",
+      "label": "instance.i0003",
+      "local_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        10,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "parent_label": "instance.i0001",
+      "target_definition": "definition.d0003",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    },
+    {
+      "component_label": "component.c0005",
+      "label": "instance.i0004",
+      "local_matrix_row_major": [
+        1,
+        0,
+        0,
+        12,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "matrix_row_major": [
+        1,
+        0,
+        0,
+        12,
+        0,
+        1,
+        0,
+        10,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "parent_label": "instance.i0001",
+      "target_definition": "definition.d0003",
+      "target_kind": "simple_shape",
+      "transform_kind": "rigid"
+    },
+    {
+      "component_label": "component.c0002",
+      "label": "instance.i0005",
+      "local_matrix_row_major": [
+        0,
+        -1,
+        0,
+        30,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "matrix_row_major": [
+        0,
+        -1,
+        0,
+        30,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "parent_label": null,
+      "target_definition": "definition.d0002",
+      "target_kind": "assembly",
+      "transform_kind": "rigid"
+    },
+    {
+      "component_label": "component.c0003",
+      "label": "instance.i0006",
+      "local_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "matrix_row_major": [
+        0,
+        -1,
+        0,
+        30,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "parent_label": "instance.i0005",
+      "target_definition": "definition.d0003",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    },
+    {
+      "component_label": "component.c0004",
+      "label": "instance.i0007",
+      "local_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "matrix_row_major": [
+        0,
+        -1,
+        0,
+        30,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "parent_label": "instance.i0005",
+      "target_definition": "definition.d0003",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    },
+    {
+      "component_label": "component.c0005",
+      "label": "instance.i0008",
+      "local_matrix_row_major": [
+        1,
+        0,
+        0,
+        12,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "matrix_row_major": [
+        0,
+        -1,
+        0,
+        30,
+        1,
+        0,
+        0,
+        12,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "parent_label": "instance.i0005",
+      "target_definition": "definition.d0003",
+      "target_kind": "simple_shape",
+      "transform_kind": "rigid"
+    }
+  ],
+  "observations": [
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "strategy.curve.exact_line"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 144 edge subjects to SupportedAnalyticTemplate using strategy.curve.exact_line.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.edge.lines",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004",
+        "edge_occurrence.e0005",
+        "edge_occurrence.e0006",
+        "edge_occurrence.e0007",
+        "edge_occurrence.e0008",
+        "edge_occurrence.e0009",
+        "edge_occurrence.e0010",
+        "edge_occurrence.e0011",
+        "edge_occurrence.e0012",
+        "edge_occurrence.e0013",
+        "edge_occurrence.e0014",
+        "edge_occurrence.e0015",
+        "edge_occurrence.e0016",
+        "edge_occurrence.e0017",
+        "edge_occurrence.e0018",
+        "edge_occurrence.e0019",
+        "edge_occurrence.e0020",
+        "edge_occurrence.e0021",
+        "edge_occurrence.e0022",
+        "edge_occurrence.e0023",
+        "edge_occurrence.e0024",
+        "edge_occurrence.e0025",
+        "edge_occurrence.e0026",
+        "edge_occurrence.e0027",
+        "edge_occurrence.e0028",
+        "edge_occurrence.e0029",
+        "edge_occurrence.e0030",
+        "edge_occurrence.e0031",
+        "edge_occurrence.e0032",
+        "edge_occurrence.e0033",
+        "edge_occurrence.e0034",
+        "edge_occurrence.e0035",
+        "edge_occurrence.e0036",
+        "edge_occurrence.e0037",
+        "edge_occurrence.e0038",
+        "edge_occurrence.e0039",
+        "edge_occurrence.e0040",
+        "edge_occurrence.e0041",
+        "edge_occurrence.e0042",
+        "edge_occurrence.e0043",
+        "edge_occurrence.e0044",
+        "edge_occurrence.e0045",
+        "edge_occurrence.e0046",
+        "edge_occurrence.e0047",
+        "edge_occurrence.e0048",
+        "edge_occurrence.e0049",
+        "edge_occurrence.e0050",
+        "edge_occurrence.e0051",
+        "edge_occurrence.e0052",
+        "edge_occurrence.e0053",
+        "edge_occurrence.e0054",
+        "edge_occurrence.e0055",
+        "edge_occurrence.e0056",
+        "edge_occurrence.e0057",
+        "edge_occurrence.e0058",
+        "edge_occurrence.e0059",
+        "edge_occurrence.e0060",
+        "edge_occurrence.e0061",
+        "edge_occurrence.e0062",
+        "edge_occurrence.e0063",
+        "edge_occurrence.e0064",
+        "edge_occurrence.e0065",
+        "edge_occurrence.e0066",
+        "edge_occurrence.e0067",
+        "edge_occurrence.e0068",
+        "edge_occurrence.e0069",
+        "edge_occurrence.e0070",
+        "edge_occurrence.e0071",
+        "edge_occurrence.e0072",
+        "edge_occurrence.e0073",
+        "edge_occurrence.e0074",
+        "edge_occurrence.e0075",
+        "edge_occurrence.e0076",
+        "edge_occurrence.e0077",
+        "edge_occurrence.e0078",
+        "edge_occurrence.e0079",
+        "edge_occurrence.e0080",
+        "edge_occurrence.e0081",
+        "edge_occurrence.e0082",
+        "edge_occurrence.e0083",
+        "edge_occurrence.e0084",
+        "edge_occurrence.e0085",
+        "edge_occurrence.e0086",
+        "edge_occurrence.e0087",
+        "edge_occurrence.e0088",
+        "edge_occurrence.e0089",
+        "edge_occurrence.e0090",
+        "edge_occurrence.e0091",
+        "edge_occurrence.e0092",
+        "edge_occurrence.e0093",
+        "edge_occurrence.e0094",
+        "edge_occurrence.e0095",
+        "edge_occurrence.e0096",
+        "edge_occurrence.e0097",
+        "edge_occurrence.e0098",
+        "edge_occurrence.e0099",
+        "edge_occurrence.e0100",
+        "edge_occurrence.e0101",
+        "edge_occurrence.e0102",
+        "edge_occurrence.e0103",
+        "edge_occurrence.e0104",
+        "edge_occurrence.e0105",
+        "edge_occurrence.e0106",
+        "edge_occurrence.e0107",
+        "edge_occurrence.e0108",
+        "edge_occurrence.e0109",
+        "edge_occurrence.e0110",
+        "edge_occurrence.e0111",
+        "edge_occurrence.e0112",
+        "edge_occurrence.e0113",
+        "edge_occurrence.e0114",
+        "edge_occurrence.e0115",
+        "edge_occurrence.e0116",
+        "edge_occurrence.e0117",
+        "edge_occurrence.e0118",
+        "edge_occurrence.e0119",
+        "edge_occurrence.e0120",
+        "edge_occurrence.e0121",
+        "edge_occurrence.e0122",
+        "edge_occurrence.e0123",
+        "edge_occurrence.e0124",
+        "edge_occurrence.e0125",
+        "edge_occurrence.e0126",
+        "edge_occurrence.e0127",
+        "edge_occurrence.e0128",
+        "edge_occurrence.e0129",
+        "edge_occurrence.e0130",
+        "edge_occurrence.e0131",
+        "edge_occurrence.e0132",
+        "edge_occurrence.e0133",
+        "edge_occurrence.e0134",
+        "edge_occurrence.e0135",
+        "edge_occurrence.e0136",
+        "edge_occurrence.e0137",
+        "edge_occurrence.e0138",
+        "edge_occurrence.e0139",
+        "edge_occurrence.e0140",
+        "edge_occurrence.e0141",
+        "edge_occurrence.e0142",
+        "edge_occurrence.e0143",
+        "edge_occurrence.e0144"
+      ]
+    },
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "strategy.surface.planar"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 36 face subjects to SupportedAnalyticTemplate using strategy.surface.planar.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.face.planes",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "face_occurrence.f0001",
+        "face_occurrence.f0002",
+        "face_occurrence.f0003",
+        "face_occurrence.f0004",
+        "face_occurrence.f0005",
+        "face_occurrence.f0006",
+        "face_occurrence.f0007",
+        "face_occurrence.f0008",
+        "face_occurrence.f0009",
+        "face_occurrence.f0010",
+        "face_occurrence.f0011",
+        "face_occurrence.f0012",
+        "face_occurrence.f0013",
+        "face_occurrence.f0014",
+        "face_occurrence.f0015",
+        "face_occurrence.f0016",
+        "face_occurrence.f0017",
+        "face_occurrence.f0018",
+        "face_occurrence.f0019",
+        "face_occurrence.f0020",
+        "face_occurrence.f0021",
+        "face_occurrence.f0022",
+        "face_occurrence.f0023",
+        "face_occurrence.f0024",
+        "face_occurrence.f0025",
+        "face_occurrence.f0026",
+        "face_occurrence.f0027",
+        "face_occurrence.f0028",
+        "face_occurrence.f0029",
+        "face_occurrence.f0030",
+        "face_occurrence.f0031",
+        "face_occurrence.f0032",
+        "face_occurrence.f0033",
+        "face_occurrence.f0034",
+        "face_occurrence.f0035",
+        "face_occurrence.f0036"
+      ]
+    },
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "strategy.surface.planar"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 36 logical_region subjects to SupportedAnalyticTemplate using strategy.surface.planar.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.region.planes",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "logical_region.r0001",
+        "logical_region.r0002",
+        "logical_region.r0003",
+        "logical_region.r0004",
+        "logical_region.r0005",
+        "logical_region.r0006",
+        "logical_region.r0007",
+        "logical_region.r0008",
+        "logical_region.r0009",
+        "logical_region.r0010",
+        "logical_region.r0011",
+        "logical_region.r0012",
+        "logical_region.r0013",
+        "logical_region.r0014",
+        "logical_region.r0015",
+        "logical_region.r0016",
+        "logical_region.r0017",
+        "logical_region.r0018",
+        "logical_region.r0019",
+        "logical_region.r0020",
+        "logical_region.r0021",
+        "logical_region.r0022",
+        "logical_region.r0023",
+        "logical_region.r0024",
+        "logical_region.r0025",
+        "logical_region.r0026",
+        "logical_region.r0027",
+        "logical_region.r0028",
+        "logical_region.r0029",
+        "logical_region.r0030",
+        "logical_region.r0031",
+        "logical_region.r0032",
+        "logical_region.r0033",
+        "logical_region.r0034",
+        "logical_region.r0035",
+        "logical_region.r0036"
+      ]
+    },
+    {
+      "concrete_type": "Geom_Line",
+      "condition_codes": [
+        "bounded",
+        "located_occurrence",
+        "mathematically_unbounded_basis",
+        "trimmed_by_edge_range"
+      ],
+      "exact_evaluator_kind": "occt.exact_curve",
+      "family_code": "line",
+      "id": "observation.geometry.line.located_rectilinear_edges",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "curve",
+          "closed": false,
+          "lower": null,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": null
+        }
+      ],
+      "parameters": [],
+      "phase": "imported",
+      "subject_id": "line.located_rectilinear_edges",
+      "taxonomy": "Curve",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_Plane",
+      "condition_codes": [
+        "bounded",
+        "located_occurrence",
+        "outer_loop",
+        "rectangular_trim"
+      ],
+      "exact_evaluator_kind": "occt.exact_surface",
+      "family_code": "plane",
+      "id": "observation.geometry.plane.located_rectangular_faces",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": null,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": null
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": null,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": null
+        }
+      ],
+      "parameters": [],
+      "phase": "imported",
+      "subject_id": "plane.located_rectangular_faces",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "evidence": "The reused cuboid has twelve positive-length straight edges.",
+      "expectation": "absent",
+      "expected_failure_code": null,
+      "id": "observation.pathology.p1",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "edge.degenerated.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 0,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "edge.degenerated",
+      "phase": "imported",
+      "subject_ids": [
+        "oracle.finding.p1"
+      ]
+    },
+    {
+      "evidence": "Each unique cuboid edge has an exact three-dimensional line representation.",
+      "expectation": "absent",
+      "expected_failure_code": null,
+      "id": "observation.pathology.p2",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "edge.missing_3d_curve.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 0,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "edge.missing_3d_curve",
+      "phase": "imported",
+      "subject_ids": [
+        "oracle.finding.p2"
+      ]
+    },
+    {
+      "evidence": "All unique vertices, edges, and faces retain the same 1e-7 millimetre imported tolerance.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.p3",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "tolerance.uniform_kernel_precision.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 1,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "tolerance.uniform_kernel_precision",
+      "phase": "imported",
+      "subject_ids": [
+        "oracle.finding.p3"
+      ]
+    },
+    {
+      "evidence": "The reused box definition has one closed outer shell whose twelve edges each have two face uses.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.p4",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "topology.closed_shell.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 1,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "topology.closed_shell",
+      "phase": "imported",
+      "subject_ids": [
+        "oracle.finding.p4"
+      ]
+    },
+    {
+      "evidence": "Five component labels expand into eight paths, including repeated identity children and two occurrences of the nested assembly.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.p5",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "topology.repeated_instances.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 1,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "topology.repeated_instances",
+      "phase": "imported",
+      "subject_ids": [
+        "oracle.finding.p5"
+      ]
+    },
+    {
+      "evidence": "The shared box definition is valid and every expanded rigid occurrence preserves that topology.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.p6",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "topology.valid.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 1,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "topology.valid",
+      "phase": "imported",
+      "subject_ids": [
+        "oracle.finding.p6"
+      ]
+    },
+    {
+      "axes": [
+        {
+          "axis": "u",
+          "closed": false,
+          "period": null,
+          "periodic": false,
+          "principal_lower": null,
+          "principal_upper": null,
+          "seam_parameters": [],
+          "unit": "unitless"
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "period": null,
+          "periodic": false,
+          "principal_lower": null,
+          "principal_upper": null,
+          "seam_parameters": [],
+          "unit": "unitless"
+        }
+      ],
+      "id": "observation.periodicity.plane.located_rectangular_faces",
+      "kind": "periodicity_singularity",
+      "phase": "imported",
+      "singularities": [],
+      "subject_id": "plane.located_rectangular_faces"
+    },
+    {
+      "accepted_normalization_codes": [],
+      "changes": [],
+      "equivalence": "exact",
+      "geometry_equivalent": true,
+      "id": "observation.normalization.model",
+      "imported_subject_ids": [
+        "imported.model"
+      ],
+      "kind": "source_import_normalization",
+      "outcome": "preserved",
+      "source_subject_ids": [
+        "source.model"
+      ],
+      "topology_equivalent": true
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.compound",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 1
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.compounds"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.compounds",
+      "tolerance_metres": 0,
+      "topology_kind": "compound",
+      "underlying_id": "topology.compounds",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.edge",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 12
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.edges"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.edges",
+      "tolerance_metres": 0,
+      "topology_kind": "edge",
+      "underlying_id": "topology.edges",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.face",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 6
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.faces"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.faces",
+      "tolerance_metres": 0,
+      "topology_kind": "face",
+      "underlying_id": "topology.faces",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.shell",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 1
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.shells"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.shells",
+      "tolerance_metres": 0,
+      "topology_kind": "shell",
+      "underlying_id": "topology.shells",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.solid",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 1
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.solids"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.solids",
+      "tolerance_metres": 0,
+      "topology_kind": "solid",
+      "underlying_id": "topology.solids",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.vertex",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 8
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.vertices"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.vertices",
+      "tolerance_metres": 0,
+      "topology_kind": "vertex",
+      "underlying_id": "topology.vertices",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.wire",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 6
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.wires"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.wires",
+      "tolerance_metres": 0,
+      "topology_kind": "wire",
+      "underlying_id": "topology.wires",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "baked_geometry_matrix_row_major": null,
+      "disposition": "retained_as_location",
+      "handedness": "right_handed",
+      "id": "observation.transform.instance.i0001",
+      "imported_location_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        10,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "instance_id": "instance.i0001",
+      "kind": "transform",
+      "linear_determinant": 1,
+      "parent_instance_id": null,
+      "source_affine_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        10,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "source_unit_scale_to_metres": 0.001,
+      "target_definition_id": "definition.d0002",
+      "transform_kind": "rigid",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        10,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "baked_geometry_matrix_row_major": null,
+      "disposition": "retained_as_location",
+      "handedness": "right_handed",
+      "id": "observation.transform.instance.i0002",
+      "imported_location_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "instance_id": "instance.i0002",
+      "kind": "transform",
+      "linear_determinant": 1,
+      "parent_instance_id": "instance.i0001",
+      "source_affine_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "source_unit_scale_to_metres": 0.001,
+      "target_definition_id": "definition.d0003",
+      "transform_kind": "identity",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        10,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "baked_geometry_matrix_row_major": null,
+      "disposition": "retained_as_location",
+      "handedness": "right_handed",
+      "id": "observation.transform.instance.i0003",
+      "imported_location_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "instance_id": "instance.i0003",
+      "kind": "transform",
+      "linear_determinant": 1,
+      "parent_instance_id": "instance.i0001",
+      "source_affine_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "source_unit_scale_to_metres": 0.001,
+      "target_definition_id": "definition.d0003",
+      "transform_kind": "identity",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        10,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "baked_geometry_matrix_row_major": null,
+      "disposition": "retained_as_location",
+      "handedness": "right_handed",
+      "id": "observation.transform.instance.i0004",
+      "imported_location_matrix_row_major": [
+        1,
+        0,
+        0,
+        12,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "instance_id": "instance.i0004",
+      "kind": "transform",
+      "linear_determinant": 1,
+      "parent_instance_id": "instance.i0001",
+      "source_affine_matrix_row_major": [
+        1,
+        0,
+        0,
+        12,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "source_unit_scale_to_metres": 0.001,
+      "target_definition_id": "definition.d0003",
+      "transform_kind": "rigid",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        12,
+        0,
+        1,
+        0,
+        10,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "baked_geometry_matrix_row_major": null,
+      "disposition": "retained_as_location",
+      "handedness": "right_handed",
+      "id": "observation.transform.instance.i0005",
+      "imported_location_matrix_row_major": [
+        0,
+        -1,
+        0,
+        30,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "instance_id": "instance.i0005",
+      "kind": "transform",
+      "linear_determinant": 1,
+      "parent_instance_id": null,
+      "source_affine_matrix_row_major": [
+        0,
+        -1,
+        0,
+        30,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "source_unit_scale_to_metres": 0.001,
+      "target_definition_id": "definition.d0002",
+      "transform_kind": "rigid",
+      "world_matrix_row_major": [
+        0,
+        -1,
+        0,
+        30,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "baked_geometry_matrix_row_major": null,
+      "disposition": "retained_as_location",
+      "handedness": "right_handed",
+      "id": "observation.transform.instance.i0006",
+      "imported_location_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "instance_id": "instance.i0006",
+      "kind": "transform",
+      "linear_determinant": 1,
+      "parent_instance_id": "instance.i0005",
+      "source_affine_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "source_unit_scale_to_metres": 0.001,
+      "target_definition_id": "definition.d0003",
+      "transform_kind": "identity",
+      "world_matrix_row_major": [
+        0,
+        -1,
+        0,
+        30,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "baked_geometry_matrix_row_major": null,
+      "disposition": "retained_as_location",
+      "handedness": "right_handed",
+      "id": "observation.transform.instance.i0007",
+      "imported_location_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "instance_id": "instance.i0007",
+      "kind": "transform",
+      "linear_determinant": 1,
+      "parent_instance_id": "instance.i0005",
+      "source_affine_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "source_unit_scale_to_metres": 0.001,
+      "target_definition_id": "definition.d0003",
+      "transform_kind": "identity",
+      "world_matrix_row_major": [
+        0,
+        -1,
+        0,
+        30,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "baked_geometry_matrix_row_major": null,
+      "disposition": "retained_as_location",
+      "handedness": "right_handed",
+      "id": "observation.transform.instance.i0008",
+      "imported_location_matrix_row_major": [
+        1,
+        0,
+        0,
+        12,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "instance_id": "instance.i0008",
+      "kind": "transform",
+      "linear_determinant": 1,
+      "parent_instance_id": "instance.i0005",
+      "source_affine_matrix_row_major": [
+        1,
+        0,
+        0,
+        12,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "source_unit_scale_to_metres": 0.001,
+      "target_definition_id": "definition.d0003",
+      "transform_kind": "rigid",
+      "world_matrix_row_major": [
+        0,
+        -1,
+        0,
+        30,
+        1,
+        0,
+        0,
+        12,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "condition_codes": [
+        "bounded",
+        "located_occurrence",
+        "outer_loop",
+        "rectangular_trim"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "plane.located_rectangular_faces",
+      "id": "observation.trim.plane.located_rectangular_faces",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0001.c1",
+            "oracle.coedge.boundary_loop.l0001.c2",
+            "oracle.coedge.boundary_loop.l0001.c3",
+            "oracle.coedge.boundary_loop.l0001.c4"
+          ],
+          "loop_id": "boundary_loop.l0001",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 30,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 5,
+            "u_min": 0,
+            "v_max": 6,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0001"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0002.c1",
+            "oracle.coedge.boundary_loop.l0002.c2",
+            "oracle.coedge.boundary_loop.l0002.c3",
+            "oracle.coedge.boundary_loop.l0002.c4"
+          ],
+          "loop_id": "boundary_loop.l0002",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 30,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 5,
+            "u_min": 0,
+            "v_max": 6,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0002"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0003.c1",
+            "oracle.coedge.boundary_loop.l0003.c2",
+            "oracle.coedge.boundary_loop.l0003.c3",
+            "oracle.coedge.boundary_loop.l0003.c4"
+          ],
+          "loop_id": "boundary_loop.l0003",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 30,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 5,
+            "u_min": 0,
+            "v_max": 6,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0003"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0004.c1",
+            "oracle.coedge.boundary_loop.l0004.c2",
+            "oracle.coedge.boundary_loop.l0004.c3",
+            "oracle.coedge.boundary_loop.l0004.c4"
+          ],
+          "loop_id": "boundary_loop.l0004",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 30,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 5,
+            "u_min": 0,
+            "v_max": 6,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0004"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0005.c1",
+            "oracle.coedge.boundary_loop.l0005.c2",
+            "oracle.coedge.boundary_loop.l0005.c3",
+            "oracle.coedge.boundary_loop.l0005.c4"
+          ],
+          "loop_id": "boundary_loop.l0005",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 30,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 5,
+            "u_min": 0,
+            "v_max": 6,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0005"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0006.c1",
+            "oracle.coedge.boundary_loop.l0006.c2",
+            "oracle.coedge.boundary_loop.l0006.c3",
+            "oracle.coedge.boundary_loop.l0006.c4"
+          ],
+          "loop_id": "boundary_loop.l0006",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 30,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 5,
+            "u_min": 0,
+            "v_max": 6,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0006"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0007.c1",
+            "oracle.coedge.boundary_loop.l0007.c2",
+            "oracle.coedge.boundary_loop.l0007.c3",
+            "oracle.coedge.boundary_loop.l0007.c4"
+          ],
+          "loop_id": "boundary_loop.l0007",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 42,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 7,
+            "u_min": 0,
+            "v_max": 0,
+            "v_min": -6
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0007"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0008.c1",
+            "oracle.coedge.boundary_loop.l0008.c2",
+            "oracle.coedge.boundary_loop.l0008.c3",
+            "oracle.coedge.boundary_loop.l0008.c4"
+          ],
+          "loop_id": "boundary_loop.l0008",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 42,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 7,
+            "u_min": 0,
+            "v_max": 0,
+            "v_min": -6
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0008"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0009.c1",
+            "oracle.coedge.boundary_loop.l0009.c2",
+            "oracle.coedge.boundary_loop.l0009.c3",
+            "oracle.coedge.boundary_loop.l0009.c4"
+          ],
+          "loop_id": "boundary_loop.l0009",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 42,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 7,
+            "u_min": 0,
+            "v_max": 0,
+            "v_min": -6
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0009"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0010.c1",
+            "oracle.coedge.boundary_loop.l0010.c2",
+            "oracle.coedge.boundary_loop.l0010.c3",
+            "oracle.coedge.boundary_loop.l0010.c4"
+          ],
+          "loop_id": "boundary_loop.l0010",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 42,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 7,
+            "u_min": 0,
+            "v_max": 0,
+            "v_min": -6
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0010"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0011.c1",
+            "oracle.coedge.boundary_loop.l0011.c2",
+            "oracle.coedge.boundary_loop.l0011.c3",
+            "oracle.coedge.boundary_loop.l0011.c4"
+          ],
+          "loop_id": "boundary_loop.l0011",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 42,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 7,
+            "u_min": 0,
+            "v_max": 0,
+            "v_min": -6
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0011"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0012.c1",
+            "oracle.coedge.boundary_loop.l0012.c2",
+            "oracle.coedge.boundary_loop.l0012.c3",
+            "oracle.coedge.boundary_loop.l0012.c4"
+          ],
+          "loop_id": "boundary_loop.l0012",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 42,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 7,
+            "u_min": 0,
+            "v_max": 0,
+            "v_min": -6
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0012"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0013.c1",
+            "oracle.coedge.boundary_loop.l0013.c2",
+            "oracle.coedge.boundary_loop.l0013.c3",
+            "oracle.coedge.boundary_loop.l0013.c4"
+          ],
+          "loop_id": "boundary_loop.l0013",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 35,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 7,
+            "u_min": 0,
+            "v_max": 5,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0013"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0014.c1",
+            "oracle.coedge.boundary_loop.l0014.c2",
+            "oracle.coedge.boundary_loop.l0014.c3",
+            "oracle.coedge.boundary_loop.l0014.c4"
+          ],
+          "loop_id": "boundary_loop.l0014",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 35,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 7,
+            "u_min": 0,
+            "v_max": 5,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0014"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0015.c1",
+            "oracle.coedge.boundary_loop.l0015.c2",
+            "oracle.coedge.boundary_loop.l0015.c3",
+            "oracle.coedge.boundary_loop.l0015.c4"
+          ],
+          "loop_id": "boundary_loop.l0015",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 35,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 7,
+            "u_min": 0,
+            "v_max": 5,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0015"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0016.c1",
+            "oracle.coedge.boundary_loop.l0016.c2",
+            "oracle.coedge.boundary_loop.l0016.c3",
+            "oracle.coedge.boundary_loop.l0016.c4"
+          ],
+          "loop_id": "boundary_loop.l0016",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 35,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 7,
+            "u_min": 0,
+            "v_max": 5,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0016"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0017.c1",
+            "oracle.coedge.boundary_loop.l0017.c2",
+            "oracle.coedge.boundary_loop.l0017.c3",
+            "oracle.coedge.boundary_loop.l0017.c4"
+          ],
+          "loop_id": "boundary_loop.l0017",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 35,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 7,
+            "u_min": 0,
+            "v_max": 5,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0017"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0018.c1",
+            "oracle.coedge.boundary_loop.l0018.c2",
+            "oracle.coedge.boundary_loop.l0018.c3",
+            "oracle.coedge.boundary_loop.l0018.c4"
+          ],
+          "loop_id": "boundary_loop.l0018",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 35,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 7,
+            "u_min": 0,
+            "v_max": 5,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0018"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0019.c1",
+            "oracle.coedge.boundary_loop.l0019.c2",
+            "oracle.coedge.boundary_loop.l0019.c3",
+            "oracle.coedge.boundary_loop.l0019.c4"
+          ],
+          "loop_id": "boundary_loop.l0019",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "REVERSED",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": -30,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 5,
+            "u_min": 0,
+            "v_max": 6,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0019"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0020.c1",
+            "oracle.coedge.boundary_loop.l0020.c2",
+            "oracle.coedge.boundary_loop.l0020.c3",
+            "oracle.coedge.boundary_loop.l0020.c4"
+          ],
+          "loop_id": "boundary_loop.l0020",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "REVERSED",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": -30,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 5,
+            "u_min": 0,
+            "v_max": 6,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0020"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0021.c1",
+            "oracle.coedge.boundary_loop.l0021.c2",
+            "oracle.coedge.boundary_loop.l0021.c3",
+            "oracle.coedge.boundary_loop.l0021.c4"
+          ],
+          "loop_id": "boundary_loop.l0021",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "REVERSED",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": -30,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 5,
+            "u_min": 0,
+            "v_max": 6,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0021"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0022.c1",
+            "oracle.coedge.boundary_loop.l0022.c2",
+            "oracle.coedge.boundary_loop.l0022.c3",
+            "oracle.coedge.boundary_loop.l0022.c4"
+          ],
+          "loop_id": "boundary_loop.l0022",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "REVERSED",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": -30,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 5,
+            "u_min": 0,
+            "v_max": 6,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0022"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0023.c1",
+            "oracle.coedge.boundary_loop.l0023.c2",
+            "oracle.coedge.boundary_loop.l0023.c3",
+            "oracle.coedge.boundary_loop.l0023.c4"
+          ],
+          "loop_id": "boundary_loop.l0023",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "REVERSED",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": -30,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 5,
+            "u_min": 0,
+            "v_max": 6,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0023"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0024.c1",
+            "oracle.coedge.boundary_loop.l0024.c2",
+            "oracle.coedge.boundary_loop.l0024.c3",
+            "oracle.coedge.boundary_loop.l0024.c4"
+          ],
+          "loop_id": "boundary_loop.l0024",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "REVERSED",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": -30,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 5,
+            "u_min": 0,
+            "v_max": 6,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0024"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0025.c1",
+            "oracle.coedge.boundary_loop.l0025.c2",
+            "oracle.coedge.boundary_loop.l0025.c3",
+            "oracle.coedge.boundary_loop.l0025.c4"
+          ],
+          "loop_id": "boundary_loop.l0025",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "REVERSED",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": -42,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 7,
+            "u_min": 0,
+            "v_max": 0,
+            "v_min": -6
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0025"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0026.c1",
+            "oracle.coedge.boundary_loop.l0026.c2",
+            "oracle.coedge.boundary_loop.l0026.c3",
+            "oracle.coedge.boundary_loop.l0026.c4"
+          ],
+          "loop_id": "boundary_loop.l0026",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "REVERSED",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": -42,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 7,
+            "u_min": 0,
+            "v_max": 0,
+            "v_min": -6
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0026"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0027.c1",
+            "oracle.coedge.boundary_loop.l0027.c2",
+            "oracle.coedge.boundary_loop.l0027.c3",
+            "oracle.coedge.boundary_loop.l0027.c4"
+          ],
+          "loop_id": "boundary_loop.l0027",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "REVERSED",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": -42,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 7,
+            "u_min": 0,
+            "v_max": 0,
+            "v_min": -6
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0027"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0028.c1",
+            "oracle.coedge.boundary_loop.l0028.c2",
+            "oracle.coedge.boundary_loop.l0028.c3",
+            "oracle.coedge.boundary_loop.l0028.c4"
+          ],
+          "loop_id": "boundary_loop.l0028",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "REVERSED",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": -42,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 7,
+            "u_min": 0,
+            "v_max": 0,
+            "v_min": -6
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0028"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0029.c1",
+            "oracle.coedge.boundary_loop.l0029.c2",
+            "oracle.coedge.boundary_loop.l0029.c3",
+            "oracle.coedge.boundary_loop.l0029.c4"
+          ],
+          "loop_id": "boundary_loop.l0029",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "REVERSED",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": -42,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 7,
+            "u_min": 0,
+            "v_max": 0,
+            "v_min": -6
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0029"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0030.c1",
+            "oracle.coedge.boundary_loop.l0030.c2",
+            "oracle.coedge.boundary_loop.l0030.c3",
+            "oracle.coedge.boundary_loop.l0030.c4"
+          ],
+          "loop_id": "boundary_loop.l0030",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "REVERSED",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": -42,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 7,
+            "u_min": 0,
+            "v_max": 0,
+            "v_min": -6
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0030"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0031.c1",
+            "oracle.coedge.boundary_loop.l0031.c2",
+            "oracle.coedge.boundary_loop.l0031.c3",
+            "oracle.coedge.boundary_loop.l0031.c4"
+          ],
+          "loop_id": "boundary_loop.l0031",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "REVERSED",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": -35,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 7,
+            "u_min": 0,
+            "v_max": 5,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0031"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0032.c1",
+            "oracle.coedge.boundary_loop.l0032.c2",
+            "oracle.coedge.boundary_loop.l0032.c3",
+            "oracle.coedge.boundary_loop.l0032.c4"
+          ],
+          "loop_id": "boundary_loop.l0032",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "REVERSED",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": -35,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 7,
+            "u_min": 0,
+            "v_max": 5,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0032"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0033.c1",
+            "oracle.coedge.boundary_loop.l0033.c2",
+            "oracle.coedge.boundary_loop.l0033.c3",
+            "oracle.coedge.boundary_loop.l0033.c4"
+          ],
+          "loop_id": "boundary_loop.l0033",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "REVERSED",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": -35,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 7,
+            "u_min": 0,
+            "v_max": 5,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0033"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0034.c1",
+            "oracle.coedge.boundary_loop.l0034.c2",
+            "oracle.coedge.boundary_loop.l0034.c3",
+            "oracle.coedge.boundary_loop.l0034.c4"
+          ],
+          "loop_id": "boundary_loop.l0034",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "REVERSED",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": -35,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 7,
+            "u_min": 0,
+            "v_max": 5,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0034"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0035.c1",
+            "oracle.coedge.boundary_loop.l0035.c2",
+            "oracle.coedge.boundary_loop.l0035.c3",
+            "oracle.coedge.boundary_loop.l0035.c4"
+          ],
+          "loop_id": "boundary_loop.l0035",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "REVERSED",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": -35,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 7,
+            "u_min": 0,
+            "v_max": 5,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0035"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0036.c1",
+            "oracle.coedge.boundary_loop.l0036.c2",
+            "oracle.coedge.boundary_loop.l0036.c3",
+            "oracle.coedge.boundary_loop.l0036.c4"
+          ],
+          "loop_id": "boundary_loop.l0036",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "REVERSED",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": -35,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 7,
+            "u_min": 0,
+            "v_max": 5,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0036"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    }
+  ],
+  "oracle": {
+    "independent_from_production_classifier": true,
+    "method": "topological_construction",
+    "references": [
+      "fixtures/generator/fixture_generator.cpp recipe assembly.box.nested_repeated_instances",
+      "independent expansion of the two-level XDE component graph and rigid matrix products",
+      "post-STEP occurrence identities and XDE paths from out/m1_topology_probe_v2/assembly.box.nested_repeated_instances.json"
+    ],
+    "statement": "A single 5 by 6 by 7 millimetre box definition is referenced three times by a subassembly, with two identity occurrences and one 12 millimetre translation. The subassembly is then referenced twice under distinct proper-rigid transforms. This construction yields three product definitions, five distinct component labels, eight expanded instance paths, and six solid occurrences while preserving one unique box topology."
+  },
+  "schema_version": "1.0.0",
+  "tolerances": {
+    "edges_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "faces_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "vertices_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    }
+  },
+  "units": {
+    "coordinate_space": "right_handed_si_metres_radians",
+    "scale_to_metres": 0.001,
+    "source_unit": "millimetre"
+  }
+}

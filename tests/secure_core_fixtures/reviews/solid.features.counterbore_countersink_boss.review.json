@@ -1,0 +1,30 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "886b5c466657481f504500698ca34262d55c3810f5b20249df6b64688119e02e",
+  "finding_disposition": "Fresh-context recipe, parameter, topology, normalization, invalid-import, STEP, summary, native-BRep, claim-profile, and source-contract checks passed without promoting lost or invalid imported subjects.",
+  "fixture_id": "solid.features.counterbore_countersink_boss",
+  "producer_id": "producer.m1_feature_pathology_oracle_authoring",
+  "review_id": "review.solid_features_counterbore_countersink_boss.revision_6",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.feature_pathology_oracle_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "artifacts.native_brep_binding",
+    "claims.profile_binding",
+    "construction.parameters",
+    "geometry.source_derivation",
+    "normalization.explicit",
+    "support.occurrence_identity",
+    "topology.readback",
+    "units.tolerances"
+  ],
+  "source_binding": {
+    "artifact_sha256": "369a1aac570614de993b002ba84ae2b29bb3fc5be9f12e61d8d059d2ab0e95e9",
+    "construction_parameters_sha256": "1d899c8689bbc6abc2c13f3aa70072e4c6015f873e6b35d00e638d5a2063759a",
+    "generator_revision": 6,
+    "kind": "occt_procedural",
+    "source_contract_sha256": "adaa613aaa7505a037270345952f9141d535f3ad5fbbc397ffadf4b49e331e94",
+    "summary_sha256": "6b532306fb63a81b61ae718020761da4d11779b2e5048629f2380ffe0d231808"
+  }
+}

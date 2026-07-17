@@ -1,0 +1,2027 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "expected": {
+    "boundary_loops": [
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0001",
+        "id": "boundary_loop.l0001",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 10,
+          "u_min": 0,
+          "v_max": 20,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0002",
+        "id": "boundary_loop.l0002",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 30,
+          "u_min": 0,
+          "v_max": 0,
+          "v_min": -20
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0003",
+        "id": "boundary_loop.l0003",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 30,
+          "u_min": 0,
+          "v_max": 10,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0004",
+        "id": "boundary_loop.l0004",
+        "orientation": "REVERSED",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 10,
+          "u_min": 0,
+          "v_max": 20,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0005",
+        "id": "boundary_loop.l0005",
+        "orientation": "REVERSED",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 30,
+          "u_min": 0,
+          "v_max": 0,
+          "v_min": -20
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0006",
+        "id": "boundary_loop.l0006",
+        "orientation": "REVERSED",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 30,
+          "u_min": 0,
+          "v_max": 10,
+          "v_min": 0
+        }
+      }
+    ],
+    "brep_valid": true,
+    "claims": [
+      {
+        "id": "claim.crv_001.evidence",
+        "obligation_id": "CRV-001",
+        "predicate_codes": [
+          "predicate.curve.line_exact"
+        ],
+        "statement": "Hand-derived cuboid oracle and deterministic no-processing AP242 round trip provide the baseline variant.",
+        "subject_refs": [
+          {
+            "id": "line.rectilinear_edges",
+            "kind": "curve_variant"
+          },
+          {
+            "id": "observation.geometry.line.rectilinear_edges",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.rec_002.box_occurrence_unique_inventory",
+        "obligation_id": "REC-002",
+        "predicate_codes": [
+          "predicate.reconnaissance.inventory_occurrences_unique"
+        ],
+        "statement": "The M1 oracle pins the box occurrence inventory and unique underlying topology; M3 must compare its reconnaissance output to these identities.",
+        "subject_refs": [
+          {
+            "id": "observation.topology.edge",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.face",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.shell",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.solid",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.vertex",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.wire",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.rec_003.box_geometry_taxonomy",
+        "obligation_id": "REC-003",
+        "predicate_codes": [
+          "predicate.reconnaissance.geometry_taxonomy"
+        ],
+        "statement": "The M1 oracle classifies every box curve and surface subject and binds the valid processing-disabled import; corpus-wide classifier verification remains M3 work.",
+        "subject_refs": [
+          {
+            "id": "observation.geometry.line.rectilinear_edges",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.plane.rectangular_faces",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p1",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p2",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p3",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p4",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p5",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p6",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.rec_004.box_representation_inventory",
+        "obligation_id": "REC-004",
+        "predicate_codes": [
+          "predicate.reconnaissance.wrapper_recording"
+        ],
+        "statement": "The M1 geometry observations pin concrete line and plane types and their empty wrapper stacks, defining the representation record expected from M3.",
+        "subject_refs": [
+          {
+            "id": "observation.geometry.line.rectilinear_edges",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.plane.rectangular_faces",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.rec_006.box_semantic_support_oracle",
+        "obligation_id": "REC-006",
+        "predicate_codes": [
+          "predicate.reconnaissance.semantic_support_assignment"
+        ],
+        "statement": "The M1 oracle binds the analytic box candidate and total line/plane support assignments without claiming that the M3 recogniser has executed them.",
+        "subject_refs": [
+          {
+            "id": "observation.consumer.edge.lines",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.face.planes",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.region.planes",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.semantic.primitive.box",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.rec_008.box_report_determinism_oracle",
+        "obligation_id": "REC-008",
+        "predicate_codes": [
+          "predicate.reconnaissance.report_determinism"
+        ],
+        "statement": "The M1 expected outcome fixes schema 1.0.0, total support/occurrence content, and repeat-byte equality; M3 must produce and verify the report.",
+        "subject_refs": [
+          {
+            "id": "observation.consumer.edge.lines",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.face.planes",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.inventory_report.determinism",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.region.planes",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.edge",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.face",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.shell",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.solid",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.vertex",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.wire",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.sem_003.evidence",
+        "obligation_id": "SEM-003",
+        "predicate_codes": [
+          "predicate.semantic.box_analytic"
+        ],
+        "statement": "Hand-derived cuboid oracle and deterministic no-processing AP242 round trip provide the baseline variant.",
+        "subject_refs": [
+          {
+            "id": "observation.semantic.primitive.box",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.edge",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.face",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.shell",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.solid",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.vertex",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.wire",
+            "kind": "observation"
+          },
+          {
+            "id": "primitive.box",
+            "kind": "semantic_candidate"
+          }
+        ]
+      },
+      {
+        "id": "claim.srf_001.evidence",
+        "obligation_id": "SRF-001",
+        "predicate_codes": [
+          "predicate.surface.plane_exact"
+        ],
+        "statement": "Hand-derived cuboid oracle and deterministic no-processing AP242 round trip provide the baseline variant.",
+        "subject_refs": [
+          {
+            "id": "observation.geometry.plane.rectangular_faces",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.plane.rectangular_faces",
+            "kind": "observation"
+          },
+          {
+            "id": "plane.rectangular_faces",
+            "kind": "surface_variant"
+          }
+        ]
+      },
+      {
+        "id": "claim.srf_015.evidence",
+        "obligation_id": "SRF-015",
+        "predicate_codes": [
+          "predicate.surface.trim_domain_recorded"
+        ],
+        "statement": "Hand-derived cuboid oracle and deterministic no-processing AP242 round trip provide the baseline variant.",
+        "subject_refs": [
+          {
+            "id": "observation.geometry.plane.rectangular_faces",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.plane.rectangular_faces",
+            "kind": "observation"
+          },
+          {
+            "id": "plane.rectangular_faces",
+            "kind": "surface_variant"
+          }
+        ]
+      },
+      {
+        "id": "claim.sup_001.evidence",
+        "obligation_id": "SUP-001",
+        "predicate_codes": [
+          "predicate.support.analytic_template_total"
+        ],
+        "statement": "Hand-derived cuboid oracle and deterministic no-processing AP242 round trip provide the baseline variant.",
+        "subject_refs": [
+          {
+            "id": "observation.consumer.edge.lines",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.face.planes",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.region.planes",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.semantic.primitive.box",
+            "kind": "observation"
+          },
+          {
+            "id": "edge.lines",
+            "kind": "support"
+          },
+          {
+            "id": "face.planes",
+            "kind": "support"
+          },
+          {
+            "id": "region.planes",
+            "kind": "support"
+          }
+        ]
+      },
+      {
+        "id": "claim.sup_009.evidence",
+        "obligation_id": "SUP-009",
+        "predicate_codes": [
+          "predicate.support.assignment_total"
+        ],
+        "statement": "Hand-derived cuboid oracle and deterministic no-processing AP242 round trip provide the baseline variant.",
+        "subject_refs": [
+          {
+            "id": "observation.consumer.edge.lines",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.face.planes",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.region.planes",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.edge",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.face",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.shell",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.solid",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.vertex",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.wire",
+            "kind": "observation"
+          },
+          {
+            "id": "subject_universe.edge_occurrences",
+            "kind": "subject_universe"
+          },
+          {
+            "id": "subject_universe.face_occurrences",
+            "kind": "subject_universe"
+          },
+          {
+            "id": "subject_universe.logical_regions",
+            "kind": "subject_universe"
+          },
+          {
+            "id": "edge.lines",
+            "kind": "support"
+          },
+          {
+            "id": "face.planes",
+            "kind": "support"
+          },
+          {
+            "id": "region.planes",
+            "kind": "support"
+          }
+        ]
+      },
+      {
+        "id": "claim.top_003.evidence",
+        "obligation_id": "TOP-003",
+        "predicate_codes": [
+          "predicate.topology.solid_shell_validity"
+        ],
+        "statement": "Hand-derived cuboid oracle and deterministic no-processing AP242 round trip provide the baseline variant.",
+        "subject_refs": [
+          {
+            "id": "observation.pathology.p6",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.shell",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.solid",
+            "kind": "observation"
+          },
+          {
+            "id": "topology.shells",
+            "kind": "topology"
+          },
+          {
+            "id": "topology.solids",
+            "kind": "topology"
+          },
+          {
+            "id": "topology.valid",
+            "kind": "validation_finding"
+          }
+        ]
+      },
+      {
+        "id": "claim.top_005.evidence",
+        "obligation_id": "TOP-005",
+        "predicate_codes": [
+          "predicate.topology.face_inventory"
+        ],
+        "statement": "Hand-derived cuboid oracle and deterministic no-processing AP242 round trip provide the baseline variant.",
+        "subject_refs": [
+          {
+            "id": "observation.geometry.plane.rectangular_faces",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.face",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.plane.rectangular_faces",
+            "kind": "observation"
+          },
+          {
+            "id": "plane.rectangular_faces",
+            "kind": "surface_variant"
+          },
+          {
+            "id": "topology.faces",
+            "kind": "topology"
+          }
+        ]
+      },
+      {
+        "id": "claim.top_006.evidence",
+        "obligation_id": "TOP-006",
+        "predicate_codes": [
+          "predicate.topology.wire_inventory"
+        ],
+        "statement": "Hand-derived cuboid oracle and deterministic no-processing AP242 round trip provide the baseline variant.",
+        "subject_refs": [
+          {
+            "id": "observation.pathology.p1",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p2",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p3",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p4",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p5",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p6",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.wire",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.plane.rectangular_faces",
+            "kind": "observation"
+          },
+          {
+            "id": "topology.wires",
+            "kind": "topology"
+          }
+        ]
+      },
+      {
+        "id": "claim.top_008.evidence",
+        "obligation_id": "TOP-008",
+        "predicate_codes": [
+          "predicate.topology.vertex_inventory"
+        ],
+        "statement": "Hand-derived cuboid oracle and deterministic no-processing AP242 round trip provide the baseline variant.",
+        "subject_refs": [
+          {
+            "id": "observation.topology.vertex",
+            "kind": "observation"
+          },
+          {
+            "id": "topology.vertices",
+            "kind": "topology"
+          }
+        ]
+      },
+      {
+        "id": "claim.top_012.evidence",
+        "obligation_id": "TOP-012",
+        "predicate_codes": [
+          "predicate.model.single_solid"
+        ],
+        "statement": "Hand-derived cuboid oracle and deterministic no-processing AP242 round trip provide the baseline variant.",
+        "subject_refs": [
+          {
+            "id": "single_solid",
+            "kind": "model_class"
+          },
+          {
+            "id": "observation.normalization.model",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.edge",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.face",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.shell",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.solid",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.vertex",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.wire",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.top_013.evidence",
+        "obligation_id": "TOP-013",
+        "predicate_codes": [
+          "predicate.model.closed_manifold"
+        ],
+        "statement": "Hand-derived cuboid oracle and deterministic no-processing AP242 round trip provide the baseline variant.",
+        "subject_refs": [
+          {
+            "id": "closed_manifold",
+            "kind": "model_class"
+          },
+          {
+            "id": "observation.pathology.p1",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p2",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p3",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p4",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p5",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p6",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.edge",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.face",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.shell",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.solid",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.vertex",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.wire",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.trm_005.evidence",
+        "obligation_id": "TRM-005",
+        "predicate_codes": [
+          "predicate.trim.outer_boundary"
+        ],
+        "statement": "Hand-derived cuboid oracle and deterministic no-processing AP242 round trip provide the baseline variant.",
+        "subject_refs": [
+          {
+            "id": "observation.topology.edge",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.face",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.shell",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.solid",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.vertex",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.wire",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.plane.rectangular_faces",
+            "kind": "observation"
+          },
+          {
+            "id": "plane.rectangular_faces",
+            "kind": "surface_variant"
+          }
+        ]
+      }
+    ],
+    "curve_variants": [
+      {
+        "concrete_type": "Geom_Line",
+        "condition_codes": [
+          "bounded",
+          "mathematically_unbounded_basis",
+          "trimmed_by_edge_range"
+        ],
+        "count": 12,
+        "family_code": "line",
+        "label": "line.rectilinear_edges",
+        "wrapper_stack": []
+      }
+    ],
+    "import_outcome": "success",
+    "model_classes": [
+      "closed_manifold",
+      "outer_shell_only",
+      "single_solid"
+    ],
+    "orientation_states": [
+      "FORWARD",
+      "REVERSED"
+    ],
+    "periodicity": [
+      {
+        "label": "plane.rectangular_faces",
+        "u_closed": false,
+        "u_periodic": false,
+        "v_closed": false,
+        "v_periodic": false
+      }
+    ],
+    "semantic_candidates": [
+      {
+        "code": "primitive.box",
+        "confidence": "ProvenAnalytic",
+        "evidence": "Six mutually orthogonal rectangular planes occur in three parallel pairs at separations 10, 20, and 30 millimetres.",
+        "subject_count": 6
+      }
+    ],
+    "singularity_codes": [],
+    "subject_universe": {
+      "edge_occurrence_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004",
+        "edge_occurrence.e0005",
+        "edge_occurrence.e0006",
+        "edge_occurrence.e0007",
+        "edge_occurrence.e0008",
+        "edge_occurrence.e0009",
+        "edge_occurrence.e0010",
+        "edge_occurrence.e0011",
+        "edge_occurrence.e0012",
+        "edge_occurrence.e0013",
+        "edge_occurrence.e0014",
+        "edge_occurrence.e0015",
+        "edge_occurrence.e0016",
+        "edge_occurrence.e0017",
+        "edge_occurrence.e0018",
+        "edge_occurrence.e0019",
+        "edge_occurrence.e0020",
+        "edge_occurrence.e0021",
+        "edge_occurrence.e0022",
+        "edge_occurrence.e0023",
+        "edge_occurrence.e0024"
+      ],
+      "face_occurrence_ids": [
+        "face_occurrence.f0001",
+        "face_occurrence.f0002",
+        "face_occurrence.f0003",
+        "face_occurrence.f0004",
+        "face_occurrence.f0005",
+        "face_occurrence.f0006"
+      ],
+      "logical_region_ids": [
+        "logical_region.r0001",
+        "logical_region.r0002",
+        "logical_region.r0003",
+        "logical_region.r0004",
+        "logical_region.r0005",
+        "logical_region.r0006"
+      ]
+    },
+    "support": [
+      {
+        "geometry_family_code": "line",
+        "label": "edge.lines",
+        "selection_code": "strategy.curve.exact_line",
+        "state": "SupportedAnalyticTemplate",
+        "subject_count": 24,
+        "subject_ids": [
+          "edge_occurrence.e0001",
+          "edge_occurrence.e0002",
+          "edge_occurrence.e0003",
+          "edge_occurrence.e0004",
+          "edge_occurrence.e0005",
+          "edge_occurrence.e0006",
+          "edge_occurrence.e0007",
+          "edge_occurrence.e0008",
+          "edge_occurrence.e0009",
+          "edge_occurrence.e0010",
+          "edge_occurrence.e0011",
+          "edge_occurrence.e0012",
+          "edge_occurrence.e0013",
+          "edge_occurrence.e0014",
+          "edge_occurrence.e0015",
+          "edge_occurrence.e0016",
+          "edge_occurrence.e0017",
+          "edge_occurrence.e0018",
+          "edge_occurrence.e0019",
+          "edge_occurrence.e0020",
+          "edge_occurrence.e0021",
+          "edge_occurrence.e0022",
+          "edge_occurrence.e0023",
+          "edge_occurrence.e0024"
+        ],
+        "subject_kind": "edge"
+      },
+      {
+        "geometry_family_code": "plane",
+        "label": "face.planes",
+        "selection_code": "strategy.surface.planar",
+        "state": "SupportedAnalyticTemplate",
+        "subject_count": 6,
+        "subject_ids": [
+          "face_occurrence.f0001",
+          "face_occurrence.f0002",
+          "face_occurrence.f0003",
+          "face_occurrence.f0004",
+          "face_occurrence.f0005",
+          "face_occurrence.f0006"
+        ],
+        "subject_kind": "face"
+      },
+      {
+        "geometry_family_code": "plane",
+        "label": "region.planes",
+        "selection_code": "strategy.surface.planar",
+        "state": "SupportedAnalyticTemplate",
+        "subject_count": 6,
+        "subject_ids": [
+          "logical_region.r0001",
+          "logical_region.r0002",
+          "logical_region.r0003",
+          "logical_region.r0004",
+          "logical_region.r0005",
+          "logical_region.r0006"
+        ],
+        "subject_kind": "logical_region"
+      }
+    ],
+    "surface_variants": [
+      {
+        "concrete_type": "Geom_Plane",
+        "condition_codes": [
+          "bounded",
+          "outer_loop",
+          "rectangular_trim"
+        ],
+        "count": 6,
+        "family_code": "plane",
+        "label": "plane.rectangular_faces",
+        "trim_domain_class": "convex_simple_region",
+        "wrapper_stack": []
+      }
+    ],
+    "topology_occurrences": {
+      "assembly_products": 1,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 24,
+      "faces": 6,
+      "instances": 0,
+      "shells": 1,
+      "solids": 1,
+      "vertices": 48,
+      "wires": 6
+    },
+    "unique_topology": {
+      "assembly_products": 1,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 12,
+      "faces": 6,
+      "instances": 0,
+      "shells": 1,
+      "solids": 1,
+      "vertices": 8,
+      "wires": 6
+    },
+    "validation_findings": [
+      {
+        "code": "edge.degenerated",
+        "evidence": "Every cuboid edge has one of the positive analytic lengths 10, 20, or 30 millimetres.",
+        "expectation": "absent",
+        "subject_kind": "edge"
+      },
+      {
+        "code": "edge.missing_3d_curve",
+        "evidence": "Each of the twelve bounded edges is supported by an exact line.",
+        "expectation": "absent",
+        "subject_kind": "edge"
+      },
+      {
+        "code": "tolerance.uniform_kernel_precision",
+        "evidence": "The no-processing STEP round trip records 1e-7 millimetres, equal to 1e-10 metres, for every vertex, edge, and face tolerance.",
+        "expectation": "present",
+        "subject_kind": "model"
+      },
+      {
+        "code": "topology.closed_shell",
+        "evidence": "Each of twelve unique edges is used by two of the six face wires, so the sole shell has no boundary edge.",
+        "expectation": "present",
+        "subject_kind": "shell"
+      },
+      {
+        "code": "topology.manifold",
+        "evidence": "The six oriented rectangular faces bound one connected three-dimensional cuboid component.",
+        "expectation": "present",
+        "subject_kind": "solid"
+      },
+      {
+        "code": "topology.valid",
+        "evidence": "V-E+F equals 8-12+6=2 and every incidence has a finite exact analytic representation.",
+        "expectation": "present",
+        "subject_kind": "model"
+      }
+    ]
+  },
+  "fixture_id": "solid.box",
+  "instances": [],
+  "observations": [
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "strategy.curve.exact_line"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 24 edge subjects to SupportedAnalyticTemplate using strategy.curve.exact_line.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.edge.lines",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004",
+        "edge_occurrence.e0005",
+        "edge_occurrence.e0006",
+        "edge_occurrence.e0007",
+        "edge_occurrence.e0008",
+        "edge_occurrence.e0009",
+        "edge_occurrence.e0010",
+        "edge_occurrence.e0011",
+        "edge_occurrence.e0012",
+        "edge_occurrence.e0013",
+        "edge_occurrence.e0014",
+        "edge_occurrence.e0015",
+        "edge_occurrence.e0016",
+        "edge_occurrence.e0017",
+        "edge_occurrence.e0018",
+        "edge_occurrence.e0019",
+        "edge_occurrence.e0020",
+        "edge_occurrence.e0021",
+        "edge_occurrence.e0022",
+        "edge_occurrence.e0023",
+        "edge_occurrence.e0024"
+      ]
+    },
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "strategy.surface.planar"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 6 face subjects to SupportedAnalyticTemplate using strategy.surface.planar.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.face.planes",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "face_occurrence.f0001",
+        "face_occurrence.f0002",
+        "face_occurrence.f0003",
+        "face_occurrence.f0004",
+        "face_occurrence.f0005",
+        "face_occurrence.f0006"
+      ]
+    },
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "report.canonical_sorted_pretty_json",
+        "report.repeat_hash_equal",
+        "report.schema_1_0_0"
+      ],
+      "consumer_code": "oracle.report_determinism",
+      "consumer_kind": "inventory",
+      "evidence": "The M1 oracle requires schema 1.0.0, canonical sorted-pretty JSON, and byte-identical repeated inventory output; actual consumer execution remains M3.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.inventory_report.determinism",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "model.root"
+      ]
+    },
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "strategy.surface.planar"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 6 logical_region subjects to SupportedAnalyticTemplate using strategy.surface.planar.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.region.planes",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "logical_region.r0001",
+        "logical_region.r0002",
+        "logical_region.r0003",
+        "logical_region.r0004",
+        "logical_region.r0005",
+        "logical_region.r0006"
+      ]
+    },
+    {
+      "concrete_type": "Geom_Line",
+      "condition_codes": [
+        "bounded",
+        "mathematically_unbounded_basis",
+        "trimmed_by_edge_range"
+      ],
+      "exact_evaluator_kind": "occt.exact_curve",
+      "family_code": "line",
+      "id": "observation.geometry.line.rectilinear_edges",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "curve",
+          "closed": false,
+          "lower": null,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": null
+        }
+      ],
+      "parameters": [],
+      "phase": "imported",
+      "subject_id": "line.rectilinear_edges",
+      "taxonomy": "Curve",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_Plane",
+      "condition_codes": [
+        "bounded",
+        "outer_loop",
+        "rectangular_trim"
+      ],
+      "exact_evaluator_kind": "occt.exact_surface",
+      "family_code": "plane",
+      "id": "observation.geometry.plane.rectangular_faces",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": null,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": null
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": null,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": null
+        }
+      ],
+      "parameters": [],
+      "phase": "imported",
+      "subject_id": "plane.rectangular_faces",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "evidence": "Every cuboid edge has one of the positive analytic lengths 10, 20, or 30 millimetres.",
+      "expectation": "absent",
+      "expected_failure_code": null,
+      "id": "observation.pathology.p1",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "edge.degenerated.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 0,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "edge.degenerated",
+      "phase": "imported",
+      "subject_ids": [
+        "oracle.finding.p1"
+      ]
+    },
+    {
+      "evidence": "Each of the twelve bounded edges is supported by an exact line.",
+      "expectation": "absent",
+      "expected_failure_code": null,
+      "id": "observation.pathology.p2",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "edge.missing_3d_curve.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 0,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "edge.missing_3d_curve",
+      "phase": "imported",
+      "subject_ids": [
+        "oracle.finding.p2"
+      ]
+    },
+    {
+      "evidence": "The no-processing STEP round trip records 1e-7 millimetres, equal to 1e-10 metres, for every vertex, edge, and face tolerance.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.p3",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "tolerance.uniform_kernel_precision.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 1,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "tolerance.uniform_kernel_precision",
+      "phase": "imported",
+      "subject_ids": [
+        "oracle.finding.p3"
+      ]
+    },
+    {
+      "evidence": "Each of twelve unique edges is used by two of the six face wires, so the sole shell has no boundary edge.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.p4",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "topology.closed_shell.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 1,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "topology.closed_shell",
+      "phase": "imported",
+      "subject_ids": [
+        "oracle.finding.p4"
+      ]
+    },
+    {
+      "evidence": "The six oriented rectangular faces bound one connected three-dimensional cuboid component.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.p5",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "topology.manifold.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 1,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "topology.manifold",
+      "phase": "imported",
+      "subject_ids": [
+        "oracle.finding.p5"
+      ]
+    },
+    {
+      "evidence": "V-E+F equals 8-12+6=2 and every incidence has a finite exact analytic representation.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.p6",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "topology.valid.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 1,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "topology.valid",
+      "phase": "imported",
+      "subject_ids": [
+        "oracle.finding.p6"
+      ]
+    },
+    {
+      "axes": [
+        {
+          "axis": "u",
+          "closed": false,
+          "period": null,
+          "periodic": false,
+          "principal_lower": null,
+          "principal_upper": null,
+          "seam_parameters": [],
+          "unit": "unitless"
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "period": null,
+          "periodic": false,
+          "principal_lower": null,
+          "principal_upper": null,
+          "seam_parameters": [],
+          "unit": "unitless"
+        }
+      ],
+      "id": "observation.periodicity.plane.rectangular_faces",
+      "kind": "periodicity_singularity",
+      "phase": "imported",
+      "singularities": [],
+      "subject_id": "plane.rectangular_faces"
+    },
+    {
+      "candidate_code": "primitive.box",
+      "confidence": "ProvenAnalytic",
+      "continuity_observation_ids": [],
+      "evidence": "Six mutually orthogonal rectangular planes occur in three parallel pairs at separations 10, 20, and 30 millimetres.",
+      "evidence_codes": [
+        "evidence.independent_oracle"
+      ],
+      "fitted_parameters": [],
+      "id": "observation.semantic.primitive.box",
+      "kind": "semantic_evidence",
+      "max_residual_metres": null,
+      "phase": "imported",
+      "residual_observation_ids": [],
+      "subject_ids": [
+        "primitive.box"
+      ]
+    },
+    {
+      "accepted_normalization_codes": [],
+      "changes": [],
+      "equivalence": "exact",
+      "geometry_equivalent": true,
+      "id": "observation.normalization.model",
+      "imported_subject_ids": [
+        "imported.model"
+      ],
+      "kind": "source_import_normalization",
+      "outcome": "preserved",
+      "source_subject_ids": [
+        "source.model"
+      ],
+      "topology_equivalent": true
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.edge",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 12
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.edges"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.edges",
+      "tolerance_metres": 0,
+      "topology_kind": "edge",
+      "underlying_id": "topology.edges",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.face",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 6
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.faces"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.faces",
+      "tolerance_metres": 0,
+      "topology_kind": "face",
+      "underlying_id": "topology.faces",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.shell",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 1
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.shells"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.shells",
+      "tolerance_metres": 0,
+      "topology_kind": "shell",
+      "underlying_id": "topology.shells",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.solid",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 1
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.solids"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.solids",
+      "tolerance_metres": 0,
+      "topology_kind": "solid",
+      "underlying_id": "topology.solids",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.vertex",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 8
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.vertices"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.vertices",
+      "tolerance_metres": 0,
+      "topology_kind": "vertex",
+      "underlying_id": "topology.vertices",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.wire",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 6
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.wires"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.wires",
+      "tolerance_metres": 0,
+      "topology_kind": "wire",
+      "underlying_id": "topology.wires",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "baked_geometry_matrix_row_major": null,
+      "disposition": "retained_as_location",
+      "handedness": "right_handed",
+      "id": "observation.transform.instance.synthetic_identity",
+      "imported_location_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "instance_id": "instance.synthetic_identity",
+      "kind": "transform",
+      "linear_determinant": 1,
+      "parent_instance_id": null,
+      "source_affine_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "source_unit_scale_to_metres": 0.001,
+      "target_definition_id": "definition.synthetic_identity",
+      "transform_kind": "identity",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "condition_codes": [
+        "bounded",
+        "outer_loop",
+        "rectangular_trim"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "plane.rectangular_faces",
+      "id": "observation.trim.plane.rectangular_faces",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0001.c1",
+            "oracle.coedge.boundary_loop.l0001.c2",
+            "oracle.coedge.boundary_loop.l0001.c3",
+            "oracle.coedge.boundary_loop.l0001.c4"
+          ],
+          "loop_id": "boundary_loop.l0001",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 200,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 10,
+            "u_min": 0,
+            "v_max": 20,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0001"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0002.c1",
+            "oracle.coedge.boundary_loop.l0002.c2",
+            "oracle.coedge.boundary_loop.l0002.c3",
+            "oracle.coedge.boundary_loop.l0002.c4"
+          ],
+          "loop_id": "boundary_loop.l0002",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 600,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 30,
+            "u_min": 0,
+            "v_max": 0,
+            "v_min": -20
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0002"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0003.c1",
+            "oracle.coedge.boundary_loop.l0003.c2",
+            "oracle.coedge.boundary_loop.l0003.c3",
+            "oracle.coedge.boundary_loop.l0003.c4"
+          ],
+          "loop_id": "boundary_loop.l0003",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 300,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 30,
+            "u_min": 0,
+            "v_max": 10,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0003"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0004.c1",
+            "oracle.coedge.boundary_loop.l0004.c2",
+            "oracle.coedge.boundary_loop.l0004.c3",
+            "oracle.coedge.boundary_loop.l0004.c4"
+          ],
+          "loop_id": "boundary_loop.l0004",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "REVERSED",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": -200,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 10,
+            "u_min": 0,
+            "v_max": 20,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0004"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0005.c1",
+            "oracle.coedge.boundary_loop.l0005.c2",
+            "oracle.coedge.boundary_loop.l0005.c3",
+            "oracle.coedge.boundary_loop.l0005.c4"
+          ],
+          "loop_id": "boundary_loop.l0005",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "REVERSED",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": -600,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 30,
+            "u_min": 0,
+            "v_max": 0,
+            "v_min": -20
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0005"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0006.c1",
+            "oracle.coedge.boundary_loop.l0006.c2",
+            "oracle.coedge.boundary_loop.l0006.c3",
+            "oracle.coedge.boundary_loop.l0006.c4"
+          ],
+          "loop_id": "boundary_loop.l0006",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "REVERSED",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": -300,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 30,
+            "u_min": 0,
+            "v_max": 10,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0006"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    }
+  ],
+  "oracle": {
+    "independent_from_production_classifier": true,
+    "method": "analytic_derivation",
+    "references": [
+      "fixtures/generator/fixture_generator.cpp recipe solid.box",
+      "independent Euler and face-incidence derivation for a rectangular cuboid",
+      "post-STEP metadata solid.box from the no-processing AP242 round trip"
+    ],
+    "statement": "A 10 by 20 by 30 millimetre cuboid has six rectangular planar faces, twelve unique straight edges, and eight vertices. Every edge belongs to two face wires, producing 24 edge and 48 endpoint occurrences. These counts and geometry classes follow from the construction, independently of classifier output."
+  },
+  "schema_version": "1.0.0",
+  "tolerances": {
+    "edges_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "faces_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "vertices_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    }
+  },
+  "units": {
+    "coordinate_space": "right_handed_si_metres_radians",
+    "scale_to_metres": 0.001,
+    "source_unit": "millimetre"
+  }
+}

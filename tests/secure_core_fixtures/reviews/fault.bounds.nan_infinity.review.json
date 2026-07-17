@@ -1,0 +1,25 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "b2acc8b0f708c8b2a58a9501abbdff951097b58481850a1cc50755a62fa48bdc",
+  "finding_disposition": "Fresh-context fault-contract, exact-observation, deterministic-runner, and source-binding review passed; no unresolved finding remains.",
+  "fixture_id": "fault.bounds.nan_infinity",
+  "producer_id": "producer.m1_native_fault_foundation",
+  "review_id": "review.fault_bounds_nan_infinity.revision_1",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.m1_native_fault_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "claims.typed_binding",
+    "fault.contract",
+    "native.runner_binding",
+    "observations.exact_values"
+  ],
+  "source_binding": {
+    "fault_code": "fault.bounds.nan_infinity",
+    "harness_source_sha256": "a95831c06005760170cb95034ba6500190f9218a681f0e88edde66a93ec60d2e",
+    "kind": "native_fault_injection",
+    "source_contract_sha256": "1cc2dd31c0220b2a62b5fef72a8dd21d7e461eb9d9209e3109d326cab95621cb",
+    "test_id": "test.native_fault.bounds.nan_infinity"
+  }
+}

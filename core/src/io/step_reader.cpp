@@ -17,6 +17,10 @@
 #include <StepBasic_Product.hxx>
 #include <StepBasic_ProductDefinition.hxx>
 #include <StepBasic_ProductDefinitionFormation.hxx>
+#include <StepData_StepModel.hxx>
+#include <StepGeom_CartesianPoint.hxx>
+#include <StepGeom_CartesianTransformationOperator3d.hxx>
+#include <StepGeom_Direction.hxx>
 #include <StepRepr_ProductDefinitionShape.hxx>
 #include <StepRepr_Representation.hxx>
 #include <StepRepr_RepresentationItem.hxx>
@@ -33,12 +37,15 @@
 #include <XSControl_WorkSession.hxx>
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <map>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
+#include <locale>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -185,6 +192,159 @@ void applyStepReadStatics(OccStaticVariablesRollback& rb) {
 #endif
 }
 
+struct SourceTransformScan {
+    std::size_t nonRigidCount = 0;
+    double firstNonRigidDeterminant = 1.0;
+    double firstNonRigidScale = 1.0;
+    std::optional<std::string> invalidReason;
+};
+
+SourceTransformScan scanSourceTransformOperators(
+    const Handle(StepData_StepModel)& model) {
+    SourceTransformScan scan;
+    if (model.IsNull()) return scan;
+    using Axis = std::array<double, 3>;
+    const auto dot = [](const Axis& left, const Axis& right) {
+        return left[0] * right[0] + left[1] * right[1] +
+            left[2] * right[2];
+    };
+    const auto cross = [](const Axis& left, const Axis& right) {
+        return Axis{left[1] * right[2] - left[2] * right[1],
+                    left[2] * right[0] - left[0] * right[2],
+                    left[0] * right[1] - left[1] * right[0]};
+    };
+    const auto normalised = [&dot](const Axis& axis)
+        -> std::optional<Axis> {
+        const double length = std::sqrt(dot(axis, axis));
+        if (!std::isfinite(length) || length <= 1e-12) {
+            return std::nullopt;
+        }
+        return Axis{axis[0] / length, axis[1] / length, axis[2] / length};
+    };
+    const auto direction = [](const Handle(StepGeom_Direction)& value)
+        -> std::optional<Axis> {
+        if (value.IsNull() || value->NbDirectionRatios() != 3) {
+            return std::nullopt;
+        }
+        const Axis result{value->DirectionRatiosValue(1),
+                          value->DirectionRatiosValue(2),
+                          value->DirectionRatiosValue(3)};
+        if (!std::all_of(result.begin(), result.end(),
+                         [](double coordinate) {
+                             return std::isfinite(coordinate);
+                         })) {
+            return std::nullopt;
+        }
+        return result;
+    };
+    const auto fail = [&scan](int entityIndex, std::string reason) {
+        scan.invalidReason = "entity #" + std::to_string(entityIndex) +
+            ": " + std::move(reason);
+    };
+
+    for (int index = 1; index <= model->NbEntities(); ++index) {
+        const Handle(StepGeom_CartesianTransformationOperator3d) entity =
+            Handle(StepGeom_CartesianTransformationOperator3d)::DownCast(
+                model->Value(index));
+        if (entity.IsNull()) continue;
+
+        Axis w{0.0, 0.0, 1.0};
+        if (entity->HasAxis3()) {
+            const auto declared = direction(entity->Axis3());
+            const auto unit = declared ? normalised(*declared) : std::nullopt;
+            if (!unit) {
+                fail(index, "axis3 is non-3D or degenerate");
+                return scan;
+            }
+            w = *unit;
+        }
+
+        Axis u{1.0, 0.0, 0.0};
+        if (entity->HasAxis1()) {
+            const auto declared = direction(entity->Axis1());
+            if (!declared) {
+                fail(index, "axis1 is non-3D or degenerate");
+                return scan;
+            }
+            const double along = dot(*declared, w);
+            const auto unit = normalised(
+                {(*declared)[0] - along * w[0],
+                 (*declared)[1] - along * w[1],
+                 (*declared)[2] - along * w[2]});
+            if (!unit) {
+                fail(index, "axis1 is parallel to axis3");
+                return scan;
+            }
+            u = *unit;
+        } else {
+            const Axis seed = std::abs(w[0]) < 0.9
+                ? Axis{1.0, 0.0, 0.0}
+                : Axis{0.0, 1.0, 0.0};
+            const double along = dot(seed, w);
+            const auto unit = normalised(
+                {seed[0] - along * w[0], seed[1] - along * w[1],
+                 seed[2] - along * w[2]});
+            if (!unit) {
+                fail(index, "derived axis1 seed is degenerate");
+                return scan;
+            }
+            u = *unit;
+        }
+
+        Axis v = cross(w, u);
+        if (entity->HasAxis2()) {
+            const auto declared = direction(entity->Axis2());
+            if (!declared) {
+                fail(index, "axis2 is non-3D or degenerate");
+                return scan;
+            }
+            const double alongU = dot(*declared, u);
+            const double alongW = dot(*declared, w);
+            const auto unit = normalised(
+                {(*declared)[0] - alongU * u[0] - alongW * w[0],
+                 (*declared)[1] - alongU * u[1] - alongW * w[1],
+                 (*declared)[2] - alongU * u[2] - alongW * w[2]});
+            if (!unit) {
+                fail(index, "axis2 lies in the axis1/axis3 plane");
+                return scan;
+            }
+            v = *unit;
+        }
+
+        const double scale = entity->HasScale() ? entity->Scale() : 1.0;
+        if (!std::isfinite(scale) || scale <= 0.0) {
+            fail(index, "scale is non-finite or non-positive");
+            return scan;
+        }
+        const auto origin = entity->LocalOrigin();
+        if (origin.IsNull() || origin->NbCoordinates() != 3) {
+            fail(index, "local origin is absent or non-3D");
+            return scan;
+        }
+        for (int coordinate = 1; coordinate <= 3; ++coordinate) {
+            if (!std::isfinite(origin->CoordinatesValue(coordinate))) {
+                fail(index, "local origin contains a non-finite coordinate");
+                return scan;
+            }
+        }
+
+        const double determinant = scale * scale * scale * dot(u, cross(v, w));
+        if (!std::isfinite(determinant) || determinant == 0.0) {
+            fail(index, "derived linear transform is singular");
+            return scan;
+        }
+        if (std::abs(scale - 1.0) > 1e-9 ||
+            std::abs(determinant - 1.0) > 1e-9) {
+            if (scan.nonRigidCount == 0) {
+                scan.firstNonRigidDeterminant = determinant;
+                scan.firstNonRigidScale = scale;
+            }
+            ++scan.nonRigidCount;
+        }
+    }
+    return scan;
+}
+
 class StepReader final : public Reader {
 public:
     StepReader() {
@@ -282,6 +442,29 @@ public:
             throw SecureImportError(
                 "import.step.no_transfer_roots",
                 "STEP source contains no transferable product roots: " + m_path);
+        }
+
+        const SourceTransformScan transformScan =
+            scanSourceTransformOperators(m_reader.Reader().StepModel());
+        if (transformScan.invalidReason) {
+            throw SecureImportError(
+                "import.transform.singular_placement",
+                "STEP declares an invalid cartesian transformation operator (" +
+                    *transformScan.invalidReason + "): " + m_path);
+        }
+        if (transformScan.nonRigidCount != 0) {
+            std::ostringstream message;
+            message.imbue(std::locale::classic());
+            message << "STEP declares " << transformScan.nonRigidCount
+                    << " non-rigid cartesian transformation operator(s); first "
+                    << "determinant=" << transformScan.firstNonRigidDeterminant
+                    << ", scale=" << transformScan.firstNonRigidScale
+                    << ". Processing-disabled XDE provides no certificate that "
+                       "the affine was retained or baked: "
+                    << m_path;
+            throw SecureImportError(
+                "import.transform.unresolved_representation_loss",
+                message.str());
         }
 
         Handle(TDocStd_Document) doc;

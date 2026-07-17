@@ -1,0 +1,32 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "5c6bec90497bd296a85781d61927ac096bb6295a99d5c4454e50c0e3432fea04",
+  "finding_disposition": "Accepted source/native M1 witness with exact representation-survival or representation-loss boundaries. These claims establish fixture readiness only; no M2/M3 consumer verification is promoted.",
+  "fixture_id": "solid.blend.setback_multiway",
+  "producer_id": "producer.m1_feature_pathology_oracle_authoring",
+  "review_id": "review.solid_blend_setback_multiway.revision_6",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.feature_pathology_oracle_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "artifacts.native_brep_binding",
+    "claims.profile_binding",
+    "construction.parameters",
+    "geometry.source_derivation",
+    "normalization.explicit",
+    "normalization.representation_loss",
+    "source.native_contract",
+    "support.occurrence_identity",
+    "topology.readback",
+    "units.tolerances"
+  ],
+  "source_binding": {
+    "artifact_sha256": "afe761f0da0eabdab8cb6eca2b550c526ec3a5b4ad740474444eefb70c00e5a9",
+    "construction_parameters_sha256": "64fe00fe12b1a188684a9e319df6b862153b4d51b4cc8ddb5642d169f2ce8ba8",
+    "generator_revision": 6,
+    "kind": "occt_procedural",
+    "source_contract_sha256": "66d15e6ad606b0573067490497398f0c8bf6ea2553bcfd10d3d8e4c5ca8c899f",
+    "summary_sha256": "febbf6a1a7d0b0e843b1c7e30afbe5655543a2b2aec3f8985dda426ff589188d"
+  }
+}

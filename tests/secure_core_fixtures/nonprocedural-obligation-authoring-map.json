@@ -1,0 +1,2866 @@
+{
+  "authoritative_ledger": "docs/governance/fixture-coverage.md",
+  "authoritative_obligation_registry": "fixtures/obligation-profiles.json",
+  "canonicalization": "sorted-pretty-json-v1",
+  "complements_procedural_map": "fixtures/procedural-recipe-authoring-map.json",
+  "coverage_semantics": "authoring-intent-and-named-limitations-not-coverage-evidence",
+  "obligation_count": 75,
+  "obligations": {
+    "CRV-001": {
+      "assignments": [
+        {
+          "claim_boundary": "Existing legacy fixture-ready evidence for bounded line edges on mathematically unbounded exact line bases.",
+          "fixture_id": "solid.box",
+          "independent_oracle_intent": "Derive all twelve unique line equations, endpoint coordinates, finite edge ranges, and unbounded Geom_Line bases from the 30 by 20 by 10 millimetre cuboid.",
+          "intended_import_outcome": {
+            "detail": "Processing-disabled STEP import succeeds with a valid closed cuboid B-rep.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "pass",
+            "selection_codes": [
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "solid.box"
+        }
+      ]
+    },
+    "CRV-002": {
+      "assignments": [
+        {
+          "claim_boundary": "Existing legacy fixture-ready evidence includes full cap circles, partial circular arcs, seam incidence, and reversed coedge occurrences.",
+          "fixture_id": "solid.cylinder.partial",
+          "independent_oracle_intent": "Derive the cylinder radius, full cap-circle periods, partial side-boundary arc ranges, seam placement, and edge/coedge orientations independently from analytic construction.",
+          "intended_import_outcome": {
+            "detail": "Processing-disabled STEP import succeeds with a valid partial-cylinder solid.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "pass",
+            "selection_codes": [
+              "strategy.curve.exact_circle",
+              "strategy.curve.exact_line",
+              "strategy.surface.cylinder_partial",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "solid.cylinder.partial"
+        }
+      ]
+    },
+    "CRV-009": {
+      "assignments": [
+        {
+          "claim_boundary": "Procedural native-BRep M1 witness for an addressable intersection, composite, or kernel-specific OtherCurve dynamic type. STEP canonicalization remains an explicit limitation, so this route does not claim post-STEP survival or M2/M3 consumer verification.",
+          "fixture_id": "witness.curve.other_dynamic_type.native_brep",
+          "independent_oracle_intent": "Serialize the composite/intersection source as hash-bound OCCT ASCII BRep, reload it without STEP, record the retained concrete dynamic type and exact subject identity, and separately record the STEP-flattened comparison.",
+          "intended_import_outcome": {
+            "detail": "Native BRep loading succeeds with the OtherCurve dynamic type retained; the paired STEP comparison may canonicalize it.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.free_topology"
+            ],
+            "support_states": [
+              "UnsupportedTopology"
+            ]
+          },
+          "lane": "occt_procedural",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "wire.composite.intersection_isoparametric"
+        }
+      ]
+    },
+    "CRV-010": {
+      "assignments": [
+        {
+          "claim_boundary": "Procedural native-BRep M1 witness for the exact trimmed-curve wrapper stack. STEP flattening remains recorded representation loss, so this route does not claim post-STEP wrapper survival or consumer verification.",
+          "fixture_id": "witness.curve.trimmed_wrapper.native_brep",
+          "independent_oracle_intent": "Load a hash-bound native BRep derived from the offset-curve source and independently verify the Geom_TrimmedCurve basis, bounds, and wrapper stack before and after native serialization.",
+          "intended_import_outcome": {
+            "detail": "Native BRep loading is intended to preserve the trimmed wrapper that STEP currently flattens.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.free_topology"
+            ],
+            "support_states": [
+              "UnsupportedTopology"
+            ]
+          },
+          "lane": "occt_procedural",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "wire.offset.nested_singular"
+        }
+      ]
+    },
+    "CRV-011": {
+      "assignments": [
+        {
+          "claim_boundary": "Procedural native-BRep M1 witness for exact offset and nested-offset curve wrappers. STEP may flatten or combine the wrappers, and that limitation is not promoted to consumer coverage.",
+          "fixture_id": "witness.curve.offset_wrapper.native_brep",
+          "independent_oracle_intent": "Load a hash-bound native BRep and independently verify each Geom_OffsetCurve wrapper, its basis identity, distance, direction, and nested wrapper order.",
+          "intended_import_outcome": {
+            "detail": "Native BRep loading is intended to preserve both offset wrapper levels that STEP may canonicalize.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.free_topology"
+            ],
+            "support_states": [
+              "UnsupportedTopology"
+            ]
+          },
+          "lane": "occt_procedural",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "wire.offset.nested_singular"
+        }
+      ]
+    },
+    "CRV-012": {
+      "assignments": [
+        {
+          "claim_boundary": "Deterministic source-bound ASCII STEP patch for mirrored mapped-item accounting. It materializes M1 source and loss evidence only; it does not claim that the current consumer preserves a non-rigid occurrence transform.",
+          "fixture_id": "assembly.box.mirrored_mapped_item",
+          "independent_oracle_intent": "Derive the mirrored source matrix and determinant, then record imported rigid location, orientation changes, and any geometry-baked transformation without treating reflection as a TopLoc rigid transform.",
+          "intended_import_outcome": {
+            "detail": "Patched STEP import is expected to succeed while recording whether reflection is represented by orientation change or baked geometry.",
+            "status": "succeeds_with_representation_loss"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "verification_pending",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "assembly.box.nested_repeated_instances"
+        },
+        {
+          "claim_boundary": "Deterministic source-bound ASCII STEP patch for scaled mapped-item accounting. It materializes M1 source and loss evidence while forbidding any claim that scale survived as a rigid TopLoc location.",
+          "fixture_id": "assembly.box.scaled_mapped_item",
+          "independent_oracle_intent": "Derive the non-unit scale matrix and transformed line geometry, then distinguish source mapping, imported rigid placement, and geometry conversion with exact provenance.",
+          "intended_import_outcome": {
+            "detail": "Patched STEP import is expected to succeed while recording non-unit source scale separately from any geometry-baked conversion.",
+            "status": "succeeds_with_representation_loss"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "verification_pending",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "assembly.box.nested_repeated_instances"
+        },
+        {
+          "claim_boundary": "Existing fixture-ready procedural half for exact line bases under accumulated rigid XDE occurrence locations.",
+          "fixture_id": "assembly.box.nested_repeated_instances",
+          "independent_oracle_intent": "Compare each local exact line with all accumulated rigid world transforms and repeated occurrences sharing one underlying topology definition.",
+          "intended_import_outcome": {
+            "detail": "Processing-disabled STEP/XDE import succeeds with six valid box occurrences and deterministic rigid placements.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "pass",
+            "selection_codes": [
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "assembly.box.nested_repeated_instances"
+        }
+      ]
+    },
+    "CRV-017": {
+      "assignments": [
+        {
+          "claim_boundary": "Exact derived native-BRep edge fault; translator p-curve repair must remain disabled and no synthesized 3D curve may be accepted.",
+          "fixture_id": "corrupt.edge.pcurve_only",
+          "independent_oracle_intent": "Prove that the selected edge has no stored 3D curve while retaining an exact face p-curve, finite range, endpoints, and coedge incidence.",
+          "intended_import_outcome": {
+            "detail": "Hash-bound native BRep load succeeds and retains the p-curve-only edge without repair.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.pcurve_only_edge"
+            ],
+            "support_states": [
+              "UnsupportedTopology"
+            ]
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.cylinder.seam_dual_pcurve"
+        }
+      ]
+    },
+    "CRV-022": {
+      "assignments": [
+        {
+          "claim_boundary": "Exact source-bound edge-domain mutation; equivalent geometry must remain measurable despite unequal 3D and p-curve ranges.",
+          "fixture_id": "corrupt.edge.range_mismatch",
+          "independent_oracle_intent": "Freeze the unequal edge and p-curve parameter domains and independently prove their endpoint and interior mappings correspond to the same 3D locus.",
+          "intended_import_outcome": {
+            "detail": "Native BRep load succeeds and retains unequal but geometrically equivalent parameter ranges.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.cylinder.seam_dual_pcurve"
+        }
+      ]
+    },
+    "CRV-023": {
+      "assignments": [
+        {
+          "claim_boundary": "Exact source-bound flag mutation with both SameParameter and SameRange false; it does not imply geometric disagreement by itself.",
+          "fixture_id": "corrupt.edge.sameparameter_samerange_false",
+          "independent_oracle_intent": "Read both stored flags independently, record all curve domains, and sample the mappings so flag state and geometric consistency are not conflated.",
+          "intended_import_outcome": {
+            "detail": "Native BRep load succeeds and retains both false flags without automatic repair.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.cylinder.seam_dual_pcurve"
+        }
+      ]
+    },
+    "CRV-024": {
+      "assignments": [
+        {
+          "claim_boundary": "Beyond-tolerance half of the measured 3D-curve versus p-curve surface-mapping matrix.",
+          "fixture_id": "corrupt.edge.pcurve_disagreement_beyond_tolerance",
+          "independent_oracle_intent": "Sample C(t) and S(Cuv(t)) at frozen parameters and prove the maximum distance exceeds the exact imported edge tolerance.",
+          "intended_import_outcome": {
+            "detail": "Native BRep load succeeds while validation reports the retained beyond-tolerance disagreement.",
+            "status": "succeeds_invalid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.cylinder.seam_dual_pcurve"
+        },
+        {
+          "claim_boundary": "Within-tolerance half of the measured 3D-curve versus p-curve surface-mapping matrix.",
+          "fixture_id": "corrupt.edge.pcurve_disagreement_within_tolerance",
+          "independent_oracle_intent": "Sample the same mapping at frozen parameters and prove a positive discrepancy that remains no greater than the exact imported tolerance.",
+          "intended_import_outcome": {
+            "detail": "Native BRep load succeeds with a valid within-tolerance representation mismatch.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.cylinder.seam_dual_pcurve"
+        }
+      ]
+    },
+    "PAT-003": {
+      "assignments": [
+        {
+          "claim_boundary": "Source-bound two-variant wire mutation; the clean baseline itself carries no gap claim.",
+          "fixture_id": "corrupt.wire.gap_within_beyond",
+          "independent_oracle_intent": "Measure 0.0005 and 0.005 millimetre endpoint gaps against the frozen 0.001 millimetre tolerance, preserving distinct within-tolerance and beyond-tolerance identities without sewing.",
+          "intended_import_outcome": {
+            "detail": "Native BRep load retains both gaps; the beyond-tolerance variant is invalid and the within-tolerance variant remains unrepaired.",
+            "status": "succeeds_invalid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry",
+              "UnsupportedTopology"
+            ]
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "baseline.pathology.wire_gap_thresholds"
+        }
+      ]
+    },
+    "PAT-004": {
+      "assignments": [
+        {
+          "claim_boundary": "Source-bound duplicate-topology mutation; coincident coordinates alone are insufficient.",
+          "fixture_id": "corrupt.topology.duplicate_vertex_edge",
+          "independent_oracle_intent": "Prove duplicated underlying vertex and edge identities, their equal geometry, and the resulting contradictory incidence independently from the baseline box topology.",
+          "intended_import_outcome": {
+            "detail": "Native BRep load succeeds while validation retains the duplicate topology fault.",
+            "status": "succeeds_invalid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "baseline.pathology.box"
+        }
+      ]
+    },
+    "PAT-005": {
+      "assignments": [
+        {
+          "claim_boundary": "Deterministic source-bound ASCII-BRep patch for a separately addressable near-zero-area face. Splitting the matrix avoids pretending that one baseline artifact already contains both fault variants.",
+          "fixture_id": "corrupt.face.near_zero_area",
+          "independent_oracle_intent": "Patch the 20 millimetre height to the declared 1e-8 millimetre target, derive the positive near-zero area independently, and preserve exact source hash, subject identity, and validation finding.",
+          "intended_import_outcome": {
+            "detail": "Hash-bound ASCII BRep load succeeds and the near-zero face fails the frozen meshing-validity threshold.",
+            "status": "succeeds_invalid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "baseline.pathology.planar_face"
+        },
+        {
+          "claim_boundary": "Deterministic source-bound ASCII-BRep patch for a separately addressable zero-area face; no combined two-face baseline is required.",
+          "fixture_id": "corrupt.face.zero_area",
+          "independent_oracle_intent": "Patch the 20 millimetre height to the declared zero target, independently prove coincident boundary geometry and zero area, and preserve exact source hash, subject identity, and validation finding.",
+          "intended_import_outcome": {
+            "detail": "Hash-bound ASCII BRep load succeeds while validation retains the intentionally degenerate zero-area face.",
+            "status": "succeeds_invalid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "baseline.pathology.planar_face"
+        }
+      ]
+    },
+    "PAT-008": {
+      "assignments": [
+        {
+          "claim_boundary": "Existing fixture-ready non-manifold edge and vertex evidence from one face shared by two solids.",
+          "fixture_id": "compound.box_pair.shared_face_nonmanifold",
+          "independent_oracle_intent": "Prove one shared face identity, four interface edges with three face uses, four non-manifold vertices, and exact two-solid ancestry.",
+          "intended_import_outcome": {
+            "detail": "Processing-disabled non-manifold STEP import succeeds with a valid retained shared interface.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.nonmanifold_shared_interface",
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate",
+              "UnsupportedTopology"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "compound.box_pair.shared_face_nonmanifold"
+        }
+      ]
+    },
+    "PAT-009": {
+      "assignments": [
+        {
+          "claim_boundary": "Deterministic source-bound ASCII-BRep orientation mutation of the clean box baseline. The native artifact is the pathology witness; STEP normalization is recorded separately and is not treated as preserved fault evidence.",
+          "fixture_id": "corrupt.orientation.inverted_shell_face",
+          "independent_oracle_intent": "Apply declared shell and face orientation-token reversals to the hash-bound clean box BRep, then independently prove negative signed volume plus reversed face/support orientation.",
+          "intended_import_outcome": {
+            "detail": "Hash-bound ASCII BRep load succeeds while validation retains the inverted shell and reversed-face orientation faults.",
+            "status": "succeeds_invalid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "baseline.pathology.box"
+        }
+      ]
+    },
+    "PAT-010": {
+      "assignments": [
+        {
+          "claim_boundary": "Exact native-BRep coedge-orientation mutation bound to the clean square-wire baseline.",
+          "fixture_id": "corrupt.wire.inconsistent_orientation",
+          "independent_oracle_intent": "Derive the expected ordered cycle and prove one contradictory coedge orientation, its endpoints, and the resulting invalid winding without automatic repair.",
+          "intended_import_outcome": {
+            "detail": "Native BRep load succeeds while retaining the inconsistent wire orientation fault.",
+            "status": "succeeds_invalid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "baseline.pathology.wire_gap_thresholds"
+        }
+      ]
+    },
+    "PAT-011": {
+      "assignments": [
+        {
+          "claim_boundary": "Beyond-tolerance p-curve disagreement is the invalid half of the pathology matrix.",
+          "fixture_id": "corrupt.edge.pcurve_disagreement_beyond_tolerance",
+          "independent_oracle_intent": "Measure the maximum C(t) versus S(Cuv(t)) residual and prove it exceeds the imported tolerance on the exact affected coedge.",
+          "intended_import_outcome": {
+            "detail": "Native BRep load succeeds and validation retains the beyond-tolerance disagreement.",
+            "status": "succeeds_invalid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.cylinder.seam_dual_pcurve"
+        },
+        {
+          "claim_boundary": "Within-tolerance p-curve disagreement is the valid comparison half and must remain distinct from exact agreement.",
+          "fixture_id": "corrupt.edge.pcurve_disagreement_within_tolerance",
+          "independent_oracle_intent": "Measure a positive mapping residual that remains at or below the imported tolerance, retaining exact subject and parameter provenance.",
+          "intended_import_outcome": {
+            "detail": "Native BRep load succeeds with a valid within-tolerance discrepancy.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.cylinder.seam_dual_pcurve"
+        }
+      ]
+    },
+    "PAT-012": {
+      "assignments": [
+        {
+          "claim_boundary": "Native derivative-failure half; no STEP artifact can deterministically force an evaluator callback failure.",
+          "fixture_id": "fault.surface.derivative_failure",
+          "independent_oracle_intent": "Inject an exact face-bound derivative failure and require the stable geometry-evaluation error without fallback values or synthesized derivatives.",
+          "intended_import_outcome": {
+            "detail": "Native evaluator harness executes directly; STEP import is not applicable.",
+            "status": "not_applicable"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "native_fault_injection",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "native.fault_harness.v1"
+        },
+        {
+          "claim_boundary": "Native value-failure half; it remains separate from derivative failure.",
+          "fixture_id": "fault.surface.value_failure",
+          "independent_oracle_intent": "Inject an exact face-bound surface-value failure and require the stable geometry-evaluation error with retained subject identity.",
+          "intended_import_outcome": {
+            "detail": "Native evaluator harness executes directly; STEP import is not applicable.",
+            "status": "not_applicable"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "native_fault_injection",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "native.fault_harness.v1"
+        }
+      ]
+    },
+    "PAT-013": {
+      "assignments": [
+        {
+          "claim_boundary": "Native exact-evaluator singularity case; no normal may be fabricated from parallel tangents.",
+          "fixture_id": "fault.surface.undefined_normal",
+          "independent_oracle_intent": "Return finite point and derivative data with parallel tangent vectors and independently require a null unit normal for the exact face and UV sample.",
+          "intended_import_outcome": {
+            "detail": "Native evaluator harness executes directly; STEP import is not applicable.",
+            "status": "not_applicable"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "native_fault_injection",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "native.fault_harness.v1"
+        }
+      ]
+    },
+    "PAT-015": {
+      "assignments": [
+        {
+          "claim_boundary": "Native parameter-domain fault covering both NaN and positive infinity rejection.",
+          "fixture_id": "fault.bounds.nan_infinity",
+          "independent_oracle_intent": "Construct exact NaN and infinite parameter domains and require deterministic rejection before any evaluator or meshing operation consumes them.",
+          "intended_import_outcome": {
+            "detail": "Native domain-validation harness executes directly; STEP import is not applicable.",
+            "status": "not_applicable"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "fail_closed",
+            "meshing_gate": "not_applicable",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "native_fault_injection",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "native.fault_harness.v1"
+        }
+      ]
+    },
+    "PAT-017": {
+      "assignments": [
+        {
+          "claim_boundary": "Deterministic source-bound ASCII-BRep patch for the curve member of the self-intersection matrix; the split fixture keeps curve evidence independently addressable.",
+          "fixture_id": "corrupt.self_intersection.curve",
+          "independent_oracle_intent": "Patch the hash-bound composite-curve source into a crossing parametric path and independently locate every duplicate image with curve parameters and subject provenance.",
+          "intended_import_outcome": {
+            "detail": "Hash-bound ASCII BRep load succeeds while validation retains the intentionally self-intersecting curve.",
+            "status": "succeeds_invalid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "wire.composite.intersection_isoparametric"
+        },
+        {
+          "claim_boundary": "Deterministic source-bound ASCII-BRep patch for the shell member of the self-intersection matrix; it does not infer shell failure from a surface-only singularity.",
+          "fixture_id": "corrupt.self_intersection.shell",
+          "independent_oracle_intent": "Patch selected clean-box face placements to create a controlled shell crossing, then independently prove the face-face intersection curves and invalid shell incidence.",
+          "intended_import_outcome": {
+            "detail": "Hash-bound ASCII BRep load succeeds while validation retains the intentionally self-intersecting shell.",
+            "status": "succeeds_invalid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "baseline.pathology.box"
+        },
+        {
+          "claim_boundary": "Deterministic source-bound ASCII-BRep patch for the surface member of the self-intersection matrix; the independent oracle measures duplicate UV images rather than relying on source naming.",
+          "fixture_id": "corrupt.self_intersection.surface",
+          "independent_oracle_intent": "Patch selected B-spline control points into a controlled fold, then independently locate distinct UV samples with the same 3D image and record the singular locus.",
+          "intended_import_outcome": {
+            "detail": "Hash-bound ASCII BRep load succeeds while validation retains the intentionally folded self-intersecting surface.",
+            "status": "succeeds_invalid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.bspline_nurbs.matrix"
+        },
+        {
+          "claim_boundary": "Deterministic source-bound ASCII-BRep patch for the trim member of the self-intersection matrix; the trim fault remains separate from the supporting surface.",
+          "fixture_id": "corrupt.self_intersection.trim",
+          "independent_oracle_intent": "Reorder declared p-curve coordinates in the nested-hole baseline, independently locate the non-adjacent segment crossing, and retain exact loop and face identity.",
+          "intended_import_outcome": {
+            "detail": "Hash-bound ASCII BRep load succeeds while validation retains the intentionally self-intersecting trim loop.",
+            "status": "succeeds_invalid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.trim.nested_holes"
+        },
+        {
+          "claim_boundary": "Procedural all-of witness only: the torus matrix can supply a mathematically self-intersecting spindle surface but not the required curve, trim, and shell faults.",
+          "fixture_id": "corpus.pathology.self_intersection.procedural",
+          "independent_oracle_intent": "Measure the spindle-torus duplicate images and singular locus independently, bind them to the imported torus subjects, and publish the missing curve, trim, and shell variants as explicit gaps.",
+          "intended_import_outcome": {
+            "detail": "Consumer oracle reads the valid procedural torus artifact and records only its genuine surface contribution.",
+            "status": "consumer_fixture_only"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "verification_pending",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.singular_torus_route_unproven"
+            ],
+            "support_states": [
+              "DeferredResidualSurface"
+            ]
+          },
+          "lane": "m1_consumer_oracle",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "solid.torus.ring_horn_spindle_full_partial"
+        }
+      ]
+    },
+    "REC-001": {
+      "assignments": [
+        {
+          "claim_boundary": "M1 consumer-oracle definition only. Fixture readiness pins the no-processing import inputs and expected diagnostics; actual XDE importer verification remains M2/M3 work.",
+          "fixture_id": "corpus.recon.step_lanes",
+          "independent_oracle_intent": "Enumerate the audited-external, derived-corruption, and procedural STEP inputs, freeze every translator processing setting as disabled, and require source-bound evidence that no healing changed topology or p-curves.",
+          "intended_import_outcome": {
+            "detail": "Consumer fixture specifies the mixed successful and deliberately failed STEP outcomes for later reconnaissance execution.",
+            "status": "consumer_fixture_only"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "verification_pending",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "m1_consumer_oracle",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "corpus.step_lanes.v1"
+        }
+      ]
+    },
+    "REC-002": {
+      "assignments": [
+        {
+          "claim_boundary": "M1 consumer-oracle definition only; later reconnaissance must match the pinned occurrence and unique-entity identities.",
+          "fixture_id": "corpus.recon.step_lanes",
+          "independent_oracle_intent": "Author the exact expected occurrence graph and unique underlying topology universe for every external, derived, and procedural STEP fixture, including instance paths and repeated identities.",
+          "intended_import_outcome": {
+            "detail": "Consumer fixture declares per-input import outcomes and the identity universe expected from later execution.",
+            "status": "consumer_fixture_only"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "verification_pending",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "m1_consumer_oracle",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "corpus.step_lanes.v1"
+        }
+      ]
+    },
+    "REC-003": {
+      "assignments": [
+        {
+          "claim_boundary": "M1 all-lane taxonomy oracle only; classifier verification and zero-unaccounted enforcement remain M3 responsibilities.",
+          "fixture_id": "corpus.recon.all_lanes",
+          "independent_oracle_intent": "Freeze exact curve and surface family expectations across audited external, derived, native-fault, and procedural inputs, including deliberate unknown and evaluator-failure subjects.",
+          "intended_import_outcome": {
+            "detail": "Consumer fixture combines STEP import results with native-only outcomes without pretending native faults are imported shapes.",
+            "status": "consumer_fixture_only"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "verification_pending",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "m1_consumer_oracle",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "corpus.all_lanes.v1"
+        }
+      ]
+    },
+    "REC-004": {
+      "assignments": [
+        {
+          "claim_boundary": "M1 wrapper-stack oracle only; later inventory verification must fail on any unrecorded representation or wrapper loss.",
+          "fixture_id": "corpus.recon.all_lanes",
+          "independent_oracle_intent": "Author concrete curve and surface types plus ordered wrapper stacks for every applicable all-lane subject, with native-BRep witnesses explicitly separated from STEP-survival evidence.",
+          "intended_import_outcome": {
+            "detail": "Consumer fixture records each source-specific import or native outcome and the representation boundary it can honestly prove.",
+            "status": "consumer_fixture_only"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "verification_pending",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "m1_consumer_oracle",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "corpus.all_lanes.v1"
+        }
+      ]
+    },
+    "REC-005": {
+      "assignments": [
+        {
+          "claim_boundary": "M1 analytic-observation oracle only; continuity, trim, period, and singularity consumers remain unimplemented.",
+          "fixture_id": "corpus.recon.all_lanes",
+          "independent_oracle_intent": "Freeze every periodic domain, trim loop, singularity, and continuity classification using independent analytic derivations and exact fault measurements across all evidence lanes.",
+          "intended_import_outcome": {
+            "detail": "Consumer fixture specifies heterogeneous imported, invalid, rejected, and native-only source outcomes.",
+            "status": "consumer_fixture_only"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "verification_pending",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "m1_consumer_oracle",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "corpus.all_lanes.v1"
+        }
+      ]
+    },
+    "REC-006": {
+      "assignments": [
+        {
+          "claim_boundary": "M1 semantic and support oracle only; M3 recognition and support-assignment verification remain pending.",
+          "fixture_id": "corpus.recon.all_lanes",
+          "independent_oracle_intent": "Author independently derived semantic candidates, confidence evidence, exact support states, and selection reasons for every all-lane edge, face, and logical region.",
+          "intended_import_outcome": {
+            "detail": "Consumer fixture binds support expectations to each source's declared import or native outcome.",
+            "status": "consumer_fixture_only"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "verification_pending",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "m1_consumer_oracle",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "corpus.all_lanes.v1"
+        }
+      ]
+    },
+    "REC-007": {
+      "assignments": [
+        {
+          "claim_boundary": "M1 palette oracle can be materialized now, but Qt 6 viewer execution and screenshot verification remain a later M2 dependency.",
+          "fixture_id": "viewer.recon.diagnostic_palette",
+          "independent_oracle_intent": "Assign a frozen distinct colour and legend entry to every geometry, support, invalid, ambiguous, unknown, and gate-failure category without relying on production viewer output.",
+          "intended_import_outcome": {
+            "detail": "Viewer consumer fixture references all-lane inventory subjects; it is not itself an imported geometry artifact.",
+            "status": "consumer_fixture_only"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "verification_pending",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "m1_consumer_oracle",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "diagnostic.palette.v1"
+        }
+      ]
+    },
+    "REC-008": {
+      "assignments": [
+        {
+          "claim_boundary": "M1 canonical report oracle only; deterministic report production and repeat-run equality remain later consumer verification.",
+          "fixture_id": "corpus.recon.all_lanes",
+          "independent_oracle_intent": "Author canonical schema-1.0.0 inventory documents for all-lane subjects and freeze ordering, identifiers, exact measurements, and support assignments independently of production reports.",
+          "intended_import_outcome": {
+            "detail": "Consumer fixture binds canonical reports to each source's imported or native outcome.",
+            "status": "consumer_fixture_only"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "verification_pending",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "m1_consumer_oracle",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "corpus.all_lanes.v1"
+        }
+      ]
+    },
+    "REC-009": {
+      "assignments": [
+        {
+          "claim_boundary": "M1 fail-closed consumer oracle only; later M3 automated inventory must demonstrate the rejection.",
+          "fixture_id": "native.recon.unaccounted_exact_type",
+          "independent_oracle_intent": "Combine one valid procedural subject, one derived import fault, and the native unknown-dynamic-type subject, then require the inventory gate to fail on any missing assignment or unrecognised exact type lacking its explicit state.",
+          "intended_import_outcome": {
+            "detail": "Consumer fixture aggregates imported and native-only outcomes and is not itself a STEP artifact.",
+            "status": "consumer_fixture_only"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "verification_pending",
+            "meshing_gate": "not_applicable",
+            "selection_codes": [
+              "reason.unrecognised_exact_geometry"
+            ],
+            "support_states": [
+              "UnrecognisedExactGeometry"
+            ]
+          },
+          "lane": "m1_consumer_oracle",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "corpus.recon.fail_closed_matrix"
+        }
+      ]
+    },
+    "REC-010": {
+      "assignments": [
+        {
+          "claim_boundary": "Feasible M1 accepted-corpus manifest only. It pins the present synthetic, derived, native, Plasticity AP203, AutoCAD AP214, and NIST AP242 assets while explicitly leaving the broader Plasticity family matrix and M3 execution unclaimed.",
+          "fixture_id": "corpus.recon.accepted_lanes",
+          "independent_oracle_intent": "Pin exact membership, source hashes, provenance records, expected per-source outcomes, and a canonical aggregate digest for the accepted corpus; emit an explicit missing-family inventory instead of treating the current Plasticity file as complete.",
+          "intended_import_outcome": {
+            "detail": "M1 consumer fixture catalogs the accepted assets and missing Plasticity families; no M2/M3 run result is asserted.",
+            "status": "consumer_fixture_only"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "verification_pending",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "m1_consumer_oracle",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "corpus.accepted_lanes.v1"
+        }
+      ]
+    },
+    "SEM-001": {
+      "assignments": [
+        {
+          "claim_boundary": "Procedural native-BRep M1 topology witness for distinct coplanar faces and their artificial edge. STEP may merge the faces, so this route does not claim post-STEP survival or M3 recognition verification.",
+          "fixture_id": "witness.semantic.coplanar_split.native_brep",
+          "independent_oracle_intent": "Load a hash-bound native BRep and prove distinct coplanar face identities, equal normals, zero plane separation, and their shared artificial edge at the authored split location.",
+          "intended_import_outcome": {
+            "detail": "Native BRep preserves the split that may be merged during STEP serialization.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "occt_procedural",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "solid.planar.coplanar_split"
+        }
+      ]
+    },
+    "SEM-003": {
+      "assignments": [
+        {
+          "claim_boundary": "Existing fixture-ready prismatic/extruded-region evidence for the analytic cuboid baseline.",
+          "fixture_id": "solid.box",
+          "independent_oracle_intent": "Recover the box extrusion direction, rectangular generator, constant cross-section, six planes, twelve lines, and exact dimensions independently.",
+          "intended_import_outcome": {
+            "detail": "Processing-disabled STEP import succeeds with a valid analytic cuboid.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "pass",
+            "selection_codes": [
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "solid.box"
+        }
+      ]
+    },
+    "SEM-011": {
+      "assignments": [
+        {
+          "claim_boundary": "Named procedural unsupported-topology witness: the fixture contains a valid corner blend plus a separate free degree-four rail graph, not a true setback or multi-way blend cap. M1 readiness records that limitation rather than claiming a generic cap.",
+          "fixture_id": "solid.blend.setback_multiway",
+          "independent_oracle_intent": "Measure the corner blend and all unequal rail setbacks independently, preserve their separation, and prohibit any oracle statement that the free graph is a generated blend cap.",
+          "intended_import_outcome": {
+            "detail": "The compound imports as valid geometry, but its free graph is only a topology witness.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.free_topology"
+            ],
+            "support_states": [
+              "UnsupportedTopology"
+            ]
+          },
+          "lane": "occt_procedural",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "solid.blend.setback_multiway"
+        }
+      ]
+    },
+    "SEM-013": {
+      "assignments": [
+        {
+          "claim_boundary": "Named procedural unsupported-topology witness: the T, Y, and X objects are free incidence graphs beside ordinary fillet strips, not true blend-junction caps. No generic junction filler or cap coverage is claimed.",
+          "fixture_id": "solid.fillet.junction_t_y_x",
+          "independent_oracle_intent": "Derive each shared-vertex graph and neighboring fillet strip independently, and fail validation if the oracle labels any graph as a generated T, Y, or X blend junction.",
+          "intended_import_outcome": {
+            "detail": "The compound imports as valid geometry, but each junction graph remains free topology rather than a blend cap.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.free_topology"
+            ],
+            "support_states": [
+              "UnsupportedTopology"
+            ]
+          },
+          "lane": "occt_procedural",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "solid.fillet.junction_t_y_x"
+        }
+      ]
+    },
+    "SEM-019": {
+      "assignments": [
+        {
+          "claim_boundary": "Existing fixture-ready circular and general sector-trimmed cap contribution.",
+          "fixture_id": "solid.cylinder.partial",
+          "independent_oracle_intent": "Derive the circular cap support, sector boundary arcs and radial edges, loop orientation, and finite trim domain from exact geometry.",
+          "intended_import_outcome": {
+            "detail": "Processing-disabled STEP import succeeds with valid circular and sector-trimmed planar caps.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "pass",
+            "selection_codes": [
+              "strategy.curve.exact_circle",
+              "strategy.curve.exact_line",
+              "strategy.surface.cylinder_partial",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "solid.cylinder.partial"
+        },
+        {
+          "claim_boundary": "Existing legacy source can supply the missing elliptical and ellipse-plus-chord cap variants, but its current oracle lacks the SEM-019 link.",
+          "fixture_id": "solid.prism.ellipse.partial_cap",
+          "independent_oracle_intent": "Derive the full elliptical cap and partial ellipse-plus-chord cap equations, loop classes, and exact trim bounds independently from the imported solid.",
+          "intended_import_outcome": {
+            "detail": "Processing-disabled STEP import succeeds with a valid elliptical-prism solid.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.regular_extrusion_route_unproven",
+              "strategy.curve.exact_ellipse",
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "DeferredResidualSurface",
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "solid.prism.ellipse.partial_cap"
+        }
+      ]
+    },
+    "SEM-021": {
+      "assignments": [
+        {
+          "claim_boundary": "Procedural native-BRep M1 witness for tangent coplanar faces and their artificial edge. STEP may merge the faces, so post-STEP edge survival and M3 recognition remain explicitly unclaimed.",
+          "fixture_id": "witness.semantic.coplanar_split.native_brep",
+          "independent_oracle_intent": "Prove two distinct imported-native face identities have equal normals, zero plane separation, and one shared artificial edge with tangent continuity.",
+          "intended_import_outcome": {
+            "detail": "Native BRep preserves the artificial edge that the current STEP contract permits to disappear.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "occt_procedural",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "solid.planar.coplanar_split"
+        }
+      ]
+    },
+    "SEM-024": {
+      "assignments": [
+        {
+          "claim_boundary": "Procedural native-BRep M1 recovery witness retaining a generic NURBS cylinder. STEP may restore the analytic cylinder before recognition, so this route does not claim post-STEP recovery verification.",
+          "fixture_id": "witness.semantic.nurbs_recovered_analytic.native_brep",
+          "independent_oracle_intent": "Retain a generic NURBS cylinder in hash-bound native BRep form, fit the analytic cylinder independently, and publish maximum positional and normal residuals against frozen recovery thresholds.",
+          "intended_import_outcome": {
+            "detail": "Native BRep preserves the NURBS representation that STEP currently may analyticize.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [
+              "strategy.surface.cylinder"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "occt_procedural",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "solid.nurbs.recovered_analytic"
+        }
+      ]
+    },
+    "SEM-025": {
+      "assignments": [
+        {
+          "claim_boundary": "Native-fault all-of contribution supplies the deliberate NotRecognised state only, not the other confidence levels or M3 classifier verification.",
+          "fixture_id": "fault.geometry.unknown_dynamic_type",
+          "independent_oracle_intent": "Inject an exact unknown dynamic type, retain its subject identity and evaluator boundary, and require the stable unrecognised-exact-geometry outcome without fallback.",
+          "intended_import_outcome": {
+            "detail": "Native fault harness executes directly; STEP import is not applicable.",
+            "status": "not_applicable"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.unrecognised_exact_geometry"
+            ],
+            "support_states": [
+              "UnrecognisedExactGeometry"
+            ]
+          },
+          "lane": "native_fault_injection",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "native.fault_harness.v1"
+        },
+        {
+          "claim_boundary": "Procedural native-BRep M1 confidence witness for ProvenAnalytic, VerifiedRecovered, and Ambiguous variants. STEP may analyticize recovered cases, and no M3 classifier result is claimed.",
+          "fixture_id": "witness.semantic.nurbs_confidence.native_brep",
+          "independent_oracle_intent": "Freeze independently measured residuals for ProvenAnalytic, VerifiedRecovered, and Ambiguous variants while preserving generic NURBS representations in native BRep form.",
+          "intended_import_outcome": {
+            "detail": "Native BRep preserves the confidence-matrix representations that STEP may canonicalize.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [
+              "reason.ambiguous_recognition",
+              "reason.residual_surface_route_unproven",
+              "strategy.surface.cylinder"
+            ],
+            "support_states": [
+              "AmbiguousRecognition",
+              "DeferredResidualSurface",
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "occt_procedural",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "semantic.nurbs.confidence_matrix"
+        }
+      ]
+    },
+    "SRC-001": {
+      "assignments": [
+        {
+          "claim_boundary": "Accepted real Plasticity AP203 asset with verified authorship and redistribution permission. This feasible M1 source route covers only plane, cylinder, cone, line, circle, and B-spline families; full Plasticity family coverage is not claimed.",
+          "fixture_id": "external.plasticity26.mixed_analytic_nurbs.ap203",
+          "independent_oracle_intent": "Author the post-STEP oracle for the accepted two-solid Plasticity export and explicitly enumerate missing Plasticity-authored ellipse, sphere, torus, Bezier, offset, and other required family assets.",
+          "intended_import_outcome": {
+            "detail": "Accepted AP203 Plasticity asset is expected to import successfully; its explicit missing-family inventory remains part of the M1 oracle.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "verification_pending",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "audited_external",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "external.plasticity26.mixed_analytic_nurbs.ap203"
+        }
+      ]
+    },
+    "SRC-002": {
+      "assignments": [
+        {
+          "claim_boundary": "Accepted independent AutoCAD STEP exporter asset with verified AP214 declaration and redistribution record.",
+          "fixture_id": "external.freecad.as1_autocad2000.ap214",
+          "independent_oracle_intent": "Author a post-STEP independent inventory tied to the exact FreeCAD-hosted AutoCAD 2000 blob, its SHA-256, AP214 header, exporter identity, and licence record.",
+          "intended_import_outcome": {
+            "detail": "Audited AP214 asset is expected to import successfully through processing-disabled XDE.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "verification_pending",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "audited_external",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "external.freecad.as1_autocad2000.ap214"
+        },
+        {
+          "claim_boundary": "Accepted NIST asset from a genuinely independent undisclosed CAD exporter in the multi-exporter PMI corpus.",
+          "fixture_id": "external.nist.ctc_01.ap242_e1",
+          "independent_oracle_intent": "Author a post-STEP inventory tied to the exact NIST CTC-01 blob, AP242 edition-1 declaration, unrestricted-use record, and NIST statement that corpus files came from different CAD systems.",
+          "intended_import_outcome": {
+            "detail": "Audited AP242 asset is expected to import successfully through processing-disabled XDE.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "verification_pending",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "audited_external",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "external.nist.ctc_01.ap242_e1"
+        },
+        {
+          "claim_boundary": "Accepted project-authored Plasticity export using HOOPS Exchange, independently distinct from AutoCAD and the NIST corpus exporters.",
+          "fixture_id": "external.plasticity26.mixed_analytic_nurbs.ap203",
+          "independent_oracle_intent": "Author a post-STEP inventory tied to the exact project-authored Plasticity asset, AP203 declaration, HOOPS Exchange version evidence, authorship, and redistribution permission.",
+          "intended_import_outcome": {
+            "detail": "Audited AP203 Plasticity asset is expected to import successfully through processing-disabled XDE.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "verification_pending",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "audited_external",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "external.plasticity26.mixed_analytic_nurbs.ap203"
+        }
+      ]
+    },
+    "SRC-003": {
+      "assignments": [
+        {
+          "claim_boundary": "Accepted real AP214 asset; schema credit comes from the Part 21 FILE_SCHEMA declaration, not its filename.",
+          "fixture_id": "external.freecad.as1_autocad2000.ap214",
+          "independent_oracle_intent": "Verify the exact AP214IS declaration, bind it to the audited blob hash, and reject any conflicting filename or acquisition claim.",
+          "intended_import_outcome": {
+            "detail": "Audited AP214 asset is expected to import successfully through processing-disabled XDE.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "verification_pending",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "audited_external",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "external.freecad.as1_autocad2000.ap214"
+        },
+        {
+          "claim_boundary": "Accepted real AP242 edition-1 asset with file-verified schema declaration.",
+          "fixture_id": "external.nist.ctc_01.ap242_e1",
+          "independent_oracle_intent": "Verify the exact AP242DIS declaration and bind it to the NIST artifact hash and unrestricted-use provenance record.",
+          "intended_import_outcome": {
+            "detail": "Audited AP242 asset is expected to import successfully through processing-disabled XDE.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "verification_pending",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "audited_external",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "external.nist.ctc_01.ap242_e1"
+        },
+        {
+          "claim_boundary": "Accepted real AP203 Plasticity asset; similarly named AP214/AP242 copies receive no schema credit because their payloads still declare AP203.",
+          "fixture_id": "external.plasticity26.mixed_analytic_nurbs.ap203",
+          "independent_oracle_intent": "Verify the AP203 configuration-controlled-design declaration, exact blob hash, and explicit rejection of the mislabeled duplicate exports for AP214 or AP242 credit.",
+          "intended_import_outcome": {
+            "detail": "Audited AP203 Plasticity asset is expected to import successfully through processing-disabled XDE.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "verification_pending",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "audited_external",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "external.plasticity26.mixed_analytic_nurbs.ap203"
+        }
+      ]
+    },
+    "SRF-010": {
+      "assignments": [
+        {
+          "claim_boundary": "Derived all-of fault contribution for singular and self-intersecting offset zones; it does not repair the missing post-STEP wrapper-survival contribution.",
+          "fixture_id": "corrupt.surface.offset.singular_self_intersection",
+          "independent_oracle_intent": "Freeze the offset basis, distance, orientation, and exact native-BRep mutation, then sample the singular and self-intersecting loci independently with validity and subject provenance.",
+          "intended_import_outcome": {
+            "detail": "Native BRep load retains regular and invalid offset variants without STEP canonicalization.",
+            "status": "succeeds_invalid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry",
+              "reason.offset_route_unproven"
+            ],
+            "support_states": [
+              "DeferredResidualSurface",
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.offset.nested_regular_singular"
+        },
+        {
+          "claim_boundary": "Procedural native-BRep M1 witness for exact offset-surface wrapper identity and nesting. STEP canonicalization remains a recorded limitation, and no M2/M3 wrapper-consumer verification is claimed.",
+          "fixture_id": "witness.surface.offset_wrapper.native_brep",
+          "independent_oracle_intent": "Verify the exact Geom_OffsetSurface basis, distance, orientation, nested order, and sampled regularity before and after hash-bound native serialization.",
+          "intended_import_outcome": {
+            "detail": "Native BRep preserves offset wrappers that the current STEP round trip may flatten or canonicalize.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.free_topology"
+            ],
+            "support_states": [
+              "UnsupportedTopology"
+            ]
+          },
+          "lane": "occt_procedural",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.offset.nested_regular_singular"
+        }
+      ]
+    },
+    "SRF-011": {
+      "assignments": [
+        {
+          "claim_boundary": "Procedural native-BRep M1 witness for ruled, swept, lofted, plate, and kernel-specific OtherSurface dynamic types. STEP may analyticize or reparameterize them, so post-STEP survival is not claimed.",
+          "fixture_id": "witness.surface.other_dynamic_type.native_brep",
+          "independent_oracle_intent": "Preserve and inspect exact ruled, swept, lofted, and kernel-specific surface dynamic types in hash-bound native BRep form, with independently derived generators and section laws.",
+          "intended_import_outcome": {
+            "detail": "Native BRep loading succeeds with the authored OtherSurface dynamic types retained; the paired STEP comparison may canonicalize them.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.free_topology"
+            ],
+            "support_states": [
+              "UnsupportedTopology"
+            ]
+          },
+          "lane": "occt_procedural",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.ruled_swept_lofted_plate"
+        }
+      ]
+    },
+    "SRF-012": {
+      "assignments": [
+        {
+          "claim_boundary": "Procedural native-BRep M1 witness for an exact rectangular-trimmed surface wrapper. STEP may unwrap it, so this route does not assert post-STEP wrapper survival.",
+          "fixture_id": "witness.surface.rectangular_trim_wrapper.native_brep",
+          "independent_oracle_intent": "Load hash-bound native BRep and verify Geom_RectangularTrimmedSurface type, basis identity, U/V bounds, and ordered wrapper stack independently.",
+          "intended_import_outcome": {
+            "detail": "Native BRep preserves the rectangular-trimmed wrapper that STEP may unwrap.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.free_topology"
+            ],
+            "support_states": [
+              "UnsupportedTopology"
+            ]
+          },
+          "lane": "occt_procedural",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.rectangular_trimmed.wrapper"
+        }
+      ]
+    },
+    "SRF-013": {
+      "assignments": [
+        {
+          "claim_boundary": "Procedural native-BRep M1 witness for offset and nested-offset surface wrapper order. Processing-disabled STEP may combine or flatten the wrappers, and that limitation remains explicit.",
+          "fixture_id": "witness.surface.offset_wrapper.native_brep",
+          "independent_oracle_intent": "Verify every offset wrapper level, basis identity, distance, orientation, and nesting order before and after deterministic native-BRep serialization.",
+          "intended_import_outcome": {
+            "detail": "Native BRep preserves wrapper order that STEP may combine or canonicalize.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.free_topology"
+            ],
+            "support_states": [
+              "UnsupportedTopology"
+            ]
+          },
+          "lane": "occt_procedural",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.offset.nested_regular_singular"
+        }
+      ]
+    },
+    "SRF-014": {
+      "assignments": [
+        {
+          "claim_boundary": "Deterministic source-bound ASCII STEP patch for mirrored surface-transform accounting. It materializes M1 source and representation-loss evidence without claiming a preserved non-rigid consumer transform.",
+          "fixture_id": "assembly.box.mirrored_mapped_item",
+          "independent_oracle_intent": "Derive each mirrored source plane and its transformed normal, then record the imported rigid placement and any geometry-baked reflection separately.",
+          "intended_import_outcome": {
+            "detail": "Patched STEP import is expected to succeed while recording source reflection separately from orientation changes or baked surface geometry.",
+            "status": "succeeds_with_representation_loss"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "verification_pending",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "assembly.box.nested_repeated_instances"
+        },
+        {
+          "claim_boundary": "Deterministic source-bound ASCII STEP patch for scaled surface-transform accounting. It materializes M1 source and loss evidence without treating scale as a rigid placement.",
+          "fixture_id": "assembly.box.scaled_mapped_item",
+          "independent_oracle_intent": "Derive scaled source planes, transformed normals, and offsets, then distinguish non-rigid source mapping from imported rigid placement and converted geometry.",
+          "intended_import_outcome": {
+            "detail": "Patched STEP import is expected to succeed while recording non-unit source scale separately from converted surface geometry.",
+            "status": "succeeds_with_representation_loss"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "verification_pending",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "assembly.box.nested_repeated_instances"
+        },
+        {
+          "claim_boundary": "Existing fixture-ready procedural half for exact plane bases under accumulated rigid XDE instance placements.",
+          "fixture_id": "assembly.box.nested_repeated_instances",
+          "independent_oracle_intent": "Compare each local exact plane with every accumulated rigid world location and repeated occurrence sharing one underlying face definition.",
+          "intended_import_outcome": {
+            "detail": "Processing-disabled STEP/XDE import succeeds with valid nested rigid instances.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "pass",
+            "selection_codes": [
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "assembly.box.nested_repeated_instances"
+        }
+      ]
+    },
+    "SRF-031": {
+      "assignments": [
+        {
+          "claim_boundary": "Invalid p-curve mapping variant whose measured discrepancy exceeds imported tolerance.",
+          "fixture_id": "corrupt.edge.pcurve_disagreement_beyond_tolerance",
+          "independent_oracle_intent": "Bind the exact coedge and prove C(t) versus S(Cuv(t)) disagreement exceeds tolerance at frozen samples.",
+          "intended_import_outcome": {
+            "detail": "Native BRep load succeeds and validation retains the inconsistent p-curve.",
+            "status": "succeeds_invalid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.cylinder.seam_dual_pcurve"
+        },
+        {
+          "claim_boundary": "Valid comparison variant with a positive p-curve disagreement still within imported tolerance.",
+          "fixture_id": "corrupt.edge.pcurve_disagreement_within_tolerance",
+          "independent_oracle_intent": "Bind the exact coedge and prove the positive C(t) versus S(Cuv(t)) residual remains no greater than tolerance.",
+          "intended_import_outcome": {
+            "detail": "Native BRep load succeeds with a valid within-tolerance discrepancy.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.cylinder.seam_dual_pcurve"
+        },
+        {
+          "claim_boundary": "Missing or dangling p-curve variant with repair disabled.",
+          "fixture_id": "corrupt.edge.pcurve_missing_invalid",
+          "independent_oracle_intent": "Identify the exact coedge lacking a usable p-curve and require the imported-native fault to remain unhealed and invalid.",
+          "intended_import_outcome": {
+            "detail": "Native BRep load succeeds while validation retains the missing p-curve fault.",
+            "status": "succeeds_invalid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.cylinder.seam_dual_pcurve"
+        },
+        {
+          "claim_boundary": "Unequal edge and p-curve parameter domains with equivalent geometry.",
+          "fixture_id": "corrupt.edge.range_mismatch",
+          "independent_oracle_intent": "Freeze both domains and independently prove their endpoint and interior mappings correspond despite unequal numerical ranges.",
+          "intended_import_outcome": {
+            "detail": "Native BRep load succeeds and retains the range mismatch without repair.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.cylinder.seam_dual_pcurve"
+        }
+      ]
+    },
+    "SUP-003": {
+      "assignments": [
+        {
+          "claim_boundary": "ADR-backed AP-TPL-01 M1 route for a deterministic planar cut graph over perforated regions. The named strategy and oracle are materializable now; M3 consumer execution remains unclaimed.",
+          "fixture_id": "face.planar.perforated_cut_graph",
+          "independent_oracle_intent": "Use the one-hole, two-hole, and three-hole planar regions to freeze a deterministic cut graph, exact boundary correspondence, bridge ordering, containment, and no-crossing proof.",
+          "intended_import_outcome": {
+            "detail": "Procedural perforated planar fixture imports successfully as valid geometry for the named cut-graph route.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [
+              "strategy.planar_cut_graph"
+            ],
+            "support_states": [
+              "SupportedPlanarCutGraph"
+            ]
+          },
+          "lane": "occt_procedural",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.planar.perforated_cut_graph"
+        }
+      ]
+    },
+    "SUP-006": {
+      "assignments": [
+        {
+          "claim_boundary": "Derived invalid-geometry half for an explicitly self-intersecting trim with repair disabled.",
+          "fixture_id": "corrupt.trim.self_intersecting",
+          "independent_oracle_intent": "Derive the exact p-curve segment intersections, bind them to the invalid loop and face, and require every affected subject to receive InvalidImportedGeometry.",
+          "intended_import_outcome": {
+            "detail": "Native BRep load succeeds while retaining an invalid self-intersecting trim.",
+            "status": "succeeds_invalid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.trim.nested_holes"
+        },
+        {
+          "claim_boundary": "Existing fixture-ready procedural half: processing-disabled STEP import succeeds but the spherical-segment BRep is independently invalid.",
+          "fixture_id": "solid.sphere.segment",
+          "independent_oracle_intent": "Prove the imported shape is present, bind every invalid edge, face, and region, and require one InvalidImportedGeometry assignment per subject without repair.",
+          "intended_import_outcome": {
+            "detail": "STEP import succeeds and intentionally yields a BRep-invalid spherical segment.",
+            "status": "succeeds_invalid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "solid.sphere.segment"
+        }
+      ]
+    },
+    "SUP-008": {
+      "assignments": [
+        {
+          "claim_boundary": "Native deliberate-unknown case; exact evaluator identity must remain available even though no known geometry strategy exists.",
+          "fixture_id": "fault.geometry.unknown_dynamic_type",
+          "independent_oracle_intent": "Inject one exact face-bound unknown dynamic type and require the stable UnrecognisedExactGeometry state with no substitution or generic fallback.",
+          "intended_import_outcome": {
+            "detail": "Native fault harness executes directly; STEP import is not applicable.",
+            "status": "not_applicable"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.unrecognised_exact_geometry"
+            ],
+            "support_states": [
+              "UnrecognisedExactGeometry"
+            ]
+          },
+          "lane": "native_fault_injection",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "native.fault_harness.v1"
+        }
+      ]
+    },
+    "SUP-009": {
+      "assignments": [
+        {
+          "claim_boundary": "Existing fixture-ready procedural-corpus contribution. This representative legacy fixture proves that procedural subjects already have total assignments, but it does not satisfy the audited-external, derived, native, or cross-lane consumer portions.",
+          "fixture_id": "assembly.box.nested_repeated_instances",
+          "independent_oracle_intent": "For every imported edge, face, and logical region in the nested assembly, prove exactly one subject-bound support state and selection code from the expectation rather than from source labels.",
+          "intended_import_outcome": {
+            "detail": "STEP import succeeds with the valid nested assembly and all procedural subject assignments present.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "pass",
+            "selection_codes": [
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "assembly.box.nested_repeated_instances"
+        },
+        {
+          "claim_boundary": "Feasible cross-lane M1 totality-oracle route over the accepted external corpus and all procedural, derived, and native materialization plans. It defines expected total assignments but does not claim M3 enforcement.",
+          "fixture_id": "corpus.support.assignment_totality",
+          "independent_oracle_intent": "Enumerate every edge, face, and logical region across all audited-external, derived, native, and procedural fixtures and prove exactly one support state and selection code per applicable subject.",
+          "intended_import_outcome": {
+            "detail": "M1 consumer fixture catalogs imported and native outcomes plus their intended independent oracles; no runtime verification result is asserted.",
+            "status": "consumer_fixture_only"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "verification_pending",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "m1_consumer_oracle",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "corpus.all_lanes.v1"
+        }
+      ]
+    },
+    "TOP-001": {
+      "assignments": [
+        {
+          "claim_boundary": "Existing fixture-ready assembly witness; it covers root-product, nested-assembly, repeated-definition, and transformed-instance inventory without claiming non-rigid mapped items.",
+          "fixture_id": "assembly.box.nested_repeated_instances",
+          "independent_oracle_intent": "Bind the imported root product, nested assembly nodes, definition identities, occurrence paths, rigid transforms, and repeated instances independently of source labels.",
+          "intended_import_outcome": {
+            "detail": "STEP import succeeds with the nested assembly and repeated rigid instances preserved.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "pass",
+            "selection_codes": [
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "assembly.box.nested_repeated_instances"
+        }
+      ]
+    },
+    "TOP-002": {
+      "assignments": [
+        {
+          "claim_boundary": "Procedural native-BRep M1 witness for one true TopoDS_CompSolid containing two solids with a shared face. STEP readback may return a compound, so generic post-STEP compsolid acceptance and consumer verification are not claimed.",
+          "fixture_id": "witness.topology.compsolid.native_brep",
+          "independent_oracle_intent": "Before native serialization, prove the exact COMPSOLID root type, two solid children, and one shared face identity; reload the hash-bound BRep and separately record any STEP root-type loss.",
+          "intended_import_outcome": {
+            "detail": "Native construction is valid, but processing-disabled STEP readback loses the COMPSOLID wrapper.",
+            "status": "succeeds_with_representation_loss"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.nonmanifold_shared_interface"
+            ],
+            "support_states": [
+              "UnsupportedTopology"
+            ]
+          },
+          "lane": "occt_procedural",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "compsolid.box_pair.shared_interface"
+        }
+      ]
+    },
+    "TOP-003": {
+      "assignments": [
+        {
+          "claim_boundary": "Existing fixture-ready single-solid witness for solid inventory and its outer shell.",
+          "fixture_id": "solid.box",
+          "independent_oracle_intent": "Prove one valid solid containing one closed outer shell and bind the shell-to-solid ownership independently.",
+          "intended_import_outcome": {
+            "detail": "STEP import succeeds with one valid box solid.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "pass",
+            "selection_codes": [
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "solid.box"
+        },
+        {
+          "claim_boundary": "Existing generated inner-void fixture supplies the second required solid-shell ownership pattern, but TOP-003 evidence is not yet promoted in its legacy expectation.",
+          "fixture_id": "solid.box.inner_void",
+          "independent_oracle_intent": "Prove one solid owns exactly one outer shell and one inner void shell with opposite containment roles.",
+          "intended_import_outcome": {
+            "detail": "STEP import succeeds with a valid outer solid and inner void shell.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.inner_void_shell",
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate",
+              "UnsupportedTopology"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "solid.box.inner_void"
+        }
+      ]
+    },
+    "TOP-004": {
+      "assignments": [
+        {
+          "claim_boundary": "Existing non-manifold compound can contribute the shared-face shell condition after TOP-004 evidence is added; it does not replace the open- and closed-shell witnesses.",
+          "fixture_id": "compound.box_pair.shared_face_nonmanifold",
+          "independent_oracle_intent": "Bind the shared face identity and prove its incident shell/solid ownership exceeds the manifold limit.",
+          "intended_import_outcome": {
+            "detail": "STEP import succeeds with a valid compound carrying a shared non-manifold interface.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.nonmanifold_shared_interface",
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate",
+              "UnsupportedTopology"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "compound.box_pair.shared_face_nonmanifold"
+        },
+        {
+          "claim_boundary": "Existing fixture-ready open-shell witness.",
+          "fixture_id": "shell.box.open",
+          "independent_oracle_intent": "Prove the imported root is a shell, enumerate all faces, and identify the boundary edges preventing closure.",
+          "intended_import_outcome": {
+            "detail": "STEP import succeeds with a valid but open box shell.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.open_shell"
+            ],
+            "support_states": [
+              "UnsupportedTopology"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "shell.box.open"
+        },
+        {
+          "claim_boundary": "Existing closed-shell box can contribute the ordinary manifold shell condition after TOP-004 evidence is added.",
+          "fixture_id": "solid.box",
+          "independent_oracle_intent": "Prove the solid owns one closed, consistently oriented manifold shell with no free edges.",
+          "intended_import_outcome": {
+            "detail": "STEP import succeeds with one valid closed-shell box.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "pass",
+            "selection_codes": [
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "solid.box"
+        }
+      ]
+    },
+    "TOP-005": {
+      "assignments": [
+        {
+          "claim_boundary": "Existing fixture-ready planar-face topology witness.",
+          "fixture_id": "solid.box",
+          "independent_oracle_intent": "For every face, bind support surface, orientation, outer loop, tolerance, adjacent faces, and incident edges using imported topology identities.",
+          "intended_import_outcome": {
+            "detail": "STEP import succeeds with six valid planar box faces.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "pass",
+            "selection_codes": [
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "solid.box"
+        }
+      ]
+    },
+    "TOP-006": {
+      "assignments": [
+        {
+          "claim_boundary": "Derived ambiguous loop-nesting variant; it proves deterministic ambiguity handling without asserting geometric invalidity.",
+          "fixture_id": "corrupt.trim.ambiguous_nesting",
+          "independent_oracle_intent": "Construct overlapping or containment-indeterminate loops and require stable AmbiguousRecognition rather than an arbitrary outer/inner classification.",
+          "intended_import_outcome": {
+            "detail": "Native-BRep load succeeds and remains geometrically readable while loop nesting is intentionally ambiguous.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.ambiguous_recognition"
+            ],
+            "support_states": [
+              "AmbiguousRecognition"
+            ]
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.trim.nested_holes"
+        },
+        {
+          "claim_boundary": "Derived open/gapped trim-wire variant.",
+          "fixture_id": "corrupt.trim.open_gapped",
+          "independent_oracle_intent": "Measure the frozen closing gap and require the containing face and wire to remain inventory-visible but invalid.",
+          "intended_import_outcome": {
+            "detail": "Native-BRep load succeeds and yields intentionally invalid open trim topology.",
+            "status": "succeeds_invalid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.trim.nested_holes"
+        },
+        {
+          "claim_boundary": "Derived self-intersecting trim-wire variant.",
+          "fixture_id": "corrupt.trim.self_intersecting",
+          "independent_oracle_intent": "Prove a fixed non-adjacent segment crossing in parameter space and require deterministic invalid-topology classification.",
+          "intended_import_outcome": {
+            "detail": "Native-BRep load succeeds and yields an intentionally invalid self-intersecting trim wire.",
+            "status": "succeeds_invalid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.trim.nested_holes"
+        },
+        {
+          "claim_boundary": "Derived paired wire-gap thresholds; one gap remains within the frozen tolerance and one exceeds it.",
+          "fixture_id": "corrupt.wire.gap_within_beyond",
+          "independent_oracle_intent": "Measure both endpoint gaps, freeze the relevant tolerances, and require deterministic closed-versus-invalid outcomes across the threshold.",
+          "intended_import_outcome": {
+            "detail": "Native-BRep load succeeds; the beyond-tolerance wire is intentionally invalid.",
+            "status": "succeeds_invalid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "baseline.pathology.wire_gap_thresholds"
+        },
+        {
+          "claim_boundary": "Derived inconsistent edge-orientation wire variant.",
+          "fixture_id": "corrupt.wire.inconsistent_orientation",
+          "independent_oracle_intent": "Freeze edge occurrences and endpoint order, invert one occurrence, and require the imported wire traversal to be classified invalid without normalization.",
+          "intended_import_outcome": {
+            "detail": "Native-BRep load succeeds and yields an intentionally invalid inconsistent wire.",
+            "status": "succeeds_invalid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "baseline.pathology.wire_gap_thresholds"
+        },
+        {
+          "claim_boundary": "Existing fixture-ready valid reference for ordered, closed face wires.",
+          "fixture_id": "solid.box",
+          "independent_oracle_intent": "Prove every box face has one closed outer wire with a coherent edge-occurrence traversal before comparing the derived failure variants.",
+          "intended_import_outcome": {
+            "detail": "STEP import succeeds with valid ordered closed wires.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "pass",
+            "selection_codes": [
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "solid.box"
+        }
+      ]
+    },
+    "TOP-008": {
+      "assignments": [
+        {
+          "claim_boundary": "Existing fixture-ready vertex inventory witness.",
+          "fixture_id": "solid.box",
+          "independent_oracle_intent": "Bind every imported vertex, tolerance, incident edge, and per-edge parameter value; verify shared vertex identities rather than coordinate equality alone.",
+          "intended_import_outcome": {
+            "detail": "STEP import succeeds with eight valid shared box vertices.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "pass",
+            "selection_codes": [
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "solid.box"
+        }
+      ]
+    },
+    "TOP-009": {
+      "assignments": [
+        {
+          "claim_boundary": "Derived semantic-null product variant; failure must occur at controlled import validation rather than through an empty success.",
+          "fixture_id": "corrupt.step.null_shape_product",
+          "independent_oracle_intent": "Patch the product/shape representation so transfer produces no usable shape and require a stable fail-closed import result.",
+          "intended_import_outcome": {
+            "detail": "STEP transfer fails as expected because no usable shape is associated with the product.",
+            "status": "fails_as_expected"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "fail_closed",
+            "meshing_gate": "not_applicable",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "solid.box"
+        },
+        {
+          "claim_boundary": "Derived malformed STEP syntax variant with a frozen deterministic edit.",
+          "fixture_id": "corrupt.step.syntax_failure",
+          "independent_oracle_intent": "Apply one declared ASCII mutation that violates STEP syntax and require a stable parser failure with no partial inventory.",
+          "intended_import_outcome": {
+            "detail": "STEP parsing fails as expected at the declared malformed record.",
+            "status": "fails_as_expected"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "fail_closed",
+            "meshing_gate": "not_applicable",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "solid.box"
+        },
+        {
+          "claim_boundary": "Derived dangling STEP entity-reference variant with a frozen target record.",
+          "fixture_id": "corrupt.step.unknown_entity_reference",
+          "independent_oracle_intent": "Replace one required entity reference with a non-existent identifier and require deterministic transfer failure without partial-shape acceptance.",
+          "intended_import_outcome": {
+            "detail": "STEP transfer fails as expected on the unresolved entity reference.",
+            "status": "fails_as_expected"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "fail_closed",
+            "meshing_gate": "not_applicable",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "solid.box"
+        }
+      ]
+    },
+    "TOP-010": {
+      "assignments": [
+        {
+          "claim_boundary": "Procedural native-BRep M1 witness for FORWARD, REVERSED, INTERNAL, and EXTERNAL occurrences. STEP may canonicalize free-edge orientations, so generic post-import orientation coverage is not claimed.",
+          "fixture_id": "witness.topology.orientation_matrix.native_brep",
+          "independent_oracle_intent": "Record all four native occurrence orientations, export and re-import without processing, and make the exact lost-orientation matrix explicit rather than treating canonicalized results as coverage.",
+          "intended_import_outcome": {
+            "detail": "Native construction preserves all four orientations; STEP readback canonicalizes at least the free-edge occurrences.",
+            "status": "succeeds_with_representation_loss"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.free_topology"
+            ],
+            "support_states": [
+              "UnsupportedTopology"
+            ]
+          },
+          "lane": "occt_procedural",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "compound.orientation.internal_external"
+        }
+      ]
+    },
+    "TOP-011": {
+      "assignments": [
+        {
+          "claim_boundary": "Existing fixture-ready nested-placement and reused-definition witness.",
+          "fixture_id": "assembly.box.nested_repeated_instances",
+          "independent_oracle_intent": "Compose every imported rigid placement along each occurrence path, compare world transforms, and prove repeated occurrences share one definition identity.",
+          "intended_import_outcome": {
+            "detail": "STEP import succeeds with nested rigid placements and repeated definitions preserved.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "pass",
+            "selection_codes": [
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "assembly.box.nested_repeated_instances"
+        }
+      ]
+    },
+    "TOP-012": {
+      "assignments": [
+        {
+          "claim_boundary": "Existing fixture-ready assembly/multiple-instance model witness.",
+          "fixture_id": "assembly.box.nested_repeated_instances",
+          "independent_oracle_intent": "Prove the model root contains a nested assembly with multiple shape occurrences and preserve their product paths.",
+          "intended_import_outcome": {
+            "detail": "STEP import succeeds with a valid multi-occurrence assembly model.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "pass",
+            "selection_codes": [
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "assembly.box.nested_repeated_instances"
+        },
+        {
+          "claim_boundary": "Existing coincident-body compound supplies a distinct multiple-solid root model after TOP-012 evidence is promoted.",
+          "fixture_id": "compound.box_pair.coincident",
+          "independent_oracle_intent": "Prove the root contains two distinct solid identities despite coincident geometry and retain both in model inventory.",
+          "intended_import_outcome": {
+            "detail": "STEP import succeeds with two valid but coincident solids in one compound.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.coincident_bodies"
+            ],
+            "support_states": [
+              "UnsupportedTopology"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "compound.box_pair.coincident"
+        },
+        {
+          "claim_boundary": "Existing fixture-ready single-solid root model witness.",
+          "fixture_id": "solid.box",
+          "independent_oracle_intent": "Prove the model root resolves to exactly one valid solid and no assembly nodes or additional solids.",
+          "intended_import_outcome": {
+            "detail": "STEP import succeeds with one valid box solid.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "pass",
+            "selection_codes": [
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "solid.box"
+        }
+      ]
+    },
+    "TOP-013": {
+      "assignments": [
+        {
+          "claim_boundary": "Existing fixture-ready non-manifold shared-interface compound witness.",
+          "fixture_id": "compound.box_pair.shared_face_nonmanifold",
+          "independent_oracle_intent": "Prove one face identity is shared by both solids and require the non-manifold condition to fail the meshing gate.",
+          "intended_import_outcome": {
+            "detail": "STEP import succeeds with the shared interface preserved.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.nonmanifold_shared_interface",
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate",
+              "UnsupportedTopology"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "compound.box_pair.shared_face_nonmanifold"
+        },
+        {
+          "claim_boundary": "Existing fixture-ready open-shell witness.",
+          "fixture_id": "shell.box.open",
+          "independent_oracle_intent": "Prove the shell has boundary edges and no enclosing solid, then require the open-shell support decision.",
+          "intended_import_outcome": {
+            "detail": "STEP import succeeds with a valid open shell.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.open_shell"
+            ],
+            "support_states": [
+              "UnsupportedTopology"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "shell.box.open"
+        },
+        {
+          "claim_boundary": "Existing fixture-ready closed-manifold solid witness.",
+          "fixture_id": "solid.box",
+          "independent_oracle_intent": "Prove one closed orientable two-manifold shell encloses a valid solid and has no free or over-shared edges.",
+          "intended_import_outcome": {
+            "detail": "STEP import succeeds with one valid closed-manifold box.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "pass",
+            "selection_codes": [
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "solid.box"
+        }
+      ]
+    },
+    "TOP-014": {
+      "assignments": [
+        {
+          "claim_boundary": "Existing fixture-ready inner-void shell witness.",
+          "fixture_id": "solid.box.inner_void",
+          "independent_oracle_intent": "Prove one outer shell and one contained inner shell belong to the same solid, with independently measured containment and orientation roles.",
+          "intended_import_outcome": {
+            "detail": "STEP import succeeds with a valid box solid containing an inner void shell.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.inner_void_shell",
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate",
+              "UnsupportedTopology"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "solid.box.inner_void"
+        }
+      ]
+    },
+    "TOP-016": {
+      "assignments": [
+        {
+          "claim_boundary": "Existing fixture-ready coincident-body witness.",
+          "fixture_id": "compound.box_pair.coincident",
+          "independent_oracle_intent": "Prove two distinct imported solid identities occupy coincident geometric extents and require the stable coincident-body rejection.",
+          "intended_import_outcome": {
+            "detail": "STEP import succeeds with two valid but coincident solids.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.coincident_bodies"
+            ],
+            "support_states": [
+              "UnsupportedTopology"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "compound.box_pair.coincident"
+        }
+      ]
+    },
+    "TOP-017": {
+      "assignments": [
+        {
+          "claim_boundary": "Deterministic source-bound ASCII STEP patch for a mirrored mapped item. The M1 artifact and source-transform oracle are feasible now; no claim is made that the current consumer preserves reflection as an occurrence transform.",
+          "fixture_id": "assembly.box.mirrored_mapped_item",
+          "independent_oracle_intent": "Freeze the source mapped-item transform, prove its negative determinant, and compare imported occurrence geometry and transform semantics without accepting a baked rigid substitute.",
+          "intended_import_outcome": {
+            "detail": "STEP import is expected to preserve geometry while the current consumer loses the non-rigid mapped-item transform semantics.",
+            "status": "succeeds_with_representation_loss"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "verification_pending",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "assembly.box.nested_repeated_instances"
+        },
+        {
+          "claim_boundary": "Deterministic source-bound ASCII STEP patch for a scaled mapped item. The M1 artifact and source-transform oracle are feasible now; no claim is made that the current consumer preserves non-unit scale as an occurrence transform.",
+          "fixture_id": "assembly.box.scaled_mapped_item",
+          "independent_oracle_intent": "Freeze a non-unit mapped-item scale, prove determinant and expected dimensions, and compare imported occurrence geometry and transform semantics without accepting baked geometry as transform preservation.",
+          "intended_import_outcome": {
+            "detail": "STEP import is expected to preserve geometry while the current consumer loses the non-rigid mapped-item transform semantics.",
+            "status": "succeeds_with_representation_loss"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "verification_pending",
+            "meshing_gate": "verification_pending",
+            "selection_codes": [],
+            "support_states": []
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "assembly.box.nested_repeated_instances"
+        }
+      ]
+    },
+    "TRM-001": {
+      "assignments": [
+        {
+          "claim_boundary": "Existing fixture-ready simple disk-cap witness.",
+          "fixture_id": "solid.cylinder.full",
+          "independent_oracle_intent": "Prove each planar cap has one circular closed outer loop, no inner loops, and the expected disk area and orientation.",
+          "intended_import_outcome": {
+            "detail": "STEP import succeeds with valid circular cylinder caps.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "pass",
+            "selection_codes": [
+              "strategy.curve.exact_circle",
+              "strategy.curve.exact_line",
+              "strategy.surface.cylinder",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "solid.cylinder.full"
+        }
+      ]
+    },
+    "TRM-002": {
+      "assignments": [
+        {
+          "claim_boundary": "Existing fixture-ready planar-cap witness with one nested circular hole; cut-graph meshing remains intentionally unsupported.",
+          "fixture_id": "solid.plate.circular_through_hole",
+          "independent_oracle_intent": "Prove each perforated planar cap owns one outer rectangular loop and one contained circular inner loop with opposite winding and disjoint boundaries.",
+          "intended_import_outcome": {
+            "detail": "STEP import succeeds with a valid plate and circular through-hole topology.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.planar_holes_require_cut_graph",
+              "strategy.curve.exact_circle",
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate",
+              "UnsupportedTopology"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "solid.plate.circular_through_hole"
+        }
+      ]
+    },
+    "TRM-004": {
+      "assignments": [
+        {
+          "claim_boundary": "Existing fixture-ready simple concave-loop witness.",
+          "fixture_id": "solid.prism.concave",
+          "independent_oracle_intent": "Reconstruct each L-shaped cap polygon, prove at least one reflex vertex, closure, non-self-intersection, and the exact signed area.",
+          "intended_import_outcome": {
+            "detail": "STEP import succeeds with valid concave prism caps.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "pass",
+            "selection_codes": [
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "solid.prism.concave"
+        }
+      ]
+    },
+    "TRM-005": {
+      "assignments": [
+        {
+          "claim_boundary": "Existing fixture-ready simple convex-loop witness.",
+          "fixture_id": "solid.box",
+          "independent_oracle_intent": "For every box face, reconstruct the rectangular UV loop and prove closure, convexity, simple ordering, and expected signed area.",
+          "intended_import_outcome": {
+            "detail": "STEP import succeeds with valid convex rectangular trim loops.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "pass",
+            "selection_codes": [
+              "strategy.curve.exact_line",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "solid.box"
+        }
+      ]
+    },
+    "TRM-007": {
+      "assignments": [
+        {
+          "claim_boundary": "Existing fixture-ready periodic-surface trim witness.",
+          "fixture_id": "solid.cylinder.full",
+          "independent_oracle_intent": "Prove the full-period cylindrical side is bounded by the cap-circle occurrences and its seam representation, with a complete 2-pi angular domain.",
+          "intended_import_outcome": {
+            "detail": "STEP import succeeds with a valid full-period cylinder and seam topology.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "pass",
+            "selection_codes": [
+              "strategy.curve.exact_circle",
+              "strategy.curve.exact_line",
+              "strategy.surface.cylinder",
+              "strategy.surface.planar"
+            ],
+            "support_states": [
+              "SupportedAnalyticTemplate"
+            ]
+          },
+          "lane": "legacy_occt_procedural",
+          "materialization_status": "ready",
+          "readiness": "legacy_already_ready",
+          "source_or_baseline_id": "solid.cylinder.full"
+        }
+      ]
+    },
+    "TRM-011": {
+      "assignments": [
+        {
+          "claim_boundary": "Planned derived self-intersecting trim loop with a frozen native-BRep mutation.",
+          "fixture_id": "corrupt.trim.self_intersecting",
+          "independent_oracle_intent": "Locate and measure a fixed non-adjacent p-curve segment intersection, preserve the containing face identity, and require invalid classification without healing.",
+          "intended_import_outcome": {
+            "detail": "Native-BRep load succeeds and yields an intentionally invalid self-intersecting trim loop.",
+            "status": "succeeds_invalid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.trim.nested_holes"
+        }
+      ]
+    },
+    "TRM-012": {
+      "assignments": [
+        {
+          "claim_boundary": "Planned derived open/gapped trim loop with a frozen native-BRep mutation.",
+          "fixture_id": "corrupt.trim.open_gapped",
+          "independent_oracle_intent": "Measure the unmatched endpoints and gap against the stored tolerances, preserve the containing face identity, and require invalid classification without sewing.",
+          "intended_import_outcome": {
+            "detail": "Native-BRep load succeeds and yields an intentionally invalid open trim loop.",
+            "status": "succeeds_invalid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.invalid_imported_geometry"
+            ],
+            "support_states": [
+              "InvalidImportedGeometry"
+            ]
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.trim.nested_holes"
+        }
+      ]
+    },
+    "TRM-013": {
+      "assignments": [
+        {
+          "claim_boundary": "Planned derived ambiguous loop-nesting case; it must expose recognition ambiguity rather than be mislabeled geometrically invalid.",
+          "fixture_id": "corrupt.trim.ambiguous_nesting",
+          "independent_oracle_intent": "Prove a winding/containment conflict or coincident nesting relation that admits no unique outer/inner classification and require a deterministic ambiguity outcome.",
+          "intended_import_outcome": {
+            "detail": "Native-BRep load succeeds and remains readable while loop nesting is intentionally ambiguous.",
+            "status": "succeeds_valid"
+          },
+          "intended_support_gate_outcome": {
+            "inventory_gate": "pass",
+            "meshing_gate": "fail",
+            "selection_codes": [
+              "reason.ambiguous_recognition"
+            ],
+            "support_states": [
+              "AmbiguousRecognition"
+            ]
+          },
+          "lane": "derived_corruption",
+          "materialization_status": "feasible",
+          "readiness": "requires_materialization",
+          "source_or_baseline_id": "face.trim.nested_holes"
+        }
+      ]
+    }
+  },
+  "schema_version": "1.0.0"
+}

@@ -1,0 +1,210 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "expected": {
+    "boundary_loops": [],
+    "brep_valid": true,
+    "claims": [
+      {
+        "id": "claim.pat_012.value_failure",
+        "obligation_id": "PAT-012",
+        "predicate_codes": [
+          "predicate.pathology.evaluator.value_failure"
+        ],
+        "statement": "The public surface evaluator reports the exact value failure and supplies neither fallback values nor synthesized derivatives.",
+        "subject_refs": [
+          {
+            "id": "observation.pathology.surface.value_failure",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.validation.evaluator_error_contract",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.periodicity.surface.value_failure",
+            "kind": "observation"
+          },
+          {
+            "id": "surface.value_failure",
+            "kind": "validation_finding"
+          }
+        ]
+      }
+    ],
+    "curve_variants": [],
+    "import_outcome": "native_only",
+    "model_classes": [
+      "native_evaluator_fault_contract"
+    ],
+    "orientation_states": [],
+    "periodicity": [],
+    "semantic_candidates": [],
+    "singularity_codes": [],
+    "subject_universe": {
+      "edge_occurrence_ids": [],
+      "face_occurrence_ids": [],
+      "logical_region_ids": []
+    },
+    "support": [],
+    "surface_variants": [],
+    "topology_occurrences": {
+      "assembly_products": 0,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 0,
+      "faces": 0,
+      "instances": 0,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 0,
+      "wires": 0
+    },
+    "unique_topology": {
+      "assembly_products": 0,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 0,
+      "faces": 0,
+      "instances": 0,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 0,
+      "wires": 0
+    },
+    "validation_findings": [
+      {
+        "code": "surface.value_failure",
+        "evidence": "The native harness observes the exact value-failure contract as geometry_evaluation_failure.",
+        "expectation": "named_failure",
+        "subject_kind": "model"
+      },
+      {
+        "code": "topology.valid",
+        "evidence": "The native-only fixture serializes no B-rep; its empty topology population remains valid while the fault is isolated at the public contract boundary.",
+        "expectation": "present",
+        "subject_kind": "model"
+      }
+    ]
+  },
+  "fixture_id": "fault.surface.value_failure",
+  "instances": [],
+  "observations": [
+    {
+      "evidence": "The exact face-bound value failure crosses the public Result boundary as geometry_evaluation_failure without a fallback value.",
+      "expectation": "named_failure",
+      "expected_failure_code": "geometry_evaluation_failure",
+      "id": "observation.pathology.surface.value_failure",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "evaluator.error_code",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "value": "geometry_evaluation_failure",
+            "value_type": "code"
+          }
+        },
+        {
+          "code": "evaluator.fallback_value.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 0,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "surface.value_failure",
+      "phase": "native",
+      "subject_ids": [
+        "face:0000000000000001"
+      ]
+    },
+    {
+      "evidence": "is_valid_evaluator_error accepts the deliberate face-bound value failure with retained subject identity.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.validation.evaluator_error_contract",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "validation.evaluator_error_contract",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "value": true,
+            "value_type": "boolean"
+          }
+        }
+      ],
+      "pathology_code": "validation.evaluator_error_contract",
+      "phase": "native",
+      "subject_ids": [
+        "face:0000000000000001"
+      ]
+    },
+    {
+      "axes": [
+        {
+          "axis": "u",
+          "closed": false,
+          "period": null,
+          "periodic": false,
+          "principal_lower": null,
+          "principal_upper": null,
+          "seam_parameters": [],
+          "unit": "unitless"
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "period": null,
+          "periodic": false,
+          "principal_lower": null,
+          "principal_upper": null,
+          "seam_parameters": [],
+          "unit": "unitless"
+        }
+      ],
+      "id": "observation.periodicity.surface.value_failure",
+      "kind": "periodicity_singularity",
+      "phase": "native",
+      "singularities": [],
+      "subject_id": "face:0000000000000001"
+    }
+  ],
+  "oracle": {
+    "independent_from_production_classifier": true,
+    "method": "fault_contract",
+    "references": [
+      "fixtures/nonprocedural-obligation-authoring-map.json#PAT-012/fault.surface.value_failure",
+      "tests/fixtures/native_fault_fixture.cpp#fault.surface.value_failure"
+    ],
+    "statement": "A deliberate face-bound surface value failure must produce geometry_evaluation_failure through the public evaluator boundary."
+  },
+  "schema_version": "1.0.0",
+  "tolerances": {
+    "edges_metres": {
+      "maximum": null,
+      "minimum": null
+    },
+    "faces_metres": {
+      "maximum": null,
+      "minimum": null
+    },
+    "vertices_metres": {
+      "maximum": null,
+      "minimum": null
+    }
+  },
+  "units": {
+    "coordinate_space": "right_handed_si_metres_radians",
+    "scale_to_metres": 1,
+    "source_unit": "metre"
+  }
+}

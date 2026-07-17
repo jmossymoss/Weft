@@ -1,0 +1,333 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "expected": {
+    "boundary_loops": [],
+    "brep_valid": true,
+    "claims": [
+      {
+        "id": "claim.rec_007.unknown_type_viewer_state",
+        "obligation_id": "REC-007",
+        "predicate_codes": [
+          "predicate.reconnaissance.viewer_palette"
+        ],
+        "statement": "The M1 oracle binds one exact failure-state support assignment to its required viewer diagnostic category without claiming that the Qt viewer has rendered it.",
+        "subject_refs": [
+          {
+            "id": "observation.consumer.support.unrecognised_exact_geometry",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.viewer.unrecognised_exact_geometry",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.rec_009.unknown_type_fail_closed",
+        "obligation_id": "REC-009",
+        "predicate_codes": [
+          "predicate.reconnaissance.fail_closed"
+        ],
+        "statement": "The native harness pins the evaluator error and explicit UnrecognisedExactGeometry gate result with no fallback, defining the fail-closed M3 assertion.",
+        "subject_refs": [
+          {
+            "id": "observation.consumer.support.unrecognised_exact_geometry",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.geometry.unknown_dynamic_type",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.validation.evaluator_error_contract",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.sem_025.native_not_recognised_confidence",
+        "obligation_id": "SEM-025",
+        "predicate_codes": [
+          "predicate.semantic.confidence_native_fault"
+        ],
+        "statement": "The native evaluator-boundary harness pins the NotRecognised confidence outcome, exact failure evidence, and no-fallback support assignment.",
+        "subject_refs": [
+          {
+            "id": "observation.consumer.support.unrecognised_exact_geometry",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.viewer.unrecognised_exact_geometry",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.geometry.unknown_dynamic_type",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.validation.evaluator_error_contract",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.semantic.confidence.unknown_dynamic_type",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.sup_008.unknown_dynamic_type",
+        "obligation_id": "SUP-008",
+        "predicate_codes": [
+          "predicate.support.state.unrecognised_exact_geometry"
+        ],
+        "statement": "An exact unknown dynamic type remains UnrecognisedExactGeometry and cannot fall back to a generic strategy.",
+        "subject_refs": [
+          {
+            "id": "observation.consumer.support.unrecognised_exact_geometry",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.geometry.unknown_dynamic_type",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.validation.evaluator_error_contract",
+            "kind": "observation"
+          },
+          {
+            "id": "geometry.unknown_dynamic_type",
+            "kind": "validation_finding"
+          }
+        ]
+      }
+    ],
+    "curve_variants": [],
+    "import_outcome": "native_only",
+    "model_classes": [
+      "native_evaluator_fault_contract"
+    ],
+    "orientation_states": [],
+    "periodicity": [],
+    "semantic_candidates": [
+      {
+        "code": "recognition.unknown_dynamic_type",
+        "confidence": "NotRecognised",
+        "evidence": "The registered native harness injects an exact unknown type with no fallback.",
+        "subject_count": 1
+      }
+    ],
+    "singularity_codes": [],
+    "subject_universe": {
+      "edge_occurrence_ids": [],
+      "face_occurrence_ids": [],
+      "logical_region_ids": []
+    },
+    "support": [],
+    "surface_variants": [],
+    "topology_occurrences": {
+      "assembly_products": 0,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 0,
+      "faces": 0,
+      "instances": 0,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 0,
+      "wires": 0
+    },
+    "unique_topology": {
+      "assembly_products": 0,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 0,
+      "faces": 0,
+      "instances": 0,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 0,
+      "wires": 0
+    },
+    "validation_findings": [
+      {
+        "code": "geometry.unknown_dynamic_type",
+        "evidence": "The harness returns the exact unrecognised_exact_geometry evaluator error for the retained face subject.",
+        "expectation": "named_failure",
+        "subject_kind": "model"
+      },
+      {
+        "code": "topology.valid",
+        "evidence": "The native-only fixture serializes no B-rep; its empty topology population remains valid while the fault is isolated at the public contract boundary.",
+        "expectation": "present",
+        "subject_kind": "model"
+      }
+    ]
+  },
+  "fixture_id": "fault.geometry.unknown_dynamic_type",
+  "instances": [],
+  "observations": [
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "reason.unrecognised_exact_geometry"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "The exact face retains UnrecognisedExactGeometry with no generic or substituted fallback.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.support.unrecognised_exact_geometry",
+      "kind": "consumer_evidence",
+      "measurements": [
+        {
+          "code": "support.fallback.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 0,
+            "value_type": "integer"
+          }
+        },
+        {
+          "code": "support.state",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "value": "UnrecognisedExactGeometry",
+            "value_type": "text"
+          }
+        }
+      ],
+      "representation_kind": "exact_evaluator_result",
+      "subject_ids": [
+        "face:0000000000000001"
+      ]
+    },
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "palette.state.unrecognised_exact_geometry",
+        "palette.subject_identity.stable"
+      ],
+      "consumer_code": "oracle.viewer_diagnostic_palette",
+      "consumer_kind": "viewer",
+      "evidence": "The M1 oracle assigns an explicit diagnostic-overlay category to the exact unknown face; Qt viewer rendering and screenshot verification remain M2/M3 work.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.viewer.unrecognised_exact_geometry",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "diagnostic_overlay",
+      "subject_ids": [
+        "face:0000000000000001"
+      ]
+    },
+    {
+      "evidence": "The public evaluator error boundary retains the face identity and exact unrecognised_exact_geometry code.",
+      "expectation": "named_failure",
+      "expected_failure_code": "unrecognised_exact_geometry",
+      "id": "observation.pathology.geometry.unknown_dynamic_type",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "evaluator.error_code",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "value": "unrecognised_exact_geometry",
+            "value_type": "code"
+          }
+        },
+        {
+          "code": "evaluator.fallback_value.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 0,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "geometry.unknown_dynamic_type",
+      "phase": "native",
+      "subject_ids": [
+        "face:0000000000000001"
+      ]
+    },
+    {
+      "evidence": "is_valid_evaluator_error accepts the deliberate face-bound unknown-type error contract.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.validation.evaluator_error_contract",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "validation.evaluator_error_contract",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "value": true,
+            "value_type": "boolean"
+          }
+        }
+      ],
+      "pathology_code": "validation.evaluator_error_contract",
+      "phase": "native",
+      "subject_ids": [
+        "face:0000000000000001"
+      ]
+    },
+    {
+      "candidate_code": "recognition.unknown_dynamic_type",
+      "confidence": "NotRecognised",
+      "continuity_observation_ids": [],
+      "evidence": "The injected exact unknown type must remain explicitly NotRecognised with no fallback.",
+      "evidence_codes": [
+        "evidence.independent_oracle"
+      ],
+      "fitted_parameters": [],
+      "id": "observation.semantic.confidence.unknown_dynamic_type",
+      "kind": "semantic_evidence",
+      "max_residual_metres": null,
+      "phase": "native",
+      "residual_observation_ids": [],
+      "subject_ids": [
+        "face:0000000000000001"
+      ]
+    }
+  ],
+  "oracle": {
+    "independent_from_production_classifier": true,
+    "method": "fault_contract",
+    "references": [
+      "fixtures/nonprocedural-obligation-authoring-map.json#SUP-008/fault.geometry.unknown_dynamic_type",
+      "tests/fixtures/native_fault_fixture.cpp#fault.geometry.unknown_dynamic_type"
+    ],
+    "statement": "A deliberate face-bound unknown exact geometry type must retain subject identity and return unrecognised_exact_geometry with no fallback."
+  },
+  "schema_version": "1.0.0",
+  "tolerances": {
+    "edges_metres": {
+      "maximum": null,
+      "minimum": null
+    },
+    "faces_metres": {
+      "maximum": null,
+      "minimum": null
+    },
+    "vertices_metres": {
+      "maximum": null,
+      "minimum": null
+    }
+  },
+  "units": {
+    "coordinate_space": "right_handed_si_metres_radians",
+    "scale_to_metres": 1,
+    "source_unit": "metre"
+  }
+}

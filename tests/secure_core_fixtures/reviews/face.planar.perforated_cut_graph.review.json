@@ -1,0 +1,31 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "e5b1573ec8532af215d9e0ddf1448d044b84479ca6ba04125b5e34a64d5c1b92",
+  "finding_disposition": "Accepted M1 eligibility witness for the ADR-0003 planar-cut-graph route. The support assignment is fixture-ready only; M3 consumer verification and M8 topology generation remain unclaimed.",
+  "fixture_id": "face.planar.perforated_cut_graph",
+  "producer_id": "producer.m1_trim_support_oracles",
+  "review_id": "review.face_planar_perforated_cut_graph.revision_6",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.trim_support_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "artifact.brep",
+    "artifact.step",
+    "construction.parameters",
+    "import.processing_disabled",
+    "normalization.representation_loss",
+    "oracle.independent",
+    "source.contract",
+    "source.native_contract",
+    "summary.imported"
+  ],
+  "source_binding": {
+    "artifact_sha256": "29250b2494e0c8e8cec207a4c110d39bff239b74c92700ec3ec166dbfe5bf7e8",
+    "construction_parameters_sha256": "937fb51ccadfa64ea8a4732a3a13ff5d0b0001761d1f91ecf06c7ab526f3ac37",
+    "generator_revision": 6,
+    "kind": "occt_procedural",
+    "source_contract_sha256": "4d967ec1673326dc88721f19fac6a2ac186889f18bebc97b3f033a35633f48cb",
+    "summary_sha256": "a43f8939161c6fdf46a7e1d6aaf2577c4a5cfc0fd87b1a01438f5a59462f5c59"
+  }
+}

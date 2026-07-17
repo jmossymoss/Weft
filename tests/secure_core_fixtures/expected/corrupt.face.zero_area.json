@@ -1,0 +1,509 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "expected": {
+    "boundary_loops": [],
+    "brep_valid": false,
+    "claims": [
+      {
+        "id": "claim.pat_005.zero_area",
+        "obligation_id": "PAT-005",
+        "predicate_codes": [
+          "predicate.pathology.face_zero_area"
+        ],
+        "statement": "The declared ASCII-BRep patch preserves the face, wire, edge, and vertex identities while setting the 20 mm height to 0 mm; independent multiplication yields 0 square metres and the unhealed native BRep is invalid.",
+        "subject_refs": [
+          {
+            "id": "observation.measurement.exact_mutation",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.normalization.source_to_derived",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.native_validity",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.face_mutated",
+            "kind": "observation"
+          }
+        ]
+      }
+    ],
+    "curve_variants": [],
+    "import_outcome": "named_failure",
+    "model_classes": [
+      "derived_pathology",
+      "invalid_import",
+      "standalone_face"
+    ],
+    "model_topology": {
+      "closed_shells": 0,
+      "coincident_solid_signature_pairs": 0,
+      "free_edges": 0,
+      "free_wires": 0,
+      "inner_shells": 0,
+      "isolated_vertices": 0,
+      "maximum_faces_per_edge": 1,
+      "nonmanifold_vertices": 0,
+      "open_shells": 0,
+      "outer_shells": 0,
+      "shared_faces_between_solids": 0,
+      "standalone_shells": 0
+    },
+    "orientation_states": [
+      "FORWARD",
+      "REVERSED"
+    ],
+    "periodicity": [],
+    "semantic_candidates": [],
+    "singularity_codes": [],
+    "subject_universe": {
+      "edge_occurrence_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004"
+      ],
+      "face_occurrence_ids": [
+        "face_occurrence.f0001"
+      ],
+      "logical_region_ids": [
+        "logical_region.r0001"
+      ]
+    },
+    "support": [
+      {
+        "geometry_family_code": "line",
+        "label": "support.edge.line.invalid_imported_geometry",
+        "selection_code": "reason.invalid_imported_geometry",
+        "state": "InvalidImportedGeometry",
+        "subject_count": 4,
+        "subject_ids": [
+          "edge_occurrence.e0001",
+          "edge_occurrence.e0002",
+          "edge_occurrence.e0003",
+          "edge_occurrence.e0004"
+        ],
+        "subject_kind": "edge"
+      },
+      {
+        "geometry_family_code": "plane",
+        "label": "support.face.plane.invalid_imported_geometry",
+        "selection_code": "reason.invalid_imported_geometry",
+        "state": "InvalidImportedGeometry",
+        "subject_count": 1,
+        "subject_ids": [
+          "face_occurrence.f0001"
+        ],
+        "subject_kind": "face"
+      },
+      {
+        "geometry_family_code": "plane",
+        "label": "support.logical_region.plane.invalid_imported_geometry",
+        "selection_code": "reason.invalid_imported_geometry",
+        "state": "InvalidImportedGeometry",
+        "subject_count": 1,
+        "subject_ids": [
+          "logical_region.r0001"
+        ],
+        "subject_kind": "logical_region"
+      }
+    ],
+    "surface_variants": [],
+    "topology_occurrences": {
+      "assembly_products": 1,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 4,
+      "faces": 1,
+      "instances": 0,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 8,
+      "wires": 1
+    },
+    "unique_topology": {
+      "assembly_products": 1,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 4,
+      "faces": 1,
+      "instances": 0,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 4,
+      "wires": 1
+    },
+    "validation_findings": [
+      {
+        "code": "import.unprocessed_brep_invalid",
+        "evidence": "The hash-bound native BRep is checked directly without sewing, healing, SameParameter repair, or topology replacement.",
+        "expectation": "present",
+        "subject_kind": "model"
+      },
+      {
+        "code": "pathology.face.zero_area",
+        "evidence": "The exact declared ASCII replacements and independent analytic measurement retain this pathology in the native artifact.",
+        "expectation": "present",
+        "subject_kind": "face"
+      },
+      {
+        "code": "topology.valid",
+        "evidence": "BRepCheck_Analyzer result for the deterministic native artifact.",
+        "expectation": "absent",
+        "subject_kind": "model"
+      }
+    ]
+  },
+  "fixture_id": "corrupt.face.zero_area",
+  "instances": [],
+  "observations": [
+    {
+      "evidence": "The exact source-bound replacements change the plane origin, both upper curve origins, both height-bearing edge ranges, and both upper vertex coordinates. Area is derived independently as 30 mm multiplied by the patched height.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.measurement.exact_mutation",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "derived.collapsed_vertex_pair_count",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "code": "derived.face_area",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "square_metres",
+            "value": 0.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "derived.face_height",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 0.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "derived.face_width",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 30.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "mutation.artifact_sha256",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": "a01c73913b6f04054ce85619fa0a846e572a01bac2c99933c0b87fa8a815d7ea",
+            "value_type": "text"
+          }
+        },
+        {
+          "code": "mutation.baseline_height",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 20.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "mutation.baseline_sha256",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": "cfaf35858ee67c69299f79c495f513f806b370c83357e03b7d0c3464939c9625",
+            "value_type": "text"
+          }
+        },
+        {
+          "code": "mutation.operation_count",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 7,
+            "value_type": "integer"
+          }
+        },
+        {
+          "code": "mutation.runner_sha256",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": "aa7148e4771621371a44509728fac5efad7e7ebdec3a367ec1c16d58ab981630",
+            "value_type": "text"
+          }
+        }
+      ],
+      "pathology_code": "pathology.face.zero_area",
+      "phase": "native",
+      "subject_ids": [
+        "face_occurrence.f0001"
+      ]
+    },
+    {
+      "evidence": "The direct native BRep load is retained without repair and BRepCheck_Analyzer reports the intentionally degenerate face invalid.",
+      "expectation": "named_failure",
+      "expected_failure_code": "import.unprocessed_brep_invalid",
+      "id": "observation.pathology.native_validity",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "brep.valid",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        }
+      ],
+      "pathology_code": "meshing.native_validity",
+      "phase": "native",
+      "subject_ids": [
+        "face_occurrence.f0001"
+      ]
+    },
+    {
+      "accepted_normalization_codes": [
+        "derived.ascii_brep.face_height_patch"
+      ],
+      "changes": [
+        {
+          "disposition": "introduced",
+          "field_path": "/ascii_brep/curves/curve_3/origin_y",
+          "imported_value": {
+            "unit": "millimetres",
+            "value": 0.0,
+            "value_type": "number"
+          },
+          "normalization_code": "derived.ascii_brep.face_height_patch",
+          "source_value": {
+            "unit": "millimetres",
+            "value": 20.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "disposition": "introduced",
+          "field_path": "/ascii_brep/curves/curve_4/origin_y",
+          "imported_value": {
+            "unit": "millimetres",
+            "value": 0.0,
+            "value_type": "number"
+          },
+          "normalization_code": "derived.ascii_brep.face_height_patch",
+          "source_value": {
+            "unit": "millimetres",
+            "value": 20.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "disposition": "introduced",
+          "field_path": "/ascii_brep/edges/edge_2/parameter_upper",
+          "imported_value": {
+            "unit": "millimetres",
+            "value": 0.0,
+            "value_type": "number"
+          },
+          "normalization_code": "derived.ascii_brep.face_height_patch",
+          "source_value": {
+            "unit": "millimetres",
+            "value": 20.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "disposition": "introduced",
+          "field_path": "/ascii_brep/edges/edge_4/parameter_upper",
+          "imported_value": {
+            "unit": "millimetres",
+            "value": 0.0,
+            "value_type": "number"
+          },
+          "normalization_code": "derived.ascii_brep.face_height_patch",
+          "source_value": {
+            "unit": "millimetres",
+            "value": 20.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "disposition": "introduced",
+          "field_path": "/ascii_brep/surfaces/surface_1/origin_y",
+          "imported_value": {
+            "unit": "millimetres",
+            "value": 0.0,
+            "value_type": "number"
+          },
+          "normalization_code": "derived.ascii_brep.face_height_patch",
+          "source_value": {
+            "unit": "millimetres",
+            "value": 10.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "disposition": "introduced",
+          "field_path": "/ascii_brep/vertices/vertex_3/y",
+          "imported_value": {
+            "unit": "millimetres",
+            "value": 0.0,
+            "value_type": "number"
+          },
+          "normalization_code": "derived.ascii_brep.face_height_patch",
+          "source_value": {
+            "unit": "millimetres",
+            "value": 20.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "disposition": "introduced",
+          "field_path": "/ascii_brep/vertices/vertex_4/y",
+          "imported_value": {
+            "unit": "millimetres",
+            "value": 0.0,
+            "value_type": "number"
+          },
+          "normalization_code": "derived.ascii_brep.face_height_patch",
+          "source_value": {
+            "unit": "millimetres",
+            "value": 20.0,
+            "value_type": "number"
+          }
+        }
+      ],
+      "equivalence": "intentionally_changed",
+      "geometry_equivalent": false,
+      "id": "observation.normalization.source_to_derived",
+      "imported_subject_ids": [
+        "face_occurrence.f0001"
+      ],
+      "kind": "source_import_normalization",
+      "outcome": "introduced",
+      "source_subject_ids": [
+        "baseline.face_occurrence.f0001"
+      ],
+      "topology_equivalent": true
+    },
+    {
+      "child_ids": [
+        "wire_occurrence.w0001"
+      ],
+      "condition_codes": [
+        "artifact.derived_ascii_brep",
+        "pathology.face.zero_area"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.face_mutated",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "native",
+      "relations": [],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "face_occurrence.f0001",
+      "tolerance_metres": 1e-10,
+      "topology_kind": "face",
+      "underlying_id": "face.partner_0001",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    }
+  ],
+  "oracle": {
+    "independent_from_production_classifier": true,
+    "method": "analytic_derivation",
+    "references": [
+      "fixtures/baselines/baseline.pathology.planar_face.brep hash-bound clean 30 by 20 millimetre face",
+      "fixtures/lanes/derived_artifact.py transform.declared_ascii_patch.v1",
+      "fixtures/nonprocedural-obligation-authoring-map.json PAT-005"
+    ],
+    "statement": "The declared ASCII-BRep patch preserves the face, wire, edge, and vertex identities while setting the 20 mm height to 0 mm; independent multiplication yields 0 square metres and the unhealed native BRep is invalid."
+  },
+  "schema_version": "1.0.0",
+  "tolerances": {
+    "edges_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "faces_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "vertices_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    }
+  },
+  "units": {
+    "coordinate_space": "right_handed_si_metres_radians",
+    "scale_to_metres": 0.001,
+    "source_unit": "millimetre"
+  }
+}

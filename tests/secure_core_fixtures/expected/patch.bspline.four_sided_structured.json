@@ -1,0 +1,451 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "expected": {
+    "boundary_loops": [
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0001",
+        "id": "boundary_loop.l0001",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 1.0,
+          "u_min": 0.0,
+          "v_max": 1.0,
+          "v_min": 0.0
+        }
+      }
+    ],
+    "brep_valid": true,
+    "claims": [
+      {
+        "id": "claim.srf_007.surface_spline",
+        "obligation_id": "SRF-007",
+        "predicate_codes": [
+          "predicate.surface.spline"
+        ],
+        "statement": "The processing-disabled imported evidence satisfies SRF-007 through predicate.surface.spline; the referenced observations bind the exact post-STEP subjects.",
+        "subject_refs": [
+          {
+            "id": "observation.geometry.surface_bspline",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.face_occurrence_f0001",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.srf_024.surface_spline",
+        "obligation_id": "SRF-024",
+        "predicate_codes": [
+          "predicate.surface.spline"
+        ],
+        "statement": "The processing-disabled imported evidence satisfies SRF-024 through predicate.surface.spline; the referenced observations bind the exact post-STEP subjects.",
+        "subject_refs": [
+          {
+            "id": "observation.geometry.surface_bspline",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.sup_002.support_state",
+        "obligation_id": "SUP-002",
+        "predicate_codes": [
+          "predicate.support.state"
+        ],
+        "statement": "The processing-disabled imported evidence satisfies SUP-002 through predicate.support.state; the referenced observations bind the exact post-STEP subjects.",
+        "subject_refs": [
+          {
+            "id": "observation.consumer.support_assignment",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.semantic.recognition_imported_geometry",
+            "kind": "observation"
+          },
+          {
+            "id": "support.face.bspline.strategy_structured_patch.bucket_02",
+            "kind": "support"
+          },
+          {
+            "id": "support.logical_region.bspline.strategy_structured_patch.bucket_03",
+            "kind": "support"
+          }
+        ]
+      }
+    ],
+    "curve_variants": [
+      {
+        "concrete_type": "Geom_BSplineCurve",
+        "condition_codes": [
+          "bounded",
+          "spline_representation"
+        ],
+        "count": 4,
+        "family_code": "bspline",
+        "label": "curve.bspline",
+        "wrapper_stack": []
+      }
+    ],
+    "import_outcome": "success",
+    "model_classes": [
+      "open_manifold",
+      "open_shell",
+      "procedural_fixture",
+      "standalone_shell"
+    ],
+    "model_topology": {
+      "closed_shells": 0,
+      "coincident_solid_signature_pairs": 0,
+      "free_edges": 0,
+      "free_wires": 0,
+      "inner_shells": 0,
+      "isolated_vertices": 0,
+      "maximum_faces_per_edge": 1,
+      "nonmanifold_vertices": 0,
+      "open_shells": 1,
+      "outer_shells": 0,
+      "shared_faces_between_solids": 0,
+      "standalone_shells": 1
+    },
+    "orientation_states": [
+      "FORWARD",
+      "REVERSED"
+    ],
+    "periodicity": [
+      {
+        "label": "surface.bspline",
+        "u_closed": false,
+        "u_periodic": false,
+        "v_closed": false,
+        "v_periodic": false
+      }
+    ],
+    "semantic_candidates": [],
+    "singularity_codes": [],
+    "subject_universe": {
+      "edge_occurrence_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004"
+      ],
+      "face_occurrence_ids": [
+        "face_occurrence.f0001"
+      ],
+      "logical_region_ids": [
+        "logical_region.r0001"
+      ]
+    },
+    "support": [
+      {
+        "geometry_family_code": "bspline",
+        "label": "support.edge.bspline.reason_structured_boundary_curve_route_unproven.bucket_01",
+        "selection_code": "reason.structured_boundary_curve_route_unproven",
+        "state": "UnrecognisedExactGeometry",
+        "subject_count": 4,
+        "subject_ids": [
+          "edge_occurrence.e0001",
+          "edge_occurrence.e0002",
+          "edge_occurrence.e0003",
+          "edge_occurrence.e0004"
+        ],
+        "subject_kind": "edge"
+      },
+      {
+        "geometry_family_code": "bspline",
+        "label": "support.face.bspline.strategy_structured_patch.bucket_02",
+        "selection_code": "strategy.structured_patch",
+        "state": "SupportedStructuredPatch",
+        "subject_count": 1,
+        "subject_ids": [
+          "face_occurrence.f0001"
+        ],
+        "subject_kind": "face"
+      },
+      {
+        "geometry_family_code": "bspline",
+        "label": "support.logical_region.bspline.strategy_structured_patch.bucket_03",
+        "selection_code": "strategy.structured_patch",
+        "state": "SupportedStructuredPatch",
+        "subject_count": 1,
+        "subject_ids": [
+          "logical_region.r0001"
+        ],
+        "subject_kind": "logical_region"
+      }
+    ],
+    "surface_variants": [
+      {
+        "concrete_type": "Geom_BSplineSurface",
+        "condition_codes": [
+          "bounded_trim_layout"
+        ],
+        "count": 1,
+        "family_code": "bspline",
+        "label": "surface.bspline",
+        "trim_domain_class": "convex_simple_region",
+        "wrapper_stack": []
+      }
+    ],
+    "topology_occurrences": {
+      "assembly_products": 1,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 4,
+      "faces": 1,
+      "instances": 0,
+      "shells": 1,
+      "solids": 0,
+      "vertices": 8,
+      "wires": 1
+    },
+    "unique_topology": {
+      "assembly_products": 1,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 4,
+      "faces": 1,
+      "instances": 0,
+      "shells": 1,
+      "solids": 0,
+      "vertices": 4,
+      "wires": 1
+    },
+    "validation_findings": [
+      {
+        "code": "edge.degenerated",
+        "evidence": "Degenerated edge count from imported topology.",
+        "expectation": "absent",
+        "subject_kind": "edge"
+      },
+      {
+        "code": "edge.missing_3d_curve",
+        "evidence": "Missing 3D-curve count from imported topology.",
+        "expectation": "absent",
+        "subject_kind": "edge"
+      },
+      {
+        "code": "edge.periodic_seam",
+        "evidence": "Periodic seam incidence from imported topology.",
+        "expectation": "absent",
+        "subject_kind": "edge"
+      },
+      {
+        "code": "import.unprocessed_brep_invalid",
+        "evidence": "Validity is measured before any repair or shape processing.",
+        "expectation": "absent",
+        "subject_kind": "model"
+      },
+      {
+        "code": "tolerance.uniform_kernel_precision",
+        "evidence": "All populated imported tolerance ranges equal 10^-10 metres.",
+        "expectation": "present",
+        "subject_kind": "model"
+      },
+      {
+        "code": "topology.closed_shell",
+        "evidence": "A closed shell has no free boundary incidence.",
+        "expectation": "absent",
+        "subject_kind": "shell"
+      },
+      {
+        "code": "topology.manifold",
+        "evidence": "No imported edge has non-manifold face incidence.",
+        "expectation": "present",
+        "subject_kind": "model"
+      },
+      {
+        "code": "topology.valid",
+        "evidence": "BRepCheck_Analyzer result on the processing-disabled readback.",
+        "expectation": "present",
+        "subject_kind": "model"
+      }
+    ]
+  },
+  "fixture_id": "patch.bspline.four_sided_structured",
+  "instances": [],
+  "observations": [
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "support.assignment_total",
+        "support.viewer_state_defined"
+      ],
+      "consumer_code": "consumer.support_gate",
+      "consumer_kind": "mesher",
+      "evidence": "Every imported edge, face, and logical-region proxy is assigned exactly once; blocked buckets fail the component mesh gate by name.",
+      "expected_outcome": "named_failure",
+      "id": "observation.consumer.support_assignment",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "authoritative_brep",
+      "subject_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004",
+        "face_occurrence.f0001",
+        "logical_region.r0001"
+      ]
+    },
+    {
+      "concrete_type": "Geom_BSplineCurve",
+      "condition_codes": [
+        "bounded",
+        "spline_representation"
+      ],
+      "exact_evaluator_kind": "evaluator.bspline",
+      "family_code": "bspline",
+      "id": "observation.geometry.curve_bspline",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "curve",
+          "closed": false,
+          "lower": 0.0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1.0
+        }
+      ],
+      "parameters": [],
+      "phase": "imported",
+      "subject_id": "curve.bspline",
+      "taxonomy": "Curve",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BSplineSurface",
+      "condition_codes": [
+        "bounded_trim_layout"
+      ],
+      "exact_evaluator_kind": "evaluator.bspline",
+      "family_code": "bspline",
+      "id": "observation.geometry.surface_bspline",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0.0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1.0
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0.0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1.0
+        }
+      ],
+      "parameters": [],
+      "phase": "imported",
+      "subject_id": "surface.bspline",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "candidate_code": "recognition.imported_geometry",
+      "confidence": "ProvenAnalytic",
+      "continuity_observation_ids": [],
+      "evidence": "The exact imported family is independently derived from its defining equation.",
+      "evidence_codes": [
+        "evidence.independent_oracle"
+      ],
+      "fitted_parameters": [],
+      "id": "observation.semantic.recognition_imported_geometry",
+      "kind": "semantic_evidence",
+      "max_residual_metres": null,
+      "phase": "imported",
+      "residual_observation_ids": [],
+      "subject_ids": [
+        "face_occurrence.f0001"
+      ]
+    },
+    {
+      "condition_codes": [
+        "closed_imported_loops",
+        "processing_disabled_readback"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "face_occurrence.f0001",
+      "id": "observation.trim.face_occurrence_f0001",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop_l0001.c01",
+            "oracle.coedge.boundary_loop_l0001.c02",
+            "oracle.coedge.boundary_loop_l0001.c03",
+            "oracle.coedge.boundary_loop_l0001.c04"
+          ],
+          "loop_id": "boundary_loop.l0001",
+          "max_gap_metres": 0.0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 1.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 1.0,
+            "u_min": 0.0,
+            "v_max": 1.0,
+            "v_min": 0.0
+          },
+          "wire_id": "oracle.wire.boundary_loop_l0001"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    }
+  ],
+  "oracle": {
+    "independent_from_production_classifier": true,
+    "method": "analytic_derivation",
+    "references": [
+      "fixtures/generator/fixture_trim_support_recipes.cpp recipe patch.bspline.four_sided_structured",
+      "independent_oracle_intent: Extract the imported bicubic tensor data, bound the Jacobian away from zero on an independently chosen interval grid, prove no fold or self-intersection, and establish one-to-one correspondence among the four boundary curves before selecting the structured-patch strategy.",
+      "post-STEP processing-disabled summary patch.bspline.four_sided_structured"
+    ],
+    "statement": "Extract the imported bicubic tensor data, bound the Jacobian away from zero on an independently chosen interval grid, prove no fold or self-intersection, and establish one-to-one correspondence among the four boundary curves before selecting the structured-patch strategy."
+  },
+  "schema_version": "1.0.0",
+  "tolerances": {
+    "edges_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "faces_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "vertices_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    }
+  },
+  "units": {
+    "coordinate_space": "right_handed_si_metres_radians",
+    "scale_to_metres": 0.001,
+    "source_unit": "millimetre"
+  }
+}

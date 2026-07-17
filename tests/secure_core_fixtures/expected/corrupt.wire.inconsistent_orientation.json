@@ -1,0 +1,453 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "expected": {
+    "boundary_loops": [],
+    "brep_valid": true,
+    "claims": [
+      {
+        "id": "claim.pat_010.inconsistent_wire_orientation",
+        "obligation_id": "PAT-010",
+        "predicate_codes": [
+          "predicate.pathology.inconsistent_wire_orientation"
+        ],
+        "statement": "The single source-bound coedge-token reversal preserves all edge and vertex geometry but reverses edge 1 inside the ordered square cycle, producing two exact 20 mm adjacency breaks; native BRepCheck remains valid while meshing admission fails.",
+        "subject_refs": [
+          {
+            "id": "observation.measurement.exact_mutation",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.normalization.source_to_derived",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.native_validity",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.coedge_reversed",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.wire_cycle",
+            "kind": "observation"
+          }
+        ]
+      }
+    ],
+    "curve_variants": [],
+    "import_outcome": "native_only",
+    "model_classes": [
+      "derived_pathology",
+      "free_topology",
+      "meshing_admission_failure"
+    ],
+    "model_topology": {
+      "closed_shells": 0,
+      "coincident_solid_signature_pairs": 0,
+      "free_edges": 0,
+      "free_wires": 2,
+      "inner_shells": 0,
+      "isolated_vertices": 0,
+      "maximum_faces_per_edge": 0,
+      "nonmanifold_vertices": 0,
+      "open_shells": 0,
+      "outer_shells": 0,
+      "shared_faces_between_solids": 0,
+      "standalone_shells": 0
+    },
+    "orientation_states": [
+      "FORWARD",
+      "REVERSED"
+    ],
+    "periodicity": [],
+    "semantic_candidates": [],
+    "singularity_codes": [],
+    "subject_universe": {
+      "edge_occurrence_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004",
+        "edge_occurrence.e0005",
+        "edge_occurrence.e0006",
+        "edge_occurrence.e0007",
+        "edge_occurrence.e0008"
+      ],
+      "face_occurrence_ids": [],
+      "logical_region_ids": []
+    },
+    "support": [
+      {
+        "geometry_family_code": "line",
+        "label": "support.edge.line.invalid_imported_geometry",
+        "selection_code": "reason.invalid_imported_geometry",
+        "state": "InvalidImportedGeometry",
+        "subject_count": 8,
+        "subject_ids": [
+          "edge_occurrence.e0001",
+          "edge_occurrence.e0002",
+          "edge_occurrence.e0003",
+          "edge_occurrence.e0004",
+          "edge_occurrence.e0005",
+          "edge_occurrence.e0006",
+          "edge_occurrence.e0007",
+          "edge_occurrence.e0008"
+        ],
+        "subject_kind": "edge"
+      }
+    ],
+    "surface_variants": [],
+    "topology_occurrences": {
+      "assembly_products": 1,
+      "compounds": 1,
+      "compsolids": 0,
+      "edges": 8,
+      "faces": 0,
+      "instances": 0,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 16,
+      "wires": 2
+    },
+    "unique_topology": {
+      "assembly_products": 1,
+      "compounds": 1,
+      "compsolids": 0,
+      "edges": 8,
+      "faces": 0,
+      "instances": 0,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 8,
+      "wires": 2
+    },
+    "validation_findings": [
+      {
+        "code": "import.unprocessed_brep_invalid",
+        "evidence": "The hash-bound native BRep is checked directly without sewing, healing, SameParameter repair, or topology replacement.",
+        "expectation": "absent",
+        "subject_kind": "model"
+      },
+      {
+        "code": "pathology.wire.inconsistent_orientation",
+        "evidence": "The exact declared ASCII replacements and independent analytic measurement retain this pathology in the native artifact.",
+        "expectation": "present",
+        "subject_kind": "wire"
+      },
+      {
+        "code": "topology.valid",
+        "evidence": "BRepCheck_Analyzer result for the deterministic native artifact.",
+        "expectation": "present",
+        "subject_kind": "model"
+      }
+    ]
+  },
+  "fixture_id": "corrupt.wire.inconsistent_orientation",
+  "instances": [],
+  "observations": [
+    {
+      "evidence": "The first wire's stored edge cycle changes from +7,+5,+3,+2 to -7,+5,+3,+2. Reversing the 20 mm first edge makes its terminal vertex disagree with the next edge and its initial vertex disagree with the closing edge.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.measurement.exact_mutation",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "mutation.artifact_sha256",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": "63a96d07f8b360528f9c557af6d6ec38761c332fb77863ed5c6e5ee7e022eddc",
+            "value_type": "text"
+          }
+        },
+        {
+          "code": "mutation.baseline_sha256",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": "527ac05bc9bef4da134557fb142ff1259bcd49c4ef46331fadad74e1e617bab3",
+            "value_type": "text"
+          }
+        },
+        {
+          "code": "mutation.operation_count",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "code": "mutation.runner_sha256",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": "aa7148e4771621371a44509728fac5efad7e7ebdec3a367ec1c16d58ab981630",
+            "value_type": "text"
+          }
+        },
+        {
+          "code": "orientation.adjacency_gap_count",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "code": "orientation.maximum_adjacency_gap",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 20.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "orientation.reversed_coedge_count",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 1,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "pathology.wire.inconsistent_orientation",
+      "phase": "native",
+      "subject_ids": [
+        "wire_occurrence.w0001",
+        "edge_occurrence.e0001"
+      ]
+    },
+    {
+      "evidence": "OCCT accepts the free wire as BRepCheck-valid, but ordered meshing traversal sees two 20 mm adjacency breaks and rejects the inconsistent winding without repair.",
+      "expectation": "present",
+      "expected_failure_code": "reason.invalid_imported_geometry",
+      "id": "observation.pathology.native_validity",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "brep.valid",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": true,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "code": "meshing.wire_cycle_admitted",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        }
+      ],
+      "pathology_code": "meshing.native_validity",
+      "phase": "native",
+      "subject_ids": [
+        "wire_occurrence.w0001"
+      ]
+    },
+    {
+      "accepted_normalization_codes": [
+        "derived.ascii_brep.inconsistent_wire_orientation_patch"
+      ],
+      "changes": [
+        {
+          "disposition": "introduced",
+          "field_path": "/ascii_brep/wires/wire_1/coedge_1_orientation_token",
+          "imported_value": {
+            "value": "orientation.reversed",
+            "value_type": "code"
+          },
+          "normalization_code": "derived.ascii_brep.inconsistent_wire_orientation_patch",
+          "source_value": {
+            "value": "orientation.forward",
+            "value_type": "code"
+          }
+        }
+      ],
+      "equivalence": "intentionally_changed",
+      "geometry_equivalent": false,
+      "id": "observation.normalization.source_to_derived",
+      "imported_subject_ids": [
+        "wire_occurrence.w0001"
+      ],
+      "kind": "source_import_normalization",
+      "outcome": "introduced",
+      "source_subject_ids": [
+        "baseline.wire_occurrence.w0001"
+      ],
+      "topology_equivalent": true
+    },
+    {
+      "child_ids": [
+        "vertex_occurrence.v0002",
+        "vertex_occurrence.v0001"
+      ],
+      "condition_codes": [
+        "coedge.orientation_contradictory",
+        "orientation.reversed"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.coedge_reversed",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "REVERSED",
+      "parent_id": "wire_occurrence.w0001",
+      "phase": "native",
+      "relations": [],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "edge_occurrence.e0001",
+      "tolerance_metres": 1e-06,
+      "topology_kind": "edge",
+      "underlying_id": "edge.partner_0001",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004"
+      ],
+      "condition_codes": [
+        "cycle.adjacency_broken",
+        "identity.preserved"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.wire_cycle",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": "compound_occurrence.c0001",
+      "phase": "native",
+      "relations": [],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "wire_occurrence.w0001",
+      "tolerance_metres": 1e-06,
+      "topology_kind": "wire",
+      "underlying_id": "wire.partner_0001",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    }
+  ],
+  "oracle": {
+    "independent_from_production_classifier": true,
+    "method": "analytic_derivation",
+    "references": [
+      "fixtures/baselines/baseline.pathology.wire_gap_thresholds.brep hash-bound clean two-wire baseline",
+      "fixtures/lanes/derived_artifact.py transform.declared_ascii_patch.v1",
+      "fixtures/nonprocedural-obligation-authoring-map.json PAT-010"
+    ],
+    "statement": "The single source-bound coedge-token reversal preserves all edge and vertex geometry but reverses edge 1 inside the ordered square cycle, producing two exact 20 mm adjacency breaks; native BRepCheck remains valid while meshing admission fails."
+  },
+  "schema_version": "1.0.0",
+  "tolerances": {
+    "edges_metres": {
+      "maximum": 1e-06,
+      "minimum": 1e-06
+    },
+    "faces_metres": {
+      "maximum": null,
+      "minimum": null
+    },
+    "vertices_metres": {
+      "maximum": 1e-06,
+      "minimum": 1e-06
+    }
+  },
+  "units": {
+    "coordinate_space": "right_handed_si_metres_radians",
+    "scale_to_metres": 0.001,
+    "source_unit": "millimetre"
+  }
+}

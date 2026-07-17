@@ -1,0 +1,34 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "6ffabbf384d1a007e9f5a06dc54464b283cfa70c342abb3728f2d7651d529b93",
+  "finding_disposition": "Independent construction, topology-incidence, instance-placement, support-state, and provenance review found no unresolved P0 or P1 findings for corpus revision 5.",
+  "fixture_id": "assembly.box.nested_repeated_instances",
+  "producer_id": "producer.m1_topology_model_tranche",
+  "review_id": "review.assembly_box_nested_repeated_instances.revision_1",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.m1_topology_model_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "claims.typed_binding",
+    "construction.parameters",
+    "geometry.conditions",
+    "geometry.taxonomy",
+    "model.topology",
+    "provenance.instance_graph",
+    "provenance.xde_readback",
+    "support.occurrence_identity",
+    "topology.boundary_loops",
+    "topology.counts",
+    "topology.occurrence_locations",
+    "units.tolerances"
+  ],
+  "source_binding": {
+    "artifact_sha256": "37f8e0c8cc907429a072865df7fd8e6dd8bd9446e0f868016e85f8eab0a2185b",
+    "construction_parameters_sha256": "5bb70dce047b1003f460b5d231b8a9687e63717ca4b46aecbe1d01b9b6660d11",
+    "generator_revision": 3,
+    "kind": "occt_procedural",
+    "source_contract_sha256": "57585708f1635760c6dcd04f028ca3e8b3a08964d4082b59e36f5dcf5d2e08c5",
+    "summary_sha256": "e6f338bf027b4aeb22db124f7425bb2af30c9c3909b31dd3f652269f33003b61"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "e08113d0f1b17d3ec51ae007357b5ba2f75518201edd75099fae1ec99a102bb8",
+  "finding_disposition": "Accepted with exact baseline/artifact/runner binding, direct OCCT validity diagnostics, analytic mutation measurements, and explicit contradiction notes where the authoring-map intended validity is infeasible.",
+  "fixture_id": "corrupt.edge.range_mismatch",
+  "producer_id": "producer.m1_derived_edge_trim_import_oracle",
+  "review_id": "review.corrupt.edge.range_mismatch.revision_1",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.derived_edge_trim_import_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "artifact.hash",
+    "mutation.exact_ascii_patch",
+    "native.validity",
+    "oracle.independent_measurement",
+    "source.provenance"
+  ],
+  "source_binding": {
+    "artifact_sha256": "c330fc34afaa9c0fcd33b79cf3baddad37c3a227263f64ef49e444270a892ac8",
+    "kind": "derived_corruption",
+    "source_contract_sha256": "5c22dcd374cd0999da43684e96accf708d27d35384d4b5f66dcc0698e0b2a1d7"
+  }
+}

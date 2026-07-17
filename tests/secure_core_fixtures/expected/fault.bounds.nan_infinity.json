@@ -1,0 +1,217 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "expected": {
+    "boundary_loops": [],
+    "brep_valid": true,
+    "claims": [
+      {
+        "id": "claim.pat_015.nan_infinity_bounds",
+        "obligation_id": "PAT-015",
+        "predicate_codes": [
+          "predicate.pathology.evaluator.nan_infinity_bounds"
+        ],
+        "statement": "NaN and positive-infinity parameter bounds fail closed before evaluation or meshing can consume them.",
+        "subject_refs": [
+          {
+            "id": "observation.pathology.bounds.nan_infinity",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.bounds.non_finite_values",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.validation.parameter_domain_contract",
+            "kind": "observation"
+          },
+          {
+            "id": "bounds.nan_infinity",
+            "kind": "validation_finding"
+          }
+        ]
+      }
+    ],
+    "curve_variants": [],
+    "import_outcome": "native_only",
+    "model_classes": [
+      "native_parameter_domain_fault_contract"
+    ],
+    "orientation_states": [],
+    "periodicity": [],
+    "semantic_candidates": [],
+    "singularity_codes": [],
+    "subject_universe": {
+      "edge_occurrence_ids": [],
+      "face_occurrence_ids": [],
+      "logical_region_ids": []
+    },
+    "support": [],
+    "surface_variants": [],
+    "topology_occurrences": {
+      "assembly_products": 0,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 0,
+      "faces": 0,
+      "instances": 0,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 0,
+      "wires": 0
+    },
+    "unique_topology": {
+      "assembly_products": 0,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 0,
+      "faces": 0,
+      "instances": 0,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 0,
+      "wires": 0
+    },
+    "validation_findings": [
+      {
+        "code": "bounds.nan_infinity",
+        "evidence": "The native harness rejects both non-finite curve parameter domains.",
+        "expectation": "present",
+        "subject_kind": "model"
+      },
+      {
+        "code": "topology.valid",
+        "evidence": "The native-only fixture serializes no B-rep; its empty topology population remains valid while the fault is isolated at the public contract boundary.",
+        "expectation": "present",
+        "subject_kind": "model"
+      }
+    ]
+  },
+  "fixture_id": "fault.bounds.nan_infinity",
+  "instances": [],
+  "observations": [
+    {
+      "evidence": "Both the NaN-lower-bound domain and positive-infinity-upper-bound domain are rejected before evaluator use.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.bounds.nan_infinity",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "domain.nan.valid",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "code": "domain.positive_infinity.valid",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        }
+      ],
+      "pathology_code": "bounds.nan_infinity",
+      "phase": "native",
+      "subject_ids": [
+        "parameter_domain.curve.nan",
+        "parameter_domain.curve.positive_infinity"
+      ]
+    },
+    {
+      "evidence": "The native construction preserves the two exact non-finite states instead of serializing or normalizing them.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.bounds.non_finite_values",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "bounds.lower.nan",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "value": "nan",
+            "value_type": "state"
+          }
+        },
+        {
+          "code": "bounds.upper.positive_infinity",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "value": "positive_infinity",
+            "value_type": "state"
+          }
+        }
+      ],
+      "pathology_code": "bounds.non_finite_values",
+      "phase": "native",
+      "subject_ids": [
+        "parameter_domain.curve.nan",
+        "parameter_domain.curve.positive_infinity"
+      ]
+    },
+    {
+      "evidence": "is_valid_parameter_domain deterministically rejects both non-finite parameter domains.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.validation.parameter_domain_contract",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "validation.parameter_domain_contract",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "value": true,
+            "value_type": "boolean"
+          }
+        }
+      ],
+      "pathology_code": "validation.parameter_domain_contract",
+      "phase": "native",
+      "subject_ids": [
+        "parameter_domain.curve.nan",
+        "parameter_domain.curve.positive_infinity"
+      ]
+    }
+  ],
+  "oracle": {
+    "independent_from_production_classifier": true,
+    "method": "fault_contract",
+    "references": [
+      "fixtures/nonprocedural-obligation-authoring-map.json#PAT-015/fault.bounds.nan_infinity",
+      "tests/fixtures/native_fault_fixture.cpp#fault.bounds.nan_infinity"
+    ],
+    "statement": "Curve parameter domains containing NaN or positive infinity must both fail the public domain-validity contract."
+  },
+  "schema_version": "1.0.0",
+  "tolerances": {
+    "edges_metres": {
+      "maximum": null,
+      "minimum": null
+    },
+    "faces_metres": {
+      "maximum": null,
+      "minimum": null
+    },
+    "vertices_metres": {
+      "maximum": null,
+      "minimum": null
+    }
+  },
+  "units": {
+    "coordinate_space": "right_handed_si_metres_radians",
+    "scale_to_metres": 1,
+    "source_unit": "metre"
+  }
+}

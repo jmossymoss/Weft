@@ -1,0 +1,23 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "23826a499773b2316e9919bd586df4fd9b1802af3165c8d1422996e0f706fc26",
+  "finding_disposition": "Accepted as the exact source-bound PAT-010 witness. Artifact, baseline, mutation source, independent measurements, topology identity, and named native outcome are hash-bound.",
+  "fixture_id": "corrupt.wire.inconsistent_orientation",
+  "producer_id": "producer.m1_derived_pathology_oracle",
+  "review_id": "review.corrupt.wire.inconsistent_orientation.revision_1",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.derived_pathology_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "artifact.hash",
+    "mutation.exact_ascii_patch",
+    "oracle.independent_measurement",
+    "source.provenance"
+  ],
+  "source_binding": {
+    "artifact_sha256": "63a96d07f8b360528f9c557af6d6ec38761c332fb77863ed5c6e5ee7e022eddc",
+    "kind": "derived_corruption",
+    "source_contract_sha256": "d1ec3fab8cac6f0732fcaf3cf10cd717fc87ecd407d3a4d86d5937d91f199233"
+  }
+}

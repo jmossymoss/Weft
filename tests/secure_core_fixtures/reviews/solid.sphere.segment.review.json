@@ -1,0 +1,31 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "3957dd03776d0198083bda1fe839c9c595e65a1f390b4d14a59e623b40340222",
+  "finding_disposition": "Fresh-context occurrence, boundary-loop, oracle, support-strategy, runner-execution, and promotion audits passed after all findings were resolved; no P0 or P1 finding remains for corpus revision 4.",
+  "fixture_id": "solid.sphere.segment",
+  "producer_id": "producer.m1_fixture_foundation",
+  "review_id": "review.solid_sphere_segment.revision_2",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.m1_oracle_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "claims.typed_binding",
+    "construction.parameters",
+    "geometry.conditions",
+    "geometry.taxonomy",
+    "provenance.xde_readback",
+    "support.occurrence_identity",
+    "topology.boundary_loops",
+    "topology.counts",
+    "units.tolerances"
+  ],
+  "source_binding": {
+    "artifact_sha256": "9f67a586dca0991f3017586b4834845d17bdd249a923813c44008a1149000ce8",
+    "construction_parameters_sha256": "6bbde0a51353f4365db7952cbe805302c6a5e62de82e922dc3a4e68ccae91713",
+    "generator_revision": 3,
+    "kind": "occt_procedural",
+    "source_contract_sha256": "a9f1d35a7be2d89791e1095d5c5e6c2e67b1d844c72788a1bcb04ea6b498268c",
+    "summary_sha256": "e72c9430d3734f7f2148d34aa679481c82d443d6a3e03913d646943dde79f3ae"
+  }
+}

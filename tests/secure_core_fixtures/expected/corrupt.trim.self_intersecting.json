@@ -1,0 +1,630 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "expected": {
+    "boundary_loops": [
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0001",
+        "id": "boundary_loop.l0001",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 60.0,
+          "u_min": 0.0,
+          "v_max": 40.0,
+          "v_min": 0.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 1,
+        "face_occurrence_id": "face_occurrence.f0001",
+        "id": "boundary_loop.l0002",
+        "orientation": "REVERSED",
+        "role": "inner",
+        "uv_bounds": {
+          "u_max": 26.0,
+          "u_min": 10.0,
+          "v_max": 28.0,
+          "v_min": 12.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 1,
+        "face_occurrence_id": "face_occurrence.f0001",
+        "id": "boundary_loop.l0003",
+        "orientation": "REVERSED",
+        "role": "inner",
+        "uv_bounds": {
+          "u_max": 41.0,
+          "u_min": 35.0,
+          "v_max": 23.0,
+          "v_min": 17.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 1,
+        "face_occurrence_id": "face_occurrence.f0001",
+        "id": "boundary_loop.l0004",
+        "orientation": "REVERSED",
+        "role": "inner",
+        "uv_bounds": {
+          "u_max": 53.0,
+          "u_min": 47.0,
+          "v_max": 23.0,
+          "v_min": 17.0
+        }
+      }
+    ],
+    "brep_valid": false,
+    "claims": [
+      {
+        "id": "claim.sup_006.corrupt_trim_self_intersecting",
+        "obligation_id": "SUP-006",
+        "predicate_codes": [
+          "predicate.support.invalid_import_total"
+        ],
+        "statement": "Replace the rectangular outer boundary with a source-bound bow-tie loop whose non-adjacent diagonal segments cross at (30,20,0) millimetres. Exact artifact 8c27a53007e3c910b10816ec3470c44661317b0f7f7b753fafe6f44a3dd00d03 is retained without repair; observed validity is False.",
+        "subject_refs": [
+          {
+            "id": "observation.consumer.support.edge.circle.invalid_imported_geometry.bucket_01",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.support.edge.line.invalid_imported_geometry.bucket_02",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.support.face.plane.invalid_imported_geometry.bucket_03",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.support.logical_region.plane.invalid_imported_geometry.bucket_04",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.exact_mutation",
+            "kind": "observation"
+          },
+          {
+            "id": "support.edge.circle.invalid_imported_geometry.bucket_01",
+            "kind": "support"
+          },
+          {
+            "id": "support.edge.line.invalid_imported_geometry.bucket_02",
+            "kind": "support"
+          },
+          {
+            "id": "support.face.plane.invalid_imported_geometry.bucket_03",
+            "kind": "support"
+          },
+          {
+            "id": "support.logical_region.plane.invalid_imported_geometry.bucket_04",
+            "kind": "support"
+          }
+        ]
+      },
+      {
+        "id": "claim.top_006.corrupt_trim_self_intersecting",
+        "obligation_id": "TOP-006",
+        "predicate_codes": [
+          "predicate.topology.wire_inventory"
+        ],
+        "statement": "Replace the rectangular outer boundary with a source-bound bow-tie loop whose non-adjacent diagonal segments cross at (30,20,0) millimetres. Exact artifact 8c27a53007e3c910b10816ec3470c44661317b0f7f7b753fafe6f44a3dd00d03 is retained without repair; observed validity is False.",
+        "subject_refs": [
+          {
+            "id": "observation.pathology.exact_mutation",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.native_face",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.affected_face",
+            "kind": "observation"
+          },
+          {
+            "id": "topology.wires",
+            "kind": "topology"
+          }
+        ]
+      },
+      {
+        "id": "claim.trm_011.corrupt_trim_self_intersecting",
+        "obligation_id": "TRM-011",
+        "predicate_codes": [
+          "predicate.trim.self_intersection_retained"
+        ],
+        "statement": "Replace the rectangular outer boundary with a source-bound bow-tie loop whose non-adjacent diagonal segments cross at (30,20,0) millimetres. Exact artifact 8c27a53007e3c910b10816ec3470c44661317b0f7f7b753fafe6f44a3dd00d03 is retained without repair; observed validity is False.",
+        "subject_refs": [
+          {
+            "id": "observation.pathology.exact_mutation",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.native_face",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.affected_face",
+            "kind": "observation"
+          }
+        ]
+      }
+    ],
+    "curve_variants": [
+      {
+        "concrete_type": "Geom_Circle",
+        "condition_codes": [
+          "basis_periodic",
+          "bounded",
+          "periodic"
+        ],
+        "count": 3,
+        "family_code": "circle",
+        "label": "curve.circle",
+        "wrapper_stack": []
+      },
+      {
+        "concrete_type": "Geom_Line",
+        "condition_codes": [
+          "bounded",
+          "mathematically_unbounded_basis",
+          "trimmed_by_edge_range"
+        ],
+        "count": 4,
+        "family_code": "line",
+        "label": "curve.line",
+        "wrapper_stack": []
+      }
+    ],
+    "import_outcome": "native_only",
+    "model_classes": [
+      "derived_corruption",
+      "invalid_import",
+      "standalone_face"
+    ],
+    "model_topology": {
+      "closed_shells": 0,
+      "coincident_solid_signature_pairs": 0,
+      "free_edges": 0,
+      "free_wires": 0,
+      "inner_shells": 0,
+      "isolated_vertices": 0,
+      "maximum_faces_per_edge": 1,
+      "nonmanifold_vertices": 0,
+      "open_shells": 0,
+      "outer_shells": 0,
+      "shared_faces_between_solids": 0,
+      "standalone_shells": 0
+    },
+    "orientation_states": [
+      "FORWARD",
+      "REVERSED"
+    ],
+    "periodicity": [
+      {
+        "label": "surface.plane",
+        "u_closed": false,
+        "u_periodic": false,
+        "v_closed": false,
+        "v_periodic": false
+      }
+    ],
+    "semantic_candidates": [],
+    "singularity_codes": [],
+    "subject_universe": {
+      "edge_occurrence_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004",
+        "edge_occurrence.e0005",
+        "edge_occurrence.e0006",
+        "edge_occurrence.e0007"
+      ],
+      "face_occurrence_ids": [
+        "face_occurrence.f0001"
+      ],
+      "logical_region_ids": [
+        "logical_region.r0001"
+      ]
+    },
+    "support": [
+      {
+        "geometry_family_code": "circle",
+        "label": "support.edge.circle.invalid_imported_geometry.bucket_01",
+        "selection_code": "reason.invalid_imported_geometry",
+        "state": "InvalidImportedGeometry",
+        "subject_count": 3,
+        "subject_ids": [
+          "edge_occurrence.e0001",
+          "edge_occurrence.e0002",
+          "edge_occurrence.e0003"
+        ],
+        "subject_kind": "edge"
+      },
+      {
+        "geometry_family_code": "line",
+        "label": "support.edge.line.invalid_imported_geometry.bucket_02",
+        "selection_code": "reason.invalid_imported_geometry",
+        "state": "InvalidImportedGeometry",
+        "subject_count": 4,
+        "subject_ids": [
+          "edge_occurrence.e0004",
+          "edge_occurrence.e0005",
+          "edge_occurrence.e0006",
+          "edge_occurrence.e0007"
+        ],
+        "subject_kind": "edge"
+      },
+      {
+        "geometry_family_code": "plane",
+        "label": "support.face.plane.invalid_imported_geometry.bucket_03",
+        "selection_code": "reason.invalid_imported_geometry",
+        "state": "InvalidImportedGeometry",
+        "subject_count": 1,
+        "subject_ids": [
+          "face_occurrence.f0001"
+        ],
+        "subject_kind": "face"
+      },
+      {
+        "geometry_family_code": "plane",
+        "label": "support.logical_region.plane.invalid_imported_geometry.bucket_04",
+        "selection_code": "reason.invalid_imported_geometry",
+        "state": "InvalidImportedGeometry",
+        "subject_count": 1,
+        "subject_ids": [
+          "logical_region.r0001"
+        ],
+        "subject_kind": "logical_region"
+      }
+    ],
+    "surface_variants": [
+      {
+        "concrete_type": "Geom_Plane",
+        "condition_codes": [
+          "bounded_trim_layout"
+        ],
+        "count": 1,
+        "family_code": "plane",
+        "label": "surface.plane",
+        "trim_domain_class": "self_intersecting_or_invalid",
+        "wrapper_stack": []
+      }
+    ],
+    "topology_occurrences": {
+      "assembly_products": 0,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 7,
+      "faces": 1,
+      "instances": 0,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 14,
+      "wires": 4
+    },
+    "unique_topology": {
+      "assembly_products": 0,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 7,
+      "faces": 1,
+      "instances": 0,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 7,
+      "wires": 4
+    },
+    "validation_findings": [
+      {
+        "code": "brepcheck_selfintersectingwire",
+        "evidence": "Named diagnostic emitted by the direct OCCT inspection of the hash-bound artifact.",
+        "expectation": "named_failure",
+        "subject_kind": "model"
+      },
+      {
+        "code": "brepcheck_unorientableshape",
+        "evidence": "Named diagnostic emitted by the direct OCCT inspection of the hash-bound artifact.",
+        "expectation": "named_failure",
+        "subject_kind": "model"
+      },
+      {
+        "code": "import.unprocessed_brep_invalid",
+        "evidence": "The exact derived artifact is loaded or parsed without healing, sewing, SameParameter repair, or partial-shape acceptance.",
+        "expectation": "present",
+        "subject_kind": "model"
+      },
+      {
+        "code": "topology.valid",
+        "evidence": "Direct BRepCheck result, or absence of a BRep after the named STEP parser failure.",
+        "expectation": "absent",
+        "subject_kind": "model"
+      }
+    ]
+  },
+  "fixture_id": "corrupt.trim.self_intersecting",
+  "instances": [],
+  "observations": [
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "reason.invalid_imported_geometry"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 3 edge subjects to InvalidImportedGeometry using reason.invalid_imported_geometry.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.support.edge.circle.invalid_imported_geometry.bucket_01",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003"
+      ]
+    },
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "reason.invalid_imported_geometry"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 4 edge subjects to InvalidImportedGeometry using reason.invalid_imported_geometry.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.support.edge.line.invalid_imported_geometry.bucket_02",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "edge_occurrence.e0004",
+        "edge_occurrence.e0005",
+        "edge_occurrence.e0006",
+        "edge_occurrence.e0007"
+      ]
+    },
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "reason.invalid_imported_geometry"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 1 face subjects to InvalidImportedGeometry using reason.invalid_imported_geometry.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.support.face.plane.invalid_imported_geometry.bucket_03",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "face_occurrence.f0001"
+      ]
+    },
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "reason.invalid_imported_geometry"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 1 logical_region subjects to InvalidImportedGeometry using reason.invalid_imported_geometry.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.support.logical_region.plane.invalid_imported_geometry.bucket_04",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "logical_region.r0001"
+      ]
+    },
+    {
+      "evidence": "The four exact line and vertex replacements form a bow-tie whose non-adjacent diagonals intersect at (30,20,0) mm; BRepCheck reports SelfIntersectingWire.",
+      "expectation": "named_failure",
+      "expected_failure_code": "brepcheck_selfintersectingwire",
+      "id": "observation.pathology.exact_mutation",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "mutation.artifact_sha256",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": "8c27a53007e3c910b10816ec3470c44661317b0f7f7b753fafe6f44a3dd00d03",
+            "value_type": "text"
+          }
+        },
+        {
+          "code": "mutation.operation_count",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 11,
+            "value_type": "integer"
+          }
+        },
+        {
+          "code": "trim.self_intersection_count",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "code": "trim.self_intersection_x",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "metres",
+            "value": 0.03,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "trim.self_intersection_y",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "metres",
+            "value": 0.02,
+            "value_type": "number"
+          }
+        }
+      ],
+      "pathology_code": "corrupt.trim.self_intersecting",
+      "phase": "native",
+      "subject_ids": [
+        "face_occurrence.f0001"
+      ]
+    },
+    {
+      "child_ids": [
+        "wire.native.w1",
+        "wire.native.w2",
+        "wire.native.w3",
+        "wire.native.w4"
+      ],
+      "condition_codes": [
+        "artifact.derived_ascii_brep",
+        "corrupt.trim.self_intersecting"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.native_face",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "native",
+      "relations": [],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "face_occurrence.f0001",
+      "tolerance_metres": 1e-10,
+      "topology_kind": "face",
+      "underlying_id": "face_occurrence.f0001.partner",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "condition_codes": [
+        "corrupt.trim.self_intersecting",
+        "native_brep_unhealed"
+      ],
+      "disconnected_region_count": 0,
+      "face_id": "face_occurrence.f0001",
+      "id": "observation.trim.affected_face",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "coedge.loop.outer.c1",
+            "coedge.loop.outer.c2",
+            "coedge.loop.outer.c3",
+            "coedge.loop.outer.c4"
+          ],
+          "loop_id": "loop.outer",
+          "max_gap_metres": 0.0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "REVERSED",
+          "role": "unclassified",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 1,
+          "signed_uv_area": 0.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 60.0,
+            "u_min": 0.0,
+            "v_max": 40.0,
+            "v_min": 0.0
+          },
+          "wire_id": "wire.loop.outer"
+        }
+      ],
+      "phase": "native",
+      "trim_domain_class": "self_intersecting_or_invalid"
+    }
+  ],
+  "oracle": {
+    "independent_from_production_classifier": true,
+    "method": "analytic_derivation",
+    "references": [
+      "fixtures/baselines/face.trim.nested_holes.brep baseline b43663eca6d824e7165975f37797e0a5df6add96b7e09b74526d837ffe851ab2",
+      "fixtures/derived/corrupt.trim.self_intersecting.brep artifact 8c27a53007e3c910b10816ec3470c44661317b0f7f7b753fafe6f44a3dd00d03",
+      "fixtures/derived/inspection/corrupt.trim.self_intersecting.inspection.json inspection 6521a50d6f6a1bfc4ba3b34d5d7682ab706eb0f40cf393895dc3a4951a4228e2",
+      "fixtures/lanes/derived_artifact.py transform.declared_ascii_patch.v1",
+      "fixtures/nonprocedural-obligation-authoring-map.json selected derived assignments"
+    ],
+    "statement": "Replace the rectangular outer boundary with a source-bound bow-tie loop whose non-adjacent diagonal segments cross at (30,20,0) millimetres. The exact mutation, analytic measurements, and direct OCCT diagnostic are independently frozen."
+  },
+  "schema_version": "1.0.0",
+  "tolerances": {
+    "edges_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "faces_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "vertices_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    }
+  },
+  "units": {
+    "coordinate_space": "right_handed_si_metres_radians",
+    "scale_to_metres": 0.001,
+    "source_unit": "millimetre"
+  }
+}

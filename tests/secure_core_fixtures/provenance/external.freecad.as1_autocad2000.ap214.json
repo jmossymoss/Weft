@@ -1,0 +1,18 @@
+{
+  "acquired_on": "2026-07-14",
+  "artifact_sha256": "1bb1a0e55dc4a0169e329529eb520596690f8745077c1bdd2f9fa41fa5a2aa95",
+  "audit_statement": "The artifact is the exact data/tests/Step/as1-ac-214.stp blob e6e84080df0e518d68d983a28921e0e453a53f4d from the official FreeCAD repository at commit a8473f81e18ef69e63dec060de340f6976eeab06. The Part 21 header identifies AutoCAD STEP 2000, AutoCAD 2000, and an AUTOMOTIVE_DESIGN AP214 declaration. No exporter option record is present, and none is inferred.",
+  "canonicalization": "sorted-pretty-json-v1",
+  "export_settings": "STEPnet AS1 sample exported as STEP AP214 by AutoCAD 2000; detailed exporter options are not recorded in the file or its FreeCAD repository path.",
+  "exporter": {
+    "name": "AutoCAD STEP",
+    "version": "2000"
+  },
+  "fixture_id": "external.freecad.as1_autocad2000.ap214",
+  "licence_identifier": "LGPL-2.1-only",
+  "owner": "FreeCAD project repository; original STEPnet sample author not named",
+  "redistribution_allowed": true,
+  "schema_version": "1.0.0",
+  "source": "https://github.com/FreeCAD/FreeCAD/blob/a8473f81e18ef69e63dec060de340f6976eeab06/data/tests/Step/as1-ac-214.stp",
+  "step_schema": "AP214IS"
+}

@@ -1,0 +1,246 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "expected": {
+    "boundary_loops": [],
+    "brep_valid": false,
+    "claims": [
+      {
+        "id": "claim.rec_001.nist_import_outcome",
+        "obligation_id": "REC-001",
+        "predicate_codes": [
+          "predicate.reconnaissance.import"
+        ],
+        "statement": "The audited AP242 source transfers one root with processing disabled, then deterministically fails authoritative B-rep validation and is reported as a named import outcome.",
+        "subject_refs": [
+          {
+            "id": "observation.normalization.step_import",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.unprocessed_brep_invalid",
+            "kind": "observation"
+          }
+        ]
+      }
+    ],
+    "curve_variants": [],
+    "import_outcome": "named_failure",
+    "model_classes": [
+      "assembly",
+      "invalid_import"
+    ],
+    "orientation_states": [],
+    "periodicity": [],
+    "semantic_candidates": [],
+    "singularity_codes": [],
+    "subject_universe": {
+      "edge_occurrence_ids": [],
+      "face_occurrence_ids": [],
+      "logical_region_ids": []
+    },
+    "support": [],
+    "surface_variants": [],
+    "topology_occurrences": {
+      "assembly_products": 3,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 0,
+      "faces": 0,
+      "instances": 2,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 0,
+      "wires": 0
+    },
+    "unique_topology": {
+      "assembly_products": 3,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 0,
+      "faces": 0,
+      "instances": 2,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 0,
+      "wires": 0
+    },
+    "validation_findings": [
+      {
+        "code": "import.unprocessed_brep_invalid",
+        "evidence": "The processing-disabled transfer is deterministically invalid and therefore yields a named, fail-closed import outcome.",
+        "expectation": "present",
+        "subject_kind": "model"
+      },
+      {
+        "code": "topology.valid",
+        "evidence": "BRepCheck_Analyzer reports the transferred root invalid.",
+        "expectation": "absent",
+        "subject_kind": "model"
+      }
+    ]
+  },
+  "fixture_id": "external.nist.ctc_01.ap242_e1",
+  "instances": [
+    {
+      "component_label": "component.c0001",
+      "label": "instance.i0001",
+      "local_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "parent_label": null,
+      "target_definition": "definition.d0002",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    },
+    {
+      "component_label": "component.c0002",
+      "label": "instance.i0002",
+      "local_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "parent_label": null,
+      "target_definition": "definition.d0003",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    }
+  ],
+  "observations": [
+    {
+      "evidence": "Processing-disabled STEP transfer produced an XDE document, but the transferred authoritative B-rep fails BRepCheck_Analyzer and is rejected from the admitted geometry inventory.",
+      "expectation": "named_failure",
+      "expected_failure_code": "import.unprocessed_brep_invalid",
+      "id": "observation.pathology.unprocessed_brep_invalid",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "import.unprocessed_brep_invalid.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 1,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "import.unprocessed_brep_invalid",
+      "phase": "imported",
+      "subject_ids": [
+        "imported.authoritative_brep"
+      ]
+    },
+    {
+      "accepted_normalization_codes": [],
+      "changes": [],
+      "equivalence": "not_comparable",
+      "geometry_equivalent": false,
+      "id": "observation.normalization.step_import",
+      "imported_subject_ids": [
+        "imported.xde_document"
+      ],
+      "kind": "source_import_normalization",
+      "outcome": "rejected",
+      "source_subject_ids": [
+        "source.step_file"
+      ],
+      "topology_equivalent": false
+    }
+  ],
+  "oracle": {
+    "independent_from_production_classifier": true,
+    "method": "audited_external_observation",
+    "references": [
+      "NIST CTC-01 AP242 edition 1 source artifact",
+      "fixtures/external/inspection/nist_ctc_01_ap242_e1.summary.json",
+      "fixtures/provenance/external.nist.ctc_01.ap242_e1.json"
+    ],
+    "statement": "The oracle binds NIST provenance, the file-declared AP242 schema, the processing-disabled read policy, and the fail-closed invalid-BRep result."
+  },
+  "schema_version": "1.0.0",
+  "tolerances": {
+    "edges_metres": {
+      "maximum": null,
+      "minimum": null
+    },
+    "faces_metres": {
+      "maximum": null,
+      "minimum": null
+    },
+    "vertices_metres": {
+      "maximum": null,
+      "minimum": null
+    }
+  },
+  "units": {
+    "coordinate_space": "right_handed_si_metres_radians",
+    "scale_to_metres": 0.001,
+    "source_unit": "millimetre"
+  }
+}

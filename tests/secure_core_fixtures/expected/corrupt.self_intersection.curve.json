@@ -1,0 +1,587 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "expected": {
+    "boundary_loops": [],
+    "brep_valid": true,
+    "claims": [
+      {
+        "id": "claim.pat_017.self_intersecting_curve",
+        "obligation_id": "PAT-017",
+        "predicate_codes": [
+          "predicate.pathology.self_intersecting_curve"
+        ],
+        "statement": "The source-bound nine-field patch preserves all topology identities while making the first and third segments of the first free wire cross exactly once at parameters 4*sqrt(2) mm and image (4,4,0) mm; native BRep validity is recorded separately from the failed path-admission result.",
+        "subject_refs": [
+          {
+            "id": "observation.geometry.crossing_segment_1",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.crossing_segment_3",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.measurement.curve_self_intersection",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.normalization.source_to_curve_crossing",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.curve_native_validity",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.crossing_wire",
+            "kind": "observation"
+          }
+        ]
+      }
+    ],
+    "curve_variants": [],
+    "import_outcome": "native_only",
+    "model_classes": [
+      "derived_pathology",
+      "free_topology",
+      "meshing_admission_failure"
+    ],
+    "model_topology": {
+      "closed_shells": 0,
+      "coincident_solid_signature_pairs": 0,
+      "free_edges": 0,
+      "free_wires": 4,
+      "inner_shells": 0,
+      "isolated_vertices": 0,
+      "maximum_faces_per_edge": 0,
+      "nonmanifold_vertices": 0,
+      "open_shells": 0,
+      "outer_shells": 0,
+      "shared_faces_between_solids": 0,
+      "standalone_shells": 0
+    },
+    "orientation_states": [
+      "FORWARD",
+      "REVERSED"
+    ],
+    "periodicity": [],
+    "semantic_candidates": [],
+    "singularity_codes": [],
+    "subject_universe": {
+      "edge_occurrence_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004",
+        "edge_occurrence.e0005",
+        "edge_occurrence.e0006"
+      ],
+      "face_occurrence_ids": [],
+      "logical_region_ids": []
+    },
+    "support": [
+      {
+        "geometry_family_code": "circle",
+        "label": "support.edge.circle.invalid_imported_geometry",
+        "selection_code": "reason.invalid_imported_geometry",
+        "state": "InvalidImportedGeometry",
+        "subject_count": 2,
+        "subject_ids": [
+          "edge_occurrence.e0004",
+          "edge_occurrence.e0006"
+        ],
+        "subject_kind": "edge"
+      },
+      {
+        "geometry_family_code": "line",
+        "label": "support.edge.line.invalid_imported_geometry",
+        "selection_code": "reason.invalid_imported_geometry",
+        "state": "InvalidImportedGeometry",
+        "subject_count": 4,
+        "subject_ids": [
+          "edge_occurrence.e0001",
+          "edge_occurrence.e0002",
+          "edge_occurrence.e0003",
+          "edge_occurrence.e0005"
+        ],
+        "subject_kind": "edge"
+      }
+    ],
+    "surface_variants": [],
+    "topology_occurrences": {
+      "assembly_products": 1,
+      "compounds": 1,
+      "compsolids": 0,
+      "edges": 6,
+      "faces": 0,
+      "instances": 0,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 12,
+      "wires": 4
+    },
+    "unique_topology": {
+      "assembly_products": 1,
+      "compounds": 1,
+      "compsolids": 0,
+      "edges": 6,
+      "faces": 0,
+      "instances": 0,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 8,
+      "wires": 4
+    },
+    "validation_findings": [
+      {
+        "code": "import.unprocessed_brep_invalid",
+        "evidence": "The hash-bound native BRep is checked directly without sewing, healing, SameParameter repair, or topology replacement.",
+        "expectation": "absent",
+        "subject_kind": "model"
+      },
+      {
+        "code": "pathology.curve.self_intersection",
+        "evidence": "The exact declared ASCII replacements and independent analytic measurement retain this pathology in the native artifact.",
+        "expectation": "present",
+        "subject_kind": "wire"
+      },
+      {
+        "code": "topology.valid",
+        "evidence": "BRepCheck_Analyzer result for the deterministic native artifact.",
+        "expectation": "present",
+        "subject_kind": "model"
+      }
+    ]
+  },
+  "fixture_id": "corrupt.self_intersection.curve",
+  "instances": [],
+  "observations": [
+    {
+      "concrete_type": "Geom_Line",
+      "condition_codes": [
+        "bounded",
+        "crossing.member_1",
+        "native_exact"
+      ],
+      "exact_evaluator_kind": "occt.exact_curve",
+      "family_code": "line",
+      "id": "observation.geometry.crossing_segment_1",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "curve",
+          "closed": false,
+          "lower": 0.0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 11.313708498984761
+        }
+      ],
+      "parameters": [
+        {
+          "name": "line.direction_x",
+          "value": {
+            "unit": "unitless",
+            "value": 0.7071067811865476,
+            "value_type": "number"
+          }
+        },
+        {
+          "name": "line.direction_y",
+          "value": {
+            "unit": "unitless",
+            "value": 0.7071067811865476,
+            "value_type": "number"
+          }
+        },
+        {
+          "name": "line.origin_x",
+          "value": {
+            "unit": "millimetres",
+            "value": 0.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "name": "line.origin_y",
+          "value": {
+            "unit": "millimetres",
+            "value": 0.0,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "native",
+      "subject_id": "edge_occurrence.e0001",
+      "taxonomy": "Curve",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_Line",
+      "condition_codes": [
+        "bounded",
+        "crossing.member_3",
+        "native_exact"
+      ],
+      "exact_evaluator_kind": "occt.exact_curve",
+      "family_code": "line",
+      "id": "observation.geometry.crossing_segment_3",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "curve",
+          "closed": false,
+          "lower": 0.0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 11.313708498984761
+        }
+      ],
+      "parameters": [
+        {
+          "name": "line.direction_x",
+          "value": {
+            "unit": "unitless",
+            "value": 0.7071067811865476,
+            "value_type": "number"
+          }
+        },
+        {
+          "name": "line.direction_y",
+          "value": {
+            "unit": "unitless",
+            "value": -0.7071067811865476,
+            "value_type": "number"
+          }
+        },
+        {
+          "name": "line.origin_x",
+          "value": {
+            "unit": "millimetres",
+            "value": 0.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "name": "line.origin_y",
+          "value": {
+            "unit": "millimetres",
+            "value": 8.0,
+            "value_type": "number"
+          }
+        }
+      ],
+      "phase": "native",
+      "subject_id": "edge_occurrence.e0003",
+      "taxonomy": "Curve",
+      "wrappers": []
+    },
+    {
+      "evidence": "DRAWEXE evaluates non-adjacent edges 1 and 3 at the independently derived parameter 4*sqrt(2) mm; both images are (4,4,0) mm with a 1.7763568394002505e-15 mm numerical residual.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.measurement.curve_self_intersection",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "curve.crossing_pair_count",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "code": "curve.crossing_parameter_edge_1",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 5.656854249492381,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "curve.crossing_parameter_edge_3",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 5.656854249492381,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "curve.crossing_point_x",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 4.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "curve.crossing_point_y",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 4.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "curve.crossing_point_z",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 0.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "curve.crossing_residual",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 1.7763568394002505e-15,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "inspection.summary_sha256",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": "b6c4ef6f4f41eab7617246ad00fb64a9ac54462e7adba49e470d2cbb0e293d46",
+            "value_type": "text"
+          }
+        },
+        {
+          "code": "mutation.artifact_sha256",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": "2d8201dac15c1d7aabbfd3ef2613fbbb660bb5cf3a7b4a0a55a395f339ff714a",
+            "value_type": "text"
+          }
+        },
+        {
+          "code": "mutation.baseline_sha256",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": "b72f27f2c4839d2c2cc2458172767f847ab52dbe0ed4689353a84866a7006aea",
+            "value_type": "text"
+          }
+        },
+        {
+          "code": "mutation.operation_count",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 9,
+            "value_type": "integer"
+          }
+        },
+        {
+          "code": "mutation.runner_sha256",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": "aa7148e4771621371a44509728fac5efad7e7ebdec3a367ec1c16d58ab981630",
+            "value_type": "text"
+          }
+        }
+      ],
+      "pathology_code": "pathology.curve.self_intersection",
+      "phase": "native",
+      "subject_ids": [
+        "wire_occurrence.w0001",
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0003"
+      ]
+    },
+    {
+      "evidence": "DRAWEXE checkshape reports the free topology BRep valid; the independent non-adjacent segment test nevertheless rejects the self-crossing path at the meshing-admission boundary without healing or splitting.",
+      "expectation": "named_failure",
+      "expected_failure_code": "reason.invalid_imported_geometry",
+      "id": "observation.pathology.curve_native_validity",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "brep.valid",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": true,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "code": "meshing.subject_admitted",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        }
+      ],
+      "pathology_code": "meshing.native_validity",
+      "phase": "native",
+      "subject_ids": [
+        "wire_occurrence.w0001"
+      ]
+    },
+    {
+      "accepted_normalization_codes": [
+        "derived.ascii_brep.self_intersecting_curve_patch"
+      ],
+      "changes": [
+        {
+          "disposition": "introduced",
+          "field_path": "/derived/curve/nonadjacent_crossing_count",
+          "imported_value": {
+            "unit": "count",
+            "value": 1,
+            "value_type": "integer"
+          },
+          "normalization_code": "derived.ascii_brep.self_intersecting_curve_patch",
+          "source_value": {
+            "unit": "count",
+            "value": 0,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "equivalence": "intentionally_changed",
+      "geometry_equivalent": false,
+      "id": "observation.normalization.source_to_curve_crossing",
+      "imported_subject_ids": [
+        "wire_occurrence.w0001"
+      ],
+      "kind": "source_import_normalization",
+      "outcome": "introduced",
+      "source_subject_ids": [
+        "source.wire.composite.segment_chain"
+      ],
+      "topology_equivalent": true
+    },
+    {
+      "child_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003"
+      ],
+      "condition_codes": [
+        "identity.preserved",
+        "path.self_intersecting",
+        "wire.open"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.crossing_wire",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": "compound_occurrence.c0001",
+      "phase": "native",
+      "relations": [],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "wire_occurrence.w0001",
+      "tolerance_metres": 1e-10,
+      "topology_kind": "wire",
+      "underlying_id": "wire.partner_0001",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    }
+  ],
+  "oracle": {
+    "independent_from_production_classifier": true,
+    "method": "analytic_derivation",
+    "references": [
+      "fixtures/baselines/wire.composite.intersection_isoparametric.brep hash-bound composite-curve baseline",
+      "fixtures/derived/inspection/corrupt.self_intersection.curve.inspection.json sha256=b6c4ef6f4f41eab7617246ad00fb64a9ac54462e7adba49e470d2cbb0e293d46",
+      "fixtures/lanes/derived_artifact.py transform.declared_ascii_patch.v1",
+      "fixtures/nonprocedural-obligation-authoring-map.json PAT-017 curve route"
+    ],
+    "statement": "The source-bound nine-field patch preserves all topology identities while making the first and third segments of the first free wire cross exactly once at parameters 4*sqrt(2) mm and image (4,4,0) mm; native BRep validity is recorded separately from the failed path-admission result."
+  },
+  "schema_version": "1.0.0",
+  "tolerances": {
+    "edges_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "faces_metres": {
+      "maximum": null,
+      "minimum": null
+    },
+    "vertices_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    }
+  },
+  "units": {
+    "coordinate_space": "right_handed_si_metres_radians",
+    "scale_to_metres": 0.001,
+    "source_unit": "millimetre"
+  }
+}

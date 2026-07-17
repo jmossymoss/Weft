@@ -1,0 +1,35 @@
+{
+  "artifact_format": "occt_ascii_brep",
+  "artifact_sha256": "c400ae0bb2102165a07673bb0df8ba28a17e998c84daf1ade7b4bc95a963ba1e",
+  "brep_valid": false,
+  "canonicalization": "sorted-pretty-json-v1",
+  "diagnostic_codes": [
+    "BRepCheck_InvalidSameParameterFlag",
+    "BRepCheck_InvalidSameRangeFlag"
+  ],
+  "fixture_id": "corrupt.edge.sameparameter_samerange_false",
+  "inspection_method": "DRAWEXE direct BRepTools restore plus BRepCheck, or STEPControl parser for named failure",
+  "measurements": {
+    "mutation_operation_count": 1
+  },
+  "occt_version": "8.0.0.p1-e52c4021",
+  "processing": [
+    "no_healing",
+    "no_sameparameter_repair",
+    "no_sewing",
+    "no_partial_shape_acceptance"
+  ],
+  "schema_version": "1.0.0",
+  "unique_topology": {
+    "assembly_products": 0,
+    "compounds": 0,
+    "compsolids": 0,
+    "edges": 3,
+    "faces": 3,
+    "instances": 0,
+    "shells": 1,
+    "solids": 1,
+    "vertices": 2,
+    "wires": 3
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "448e848f7dc48d2e150e76224dbb18b8520c92d010135f84ef44102df5625c5b",
+  "finding_disposition": "Accepted source/native M1 witness with exact representation-survival or representation-loss boundaries. These claims establish fixture readiness only; no M2/M3 consumer verification is promoted.",
+  "fixture_id": "semantic.nurbs.confidence_matrix",
+  "producer_id": "producer.m1_trim_support_oracles",
+  "review_id": "review.semantic_nurbs_confidence_matrix.revision_6",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.trim_support_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "artifact.brep",
+    "artifact.step",
+    "construction.parameters",
+    "import.processing_disabled",
+    "normalization.representation_loss",
+    "oracle.independent",
+    "source.contract",
+    "source.native_contract",
+    "summary.imported"
+  ],
+  "source_binding": {
+    "artifact_sha256": "8f2a87d4ca7db39d1b49c24bad613297c8b0807eff959bd1891791386b28a7ca",
+    "construction_parameters_sha256": "6c88a389b1b33722ecd88d7a164538819c1d5e9a3a6222642ae23cf18a770511",
+    "generator_revision": 6,
+    "kind": "occt_procedural",
+    "source_contract_sha256": "719bfd7506e462dc8632eb0953b2d58ae42a7f3a50994860676d0bdb153402a9",
+    "summary_sha256": "d62c8e84c7f35f76107affbaa5fb8404345ad545ec052b9e6f98dc7333ee613b"
+  }
+}

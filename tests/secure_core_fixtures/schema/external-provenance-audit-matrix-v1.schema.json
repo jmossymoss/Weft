@@ -1,0 +1,660 @@
+{
+  "$defs": {
+    "asset": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "readiness": {
+                "properties": {
+                  "fixture_ready": { "const": true }
+                },
+                "required": ["fixture_ready"]
+              }
+            },
+            "required": ["readiness"]
+          },
+          "then": {
+            "properties": {
+              "licence": {
+                "properties": {
+                  "redistribution_permission": { "const": "allowed" }
+                }
+              },
+              "readiness": {
+                "properties": {
+                  "blocking_reasons": { "maxItems": 0 },
+                  "status": { "const": "fixture_ready" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "schema_audit": {
+                "properties": {
+                  "comparison": { "const": "mismatch" }
+                },
+                "required": ["comparison"]
+              }
+            },
+            "required": ["schema_audit"]
+          },
+          "then": {
+            "properties": {
+              "readiness": {
+                "properties": {
+                  "fixture_ready": { "const": false }
+                }
+              },
+              "schema_audit": {
+                "properties": {
+                  "declared_schema_credit_allowed": { "const": false }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "disposition": {
+                "properties": {
+                  "decision": { "const": "accepted" }
+                },
+                "required": ["decision"]
+              }
+            },
+            "required": ["disposition"]
+          },
+          "then": {
+            "properties": {
+              "disposition": {
+                "properties": {
+                  "duplicate_of": { "const": null }
+                }
+              },
+              "inspection_summary": { "$ref": "#/$defs/file_binding" },
+              "oracle_record": { "$ref": "#/$defs/file_binding" },
+              "review_record": { "$ref": "#/$defs/file_binding" }
+            },
+            "required": ["inspection_summary", "oracle_record", "review_record"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "disposition": {
+                "properties": {
+                  "decision": { "const": "rejected_duplicate" }
+                },
+                "required": ["decision"]
+              }
+            },
+            "required": ["disposition"]
+          },
+          "then": {
+            "properties": {
+              "disposition": {
+                "properties": {
+                  "duplicate_of": {
+                    "pattern": "^fixtures/external/[A-Za-z0-9._-]+\\.step$",
+                    "type": "string"
+                  }
+                }
+              },
+              "inspection_summary": { "const": null },
+              "readiness": {
+                "properties": {
+                  "blocking_reasons": { "maxItems": 0 },
+                  "fixture_ready": { "const": false },
+                  "remaining_work": { "maxItems": 0 },
+                  "status": { "const": "rejected_duplicate" }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "artifact": {
+          "additionalProperties": false,
+          "properties": {
+            "bytes": { "minimum": 1, "type": "integer" },
+            "path": {
+              "pattern": "^fixtures/external/[A-Za-z0-9._-]+\\.step$",
+              "type": "string"
+            },
+            "sha256": { "pattern": "^[0-9a-f]{64}$", "type": "string" }
+          },
+          "required": ["bytes", "path", "sha256"],
+          "type": "object"
+        },
+        "authoring_source": {
+          "additionalProperties": false,
+          "properties": {
+            "acquired_on": {
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+              "type": "string"
+            },
+            "application_claim": { "minLength": 1, "type": "string" },
+            "claim_basis": {
+              "enum": [
+                "file_header",
+                "filename_only",
+                "owner_record",
+                "written_acquisition_record"
+              ]
+            },
+            "construction_description": { "minLength": 1, "type": "string" },
+            "header_confirms_application": { "type": "boolean" },
+            "project_authorship": {
+              "additionalProperties": false,
+              "properties": {
+                "evidence": { "minLength": 1, "type": "string" },
+                "header_author": { "type": ["string", "null"] },
+                "status": {
+                  "enum": [
+                    "external_owner_verified",
+                    "header_attributed_not_verified",
+                    "unknown",
+                    "verified_project_authored"
+                  ]
+                }
+              },
+              "required": ["evidence", "header_author", "status"],
+              "type": "object"
+            },
+            "source_url": {
+              "anyOf": [
+                {
+                  "pattern": "^https?://[^\\s]+$",
+                  "type": "string"
+                },
+                { "type": "null" }
+              ]
+            },
+            "version_claim": { "minLength": 1, "type": "string" }
+          },
+          "required": [
+            "acquired_on",
+            "application_claim",
+            "claim_basis",
+            "construction_description",
+            "header_confirms_application",
+            "project_authorship",
+            "source_url",
+            "version_claim"
+          ],
+          "type": "object"
+        },
+        "disposition": {
+          "additionalProperties": false,
+          "properties": {
+            "decision": { "enum": ["accepted", "rejected_duplicate"] },
+            "duplicate_of": {
+              "type": ["string", "null"]
+            },
+            "reason": { "minLength": 1, "type": "string" }
+          },
+          "required": ["decision", "duplicate_of", "reason"],
+          "type": "object"
+        },
+        "export_settings": {
+          "additionalProperties": false,
+          "properties": {
+            "declared": {
+              "items": { "minLength": 1, "type": "string" },
+              "type": "array",
+              "uniqueItems": true
+            },
+            "detected_from_payload": {
+              "items": { "minLength": 1, "type": "string" },
+              "minItems": 1,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "missing": {
+              "items": { "minLength": 1, "type": "string" },
+              "type": "array",
+              "uniqueItems": true
+            }
+          },
+          "required": ["declared", "detected_from_payload", "missing"],
+          "type": "object"
+        },
+        "exporter": {
+          "additionalProperties": false,
+          "properties": {
+            "independent_of_other_assets": { "type": "boolean" },
+            "name": { "minLength": 1, "type": "string" },
+            "version_claims": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "source": {
+                    "enum": [
+                      "file_name_originating_system",
+                      "file_name_preprocessor_version",
+                      "header_comment",
+                      "provenance_record"
+                    ]
+                  },
+                  "value": { "minLength": 1, "type": "string" }
+                },
+                "required": ["source", "value"],
+                "type": "object"
+              },
+              "minItems": 1,
+              "type": "array",
+              "uniqueItems": true
+            }
+          },
+          "required": ["independent_of_other_assets", "name", "version_claims"],
+          "type": "object"
+        },
+        "geometry_audit": {
+          "additionalProperties": false,
+          "properties": {
+            "analytic_families": {
+              "items": { "enum": ["circle", "cone", "cylinder", "line", "plane", "sphere", "torus"] },
+              "type": "array",
+              "uniqueItems": true
+            },
+            "b_spline_or_nurbs_present": { "type": "boolean" },
+            "data_section_bytes": { "minimum": 1, "type": "integer" },
+            "data_section_equivalence_group": {
+              "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*$",
+              "type": "string"
+            },
+            "data_section_sha256": { "pattern": "^[0-9a-f]{64}$", "type": "string" },
+            "entity_counts": {
+              "additionalProperties": false,
+              "properties": {
+                "advanced_face": { "minimum": 0, "type": "integer" },
+                "b_spline_curve_with_knots": { "minimum": 0, "type": "integer" },
+                "b_spline_surface_with_knots": { "minimum": 0, "type": "integer" },
+                "b_spline_tokens": { "minimum": 0, "type": "integer" },
+                "bezier_curve": { "minimum": 0, "type": "integer" },
+                "bezier_surface": { "minimum": 0, "type": "integer" },
+                "bezier_tokens": { "minimum": 0, "type": "integer" },
+                "circle": { "minimum": 0, "type": "integer" },
+                "closed_shell": { "minimum": 0, "type": "integer" },
+                "conical_surface": { "minimum": 0, "type": "integer" },
+                "cylindrical_surface": { "minimum": 0, "type": "integer" },
+                "edge_curve": { "minimum": 0, "type": "integer" },
+                "edge_loop": { "minimum": 0, "type": "integer" },
+                "ellipse": { "minimum": 0, "type": "integer" },
+                "hyperbola": { "minimum": 0, "type": "integer" },
+                "line": { "minimum": 0, "type": "integer" },
+                "manifold_solid_brep": { "minimum": 0, "type": "integer" },
+                "offset_curve": { "minimum": 0, "type": "integer" },
+                "offset_surface": { "minimum": 0, "type": "integer" },
+                "parabola": { "minimum": 0, "type": "integer" },
+                "plane": { "minimum": 0, "type": "integer" },
+                "rational_b_spline_curve": { "minimum": 0, "type": "integer" },
+                "rational_b_spline_surface": { "minimum": 0, "type": "integer" },
+                "rational_tokens": { "minimum": 0, "type": "integer" },
+                "spherical_surface": { "minimum": 0, "type": "integer" },
+                "surface_of_linear_extrusion": { "minimum": 0, "type": "integer" },
+                "surface_of_revolution": { "minimum": 0, "type": "integer" },
+                "toroidal_surface": { "minimum": 0, "type": "integer" },
+                "vertex_point": { "minimum": 0, "type": "integer" }
+              },
+              "required": [
+                "advanced_face",
+                "b_spline_curve_with_knots",
+                "b_spline_surface_with_knots",
+                "b_spline_tokens",
+                "bezier_curve",
+                "bezier_surface",
+                "bezier_tokens",
+                "circle",
+                "closed_shell",
+                "conical_surface",
+                "cylindrical_surface",
+                "edge_curve",
+                "edge_loop",
+                "ellipse",
+                "hyperbola",
+                "line",
+                "manifold_solid_brep",
+                "offset_curve",
+                "offset_surface",
+                "parabola",
+                "plane",
+                "rational_b_spline_curve",
+                "rational_b_spline_surface",
+                "rational_tokens",
+                "spherical_surface",
+                "surface_of_linear_extrusion",
+                "surface_of_revolution",
+                "toroidal_surface",
+                "vertex_point"
+              ],
+              "type": "object"
+            },
+            "method": { "const": "read-only STEP token and entity audit" },
+            "rational_nurbs_present": { "type": "boolean" },
+            "summary": { "minLength": 1, "type": "string" }
+          },
+          "required": [
+            "analytic_families",
+            "b_spline_or_nurbs_present",
+            "data_section_bytes",
+            "data_section_equivalence_group",
+            "data_section_sha256",
+            "entity_counts",
+            "method",
+            "rational_nurbs_present",
+            "summary"
+          ],
+          "type": "object"
+        },
+        "inspection_summary": {
+          "anyOf": [
+            { "$ref": "#/$defs/file_binding" },
+            { "type": "null" }
+          ]
+        },
+        "licence": {
+          "additionalProperties": false,
+          "properties": {
+            "evidence": { "minLength": 1, "type": "string" },
+            "evidence_record": { "$ref": "#/$defs/file_binding" },
+            "identifier": { "minLength": 1, "type": "string" },
+            "redistribution_permission": {
+              "enum": ["allowed", "forbidden", "unverified"]
+            }
+          },
+          "required": [
+            "evidence",
+            "evidence_record",
+            "identifier",
+            "redistribution_permission"
+          ],
+          "type": "object"
+        },
+        "oracle_record": {
+          "anyOf": [
+            { "$ref": "#/$defs/file_binding" },
+            { "type": "null" }
+          ]
+        },
+        "presentation_audit": {
+          "additionalProperties": false,
+          "properties": {
+            "colour_rgb": { "minimum": 0, "type": "integer" },
+            "material_tokens": { "minimum": 0, "type": "integer" },
+            "presentation_style_assignment": { "minimum": 0, "type": "integer" },
+            "styled_item": { "minimum": 0, "type": "integer" },
+            "summary": { "minLength": 1, "type": "string" },
+            "surface_style_tokens": { "minimum": 0, "type": "integer" }
+          },
+          "required": [
+            "colour_rgb",
+            "material_tokens",
+            "presentation_style_assignment",
+            "styled_item",
+            "summary",
+            "surface_style_tokens"
+          ],
+          "type": "object"
+        },
+        "provenance_record": { "$ref": "#/$defs/file_binding" },
+        "readiness": {
+          "additionalProperties": false,
+          "properties": {
+            "blocking_reasons": {
+              "items": { "minLength": 1, "type": "string" },
+              "type": "array",
+              "uniqueItems": true
+            },
+            "fixture_ready": { "type": "boolean" },
+            "remaining_work": {
+              "items": { "minLength": 1, "type": "string" },
+              "type": "array",
+              "uniqueItems": true
+            },
+            "status": {
+              "enum": [
+                "blocked",
+                "candidate",
+                "feasible",
+                "fixture_ready",
+                "partial",
+                "rejected_duplicate"
+              ]
+            }
+          },
+          "required": [
+            "blocking_reasons",
+            "fixture_ready",
+            "remaining_work",
+            "status"
+          ],
+          "type": "object"
+        },
+        "review_record": {
+          "anyOf": [
+            { "$ref": "#/$defs/file_binding" },
+            { "type": "null" }
+          ]
+        },
+        "schema_audit": {
+          "additionalProperties": false,
+          "properties": {
+            "comparison": { "enum": ["match", "mismatch", "not_declared"] },
+            "declared_schema_credit_allowed": { "type": "boolean" },
+            "detected_declaration": { "minLength": 1, "type": "string" },
+            "detected_family": { "enum": ["AP203", "AP214", "AP242", "other"] },
+            "filename_intent": { "minLength": 1, "type": "string" },
+            "requested_family": {
+              "enum": ["AP203", "AP214", "AP242", null]
+            }
+          },
+          "required": [
+            "comparison",
+            "declared_schema_credit_allowed",
+            "detected_declaration",
+            "detected_family",
+            "filename_intent",
+            "requested_family"
+          ],
+          "type": "object"
+        },
+        "step_header": {
+          "additionalProperties": false,
+          "properties": {
+            "authorisation": { "type": "string" },
+            "authors": {
+              "items": { "type": "string" },
+              "minItems": 1,
+              "type": "array"
+            },
+            "file_description": {
+              "items": { "type": "string" },
+              "minItems": 1,
+              "type": "array"
+            },
+            "file_name_field": { "minLength": 1, "type": "string" },
+            "organizations": {
+              "items": { "type": "string" },
+              "minItems": 1,
+              "type": "array"
+            },
+            "originating_system": { "type": "string" },
+            "preprocessor_version": { "type": "string" },
+            "timestamp": {
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:Z|[+-][0-9]{2}:[0-9]{2})?$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "authorisation",
+            "authors",
+            "file_description",
+            "file_name_field",
+            "organizations",
+            "originating_system",
+            "preprocessor_version",
+            "timestamp"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "artifact",
+        "authoring_source",
+        "disposition",
+        "export_settings",
+        "exporter",
+        "geometry_audit",
+        "inspection_summary",
+        "licence",
+        "oracle_record",
+        "presentation_audit",
+        "provenance_record",
+        "readiness",
+        "review_record",
+        "schema_audit",
+        "step_header"
+      ],
+      "type": "object"
+    },
+    "file_binding": {
+      "additionalProperties": false,
+      "properties": {
+        "bytes": { "minimum": 1, "type": "integer" },
+        "path": {
+          "pattern": "^fixtures/(?:external/inspection|expected|licences|provenance|reviews)/[A-Za-z0-9._-]+(?:\\.summary\\.json|\\.json|\\.md|\\.txt)$",
+          "type": "string"
+        },
+        "sha256": { "pattern": "^[0-9a-f]{64}$", "type": "string" }
+      },
+      "required": ["bytes", "path", "sha256"],
+      "type": "object"
+    },
+    "obligation_status": {
+      "additionalProperties": false,
+      "properties": {
+        "id": { "enum": ["REC-010", "SRC-001", "SRC-002", "SRC-003"] },
+        "reason": { "minLength": 1, "type": "string" },
+        "status": { "enum": ["BLOCKED", "COMPLETE", "FEASIBLE", "PARTIAL"] }
+      },
+      "required": ["id", "reason", "status"],
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.weftocct.example/v1/external-provenance-audit-matrix-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "assets": {
+      "items": { "$ref": "#/$defs/asset" },
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "audit_date": {
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "type": "string"
+    },
+    "audit_method": {
+      "items": { "minLength": 1, "type": "string" },
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "canonicalization": { "const": "sorted-pretty-json-v1" },
+    "corpus_assessment": {
+      "additionalProperties": false,
+      "properties": {
+        "accepted_asset_count": { "minimum": 1, "type": "integer" },
+        "analytic_families_evidenced": {
+          "items": { "enum": ["circle", "cone", "cylinder", "line", "plane", "sphere", "torus"] },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "asset_count": { "minimum": 1, "type": "integer" },
+        "b_spline_or_nurbs_evidenced": { "type": "boolean" },
+        "blocking_reasons": {
+          "items": { "minLength": 1, "type": "string" },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "detected_schema_families": {
+          "items": { "enum": ["AP203", "AP214", "AP242", "other"] },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "fixture_ready_schema_families": {
+          "items": { "enum": ["AP203", "AP214", "AP242", "other"] },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "obligations": {
+          "items": { "$ref": "#/$defs/obligation_status" },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "rational_nurbs_evidenced": { "type": "boolean" },
+        "readiness": {
+          "enum": ["blocked", "feasible", "fixture_ready", "partial"]
+        },
+        "rejected_duplicate_count": { "minimum": 0, "type": "integer" },
+        "remaining_work": {
+          "items": { "minLength": 1, "type": "string" },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "schema_mismatch_assets": {
+          "items": { "pattern": "^fixtures/external/.+\\.step$", "type": "string" },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "unique_data_section_count": { "minimum": 1, "type": "integer" },
+        "unique_exporter_count": { "minimum": 1, "type": "integer" }
+      },
+      "required": [
+        "accepted_asset_count",
+        "analytic_families_evidenced",
+        "asset_count",
+        "b_spline_or_nurbs_evidenced",
+        "blocking_reasons",
+        "detected_schema_families",
+        "fixture_ready_schema_families",
+        "obligations",
+        "rational_nurbs_evidenced",
+        "readiness",
+        "rejected_duplicate_count",
+        "remaining_work",
+        "schema_mismatch_assets",
+        "unique_data_section_count",
+        "unique_exporter_count"
+      ],
+      "type": "object"
+    },
+    "schema": {
+      "const": "fixtures/schema/external-provenance-audit-matrix-v1.schema.json"
+    },
+    "schema_version": { "const": "1.0.0" }
+  },
+  "required": [
+    "assets",
+    "audit_date",
+    "audit_method",
+    "canonicalization",
+    "corpus_assessment",
+    "schema",
+    "schema_version"
+  ],
+  "title": "CAD mesher external STEP provenance audit matrix v1",
+  "type": "object"
+}

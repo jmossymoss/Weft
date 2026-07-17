@@ -1,0 +1,33 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "b3cf8311732b7ce77b7737b8f250ddf40dc56ff664810de0b65b4c7095cbf339",
+  "finding_disposition": "Independent construction, topology-incidence, instance-placement, support-state, and provenance review found no unresolved P0 or P1 findings for corpus revision 5.",
+  "fixture_id": "compound.box_pair.coincident",
+  "producer_id": "producer.m1_topology_model_tranche",
+  "review_id": "review.compound_box_pair_coincident.revision_1",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.m1_topology_model_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "claims.typed_binding",
+    "construction.parameters",
+    "geometry.conditions",
+    "geometry.taxonomy",
+    "model.topology",
+    "pathology.coincident_signatures",
+    "provenance.xde_readback",
+    "support.occurrence_identity",
+    "topology.boundary_loops",
+    "topology.counts",
+    "units.tolerances"
+  ],
+  "source_binding": {
+    "artifact_sha256": "282ef047afe68609a7cfbb5a318b2546e967098e4fe1767863e81cd6808ff1b9",
+    "construction_parameters_sha256": "a76510fb130ac6f4cf672c5977bc611c6c8a6eec1ff399f5bb37f908777532f7",
+    "generator_revision": 3,
+    "kind": "occt_procedural",
+    "source_contract_sha256": "7203c04c53ed31ce9eeb31d6a68b718f81bc9a14927d592e12748489ed2c12e3",
+    "summary_sha256": "cf46a4892ad5fc9f71c12c994a750659555415b66c6f1e6e51f90387cef26973"
+  }
+}

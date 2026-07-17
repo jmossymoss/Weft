@@ -1,0 +1,296 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.weftocct.example/v1/procedural-recipe-authoring-map-v1.schema.json",
+  "title": "CAD mesher procedural recipe authoring map v1",
+  "description": "Strict authoring-intent map for the modular OCCT procedural recipes. Mappings identify independent-oracle targets and intended support decisions; they are not fixture-readiness or coverage claims.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "authoritative_ledger",
+    "authoritative_obligation_registry",
+    "canonicalization",
+    "coverage_semantics",
+    "excluded_legacy_recipe_ids",
+    "recipe_count",
+    "recipe_modules",
+    "recipes",
+    "schema_version"
+  ],
+  "properties": {
+    "authoritative_ledger": {
+      "const": "docs/governance/fixture-coverage.md"
+    },
+    "authoritative_obligation_registry": {
+      "const": "fixtures/obligation-profiles.json"
+    },
+    "canonicalization": {
+      "const": "sorted-pretty-json-v1"
+    },
+    "coverage_semantics": {
+      "const": "authoring-intent-only-not-coverage-evidence"
+    },
+    "excluded_legacy_recipe_ids": {
+      "type": "array",
+      "prefixItems": [
+        { "const": "assembly.box.nested_repeated_instances" },
+        { "const": "compound.box_pair.coincident" },
+        { "const": "compound.box_pair.shared_face_nonmanifold" },
+        { "const": "compound.free_edge_isolated_vertex" },
+        { "const": "shell.box.open" },
+        { "const": "solid.box" },
+        { "const": "solid.box.inner_void" },
+        { "const": "solid.cone.frustum" },
+        { "const": "solid.cylinder.full" },
+        { "const": "solid.cylinder.partial" },
+        { "const": "solid.plate.circular_through_hole" },
+        { "const": "solid.plate.two_circular_through_holes" },
+        { "const": "solid.prism.concave" },
+        { "const": "solid.prism.ellipse.full" },
+        { "const": "solid.prism.ellipse.partial_cap" },
+        { "const": "solid.sphere.segment" },
+        { "const": "solid.torus.segment" }
+      ],
+      "items": false,
+      "minItems": 17,
+      "maxItems": 17
+    },
+    "recipe_count": {
+      "const": 60
+    },
+    "recipe_modules": {
+      "type": "array",
+      "prefixItems": [
+        { "const": "fixtures/generator/fixture_curve_recipes.cpp" },
+        { "const": "fixtures/generator/fixture_feature_recipes.cpp" },
+        { "const": "fixtures/generator/fixture_pathology_recipes.cpp" },
+        { "const": "fixtures/generator/fixture_surface_recipes.cpp" },
+        { "const": "fixtures/generator/fixture_topology_recipes.cpp" },
+        { "const": "fixtures/generator/fixture_trim_support_recipes.cpp" }
+      ],
+      "items": false,
+      "minItems": 6,
+      "maxItems": 6
+    },
+    "recipes": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 60,
+      "maxProperties": 60,
+      "required": [
+        "baseline.pathology.box",
+        "baseline.pathology.planar_face",
+        "baseline.pathology.wire_gap_thresholds",
+        "component.mixed.supported_unsupported",
+        "compound.face.coincident_overlap",
+        "compound.free_wire_edge_vertex",
+        "compound.mixed.disconnected_face_wire",
+        "compound.orientation.internal_external",
+        "compsolid.box_pair.shared_interface",
+        "face.bezier.matrix",
+        "face.bspline_nurbs.matrix",
+        "face.cylinder.seam_dual_pcurve",
+        "face.offset.nested_regular_singular",
+        "face.periodic.band_seam_crossing",
+        "face.planar.perforated_cut_graph",
+        "face.rectangular_trimmed.wrapper",
+        "face.ruled_swept_lofted_plate",
+        "face.single_support.multidomain",
+        "face.sliver_needle_microedge",
+        "face.sphere.pole_degenerate_edge",
+        "face.surface.reversed_orientation",
+        "face.trim.nested_holes",
+        "face.trim.periodic_band",
+        "face.trim.singular_one_pole",
+        "face.trim.singular_two_poles",
+        "face.uv.anisotropic_folded",
+        "face.uv.extreme_metric",
+        "patch.bspline.four_sided_structured",
+        "patch.continuity.c0_c1_c2_cn_g0_g1_g2",
+        "semantic.nurbs.confidence_matrix",
+        "solid.blend.face_face_face_edge_corner",
+        "solid.blend.setback_multiway",
+        "solid.chamfer.constant_variable",
+        "solid.cone.apex_full_partial",
+        "solid.draft_shell_offset",
+        "solid.features.counterbore_countersink_boss",
+        "solid.features.slot_pocket_rib",
+        "solid.fillet.chain_split_mismatch",
+        "solid.fillet.constant_variable",
+        "solid.fillet.junction_t_y_x",
+        "solid.fillet.rolling_ball_channel",
+        "solid.fillet.termination_matrix",
+        "solid.nurbs.recovered_analytic",
+        "solid.orientation.inverted_shell_face",
+        "solid.planar.coplanar_split",
+        "solid.revolution.full_partial_pole",
+        "solid.revolution.profiled",
+        "solid.scale.unit_matrix",
+        "solid.sphere.full_hemisphere_band_shifted_seam",
+        "solid.stepped_coaxial.cylinder_cone",
+        "solid.tolerance.extremes",
+        "solid.torus.ring_horn_spindle_full_partial",
+        "wire.bezier.rationality_degree_matrix",
+        "wire.bspline.rationality_knot_matrix",
+        "wire.composite.intersection_isoparametric",
+        "wire.conic.hyperbola_parabola",
+        "wire.continuity.c0_c1_c2_cn",
+        "wire.edge.near_zero",
+        "wire.ellipse.full_partial",
+        "wire.offset.nested_singular"
+      ],
+      "properties": {
+        "baseline.pathology.box": { "$ref": "#/$defs/recipe" },
+        "baseline.pathology.planar_face": { "$ref": "#/$defs/recipe" },
+        "baseline.pathology.wire_gap_thresholds": { "$ref": "#/$defs/recipe" },
+        "component.mixed.supported_unsupported": { "$ref": "#/$defs/recipe" },
+        "compound.face.coincident_overlap": { "$ref": "#/$defs/recipe" },
+        "compound.free_wire_edge_vertex": { "$ref": "#/$defs/recipe" },
+        "compound.mixed.disconnected_face_wire": { "$ref": "#/$defs/recipe" },
+        "compound.orientation.internal_external": { "$ref": "#/$defs/recipe" },
+        "compsolid.box_pair.shared_interface": { "$ref": "#/$defs/recipe" },
+        "face.bezier.matrix": { "$ref": "#/$defs/recipe" },
+        "face.bspline_nurbs.matrix": { "$ref": "#/$defs/recipe" },
+        "face.cylinder.seam_dual_pcurve": { "$ref": "#/$defs/recipe" },
+        "face.offset.nested_regular_singular": { "$ref": "#/$defs/recipe" },
+        "face.periodic.band_seam_crossing": { "$ref": "#/$defs/recipe" },
+        "face.planar.perforated_cut_graph": { "$ref": "#/$defs/recipe" },
+        "face.rectangular_trimmed.wrapper": { "$ref": "#/$defs/recipe" },
+        "face.ruled_swept_lofted_plate": { "$ref": "#/$defs/recipe" },
+        "face.single_support.multidomain": { "$ref": "#/$defs/recipe" },
+        "face.sliver_needle_microedge": { "$ref": "#/$defs/recipe" },
+        "face.sphere.pole_degenerate_edge": { "$ref": "#/$defs/recipe" },
+        "face.surface.reversed_orientation": { "$ref": "#/$defs/recipe" },
+        "face.trim.nested_holes": { "$ref": "#/$defs/recipe" },
+        "face.trim.periodic_band": { "$ref": "#/$defs/recipe" },
+        "face.trim.singular_one_pole": { "$ref": "#/$defs/recipe" },
+        "face.trim.singular_two_poles": { "$ref": "#/$defs/recipe" },
+        "face.uv.anisotropic_folded": { "$ref": "#/$defs/recipe" },
+        "face.uv.extreme_metric": { "$ref": "#/$defs/recipe" },
+        "patch.bspline.four_sided_structured": { "$ref": "#/$defs/recipe" },
+        "patch.continuity.c0_c1_c2_cn_g0_g1_g2": { "$ref": "#/$defs/recipe" },
+        "semantic.nurbs.confidence_matrix": { "$ref": "#/$defs/recipe" },
+        "solid.blend.face_face_face_edge_corner": { "$ref": "#/$defs/recipe" },
+        "solid.blend.setback_multiway": { "$ref": "#/$defs/recipe" },
+        "solid.chamfer.constant_variable": { "$ref": "#/$defs/recipe" },
+        "solid.cone.apex_full_partial": { "$ref": "#/$defs/recipe" },
+        "solid.draft_shell_offset": { "$ref": "#/$defs/recipe" },
+        "solid.features.counterbore_countersink_boss": { "$ref": "#/$defs/recipe" },
+        "solid.features.slot_pocket_rib": { "$ref": "#/$defs/recipe" },
+        "solid.fillet.chain_split_mismatch": { "$ref": "#/$defs/recipe" },
+        "solid.fillet.constant_variable": { "$ref": "#/$defs/recipe" },
+        "solid.fillet.junction_t_y_x": { "$ref": "#/$defs/recipe" },
+        "solid.fillet.rolling_ball_channel": { "$ref": "#/$defs/recipe" },
+        "solid.fillet.termination_matrix": { "$ref": "#/$defs/recipe" },
+        "solid.nurbs.recovered_analytic": { "$ref": "#/$defs/recipe" },
+        "solid.orientation.inverted_shell_face": { "$ref": "#/$defs/recipe" },
+        "solid.planar.coplanar_split": { "$ref": "#/$defs/recipe" },
+        "solid.revolution.full_partial_pole": { "$ref": "#/$defs/recipe" },
+        "solid.revolution.profiled": { "$ref": "#/$defs/recipe" },
+        "solid.scale.unit_matrix": { "$ref": "#/$defs/recipe" },
+        "solid.sphere.full_hemisphere_band_shifted_seam": { "$ref": "#/$defs/recipe" },
+        "solid.stepped_coaxial.cylinder_cone": { "$ref": "#/$defs/recipe" },
+        "solid.tolerance.extremes": { "$ref": "#/$defs/recipe" },
+        "solid.torus.ring_horn_spindle_full_partial": { "$ref": "#/$defs/recipe" },
+        "wire.bezier.rationality_degree_matrix": { "$ref": "#/$defs/recipe" },
+        "wire.bspline.rationality_knot_matrix": { "$ref": "#/$defs/recipe" },
+        "wire.composite.intersection_isoparametric": { "$ref": "#/$defs/recipe" },
+        "wire.conic.hyperbola_parabola": { "$ref": "#/$defs/recipe" },
+        "wire.continuity.c0_c1_c2_cn": { "$ref": "#/$defs/recipe" },
+        "wire.edge.near_zero": { "$ref": "#/$defs/recipe" },
+        "wire.ellipse.full_partial": { "$ref": "#/$defs/recipe" },
+        "wire.offset.nested_singular": { "$ref": "#/$defs/recipe" }
+      }
+    },
+    "schema_version": {
+      "const": "1.0.0"
+    }
+  },
+  "$defs": {
+    "module": {
+      "enum": [
+        "fixtures/generator/fixture_curve_recipes.cpp",
+        "fixtures/generator/fixture_feature_recipes.cpp",
+        "fixtures/generator/fixture_pathology_recipes.cpp",
+        "fixtures/generator/fixture_surface_recipes.cpp",
+        "fixtures/generator/fixture_topology_recipes.cpp",
+        "fixtures/generator/fixture_trim_support_recipes.cpp"
+      ]
+    },
+    "obligation_id": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}-[0-9]{3}$",
+      "x-authoritative-registry": "fixtures/obligation-profiles.json#/obligation_profiles"
+    },
+    "recipe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "independent_oracle_intent",
+        "intended_obligation_ids",
+        "intended_support_assignments",
+        "module",
+        "title"
+      ],
+      "properties": {
+        "independent_oracle_intent": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 1200
+        },
+        "intended_obligation_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/obligation_id" },
+          "uniqueItems": true,
+          "maxItems": 16,
+          "x-canonical-order": "ascending obligation id"
+        },
+        "intended_support_assignments": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/support_assignment" },
+          "uniqueItems": true,
+          "maxItems": 12,
+          "x-canonical-order": "ascending selection_code then subject_scope"
+        },
+        "module": { "$ref": "#/$defs/module" },
+        "title": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 160
+        }
+      }
+    },
+    "selection_code": {
+      "type": "string",
+      "pattern": "^(reason|strategy)(?:\\.[a-z][a-z0-9_]*)+$"
+    },
+    "support_assignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "selection_code",
+        "state",
+        "subject_scope"
+      ],
+      "properties": {
+        "selection_code": { "$ref": "#/$defs/selection_code" },
+        "state": {
+          "enum": [
+            "SupportedAnalyticTemplate",
+            "SupportedStructuredPatch",
+            "SupportedPlanarCutGraph",
+            "DeferredResidualSurface",
+            "UnsupportedTopology",
+            "InvalidImportedGeometry",
+            "AmbiguousRecognition",
+            "UnrecognisedExactGeometry"
+          ]
+        },
+        "subject_scope": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 500
+        }
+      }
+    }
+  }
+}

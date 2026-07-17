@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.weftocct.example/v1/external-import-summary-v1.schema.json",
+  "title": "CAD mesher read-only external STEP import summary v1",
+  "description": "Strict generator evidence emitted by the read-only external STEP inspection mode after an unprocessed STEPCAFControl_Reader/XDE transfer. This summary is not an independent oracle.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evidence",
+    "input",
+    "generator",
+    "reader",
+    "xde",
+    "observations",
+    "shape"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "evidence": { "$ref": "#/$defs/evidence" },
+    "input": { "$ref": "#/$defs/input" },
+    "generator": { "$ref": "#/$defs/generator" },
+    "reader": { "$ref": "#/$defs/reader" },
+    "xde": { "$ref": "procedural-summary-v1.schema.json#/$defs/xde_summary" },
+    "observations": {
+      "$ref": "procedural-summary-v1.schema.json#/$defs/generated_fixture_evidence"
+    },
+    "shape": { "$ref": "procedural-summary-v1.schema.json#/$defs/shape_summary" }
+  },
+  "$defs": {
+    "positive_number": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_role",
+        "evidence_class",
+        "independent_oracle",
+        "description"
+      ],
+      "properties": {
+        "artifact_role": { "const": "external_or_derived_step_input" },
+        "evidence_class": { "const": "generator_observation" },
+        "independent_oracle": { "const": false },
+        "description": {
+          "const": "Read-only generator evidence; not an independent oracle."
+        }
+      }
+    },
+    "step_declaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entity", "schema_identifiers"],
+      "properties": {
+        "entity": { "const": "FILE_SCHEMA" },
+        "schema_identifiers": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "x-canonical-order": "source FILE_SCHEMA declaration order"
+        }
+      }
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file_name", "step_declaration"],
+      "properties": {
+        "file_name": {
+          "type": "string",
+          "pattern": "^.+\\.[Ss][Tt][Ee]?[Pp]$"
+        },
+        "step_declaration": { "$ref": "#/$defs/step_declaration" }
+      },
+      "description": "The source basename and parsed STEP declaration. No input digest is computed by this executable."
+    },
+    "generator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "occt_version",
+        "boundary_loop_uv_quantum",
+        "tolerance_quantum_mm",
+        "location_quantum",
+        "coincidence_quantum_mm"
+      ],
+      "properties": {
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "occt_version": { "type": "string", "minLength": 1 },
+        "boundary_loop_uv_quantum": { "$ref": "#/$defs/positive_number" },
+        "tolerance_quantum_mm": { "$ref": "#/$defs/positive_number" },
+        "location_quantum": { "$ref": "#/$defs/positive_number" },
+        "coincidence_quantum_mm": { "$ref": "#/$defs/positive_number" }
+      }
+    },
+    "reader_modes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["color", "layer", "properties", "name"],
+      "properties": {
+        "color": { "const": false },
+        "layer": { "const": false },
+        "properties": { "const": false },
+        "name": { "const": true }
+      }
+    },
+    "read_parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "same_parameter_repair",
+        "tessellated",
+        "surface_curve_mode",
+        "nonmanifold"
+      ],
+      "properties": {
+        "same_parameter_repair": { "const": false },
+        "tessellated": { "const": false },
+        "surface_curve_mode": { "const": "default" },
+        "nonmanifold": { "const": false }
+      }
+    },
+    "shape_processing_flags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["xde_reader", "base_reader"],
+      "properties": {
+        "xde_reader": { "const": [] },
+        "base_reader": { "const": [] }
+      }
+    },
+    "reader": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "implementation",
+        "input_access",
+        "transfer_boundary",
+        "transfer_root_count",
+        "modes",
+        "read_parameters",
+        "shape_processing_flags"
+      ],
+      "properties": {
+        "implementation": { "const": "STEPCAFControl_Reader" },
+        "input_access": { "const": "read_only" },
+        "transfer_boundary": { "const": "TDocStd_Document/XCAFDoc_ShapeTool" },
+        "transfer_root_count": { "type": "integer", "minimum": 1 },
+        "modes": { "$ref": "#/$defs/reader_modes" },
+        "read_parameters": { "$ref": "#/$defs/read_parameters" },
+        "shape_processing_flags": { "$ref": "#/$defs/shape_processing_flags" }
+      }
+    }
+  }
+}

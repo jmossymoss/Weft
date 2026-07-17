@@ -1,0 +1,29 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "f05d6eb33e807cfba0650715fb690e923ea54ae8afb5ec2fe56dca7da9e82de2",
+  "finding_disposition": "Accepted source/native M1 witness with exact representation-survival or representation-loss boundaries. These claims establish fixture readiness only; no M2/M3 consumer verification is promoted.",
+  "fixture_id": "fault.geometry.unknown_dynamic_type",
+  "producer_id": "producer.m1_native_fault_foundation",
+  "review_id": "review.fault_geometry_unknown_dynamic_type.revision_1",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.m1_native_fault_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "claims.typed_binding",
+    "fault.contract",
+    "native.runner_binding",
+    "normalization.representation_loss",
+    "observations.exact_values",
+    "reconnaissance.consumer_oracle",
+    "reconnaissance.partial_readiness",
+    "source.native_contract"
+  ],
+  "source_binding": {
+    "fault_code": "fault.geometry.unknown_dynamic_type",
+    "harness_source_sha256": "a95831c06005760170cb95034ba6500190f9218a681f0e88edde66a93ec60d2e",
+    "kind": "native_fault_injection",
+    "source_contract_sha256": "e7180999028e67e7eb3d63bd80885e3f4d8855adf0fc161ee6300ea8d6af8bc4",
+    "test_id": "test.native_fault.geometry.unknown_dynamic_type"
+  }
+}

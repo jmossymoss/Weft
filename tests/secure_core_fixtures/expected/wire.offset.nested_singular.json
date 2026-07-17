@@ -1,0 +1,993 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "expected": {
+    "boundary_loops": [],
+    "brep_valid": true,
+    "claims": [
+      {
+        "id": "claim.crv_008.offset_nested_singular",
+        "obligation_id": "CRV-008",
+        "predicate_codes": [
+          "predicate.curve.offset_wrapper"
+        ],
+        "statement": "The first source curve offsets a trimmed 10 by 6 millimetre ellipse by 1.75 millimetres; the nested offset totals 2.9 millimetres. A parabola of focal length 3 millimetres offset by 6 millimetres reaches its vertex curvature singularity. STEP drops all three offset edge entities, which is recorded as representation loss and leaves no imported support subjects.",
+        "subject_refs": [
+          {
+            "id": "observation.source_geometry.offset.curvature_singular",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.source_geometry.offset.nested",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.source_geometry.offset.regular",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.source_periodicity.offset.curvature_singular",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.crv_010.native_trimmed_wrapper",
+        "obligation_id": "CRV-010",
+        "predicate_codes": [
+          "predicate.curve.trimmed_wrapper_native"
+        ],
+        "statement": "The native source observations retain Geom_TrimmedCurve beneath the offset wrapper while the STEP comparison records canonicalization; M2/M3 survival is not claimed.",
+        "subject_refs": [
+          {
+            "id": "observation.source_geometry.offset.curvature_singular",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.source_geometry.offset.nested",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.source_geometry.offset.regular",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.crv_011.native_nested_offset_wrappers",
+        "obligation_id": "CRV-011",
+        "predicate_codes": [
+          "predicate.curve.offset_wrapper_native"
+        ],
+        "statement": "The native source observations bind every Geom_OffsetCurve level, distance, direction, and nested order; the processing-disabled STEP loss remains explicit.",
+        "subject_refs": [
+          {
+            "id": "observation.source_geometry.offset.curvature_singular",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.source_geometry.offset.nested",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.source_geometry.offset.regular",
+            "kind": "observation"
+          }
+        ]
+      }
+    ],
+    "curve_variants": [],
+    "import_outcome": "success",
+    "model_classes": [
+      "empty_compound"
+    ],
+    "model_topology": {
+      "closed_shells": 0,
+      "coincident_solid_signature_pairs": 0,
+      "free_edges": 0,
+      "free_wires": 0,
+      "inner_shells": 0,
+      "isolated_vertices": 0,
+      "maximum_faces_per_edge": 0,
+      "nonmanifold_vertices": 0,
+      "open_shells": 0,
+      "outer_shells": 0,
+      "shared_faces_between_solids": 0,
+      "standalone_shells": 0
+    },
+    "orientation_states": [
+      "FORWARD"
+    ],
+    "periodicity": [],
+    "semantic_candidates": [],
+    "singularity_codes": [
+      "curve.offset.curvature_singularity"
+    ],
+    "subject_universe": {
+      "edge_occurrence_ids": [],
+      "face_occurrence_ids": [],
+      "logical_region_ids": []
+    },
+    "support": [],
+    "surface_variants": [],
+    "topology_occurrences": {
+      "assembly_products": 4,
+      "compounds": 1,
+      "compsolids": 0,
+      "edges": 0,
+      "faces": 0,
+      "instances": 3,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 0,
+      "wires": 0
+    },
+    "unique_topology": {
+      "assembly_products": 4,
+      "compounds": 1,
+      "compsolids": 0,
+      "edges": 0,
+      "faces": 0,
+      "instances": 3,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 0,
+      "wires": 0
+    },
+    "validation_findings": [
+      {
+        "code": "topology.valid",
+        "evidence": "Independent BRepCheck construction guard and processing-disabled STEP readback both report a valid imported B-rep.",
+        "expectation": "present",
+        "subject_kind": "model"
+      }
+    ]
+  },
+  "fixture_id": "wire.offset.nested_singular",
+  "instances": [
+    {
+      "component_label": "component.c0001",
+      "label": "instance.i0001",
+      "local_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "parent_label": null,
+      "target_definition": "definition.d0002",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    },
+    {
+      "component_label": "component.c0002",
+      "label": "instance.i0002",
+      "local_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "parent_label": null,
+      "target_definition": "definition.d0003",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    },
+    {
+      "component_label": "component.c0003",
+      "label": "instance.i0003",
+      "local_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "parent_label": null,
+      "target_definition": "definition.d0004",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    }
+  ],
+  "observations": [
+    {
+      "concrete_type": "Geom_OffsetCurve",
+      "condition_codes": [
+        "bounded",
+        "source_recipe_derived"
+      ],
+      "exact_evaluator_kind": "occt.exact_curve",
+      "family_code": "offset",
+      "id": "observation.source_geometry.offset.curvature_singular",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "curve",
+          "closed": false,
+          "lower": -1.25,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1.25
+        }
+      ],
+      "parameters": [
+        {
+          "name": "parabola.focal_length",
+          "value": {
+            "unit": "count",
+            "value": 3,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "phase": "source",
+      "subject_id": "source.curve.offset.curvature_singular",
+      "taxonomy": "Curve",
+      "wrappers": [
+        {
+          "basis_observation_id": null,
+          "code": "offset",
+          "concrete_type": "Geom_OffsetCurve",
+          "ordinal": 0,
+          "parameters": [
+            {
+              "name": "offset.direction_x",
+              "value": {
+                "unit": "count",
+                "value": 0,
+                "value_type": "integer"
+              }
+            },
+            {
+              "name": "offset.direction_y",
+              "value": {
+                "unit": "count",
+                "value": 0,
+                "value_type": "integer"
+              }
+            },
+            {
+              "name": "offset.direction_z",
+              "value": {
+                "unit": "count",
+                "value": 1,
+                "value_type": "integer"
+              }
+            },
+            {
+              "name": "offset.distance",
+              "value": {
+                "unit": "count",
+                "value": 6,
+                "value_type": "integer"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "concrete_type": "Geom_OffsetCurve",
+      "condition_codes": [
+        "bounded",
+        "source_recipe_derived"
+      ],
+      "exact_evaluator_kind": "occt.exact_curve",
+      "family_code": "offset",
+      "id": "observation.source_geometry.offset.nested",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "curve",
+          "closed": false,
+          "lower": 0.2,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 5.55
+        }
+      ],
+      "parameters": [
+        {
+          "name": "ellipse.major_radius",
+          "value": {
+            "unit": "count",
+            "value": 10,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "ellipse.minor_radius",
+          "value": {
+            "unit": "count",
+            "value": 6,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "phase": "source",
+      "subject_id": "source.curve.offset.nested",
+      "taxonomy": "Curve",
+      "wrappers": [
+        {
+          "basis_observation_id": null,
+          "code": "offset",
+          "concrete_type": "Geom_OffsetCurve",
+          "ordinal": 0,
+          "parameters": [
+            {
+              "name": "offset.direction_x",
+              "value": {
+                "unit": "count",
+                "value": 0,
+                "value_type": "integer"
+              }
+            },
+            {
+              "name": "offset.direction_y",
+              "value": {
+                "unit": "count",
+                "value": 0,
+                "value_type": "integer"
+              }
+            },
+            {
+              "name": "offset.direction_z",
+              "value": {
+                "unit": "count",
+                "value": 1,
+                "value_type": "integer"
+              }
+            },
+            {
+              "name": "offset.distance",
+              "value": {
+                "unit": "millimetres",
+                "value": 2.9,
+                "value_type": "number"
+              }
+            }
+          ]
+        },
+        {
+          "basis_observation_id": null,
+          "code": "trimmed",
+          "concrete_type": "Geom_TrimmedCurve",
+          "ordinal": 1,
+          "parameters": [
+            {
+              "name": "trimmed.lower",
+              "value": {
+                "unit": "parameter",
+                "value": 0.2,
+                "value_type": "number"
+              }
+            },
+            {
+              "name": "trimmed.upper",
+              "value": {
+                "unit": "parameter",
+                "value": 5.55,
+                "value_type": "number"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "concrete_type": "Geom_OffsetCurve",
+      "condition_codes": [
+        "bounded",
+        "source_recipe_derived"
+      ],
+      "exact_evaluator_kind": "occt.exact_curve",
+      "family_code": "offset",
+      "id": "observation.source_geometry.offset.regular",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "curve",
+          "closed": false,
+          "lower": 0.2,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 5.55
+        }
+      ],
+      "parameters": [
+        {
+          "name": "ellipse.major_radius",
+          "value": {
+            "unit": "count",
+            "value": 10,
+            "value_type": "integer"
+          }
+        },
+        {
+          "name": "ellipse.minor_radius",
+          "value": {
+            "unit": "count",
+            "value": 6,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "phase": "source",
+      "subject_id": "source.curve.offset.regular",
+      "taxonomy": "Curve",
+      "wrappers": [
+        {
+          "basis_observation_id": null,
+          "code": "offset",
+          "concrete_type": "Geom_OffsetCurve",
+          "ordinal": 0,
+          "parameters": [
+            {
+              "name": "offset.direction_x",
+              "value": {
+                "unit": "count",
+                "value": 0,
+                "value_type": "integer"
+              }
+            },
+            {
+              "name": "offset.direction_y",
+              "value": {
+                "unit": "count",
+                "value": 0,
+                "value_type": "integer"
+              }
+            },
+            {
+              "name": "offset.direction_z",
+              "value": {
+                "unit": "count",
+                "value": 1,
+                "value_type": "integer"
+              }
+            },
+            {
+              "name": "offset.distance",
+              "value": {
+                "unit": "millimetres",
+                "value": 1.75,
+                "value_type": "number"
+              }
+            }
+          ]
+        },
+        {
+          "basis_observation_id": null,
+          "code": "trimmed",
+          "concrete_type": "Geom_TrimmedCurve",
+          "ordinal": 1,
+          "parameters": [
+            {
+              "name": "trimmed.lower",
+              "value": {
+                "unit": "parameter",
+                "value": 0.2,
+                "value_type": "number"
+              }
+            },
+            {
+              "name": "trimmed.upper",
+              "value": {
+                "unit": "parameter",
+                "value": 5.55,
+                "value_type": "number"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "evidence": "Independent BRepCheck construction guard and processing-disabled STEP readback both report a valid imported B-rep.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.p1",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "topology.valid.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 1,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "topology.valid",
+      "phase": "imported",
+      "subject_ids": [
+        "oracle.finding.p1"
+      ]
+    },
+    {
+      "axes": [
+        {
+          "axis": "curve",
+          "closed": false,
+          "period": null,
+          "periodic": false,
+          "principal_lower": -1.25,
+          "principal_upper": 1.25,
+          "seam_parameters": [],
+          "unit": "unitless"
+        }
+      ],
+      "id": "observation.source_periodicity.offset.curvature_singular",
+      "kind": "periodicity_singularity",
+      "phase": "source",
+      "singularities": [
+        {
+          "code": "curve.offset.curvature_singularity",
+          "incident_subject_ids": [
+            "source.curve.offset.curvature_singular"
+          ],
+          "kind": "pinch",
+          "point_metres": null,
+          "singularity_id": "singularity.offset.curvature_vertex",
+          "topology_disposition": "interior",
+          "u_parameter": 0,
+          "unit_normal_defined": false,
+          "v_parameter": null
+        }
+      ],
+      "subject_id": "source.curve.offset.curvature_singular"
+    },
+    {
+      "axes": [
+        {
+          "axis": "curve",
+          "closed": false,
+          "period": null,
+          "periodic": false,
+          "principal_lower": 0.2,
+          "principal_upper": 5.55,
+          "seam_parameters": [],
+          "unit": "unitless"
+        }
+      ],
+      "id": "observation.source_periodicity.offset.nested",
+      "kind": "periodicity_singularity",
+      "phase": "source",
+      "singularities": [],
+      "subject_id": "source.curve.offset.nested"
+    },
+    {
+      "axes": [
+        {
+          "axis": "curve",
+          "closed": false,
+          "period": null,
+          "periodic": false,
+          "principal_lower": 0.2,
+          "principal_upper": 5.55,
+          "seam_parameters": [],
+          "unit": "unitless"
+        }
+      ],
+      "id": "observation.source_periodicity.offset.regular",
+      "kind": "periodicity_singularity",
+      "phase": "source",
+      "singularities": [],
+      "subject_id": "source.curve.offset.regular"
+    },
+    {
+      "accepted_normalization_codes": [
+        "step.curve.offset_canonicalized",
+        "step.curve.offset_entities_dropped",
+        "step.curve.trimmed_basis_canonicalized",
+        "step.free_wire_container_flattened",
+        "step.tolerances_absent_after_entity_drop"
+      ],
+      "changes": [],
+      "equivalence": "not_comparable",
+      "geometry_equivalent": false,
+      "id": "observation.normalization.model",
+      "imported_subject_ids": [
+        "imported.model"
+      ],
+      "kind": "source_import_normalization",
+      "outcome": "dropped",
+      "source_subject_ids": [
+        "source.model"
+      ],
+      "topology_equivalent": false
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.compound",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 1
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.compounds"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.compounds",
+      "tolerance_metres": 0,
+      "topology_kind": "compound",
+      "underlying_id": "topology.compounds",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "baked_geometry_matrix_row_major": null,
+      "disposition": "retained_as_location",
+      "handedness": "right_handed",
+      "id": "observation.transform.instance.i0001",
+      "imported_location_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "instance_id": "instance.i0001",
+      "kind": "transform",
+      "linear_determinant": 1.0,
+      "parent_instance_id": null,
+      "source_affine_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "source_unit_scale_to_metres": 0.001,
+      "target_definition_id": "definition.d0002",
+      "transform_kind": "identity",
+      "world_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "baked_geometry_matrix_row_major": null,
+      "disposition": "retained_as_location",
+      "handedness": "right_handed",
+      "id": "observation.transform.instance.i0002",
+      "imported_location_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "instance_id": "instance.i0002",
+      "kind": "transform",
+      "linear_determinant": 1.0,
+      "parent_instance_id": null,
+      "source_affine_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "source_unit_scale_to_metres": 0.001,
+      "target_definition_id": "definition.d0003",
+      "transform_kind": "identity",
+      "world_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "baked_geometry_matrix_row_major": null,
+      "disposition": "retained_as_location",
+      "handedness": "right_handed",
+      "id": "observation.transform.instance.i0003",
+      "imported_location_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "instance_id": "instance.i0003",
+      "kind": "transform",
+      "linear_determinant": 1.0,
+      "parent_instance_id": null,
+      "source_affine_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "source_unit_scale_to_metres": 0.001,
+      "target_definition_id": "definition.d0004",
+      "transform_kind": "identity",
+      "world_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    }
+  ],
+  "oracle": {
+    "independent_from_production_classifier": true,
+    "method": "analytic_derivation",
+    "references": [
+      "final revision-6 processing-disabled STEP readback summary wire.offset.nested_singular.json used only for exact import binding",
+      "fixtures/generator/fixture_curve_recipes.cpp recipe wire.offset.nested_singular",
+      "independent parameter, incidence, and analytic derivation stated in the wire.offset.nested_singular oracle"
+    ],
+    "statement": "The first source curve offsets a trimmed 10 by 6 millimetre ellipse by 1.75 millimetres; the nested offset totals 2.9 millimetres. A parabola of focal length 3 millimetres offset by 6 millimetres reaches its vertex curvature singularity. STEP drops all three offset edge entities, which is recorded as representation loss and leaves no imported support subjects."
+  },
+  "schema_version": "1.0.0",
+  "tolerances": {
+    "edges_metres": {
+      "maximum": null,
+      "minimum": null
+    },
+    "faces_metres": {
+      "maximum": null,
+      "minimum": null
+    },
+    "vertices_metres": {
+      "maximum": null,
+      "minimum": null
+    }
+  },
+  "units": {
+    "coordinate_space": "right_handed_si_metres_radians",
+    "scale_to_metres": 0.001,
+    "source_unit": "millimetre"
+  }
+}

@@ -1,0 +1,288 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "expected": {
+    "boundary_loops": [],
+    "brep_valid": false,
+    "claims": [
+      {
+        "id": "claim.top_017.mirrored_mapped_item",
+        "obligation_id": "TOP-017",
+        "predicate_codes": [
+          "predicate.topology.transform"
+        ],
+        "statement": "The source-bound STEP patch contains an exact mirrored mapped-item matrix, while processing-disabled XDE readback exposes only identity product locations and no evidenced baked-geometry transform; the fixture therefore records representation loss, not transform preservation.",
+        "subject_refs": [
+          {
+            "id": "observation.normalization.step_import",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.transform.source_mapped_item",
+            "kind": "observation"
+          }
+        ]
+      }
+    ],
+    "curve_variants": [],
+    "import_outcome": "named_failure",
+    "model_classes": [
+      "assembly",
+      "invalid_import"
+    ],
+    "orientation_states": [],
+    "periodicity": [],
+    "semantic_candidates": [],
+    "singularity_codes": [],
+    "subject_universe": {
+      "edge_occurrence_ids": [],
+      "face_occurrence_ids": [],
+      "logical_region_ids": []
+    },
+    "support": [],
+    "surface_variants": [],
+    "topology_occurrences": {
+      "assembly_products": 3,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 0,
+      "faces": 0,
+      "instances": 2,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 0,
+      "wires": 0
+    },
+    "unique_topology": {
+      "assembly_products": 3,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 0,
+      "faces": 0,
+      "instances": 2,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 0,
+      "wires": 0
+    },
+    "validation_findings": [
+      {
+        "code": "import.unprocessed_brep_invalid",
+        "evidence": "The processing-disabled transfer is deterministically invalid and therefore yields a named, fail-closed import outcome.",
+        "expectation": "present",
+        "subject_kind": "model"
+      },
+      {
+        "code": "topology.valid",
+        "evidence": "BRepCheck_Analyzer reports the transferred root invalid.",
+        "expectation": "absent",
+        "subject_kind": "model"
+      }
+    ]
+  },
+  "fixture_id": "assembly.nist_ctc_01.mirrored_mapped_item",
+  "instances": [
+    {
+      "component_label": "component.c0001",
+      "label": "instance.i0001",
+      "local_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "parent_label": null,
+      "target_definition": "definition.d0002",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    },
+    {
+      "component_label": "component.c0002",
+      "label": "instance.i0002",
+      "local_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "parent_label": null,
+      "target_definition": "definition.d0003",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    }
+  ],
+  "observations": [
+    {
+      "accepted_normalization_codes": [],
+      "changes": [],
+      "equivalence": "not_comparable",
+      "geometry_equivalent": false,
+      "id": "observation.normalization.step_import",
+      "imported_subject_ids": [
+        "imported.xde_document"
+      ],
+      "kind": "source_import_normalization",
+      "outcome": "dropped",
+      "source_subject_ids": [
+        "source.mapped_item.entity_10"
+      ],
+      "topology_equivalent": true
+    },
+    {
+      "baked_geometry_matrix_row_major": null,
+      "disposition": "rejected",
+      "handedness": "left_handed",
+      "id": "observation.transform.source_mapped_item",
+      "imported_location_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "instance_id": "source.mapped_item.entity_10",
+      "kind": "transform",
+      "linear_determinant": -1.0,
+      "parent_instance_id": null,
+      "source_affine_matrix_row_major": [
+        -1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "source_unit_scale_to_metres": 0.001,
+      "target_definition_id": "source.representation_map.entity_11",
+      "transform_kind": "mirrored",
+      "world_matrix_row_major": [
+        -1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    }
+  ],
+  "oracle": {
+    "independent_from_production_classifier": true,
+    "method": "analytic_derivation",
+    "references": [
+      "NIST CTC-01 AP242 baseline entity 4220",
+      "fixtures/derived/inspection/assembly.nist_ctc_01.mirrored_mapped_item.summary.json",
+      "fixtures/lanes/derived_artifact.py"
+    ],
+    "statement": "The mirrored affine matrix and determinant are derived directly from the patched Part 21 operator; independent read-only inspection shows identity XDE product locations and an invalid authoritative B-rep."
+  },
+  "schema_version": "1.0.0",
+  "tolerances": {
+    "edges_metres": {
+      "maximum": null,
+      "minimum": null
+    },
+    "faces_metres": {
+      "maximum": null,
+      "minimum": null
+    },
+    "vertices_metres": {
+      "maximum": null,
+      "minimum": null
+    }
+  },
+  "units": {
+    "coordinate_space": "right_handed_si_metres_radians",
+    "scale_to_metres": 0.001,
+    "source_unit": "millimetre"
+  }
+}

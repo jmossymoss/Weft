@@ -1,0 +1,70 @@
+{
+  "artifact_format": "occt_ascii_brep",
+  "artifact_sha256": "1cdf22d821ee78ae8bb6216a81bac33865f65e13aa4f29400a491f43ebb26888",
+  "brep_valid": false,
+  "canonicalization": "sorted-pretty-json-v1",
+  "diagnostic_codes": [
+    "BRepCheck_NotConnected"
+  ],
+  "fixture_id": "corrupt.self_intersection.shell",
+  "inspection_method": "DRAWEXE restore, checkshape, mksurface, dump, bsection, nbshapes, and lprops for the moved face against every remaining face",
+  "measurements": {
+    "adjacent_face_intersection_count": 4,
+    "intersection_edge_count_by_face": {
+      "face_2": 0,
+      "face_3": 1,
+      "face_4": 1,
+      "face_5": 1,
+      "face_6": 1
+    },
+    "intersection_lengths_millimetres": [
+      16.0,
+      16.0,
+      20.0,
+      20.0
+    ],
+    "intersection_midpoints_millimetres": [
+      [
+        12.0,
+        0.0,
+        8.0
+      ],
+      [
+        12.0,
+        20.0,
+        8.0
+      ],
+      [
+        12.0,
+        10.0,
+        0.0
+      ],
+      [
+        12.0,
+        10.0,
+        16.0
+      ]
+    ],
+    "moved_face_translation_x_millimetres": 12.0,
+    "mutation_operation_count": 2
+  },
+  "occt_version": "8.0.0.p1-e52c4021",
+  "processing": [
+    "no_healing",
+    "no_sameparameter_repair",
+    "no_sewing"
+  ],
+  "schema_version": "1.0.0",
+  "unique_topology": {
+    "assembly_products": 0,
+    "compounds": 0,
+    "compsolids": 0,
+    "edges": 12,
+    "faces": 6,
+    "instances": 0,
+    "shells": 1,
+    "solids": 1,
+    "vertices": 8,
+    "wires": 6
+  }
+}

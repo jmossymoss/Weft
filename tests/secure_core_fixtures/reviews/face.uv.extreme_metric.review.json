@@ -1,0 +1,30 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "f446baeab6e0acf5a6c1571293090f94ff1ff74cd945911a6d6f0f0f3b708fc4",
+  "finding_disposition": "Fresh-context recipe, parameter, topology, normalization, invalid-import, STEP, summary, native-BRep, claim-profile, and source-contract checks passed without promoting lost or invalid imported subjects.",
+  "fixture_id": "face.uv.extreme_metric",
+  "producer_id": "producer.m1_feature_pathology_oracle_authoring",
+  "review_id": "review.face_uv_extreme_metric.revision_6",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.feature_pathology_oracle_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "artifacts.native_brep_binding",
+    "claims.profile_binding",
+    "construction.parameters",
+    "geometry.source_derivation",
+    "normalization.explicit",
+    "support.occurrence_identity",
+    "topology.readback",
+    "units.tolerances"
+  ],
+  "source_binding": {
+    "artifact_sha256": "95b2c3852e8d80e29cc7cfd814b75b1054802cac252f81c32add057d8cdff427",
+    "construction_parameters_sha256": "949290c87dd962746de0f53b188828e5bf5d19f8fd19fe89cc475697d52f4fba",
+    "generator_revision": 6,
+    "kind": "occt_procedural",
+    "source_contract_sha256": "55bd068100a7b54cd39b2886e695f8ce7db6aaae38ae85b2609ed2970a127bb3",
+    "summary_sha256": "45f8380b87581174dc5da81ee141e6e2736a57116276826be3f032b9d23e2741"
+  }
+}

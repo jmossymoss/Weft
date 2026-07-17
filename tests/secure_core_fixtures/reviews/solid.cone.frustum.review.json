@@ -1,0 +1,31 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "caeb45c3cb1e74f4f3422cd468160d4e53adda9339530814c598e3348af03410",
+  "finding_disposition": "Fresh-context occurrence, boundary-loop, oracle, support-strategy, runner-execution, and promotion audits passed after all findings were resolved; no P0 or P1 finding remains for corpus revision 4.",
+  "fixture_id": "solid.cone.frustum",
+  "producer_id": "producer.m1_fixture_foundation",
+  "review_id": "review.solid_cone_frustum.revision_2",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.m1_oracle_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "claims.typed_binding",
+    "construction.parameters",
+    "geometry.conditions",
+    "geometry.taxonomy",
+    "provenance.xde_readback",
+    "support.occurrence_identity",
+    "topology.boundary_loops",
+    "topology.counts",
+    "units.tolerances"
+  ],
+  "source_binding": {
+    "artifact_sha256": "c4ba1b0d2d84006508558cdb47eda0a653e6a4b44435ff52db551fb3106ac238",
+    "construction_parameters_sha256": "3e4bbb547ff25f0bfdddee18dd6e2fe22ad503560e7f7c3da786fadde237e606",
+    "generator_revision": 3,
+    "kind": "occt_procedural",
+    "source_contract_sha256": "1c0e0a55917b8923e685cb2b487f360e18ef914151a0a4515e96bb63d669cf5d",
+    "summary_sha256": "bff594d83b7ac37ce50ca35441c29748e36e9b9da3f3fd256397ad7fd8c602c3"
+  }
+}

@@ -1,0 +1,1056 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.weftocct.example/v1/obligation-profiles-v1.schema.json",
+  "title": "CAD mesher M1 obligation profiles v1",
+  "description": "Strict machine-readable partition of fixture-coverage obligations into batched evidence families. Obligation descriptions are intentionally not duplicated; docs/governance/fixture-coverage.md remains authoritative.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "canonicalization",
+    "authoritative_ledger",
+    "authoritative_obligation_count",
+    "families",
+    "obligation_profiles"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "canonicalization": {
+      "const": "sorted-pretty-json-v1"
+    },
+    "authoritative_ledger": {
+      "const": "docs/governance/fixture-coverage.md"
+    },
+    "authoritative_obligation_count": {
+      "const": 152
+    },
+    "families": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 16,
+      "maxProperties": 16,
+      "required": [
+        "family.assembly_instances",
+        "family.curve_taxonomy",
+        "family.edge_representation",
+        "family.external_corpus",
+        "family.import_failures",
+        "family.native_faults",
+        "family.numeric_pathology",
+        "family.reconnaissance_consumers",
+        "family.semantic_blends",
+        "family.semantic_primitives",
+        "family.support_decisions",
+        "family.surface_freeform_wrappers",
+        "family.surface_periodic_singular",
+        "family.topology_hierarchy",
+        "family.trim_faults",
+        "family.trim_valid_domains"
+      ],
+      "properties": {
+        "family.assembly_instances": {
+          "$ref": "#/$defs/family"
+        },
+        "family.curve_taxonomy": {
+          "$ref": "#/$defs/family"
+        },
+        "family.edge_representation": {
+          "$ref": "#/$defs/family"
+        },
+        "family.external_corpus": {
+          "$ref": "#/$defs/family"
+        },
+        "family.import_failures": {
+          "$ref": "#/$defs/family"
+        },
+        "family.native_faults": {
+          "$ref": "#/$defs/family"
+        },
+        "family.numeric_pathology": {
+          "$ref": "#/$defs/family"
+        },
+        "family.reconnaissance_consumers": {
+          "$ref": "#/$defs/family"
+        },
+        "family.semantic_blends": {
+          "$ref": "#/$defs/family"
+        },
+        "family.semantic_primitives": {
+          "$ref": "#/$defs/family"
+        },
+        "family.support_decisions": {
+          "$ref": "#/$defs/family"
+        },
+        "family.surface_freeform_wrappers": {
+          "$ref": "#/$defs/family"
+        },
+        "family.surface_periodic_singular": {
+          "$ref": "#/$defs/family"
+        },
+        "family.topology_hierarchy": {
+          "$ref": "#/$defs/family"
+        },
+        "family.trim_faults": {
+          "$ref": "#/$defs/family"
+        },
+        "family.trim_valid_domains": {
+          "$ref": "#/$defs/family"
+        }
+      }
+    },
+    "obligation_profiles": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 152,
+      "maxProperties": 152,
+      "required": [
+        "SRC-001",
+        "SRC-002",
+        "SRC-003",
+        "TOP-001",
+        "TOP-002",
+        "TOP-003",
+        "TOP-004",
+        "TOP-005",
+        "TOP-006",
+        "TOP-007",
+        "TOP-008",
+        "TOP-009",
+        "TOP-010",
+        "TOP-011",
+        "TOP-012",
+        "TOP-013",
+        "TOP-014",
+        "TOP-015",
+        "TOP-016",
+        "TOP-017",
+        "TOP-018",
+        "CRV-001",
+        "CRV-002",
+        "CRV-003",
+        "CRV-004",
+        "CRV-005",
+        "CRV-006",
+        "CRV-007",
+        "CRV-008",
+        "CRV-009",
+        "CRV-010",
+        "CRV-011",
+        "CRV-012",
+        "CRV-013",
+        "CRV-014",
+        "CRV-015",
+        "CRV-016",
+        "CRV-017",
+        "CRV-018",
+        "CRV-019",
+        "CRV-020",
+        "CRV-021",
+        "CRV-022",
+        "CRV-023",
+        "CRV-024",
+        "SRF-001",
+        "SRF-002",
+        "SRF-003",
+        "SRF-004",
+        "SRF-005",
+        "SRF-006",
+        "SRF-007",
+        "SRF-008",
+        "SRF-009",
+        "SRF-010",
+        "SRF-011",
+        "SRF-012",
+        "SRF-013",
+        "SRF-014",
+        "SRF-015",
+        "SRF-016",
+        "SRF-017",
+        "SRF-018",
+        "SRF-019",
+        "SRF-020",
+        "SRF-021",
+        "SRF-022",
+        "SRF-023",
+        "SRF-024",
+        "SRF-025",
+        "SRF-026",
+        "SRF-027",
+        "SRF-028",
+        "SRF-029",
+        "SRF-030",
+        "SRF-031",
+        "SEM-001",
+        "SEM-002",
+        "SEM-003",
+        "SEM-004",
+        "SEM-005",
+        "SEM-006",
+        "SEM-007",
+        "SEM-008",
+        "SEM-009",
+        "SEM-010",
+        "SEM-011",
+        "SEM-012",
+        "SEM-013",
+        "SEM-014",
+        "SEM-015",
+        "SEM-016",
+        "SEM-017",
+        "SEM-018",
+        "SEM-019",
+        "SEM-020",
+        "SEM-021",
+        "SEM-022",
+        "SEM-023",
+        "SEM-024",
+        "SEM-025",
+        "TRM-001",
+        "TRM-002",
+        "TRM-003",
+        "TRM-004",
+        "TRM-005",
+        "TRM-006",
+        "TRM-007",
+        "TRM-008",
+        "TRM-009",
+        "TRM-010",
+        "TRM-011",
+        "TRM-012",
+        "TRM-013",
+        "PAT-001",
+        "PAT-002",
+        "PAT-003",
+        "PAT-004",
+        "PAT-005",
+        "PAT-006",
+        "PAT-007",
+        "PAT-008",
+        "PAT-009",
+        "PAT-010",
+        "PAT-011",
+        "PAT-012",
+        "PAT-013",
+        "PAT-014",
+        "PAT-015",
+        "PAT-016",
+        "PAT-017",
+        "SUP-001",
+        "SUP-002",
+        "SUP-003",
+        "SUP-004",
+        "SUP-005",
+        "SUP-006",
+        "SUP-007",
+        "SUP-008",
+        "SUP-009",
+        "SUP-010",
+        "SUP-011",
+        "REC-001",
+        "REC-002",
+        "REC-003",
+        "REC-004",
+        "REC-005",
+        "REC-006",
+        "REC-007",
+        "REC-008",
+        "REC-009",
+        "REC-010"
+      ],
+      "properties": {
+        "SRC-001": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRC-002": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRC-003": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TOP-001": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TOP-002": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TOP-003": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TOP-004": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TOP-005": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TOP-006": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TOP-007": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TOP-008": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TOP-009": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TOP-010": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TOP-011": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TOP-012": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TOP-013": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TOP-014": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TOP-015": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TOP-016": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TOP-017": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TOP-018": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "CRV-001": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "CRV-002": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "CRV-003": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "CRV-004": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "CRV-005": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "CRV-006": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "CRV-007": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "CRV-008": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "CRV-009": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "CRV-010": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "CRV-011": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "CRV-012": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "CRV-013": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "CRV-014": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "CRV-015": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "CRV-016": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "CRV-017": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "CRV-018": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "CRV-019": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "CRV-020": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "CRV-021": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "CRV-022": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "CRV-023": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "CRV-024": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-001": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-002": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-003": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-004": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-005": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-006": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-007": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-008": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-009": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-010": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-011": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-012": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-013": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-014": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-015": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-016": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-017": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-018": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-019": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-020": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-021": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-022": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-023": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-024": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-025": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-026": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-027": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-028": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-029": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-030": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SRF-031": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SEM-001": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SEM-002": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SEM-003": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SEM-004": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SEM-005": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SEM-006": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SEM-007": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SEM-008": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SEM-009": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SEM-010": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SEM-011": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SEM-012": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SEM-013": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SEM-014": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SEM-015": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SEM-016": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SEM-017": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SEM-018": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SEM-019": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SEM-020": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SEM-021": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SEM-022": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SEM-023": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SEM-024": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SEM-025": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TRM-001": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TRM-002": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TRM-003": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TRM-004": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TRM-005": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TRM-006": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TRM-007": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TRM-008": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TRM-009": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TRM-010": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TRM-011": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TRM-012": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "TRM-013": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "PAT-001": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "PAT-002": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "PAT-003": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "PAT-004": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "PAT-005": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "PAT-006": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "PAT-007": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "PAT-008": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "PAT-009": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "PAT-010": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "PAT-011": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "PAT-012": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "PAT-013": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "PAT-014": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "PAT-015": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "PAT-016": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "PAT-017": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SUP-001": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SUP-002": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SUP-003": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SUP-004": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SUP-005": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SUP-006": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SUP-007": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SUP-008": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SUP-009": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SUP-010": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "SUP-011": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "REC-001": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "REC-002": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "REC-003": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "REC-004": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "REC-005": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "REC-006": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "REC-007": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "REC-008": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "REC-009": {
+          "$ref": "#/$defs/obligation_profile"
+        },
+        "REC-010": {
+          "$ref": "#/$defs/obligation_profile"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "stable_code": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*$"
+    },
+    "family_id": {
+      "enum": [
+        "family.assembly_instances",
+        "family.curve_taxonomy",
+        "family.edge_representation",
+        "family.external_corpus",
+        "family.import_failures",
+        "family.native_faults",
+        "family.numeric_pathology",
+        "family.reconnaissance_consumers",
+        "family.semantic_blends",
+        "family.semantic_primitives",
+        "family.support_decisions",
+        "family.surface_freeform_wrappers",
+        "family.surface_periodic_singular",
+        "family.topology_hierarchy",
+        "family.trim_faults",
+        "family.trim_valid_domains"
+      ]
+    },
+    "evidence_lane": {
+      "enum": [
+        "audited_external",
+        "derived_corruption",
+        "native_fault_injection",
+        "occt_procedural"
+      ]
+    },
+    "evidence_requirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "lanes"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "all_of",
+            "any_of",
+            "single"
+          ]
+        },
+        "lanes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/evidence_lane"
+          },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending evidence lane"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "single"
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          },
+          "then": {
+            "properties": {
+              "lanes": {
+                "minItems": 1,
+                "maxItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "enum": [
+                  "all_of",
+                  "any_of"
+                ]
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          },
+          "then": {
+            "properties": {
+              "lanes": {
+                "minItems": 2
+              }
+            }
+          }
+        }
+      ]
+    },
+    "observation_kind": {
+      "enum": [
+        "continuity",
+        "curve_geometry",
+        "curve_representation",
+        "evaluator_result",
+        "external_provenance",
+        "gate_result",
+        "locations",
+        "numerical_measurement",
+        "orientation",
+        "ownership_licence",
+        "pcurve_mapping",
+        "periodicity",
+        "recognition_evidence",
+        "report_determinism",
+        "semantic_candidate",
+        "singularity",
+        "source_provenance",
+        "source_transform",
+        "step_import",
+        "support_assignment",
+        "surface_geometry",
+        "surface_representation",
+        "topology_counts",
+        "topology_identity",
+        "topology_incidence",
+        "topology_occurrences",
+        "trim_domain",
+        "validation_finding",
+        "vertex_parameters",
+        "viewer_state"
+      ]
+    },
+    "predicate_family": {
+      "enum": [
+        "curve.analytic",
+        "curve.parameter_consistency",
+        "curve.spline",
+        "curve.topological_representation",
+        "curve.wrapper",
+        "pathology.evaluator",
+        "pathology.numeric",
+        "pathology.topology",
+        "reconnaissance.corpus",
+        "reconnaissance.fail_closed",
+        "reconnaissance.import",
+        "reconnaissance.inventory",
+        "reconnaissance.report",
+        "reconnaissance.viewer",
+        "semantic.blend",
+        "semantic.confidence",
+        "semantic.feature",
+        "semantic.freeform",
+        "semantic.primitive",
+        "source.external",
+        "support.gate",
+        "support.state",
+        "support.totality",
+        "surface.analytic",
+        "surface.continuity_metric",
+        "surface.periodic_singularity",
+        "surface.spline",
+        "surface.wrapper",
+        "topology.edge",
+        "topology.entity",
+        "topology.import_failure",
+        "topology.model",
+        "topology.orientation",
+        "topology.transform",
+        "trim.invalid_domain",
+        "trim.valid_domain"
+      ]
+    },
+    "milestone": {
+      "type": "string",
+      "pattern": "^M(?:[0-9]|1[0-2])$"
+    },
+    "corpus_constraint": {
+      "enum": [
+        "all_applicable_fixtures",
+        "complete_external_corpus",
+        "complete_synthetic_corpus",
+        "consumer_verification_required",
+        "cross_lane_corpus",
+        "derived_runner_registered",
+        "exact_evaluator_boundary",
+        "exact_subject_identity",
+        "external_authorship_verified",
+        "file_verified_step_schema",
+        "independent_exporter_matrix",
+        "independent_oracle",
+        "native_runner_registered",
+        "no_meshing_fallback",
+        "nonrigid_source_transform_contract",
+        "pcurve_repair_disabled",
+        "plasticity_family_matrix",
+        "post_step_processing_disabled",
+        "qt6_viewer_required",
+        "redistribution_authority",
+        "source_bound_mutation",
+        "unknown_type_injection",
+        "wrapper_survives_roundtrip_or_external"
+      ]
+    },
+    "dependencies": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fixture_prerequisite_families",
+        "consumer_milestones",
+        "corpus_constraints"
+      ],
+      "properties": {
+        "fixture_prerequisite_families": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/family_id"
+          },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending family id"
+        },
+        "consumer_milestones": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/milestone"
+          },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending milestone number"
+        },
+        "corpus_constraints": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/corpus_constraint"
+          },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending constraint"
+        }
+      }
+    },
+    "family": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "batch_order",
+        "title",
+        "proposed_fixture_ids",
+        "shared_construction_foundation",
+        "prerequisite_families",
+        "delivery_constraints"
+      ],
+      "properties": {
+        "batch_order": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "proposed_fixture_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/stable_code"
+          },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending fixture id"
+        },
+        "shared_construction_foundation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "prerequisite_families": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/family_id"
+          },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending family id"
+        },
+        "delivery_constraints": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/corpus_constraint"
+          },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending constraint"
+        }
+      }
+    },
+    "obligation_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "family_id",
+        "evidence_requirement",
+        "observation_kinds",
+        "predicate_family",
+        "dependencies"
+      ],
+      "properties": {
+        "family_id": {
+          "$ref": "#/$defs/family_id"
+        },
+        "evidence_requirement": {
+          "$ref": "#/$defs/evidence_requirement"
+        },
+        "observation_kinds": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/observation_kind"
+          },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending observation kind"
+        },
+        "predicate_family": {
+          "$ref": "#/$defs/predicate_family"
+        },
+        "dependencies": {
+          "$ref": "#/$defs/dependencies"
+        }
+      }
+    }
+  }
+}

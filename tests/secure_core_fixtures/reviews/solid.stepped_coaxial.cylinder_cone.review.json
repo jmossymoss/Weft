@@ -1,0 +1,30 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "fbbf8c30cda6d65baaf6d11a66fc58b7d6774e874b8e3d0884e41e077992a71f",
+  "finding_disposition": "Fresh-context recipe, parameter, topology, normalization, invalid-import, STEP, summary, native-BRep, claim-profile, and source-contract checks passed without promoting lost or invalid imported subjects.",
+  "fixture_id": "solid.stepped_coaxial.cylinder_cone",
+  "producer_id": "producer.m1_feature_pathology_oracle_authoring",
+  "review_id": "review.solid_stepped_coaxial_cylinder_cone.revision_6",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.feature_pathology_oracle_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "artifacts.native_brep_binding",
+    "claims.profile_binding",
+    "construction.parameters",
+    "geometry.source_derivation",
+    "normalization.explicit",
+    "support.occurrence_identity",
+    "topology.readback",
+    "units.tolerances"
+  ],
+  "source_binding": {
+    "artifact_sha256": "f6a6283f0d24d41eaff6d50709e591d9b9435c36b164cd857d0d203bb7a85be4",
+    "construction_parameters_sha256": "5419c4cb66dcda6c8aa3a784d2166ebbf99496eca8926cf033e7b05aa8ba40f0",
+    "generator_revision": 6,
+    "kind": "occt_procedural",
+    "source_contract_sha256": "068ca287ae6ac183118efd00b4db4fe48b5b8b9eb9d324bf2a212df18b1472f9",
+    "summary_sha256": "44369447d51cde4375eff5666adf60662a29af77f299c57c4340e73a0f05aa98"
+  }
+}

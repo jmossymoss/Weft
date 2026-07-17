@@ -1,0 +1,5393 @@
+{
+  "authoritative_ledger": "docs/governance/fixture-coverage.md",
+  "authoritative_obligation_count": 152,
+  "canonicalization": "sorted-pretty-json-v1",
+  "families": {
+    "family.assembly_instances": {
+      "batch_order": 15,
+      "delivery_constraints": [
+        "derived_runner_registered",
+        "external_authorship_verified",
+        "independent_oracle",
+        "nonrigid_source_transform_contract",
+        "source_bound_mutation"
+      ],
+      "prerequisite_families": [
+        "family.topology_hierarchy"
+      ],
+      "proposed_fixture_ids": [
+        "assembly.box.mirrored_mapped_item",
+        "assembly.box.nested_repeated_instances",
+        "assembly.box.scaled_mapped_item",
+        "external.nonrigid_instance.reference"
+      ],
+      "shared_construction_foundation": "The repeated nested assembly baseline is paired with source-bound AP242 mapped-item transformations and an audited external reference, explicitly separating source transform, imported rigid TopLoc_Location, and geometry-baked conversion.",
+      "title": "Rigid and non-rigid assembly instances"
+    },
+    "family.curve_taxonomy": {
+      "batch_order": 3,
+      "delivery_constraints": [
+        "exact_subject_identity",
+        "independent_oracle",
+        "post_step_processing_disabled",
+        "wrapper_survives_roundtrip_or_external"
+      ],
+      "prerequisite_families": [
+        "family.topology_hierarchy"
+      ],
+      "proposed_fixture_ids": [
+        "wire.bezier.rationality_degree_matrix",
+        "wire.bspline.rationality_knot_matrix",
+        "wire.composite.intersection_isoparametric",
+        "wire.conic.hyperbola_parabola",
+        "wire.continuity.c0_c1_c2_cn",
+        "wire.ellipse.full_partial",
+        "wire.offset.nested_singular"
+      ],
+      "shared_construction_foundation": "A shared free-wire and face-bound edge factory that derives exact parameters, wrapper stacks, periodic and closed distinctions, and continuity evidence before checking the unprocessed post-STEP representation.",
+      "title": "Curve taxonomy, wrappers, and continuity"
+    },
+    "family.edge_representation": {
+      "batch_order": 6,
+      "delivery_constraints": [
+        "derived_runner_registered",
+        "exact_subject_identity",
+        "independent_oracle",
+        "pcurve_repair_disabled",
+        "post_step_processing_disabled",
+        "source_bound_mutation"
+      ],
+      "prerequisite_families": [
+        "family.curve_taxonomy",
+        "family.surface_periodic_singular",
+        "family.topology_hierarchy"
+      ],
+      "proposed_fixture_ids": [
+        "corrupt.edge.pcurve_disagreement_beyond_tolerance",
+        "corrupt.edge.pcurve_disagreement_within_tolerance",
+        "corrupt.edge.pcurve_missing_invalid",
+        "corrupt.edge.pcurve_only",
+        "corrupt.edge.range_mismatch",
+        "corrupt.edge.sameparameter_samerange_false",
+        "corrupt.edge.zero_length",
+        "face.cylinder.seam_dual_pcurve",
+        "face.sphere.pole_degenerate_edge",
+        "wire.edge.near_zero"
+      ],
+      "shared_construction_foundation": "Exact seam, pole, and micro-edge baselines plus source-bound deterministic mutations; every edge use binds the 3D curve, each face p-curve, both ranges, endpoints, tolerance, flags, and measured S(C_uv(t)) discrepancy.",
+      "title": "Edge, p-curve, and parameter representation"
+    },
+    "family.external_corpus": {
+      "batch_order": 1,
+      "delivery_constraints": [
+        "external_authorship_verified",
+        "file_verified_step_schema",
+        "independent_exporter_matrix",
+        "plasticity_family_matrix",
+        "redistribution_authority"
+      ],
+      "prerequisite_families": [],
+      "proposed_fixture_ids": [
+        "external.plasticity.analytic_feature_tower",
+        "external.plasticity.blend_feature_tower",
+        "external.plasticity.freeform_feature_tower",
+        "external.reference_part.ap203",
+        "external.reference_part.ap214",
+        "external.reference_part.ap242"
+      ],
+      "shared_construction_foundation": "Immutable externally authored STEP assets with application/version/export records, file-verified schema, ownership or licence evidence, content hashes, and independent post-XDE oracles.",
+      "title": "Audited external authoring and schema corpus"
+    },
+    "family.import_failures": {
+      "batch_order": 12,
+      "delivery_constraints": [
+        "derived_runner_registered",
+        "independent_oracle",
+        "post_step_processing_disabled",
+        "source_bound_mutation"
+      ],
+      "prerequisite_families": [
+        "family.topology_hierarchy"
+      ],
+      "proposed_fixture_ids": [
+        "corrupt.step.null_shape_product",
+        "corrupt.step.syntax_failure",
+        "corrupt.step.unknown_entity_reference"
+      ],
+      "shared_construction_foundation": "Small valid STEP/XDE baselines with deterministic syntax, product, and entity-reference mutations whose expected result is a named translator failure retaining source entity and diagnostic provenance.",
+      "title": "STEP import and translator failure artifacts"
+    },
+    "family.native_faults": {
+      "batch_order": 13,
+      "delivery_constraints": [
+        "exact_evaluator_boundary",
+        "independent_oracle",
+        "native_runner_registered",
+        "unknown_type_injection"
+      ],
+      "prerequisite_families": [],
+      "proposed_fixture_ids": [
+        "fault.bounds.nan_infinity",
+        "fault.geometry.unknown_dynamic_type",
+        "fault.surface.derivative_failure",
+        "fault.surface.undefined_normal",
+        "fault.surface.value_failure"
+      ],
+      "shared_construction_foundation": "Registered deterministic native producers use the same public evaluator and typed Result boundary as production to inject unknown dynamic types, evaluation failures, undefined normals, NaN, and infinity.",
+      "title": "Native evaluator and unknown-type fault injection"
+    },
+    "family.numeric_pathology": {
+      "batch_order": 10,
+      "delivery_constraints": [
+        "derived_runner_registered",
+        "exact_subject_identity",
+        "independent_oracle",
+        "post_step_processing_disabled",
+        "source_bound_mutation"
+      ],
+      "prerequisite_families": [
+        "family.edge_representation",
+        "family.topology_hierarchy",
+        "family.trim_valid_domains"
+      ],
+      "proposed_fixture_ids": [
+        "corrupt.face.zero_near_zero_area",
+        "corrupt.self_intersection.curve_trim_surface_shell",
+        "corrupt.topology.duplicate_vertex_edge",
+        "corrupt.wire.gap_within_beyond",
+        "corrupt.wire.inconsistent_orientation",
+        "face.sliver_needle_microedge",
+        "face.uv.extreme_metric",
+        "solid.orientation.inverted_shell_face",
+        "solid.scale.unit_matrix",
+        "solid.tolerance.extremes"
+      ],
+      "shared_construction_foundation": "Shared valid baselines at controlled units and scales plus deterministic source-bound mutations for duplicate, gap, area, orientation, and self-intersection failures, all with exact thresholds and no healing.",
+      "title": "Numerical and topological pathology matrix"
+    },
+    "family.reconnaissance_consumers": {
+      "batch_order": 16,
+      "delivery_constraints": [
+        "all_applicable_fixtures",
+        "complete_external_corpus",
+        "complete_synthetic_corpus",
+        "consumer_verification_required",
+        "cross_lane_corpus"
+      ],
+      "prerequisite_families": [
+        "family.assembly_instances",
+        "family.curve_taxonomy",
+        "family.edge_representation",
+        "family.external_corpus",
+        "family.import_failures",
+        "family.native_faults",
+        "family.numeric_pathology",
+        "family.semantic_blends",
+        "family.semantic_primitives",
+        "family.support_decisions",
+        "family.surface_freeform_wrappers",
+        "family.surface_periodic_singular",
+        "family.topology_hierarchy",
+        "family.trim_faults",
+        "family.trim_valid_domains"
+      ],
+      "proposed_fixture_ids": [
+        "corpus.recon.all_lanes",
+        "corpus.recon.step_lanes",
+        "native.recon.unaccounted_exact_type",
+        "viewer.recon.diagnostic_palette"
+      ],
+      "shared_construction_foundation": "Consumer suites run the complete cross-lane corpus through the production importer, inventory, classifier, deterministic report, fail-closed unknown path, and Qt diagnostic palette; these suite IDs are aggregations, not substitutes for source fixtures.",
+      "title": "M2/M3 reconnaissance consumers"
+    },
+    "family.semantic_blends": {
+      "batch_order": 9,
+      "delivery_constraints": [
+        "exact_subject_identity",
+        "independent_oracle",
+        "post_step_processing_disabled"
+      ],
+      "prerequisite_families": [
+        "family.semantic_primitives",
+        "family.surface_freeform_wrappers",
+        "family.surface_periodic_singular"
+      ],
+      "proposed_fixture_ids": [
+        "solid.blend.face_face_face_edge_corner",
+        "solid.blend.setback_multiway",
+        "solid.chamfer.constant_variable",
+        "solid.fillet.chain_split_mismatch",
+        "solid.fillet.constant_variable",
+        "solid.fillet.junction_t_y_x",
+        "solid.fillet.rolling_ball_channel",
+        "solid.fillet.termination_matrix"
+      ],
+      "shared_construction_foundation": "A shared support-solid and edge-network matrix varying radius law, blend participants, raw face splits, junction degree, chamfer width, and termination support while preserving exact feature provenance.",
+      "title": "Blend, fillet, chamfer, and termination semantics"
+    },
+    "family.semantic_primitives": {
+      "batch_order": 8,
+      "delivery_constraints": [
+        "exact_subject_identity",
+        "independent_oracle",
+        "post_step_processing_disabled"
+      ],
+      "prerequisite_families": [
+        "family.surface_freeform_wrappers",
+        "family.surface_periodic_singular",
+        "family.topology_hierarchy",
+        "family.trim_valid_domains"
+      ],
+      "proposed_fixture_ids": [
+        "compound.face.coincident_overlap",
+        "solid.draft_shell_offset",
+        "solid.features.counterbore_countersink_boss",
+        "solid.features.slot_pocket_rib",
+        "solid.nurbs.recovered_analytic",
+        "solid.planar.coplanar_split",
+        "solid.revolution.profiled",
+        "solid.stepped_coaxial.cylinder_cone"
+      ],
+      "shared_construction_foundation": "Parametric feature towers with independent analytic or construction derivations for supporting faces, boundaries, fitted parameters, residuals, and explicit candidate confidence without relying on the future recognizer.",
+      "title": "Primitive, freeform, and feature semantics"
+    },
+    "family.support_decisions": {
+      "batch_order": 14,
+      "delivery_constraints": [
+        "all_applicable_fixtures",
+        "independent_oracle",
+        "no_meshing_fallback"
+      ],
+      "prerequisite_families": [
+        "family.native_faults",
+        "family.semantic_blends",
+        "family.semantic_primitives",
+        "family.trim_faults",
+        "family.trim_valid_domains"
+      ],
+      "proposed_fixture_ids": [
+        "component.mixed.supported_unsupported",
+        "face.planar.perforated_cut_graph",
+        "patch.bspline.four_sided_structured",
+        "semantic.nurbs.confidence_matrix"
+      ],
+      "shared_construction_foundation": "A mixed-component decision matrix reuses exact analytic, structured, cut-graph, residual, ambiguous, invalid, and unknown subjects so assignment totality, confidence evidence, preview status, and component gate outcome can be checked independently.",
+      "title": "Support, confidence, and fail-closed gate decisions"
+    },
+    "family.surface_freeform_wrappers": {
+      "batch_order": 5,
+      "delivery_constraints": [
+        "exact_subject_identity",
+        "independent_oracle",
+        "post_step_processing_disabled",
+        "wrapper_survives_roundtrip_or_external"
+      ],
+      "prerequisite_families": [
+        "family.curve_taxonomy",
+        "family.topology_hierarchy"
+      ],
+      "proposed_fixture_ids": [
+        "face.bezier.matrix",
+        "face.bspline_nurbs.matrix",
+        "face.offset.nested_regular_singular",
+        "face.rectangular_trimmed.wrapper",
+        "face.ruled_swept_lofted_plate",
+        "face.uv.anisotropic_folded",
+        "patch.continuity.c0_c1_c2_cn_g0_g1_g2"
+      ],
+      "shared_construction_foundation": "A four-sided patch and adjacent-patch factory sharing exact poles, weights, knots, generators, wrapper ancestry, UV metric samples, and cross-face continuity measurements.",
+      "title": "Freeform surfaces, wrappers, and continuity"
+    },
+    "family.surface_periodic_singular": {
+      "batch_order": 4,
+      "delivery_constraints": [
+        "exact_subject_identity",
+        "independent_oracle",
+        "post_step_processing_disabled"
+      ],
+      "prerequisite_families": [
+        "family.curve_taxonomy",
+        "family.topology_hierarchy"
+      ],
+      "proposed_fixture_ids": [
+        "face.periodic.band_seam_crossing",
+        "face.surface.reversed_orientation",
+        "solid.cone.apex_full_partial",
+        "solid.revolution.full_partial_pole",
+        "solid.sphere.full_hemisphere_band_shifted_seam",
+        "solid.torus.ring_horn_spindle_full_partial"
+      ],
+      "shared_construction_foundation": "One analytic-surface recipe matrix varying full and partial domains, shifted seams, face reversal, cap and pole contact, and regular versus degenerate parameters with exact period and singularity derivations.",
+      "title": "Analytic periodic and singular surfaces"
+    },
+    "family.topology_hierarchy": {
+      "batch_order": 2,
+      "delivery_constraints": [
+        "exact_subject_identity",
+        "independent_oracle",
+        "post_step_processing_disabled"
+      ],
+      "prerequisite_families": [],
+      "proposed_fixture_ids": [
+        "compound.free_wire_edge_vertex",
+        "compound.mixed.disconnected_face_wire",
+        "compound.orientation.internal_external",
+        "compsolid.box_pair.shared_interface"
+      ],
+      "shared_construction_foundation": "Low-level BRep_Builder and XDE constructions sharing exact partner identity, explicit incidence, orientation, shell role, and ordered occurrence descriptors across one processing-disabled STEP readback path.",
+      "title": "Topology hierarchy and model incidence"
+    },
+    "family.trim_faults": {
+      "batch_order": 11,
+      "delivery_constraints": [
+        "derived_runner_registered",
+        "exact_subject_identity",
+        "independent_oracle",
+        "post_step_processing_disabled",
+        "source_bound_mutation"
+      ],
+      "prerequisite_families": [
+        "family.edge_representation",
+        "family.trim_valid_domains"
+      ],
+      "proposed_fixture_ids": [
+        "corrupt.trim.ambiguous_nesting",
+        "corrupt.trim.open_gapped",
+        "corrupt.trim.self_intersecting"
+      ],
+      "shared_construction_foundation": "The valid trim-domain baselines are mutated by registered source-bound recipes that alter only loop closure, ordering, nesting, or intersection while preserving the baseline geometry and provenance.",
+      "title": "Invalid and ambiguous trim mutations"
+    },
+    "family.trim_valid_domains": {
+      "batch_order": 7,
+      "delivery_constraints": [
+        "exact_subject_identity",
+        "independent_oracle",
+        "post_step_processing_disabled"
+      ],
+      "prerequisite_families": [
+        "family.edge_representation",
+        "family.surface_freeform_wrappers",
+        "family.surface_periodic_singular"
+      ],
+      "proposed_fixture_ids": [
+        "face.single_support.multidomain",
+        "face.trim.nested_holes",
+        "face.trim.periodic_band",
+        "face.trim.singular_one_pole",
+        "face.trim.singular_two_poles"
+      ],
+      "shared_construction_foundation": "A loop builder shared across planar, periodic, singular, and freeform supports, retaining ordered coedges, nesting, per-loop UV bounds, seam unwrap, and one-to-many retained-domain identity.",
+      "title": "Valid trim-domain classes"
+    }
+  },
+  "obligation_profiles": {
+    "CRV-001": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.curve_taxonomy",
+      "observation_kinds": [
+        "curve_geometry",
+        "curve_representation"
+      ],
+      "predicate_family": "curve.analytic"
+    },
+    "CRV-002": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.curve_taxonomy",
+      "observation_kinds": [
+        "curve_geometry",
+        "curve_representation"
+      ],
+      "predicate_family": "curve.analytic"
+    },
+    "CRV-003": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.curve_taxonomy",
+      "observation_kinds": [
+        "curve_geometry",
+        "curve_representation"
+      ],
+      "predicate_family": "curve.analytic"
+    },
+    "CRV-004": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.curve_taxonomy",
+      "observation_kinds": [
+        "curve_geometry",
+        "curve_representation"
+      ],
+      "predicate_family": "curve.analytic"
+    },
+    "CRV-005": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.curve_taxonomy",
+      "observation_kinds": [
+        "curve_geometry",
+        "curve_representation"
+      ],
+      "predicate_family": "curve.analytic"
+    },
+    "CRV-006": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.curve_taxonomy",
+      "observation_kinds": [
+        "curve_geometry",
+        "curve_representation",
+        "periodicity"
+      ],
+      "predicate_family": "curve.spline"
+    },
+    "CRV-007": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.curve_taxonomy",
+      "observation_kinds": [
+        "curve_geometry",
+        "curve_representation",
+        "periodicity"
+      ],
+      "predicate_family": "curve.spline"
+    },
+    "CRV-008": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.curve_taxonomy",
+      "observation_kinds": [
+        "curve_geometry",
+        "curve_representation",
+        "singularity"
+      ],
+      "predicate_family": "curve.wrapper"
+    },
+    "CRV-009": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "external_authorship_verified",
+          "file_verified_step_schema",
+          "independent_oracle",
+          "post_step_processing_disabled",
+          "redistribution_authority",
+          "wrapper_survives_roundtrip_or_external"
+        ],
+        "fixture_prerequisite_families": [
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "audited_external",
+          "occt_procedural"
+        ],
+        "mode": "any_of"
+      },
+      "family_id": "family.curve_taxonomy",
+      "observation_kinds": [
+        "curve_geometry",
+        "curve_representation",
+        "source_provenance"
+      ],
+      "predicate_family": "curve.wrapper"
+    },
+    "CRV-010": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled",
+          "wrapper_survives_roundtrip_or_external"
+        ],
+        "fixture_prerequisite_families": [
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.curve_taxonomy",
+      "observation_kinds": [
+        "curve_geometry",
+        "curve_representation"
+      ],
+      "predicate_family": "curve.wrapper"
+    },
+    "CRV-011": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled",
+          "wrapper_survives_roundtrip_or_external"
+        ],
+        "fixture_prerequisite_families": [
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.curve_taxonomy",
+      "observation_kinds": [
+        "curve_geometry",
+        "curve_representation"
+      ],
+      "predicate_family": "curve.wrapper"
+    },
+    "CRV-012": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "exact_subject_identity",
+          "independent_oracle",
+          "nonrigid_source_transform_contract",
+          "post_step_processing_disabled",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption",
+          "occt_procedural"
+        ],
+        "mode": "all_of"
+      },
+      "family_id": "family.curve_taxonomy",
+      "observation_kinds": [
+        "curve_representation",
+        "locations",
+        "source_transform"
+      ],
+      "predicate_family": "curve.wrapper"
+    },
+    "CRV-013": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.curve_taxonomy",
+      "observation_kinds": [
+        "curve_geometry",
+        "periodicity"
+      ],
+      "predicate_family": "curve.analytic"
+    },
+    "CRV-014": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.curve_taxonomy",
+      "observation_kinds": [
+        "curve_geometry",
+        "curve_representation",
+        "topology_incidence"
+      ],
+      "predicate_family": "curve.topological_representation"
+    },
+    "CRV-015": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.curve_taxonomy",
+      "observation_kinds": [
+        "curve_geometry",
+        "curve_representation",
+        "topology_incidence"
+      ],
+      "predicate_family": "curve.topological_representation"
+    },
+    "CRV-016": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.curve_taxonomy",
+      "observation_kinds": [
+        "curve_geometry",
+        "curve_representation",
+        "topology_incidence"
+      ],
+      "predicate_family": "curve.topological_representation"
+    },
+    "CRV-017": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "independent_oracle",
+          "pcurve_repair_disabled",
+          "post_step_processing_disabled",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.edge_representation",
+      "observation_kinds": [
+        "curve_representation",
+        "pcurve_mapping",
+        "topology_incidence"
+      ],
+      "predicate_family": "curve.topological_representation"
+    },
+    "CRV-018": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "pcurve_repair_disabled",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.edge_representation",
+      "observation_kinds": [
+        "pcurve_mapping",
+        "periodicity",
+        "topology_incidence"
+      ],
+      "predicate_family": "curve.topological_representation"
+    },
+    "CRV-019": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.edge_representation",
+      "observation_kinds": [
+        "singularity",
+        "topology_incidence"
+      ],
+      "predicate_family": "curve.topological_representation"
+    },
+    "CRV-020": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption",
+          "occt_procedural"
+        ],
+        "mode": "all_of"
+      },
+      "family_id": "family.edge_representation",
+      "observation_kinds": [
+        "numerical_measurement",
+        "topology_incidence"
+      ],
+      "predicate_family": "curve.topological_representation"
+    },
+    "CRV-021": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.curve_taxonomy",
+      "observation_kinds": [
+        "continuity",
+        "curve_geometry",
+        "topology_incidence"
+      ],
+      "predicate_family": "curve.topological_representation"
+    },
+    "CRV-022": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "independent_oracle",
+          "pcurve_repair_disabled",
+          "post_step_processing_disabled",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.edge_representation",
+      "observation_kinds": [
+        "curve_geometry",
+        "numerical_measurement",
+        "pcurve_mapping"
+      ],
+      "predicate_family": "curve.parameter_consistency"
+    },
+    "CRV-023": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "independent_oracle",
+          "pcurve_repair_disabled",
+          "post_step_processing_disabled",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.edge_representation",
+      "observation_kinds": [
+        "curve_geometry",
+        "numerical_measurement",
+        "pcurve_mapping"
+      ],
+      "predicate_family": "curve.parameter_consistency"
+    },
+    "CRV-024": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "independent_oracle",
+          "pcurve_repair_disabled",
+          "post_step_processing_disabled",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.edge_representation",
+      "observation_kinds": [
+        "curve_geometry",
+        "numerical_measurement",
+        "pcurve_mapping"
+      ],
+      "predicate_family": "curve.parameter_consistency"
+    },
+    "PAT-001": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.numeric_pathology",
+      "observation_kinds": [
+        "numerical_measurement",
+        "source_provenance",
+        "validation_finding"
+      ],
+      "predicate_family": "pathology.numeric"
+    },
+    "PAT-002": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption",
+          "occt_procedural"
+        ],
+        "mode": "all_of"
+      },
+      "family_id": "family.numeric_pathology",
+      "observation_kinds": [
+        "numerical_measurement",
+        "validation_finding"
+      ],
+      "predicate_family": "pathology.numeric"
+    },
+    "PAT-003": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "independent_oracle",
+          "post_step_processing_disabled",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.numeric_pathology",
+      "observation_kinds": [
+        "numerical_measurement",
+        "topology_incidence",
+        "validation_finding"
+      ],
+      "predicate_family": "pathology.topology"
+    },
+    "PAT-004": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "independent_oracle",
+          "post_step_processing_disabled",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.numeric_pathology",
+      "observation_kinds": [
+        "numerical_measurement",
+        "topology_incidence",
+        "validation_finding"
+      ],
+      "predicate_family": "pathology.topology"
+    },
+    "PAT-005": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "independent_oracle",
+          "post_step_processing_disabled",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.numeric_pathology",
+      "observation_kinds": [
+        "numerical_measurement",
+        "topology_incidence",
+        "validation_finding"
+      ],
+      "predicate_family": "pathology.topology"
+    },
+    "PAT-006": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.numeric_pathology",
+      "observation_kinds": [
+        "numerical_measurement",
+        "trim_domain",
+        "validation_finding"
+      ],
+      "predicate_family": "pathology.numeric"
+    },
+    "PAT-007": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.numeric_pathology",
+      "observation_kinds": [
+        "numerical_measurement",
+        "trim_domain",
+        "validation_finding"
+      ],
+      "predicate_family": "pathology.numeric"
+    },
+    "PAT-008": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": []
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.topology_hierarchy",
+      "observation_kinds": [
+        "topology_incidence",
+        "validation_finding"
+      ],
+      "predicate_family": "pathology.topology"
+    },
+    "PAT-009": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "independent_oracle",
+          "post_step_processing_disabled",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.numeric_pathology",
+      "observation_kinds": [
+        "orientation",
+        "topology_incidence",
+        "validation_finding"
+      ],
+      "predicate_family": "pathology.topology"
+    },
+    "PAT-010": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "independent_oracle",
+          "post_step_processing_disabled",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.numeric_pathology",
+      "observation_kinds": [
+        "orientation",
+        "topology_incidence",
+        "validation_finding"
+      ],
+      "predicate_family": "pathology.topology"
+    },
+    "PAT-011": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "independent_oracle",
+          "pcurve_repair_disabled",
+          "post_step_processing_disabled",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.edge_representation",
+      "observation_kinds": [
+        "numerical_measurement",
+        "pcurve_mapping",
+        "validation_finding"
+      ],
+      "predicate_family": "curve.parameter_consistency"
+    },
+    "PAT-012": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_evaluator_boundary",
+          "independent_oracle",
+          "native_runner_registered"
+        ],
+        "fixture_prerequisite_families": []
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "native_fault_injection"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.native_faults",
+      "observation_kinds": [
+        "evaluator_result",
+        "singularity",
+        "validation_finding"
+      ],
+      "predicate_family": "pathology.evaluator"
+    },
+    "PAT-013": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_evaluator_boundary",
+          "independent_oracle",
+          "native_runner_registered"
+        ],
+        "fixture_prerequisite_families": []
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "native_fault_injection"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.native_faults",
+      "observation_kinds": [
+        "evaluator_result",
+        "singularity",
+        "validation_finding"
+      ],
+      "predicate_family": "pathology.evaluator"
+    },
+    "PAT-014": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.numeric_pathology",
+      "observation_kinds": [
+        "numerical_measurement",
+        "surface_geometry",
+        "validation_finding"
+      ],
+      "predicate_family": "pathology.numeric"
+    },
+    "PAT-015": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_evaluator_boundary",
+          "independent_oracle",
+          "native_runner_registered"
+        ],
+        "fixture_prerequisite_families": []
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "native_fault_injection"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.native_faults",
+      "observation_kinds": [
+        "evaluator_result",
+        "numerical_measurement",
+        "validation_finding"
+      ],
+      "predicate_family": "pathology.evaluator"
+    },
+    "PAT-016": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": []
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.topology_hierarchy",
+      "observation_kinds": [
+        "numerical_measurement",
+        "topology_identity",
+        "validation_finding"
+      ],
+      "predicate_family": "pathology.topology"
+    },
+    "PAT-017": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption",
+          "occt_procedural"
+        ],
+        "mode": "all_of"
+      },
+      "family_id": "family.numeric_pathology",
+      "observation_kinds": [
+        "curve_geometry",
+        "surface_geometry",
+        "topology_incidence",
+        "trim_domain",
+        "validation_finding"
+      ],
+      "predicate_family": "pathology.topology"
+    },
+    "REC-001": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "exact_subject_identity",
+          "external_authorship_verified",
+          "file_verified_step_schema",
+          "independent_oracle",
+          "post_step_processing_disabled",
+          "redistribution_authority",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.assembly_instances",
+          "family.curve_taxonomy",
+          "family.edge_representation",
+          "family.external_corpus",
+          "family.import_failures",
+          "family.native_faults",
+          "family.numeric_pathology",
+          "family.semantic_blends",
+          "family.semantic_primitives",
+          "family.support_decisions",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy",
+          "family.trim_faults",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "audited_external",
+          "derived_corruption",
+          "occt_procedural"
+        ],
+        "mode": "all_of"
+      },
+      "family_id": "family.reconnaissance_consumers",
+      "observation_kinds": [
+        "source_provenance",
+        "step_import",
+        "validation_finding"
+      ],
+      "predicate_family": "reconnaissance.import"
+    },
+    "REC-002": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "all_applicable_fixtures",
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "exact_subject_identity",
+          "external_authorship_verified",
+          "file_verified_step_schema",
+          "independent_oracle",
+          "post_step_processing_disabled",
+          "redistribution_authority",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.assembly_instances",
+          "family.curve_taxonomy",
+          "family.edge_representation",
+          "family.external_corpus",
+          "family.import_failures",
+          "family.native_faults",
+          "family.numeric_pathology",
+          "family.semantic_blends",
+          "family.semantic_primitives",
+          "family.support_decisions",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy",
+          "family.trim_faults",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "audited_external",
+          "derived_corruption",
+          "occt_procedural"
+        ],
+        "mode": "all_of"
+      },
+      "family_id": "family.reconnaissance_consumers",
+      "observation_kinds": [
+        "topology_counts",
+        "topology_identity",
+        "topology_occurrences"
+      ],
+      "predicate_family": "reconnaissance.inventory"
+    },
+    "REC-003": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "all_applicable_fixtures",
+          "consumer_verification_required",
+          "exact_evaluator_boundary",
+          "exact_subject_identity",
+          "external_authorship_verified",
+          "file_verified_step_schema",
+          "independent_oracle",
+          "native_runner_registered",
+          "post_step_processing_disabled",
+          "redistribution_authority"
+        ],
+        "fixture_prerequisite_families": [
+          "family.assembly_instances",
+          "family.curve_taxonomy",
+          "family.edge_representation",
+          "family.external_corpus",
+          "family.import_failures",
+          "family.native_faults",
+          "family.numeric_pathology",
+          "family.semantic_blends",
+          "family.semantic_primitives",
+          "family.support_decisions",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy",
+          "family.trim_faults",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "audited_external",
+          "native_fault_injection",
+          "occt_procedural"
+        ],
+        "mode": "all_of"
+      },
+      "family_id": "family.reconnaissance_consumers",
+      "observation_kinds": [
+        "curve_geometry",
+        "surface_geometry",
+        "validation_finding"
+      ],
+      "predicate_family": "reconnaissance.inventory"
+    },
+    "REC-004": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "all_applicable_fixtures",
+          "consumer_verification_required",
+          "exact_evaluator_boundary",
+          "exact_subject_identity",
+          "external_authorship_verified",
+          "file_verified_step_schema",
+          "independent_oracle",
+          "native_runner_registered",
+          "post_step_processing_disabled",
+          "redistribution_authority",
+          "wrapper_survives_roundtrip_or_external"
+        ],
+        "fixture_prerequisite_families": [
+          "family.assembly_instances",
+          "family.curve_taxonomy",
+          "family.edge_representation",
+          "family.external_corpus",
+          "family.import_failures",
+          "family.native_faults",
+          "family.numeric_pathology",
+          "family.semantic_blends",
+          "family.semantic_primitives",
+          "family.support_decisions",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy",
+          "family.trim_faults",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "audited_external",
+          "native_fault_injection",
+          "occt_procedural"
+        ],
+        "mode": "all_of"
+      },
+      "family_id": "family.reconnaissance_consumers",
+      "observation_kinds": [
+        "curve_representation",
+        "surface_representation"
+      ],
+      "predicate_family": "reconnaissance.inventory"
+    },
+    "REC-005": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "all_applicable_fixtures",
+          "consumer_verification_required",
+          "cross_lane_corpus",
+          "derived_runner_registered",
+          "exact_evaluator_boundary",
+          "exact_subject_identity",
+          "external_authorship_verified",
+          "file_verified_step_schema",
+          "independent_oracle",
+          "native_runner_registered",
+          "post_step_processing_disabled",
+          "redistribution_authority",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.assembly_instances",
+          "family.curve_taxonomy",
+          "family.edge_representation",
+          "family.external_corpus",
+          "family.import_failures",
+          "family.native_faults",
+          "family.numeric_pathology",
+          "family.semantic_blends",
+          "family.semantic_primitives",
+          "family.support_decisions",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy",
+          "family.trim_faults",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "audited_external",
+          "derived_corruption",
+          "native_fault_injection",
+          "occt_procedural"
+        ],
+        "mode": "all_of"
+      },
+      "family_id": "family.reconnaissance_consumers",
+      "observation_kinds": [
+        "continuity",
+        "periodicity",
+        "singularity",
+        "trim_domain"
+      ],
+      "predicate_family": "reconnaissance.inventory"
+    },
+    "REC-006": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "all_applicable_fixtures",
+          "consumer_verification_required",
+          "cross_lane_corpus",
+          "derived_runner_registered",
+          "exact_evaluator_boundary",
+          "exact_subject_identity",
+          "external_authorship_verified",
+          "file_verified_step_schema",
+          "independent_oracle",
+          "native_runner_registered",
+          "post_step_processing_disabled",
+          "redistribution_authority",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.assembly_instances",
+          "family.curve_taxonomy",
+          "family.edge_representation",
+          "family.external_corpus",
+          "family.import_failures",
+          "family.native_faults",
+          "family.numeric_pathology",
+          "family.semantic_blends",
+          "family.semantic_primitives",
+          "family.support_decisions",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy",
+          "family.trim_faults",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "audited_external",
+          "derived_corruption",
+          "native_fault_injection",
+          "occt_procedural"
+        ],
+        "mode": "all_of"
+      },
+      "family_id": "family.reconnaissance_consumers",
+      "observation_kinds": [
+        "semantic_candidate",
+        "support_assignment"
+      ],
+      "predicate_family": "reconnaissance.inventory"
+    },
+    "REC-007": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "all_applicable_fixtures",
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "exact_evaluator_boundary",
+          "exact_subject_identity",
+          "external_authorship_verified",
+          "file_verified_step_schema",
+          "independent_oracle",
+          "native_runner_registered",
+          "post_step_processing_disabled",
+          "qt6_viewer_required",
+          "redistribution_authority",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.assembly_instances",
+          "family.curve_taxonomy",
+          "family.edge_representation",
+          "family.external_corpus",
+          "family.import_failures",
+          "family.native_faults",
+          "family.numeric_pathology",
+          "family.semantic_blends",
+          "family.semantic_primitives",
+          "family.support_decisions",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy",
+          "family.trim_faults",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "audited_external",
+          "derived_corruption",
+          "native_fault_injection",
+          "occt_procedural"
+        ],
+        "mode": "all_of"
+      },
+      "family_id": "family.reconnaissance_consumers",
+      "observation_kinds": [
+        "support_assignment",
+        "viewer_state"
+      ],
+      "predicate_family": "reconnaissance.viewer"
+    },
+    "REC-008": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "all_applicable_fixtures",
+          "consumer_verification_required",
+          "cross_lane_corpus",
+          "derived_runner_registered",
+          "exact_evaluator_boundary",
+          "exact_subject_identity",
+          "external_authorship_verified",
+          "file_verified_step_schema",
+          "independent_oracle",
+          "native_runner_registered",
+          "post_step_processing_disabled",
+          "redistribution_authority",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.assembly_instances",
+          "family.curve_taxonomy",
+          "family.edge_representation",
+          "family.external_corpus",
+          "family.import_failures",
+          "family.native_faults",
+          "family.numeric_pathology",
+          "family.semantic_blends",
+          "family.semantic_primitives",
+          "family.support_decisions",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy",
+          "family.trim_faults",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "audited_external",
+          "derived_corruption",
+          "native_fault_injection",
+          "occt_procedural"
+        ],
+        "mode": "all_of"
+      },
+      "family_id": "family.reconnaissance_consumers",
+      "observation_kinds": [
+        "report_determinism",
+        "support_assignment",
+        "topology_occurrences"
+      ],
+      "predicate_family": "reconnaissance.report"
+    },
+    "REC-009": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "all_applicable_fixtures",
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "exact_evaluator_boundary",
+          "exact_subject_identity",
+          "independent_oracle",
+          "native_runner_registered",
+          "no_meshing_fallback",
+          "post_step_processing_disabled",
+          "source_bound_mutation",
+          "unknown_type_injection"
+        ],
+        "fixture_prerequisite_families": [
+          "family.assembly_instances",
+          "family.curve_taxonomy",
+          "family.edge_representation",
+          "family.external_corpus",
+          "family.import_failures",
+          "family.native_faults",
+          "family.numeric_pathology",
+          "family.semantic_blends",
+          "family.semantic_primitives",
+          "family.support_decisions",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy",
+          "family.trim_faults",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption",
+          "native_fault_injection",
+          "occt_procedural"
+        ],
+        "mode": "all_of"
+      },
+      "family_id": "family.reconnaissance_consumers",
+      "observation_kinds": [
+        "evaluator_result",
+        "gate_result",
+        "validation_finding"
+      ],
+      "predicate_family": "reconnaissance.fail_closed"
+    },
+    "REC-010": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "complete_external_corpus",
+          "complete_synthetic_corpus",
+          "consumer_verification_required",
+          "cross_lane_corpus",
+          "derived_runner_registered",
+          "exact_subject_identity",
+          "external_authorship_verified",
+          "file_verified_step_schema",
+          "independent_exporter_matrix",
+          "independent_oracle",
+          "plasticity_family_matrix",
+          "post_step_processing_disabled",
+          "redistribution_authority",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": []
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "audited_external",
+          "derived_corruption",
+          "occt_procedural"
+        ],
+        "mode": "all_of"
+      },
+      "family_id": "family.external_corpus",
+      "observation_kinds": [
+        "external_provenance",
+        "report_determinism",
+        "source_provenance",
+        "step_import"
+      ],
+      "predicate_family": "reconnaissance.corpus"
+    },
+    "SEM-001": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.semantic_primitives",
+      "observation_kinds": [
+        "recognition_evidence",
+        "semantic_candidate",
+        "topology_incidence"
+      ],
+      "predicate_family": "semantic.primitive"
+    },
+    "SEM-002": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.semantic_primitives",
+      "observation_kinds": [
+        "recognition_evidence",
+        "semantic_candidate",
+        "topology_incidence"
+      ],
+      "predicate_family": "semantic.primitive"
+    },
+    "SEM-003": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.semantic_primitives",
+      "observation_kinds": [
+        "recognition_evidence",
+        "semantic_candidate",
+        "topology_incidence"
+      ],
+      "predicate_family": "semantic.primitive"
+    },
+    "SEM-004": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.semantic_primitives",
+      "observation_kinds": [
+        "recognition_evidence",
+        "semantic_candidate",
+        "topology_incidence"
+      ],
+      "predicate_family": "semantic.primitive"
+    },
+    "SEM-005": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.semantic_primitives",
+      "observation_kinds": [
+        "recognition_evidence",
+        "semantic_candidate",
+        "surface_geometry"
+      ],
+      "predicate_family": "semantic.freeform"
+    },
+    "SEM-006": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.semantic_primitives",
+      "observation_kinds": [
+        "recognition_evidence",
+        "semantic_candidate",
+        "surface_geometry"
+      ],
+      "predicate_family": "semantic.freeform"
+    },
+    "SEM-007": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.semantic_primitives",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.semantic_blends",
+      "observation_kinds": [
+        "continuity",
+        "recognition_evidence",
+        "semantic_candidate",
+        "topology_incidence"
+      ],
+      "predicate_family": "semantic.blend"
+    },
+    "SEM-008": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.semantic_primitives",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.semantic_blends",
+      "observation_kinds": [
+        "continuity",
+        "recognition_evidence",
+        "semantic_candidate",
+        "topology_incidence"
+      ],
+      "predicate_family": "semantic.blend"
+    },
+    "SEM-009": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.semantic_primitives",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.semantic_blends",
+      "observation_kinds": [
+        "continuity",
+        "recognition_evidence",
+        "semantic_candidate",
+        "topology_incidence"
+      ],
+      "predicate_family": "semantic.blend"
+    },
+    "SEM-010": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.semantic_primitives",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.semantic_blends",
+      "observation_kinds": [
+        "continuity",
+        "recognition_evidence",
+        "semantic_candidate",
+        "topology_incidence"
+      ],
+      "predicate_family": "semantic.blend"
+    },
+    "SEM-011": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.semantic_primitives",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.semantic_blends",
+      "observation_kinds": [
+        "continuity",
+        "recognition_evidence",
+        "semantic_candidate",
+        "topology_incidence"
+      ],
+      "predicate_family": "semantic.blend"
+    },
+    "SEM-012": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.semantic_primitives",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.semantic_blends",
+      "observation_kinds": [
+        "continuity",
+        "recognition_evidence",
+        "semantic_candidate",
+        "topology_incidence"
+      ],
+      "predicate_family": "semantic.blend"
+    },
+    "SEM-013": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.semantic_primitives",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.semantic_blends",
+      "observation_kinds": [
+        "continuity",
+        "recognition_evidence",
+        "semantic_candidate",
+        "topology_incidence"
+      ],
+      "predicate_family": "semantic.blend"
+    },
+    "SEM-014": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.semantic_primitives",
+      "observation_kinds": [
+        "recognition_evidence",
+        "semantic_candidate",
+        "topology_incidence"
+      ],
+      "predicate_family": "semantic.feature"
+    },
+    "SEM-015": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.semantic_primitives",
+      "observation_kinds": [
+        "recognition_evidence",
+        "semantic_candidate",
+        "topology_incidence"
+      ],
+      "predicate_family": "semantic.feature"
+    },
+    "SEM-016": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.semantic_primitives",
+      "observation_kinds": [
+        "recognition_evidence",
+        "semantic_candidate",
+        "topology_incidence"
+      ],
+      "predicate_family": "semantic.feature"
+    },
+    "SEM-017": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.semantic_primitives",
+      "observation_kinds": [
+        "recognition_evidence",
+        "semantic_candidate",
+        "topology_incidence"
+      ],
+      "predicate_family": "semantic.feature"
+    },
+    "SEM-018": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.semantic_primitives",
+      "observation_kinds": [
+        "recognition_evidence",
+        "semantic_candidate",
+        "topology_incidence"
+      ],
+      "predicate_family": "semantic.feature"
+    },
+    "SEM-019": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.semantic_primitives",
+      "observation_kinds": [
+        "recognition_evidence",
+        "semantic_candidate",
+        "topology_incidence"
+      ],
+      "predicate_family": "semantic.feature"
+    },
+    "SEM-020": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.semantic_primitives",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.semantic_blends",
+      "observation_kinds": [
+        "recognition_evidence",
+        "semantic_candidate",
+        "singularity",
+        "topology_incidence"
+      ],
+      "predicate_family": "semantic.blend"
+    },
+    "SEM-021": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.semantic_primitives",
+      "observation_kinds": [
+        "numerical_measurement",
+        "recognition_evidence",
+        "semantic_candidate"
+      ],
+      "predicate_family": "semantic.feature"
+    },
+    "SEM-022": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.semantic_primitives",
+      "observation_kinds": [
+        "numerical_measurement",
+        "recognition_evidence",
+        "semantic_candidate"
+      ],
+      "predicate_family": "semantic.feature"
+    },
+    "SEM-023": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.semantic_primitives",
+      "observation_kinds": [
+        "numerical_measurement",
+        "recognition_evidence",
+        "semantic_candidate"
+      ],
+      "predicate_family": "semantic.feature"
+    },
+    "SEM-024": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.semantic_primitives",
+      "observation_kinds": [
+        "numerical_measurement",
+        "recognition_evidence",
+        "semantic_candidate"
+      ],
+      "predicate_family": "semantic.feature"
+    },
+    "SEM-025": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_evaluator_boundary",
+          "exact_subject_identity",
+          "independent_oracle",
+          "native_runner_registered",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.native_faults",
+          "family.semantic_blends",
+          "family.semantic_primitives",
+          "family.trim_faults",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "native_fault_injection",
+          "occt_procedural"
+        ],
+        "mode": "all_of"
+      },
+      "family_id": "family.support_decisions",
+      "observation_kinds": [
+        "numerical_measurement",
+        "recognition_evidence",
+        "semantic_candidate",
+        "support_assignment"
+      ],
+      "predicate_family": "semantic.confidence"
+    },
+    "SRC-001": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M1"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "external_authorship_verified",
+          "file_verified_step_schema",
+          "independent_oracle",
+          "plasticity_family_matrix",
+          "redistribution_authority"
+        ],
+        "fixture_prerequisite_families": []
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "audited_external"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.external_corpus",
+      "observation_kinds": [
+        "external_provenance",
+        "ownership_licence",
+        "source_provenance"
+      ],
+      "predicate_family": "source.external"
+    },
+    "SRC-002": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M1"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "external_authorship_verified",
+          "file_verified_step_schema",
+          "independent_exporter_matrix",
+          "independent_oracle",
+          "redistribution_authority"
+        ],
+        "fixture_prerequisite_families": []
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "audited_external"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.external_corpus",
+      "observation_kinds": [
+        "external_provenance",
+        "ownership_licence",
+        "source_provenance"
+      ],
+      "predicate_family": "source.external"
+    },
+    "SRC-003": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M1"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "external_authorship_verified",
+          "file_verified_step_schema",
+          "independent_oracle",
+          "redistribution_authority"
+        ],
+        "fixture_prerequisite_families": []
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "audited_external"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.external_corpus",
+      "observation_kinds": [
+        "external_provenance",
+        "ownership_licence",
+        "source_provenance"
+      ],
+      "predicate_family": "source.external"
+    },
+    "SRF-001": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.surface_periodic_singular",
+      "observation_kinds": [
+        "surface_geometry",
+        "surface_representation",
+        "trim_domain"
+      ],
+      "predicate_family": "surface.analytic"
+    },
+    "SRF-002": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.surface_periodic_singular",
+      "observation_kinds": [
+        "surface_geometry",
+        "surface_representation",
+        "trim_domain"
+      ],
+      "predicate_family": "surface.analytic"
+    },
+    "SRF-003": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.surface_periodic_singular",
+      "observation_kinds": [
+        "surface_geometry",
+        "surface_representation",
+        "trim_domain"
+      ],
+      "predicate_family": "surface.analytic"
+    },
+    "SRF-004": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.surface_periodic_singular",
+      "observation_kinds": [
+        "surface_geometry",
+        "surface_representation",
+        "trim_domain"
+      ],
+      "predicate_family": "surface.analytic"
+    },
+    "SRF-005": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.surface_periodic_singular",
+      "observation_kinds": [
+        "surface_geometry",
+        "surface_representation",
+        "trim_domain"
+      ],
+      "predicate_family": "surface.analytic"
+    },
+    "SRF-006": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.surface_freeform_wrappers",
+      "observation_kinds": [
+        "surface_geometry",
+        "surface_representation",
+        "trim_domain"
+      ],
+      "predicate_family": "surface.spline"
+    },
+    "SRF-007": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.surface_freeform_wrappers",
+      "observation_kinds": [
+        "surface_geometry",
+        "surface_representation",
+        "trim_domain"
+      ],
+      "predicate_family": "surface.spline"
+    },
+    "SRF-008": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.surface_periodic_singular",
+      "observation_kinds": [
+        "singularity",
+        "surface_geometry",
+        "surface_representation"
+      ],
+      "predicate_family": "surface.periodic_singularity"
+    },
+    "SRF-009": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.surface_freeform_wrappers",
+      "observation_kinds": [
+        "surface_geometry",
+        "surface_representation",
+        "trim_domain"
+      ],
+      "predicate_family": "surface.wrapper"
+    },
+    "SRF-010": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption",
+          "occt_procedural"
+        ],
+        "mode": "all_of"
+      },
+      "family_id": "family.surface_freeform_wrappers",
+      "observation_kinds": [
+        "orientation",
+        "singularity",
+        "surface_geometry",
+        "surface_representation"
+      ],
+      "predicate_family": "surface.wrapper"
+    },
+    "SRF-011": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "external_authorship_verified",
+          "file_verified_step_schema",
+          "independent_oracle",
+          "post_step_processing_disabled",
+          "redistribution_authority",
+          "wrapper_survives_roundtrip_or_external"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "audited_external",
+          "occt_procedural"
+        ],
+        "mode": "any_of"
+      },
+      "family_id": "family.surface_freeform_wrappers",
+      "observation_kinds": [
+        "source_provenance",
+        "surface_geometry",
+        "surface_representation"
+      ],
+      "predicate_family": "surface.wrapper"
+    },
+    "SRF-012": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "external_authorship_verified",
+          "file_verified_step_schema",
+          "independent_oracle",
+          "post_step_processing_disabled",
+          "redistribution_authority",
+          "wrapper_survives_roundtrip_or_external"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "audited_external",
+          "occt_procedural"
+        ],
+        "mode": "any_of"
+      },
+      "family_id": "family.surface_freeform_wrappers",
+      "observation_kinds": [
+        "surface_geometry",
+        "surface_representation"
+      ],
+      "predicate_family": "surface.wrapper"
+    },
+    "SRF-013": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "external_authorship_verified",
+          "file_verified_step_schema",
+          "independent_oracle",
+          "post_step_processing_disabled",
+          "redistribution_authority",
+          "wrapper_survives_roundtrip_or_external"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "audited_external",
+          "occt_procedural"
+        ],
+        "mode": "any_of"
+      },
+      "family_id": "family.surface_freeform_wrappers",
+      "observation_kinds": [
+        "surface_geometry",
+        "surface_representation"
+      ],
+      "predicate_family": "surface.wrapper"
+    },
+    "SRF-014": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "exact_subject_identity",
+          "independent_oracle",
+          "nonrigid_source_transform_contract",
+          "post_step_processing_disabled",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption",
+          "occt_procedural"
+        ],
+        "mode": "all_of"
+      },
+      "family_id": "family.surface_freeform_wrappers",
+      "observation_kinds": [
+        "locations",
+        "source_transform",
+        "surface_representation"
+      ],
+      "predicate_family": "surface.wrapper"
+    },
+    "SRF-015": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.surface_periodic_singular",
+      "observation_kinds": [
+        "surface_geometry",
+        "surface_representation",
+        "trim_domain"
+      ],
+      "predicate_family": "surface.analytic"
+    },
+    "SRF-016": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.surface_periodic_singular",
+      "observation_kinds": [
+        "orientation",
+        "periodicity",
+        "singularity",
+        "surface_geometry",
+        "trim_domain"
+      ],
+      "predicate_family": "surface.periodic_singularity"
+    },
+    "SRF-017": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.surface_periodic_singular",
+      "observation_kinds": [
+        "orientation",
+        "periodicity",
+        "singularity",
+        "surface_geometry",
+        "trim_domain"
+      ],
+      "predicate_family": "surface.periodic_singularity"
+    },
+    "SRF-018": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.surface_periodic_singular",
+      "observation_kinds": [
+        "orientation",
+        "periodicity",
+        "singularity",
+        "surface_geometry",
+        "trim_domain"
+      ],
+      "predicate_family": "surface.periodic_singularity"
+    },
+    "SRF-019": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.surface_periodic_singular",
+      "observation_kinds": [
+        "orientation",
+        "periodicity",
+        "singularity",
+        "surface_geometry",
+        "trim_domain"
+      ],
+      "predicate_family": "surface.periodic_singularity"
+    },
+    "SRF-020": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.surface_periodic_singular",
+      "observation_kinds": [
+        "orientation",
+        "periodicity",
+        "singularity",
+        "surface_geometry",
+        "trim_domain"
+      ],
+      "predicate_family": "surface.periodic_singularity"
+    },
+    "SRF-021": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.surface_periodic_singular",
+      "observation_kinds": [
+        "orientation",
+        "periodicity",
+        "singularity",
+        "surface_geometry",
+        "trim_domain"
+      ],
+      "predicate_family": "surface.periodic_singularity"
+    },
+    "SRF-022": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.surface_periodic_singular",
+      "observation_kinds": [
+        "orientation",
+        "periodicity",
+        "singularity",
+        "surface_geometry",
+        "trim_domain"
+      ],
+      "predicate_family": "surface.periodic_singularity"
+    },
+    "SRF-023": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.surface_periodic_singular",
+      "observation_kinds": [
+        "orientation",
+        "periodicity",
+        "singularity",
+        "surface_geometry",
+        "trim_domain"
+      ],
+      "predicate_family": "surface.periodic_singularity"
+    },
+    "SRF-024": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.surface_freeform_wrappers",
+      "observation_kinds": [
+        "surface_geometry",
+        "surface_representation"
+      ],
+      "predicate_family": "surface.spline"
+    },
+    "SRF-025": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.surface_freeform_wrappers",
+      "observation_kinds": [
+        "continuity",
+        "numerical_measurement",
+        "surface_geometry"
+      ],
+      "predicate_family": "surface.continuity_metric"
+    },
+    "SRF-026": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.surface_freeform_wrappers",
+      "observation_kinds": [
+        "numerical_measurement",
+        "surface_geometry",
+        "surface_representation"
+      ],
+      "predicate_family": "surface.continuity_metric"
+    },
+    "SRF-027": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.surface_freeform_wrappers",
+      "observation_kinds": [
+        "numerical_measurement",
+        "surface_geometry",
+        "surface_representation"
+      ],
+      "predicate_family": "surface.continuity_metric"
+    },
+    "SRF-028": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.trim_valid_domains",
+      "observation_kinds": [
+        "periodicity",
+        "surface_geometry",
+        "trim_domain"
+      ],
+      "predicate_family": "trim.valid_domain"
+    },
+    "SRF-029": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.trim_valid_domains",
+      "observation_kinds": [
+        "periodicity",
+        "surface_geometry",
+        "trim_domain"
+      ],
+      "predicate_family": "trim.valid_domain"
+    },
+    "SRF-030": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.trim_valid_domains",
+      "observation_kinds": [
+        "periodicity",
+        "surface_geometry",
+        "trim_domain"
+      ],
+      "predicate_family": "trim.valid_domain"
+    },
+    "SRF-031": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "independent_oracle",
+          "pcurve_repair_disabled",
+          "post_step_processing_disabled",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.edge_representation",
+      "observation_kinds": [
+        "pcurve_mapping",
+        "surface_geometry",
+        "validation_finding"
+      ],
+      "predicate_family": "curve.parameter_consistency"
+    },
+    "SUP-001": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.native_faults",
+          "family.semantic_blends",
+          "family.semantic_primitives",
+          "family.trim_faults",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.support_decisions",
+      "observation_kinds": [
+        "recognition_evidence",
+        "support_assignment"
+      ],
+      "predicate_family": "support.state"
+    },
+    "SUP-002": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.native_faults",
+          "family.semantic_blends",
+          "family.semantic_primitives",
+          "family.trim_faults",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.support_decisions",
+      "observation_kinds": [
+        "recognition_evidence",
+        "support_assignment"
+      ],
+      "predicate_family": "support.state"
+    },
+    "SUP-003": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.native_faults",
+          "family.semantic_blends",
+          "family.semantic_primitives",
+          "family.trim_faults",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.support_decisions",
+      "observation_kinds": [
+        "recognition_evidence",
+        "support_assignment"
+      ],
+      "predicate_family": "support.state"
+    },
+    "SUP-004": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.native_faults",
+          "family.semantic_blends",
+          "family.semantic_primitives",
+          "family.trim_faults",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.support_decisions",
+      "observation_kinds": [
+        "recognition_evidence",
+        "support_assignment"
+      ],
+      "predicate_family": "support.state"
+    },
+    "SUP-005": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.native_faults",
+          "family.semantic_blends",
+          "family.semantic_primitives",
+          "family.trim_faults",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption",
+          "occt_procedural"
+        ],
+        "mode": "all_of"
+      },
+      "family_id": "family.support_decisions",
+      "observation_kinds": [
+        "support_assignment",
+        "validation_finding"
+      ],
+      "predicate_family": "support.state"
+    },
+    "SUP-006": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.native_faults",
+          "family.semantic_blends",
+          "family.semantic_primitives",
+          "family.trim_faults",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption",
+          "occt_procedural"
+        ],
+        "mode": "all_of"
+      },
+      "family_id": "family.support_decisions",
+      "observation_kinds": [
+        "support_assignment",
+        "validation_finding"
+      ],
+      "predicate_family": "support.state"
+    },
+    "SUP-007": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.native_faults",
+          "family.semantic_blends",
+          "family.semantic_primitives",
+          "family.trim_faults",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.support_decisions",
+      "observation_kinds": [
+        "recognition_evidence",
+        "support_assignment"
+      ],
+      "predicate_family": "support.state"
+    },
+    "SUP-008": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_evaluator_boundary",
+          "independent_oracle",
+          "native_runner_registered",
+          "unknown_type_injection"
+        ],
+        "fixture_prerequisite_families": []
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "native_fault_injection"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.native_faults",
+      "observation_kinds": [
+        "evaluator_result",
+        "support_assignment",
+        "validation_finding"
+      ],
+      "predicate_family": "support.state"
+    },
+    "SUP-009": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3"
+        ],
+        "corpus_constraints": [
+          "all_applicable_fixtures",
+          "consumer_verification_required",
+          "cross_lane_corpus",
+          "derived_runner_registered",
+          "exact_evaluator_boundary",
+          "exact_subject_identity",
+          "external_authorship_verified",
+          "file_verified_step_schema",
+          "independent_oracle",
+          "native_runner_registered",
+          "post_step_processing_disabled",
+          "redistribution_authority",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.native_faults",
+          "family.semantic_blends",
+          "family.semantic_primitives",
+          "family.trim_faults",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "audited_external",
+          "derived_corruption",
+          "native_fault_injection",
+          "occt_procedural"
+        ],
+        "mode": "all_of"
+      },
+      "family_id": "family.support_decisions",
+      "observation_kinds": [
+        "support_assignment",
+        "topology_occurrences"
+      ],
+      "predicate_family": "support.totality"
+    },
+    "SUP-010": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3",
+          "M5"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_evaluator_boundary",
+          "exact_subject_identity",
+          "independent_oracle",
+          "native_runner_registered",
+          "no_meshing_fallback",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.native_faults",
+          "family.semantic_blends",
+          "family.semantic_primitives",
+          "family.trim_faults",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "native_fault_injection",
+          "occt_procedural"
+        ],
+        "mode": "all_of"
+      },
+      "family_id": "family.support_decisions",
+      "observation_kinds": [
+        "gate_result",
+        "support_assignment",
+        "viewer_state"
+      ],
+      "predicate_family": "support.gate"
+    },
+    "SUP-011": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M3",
+          "M5"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_evaluator_boundary",
+          "exact_subject_identity",
+          "independent_oracle",
+          "native_runner_registered",
+          "no_meshing_fallback",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.native_faults",
+          "family.semantic_blends",
+          "family.semantic_primitives",
+          "family.trim_faults",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "native_fault_injection",
+          "occt_procedural"
+        ],
+        "mode": "all_of"
+      },
+      "family_id": "family.support_decisions",
+      "observation_kinds": [
+        "gate_result",
+        "support_assignment",
+        "viewer_state"
+      ],
+      "predicate_family": "support.gate"
+    },
+    "TOP-001": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": []
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.topology_hierarchy",
+      "observation_kinds": [
+        "locations",
+        "source_provenance",
+        "topology_identity",
+        "topology_occurrences"
+      ],
+      "predicate_family": "topology.model"
+    },
+    "TOP-002": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": []
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.topology_hierarchy",
+      "observation_kinds": [
+        "topology_counts",
+        "topology_identity",
+        "topology_incidence"
+      ],
+      "predicate_family": "topology.entity"
+    },
+    "TOP-003": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": []
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.topology_hierarchy",
+      "observation_kinds": [
+        "orientation",
+        "topology_counts",
+        "validation_finding"
+      ],
+      "predicate_family": "topology.model"
+    },
+    "TOP-004": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": []
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.topology_hierarchy",
+      "observation_kinds": [
+        "topology_counts",
+        "topology_incidence",
+        "validation_finding"
+      ],
+      "predicate_family": "topology.entity"
+    },
+    "TOP-005": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": []
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.topology_hierarchy",
+      "observation_kinds": [
+        "surface_geometry",
+        "topology_incidence",
+        "topology_occurrences",
+        "trim_domain"
+      ],
+      "predicate_family": "topology.entity"
+    },
+    "TOP-006": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": []
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption",
+          "occt_procedural"
+        ],
+        "mode": "all_of"
+      },
+      "family_id": "family.topology_hierarchy",
+      "observation_kinds": [
+        "topology_incidence",
+        "topology_occurrences",
+        "trim_domain",
+        "validation_finding"
+      ],
+      "predicate_family": "topology.entity"
+    },
+    "TOP-007": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "exact_subject_identity",
+          "independent_oracle",
+          "pcurve_repair_disabled",
+          "post_step_processing_disabled",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption",
+          "occt_procedural"
+        ],
+        "mode": "all_of"
+      },
+      "family_id": "family.edge_representation",
+      "observation_kinds": [
+        "curve_geometry",
+        "pcurve_mapping",
+        "topology_incidence",
+        "vertex_parameters"
+      ],
+      "predicate_family": "topology.edge"
+    },
+    "TOP-008": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.curve_taxonomy",
+          "family.surface_periodic_singular",
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.edge_representation",
+      "observation_kinds": [
+        "topology_incidence",
+        "topology_occurrences",
+        "vertex_parameters"
+      ],
+      "predicate_family": "topology.edge"
+    },
+    "TOP-009": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "independent_oracle",
+          "post_step_processing_disabled",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.import_failures",
+      "observation_kinds": [
+        "source_provenance",
+        "step_import",
+        "validation_finding"
+      ],
+      "predicate_family": "topology.import_failure"
+    },
+    "TOP-010": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": []
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.topology_hierarchy",
+      "observation_kinds": [
+        "orientation",
+        "topology_occurrences"
+      ],
+      "predicate_family": "topology.orientation"
+    },
+    "TOP-011": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.assembly_instances",
+      "observation_kinds": [
+        "locations",
+        "source_transform",
+        "topology_identity",
+        "topology_occurrences"
+      ],
+      "predicate_family": "topology.transform"
+    },
+    "TOP-012": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.assembly_instances",
+      "observation_kinds": [
+        "source_provenance",
+        "topology_counts",
+        "topology_occurrences"
+      ],
+      "predicate_family": "topology.model"
+    },
+    "TOP-013": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": []
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.topology_hierarchy",
+      "observation_kinds": [
+        "topology_incidence",
+        "validation_finding"
+      ],
+      "predicate_family": "topology.model"
+    },
+    "TOP-014": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": []
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.topology_hierarchy",
+      "observation_kinds": [
+        "orientation",
+        "topology_counts",
+        "topology_identity"
+      ],
+      "predicate_family": "topology.model"
+    },
+    "TOP-015": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": []
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.topology_hierarchy",
+      "observation_kinds": [
+        "topology_incidence",
+        "topology_occurrences"
+      ],
+      "predicate_family": "topology.entity"
+    },
+    "TOP-016": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": []
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.topology_hierarchy",
+      "observation_kinds": [
+        "locations",
+        "numerical_measurement",
+        "topology_identity"
+      ],
+      "predicate_family": "topology.model"
+    },
+    "TOP-017": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "external_authorship_verified",
+          "file_verified_step_schema",
+          "independent_oracle",
+          "nonrigid_source_transform_contract",
+          "post_step_processing_disabled",
+          "redistribution_authority",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.topology_hierarchy"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "audited_external",
+          "derived_corruption"
+        ],
+        "mode": "any_of"
+      },
+      "family_id": "family.assembly_instances",
+      "observation_kinds": [
+        "locations",
+        "source_provenance",
+        "source_transform"
+      ],
+      "predicate_family": "topology.transform"
+    },
+    "TOP-018": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": []
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.topology_hierarchy",
+      "observation_kinds": [
+        "topology_incidence",
+        "topology_occurrences"
+      ],
+      "predicate_family": "topology.entity"
+    },
+    "TRM-001": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.trim_valid_domains",
+      "observation_kinds": [
+        "topology_incidence",
+        "trim_domain"
+      ],
+      "predicate_family": "trim.valid_domain"
+    },
+    "TRM-002": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.trim_valid_domains",
+      "observation_kinds": [
+        "topology_incidence",
+        "trim_domain"
+      ],
+      "predicate_family": "trim.valid_domain"
+    },
+    "TRM-003": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.trim_valid_domains",
+      "observation_kinds": [
+        "topology_incidence",
+        "trim_domain"
+      ],
+      "predicate_family": "trim.valid_domain"
+    },
+    "TRM-004": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.trim_valid_domains",
+      "observation_kinds": [
+        "topology_incidence",
+        "trim_domain"
+      ],
+      "predicate_family": "trim.valid_domain"
+    },
+    "TRM-005": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.trim_valid_domains",
+      "observation_kinds": [
+        "topology_incidence",
+        "trim_domain"
+      ],
+      "predicate_family": "trim.valid_domain"
+    },
+    "TRM-006": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.trim_valid_domains",
+      "observation_kinds": [
+        "topology_incidence",
+        "trim_domain"
+      ],
+      "predicate_family": "trim.valid_domain"
+    },
+    "TRM-007": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.trim_valid_domains",
+      "observation_kinds": [
+        "topology_incidence",
+        "trim_domain"
+      ],
+      "predicate_family": "trim.valid_domain"
+    },
+    "TRM-008": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.trim_valid_domains",
+      "observation_kinds": [
+        "topology_incidence",
+        "trim_domain"
+      ],
+      "predicate_family": "trim.valid_domain"
+    },
+    "TRM-009": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.trim_valid_domains",
+      "observation_kinds": [
+        "topology_incidence",
+        "trim_domain"
+      ],
+      "predicate_family": "trim.valid_domain"
+    },
+    "TRM-010": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "exact_subject_identity",
+          "independent_oracle",
+          "post_step_processing_disabled"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.surface_freeform_wrappers",
+          "family.surface_periodic_singular"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "occt_procedural"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.trim_valid_domains",
+      "observation_kinds": [
+        "topology_incidence",
+        "trim_domain"
+      ],
+      "predicate_family": "trim.valid_domain"
+    },
+    "TRM-011": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "independent_oracle",
+          "post_step_processing_disabled",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.trim_faults",
+      "observation_kinds": [
+        "topology_incidence",
+        "trim_domain",
+        "validation_finding"
+      ],
+      "predicate_family": "trim.invalid_domain"
+    },
+    "TRM-012": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "independent_oracle",
+          "post_step_processing_disabled",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.trim_faults",
+      "observation_kinds": [
+        "topology_incidence",
+        "trim_domain",
+        "validation_finding"
+      ],
+      "predicate_family": "trim.invalid_domain"
+    },
+    "TRM-013": {
+      "dependencies": {
+        "consumer_milestones": [
+          "M2",
+          "M3"
+        ],
+        "corpus_constraints": [
+          "consumer_verification_required",
+          "derived_runner_registered",
+          "independent_oracle",
+          "post_step_processing_disabled",
+          "source_bound_mutation"
+        ],
+        "fixture_prerequisite_families": [
+          "family.edge_representation",
+          "family.trim_valid_domains"
+        ]
+      },
+      "evidence_requirement": {
+        "lanes": [
+          "derived_corruption"
+        ],
+        "mode": "single"
+      },
+      "family_id": "family.trim_faults",
+      "observation_kinds": [
+        "topology_incidence",
+        "trim_domain",
+        "validation_finding"
+      ],
+      "predicate_family": "trim.invalid_domain"
+    }
+  },
+  "schema_version": "1.0.0"
+}

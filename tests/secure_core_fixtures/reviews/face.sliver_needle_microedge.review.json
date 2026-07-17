@@ -1,0 +1,30 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "7ad97e0de0bc35b5ab1d2e85c338c3682504e03ed706dc1f5b3a212b48867950",
+  "finding_disposition": "Fresh-context recipe, parameter, topology, normalization, invalid-import, STEP, summary, native-BRep, claim-profile, and source-contract checks passed without promoting lost or invalid imported subjects.",
+  "fixture_id": "face.sliver_needle_microedge",
+  "producer_id": "producer.m1_feature_pathology_oracle_authoring",
+  "review_id": "review.face_sliver_needle_microedge.revision_6",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.feature_pathology_oracle_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "artifacts.native_brep_binding",
+    "claims.profile_binding",
+    "construction.parameters",
+    "geometry.source_derivation",
+    "normalization.explicit",
+    "support.occurrence_identity",
+    "topology.readback",
+    "units.tolerances"
+  ],
+  "source_binding": {
+    "artifact_sha256": "2203d50bce7fda9fb87709f7d4e638915080bb3df8fa6274f39d7759fa802c69",
+    "construction_parameters_sha256": "9cce4ef48dfb13bcfbf6ecb69624518aa6265ceafba9662f46d7099dc48fdbfa",
+    "generator_revision": 6,
+    "kind": "occt_procedural",
+    "source_contract_sha256": "5745f741b2bea31b0f205652d23c5c53ca02d6374365e74c9b73570487a25bf2",
+    "summary_sha256": "d85aed995857e491168b6da18f387de5f5aca227466ab4a2a72a992c8dac8b7c"
+  }
+}

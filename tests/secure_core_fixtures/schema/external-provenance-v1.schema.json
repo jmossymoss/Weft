@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.weftocct.example/v1/external-provenance-v1.schema.json",
+  "title": "CAD mesher audited external STEP provenance v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "canonicalization",
+    "fixture_id",
+    "artifact_sha256",
+    "source",
+    "owner",
+    "acquired_on",
+    "exporter",
+    "step_schema",
+    "export_settings",
+    "licence_identifier",
+    "redistribution_allowed",
+    "audit_statement"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "canonicalization": { "const": "sorted-pretty-json-v1" },
+    "fixture_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*$"
+    },
+    "artifact_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "source": { "type": "string", "minLength": 1 },
+    "owner": { "type": "string", "minLength": 1 },
+    "acquired_on": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+    "exporter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 }
+      }
+    },
+    "step_schema": { "enum": ["AP203", "AP214IS", "AP242DIS"] },
+    "export_settings": { "type": "string", "minLength": 1 },
+    "licence_identifier": { "type": "string", "minLength": 1 },
+    "redistribution_allowed": { "const": true },
+    "audit_statement": { "type": "string", "minLength": 1 }
+  }
+}

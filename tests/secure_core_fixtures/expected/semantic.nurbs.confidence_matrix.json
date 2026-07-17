@@ -1,0 +1,1269 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "expected": {
+    "boundary_loops": [
+      {
+        "closed": true,
+        "edge_occurrence_count": 1,
+        "face_occurrence_id": "face_occurrence.f0001",
+        "id": "boundary_loop.l0001",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 6.0,
+          "u_min": -6.0,
+          "v_max": 6.0,
+          "v_min": -6.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 1,
+        "face_occurrence_id": "face_occurrence.f0002",
+        "id": "boundary_loop.l0002",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 6.0,
+          "u_min": -6.0,
+          "v_max": 6.0,
+          "v_min": -6.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0003",
+        "id": "boundary_loop.l0003",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 1.0,
+          "u_min": 0.0,
+          "v_max": 1.0,
+          "v_min": 0.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0004",
+        "id": "boundary_loop.l0004",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 1.0,
+          "u_min": 0.0,
+          "v_max": 1.0,
+          "v_min": 0.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0005",
+        "id": "boundary_loop.l0005",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 6.283185307,
+          "u_min": 0.0,
+          "v_max": 1.570796327,
+          "v_min": -1.570796327
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0006",
+        "id": "boundary_loop.l0006",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 6.283185307,
+          "u_min": 0.0,
+          "v_max": 16.0,
+          "v_min": 0.0
+        }
+      }
+    ],
+    "brep_valid": true,
+    "claims": [
+      {
+        "id": "claim.sem_025.procedural_confidence_matrix",
+        "obligation_id": "SEM-025",
+        "predicate_codes": [
+          "predicate.semantic.confidence_matrix"
+        ],
+        "statement": "The procedural/native oracle binds ProvenAnalytic, VerifiedRecovered, Ambiguous, and NotRecognised evidence plus the expected support-state inventory; M3 classifier verification remains pending.",
+        "subject_refs": [
+          {
+            "id": "observation.consumer.support_assignment",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.measurement.confidence_matrix",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.semantic.confidence.proven_analytic",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.semantic.confidence.verified_recovered",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.semantic.recognition_near_planar_bspline",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.semantic.recognition_residual_bspline",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.srf_007.surface_spline",
+        "obligation_id": "SRF-007",
+        "predicate_codes": [
+          "predicate.surface.spline"
+        ],
+        "statement": "The processing-disabled imported evidence satisfies SRF-007 through predicate.surface.spline; the referenced observations bind the exact post-STEP subjects.",
+        "subject_refs": [
+          {
+            "id": "observation.geometry.surface_bspline",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.face_occurrence_f0001",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.face_occurrence_f0002",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.face_occurrence_f0003",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.face_occurrence_f0004",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.face_occurrence_f0005",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.face_occurrence_f0006",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.srf_024.surface_spline",
+        "obligation_id": "SRF-024",
+        "predicate_codes": [
+          "predicate.surface.spline"
+        ],
+        "statement": "The processing-disabled imported evidence satisfies SRF-024 through predicate.surface.spline; the referenced observations bind the exact post-STEP subjects.",
+        "subject_refs": [
+          {
+            "id": "observation.geometry.surface_bspline",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.sup_004.support_deferred_residual_present",
+        "obligation_id": "SUP-004",
+        "predicate_codes": [
+          "predicate.support.deferred_residual_present"
+        ],
+        "statement": "The processing-disabled imported evidence satisfies SUP-004 through predicate.support.deferred_residual_present; the referenced observations bind the exact post-STEP subjects.",
+        "subject_refs": [
+          {
+            "id": "observation.consumer.support_assignment",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.semantic.recognition_near_planar_bspline",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.semantic.recognition_residual_bspline",
+            "kind": "observation"
+          },
+          {
+            "id": "support.face.bspline.reason_residual_surface_route_unproven.bucket_04",
+            "kind": "support"
+          },
+          {
+            "id": "support.logical_region.bspline.reason_residual_surface_route_unproven.bucket_07",
+            "kind": "support"
+          }
+        ]
+      },
+      {
+        "id": "claim.sup_007.support_state",
+        "obligation_id": "SUP-007",
+        "predicate_codes": [
+          "predicate.support.state"
+        ],
+        "statement": "The processing-disabled imported evidence satisfies SUP-007 through predicate.support.state; the referenced observations bind the exact post-STEP subjects.",
+        "subject_refs": [
+          {
+            "id": "observation.consumer.support_assignment",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.semantic.recognition_near_planar_bspline",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.semantic.recognition_residual_bspline",
+            "kind": "observation"
+          }
+        ]
+      }
+    ],
+    "curve_variants": [
+      {
+        "concrete_type": "Geom_BSplineCurve",
+        "condition_codes": [
+          "bounded",
+          "spline_representation"
+        ],
+        "count": 12,
+        "family_code": "bspline",
+        "label": "curve.bspline",
+        "wrapper_stack": []
+      },
+      {
+        "concrete_type": "null",
+        "condition_codes": [
+          "missing_3d_curve",
+          "pcurve_only"
+        ],
+        "count": 2,
+        "family_code": "pcurve_only",
+        "label": "curve.pcurve_only",
+        "wrapper_stack": [
+          "pcurve_only"
+        ]
+      }
+    ],
+    "import_outcome": "success",
+    "model_classes": [
+      "open_manifold",
+      "open_shell",
+      "procedural_fixture"
+    ],
+    "model_topology": {
+      "closed_shells": 2,
+      "coincident_solid_signature_pairs": 0,
+      "free_edges": 0,
+      "free_wires": 0,
+      "inner_shells": 0,
+      "isolated_vertices": 0,
+      "maximum_faces_per_edge": 2,
+      "nonmanifold_vertices": 0,
+      "open_shells": 2,
+      "outer_shells": 2,
+      "shared_faces_between_solids": 0,
+      "standalone_shells": 2
+    },
+    "orientation_states": [
+      "FORWARD",
+      "REVERSED"
+    ],
+    "periodicity": [
+      {
+        "label": "surface.bspline",
+        "u_closed": false,
+        "u_periodic": false,
+        "v_closed": false,
+        "v_periodic": false
+      }
+    ],
+    "semantic_candidates": [
+      {
+        "code": "recognition.analytic_seed",
+        "confidence": "ProvenAnalytic",
+        "evidence": "Exact analytic construction seed before conversion.",
+        "subject_count": 1
+      },
+      {
+        "code": "recognition.cylinder_from_nurbs",
+        "confidence": "VerifiedRecovered",
+        "evidence": "Generic NURBS cylinder with a zero-residual independent fit.",
+        "subject_count": 1
+      },
+      {
+        "code": "recognition.near_planar_bspline",
+        "confidence": "Ambiguous",
+        "evidence": "The 10^-5 millimetre interior lift is deliberately near the frozen planar-recognition threshold.",
+        "subject_count": 1
+      },
+      {
+        "code": "recognition.residual_bspline",
+        "confidence": "NotRecognised",
+        "evidence": "The eight-millimetre residual patch is not an analytic primitive and has no residual meshing route.",
+        "subject_count": 1
+      }
+    ],
+    "singularity_codes": [],
+    "subject_universe": {
+      "edge_occurrence_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004",
+        "edge_occurrence.e0005",
+        "edge_occurrence.e0006",
+        "edge_occurrence.e0007",
+        "edge_occurrence.e0008",
+        "edge_occurrence.e0009",
+        "edge_occurrence.e0010",
+        "edge_occurrence.e0011",
+        "edge_occurrence.e0012",
+        "edge_occurrence.e0013",
+        "edge_occurrence.e0014",
+        "edge_occurrence.e0015",
+        "edge_occurrence.e0016",
+        "edge_occurrence.e0017",
+        "edge_occurrence.e0018"
+      ],
+      "face_occurrence_ids": [
+        "face_occurrence.f0001",
+        "face_occurrence.f0002",
+        "face_occurrence.f0003",
+        "face_occurrence.f0004",
+        "face_occurrence.f0005",
+        "face_occurrence.f0006"
+      ],
+      "logical_region_ids": [
+        "logical_region.r0001",
+        "logical_region.r0002",
+        "logical_region.r0003",
+        "logical_region.r0004",
+        "logical_region.r0005",
+        "logical_region.r0006"
+      ]
+    },
+    "support": [
+      {
+        "geometry_family_code": "bspline",
+        "label": "support.edge.bspline.reason_curve_route_unproven.bucket_01",
+        "selection_code": "reason.curve_route_unproven",
+        "state": "UnrecognisedExactGeometry",
+        "subject_count": 16,
+        "subject_ids": [
+          "edge_occurrence.e0001",
+          "edge_occurrence.e0002",
+          "edge_occurrence.e0003",
+          "edge_occurrence.e0004",
+          "edge_occurrence.e0005",
+          "edge_occurrence.e0006",
+          "edge_occurrence.e0007",
+          "edge_occurrence.e0008",
+          "edge_occurrence.e0009",
+          "edge_occurrence.e0010",
+          "edge_occurrence.e0011",
+          "edge_occurrence.e0012",
+          "edge_occurrence.e0013",
+          "edge_occurrence.e0014",
+          "edge_occurrence.e0015",
+          "edge_occurrence.e0016"
+        ],
+        "subject_kind": "edge"
+      },
+      {
+        "geometry_family_code": "pcurve_only",
+        "label": "support.edge.pcurve_only.reason_missing_3d_curve.bucket_02",
+        "selection_code": "reason.missing_3d_curve",
+        "state": "UnrecognisedExactGeometry",
+        "subject_count": 2,
+        "subject_ids": [
+          "edge_occurrence.e0017",
+          "edge_occurrence.e0018"
+        ],
+        "subject_kind": "edge"
+      },
+      {
+        "geometry_family_code": "bspline",
+        "label": "support.face.bspline.reason_ambiguous_recognition.bucket_03",
+        "selection_code": "reason.ambiguous_recognition",
+        "state": "AmbiguousRecognition",
+        "subject_count": 1,
+        "subject_ids": [
+          "face_occurrence.f0003"
+        ],
+        "subject_kind": "face"
+      },
+      {
+        "geometry_family_code": "bspline",
+        "label": "support.face.bspline.reason_residual_surface_route_unproven.bucket_04",
+        "selection_code": "reason.residual_surface_route_unproven",
+        "state": "DeferredResidualSurface",
+        "subject_count": 1,
+        "subject_ids": [
+          "face_occurrence.f0004"
+        ],
+        "subject_kind": "face"
+      },
+      {
+        "geometry_family_code": "bspline",
+        "label": "support.face.bspline.reason_surface_route_unproven.bucket_05",
+        "selection_code": "reason.surface_route_unproven",
+        "state": "UnrecognisedExactGeometry",
+        "subject_count": 4,
+        "subject_ids": [
+          "face_occurrence.f0001",
+          "face_occurrence.f0002",
+          "face_occurrence.f0005",
+          "face_occurrence.f0006"
+        ],
+        "subject_kind": "face"
+      },
+      {
+        "geometry_family_code": "bspline",
+        "label": "support.logical_region.bspline.reason_ambiguous_recognition.bucket_06",
+        "selection_code": "reason.ambiguous_recognition",
+        "state": "AmbiguousRecognition",
+        "subject_count": 1,
+        "subject_ids": [
+          "logical_region.r0003"
+        ],
+        "subject_kind": "logical_region"
+      },
+      {
+        "geometry_family_code": "bspline",
+        "label": "support.logical_region.bspline.reason_residual_surface_route_unproven.bucket_07",
+        "selection_code": "reason.residual_surface_route_unproven",
+        "state": "DeferredResidualSurface",
+        "subject_count": 1,
+        "subject_ids": [
+          "logical_region.r0004"
+        ],
+        "subject_kind": "logical_region"
+      },
+      {
+        "geometry_family_code": "bspline",
+        "label": "support.logical_region.bspline.reason_surface_route_unproven.bucket_08",
+        "selection_code": "reason.surface_route_unproven",
+        "state": "UnrecognisedExactGeometry",
+        "subject_count": 4,
+        "subject_ids": [
+          "logical_region.r0001",
+          "logical_region.r0002",
+          "logical_region.r0005",
+          "logical_region.r0006"
+        ],
+        "subject_kind": "logical_region"
+      }
+    ],
+    "surface_variants": [
+      {
+        "concrete_type": "Geom_BSplineSurface",
+        "condition_codes": [
+          "bounded_trim_layout"
+        ],
+        "count": 6,
+        "family_code": "bspline",
+        "label": "surface.bspline",
+        "trim_domain_class": "convex_simple_region",
+        "wrapper_stack": []
+      }
+    ],
+    "topology_occurrences": {
+      "assembly_products": 5,
+      "compounds": 1,
+      "compsolids": 0,
+      "edges": 18,
+      "faces": 6,
+      "instances": 4,
+      "shells": 4,
+      "solids": 2,
+      "vertices": 36,
+      "wires": 6
+    },
+    "unique_topology": {
+      "assembly_products": 5,
+      "compounds": 1,
+      "compsolids": 0,
+      "edges": 14,
+      "faces": 6,
+      "instances": 4,
+      "shells": 4,
+      "solids": 2,
+      "vertices": 12,
+      "wires": 6
+    },
+    "validation_findings": [
+      {
+        "code": "edge.degenerated",
+        "evidence": "Degenerated edge count from imported topology.",
+        "expectation": "present",
+        "subject_kind": "edge"
+      },
+      {
+        "code": "edge.missing_3d_curve",
+        "evidence": "Missing 3D-curve count from imported topology.",
+        "expectation": "present",
+        "subject_kind": "edge"
+      },
+      {
+        "code": "edge.periodic_seam",
+        "evidence": "Periodic seam incidence from imported topology.",
+        "expectation": "present",
+        "subject_kind": "edge"
+      },
+      {
+        "code": "import.unprocessed_brep_invalid",
+        "evidence": "Validity is measured before any repair or shape processing.",
+        "expectation": "absent",
+        "subject_kind": "model"
+      },
+      {
+        "code": "tolerance.uniform_kernel_precision",
+        "evidence": "All populated imported tolerance ranges equal 10^-10 metres.",
+        "expectation": "present",
+        "subject_kind": "model"
+      },
+      {
+        "code": "topology.closed_shell",
+        "evidence": "A closed shell has no free boundary incidence.",
+        "expectation": "absent",
+        "subject_kind": "shell"
+      },
+      {
+        "code": "topology.manifold",
+        "evidence": "No imported edge has non-manifold face incidence.",
+        "expectation": "present",
+        "subject_kind": "model"
+      },
+      {
+        "code": "topology.valid",
+        "evidence": "BRepCheck_Analyzer result on the processing-disabled readback.",
+        "expectation": "present",
+        "subject_kind": "model"
+      }
+    ]
+  },
+  "fixture_id": "semantic.nurbs.confidence_matrix",
+  "instances": [
+    {
+      "component_label": "component.c0001",
+      "label": "instance.i0001",
+      "local_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "parent_label": null,
+      "target_definition": "definition.d0002",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    },
+    {
+      "component_label": "component.c0002",
+      "label": "instance.i0002",
+      "local_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "parent_label": null,
+      "target_definition": "definition.d0003",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    },
+    {
+      "component_label": "component.c0003",
+      "label": "instance.i0003",
+      "local_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "parent_label": null,
+      "target_definition": "definition.d0004",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    },
+    {
+      "component_label": "component.c0004",
+      "label": "instance.i0004",
+      "local_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "parent_label": null,
+      "target_definition": "definition.d0005",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    }
+  ],
+  "observations": [
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "support.assignment_total",
+        "support.viewer_state_defined"
+      ],
+      "consumer_code": "consumer.support_gate",
+      "consumer_kind": "mesher",
+      "evidence": "Every imported edge, face, and logical-region proxy is assigned exactly once; blocked buckets fail the component mesh gate by name.",
+      "expected_outcome": "named_failure",
+      "id": "observation.consumer.support_assignment",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "authoritative_brep",
+      "subject_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004",
+        "edge_occurrence.e0005",
+        "edge_occurrence.e0006",
+        "edge_occurrence.e0007",
+        "edge_occurrence.e0008",
+        "edge_occurrence.e0009",
+        "edge_occurrence.e0010",
+        "edge_occurrence.e0011",
+        "edge_occurrence.e0012",
+        "edge_occurrence.e0013",
+        "edge_occurrence.e0014",
+        "edge_occurrence.e0015",
+        "edge_occurrence.e0016",
+        "edge_occurrence.e0017",
+        "edge_occurrence.e0018",
+        "face_occurrence.f0001",
+        "face_occurrence.f0002",
+        "face_occurrence.f0003",
+        "face_occurrence.f0004",
+        "face_occurrence.f0005",
+        "face_occurrence.f0006",
+        "logical_region.r0001",
+        "logical_region.r0002",
+        "logical_region.r0003",
+        "logical_region.r0004",
+        "logical_region.r0005",
+        "logical_region.r0006"
+      ]
+    },
+    {
+      "concrete_type": "Geom_BSplineCurve",
+      "condition_codes": [
+        "bounded",
+        "spline_representation"
+      ],
+      "exact_evaluator_kind": "evaluator.bspline",
+      "family_code": "bspline",
+      "id": "observation.geometry.curve_bspline",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "curve",
+          "closed": false,
+          "lower": 0.0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1.0
+        }
+      ],
+      "parameters": [],
+      "phase": "imported",
+      "subject_id": "curve.bspline",
+      "taxonomy": "Curve",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_BSplineSurface",
+      "condition_codes": [
+        "bounded_trim_layout"
+      ],
+      "exact_evaluator_kind": "evaluator.bspline",
+      "family_code": "bspline",
+      "id": "observation.geometry.surface_bspline",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": -6.0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 6.0
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": -6.0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 6.0
+        }
+      ],
+      "parameters": [],
+      "phase": "imported",
+      "subject_id": "surface.bspline",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "evidence": "The four confidence outcomes are tied to exact construction values and frozen residual measurements, not inferred from source names.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.measurement.confidence_matrix",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "confidence.ambiguous.near_height",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "metres",
+            "value": 1e-08,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "confidence.proven_analytic.max_residual",
+          "comparison": "exact",
+          "sample_count": 16,
+          "tolerance": null,
+          "value": {
+            "unit": "metres",
+            "value": 0,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "confidence.residual_patch.height",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "metres",
+            "value": 0.008,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "confidence.verified_recovered.max_residual",
+          "comparison": "exact",
+          "sample_count": 16,
+          "tolerance": null,
+          "value": {
+            "unit": "metres",
+            "value": 0,
+            "value_type": "number"
+          }
+        }
+      ],
+      "pathology_code": "oracle.independent_measurements",
+      "phase": "source",
+      "subject_ids": [
+        "source.seed.cylinder",
+        "source.face.nurbs_cylinder",
+        "face_occurrence.f0003",
+        "face_occurrence.f0004"
+      ]
+    },
+    {
+      "candidate_code": "recognition.analytic_seed",
+      "confidence": "ProvenAnalytic",
+      "continuity_observation_ids": [],
+      "evidence": "The deterministic native construction begins from an exact analytic cylinder before NURBS conversion.",
+      "evidence_codes": [
+        "evidence.independent_oracle"
+      ],
+      "fitted_parameters": [
+        {
+          "name": "cylinder.radius",
+          "value": {
+            "unit": "millimetres",
+            "value": 6,
+            "value_type": "number"
+          }
+        }
+      ],
+      "id": "observation.semantic.confidence.proven_analytic",
+      "kind": "semantic_evidence",
+      "max_residual_metres": 0,
+      "phase": "native",
+      "residual_observation_ids": [],
+      "subject_ids": [
+        "source.seed.cylinder"
+      ]
+    },
+    {
+      "candidate_code": "recognition.cylinder_from_nurbs",
+      "confidence": "VerifiedRecovered",
+      "continuity_observation_ids": [],
+      "evidence": "The converted generic NURBS cylinder is construction-bound to the analytic seed and carries a zero-residual recovery oracle.",
+      "evidence_codes": [
+        "evidence.independent_oracle"
+      ],
+      "fitted_parameters": [
+        {
+          "name": "cylinder.radius",
+          "value": {
+            "unit": "millimetres",
+            "value": 6,
+            "value_type": "number"
+          }
+        }
+      ],
+      "id": "observation.semantic.confidence.verified_recovered",
+      "kind": "semantic_evidence",
+      "max_residual_metres": 0,
+      "phase": "native",
+      "residual_observation_ids": [],
+      "subject_ids": [
+        "source.face.nurbs_cylinder"
+      ]
+    },
+    {
+      "candidate_code": "recognition.near_planar_bspline",
+      "confidence": "Ambiguous",
+      "continuity_observation_ids": [],
+      "evidence": "The 10^-5 millimetre interior lift is deliberately near the frozen planar-recognition threshold.",
+      "evidence_codes": [
+        "evidence.independent_oracle"
+      ],
+      "fitted_parameters": [],
+      "id": "observation.semantic.recognition_near_planar_bspline",
+      "kind": "semantic_evidence",
+      "max_residual_metres": null,
+      "phase": "imported",
+      "residual_observation_ids": [],
+      "subject_ids": [
+        "face_occurrence.f0001"
+      ]
+    },
+    {
+      "candidate_code": "recognition.residual_bspline",
+      "confidence": "NotRecognised",
+      "continuity_observation_ids": [],
+      "evidence": "The eight-millimetre residual patch is not an analytic primitive and has no residual meshing route.",
+      "evidence_codes": [
+        "evidence.independent_oracle"
+      ],
+      "fitted_parameters": [],
+      "id": "observation.semantic.recognition_residual_bspline",
+      "kind": "semantic_evidence",
+      "max_residual_metres": null,
+      "phase": "imported",
+      "residual_observation_ids": [],
+      "subject_ids": [
+        "face_occurrence.f0001"
+      ]
+    },
+    {
+      "condition_codes": [
+        "closed_imported_loops",
+        "processing_disabled_readback"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "face_occurrence.f0001",
+      "id": "observation.trim.face_occurrence_f0001",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop_l0001.c01"
+          ],
+          "loop_id": "boundary_loop.l0001",
+          "max_gap_metres": 0.0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 144.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 6.0,
+            "u_min": -6.0,
+            "v_max": 6.0,
+            "v_min": -6.0
+          },
+          "wire_id": "oracle.wire.boundary_loop_l0001"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    },
+    {
+      "condition_codes": [
+        "closed_imported_loops",
+        "processing_disabled_readback"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "face_occurrence.f0002",
+      "id": "observation.trim.face_occurrence_f0002",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop_l0002.c01"
+          ],
+          "loop_id": "boundary_loop.l0002",
+          "max_gap_metres": 0.0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 144.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 6.0,
+            "u_min": -6.0,
+            "v_max": 6.0,
+            "v_min": -6.0
+          },
+          "wire_id": "oracle.wire.boundary_loop_l0002"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    },
+    {
+      "condition_codes": [
+        "closed_imported_loops",
+        "processing_disabled_readback"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "face_occurrence.f0003",
+      "id": "observation.trim.face_occurrence_f0003",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop_l0003.c01",
+            "oracle.coedge.boundary_loop_l0003.c02",
+            "oracle.coedge.boundary_loop_l0003.c03",
+            "oracle.coedge.boundary_loop_l0003.c04"
+          ],
+          "loop_id": "boundary_loop.l0003",
+          "max_gap_metres": 0.0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 1.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 1.0,
+            "u_min": 0.0,
+            "v_max": 1.0,
+            "v_min": 0.0
+          },
+          "wire_id": "oracle.wire.boundary_loop_l0003"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    },
+    {
+      "condition_codes": [
+        "closed_imported_loops",
+        "processing_disabled_readback"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "face_occurrence.f0004",
+      "id": "observation.trim.face_occurrence_f0004",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop_l0004.c01",
+            "oracle.coedge.boundary_loop_l0004.c02",
+            "oracle.coedge.boundary_loop_l0004.c03",
+            "oracle.coedge.boundary_loop_l0004.c04"
+          ],
+          "loop_id": "boundary_loop.l0004",
+          "max_gap_metres": 0.0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 1.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 1.0,
+            "u_min": 0.0,
+            "v_max": 1.0,
+            "v_min": 0.0
+          },
+          "wire_id": "oracle.wire.boundary_loop_l0004"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    },
+    {
+      "condition_codes": [
+        "closed_imported_loops",
+        "processing_disabled_readback"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "face_occurrence.f0005",
+      "id": "observation.trim.face_occurrence_f0005",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop_l0005.c01",
+            "oracle.coedge.boundary_loop_l0005.c02",
+            "oracle.coedge.boundary_loop_l0005.c03",
+            "oracle.coedge.boundary_loop_l0005.c04"
+          ],
+          "loop_id": "boundary_loop.l0005",
+          "max_gap_metres": 0.0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 19.739208804191936,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 6.283185307,
+            "u_min": 0.0,
+            "v_max": 1.570796327,
+            "v_min": -1.570796327
+          },
+          "wire_id": "oracle.wire.boundary_loop_l0005"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    },
+    {
+      "condition_codes": [
+        "closed_imported_loops",
+        "processing_disabled_readback"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "face_occurrence.f0006",
+      "id": "observation.trim.face_occurrence_f0006",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop_l0006.c01",
+            "oracle.coedge.boundary_loop_l0006.c02",
+            "oracle.coedge.boundary_loop_l0006.c03",
+            "oracle.coedge.boundary_loop_l0006.c04"
+          ],
+          "loop_id": "boundary_loop.l0006",
+          "max_gap_metres": 0.0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 100.530964912,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 6.283185307,
+            "u_min": 0.0,
+            "v_max": 16.0,
+            "v_min": 0.0
+          },
+          "wire_id": "oracle.wire.boundary_loop_l0006"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    }
+  ],
+  "oracle": {
+    "independent_from_production_classifier": true,
+    "method": "analytic_derivation",
+    "references": [
+      "fixtures/generator/fixture_trim_support_recipes.cpp recipe semantic.nurbs.confidence_matrix",
+      "independent_oracle_intent: Extract every imported B-spline that survives, fit cylinder, sphere, and plane candidates independently, publish maximum positional and normal residuals, and compare near-planar and residual patches against frozen thresholds. Do not credit verified recovery when STEP has already restored an analytic representation.",
+      "post-STEP processing-disabled summary semantic.nurbs.confidence_matrix"
+    ],
+    "statement": "Extract every imported B-spline that survives, fit cylinder, sphere, and plane candidates independently, publish maximum positional and normal residuals, and compare near-planar and residual patches against frozen thresholds. Do not credit verified recovery when STEP has already restored an analytic representation."
+  },
+  "schema_version": "1.0.0",
+  "tolerances": {
+    "edges_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "faces_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "vertices_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    }
+  },
+  "units": {
+    "coordinate_space": "right_handed_si_metres_radians",
+    "scale_to_metres": 0.001,
+    "source_unit": "millimetre"
+  }
+}

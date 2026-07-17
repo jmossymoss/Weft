@@ -1,0 +1,33 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "a232ffe106967eeb71775f8e44eef002cface68cc6fc3820ae2fd3d6019829d2",
+  "finding_disposition": "Accepted M1 independent oracle, including explicit consumer-facing expected outcomes; these records establish fixture readiness only and do not claim M3 consumer execution or verification.",
+  "fixture_id": "solid.box",
+  "producer_id": "producer.m1_fixture_foundation",
+  "review_id": "review.solid_box.revision_2",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.m1_oracle_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "claims.typed_binding",
+    "construction.parameters",
+    "geometry.conditions",
+    "geometry.taxonomy",
+    "provenance.xde_readback",
+    "reconnaissance.consumer_oracle",
+    "reconnaissance.partial_readiness",
+    "support.occurrence_identity",
+    "topology.boundary_loops",
+    "topology.counts",
+    "units.tolerances"
+  ],
+  "source_binding": {
+    "artifact_sha256": "b42edb7941b5b1c8554838d77dc5f95d2c6cf90fd17fe55a6834ed89e300af2f",
+    "construction_parameters_sha256": "bcf6e9c6dc3f8e108ca6e68d55e76d16893b07d5a065a92882591a3f89ffcd85",
+    "generator_revision": 3,
+    "kind": "occt_procedural",
+    "source_contract_sha256": "34a6d362fef5e0b566ce1ead6c1a071e5af33bf28f5e592d3732ec918ced434b",
+    "summary_sha256": "2c5b839c0b8caf58dd2d239706ede591b43d5214152b233cf7cae138f2ec2433"
+  }
+}

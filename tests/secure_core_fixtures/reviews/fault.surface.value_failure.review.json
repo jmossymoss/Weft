@@ -1,0 +1,25 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "8fc5ab5bb9bae79e4396df568fcb2f9351cbbb247950f54e49d7b773f2a4b167",
+  "finding_disposition": "Fresh-context fault-contract, exact-observation, deterministic-runner, and source-binding review passed; no unresolved finding remains.",
+  "fixture_id": "fault.surface.value_failure",
+  "producer_id": "producer.m1_native_fault_foundation",
+  "review_id": "review.fault_surface_value_failure.revision_1",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.m1_native_fault_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "claims.typed_binding",
+    "fault.contract",
+    "native.runner_binding",
+    "observations.exact_values"
+  ],
+  "source_binding": {
+    "fault_code": "fault.surface.value_failure",
+    "harness_source_sha256": "a95831c06005760170cb95034ba6500190f9218a681f0e88edde66a93ec60d2e",
+    "kind": "native_fault_injection",
+    "source_contract_sha256": "264363dd1e4b3c00d41f0a4ff0dcf8d81793f61a638b435ae14c2f8411f5e82c",
+    "test_id": "test.native_fault.surface.value_failure"
+  }
+}

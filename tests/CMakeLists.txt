@@ -27,3 +27,41 @@ target_link_libraries(weft_geometric_predicate_tests PRIVATE weft_core)
 weft_enable_strict_warnings(weft_geometric_predicate_tests)
 add_test(NAME geometric_predicates COMMAND weft_geometric_predicate_tests)
 weft_deploy_occt_dlls(weft_geometric_predicate_tests)
+
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(
+  NAME secure_fixture_catalog
+  COMMAND ${Python3_EXECUTABLE}
+          ${CMAKE_CURRENT_SOURCE_DIR}/test_secure_fixture_catalog.py
+          ${CMAKE_CURRENT_SOURCE_DIR}/secure_core_fixtures)
+
+add_executable(weft_secure_corpus_tests test_secure_corpus.cpp)
+target_link_libraries(weft_secure_corpus_tests PRIVATE weft_core)
+target_compile_definitions(
+  weft_secure_corpus_tests
+  PRIVATE WEFT_SECURE_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/secure_core_fixtures")
+weft_enable_strict_warnings(weft_secure_corpus_tests)
+add_test(NAME secure_committed_step_corpus COMMAND weft_secure_corpus_tests)
+weft_deploy_occt_dlls(weft_secure_corpus_tests)
+
+set(WEFT_DONOR_GENERATOR_DIR
+    ${CMAKE_CURRENT_SOURCE_DIR}/secure_core_fixtures/generator)
+add_executable(
+  weft_generated_secure_corpus_tests
+  test_generated_secure_corpus.cpp
+  ${WEFT_DONOR_GENERATOR_DIR}/fixture_generator.cpp
+  ${WEFT_DONOR_GENERATOR_DIR}/fixture_builders.cpp
+  ${WEFT_DONOR_GENERATOR_DIR}/fixture_observer.cpp
+  ${WEFT_DONOR_GENERATOR_DIR}/fixture_curve_recipes.cpp
+  ${WEFT_DONOR_GENERATOR_DIR}/fixture_surface_recipes.cpp
+  ${WEFT_DONOR_GENERATOR_DIR}/fixture_topology_recipes.cpp
+  ${WEFT_DONOR_GENERATOR_DIR}/fixture_feature_recipes.cpp
+  ${WEFT_DONOR_GENERATOR_DIR}/fixture_pathology_recipes.cpp
+  ${WEFT_DONOR_GENERATOR_DIR}/fixture_trim_support_recipes.cpp)
+target_include_directories(weft_generated_secure_corpus_tests
+                           PRIVATE ${WEFT_DONOR_GENERATOR_DIR})
+target_link_libraries(weft_generated_secure_corpus_tests PRIVATE weft_core)
+weft_enable_strict_warnings(weft_generated_secure_corpus_tests)
+add_test(NAME secure_generated_step_corpus
+         COMMAND weft_generated_secure_corpus_tests)
+weft_deploy_occt_dlls(weft_generated_secure_corpus_tests)

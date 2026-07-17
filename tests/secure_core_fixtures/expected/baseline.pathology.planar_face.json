@@ -1,0 +1,877 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "expected": {
+    "boundary_loops": [
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0001",
+        "id": "boundary_loop.l0001",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 15.0,
+          "u_min": -15.0,
+          "v_max": 10.0,
+          "v_min": -10.0
+        }
+      }
+    ],
+    "brep_valid": true,
+    "claims": [
+      {
+        "id": "claim.rec_001.oracle",
+        "obligation_id": "REC-001",
+        "predicate_codes": [
+          "predicate.reconnaissance.processing_disabled_import"
+        ],
+        "statement": "Freeze the valid 30 by 20 millimetre rectangular face, its 600 square millimetre area, boundary identities, and imported baseline. Record the zero and near-zero mutation targets only as source parameters; the clean face is not zero-area evidence.",
+        "subject_refs": [
+          {
+            "id": "observation.normalization.model",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p1",
+            "kind": "observation"
+          }
+        ]
+      }
+    ],
+    "curve_variants": [
+      {
+        "concrete_type": "Geom_Line",
+        "condition_codes": [
+          "bounded"
+        ],
+        "count": 4,
+        "family_code": "line",
+        "label": "line.curve_imported",
+        "wrapper_stack": []
+      }
+    ],
+    "import_outcome": "success",
+    "model_classes": [
+      "open_manifold",
+      "open_shell",
+      "standalone_shell"
+    ],
+    "model_topology": {
+      "closed_shells": 0,
+      "coincident_solid_signature_pairs": 0,
+      "free_edges": 0,
+      "free_wires": 0,
+      "inner_shells": 0,
+      "isolated_vertices": 0,
+      "maximum_faces_per_edge": 1,
+      "nonmanifold_vertices": 0,
+      "open_shells": 1,
+      "outer_shells": 0,
+      "shared_faces_between_solids": 0,
+      "standalone_shells": 1
+    },
+    "orientation_states": [
+      "FORWARD",
+      "REVERSED"
+    ],
+    "periodicity": [
+      {
+        "label": "plane.imported",
+        "u_closed": false,
+        "u_periodic": false,
+        "v_closed": false,
+        "v_periodic": false
+      }
+    ],
+    "semantic_candidates": [],
+    "singularity_codes": [],
+    "subject_universe": {
+      "edge_occurrence_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004"
+      ],
+      "face_occurrence_ids": [
+        "face_occurrence.f0001"
+      ],
+      "logical_region_ids": [
+        "logical_region.r0001"
+      ]
+    },
+    "support": [
+      {
+        "geometry_family_code": "line",
+        "label": "edge.line.open_shell",
+        "selection_code": "reason.open_shell",
+        "state": "UnsupportedTopology",
+        "subject_count": 4,
+        "subject_ids": [
+          "edge_occurrence.e0001",
+          "edge_occurrence.e0002",
+          "edge_occurrence.e0003",
+          "edge_occurrence.e0004"
+        ],
+        "subject_kind": "edge"
+      },
+      {
+        "geometry_family_code": "plane",
+        "label": "face.plane.open_shell",
+        "selection_code": "reason.open_shell",
+        "state": "UnsupportedTopology",
+        "subject_count": 1,
+        "subject_ids": [
+          "face_occurrence.f0001"
+        ],
+        "subject_kind": "face"
+      },
+      {
+        "geometry_family_code": "plane",
+        "label": "region.plane.open_shell",
+        "selection_code": "reason.open_shell",
+        "state": "UnsupportedTopology",
+        "subject_count": 1,
+        "subject_ids": [
+          "logical_region.r0001"
+        ],
+        "subject_kind": "logical_region"
+      }
+    ],
+    "surface_variants": [
+      {
+        "concrete_type": "Geom_Plane",
+        "condition_codes": [
+          "bounded"
+        ],
+        "count": 1,
+        "family_code": "plane",
+        "label": "plane.imported",
+        "trim_domain_class": "convex_simple_region",
+        "wrapper_stack": []
+      }
+    ],
+    "topology_occurrences": {
+      "assembly_products": 1,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 4,
+      "faces": 1,
+      "instances": 0,
+      "shells": 1,
+      "solids": 0,
+      "vertices": 8,
+      "wires": 1
+    },
+    "unique_topology": {
+      "assembly_products": 1,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 4,
+      "faces": 1,
+      "instances": 0,
+      "shells": 1,
+      "solids": 0,
+      "vertices": 4,
+      "wires": 1
+    },
+    "validation_findings": [
+      {
+        "code": "topology.valid",
+        "evidence": "The processing-disabled STEP B-rep validity result is bound exactly and compared with the independently valid source construction.",
+        "expectation": "present",
+        "subject_kind": "model"
+      }
+    ]
+  },
+  "fixture_id": "baseline.pathology.planar_face",
+  "instances": [],
+  "observations": [
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "reason.open_shell"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 4 edge subjects to UnsupportedTopology using reason.open_shell.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.edge.line.open_shell",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004"
+      ]
+    },
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "reason.open_shell"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 1 face subjects to UnsupportedTopology using reason.open_shell.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.face.plane.open_shell",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "face_occurrence.f0001"
+      ]
+    },
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "reason.open_shell"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 1 logical_region subjects to UnsupportedTopology using reason.open_shell.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.region.plane.open_shell",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "logical_region.r0001"
+      ]
+    },
+    {
+      "concrete_type": "Geom_Line",
+      "condition_codes": [
+        "bounded"
+      ],
+      "exact_evaluator_kind": "occt.exact_curve",
+      "family_code": "line",
+      "id": "observation.geometry.line.curve_imported",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "curve",
+          "closed": false,
+          "lower": null,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": null
+        }
+      ],
+      "parameters": [],
+      "phase": "imported",
+      "subject_id": "line.curve_imported",
+      "taxonomy": "Curve",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_Plane",
+      "condition_codes": [
+        "bounded"
+      ],
+      "exact_evaluator_kind": "occt.exact_surface",
+      "family_code": "plane",
+      "id": "observation.geometry.plane.imported",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": null,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": null
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": null,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": null
+        }
+      ],
+      "parameters": [],
+      "phase": "imported",
+      "subject_id": "plane.imported",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "evidence": "Freeze the valid 30 by 20 millimetre rectangular face, its 600 square millimetre area, boundary identities, and imported baseline. Record the zero and near-zero mutation targets only as source parameters; the clean face is not zero-area evidence.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.measurement.independent",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "construction.length_x",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 30.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "construction.length_y",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 20.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "construction.near_zero_height_target",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 1e-08,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "construction.zero_height_target",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 0.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "derived.face_area",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "square_metres",
+            "value": 0.0006000000000000001,
+            "value_type": "number"
+          }
+        }
+      ],
+      "pathology_code": "oracle.independent_measurements",
+      "phase": "source",
+      "subject_ids": [
+        "source.model"
+      ]
+    },
+    {
+      "evidence": "The processing-disabled STEP B-rep validity result is bound exactly and compared with the independently valid source construction.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.p1",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "topology.valid.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 1,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "topology.valid",
+      "phase": "imported",
+      "subject_ids": [
+        "oracle.finding.p1"
+      ]
+    },
+    {
+      "accepted_normalization_codes": [
+        "step.standalone_face_wrapped_in_shell"
+      ],
+      "changes": [],
+      "equivalence": "geometrically_equivalent",
+      "geometry_equivalent": true,
+      "id": "observation.normalization.model",
+      "imported_subject_ids": [
+        "imported.model"
+      ],
+      "kind": "source_import_normalization",
+      "outcome": "canonicalized",
+      "source_subject_ids": [
+        "source.model"
+      ],
+      "topology_equivalent": false
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.edge",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 4
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.edges"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.edges",
+      "tolerance_metres": 0,
+      "topology_kind": "edge",
+      "underlying_id": "topology.edges",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.face",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 1
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.faces"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.faces",
+      "tolerance_metres": 0,
+      "topology_kind": "face",
+      "underlying_id": "topology.faces",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.shell",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 1
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.shells"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.shells",
+      "tolerance_metres": 0,
+      "topology_kind": "shell",
+      "underlying_id": "topology.shells",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.vertex",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 4
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.vertices"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.vertices",
+      "tolerance_metres": 0,
+      "topology_kind": "vertex",
+      "underlying_id": "topology.vertices",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.wire",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 1
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.wires"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.wires",
+      "tolerance_metres": 0,
+      "topology_kind": "wire",
+      "underlying_id": "topology.wires",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "baked_geometry_matrix_row_major": null,
+      "disposition": "retained_as_location",
+      "handedness": "right_handed",
+      "id": "observation.transform.instance.synthetic_identity",
+      "imported_location_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "instance_id": "instance.synthetic_identity",
+      "kind": "transform",
+      "linear_determinant": 1,
+      "parent_instance_id": null,
+      "source_affine_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "source_unit_scale_to_metres": 0.001,
+      "target_definition_id": "definition.synthetic_identity",
+      "transform_kind": "identity",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "condition_codes": [
+        "bounded"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "plane.imported",
+      "id": "observation.trim.plane.imported",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0001.c1",
+            "oracle.coedge.boundary_loop.l0001.c2",
+            "oracle.coedge.boundary_loop.l0001.c3",
+            "oracle.coedge.boundary_loop.l0001.c4"
+          ],
+          "loop_id": "boundary_loop.l0001",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 600.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 15.0,
+            "u_min": -15.0,
+            "v_max": 10.0,
+            "v_min": -10.0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0001"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    }
+  ],
+  "oracle": {
+    "independent_from_production_classifier": true,
+    "method": "analytic_derivation",
+    "references": [
+      "final revision-6 processing-disabled STEP readback summary baseline.pathology.planar_face.json used only for exact import binding",
+      "fixtures/generator/fixture_pathology_recipes.cpp recipe baseline.pathology.planar_face",
+      "independent_oracle_intent: Freeze the valid 30 by 20 millimetre rectangular face, its 600 square millimetre area, boundary identities, and imported baseline. Record the zero and near-zero mutation targets only as source parameters; the clean face is not zero-area evidence."
+    ],
+    "statement": "Freeze the valid 30 by 20 millimetre rectangular face, its 600 square millimetre area, boundary identities, and imported baseline. Record the zero and near-zero mutation targets only as source parameters; the clean face is not zero-area evidence. Frozen construction parameters: length_x=30.0 millimetres, length_y=20.0 millimetres, near_zero_height_target=1e-08 millimetres, zero_height_target=0.0 millimetres."
+  },
+  "schema_version": "1.0.0",
+  "tolerances": {
+    "edges_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "faces_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "vertices_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    }
+  },
+  "units": {
+    "coordinate_space": "right_handed_si_metres_radians",
+    "scale_to_metres": 0.001,
+    "source_unit": "millimetre"
+  }
+}

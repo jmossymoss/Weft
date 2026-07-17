@@ -1,0 +1,519 @@
+{
+  "$defs": {
+    "assignment": {
+      "additionalProperties": false,
+      "properties": {
+        "claim_boundary": {
+          "maxLength": 800,
+          "minLength": 16,
+          "type": "string"
+        },
+        "fixture_id": {
+          "$ref": "#/$defs/stable_id"
+        },
+        "independent_oracle_intent": {
+          "maxLength": 1200,
+          "minLength": 20,
+          "type": "string"
+        },
+        "intended_import_outcome": {
+          "$ref": "#/$defs/import_outcome"
+        },
+        "intended_support_gate_outcome": {
+          "$ref": "#/$defs/support_gate_outcome"
+        },
+        "lane": {
+          "enum": [
+            "audited_external",
+            "derived_corruption",
+            "legacy_occt_procedural",
+            "m1_consumer_oracle",
+            "native_fault_injection",
+            "occt_procedural"
+          ]
+        },
+        "materialization_status": {
+          "enum": [
+            "feasible",
+            "ready"
+          ]
+        },
+        "readiness": {
+          "enum": [
+            "legacy_already_ready",
+            "requires_materialization"
+          ]
+        },
+        "source_or_baseline_id": {
+          "$ref": "#/$defs/stable_id"
+        }
+      },
+      "required": [
+        "claim_boundary",
+        "fixture_id",
+        "independent_oracle_intent",
+        "intended_import_outcome",
+        "intended_support_gate_outcome",
+        "lane",
+        "materialization_status",
+        "readiness",
+        "source_or_baseline_id"
+      ],
+      "type": "object"
+    },
+    "import_outcome": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "maxLength": 500,
+          "minLength": 8,
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "consumer_fixture_only",
+            "fails_as_expected",
+            "not_applicable",
+            "succeeds_invalid",
+            "succeeds_valid",
+            "succeeds_with_representation_loss"
+          ]
+        }
+      },
+      "required": [
+        "detail",
+        "status"
+      ],
+      "type": "object"
+    },
+    "obligation": {
+      "additionalProperties": false,
+      "properties": {
+        "assignments": {
+          "items": {
+            "$ref": "#/$defs/assignment"
+          },
+          "maxItems": 12,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true,
+          "x-canonical-order": "ascending lane then fixture_id"
+        }
+      },
+      "required": [
+        "assignments"
+      ],
+      "type": "object"
+    },
+    "selection_code": {
+      "pattern": "^(reason|strategy)(?:\\.[a-z][a-z0-9_]*)+$",
+      "type": "string"
+    },
+    "stable_id": {
+      "pattern": "^[a-z][a-z0-9_]*(?:[.-][a-z0-9_]+)+$",
+      "type": "string"
+    },
+    "support_gate_outcome": {
+      "additionalProperties": false,
+      "properties": {
+        "inventory_gate": {
+          "enum": [
+            "fail_closed",
+            "not_applicable",
+            "pass",
+            "verification_pending"
+          ]
+        },
+        "meshing_gate": {
+          "enum": [
+            "fail",
+            "not_applicable",
+            "pass",
+            "verification_pending"
+          ]
+        },
+        "selection_codes": {
+          "items": {
+            "$ref": "#/$defs/selection_code"
+          },
+          "type": "array",
+          "uniqueItems": true,
+          "x-canonical-order": "ascending selection code"
+        },
+        "support_states": {
+          "items": {
+            "enum": [
+              "SupportedAnalyticTemplate",
+              "SupportedStructuredPatch",
+              "SupportedPlanarCutGraph",
+              "DeferredResidualSurface",
+              "UnsupportedTopology",
+              "InvalidImportedGeometry",
+              "AmbiguousRecognition",
+              "UnrecognisedExactGeometry"
+            ]
+          },
+          "type": "array",
+          "uniqueItems": true,
+          "x-canonical-order": "ascending support state"
+        }
+      },
+      "required": [
+        "inventory_gate",
+        "meshing_gate",
+        "selection_codes",
+        "support_states"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.weftocct.example/v1/nonprocedural-obligation-authoring-map-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Strict complement to the modular procedural recipe map. Each remaining obligation is assigned to one or more legacy, OCCT-procedural, derived, native-fault, audited-external, or M1 consumer-oracle fixtures. Assignments are feasible authoring plans and explicit limitations, not coverage or consumer-verification claims.",
+  "properties": {
+    "authoritative_ledger": {
+      "const": "docs/governance/fixture-coverage.md"
+    },
+    "authoritative_obligation_registry": {
+      "const": "fixtures/obligation-profiles.json"
+    },
+    "canonicalization": {
+      "const": "sorted-pretty-json-v1"
+    },
+    "complements_procedural_map": {
+      "const": "fixtures/procedural-recipe-authoring-map.json"
+    },
+    "coverage_semantics": {
+      "const": "authoring-intent-and-named-limitations-not-coverage-evidence"
+    },
+    "obligation_count": {
+      "const": 75
+    },
+    "obligations": {
+      "additionalProperties": false,
+      "maxProperties": 75,
+      "minProperties": 75,
+      "properties": {
+        "CRV-001": {
+          "$ref": "#/$defs/obligation"
+        },
+        "CRV-002": {
+          "$ref": "#/$defs/obligation"
+        },
+        "CRV-009": {
+          "$ref": "#/$defs/obligation"
+        },
+        "CRV-010": {
+          "$ref": "#/$defs/obligation"
+        },
+        "CRV-011": {
+          "$ref": "#/$defs/obligation"
+        },
+        "CRV-012": {
+          "$ref": "#/$defs/obligation"
+        },
+        "CRV-017": {
+          "$ref": "#/$defs/obligation"
+        },
+        "CRV-022": {
+          "$ref": "#/$defs/obligation"
+        },
+        "CRV-023": {
+          "$ref": "#/$defs/obligation"
+        },
+        "CRV-024": {
+          "$ref": "#/$defs/obligation"
+        },
+        "PAT-003": {
+          "$ref": "#/$defs/obligation"
+        },
+        "PAT-004": {
+          "$ref": "#/$defs/obligation"
+        },
+        "PAT-005": {
+          "$ref": "#/$defs/obligation"
+        },
+        "PAT-008": {
+          "$ref": "#/$defs/obligation"
+        },
+        "PAT-009": {
+          "$ref": "#/$defs/obligation"
+        },
+        "PAT-010": {
+          "$ref": "#/$defs/obligation"
+        },
+        "PAT-011": {
+          "$ref": "#/$defs/obligation"
+        },
+        "PAT-012": {
+          "$ref": "#/$defs/obligation"
+        },
+        "PAT-013": {
+          "$ref": "#/$defs/obligation"
+        },
+        "PAT-015": {
+          "$ref": "#/$defs/obligation"
+        },
+        "PAT-017": {
+          "$ref": "#/$defs/obligation"
+        },
+        "REC-001": {
+          "$ref": "#/$defs/obligation"
+        },
+        "REC-002": {
+          "$ref": "#/$defs/obligation"
+        },
+        "REC-003": {
+          "$ref": "#/$defs/obligation"
+        },
+        "REC-004": {
+          "$ref": "#/$defs/obligation"
+        },
+        "REC-005": {
+          "$ref": "#/$defs/obligation"
+        },
+        "REC-006": {
+          "$ref": "#/$defs/obligation"
+        },
+        "REC-007": {
+          "$ref": "#/$defs/obligation"
+        },
+        "REC-008": {
+          "$ref": "#/$defs/obligation"
+        },
+        "REC-009": {
+          "$ref": "#/$defs/obligation"
+        },
+        "REC-010": {
+          "$ref": "#/$defs/obligation"
+        },
+        "SEM-001": {
+          "$ref": "#/$defs/obligation"
+        },
+        "SEM-003": {
+          "$ref": "#/$defs/obligation"
+        },
+        "SEM-011": {
+          "$ref": "#/$defs/obligation"
+        },
+        "SEM-013": {
+          "$ref": "#/$defs/obligation"
+        },
+        "SEM-019": {
+          "$ref": "#/$defs/obligation"
+        },
+        "SEM-021": {
+          "$ref": "#/$defs/obligation"
+        },
+        "SEM-024": {
+          "$ref": "#/$defs/obligation"
+        },
+        "SEM-025": {
+          "$ref": "#/$defs/obligation"
+        },
+        "SRC-001": {
+          "$ref": "#/$defs/obligation"
+        },
+        "SRC-002": {
+          "$ref": "#/$defs/obligation"
+        },
+        "SRC-003": {
+          "$ref": "#/$defs/obligation"
+        },
+        "SRF-010": {
+          "$ref": "#/$defs/obligation"
+        },
+        "SRF-011": {
+          "$ref": "#/$defs/obligation"
+        },
+        "SRF-012": {
+          "$ref": "#/$defs/obligation"
+        },
+        "SRF-013": {
+          "$ref": "#/$defs/obligation"
+        },
+        "SRF-014": {
+          "$ref": "#/$defs/obligation"
+        },
+        "SRF-031": {
+          "$ref": "#/$defs/obligation"
+        },
+        "SUP-003": {
+          "$ref": "#/$defs/obligation"
+        },
+        "SUP-006": {
+          "$ref": "#/$defs/obligation"
+        },
+        "SUP-008": {
+          "$ref": "#/$defs/obligation"
+        },
+        "SUP-009": {
+          "$ref": "#/$defs/obligation"
+        },
+        "TOP-001": {
+          "$ref": "#/$defs/obligation"
+        },
+        "TOP-002": {
+          "$ref": "#/$defs/obligation"
+        },
+        "TOP-003": {
+          "$ref": "#/$defs/obligation"
+        },
+        "TOP-004": {
+          "$ref": "#/$defs/obligation"
+        },
+        "TOP-005": {
+          "$ref": "#/$defs/obligation"
+        },
+        "TOP-006": {
+          "$ref": "#/$defs/obligation"
+        },
+        "TOP-008": {
+          "$ref": "#/$defs/obligation"
+        },
+        "TOP-009": {
+          "$ref": "#/$defs/obligation"
+        },
+        "TOP-010": {
+          "$ref": "#/$defs/obligation"
+        },
+        "TOP-011": {
+          "$ref": "#/$defs/obligation"
+        },
+        "TOP-012": {
+          "$ref": "#/$defs/obligation"
+        },
+        "TOP-013": {
+          "$ref": "#/$defs/obligation"
+        },
+        "TOP-014": {
+          "$ref": "#/$defs/obligation"
+        },
+        "TOP-016": {
+          "$ref": "#/$defs/obligation"
+        },
+        "TOP-017": {
+          "$ref": "#/$defs/obligation"
+        },
+        "TRM-001": {
+          "$ref": "#/$defs/obligation"
+        },
+        "TRM-002": {
+          "$ref": "#/$defs/obligation"
+        },
+        "TRM-004": {
+          "$ref": "#/$defs/obligation"
+        },
+        "TRM-005": {
+          "$ref": "#/$defs/obligation"
+        },
+        "TRM-007": {
+          "$ref": "#/$defs/obligation"
+        },
+        "TRM-011": {
+          "$ref": "#/$defs/obligation"
+        },
+        "TRM-012": {
+          "$ref": "#/$defs/obligation"
+        },
+        "TRM-013": {
+          "$ref": "#/$defs/obligation"
+        }
+      },
+      "required": [
+        "CRV-001",
+        "CRV-002",
+        "CRV-009",
+        "CRV-010",
+        "CRV-011",
+        "CRV-012",
+        "CRV-017",
+        "CRV-022",
+        "CRV-023",
+        "CRV-024",
+        "PAT-003",
+        "PAT-004",
+        "PAT-005",
+        "PAT-008",
+        "PAT-009",
+        "PAT-010",
+        "PAT-011",
+        "PAT-012",
+        "PAT-013",
+        "PAT-015",
+        "PAT-017",
+        "REC-001",
+        "REC-002",
+        "REC-003",
+        "REC-004",
+        "REC-005",
+        "REC-006",
+        "REC-007",
+        "REC-008",
+        "REC-009",
+        "REC-010",
+        "SEM-001",
+        "SEM-003",
+        "SEM-011",
+        "SEM-013",
+        "SEM-019",
+        "SEM-021",
+        "SEM-024",
+        "SEM-025",
+        "SRC-001",
+        "SRC-002",
+        "SRC-003",
+        "SRF-010",
+        "SRF-011",
+        "SRF-012",
+        "SRF-013",
+        "SRF-014",
+        "SRF-031",
+        "SUP-003",
+        "SUP-006",
+        "SUP-008",
+        "SUP-009",
+        "TOP-001",
+        "TOP-002",
+        "TOP-003",
+        "TOP-004",
+        "TOP-005",
+        "TOP-006",
+        "TOP-008",
+        "TOP-009",
+        "TOP-010",
+        "TOP-011",
+        "TOP-012",
+        "TOP-013",
+        "TOP-014",
+        "TOP-016",
+        "TOP-017",
+        "TRM-001",
+        "TRM-002",
+        "TRM-004",
+        "TRM-005",
+        "TRM-007",
+        "TRM-011",
+        "TRM-012",
+        "TRM-013"
+      ],
+      "type": "object"
+    },
+    "schema_version": {
+      "const": "1.0.0"
+    }
+  },
+  "required": [
+    "authoritative_ledger",
+    "authoritative_obligation_registry",
+    "canonicalization",
+    "complements_procedural_map",
+    "coverage_semantics",
+    "obligation_count",
+    "obligations",
+    "schema_version"
+  ],
+  "title": "CAD mesher nonprocedural obligation authoring map v1",
+  "type": "object"
+}

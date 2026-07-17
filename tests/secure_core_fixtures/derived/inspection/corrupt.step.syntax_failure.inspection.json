@@ -1,0 +1,35 @@
+{
+  "artifact_format": "step",
+  "artifact_sha256": "5640da3df3871d6a0885118a17e037625c55daf01abdab518bdaafe890e6d264",
+  "brep_valid": false,
+  "canonicalization": "sorted-pretty-json-v1",
+  "diagnostic_codes": [
+    "StepFile_IncorrectSyntax",
+    "StepReaderData_UnresolvedReference"
+  ],
+  "fixture_id": "corrupt.step.syntax_failure",
+  "inspection_method": "DRAWEXE direct BRepTools restore plus BRepCheck, or STEPControl parser for named failure",
+  "measurements": {
+    "mutation_operation_count": 1
+  },
+  "occt_version": "8.0.0.p1-e52c4021",
+  "processing": [
+    "no_healing",
+    "no_sameparameter_repair",
+    "no_sewing",
+    "no_partial_shape_acceptance"
+  ],
+  "schema_version": "1.0.0",
+  "unique_topology": {
+    "assembly_products": 0,
+    "compounds": 0,
+    "compsolids": 0,
+    "edges": 0,
+    "faces": 0,
+    "instances": 0,
+    "shells": 0,
+    "solids": 0,
+    "vertices": 0,
+    "wires": 0
+  }
+}

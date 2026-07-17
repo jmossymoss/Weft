@@ -1,0 +1,218 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "expected": {
+    "boundary_loops": [],
+    "brep_valid": false,
+    "claims": [
+      {
+        "id": "claim.top_009.corrupt_step_syntax_failure",
+        "obligation_id": "TOP-009",
+        "predicate_codes": [
+          "predicate.topology.import_syntax_failure"
+        ],
+        "statement": "Remove the closing parenthesis from the declared shape-definition representation record. Exact artifact 5640da3df3871d6a0885118a17e037625c55daf01abdab518bdaafe890e6d264 is retained without repair; observed validity is False.",
+        "subject_refs": [
+          {
+            "id": "observation.normalization.step_failure",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.exact_mutation",
+            "kind": "observation"
+          }
+        ]
+      }
+    ],
+    "curve_variants": [],
+    "import_outcome": "named_failure",
+    "model_classes": [
+      "derived_corruption",
+      "named_import_failure"
+    ],
+    "model_topology": {
+      "closed_shells": 0,
+      "coincident_solid_signature_pairs": 0,
+      "free_edges": 0,
+      "free_wires": 0,
+      "inner_shells": 0,
+      "isolated_vertices": 0,
+      "maximum_faces_per_edge": 0,
+      "nonmanifold_vertices": 0,
+      "open_shells": 0,
+      "outer_shells": 0,
+      "shared_faces_between_solids": 0,
+      "standalone_shells": 0
+    },
+    "orientation_states": [],
+    "periodicity": [],
+    "semantic_candidates": [],
+    "singularity_codes": [],
+    "subject_universe": {
+      "edge_occurrence_ids": [],
+      "face_occurrence_ids": [],
+      "logical_region_ids": []
+    },
+    "support": [],
+    "surface_variants": [],
+    "topology_occurrences": {
+      "assembly_products": 0,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 0,
+      "faces": 0,
+      "instances": 0,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 0,
+      "wires": 0
+    },
+    "unique_topology": {
+      "assembly_products": 0,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 0,
+      "faces": 0,
+      "instances": 0,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 0,
+      "wires": 0
+    },
+    "validation_findings": [
+      {
+        "code": "import.unprocessed_brep_invalid",
+        "evidence": "The exact derived artifact is loaded or parsed without healing, sewing, SameParameter repair, or partial-shape acceptance.",
+        "expectation": "present",
+        "subject_kind": "model"
+      },
+      {
+        "code": "stepfile_incorrectsyntax",
+        "evidence": "Named diagnostic emitted by the direct OCCT inspection of the hash-bound artifact.",
+        "expectation": "named_failure",
+        "subject_kind": "model"
+      },
+      {
+        "code": "stepreaderdata_unresolvedreference",
+        "evidence": "Named diagnostic emitted by the direct OCCT inspection of the hash-bound artifact.",
+        "expectation": "named_failure",
+        "subject_kind": "model"
+      },
+      {
+        "code": "topology.valid",
+        "evidence": "Direct BRepCheck result, or absence of a BRep after the named STEP parser failure.",
+        "expectation": "absent",
+        "subject_kind": "model"
+      }
+    ]
+  },
+  "fixture_id": "corrupt.step.syntax_failure",
+  "instances": [],
+  "observations": [
+    {
+      "evidence": "OCCT STEP parsing reports IncorrectSyntax followed by UnresolvedReference and does not create an accepted shape.",
+      "expectation": "named_failure",
+      "expected_failure_code": "stepfile_incorrectsyntax",
+      "id": "observation.pathology.exact_mutation",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "mutation.artifact_sha256",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": "5640da3df3871d6a0885118a17e037625c55daf01abdab518bdaafe890e6d264",
+            "value_type": "text"
+          }
+        },
+        {
+          "code": "parser.failure_count",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 2,
+            "value_type": "integer"
+          }
+        },
+        {
+          "code": "transfer.shape_count",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 0,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "corrupt.step.syntax_failure",
+      "phase": "imported",
+      "subject_ids": [
+        "source.step.record_3"
+      ]
+    },
+    {
+      "accepted_normalization_codes": [],
+      "changes": [
+        {
+          "disposition": "introduced",
+          "field_path": "/data/shape_definition_representation/record_3",
+          "imported_value": {
+            "value": "#3 = SHAPE_DEFINITION_REPRESENTATION(#4,#10;\n",
+            "value_type": "text"
+          },
+          "normalization_code": "derived.step.syntax_parenthesis_removal",
+          "source_value": {
+            "value": "#3 = SHAPE_DEFINITION_REPRESENTATION(#4,#10);\n",
+            "value_type": "text"
+          }
+        }
+      ],
+      "equivalence": "not_comparable",
+      "geometry_equivalent": false,
+      "id": "observation.normalization.step_failure",
+      "imported_subject_ids": [],
+      "kind": "source_import_normalization",
+      "outcome": "rejected",
+      "source_subject_ids": [
+        "source.step.record_3"
+      ],
+      "topology_equivalent": false
+    }
+  ],
+  "oracle": {
+    "independent_from_production_classifier": true,
+    "method": "analytic_derivation",
+    "references": [
+      "fixtures/baselines/solid.box.step baseline b42edb7941b5b1c8554838d77dc5f95d2c6cf90fd17fe55a6834ed89e300af2f",
+      "fixtures/derived/corrupt.step.syntax_failure.step artifact 5640da3df3871d6a0885118a17e037625c55daf01abdab518bdaafe890e6d264",
+      "fixtures/derived/inspection/corrupt.step.syntax_failure.inspection.json inspection dc729c9a0fc8ff2db2967a2dabb4f63f6c8f7cb64590cc031b55bb7f0ed72841",
+      "fixtures/lanes/derived_artifact.py transform.declared_ascii_patch.v1",
+      "fixtures/nonprocedural-obligation-authoring-map.json selected derived assignments"
+    ],
+    "statement": "Remove the closing parenthesis from the declared shape-definition representation record. The exact mutation, analytic measurements, and direct OCCT diagnostic are independently frozen."
+  },
+  "schema_version": "1.0.0",
+  "tolerances": {
+    "edges_metres": {
+      "maximum": null,
+      "minimum": null
+    },
+    "faces_metres": {
+      "maximum": null,
+      "minimum": null
+    },
+    "vertices_metres": {
+      "maximum": null,
+      "minimum": null
+    }
+  },
+  "units": {
+    "coordinate_space": "right_handed_si_metres_radians",
+    "scale_to_metres": 0.001,
+    "source_unit": "millimetre"
+  }
+}

@@ -1,0 +1,516 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.weftocct.example/v1/fixture-manifest-v1.schema.json",
+  "title": "CAD mesher M1 fixture manifest v1",
+  "description": "Deterministic catalog of independently specified geometry fixtures. Coverage is evidence-bearing and never inferred from a planned recipe or screenshot.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "corpus_revision",
+    "canonicalization",
+    "corpus_evidence",
+    "fixtures",
+    "blockers"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "corpus_revision": { "type": "integer", "minimum": 1 },
+    "canonicalization": { "const": "sorted-pretty-json-v1" },
+    "corpus_evidence": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/corpus_evidence" },
+      "uniqueItems": true,
+      "x-canonical-order": "ascending corpus evidence id"
+    },
+    "fixtures": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/fixture" },
+      "uniqueItems": true,
+      "x-canonical-order": "ascending fixture id"
+    },
+    "blockers": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/blocker" },
+      "uniqueItems": true,
+      "x-canonical-order": "ascending blocker id"
+    }
+  },
+  "$defs": {
+    "stable_code": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*$"
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "obligation_id": {
+      "type": "string",
+      "pattern": "^(TOP|CRV|SRF|SEM|TRM|PAT|SUP|REC|SRC)-[0-9]{3}$"
+    },
+    "corpus_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "artifact_path",
+        "artifact_sha256",
+        "schema_path",
+        "schema_sha256",
+        "readiness",
+        "fixture_ids",
+        "obligations",
+        "evidence"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/stable_code" },
+        "title": { "type": "string", "minLength": 1 },
+        "artifact_path": {
+          "type": "string",
+          "pattern": "^external/[A-Za-z0-9_.-]+\\.json$"
+        },
+        "artifact_sha256": { "$ref": "#/$defs/sha256" },
+        "schema_path": {
+          "type": "string",
+          "pattern": "^schema/[A-Za-z0-9_.-]+\\.json$"
+        },
+        "schema_sha256": { "$ref": "#/$defs/sha256" },
+        "readiness": { "const": "fixture_ready" },
+        "fixture_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/stable_code" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending fixture id"
+        },
+        "obligations": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/obligation_id" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending obligation id"
+        },
+        "evidence": { "type": "string", "minLength": 1 }
+      }
+    },
+    "fixture_ready_coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["obligation_id", "readiness", "claim_ids", "evidence"],
+      "properties": {
+        "obligation_id": { "$ref": "#/$defs/obligation_id" },
+        "readiness": { "const": "fixture_ready" },
+        "claim_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/stable_code" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending claim id"
+        },
+        "evidence": { "type": "string", "minLength": 1 }
+      }
+    },
+    "verified_coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "obligation_id",
+        "readiness",
+        "claim_ids",
+        "evidence",
+        "verification_record_path",
+        "verification_record_sha256"
+      ],
+      "properties": {
+        "obligation_id": { "$ref": "#/$defs/obligation_id" },
+        "readiness": { "const": "verified" },
+        "claim_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/stable_code" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending claim id"
+        },
+        "evidence": { "type": "string", "minLength": 1 },
+        "verification_record_path": {
+          "type": "string",
+          "pattern": "^verifications/[a-z0-9_.-]+\\.json$"
+        },
+        "verification_record_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "coverage": {
+      "oneOf": [
+        { "$ref": "#/$defs/fixture_ready_coverage" },
+        { "$ref": "#/$defs/verified_coverage" }
+      ]
+    },
+    "step_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "unit",
+        "shape_processing",
+        "same_parameter_repair",
+        "tessellated_geometry",
+        "surface_curve_mode",
+        "writer",
+        "clean_duplicates",
+        "write_nonmanifold",
+        "read_nonmanifold"
+      ],
+      "properties": {
+        "schema": { "enum": ["AP203", "AP214IS", "AP242DIS"] },
+        "unit": { "enum": ["millimetre", "metre", "inch"] },
+        "shape_processing": { "const": "disabled" },
+        "same_parameter_repair": { "const": false },
+        "tessellated_geometry": { "const": false },
+        "surface_curve_mode": { "const": true },
+        "writer": { "type": "string", "minLength": 1 },
+        "clean_duplicates": { "type": "boolean" },
+        "write_nonmanifold": { "type": "boolean" },
+        "read_nonmanifold": { "type": "boolean" }
+      }
+    },
+    "procedural_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "generator_target",
+        "recipe",
+        "generator_sources",
+        "generator_revision",
+        "occt_version",
+        "construction_parameters",
+        "construction_parameters_sha256",
+        "generated_step_name",
+        "generated_step_sha256",
+        "generated_summary_sha256",
+        "step_profile"
+      ],
+      "properties": {
+        "kind": { "const": "occt_procedural" },
+        "generator_target": { "const": "cad_mesher_generate_fixtures" },
+        "recipe": { "$ref": "#/$defs/stable_code" },
+        "generator_sources": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/relative_path" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending repository-relative path"
+        },
+        "generator_revision": { "type": "integer", "minimum": 1 },
+        "occt_version": { "type": "string", "minLength": 1 },
+        "construction_parameters": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/construction_parameter" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending parameter name"
+        },
+        "construction_parameters_sha256": { "$ref": "#/$defs/sha256" },
+        "generated_step_name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.-]*\\.step$"
+        },
+        "generated_step_sha256": { "$ref": "#/$defs/sha256" },
+        "generated_brep_name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.-]*\\.brep$"
+        },
+        "generated_brep_sha256": { "$ref": "#/$defs/sha256" },
+        "generated_summary_sha256": { "$ref": "#/$defs/sha256" },
+        "step_profile": { "$ref": "#/$defs/step_profile" }
+      }
+    },
+    "construction_parameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value", "unit"],
+      "properties": {
+        "name": { "$ref": "#/$defs/stable_code" },
+        "value": { "type": ["number", "string", "boolean"] },
+        "unit": { "enum": ["millimetres", "radians", "unitless"] }
+      }
+    },
+    "external_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "artifact_path",
+        "artifact_sha256",
+        "exporter",
+        "step_profile",
+        "provenance",
+        "licence"
+      ],
+      "properties": {
+        "kind": { "const": "audited_external" },
+        "artifact_path": {
+          "type": "string",
+          "pattern": "^external/[A-Za-z0-9_.-]+\\.(?:step|stp)$"
+        },
+        "artifact_sha256": { "$ref": "#/$defs/sha256" },
+        "exporter": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "version", "export_settings"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 },
+            "export_settings": { "type": "string", "minLength": 1 }
+          }
+        },
+        "step_profile": { "$ref": "#/$defs/step_profile" },
+        "provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source",
+            "owner",
+            "acquired_on",
+            "audit_record",
+            "audit_record_sha256"
+          ],
+          "properties": {
+            "source": { "type": "string", "minLength": 1 },
+            "owner": { "type": "string", "minLength": 1 },
+            "acquired_on": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+            "audit_record": {
+              "type": "string",
+              "pattern": "^provenance/[A-Za-z0-9_.-]+\\.json$"
+            },
+            "audit_record_sha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "licence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "identifier",
+            "redistribution_allowed",
+            "evidence",
+            "evidence_sha256"
+          ],
+          "properties": {
+            "identifier": { "type": "string", "minLength": 1 },
+            "redistribution_allowed": { "const": true },
+            "evidence": {
+              "type": "string",
+              "pattern": "^licences/[A-Za-z0-9_.-]+\\.(?:json|md|txt|pdf)$"
+            },
+            "evidence_sha256": { "$ref": "#/$defs/sha256" }
+          }
+        }
+      }
+    },
+    "derived_mutation_parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason", "operations"],
+      "properties": {
+        "reason": { "type": "string", "minLength": 1 },
+        "operations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "expected_matches", "occurrence", "old", "new"],
+            "properties": {
+              "kind": { "const": "replace_ascii_exact" },
+              "expected_matches": { "type": "integer", "minimum": 1 },
+              "occurrence": { "type": "integer", "minimum": 1 },
+              "old": { "type": "string", "minLength": 1 },
+              "new": { "type": "string" }
+            }
+          },
+          "uniqueItems": true,
+          "x-canonical-order": "declared mutation execution order"
+        }
+      }
+    },
+    "native_brep_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "occt_version", "writer"],
+      "properties": {
+        "format": { "const": "occt_ascii_brep" },
+        "occt_version": { "type": "string", "minLength": 1 },
+        "writer": { "const": "BRepTools::Write" }
+      }
+    },
+    "derived_step_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "base_fixture_id",
+        "baseline_artifact_path",
+        "baseline_artifact_sha256",
+        "transformation_code",
+        "transformation_source",
+        "transformation_source_sha256",
+        "transformation_parameters",
+        "artifact_format",
+        "artifact_path",
+        "artifact_sha256",
+        "step_profile"
+      ],
+      "properties": {
+        "kind": { "const": "derived_corruption" },
+        "base_fixture_id": { "$ref": "#/$defs/stable_code" },
+        "baseline_artifact_path": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\\.(?:step|stp)$"
+        },
+        "baseline_artifact_sha256": { "$ref": "#/$defs/sha256" },
+        "transformation_code": { "$ref": "#/$defs/stable_code" },
+        "transformation_source": { "$ref": "#/$defs/relative_path" },
+        "transformation_source_sha256": { "$ref": "#/$defs/sha256" },
+        "transformation_parameters": { "$ref": "#/$defs/derived_mutation_parameters" },
+        "artifact_format": { "const": "step" },
+        "artifact_path": {
+          "type": "string",
+          "pattern": "^derived/[A-Za-z0-9_.-]+\\.(?:step|stp)$"
+        },
+        "artifact_sha256": { "$ref": "#/$defs/sha256" },
+        "step_profile": { "$ref": "#/$defs/step_profile" }
+      }
+    },
+    "derived_native_brep_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "base_fixture_id",
+        "baseline_artifact_path",
+        "baseline_artifact_sha256",
+        "transformation_code",
+        "transformation_source",
+        "transformation_source_sha256",
+        "transformation_parameters",
+        "artifact_format",
+        "artifact_path",
+        "artifact_sha256",
+        "native_brep_profile"
+      ],
+      "properties": {
+        "kind": { "const": "derived_corruption" },
+        "base_fixture_id": { "$ref": "#/$defs/stable_code" },
+        "baseline_artifact_path": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\\.brep$"
+        },
+        "baseline_artifact_sha256": { "$ref": "#/$defs/sha256" },
+        "transformation_code": { "$ref": "#/$defs/stable_code" },
+        "transformation_source": { "$ref": "#/$defs/relative_path" },
+        "transformation_source_sha256": { "$ref": "#/$defs/sha256" },
+        "transformation_parameters": { "$ref": "#/$defs/derived_mutation_parameters" },
+        "artifact_format": { "const": "occt_ascii_brep" },
+        "artifact_path": {
+          "type": "string",
+          "pattern": "^derived/[A-Za-z0-9_.-]+\\.brep$"
+        },
+        "artifact_sha256": { "$ref": "#/$defs/sha256" },
+        "native_brep_profile": { "$ref": "#/$defs/native_brep_profile" }
+      }
+    },
+    "derived_source": {
+      "oneOf": [
+        { "$ref": "#/$defs/derived_step_source" },
+        { "$ref": "#/$defs/derived_native_brep_source" }
+      ]
+    },
+    "native_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "fault_code",
+        "harness_source",
+        "harness_source_sha256",
+        "test_id",
+        "exact_type_contract"
+      ],
+      "properties": {
+        "kind": { "const": "native_fault_injection" },
+        "fault_code": { "$ref": "#/$defs/stable_code" },
+        "harness_source": { "$ref": "#/$defs/relative_path" },
+        "harness_source_sha256": { "$ref": "#/$defs/sha256" },
+        "test_id": { "$ref": "#/$defs/stable_code" },
+        "exact_type_contract": { "type": "string", "minLength": 1 }
+      }
+    },
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "source",
+        "expectation_path",
+        "expectation_sha256",
+        "review_record_path",
+        "review_record_sha256",
+        "coverage"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/stable_code" },
+        "title": { "type": "string", "minLength": 1 },
+        "source": {
+          "oneOf": [
+            { "$ref": "#/$defs/procedural_source" },
+            { "$ref": "#/$defs/derived_source" },
+            { "$ref": "#/$defs/native_source" },
+            { "$ref": "#/$defs/external_source" }
+          ]
+        },
+        "expectation_path": { "$ref": "#/$defs/relative_path" },
+        "expectation_sha256": { "$ref": "#/$defs/sha256" },
+        "review_record_path": {
+          "type": "string",
+          "pattern": "^reviews/[a-z0-9_.-]+\\.json$"
+        },
+        "review_record_sha256": { "$ref": "#/$defs/sha256" },
+        "coverage": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/coverage" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending obligation id"
+        }
+      }
+    },
+    "blocker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "route_id", "title", "reason", "acceptance", "obligations"],
+      "properties": {
+        "id": { "$ref": "#/$defs/stable_code" },
+        "route_id": { "type": "string", "pattern": "^BR-[0-9]{3}$" },
+        "title": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 },
+        "acceptance": { "type": "string", "minLength": 1 },
+        "obligations": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/obligation_id" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending obligation id"
+        }
+      }
+    }
+  }
+}

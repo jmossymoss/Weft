@@ -1,0 +1,30 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "e37fef5ab6de9aabe37e46720aacd9f3bd5e27203e23d223d05b190e98eb34f1",
+  "finding_disposition": "Fresh-context analytic, topology, normalization, support, STEP, summary, construction, and native-BRep binding review accepted; the native-BRep digest 8d0647e162a9cc75a44a948cd4574fcc27a3e46835efaf0682f57f61433cea27 is transitively locked by the source-contract digest.",
+  "fixture_id": "face.uv.anisotropic_folded",
+  "producer_id": "producer.fixture_surface_recipes",
+  "review_id": "review.face_uv_anisotropic_folded.revision_6",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.surface_oracle_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "claims.profile_binding",
+    "construction.parameters",
+    "geometry.source_and_imported",
+    "normalization.contract",
+    "provenance.native_brep_hash",
+    "support.assignment",
+    "topology.counts",
+    "units.tolerances"
+  ],
+  "source_binding": {
+    "artifact_sha256": "9aaf6506c6fd9798e4c1b34ffaa750af8cac6224f23329979e5367c25705760e",
+    "construction_parameters_sha256": "08096912897c3cae826f61eacd07ee778170f0d5b9343075bc5b2f5a2c5cfe94",
+    "generator_revision": 6,
+    "kind": "occt_procedural",
+    "source_contract_sha256": "6849c77f1c53f6e72d0ee0a586c30acd895671b75a0910177d23059f8f0b262a",
+    "summary_sha256": "892e3536ec841edfd380ffb9c21312300f13f1a5f238765cfb46781edac2483b"
+  }
+}

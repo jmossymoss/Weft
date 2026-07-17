@@ -1,0 +1,1971 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "expected": {
+    "boundary_loops": [
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0001",
+        "id": "boundary_loop.l0001",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 6.283185307,
+          "u_min": 0.0,
+          "v_max": 11.66190379,
+          "v_min": 0.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0002",
+        "id": "boundary_loop.l0002",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 6.283185307,
+          "u_min": -6.283185307,
+          "v_max": 22.0,
+          "v_min": 0.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0003",
+        "id": "boundary_loop.l0003",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 6.283185307,
+          "u_min": 0.0,
+          "v_max": 12.0,
+          "v_min": 0.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 1,
+        "face_occurrence_id": "face_occurrence.f0004",
+        "id": "boundary_loop.l0004",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 18.0,
+          "u_min": -18.0,
+          "v_max": 18.0,
+          "v_min": -18.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 1,
+        "face_occurrence_id": "face_occurrence.f0004",
+        "id": "boundary_loop.l0005",
+        "orientation": "FORWARD",
+        "role": "inner",
+        "uv_bounds": {
+          "u_max": 5.0,
+          "u_min": -5.0,
+          "v_max": 5.0,
+          "v_min": -5.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 1,
+        "face_occurrence_id": "face_occurrence.f0005",
+        "id": "boundary_loop.l0006",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 12.0,
+          "u_min": -12.0,
+          "v_max": 12.0,
+          "v_min": -12.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 1,
+        "face_occurrence_id": "face_occurrence.f0005",
+        "id": "boundary_loop.l0007",
+        "orientation": "FORWARD",
+        "role": "inner",
+        "uv_bounds": {
+          "u_max": 5.0,
+          "u_min": -5.0,
+          "v_max": 5.0,
+          "v_min": -5.0
+        }
+      }
+    ],
+    "brep_valid": false,
+    "claims": [
+      {
+        "id": "claim.sem_004.oracle",
+        "obligation_id": "SEM-004",
+        "predicate_codes": [
+          "predicate.sem_004.oracle"
+        ],
+        "statement": "Reconstruct the imported z-axis, full angular sweep, radial profile, generator segments, seams, and exact surface types from measurements. A retained general revolution region remains deferred until a named revolution strategy is independently proven.",
+        "subject_refs": [
+          {
+            "id": "observation.semantic.primitive.profiled_revolution",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.face",
+            "kind": "observation"
+          },
+          {
+            "id": "primitive.profiled_revolution",
+            "kind": "semantic_candidate"
+          }
+        ]
+      }
+    ],
+    "curve_variants": [
+      {
+        "concrete_type": "Geom_Circle",
+        "condition_codes": [
+          "bounded",
+          "mathematically_periodic_basis"
+        ],
+        "count": 5,
+        "family_code": "circle",
+        "label": "circle.curve_imported",
+        "wrapper_stack": []
+      },
+      {
+        "concrete_type": "Geom_Line",
+        "condition_codes": [
+          "bounded"
+        ],
+        "count": 3,
+        "family_code": "line",
+        "label": "line.curve_imported",
+        "wrapper_stack": []
+      }
+    ],
+    "import_outcome": "named_failure",
+    "model_classes": [
+      "invalid_import"
+    ],
+    "model_topology": {
+      "closed_shells": 1,
+      "coincident_solid_signature_pairs": 0,
+      "free_edges": 0,
+      "free_wires": 0,
+      "inner_shells": 0,
+      "isolated_vertices": 0,
+      "maximum_faces_per_edge": 2,
+      "nonmanifold_vertices": 0,
+      "open_shells": 0,
+      "outer_shells": 1,
+      "shared_faces_between_solids": 0,
+      "standalone_shells": 0
+    },
+    "orientation_states": [
+      "FORWARD",
+      "REVERSED"
+    ],
+    "periodicity": [
+      {
+        "label": "cone.imported",
+        "u_closed": true,
+        "u_periodic": true,
+        "v_closed": false,
+        "v_periodic": false
+      },
+      {
+        "label": "cylinder.imported",
+        "u_closed": true,
+        "u_periodic": true,
+        "v_closed": false,
+        "v_periodic": false
+      },
+      {
+        "label": "plane.perforated",
+        "u_closed": false,
+        "u_periodic": false,
+        "v_closed": false,
+        "v_periodic": false
+      }
+    ],
+    "semantic_candidates": [
+      {
+        "code": "primitive.profiled_revolution",
+        "confidence": "Ambiguous",
+        "evidence": "Reconstruct the imported z-axis, full angular sweep, radial profile, generator segments, seams, and exact surface types from measurements. A retained general revolution region remains deferred until a named revolution strategy is independently proven.",
+        "subject_count": 1
+      }
+    ],
+    "singularity_codes": [],
+    "subject_universe": {
+      "edge_occurrence_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004",
+        "edge_occurrence.e0005",
+        "edge_occurrence.e0006",
+        "edge_occurrence.e0007",
+        "edge_occurrence.e0008",
+        "edge_occurrence.e0009",
+        "edge_occurrence.e0010",
+        "edge_occurrence.e0011",
+        "edge_occurrence.e0012",
+        "edge_occurrence.e0013",
+        "edge_occurrence.e0014",
+        "edge_occurrence.e0015",
+        "edge_occurrence.e0016"
+      ],
+      "face_occurrence_ids": [
+        "face_occurrence.f0001",
+        "face_occurrence.f0002",
+        "face_occurrence.f0003",
+        "face_occurrence.f0004",
+        "face_occurrence.f0005"
+      ],
+      "logical_region_ids": [
+        "logical_region.r0001",
+        "logical_region.r0002",
+        "logical_region.r0003",
+        "logical_region.r0004",
+        "logical_region.r0005"
+      ]
+    },
+    "support": [
+      {
+        "geometry_family_code": "circle",
+        "label": "edge.circle.invalid_imported_geometry",
+        "selection_code": "reason.invalid_imported_geometry",
+        "state": "InvalidImportedGeometry",
+        "subject_count": 10,
+        "subject_ids": [
+          "edge_occurrence.e0001",
+          "edge_occurrence.e0002",
+          "edge_occurrence.e0003",
+          "edge_occurrence.e0004",
+          "edge_occurrence.e0005",
+          "edge_occurrence.e0006",
+          "edge_occurrence.e0007",
+          "edge_occurrence.e0008",
+          "edge_occurrence.e0009",
+          "edge_occurrence.e0010"
+        ],
+        "subject_kind": "edge"
+      },
+      {
+        "geometry_family_code": "line",
+        "label": "edge.line.invalid_imported_geometry",
+        "selection_code": "reason.invalid_imported_geometry",
+        "state": "InvalidImportedGeometry",
+        "subject_count": 6,
+        "subject_ids": [
+          "edge_occurrence.e0011",
+          "edge_occurrence.e0012",
+          "edge_occurrence.e0013",
+          "edge_occurrence.e0014",
+          "edge_occurrence.e0015",
+          "edge_occurrence.e0016"
+        ],
+        "subject_kind": "edge"
+      },
+      {
+        "geometry_family_code": "cone",
+        "label": "face.cone.invalid_imported_geometry",
+        "selection_code": "reason.invalid_imported_geometry",
+        "state": "InvalidImportedGeometry",
+        "subject_count": 1,
+        "subject_ids": [
+          "face_occurrence.f0001"
+        ],
+        "subject_kind": "face"
+      },
+      {
+        "geometry_family_code": "cylinder",
+        "label": "face.cylinder.invalid_imported_geometry",
+        "selection_code": "reason.invalid_imported_geometry",
+        "state": "InvalidImportedGeometry",
+        "subject_count": 2,
+        "subject_ids": [
+          "face_occurrence.f0002",
+          "face_occurrence.f0003"
+        ],
+        "subject_kind": "face"
+      },
+      {
+        "geometry_family_code": "plane",
+        "label": "face.plane.invalid_imported_geometry",
+        "selection_code": "reason.invalid_imported_geometry",
+        "state": "InvalidImportedGeometry",
+        "subject_count": 2,
+        "subject_ids": [
+          "face_occurrence.f0004",
+          "face_occurrence.f0005"
+        ],
+        "subject_kind": "face"
+      },
+      {
+        "geometry_family_code": "cone",
+        "label": "region.cone.invalid_imported_geometry",
+        "selection_code": "reason.invalid_imported_geometry",
+        "state": "InvalidImportedGeometry",
+        "subject_count": 1,
+        "subject_ids": [
+          "logical_region.r0001"
+        ],
+        "subject_kind": "logical_region"
+      },
+      {
+        "geometry_family_code": "cylinder",
+        "label": "region.cylinder.invalid_imported_geometry",
+        "selection_code": "reason.invalid_imported_geometry",
+        "state": "InvalidImportedGeometry",
+        "subject_count": 2,
+        "subject_ids": [
+          "logical_region.r0002",
+          "logical_region.r0003"
+        ],
+        "subject_kind": "logical_region"
+      },
+      {
+        "geometry_family_code": "plane",
+        "label": "region.plane.invalid_imported_geometry",
+        "selection_code": "reason.invalid_imported_geometry",
+        "state": "InvalidImportedGeometry",
+        "subject_count": 2,
+        "subject_ids": [
+          "logical_region.r0004",
+          "logical_region.r0005"
+        ],
+        "subject_kind": "logical_region"
+      }
+    ],
+    "surface_variants": [
+      {
+        "concrete_type": "Geom_ConicalSurface",
+        "condition_codes": [
+          "basis_periodic",
+          "bounded",
+          "outer_loop"
+        ],
+        "count": 1,
+        "family_code": "cone",
+        "label": "cone.imported",
+        "trim_domain_class": "convex_simple_region",
+        "wrapper_stack": []
+      },
+      {
+        "concrete_type": "Geom_CylindricalSurface",
+        "condition_codes": [
+          "basis_periodic",
+          "bounded",
+          "outer_loop"
+        ],
+        "count": 2,
+        "family_code": "cylinder",
+        "label": "cylinder.imported",
+        "trim_domain_class": "convex_simple_region",
+        "wrapper_stack": []
+      },
+      {
+        "concrete_type": "Geom_Plane",
+        "condition_codes": [
+          "bounded",
+          "inner_loop",
+          "outer_loop"
+        ],
+        "count": 2,
+        "family_code": "plane",
+        "label": "plane.perforated",
+        "trim_domain_class": "multiply_perforated_disk",
+        "wrapper_stack": []
+      }
+    ],
+    "topology_occurrences": {
+      "assembly_products": 1,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 16,
+      "faces": 5,
+      "instances": 0,
+      "shells": 1,
+      "solids": 1,
+      "vertices": 32,
+      "wires": 7
+    },
+    "unique_topology": {
+      "assembly_products": 1,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 8,
+      "faces": 5,
+      "instances": 0,
+      "shells": 1,
+      "solids": 1,
+      "vertices": 5,
+      "wires": 7
+    },
+    "validation_findings": [
+      {
+        "code": "import.unprocessed_brep_invalid",
+        "evidence": "STEP transfer succeeded, but BRepCheck reports the processing-disabled imported B-rep invalid; no supported-state assignment is made.",
+        "expectation": "present",
+        "subject_kind": "model"
+      },
+      {
+        "code": "topology.valid",
+        "evidence": "The processing-disabled STEP B-rep validity result is bound exactly and compared with the independently valid source construction.",
+        "expectation": "absent",
+        "subject_kind": "model"
+      }
+    ]
+  },
+  "fixture_id": "solid.revolution.profiled",
+  "instances": [],
+  "observations": [
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "reason.invalid_imported_geometry"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 10 edge subjects to InvalidImportedGeometry using reason.invalid_imported_geometry.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.edge.circle.invalid_imported_geometry",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004",
+        "edge_occurrence.e0005",
+        "edge_occurrence.e0006",
+        "edge_occurrence.e0007",
+        "edge_occurrence.e0008",
+        "edge_occurrence.e0009",
+        "edge_occurrence.e0010"
+      ]
+    },
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "reason.invalid_imported_geometry"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 6 edge subjects to InvalidImportedGeometry using reason.invalid_imported_geometry.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.edge.line.invalid_imported_geometry",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "edge_occurrence.e0011",
+        "edge_occurrence.e0012",
+        "edge_occurrence.e0013",
+        "edge_occurrence.e0014",
+        "edge_occurrence.e0015",
+        "edge_occurrence.e0016"
+      ]
+    },
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "reason.invalid_imported_geometry"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 1 face subjects to InvalidImportedGeometry using reason.invalid_imported_geometry.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.face.cone.invalid_imported_geometry",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "face_occurrence.f0001"
+      ]
+    },
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "reason.invalid_imported_geometry"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 2 face subjects to InvalidImportedGeometry using reason.invalid_imported_geometry.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.face.cylinder.invalid_imported_geometry",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "face_occurrence.f0002",
+        "face_occurrence.f0003"
+      ]
+    },
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "reason.invalid_imported_geometry"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 2 face subjects to InvalidImportedGeometry using reason.invalid_imported_geometry.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.face.plane.invalid_imported_geometry",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "face_occurrence.f0004",
+        "face_occurrence.f0005"
+      ]
+    },
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "reason.invalid_imported_geometry"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 1 logical_region subjects to InvalidImportedGeometry using reason.invalid_imported_geometry.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.region.cone.invalid_imported_geometry",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "logical_region.r0001"
+      ]
+    },
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "reason.invalid_imported_geometry"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 2 logical_region subjects to InvalidImportedGeometry using reason.invalid_imported_geometry.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.region.cylinder.invalid_imported_geometry",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "logical_region.r0002",
+        "logical_region.r0003"
+      ]
+    },
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "reason.invalid_imported_geometry"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 2 logical_region subjects to InvalidImportedGeometry using reason.invalid_imported_geometry.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.region.plane.invalid_imported_geometry",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "logical_region.r0004",
+        "logical_region.r0005"
+      ]
+    },
+    {
+      "concrete_type": "Geom_Circle",
+      "condition_codes": [
+        "bounded",
+        "mathematically_periodic_basis"
+      ],
+      "exact_evaluator_kind": "occt.exact_curve",
+      "family_code": "circle",
+      "id": "observation.geometry.circle.curve_imported",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "curve",
+          "closed": false,
+          "lower": null,
+          "period": 6.283185307179586,
+          "periodic": true,
+          "seam_parameters": [],
+          "unit": "radians",
+          "upper": null
+        }
+      ],
+      "parameters": [],
+      "phase": "imported",
+      "subject_id": "circle.curve_imported",
+      "taxonomy": "Curve",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_ConicalSurface",
+      "condition_codes": [
+        "basis_periodic",
+        "bounded",
+        "outer_loop"
+      ],
+      "exact_evaluator_kind": "occt.exact_surface",
+      "family_code": "cone",
+      "id": "observation.geometry.cone.imported",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": true,
+          "lower": null,
+          "period": 6.283185307179586,
+          "periodic": true,
+          "seam_parameters": [],
+          "unit": "radians",
+          "upper": null
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": null,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": null
+        }
+      ],
+      "parameters": [],
+      "phase": "imported",
+      "subject_id": "cone.imported",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_CylindricalSurface",
+      "condition_codes": [
+        "basis_periodic",
+        "bounded",
+        "outer_loop"
+      ],
+      "exact_evaluator_kind": "occt.exact_surface",
+      "family_code": "cylinder",
+      "id": "observation.geometry.cylinder.imported",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": true,
+          "lower": null,
+          "period": 6.283185307179586,
+          "periodic": true,
+          "seam_parameters": [],
+          "unit": "radians",
+          "upper": null
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": null,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": null
+        }
+      ],
+      "parameters": [],
+      "phase": "imported",
+      "subject_id": "cylinder.imported",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_Line",
+      "condition_codes": [
+        "bounded"
+      ],
+      "exact_evaluator_kind": "occt.exact_curve",
+      "family_code": "line",
+      "id": "observation.geometry.line.curve_imported",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "curve",
+          "closed": false,
+          "lower": null,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": null
+        }
+      ],
+      "parameters": [],
+      "phase": "imported",
+      "subject_id": "line.curve_imported",
+      "taxonomy": "Curve",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_Plane",
+      "condition_codes": [
+        "bounded",
+        "inner_loop",
+        "outer_loop"
+      ],
+      "exact_evaluator_kind": "occt.exact_surface",
+      "family_code": "plane",
+      "id": "observation.geometry.plane.perforated",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": null,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": null
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": null,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": null
+        }
+      ],
+      "parameters": [],
+      "phase": "imported",
+      "subject_id": "plane.perforated",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "evidence": "Reconstruct the imported z-axis, full angular sweep, radial profile, generator segments, seams, and exact surface types from measurements. A retained general revolution region remains deferred until a named revolution strategy is independently proven.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.measurement.independent",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "construction.height_1",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 12.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "construction.height_2",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 10.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "construction.inner_radius",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 5.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "construction.lower_outer_radius",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 12.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "construction.upper_outer_radius",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 18.0,
+            "value_type": "number"
+          }
+        }
+      ],
+      "pathology_code": "oracle.independent_measurements",
+      "phase": "source",
+      "subject_ids": [
+        "source.model"
+      ]
+    },
+    {
+      "evidence": "STEP transfer succeeded, but BRepCheck reports the processing-disabled imported B-rep invalid; no supported-state assignment is made.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.p1",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "import.unprocessed_brep_invalid.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 1,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "import.unprocessed_brep_invalid",
+      "phase": "imported",
+      "subject_ids": [
+        "oracle.finding.p1"
+      ]
+    },
+    {
+      "evidence": "The processing-disabled STEP B-rep validity result is bound exactly and compared with the independently valid source construction.",
+      "expectation": "absent",
+      "expected_failure_code": null,
+      "id": "observation.pathology.p2",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "topology.valid.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 0,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "topology.valid",
+      "phase": "imported",
+      "subject_ids": [
+        "oracle.finding.p2"
+      ]
+    },
+    {
+      "candidate_code": "primitive.profiled_revolution",
+      "confidence": "Ambiguous",
+      "continuity_observation_ids": [],
+      "evidence": "Reconstruct the imported z-axis, full angular sweep, radial profile, generator segments, seams, and exact surface types from measurements. A retained general revolution region remains deferred until a named revolution strategy is independently proven.",
+      "evidence_codes": [
+        "evidence.independent_oracle"
+      ],
+      "fitted_parameters": [],
+      "id": "observation.semantic.primitive.profiled_revolution",
+      "kind": "semantic_evidence",
+      "max_residual_metres": null,
+      "phase": "imported",
+      "residual_observation_ids": [],
+      "subject_ids": [
+        "primitive.profiled_revolution"
+      ]
+    },
+    {
+      "accepted_normalization_codes": [
+        "step.periodic_seam_parameter_shifted",
+        "step.profiled_revolution_import_invalid"
+      ],
+      "changes": [],
+      "equivalence": "not_comparable",
+      "geometry_equivalent": false,
+      "id": "observation.normalization.model",
+      "imported_subject_ids": [
+        "imported.model"
+      ],
+      "kind": "source_import_normalization",
+      "outcome": "rejected",
+      "source_subject_ids": [
+        "source.model"
+      ],
+      "topology_equivalent": false
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.edge",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 8
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.edges"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.edges",
+      "tolerance_metres": 0,
+      "topology_kind": "edge",
+      "underlying_id": "topology.edges",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.face",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 5
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.faces"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.faces",
+      "tolerance_metres": 0,
+      "topology_kind": "face",
+      "underlying_id": "topology.faces",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.shell",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 1
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.shells"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.shells",
+      "tolerance_metres": 0,
+      "topology_kind": "shell",
+      "underlying_id": "topology.shells",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.solid",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 1
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.solids"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.solids",
+      "tolerance_metres": 0,
+      "topology_kind": "solid",
+      "underlying_id": "topology.solids",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.vertex",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 5
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.vertices"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.vertices",
+      "tolerance_metres": 0,
+      "topology_kind": "vertex",
+      "underlying_id": "topology.vertices",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.wire",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 7
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.wires"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.wires",
+      "tolerance_metres": 0,
+      "topology_kind": "wire",
+      "underlying_id": "topology.wires",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "baked_geometry_matrix_row_major": null,
+      "disposition": "retained_as_location",
+      "handedness": "right_handed",
+      "id": "observation.transform.instance.synthetic_identity",
+      "imported_location_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "instance_id": "instance.synthetic_identity",
+      "kind": "transform",
+      "linear_determinant": 1,
+      "parent_instance_id": null,
+      "source_affine_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "source_unit_scale_to_metres": 0.001,
+      "target_definition_id": "definition.synthetic_identity",
+      "transform_kind": "identity",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "condition_codes": [
+        "basis_periodic",
+        "bounded",
+        "outer_loop"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "cone.imported",
+      "id": "observation.trim.cone.imported",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0001.c1",
+            "oracle.coedge.boundary_loop.l0001.c2",
+            "oracle.coedge.boundary_loop.l0001.c3",
+            "oracle.coedge.boundary_loop.l0001.c4"
+          ],
+          "loop_id": "boundary_loop.l0001",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 73.27390254497561,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 6.283185307,
+            "u_min": 0.0,
+            "v_max": 11.66190379,
+            "v_min": 0.0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0001"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0002.c1",
+            "oracle.coedge.boundary_loop.l0002.c2",
+            "oracle.coedge.boundary_loop.l0002.c3",
+            "oracle.coedge.boundary_loop.l0002.c4"
+          ],
+          "loop_id": "boundary_loop.l0002",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 276.460153508,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 6.283185307,
+            "u_min": -6.283185307,
+            "v_max": 22.0,
+            "v_min": 0.0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0002"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0003.c1",
+            "oracle.coedge.boundary_loop.l0003.c2",
+            "oracle.coedge.boundary_loop.l0003.c3",
+            "oracle.coedge.boundary_loop.l0003.c4"
+          ],
+          "loop_id": "boundary_loop.l0003",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 75.398223684,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 6.283185307,
+            "u_min": 0.0,
+            "v_max": 12.0,
+            "v_min": 0.0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0003"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0004.c1"
+          ],
+          "loop_id": "boundary_loop.l0004",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 1296.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 18.0,
+            "u_min": -18.0,
+            "v_max": 18.0,
+            "v_min": -18.0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0004"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0005.c1"
+          ],
+          "loop_id": "boundary_loop.l0005",
+          "max_gap_metres": 0,
+          "nesting_depth": 1,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "inner",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 100.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 5.0,
+            "u_min": -5.0,
+            "v_max": 5.0,
+            "v_min": -5.0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0005"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0006.c1"
+          ],
+          "loop_id": "boundary_loop.l0006",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 576.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 12.0,
+            "u_min": -12.0,
+            "v_max": 12.0,
+            "v_min": -12.0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0006"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0007.c1"
+          ],
+          "loop_id": "boundary_loop.l0007",
+          "max_gap_metres": 0,
+          "nesting_depth": 1,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "inner",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 100.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 5.0,
+            "u_min": -5.0,
+            "v_max": 5.0,
+            "v_min": -5.0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0007"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    },
+    {
+      "condition_codes": [
+        "basis_periodic",
+        "bounded",
+        "outer_loop"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "cylinder.imported",
+      "id": "observation.trim.cylinder.imported",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0001.c1",
+            "oracle.coedge.boundary_loop.l0001.c2",
+            "oracle.coedge.boundary_loop.l0001.c3",
+            "oracle.coedge.boundary_loop.l0001.c4"
+          ],
+          "loop_id": "boundary_loop.l0001",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 73.27390254497561,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 6.283185307,
+            "u_min": 0.0,
+            "v_max": 11.66190379,
+            "v_min": 0.0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0001"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0002.c1",
+            "oracle.coedge.boundary_loop.l0002.c2",
+            "oracle.coedge.boundary_loop.l0002.c3",
+            "oracle.coedge.boundary_loop.l0002.c4"
+          ],
+          "loop_id": "boundary_loop.l0002",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 276.460153508,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 6.283185307,
+            "u_min": -6.283185307,
+            "v_max": 22.0,
+            "v_min": 0.0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0002"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0003.c1",
+            "oracle.coedge.boundary_loop.l0003.c2",
+            "oracle.coedge.boundary_loop.l0003.c3",
+            "oracle.coedge.boundary_loop.l0003.c4"
+          ],
+          "loop_id": "boundary_loop.l0003",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 75.398223684,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 6.283185307,
+            "u_min": 0.0,
+            "v_max": 12.0,
+            "v_min": 0.0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0003"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0004.c1"
+          ],
+          "loop_id": "boundary_loop.l0004",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 1296.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 18.0,
+            "u_min": -18.0,
+            "v_max": 18.0,
+            "v_min": -18.0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0004"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0005.c1"
+          ],
+          "loop_id": "boundary_loop.l0005",
+          "max_gap_metres": 0,
+          "nesting_depth": 1,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "inner",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 100.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 5.0,
+            "u_min": -5.0,
+            "v_max": 5.0,
+            "v_min": -5.0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0005"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0006.c1"
+          ],
+          "loop_id": "boundary_loop.l0006",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 576.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 12.0,
+            "u_min": -12.0,
+            "v_max": 12.0,
+            "v_min": -12.0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0006"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0007.c1"
+          ],
+          "loop_id": "boundary_loop.l0007",
+          "max_gap_metres": 0,
+          "nesting_depth": 1,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "inner",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 100.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 5.0,
+            "u_min": -5.0,
+            "v_max": 5.0,
+            "v_min": -5.0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0007"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    },
+    {
+      "condition_codes": [
+        "bounded",
+        "inner_loop",
+        "outer_loop"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "plane.perforated",
+      "id": "observation.trim.plane.perforated",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0001.c1",
+            "oracle.coedge.boundary_loop.l0001.c2",
+            "oracle.coedge.boundary_loop.l0001.c3",
+            "oracle.coedge.boundary_loop.l0001.c4"
+          ],
+          "loop_id": "boundary_loop.l0001",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 73.27390254497561,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 6.283185307,
+            "u_min": 0.0,
+            "v_max": 11.66190379,
+            "v_min": 0.0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0001"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0002.c1",
+            "oracle.coedge.boundary_loop.l0002.c2",
+            "oracle.coedge.boundary_loop.l0002.c3",
+            "oracle.coedge.boundary_loop.l0002.c4"
+          ],
+          "loop_id": "boundary_loop.l0002",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 276.460153508,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 6.283185307,
+            "u_min": -6.283185307,
+            "v_max": 22.0,
+            "v_min": 0.0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0002"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0003.c1",
+            "oracle.coedge.boundary_loop.l0003.c2",
+            "oracle.coedge.boundary_loop.l0003.c3",
+            "oracle.coedge.boundary_loop.l0003.c4"
+          ],
+          "loop_id": "boundary_loop.l0003",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 75.398223684,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 6.283185307,
+            "u_min": 0.0,
+            "v_max": 12.0,
+            "v_min": 0.0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0003"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0004.c1"
+          ],
+          "loop_id": "boundary_loop.l0004",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 1296.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 18.0,
+            "u_min": -18.0,
+            "v_max": 18.0,
+            "v_min": -18.0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0004"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0005.c1"
+          ],
+          "loop_id": "boundary_loop.l0005",
+          "max_gap_metres": 0,
+          "nesting_depth": 1,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "inner",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 100.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 5.0,
+            "u_min": -5.0,
+            "v_max": 5.0,
+            "v_min": -5.0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0005"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0006.c1"
+          ],
+          "loop_id": "boundary_loop.l0006",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 576.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 12.0,
+            "u_min": -12.0,
+            "v_max": 12.0,
+            "v_min": -12.0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0006"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0007.c1"
+          ],
+          "loop_id": "boundary_loop.l0007",
+          "max_gap_metres": 0,
+          "nesting_depth": 1,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "inner",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 100.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 5.0,
+            "u_min": -5.0,
+            "v_max": 5.0,
+            "v_min": -5.0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0007"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "multiply_perforated_disk"
+    }
+  ],
+  "oracle": {
+    "independent_from_production_classifier": true,
+    "method": "analytic_derivation",
+    "references": [
+      "final revision-6 processing-disabled STEP readback summary solid.revolution.profiled.json used only for exact import binding",
+      "fixtures/generator/fixture_feature_recipes.cpp recipe solid.revolution.profiled",
+      "independent_oracle_intent: Reconstruct the imported z-axis, full angular sweep, radial profile, generator segments, seams, and exact surface types from measurements. A retained general revolution region remains deferred until a named revolution strategy is independently proven."
+    ],
+    "statement": "Reconstruct the imported z-axis, full angular sweep, radial profile, generator segments, seams, and exact surface types from measurements. A retained general revolution region remains deferred until a named revolution strategy is independently proven. Frozen construction parameters: height_1=12.0 millimetres, height_2=10.0 millimetres, inner_radius=5.0 millimetres, lower_outer_radius=12.0 millimetres, upper_outer_radius=18.0 millimetres."
+  },
+  "schema_version": "1.0.0",
+  "tolerances": {
+    "edges_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "faces_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "vertices_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    }
+  },
+  "units": {
+    "coordinate_space": "right_handed_si_metres_radians",
+    "scale_to_metres": 0.001,
+    "source_unit": "millimetre"
+  }
+}

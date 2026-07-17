@@ -1,0 +1,1059 @@
+{
+  "authoritative_ledger": "docs/governance/fixture-coverage.md",
+  "authoritative_obligation_registry": "fixtures/obligation-profiles.json",
+  "canonicalization": "sorted-pretty-json-v1",
+  "coverage_semantics": "authoring-intent-only-not-coverage-evidence",
+  "excluded_legacy_recipe_ids": [
+    "assembly.box.nested_repeated_instances",
+    "compound.box_pair.coincident",
+    "compound.box_pair.shared_face_nonmanifold",
+    "compound.free_edge_isolated_vertex",
+    "shell.box.open",
+    "solid.box",
+    "solid.box.inner_void",
+    "solid.cone.frustum",
+    "solid.cylinder.full",
+    "solid.cylinder.partial",
+    "solid.plate.circular_through_hole",
+    "solid.plate.two_circular_through_holes",
+    "solid.prism.concave",
+    "solid.prism.ellipse.full",
+    "solid.prism.ellipse.partial_cap",
+    "solid.sphere.segment",
+    "solid.torus.segment"
+  ],
+  "recipe_count": 60,
+  "recipe_modules": [
+    "fixtures/generator/fixture_curve_recipes.cpp",
+    "fixtures/generator/fixture_feature_recipes.cpp",
+    "fixtures/generator/fixture_pathology_recipes.cpp",
+    "fixtures/generator/fixture_surface_recipes.cpp",
+    "fixtures/generator/fixture_topology_recipes.cpp",
+    "fixtures/generator/fixture_trim_support_recipes.cpp"
+  ],
+  "recipes": {
+    "baseline.pathology.box": {
+      "independent_oracle_intent": "Freeze the valid 24 by 20 by 16 millimetre box dimensions, signed volume, topology identities, and imported baseline before any source-bound duplicate, orientation, or self-intersection mutation. The clean box alone must claim no pathology obligation.",
+      "intended_obligation_ids": [],
+      "intended_support_assignments": [],
+      "module": "fixtures/generator/fixture_pathology_recipes.cpp",
+      "title": "Clean box mutation baseline"
+    },
+    "baseline.pathology.planar_face": {
+      "independent_oracle_intent": "Freeze the valid 30 by 20 millimetre rectangular face, its 600 square millimetre area, boundary identities, and imported baseline. Record the zero and near-zero mutation targets only as source parameters; the clean face is not zero-area evidence.",
+      "intended_obligation_ids": [],
+      "intended_support_assignments": [],
+      "module": "fixtures/generator/fixture_pathology_recipes.cpp",
+      "title": "Clean planar-face area baseline"
+    },
+    "baseline.pathology.wire_gap_thresholds": {
+      "independent_oracle_intent": "Freeze two valid closed square wires, their ordered edge and vertex identities, and the one-micrometre source tolerance before source-bound gap mutations. The clean wires must not be reported as within-tolerance or beyond-tolerance gap cases.",
+      "intended_obligation_ids": [],
+      "intended_support_assignments": [],
+      "module": "fixtures/generator/fixture_pathology_recipes.cpp",
+      "title": "Clean wire-gap mutation baseline"
+    },
+    "component.mixed.supported_unsupported": {
+      "independent_oracle_intent": "Independently enumerate every imported box edge and face, derive their line and plane equations, extract the residual B-spline tensor data, and assign every subject exactly once. The procedural oracle must require component mesh completion to fail while the residual region lacks a compatible strategy; native gate evidence remains separately required.",
+      "intended_obligation_ids": [
+        "SRF-007",
+        "SRF-024",
+        "SUP-001",
+        "SUP-004",
+        "SUP-010",
+        "SUP-011"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.residual_surface_route_unproven",
+          "state": "DeferredResidualSurface",
+          "subject_scope": "the imported residual B-spline face and its logical region"
+        },
+        {
+          "selection_code": "strategy.curve.exact_line",
+          "state": "SupportedAnalyticTemplate",
+          "subject_scope": "all imported straight box-edge subjects"
+        },
+        {
+          "selection_code": "strategy.surface.planar",
+          "state": "SupportedAnalyticTemplate",
+          "subject_scope": "all imported planar box faces and their logical regions"
+        }
+      ],
+      "module": "fixtures/generator/fixture_trim_support_recipes.cpp",
+      "title": "Analytic box with a deferred residual patch"
+    },
+    "compound.face.coincident_overlap": {
+      "independent_oracle_intent": "Derive three distinct planar-face identities, prove that two 18 by 12 millimetre faces are coincident, and calculate the third face's 72 square millimetre overlap from its offset. Keep coincidence, overlap, and free-face topology as separate findings.",
+      "intended_obligation_ids": [
+        "PAT-016",
+        "SEM-022",
+        "SUP-005"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "all standalone coincident and overlapping face subjects"
+        }
+      ],
+      "module": "fixtures/generator/fixture_feature_recipes.cpp",
+      "title": "Coincident and partially overlapping planar faces"
+    },
+    "compound.free_wire_edge_vertex": {
+      "independent_oracle_intent": "Derive the four-edge closed chain, two-edge open chain, independent edge, and isolated vertex from their coordinates, then verify imported incidence and root classes. Claim the wire variants only if their ordered incidence survives the STEP readback.",
+      "intended_obligation_ids": [
+        "SUP-005",
+        "TOP-018"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "all free wire, free edge, and isolated-vertex subjects"
+        }
+      ],
+      "module": "fixtures/generator/fixture_topology_recipes.cpp",
+      "title": "Free closed wire, open wire, edge, and vertex compound"
+    },
+    "compound.mixed.disconnected_face_wire": {
+      "independent_oracle_intent": "Prove one isolated 12 by 9 millimetre rectangular face and one disconnected two-edge open chain from coordinates and imported incidence. Claim the wire-body portion only when the imported wire remains an addressable body.",
+      "intended_obligation_ids": [
+        "SUP-005",
+        "TOP-015"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "the disconnected standalone face and open-wire subjects"
+        }
+      ],
+      "module": "fixtures/generator/fixture_topology_recipes.cpp",
+      "title": "Disconnected planar face and open wire"
+    },
+    "compound.orientation.internal_external": {
+      "independent_oracle_intent": "Record the four source edge occurrences and independently record every imported orientation. Do not claim the all-orientation obligation unless FORWARD, REVERSED, INTERNAL, and EXTERNAL all survive; the present authoring target is limited to the free-topology support decision.",
+      "intended_obligation_ids": [
+        "SUP-005"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "all four free-edge occurrence subjects"
+        }
+      ],
+      "module": "fixtures/generator/fixture_topology_recipes.cpp",
+      "title": "Free-edge occurrence orientation feasibility matrix"
+    },
+    "compsolid.box_pair.shared_interface": {
+      "independent_oracle_intent": "Independently require an imported COMPSOLID root containing two solids and exactly one face identity incident to both. Until that root type and shared identity survive the processing-disabled STEP readback, this recipe must make no TOP-002, non-manifold, or support-state claim.",
+      "intended_obligation_ids": [],
+      "intended_support_assignments": [],
+      "module": "fixtures/generator/fixture_topology_recipes.cpp",
+      "title": "Shared-interface compsolid feasibility case"
+    },
+    "face.bezier.matrix": {
+      "independent_oracle_intent": "Extract each imported tensor degree, pole grid, rational flag, and weight grid, then independently evaluate tensor Bernstein samples at frozen interior parameters. Bind every observation to the corresponding face before assigning its open-face support state.",
+      "intended_obligation_ids": [
+        "SRF-006",
+        "SRF-024",
+        "SUP-005"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "all standalone Bezier face subjects"
+        }
+      ],
+      "module": "fixtures/generator/fixture_surface_recipes.cpp",
+      "title": "Bezier surface degree and rationality matrix"
+    },
+    "face.bspline_nurbs.matrix": {
+      "independent_oracle_intent": "Independently verify tensor degrees, poles, knots, multiplicities, weights, and periodic flags for every imported face, and compare fixed samples with a separate Cox-de Boor evaluation. Do not infer a structured map from the four-sided trim alone.",
+      "intended_obligation_ids": [
+        "SRF-007",
+        "SRF-016",
+        "SRF-024",
+        "SUP-005"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "all standalone B-spline and NURBS face subjects"
+        }
+      ],
+      "module": "fixtures/generator/fixture_surface_recipes.cpp",
+      "title": "B-spline and NURBS surface matrix"
+    },
+    "face.cylinder.seam_dual_pcurve": {
+      "independent_oracle_intent": "Identify the imported cylindrical seam edge, derive both face p-curves, prove that their U coordinates differ by one period while mapping to the same 3D curve, and bind curve, range, tolerance, endpoint, and incidence observations. TOP-007 remains a procedural-lane contribution to its all-lane requirement.",
+      "intended_obligation_ids": [
+        "CRV-018",
+        "TOP-007"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "strategy.curve.exact_circle",
+          "state": "SupportedAnalyticTemplate",
+          "subject_scope": "imported circular cap-edge subjects"
+        },
+        {
+          "selection_code": "strategy.curve.exact_line",
+          "state": "SupportedAnalyticTemplate",
+          "subject_scope": "imported straight seam-edge subjects"
+        },
+        {
+          "selection_code": "strategy.surface.cylinder",
+          "state": "SupportedAnalyticTemplate",
+          "subject_scope": "the imported cylindrical side face and logical region"
+        },
+        {
+          "selection_code": "strategy.surface.planar",
+          "state": "SupportedAnalyticTemplate",
+          "subject_scope": "the imported planar cap faces and logical regions"
+        }
+      ],
+      "module": "fixtures/generator/fixture_trim_support_recipes.cpp",
+      "title": "Cylindrical seam edge with dual p-curves"
+    },
+    "face.offset.nested_regular_singular": {
+      "independent_oracle_intent": "Compare imported surface samples and normals with separately evaluated basis offsets, verify regular and nested distances, and measure the conical offset's collapsed locus. Do not claim offset-wrapper retention because the STEP contract permits a representation change.",
+      "intended_obligation_ids": [
+        "SRF-020",
+        "SUP-005"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "all standalone regular, nested, and singular offset face subjects"
+        }
+      ],
+      "module": "fixtures/generator/fixture_surface_recipes.cpp",
+      "title": "Regular, nested, and singular offset-surface matrix"
+    },
+    "face.periodic.band_seam_crossing": {
+      "independent_oracle_intent": "Reconstruct the imported loop in an unwrapped cylindrical UV chart, prove that its U interval crosses a full period, derive the cylinder equation and finite V bounds, and record any seam phase change separately from the mathematical period.",
+      "intended_obligation_ids": [
+        "SRF-002",
+        "SRF-016",
+        "SRF-017",
+        "SRF-029",
+        "SUP-005",
+        "TRM-006"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "the standalone periodic-band face and logical region"
+        }
+      ],
+      "module": "fixtures/generator/fixture_surface_recipes.cpp",
+      "title": "Cylindrical band crossing a periodic seam"
+    },
+    "face.planar.perforated_cut_graph": {
+      "independent_oracle_intent": "Reconstruct one rectangular outer loop and three disjoint circular inner loops, verify winding, non-intersection, containment, and UV bounds, then independently establish eligibility for the named deterministic planar-cut-graph route under ADR-0003. This is an M1 support oracle; M3 consumer verification and M8 topology generation remain pending.",
+      "intended_obligation_ids": [
+        "SRF-001",
+        "SRF-019",
+        "SRF-028",
+        "SUP-003",
+        "TRM-003"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "strategy.planar_cut_graph",
+          "state": "SupportedPlanarCutGraph",
+          "subject_scope": "the multiply perforated planar face and logical region"
+        }
+      ],
+      "module": "fixtures/generator/fixture_trim_support_recipes.cpp",
+      "title": "Three-hole planar cut-graph region"
+    },
+    "face.rectangular_trimmed.wrapper": {
+      "independent_oracle_intent": "Verify the imported finite UV bounds and independently evaluate the underlying cylindrical and B-spline supports. Claim bounded trims on unbounded bases, but do not claim a rectangular-trimmed wrapper because the readback contract permits that wrapper to disappear.",
+      "intended_obligation_ids": [
+        "SRF-002",
+        "SRF-007",
+        "SRF-015",
+        "SUP-005"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "both standalone rectangularly bounded face subjects"
+        }
+      ],
+      "module": "fixtures/generator/fixture_surface_recipes.cpp",
+      "title": "Rectangularly bounded cylinder and B-spline supports"
+    },
+    "face.ruled_swept_lofted_plate": {
+      "independent_oracle_intent": "Check ruled interpolation between the two generators, verify the linear-extrusion translation law, and derive the loft section radii and heights without using construction labels. Do not claim a retained kernel-specific wrapper when the imported concrete representation may change.",
+      "intended_obligation_ids": [
+        "SEM-005",
+        "SEM-006",
+        "SRF-009",
+        "SUP-005"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "all standalone ruled, swept, and lofted face subjects"
+        }
+      ],
+      "module": "fixtures/generator/fixture_surface_recipes.cpp",
+      "title": "Ruled, linear-swept, and lofted surface matrix"
+    },
+    "face.single_support.multidomain": {
+      "independent_oracle_intent": "Prove two disjoint rectangular outer loops lie on the same mathematical plane, bind each imported face to its source domain, and record whether STEP duplicated the support object. The oracle must establish mathematical support equivalence without pretending two disconnected faces are one retained face.",
+      "intended_obligation_ids": [
+        "SRF-030",
+        "SUP-005",
+        "TOP-015",
+        "TRM-010"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.multidomain_decomposition_unproven",
+          "state": "UnsupportedTopology",
+          "subject_scope": "both disconnected retained domains and their shared-support grouping"
+        }
+      ],
+      "module": "fixtures/generator/fixture_trim_support_recipes.cpp",
+      "title": "Disconnected domains on one mathematical plane"
+    },
+    "face.sliver_needle_microedge": {
+      "independent_oracle_intent": "Calculate each imported face area, minimum edge length, aspect ratio, edge-to-face incidence, and validation result from coordinates and exact evaluators. Distinguish valid sliver and needle geometry from invalid geometry, and bind the near-zero edge to its adjoining long edges.",
+      "intended_obligation_ids": [
+        "PAT-006",
+        "PAT-007",
+        "SEM-023",
+        "SUP-005"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "all standalone sliver, needle, and microedge face subjects"
+        }
+      ],
+      "module": "fixtures/generator/fixture_pathology_recipes.cpp",
+      "title": "Sliver, needle, and microedge face matrix"
+    },
+    "face.sphere.pole_degenerate_edge": {
+      "independent_oracle_intent": "Identify each imported pole edge, prove zero 3D length with a finite p-curve interval, map p-curve samples to the spherical pole, and derive the pole locations from the independently fitted sphere centre and radius.",
+      "intended_obligation_ids": [
+        "CRV-019",
+        "SRF-020",
+        "SRF-021"
+      ],
+      "intended_support_assignments": [],
+      "module": "fixtures/generator/fixture_trim_support_recipes.cpp",
+      "title": "Spherical pole degeneracy with finite p-curves"
+    },
+    "face.surface.reversed_orientation": {
+      "independent_oracle_intent": "For the imported plane, cylinder, and Bezier faces, compare the oriented face normal with the independently evaluated dU cross dV direction at fixed interior samples. Bind orientation evidence to each face rather than relying on source labels.",
+      "intended_obligation_ids": [
+        "SRF-018",
+        "SUP-005"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "all standalone reversed face subjects"
+        }
+      ],
+      "module": "fixtures/generator/fixture_surface_recipes.cpp",
+      "title": "Reversed plane, cylinder, and Bezier faces"
+    },
+    "face.trim.nested_holes": {
+      "independent_oracle_intent": "Build the imported winding and containment tree, verify one rectangular outer loop and three disjoint depth-one circular holes, and derive all loop UV bounds independently. Do not claim a depth-two island because this construction contains no nested retained island.",
+      "intended_obligation_ids": [
+        "SRF-019",
+        "SRF-028",
+        "SUP-005",
+        "TRM-003"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.planar_holes_require_cut_graph",
+          "state": "UnsupportedTopology",
+          "subject_scope": "the three-hole planar face and logical region"
+        }
+      ],
+      "module": "fixtures/generator/fixture_trim_support_recipes.cpp",
+      "title": "Planar outer loop with three inner holes"
+    },
+    "face.trim.periodic_band": {
+      "independent_oracle_intent": "Reconstruct the cylindrical p-curves in an unwrapped UV chart and prove that the retained U interval spans the canonical period boundary while the V bounds remain finite. Derive the result from imported curves and surface evaluation, not the recipe name.",
+      "intended_obligation_ids": [
+        "SRF-029",
+        "SUP-005",
+        "TRM-006"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "the standalone periodic trim-band face and logical region"
+        }
+      ],
+      "module": "fixtures/generator/fixture_trim_support_recipes.cpp",
+      "title": "Periodic cylindrical trim band"
+    },
+    "face.trim.singular_one_pole": {
+      "independent_oracle_intent": "Fit the imported sphere independently, derive its latitude bounds, and prove that exactly one retained boundary collapses to one pole while the other boundary remains regular. Count degenerate topology and pole contact separately.",
+      "intended_obligation_ids": [
+        "SRF-004",
+        "SRF-020",
+        "SRF-021",
+        "SUP-005",
+        "TRM-008"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "the standalone spherical one-pole face and logical region"
+        }
+      ],
+      "module": "fixtures/generator/fixture_trim_support_recipes.cpp",
+      "title": "Spherical region touching one pole"
+    },
+    "face.trim.singular_two_poles": {
+      "independent_oracle_intent": "Fit the imported sphere independently, verify a full U period, and prove that both latitude boundaries collapse to distinct poles. Bind each degenerate boundary and pole contact to its imported topology identity.",
+      "intended_obligation_ids": [
+        "SRF-004",
+        "SRF-020",
+        "SRF-021",
+        "SUP-005",
+        "TRM-009"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "the standalone spherical two-pole face and logical region"
+        }
+      ],
+      "module": "fixtures/generator/fixture_trim_support_recipes.cpp",
+      "title": "Spherical region touching two poles"
+    },
+    "face.uv.anisotropic_folded": {
+      "independent_oracle_intent": "Evaluate imported first derivatives on a frozen sample grid, compute Jacobian singular values and condition numbers, and separately prove the folded patch's orientation reversal or duplicate 3D images from distinct UV points.",
+      "intended_obligation_ids": [
+        "SRF-026",
+        "SRF-027",
+        "SUP-005"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "both standalone anisotropic and folded face subjects"
+        }
+      ],
+      "module": "fixtures/generator/fixture_surface_recipes.cpp",
+      "title": "Anisotropic and folded UV patches"
+    },
+    "face.uv.extreme_metric": {
+      "independent_oracle_intent": "Evaluate the imported cylindrical patch's first fundamental form on a fixed UV grid. Verify a principal stretch ratio near 100000 and a metric condition number near 10000000000 while recording the finite angular and axial bounds.",
+      "intended_obligation_ids": [
+        "PAT-014",
+        "SRF-026",
+        "SUP-005"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "the standalone extreme-metric cylindrical face and logical region"
+        }
+      ],
+      "module": "fixtures/generator/fixture_pathology_recipes.cpp",
+      "title": "Extreme cylindrical UV metric patch"
+    },
+    "patch.bspline.four_sided_structured": {
+      "independent_oracle_intent": "Extract the imported bicubic tensor data, bound the Jacobian away from zero on an independently chosen interval grid, prove no fold or self-intersection, and establish one-to-one correspondence among the four boundary curves before selecting the structured-patch strategy.",
+      "intended_obligation_ids": [
+        "SRF-007",
+        "SRF-024",
+        "SUP-002"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "strategy.structured_patch",
+          "state": "SupportedStructuredPatch",
+          "subject_scope": "the B-spline face and logical region only after a regular bijective map is independently proven"
+        }
+      ],
+      "module": "fixtures/generator/fixture_trim_support_recipes.cpp",
+      "title": "Bicubic four-sided structured patch candidate"
+    },
+    "patch.continuity.c0_c1_c2_cn_g0_g1_g2": {
+      "independent_oracle_intent": "At every imported shared boundary, compare positions, one-sided derivatives, normals, and curvature using independent evaluations. Derive C0, C1, C2, CN, G0, G1, and G2 classifications from measured relations rather than stored continuity labels.",
+      "intended_obligation_ids": [
+        "SRF-025",
+        "SUP-005"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "all standalone face pairs in the continuity matrix"
+        }
+      ],
+      "module": "fixtures/generator/fixture_surface_recipes.cpp",
+      "title": "Cross-face parametric and geometric continuity matrix"
+    },
+    "semantic.nurbs.confidence_matrix": {
+      "independent_oracle_intent": "Extract every imported B-spline that survives, fit cylinder, sphere, and plane candidates independently, publish maximum positional and normal residuals, and compare near-planar and residual patches against frozen thresholds. Do not credit verified recovery when STEP has already restored an analytic representation.",
+      "intended_obligation_ids": [
+        "SRF-007",
+        "SRF-024",
+        "SUP-004",
+        "SUP-007"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.ambiguous_recognition",
+          "state": "AmbiguousRecognition",
+          "subject_scope": "the near-planar B-spline face when independent residuals straddle the frozen recognition threshold"
+        },
+        {
+          "selection_code": "reason.residual_surface_route_unproven",
+          "state": "DeferredResidualSurface",
+          "subject_scope": "the non-analytic residual B-spline face and logical region"
+        }
+      ],
+      "module": "fixtures/generator/fixture_trim_support_recipes.cpp",
+      "title": "NURBS recognition-confidence feasibility matrix"
+    },
+    "solid.blend.face_face_face_edge_corner": {
+      "independent_oracle_intent": "Identify the three imported constant-radius blend strips and their common corner patch, then independently measure radius, support adjacency, rail incidence, and continuity. Separate the semantic blend finding from the absence of a named multi-way meshing route.",
+      "intended_obligation_ids": [
+        "SEM-007",
+        "SEM-009",
+        "SUP-004"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.blend_route_unproven",
+          "state": "DeferredResidualSurface",
+          "subject_scope": "all imported blend strips and the trihedral corner region"
+        }
+      ],
+      "module": "fixtures/generator/fixture_feature_recipes.cpp",
+      "title": "Trihedral face, edge, and corner blend"
+    },
+    "solid.blend.setback_multiway": {
+      "independent_oracle_intent": "Measure the valid trihedral corner blend and the separate degree-four rail graph, including all unequal setback distances and shared-vertex incidence. The free graph is only a topology witness and must not be claimed as a generated setback or multi-way blend cap.",
+      "intended_obligation_ids": [
+        "SUP-005"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "the standalone degree-four setback rail graph"
+        }
+      ],
+      "module": "fixtures/generator/fixture_feature_recipes.cpp",
+      "title": "Setback multi-way rail-incidence witness"
+    },
+    "solid.chamfer.constant_variable": {
+      "independent_oracle_intent": "Independently measure the two-millimetre constant chamfer and the variable strip's one-to-four-millimetre endpoint widths, support adjacency, and ruled width law. Preserve the semantic distinction while deferring the strip until a named chamfer strategy is proven.",
+      "intended_obligation_ids": [
+        "SEM-014",
+        "SUP-004"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.chamfer_route_unproven",
+          "state": "DeferredResidualSurface",
+          "subject_scope": "the constant-width and variable-width chamfer strips"
+        }
+      ],
+      "module": "fixtures/generator/fixture_feature_recipes.cpp",
+      "title": "Constant-width and variable-width chamfers"
+    },
+    "solid.cone.apex_full_partial": {
+      "independent_oracle_intent": "Derive each imported cone's apex, semi-angle, radius law, angular sweep, and cap geometry, then prove the side boundary collapses at the apex. Distinguish full and partial sweeps without applying the existing frustum strategy to the apex case.",
+      "intended_obligation_ids": [
+        "SRF-003",
+        "SRF-020",
+        "SRF-022",
+        "TRM-008"
+      ],
+      "intended_support_assignments": [],
+      "module": "fixtures/generator/fixture_surface_recipes.cpp",
+      "title": "Full and partial cones including the apex"
+    },
+    "solid.draft_shell_offset": {
+      "independent_oracle_intent": "Measure the four drafted faces at pi over 60 radians, the two-millimetre wall thickness, the removed top face, inner and outer adjacency, and resulting closedness from the imported B-rep. Do not claim an offset wrapper unless one is present after import.",
+      "intended_obligation_ids": [
+        "SEM-015",
+        "SEM-016",
+        "SUP-004"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.offset_route_unproven",
+          "state": "DeferredResidualSurface",
+          "subject_scope": "non-analytic draft, offset, and intersection regions without a proven named route"
+        }
+      ],
+      "module": "fixtures/generator/fixture_feature_recipes.cpp",
+      "title": "Drafted thin-walled shell offset"
+    },
+    "solid.features.counterbore_countersink_boss": {
+      "independent_oracle_intent": "Derive both hole axes and locations, the 2.5-millimetre through radius, 5 by 3 millimetre counterbore, 6 by 4 millimetre countersink, and 5 by 5 millimetre boss. Independently verify resulting face and loop incidence before assigning analytic and perforated-region support.",
+      "intended_obligation_ids": [
+        "SEM-017",
+        "SUP-005"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.planar_holes_require_cut_graph",
+          "state": "UnsupportedTopology",
+          "subject_scope": "perforated planar faces and their logical regions"
+        },
+        {
+          "selection_code": "strategy.curve.exact_circle",
+          "state": "SupportedAnalyticTemplate",
+          "subject_scope": "all imported circular feature-edge subjects"
+        },
+        {
+          "selection_code": "strategy.curve.exact_line",
+          "state": "SupportedAnalyticTemplate",
+          "subject_scope": "all imported straight feature-edge subjects"
+        },
+        {
+          "selection_code": "strategy.surface.cone_frustum",
+          "state": "SupportedAnalyticTemplate",
+          "subject_scope": "the imported countersink conical face and logical region"
+        },
+        {
+          "selection_code": "strategy.surface.cylinder",
+          "state": "SupportedAnalyticTemplate",
+          "subject_scope": "all imported cylindrical hole and boss faces and logical regions"
+        },
+        {
+          "selection_code": "strategy.surface.planar",
+          "state": "SupportedAnalyticTemplate",
+          "subject_scope": "unperforated imported planar faces and logical regions"
+        }
+      ],
+      "module": "fixtures/generator/fixture_feature_recipes.cpp",
+      "title": "Counterbore, countersink, and boss feature plate"
+    },
+    "solid.features.slot_pocket_rib": {
+      "independent_oracle_intent": "Derive the capsule endpoints, radius and depth, rectangular pocket dimensions and depth, rib dimensions and height, and all resulting loop and region incidence from the imported B-rep. Keep the feature recognition independent of Boolean construction history.",
+      "intended_obligation_ids": [
+        "SEM-018",
+        "SUP-005"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.planar_holes_require_cut_graph",
+          "state": "UnsupportedTopology",
+          "subject_scope": "planar faces containing slot or pocket inner loops"
+        },
+        {
+          "selection_code": "strategy.curve.exact_circle",
+          "state": "SupportedAnalyticTemplate",
+          "subject_scope": "all imported circular slot-edge subjects"
+        },
+        {
+          "selection_code": "strategy.curve.exact_line",
+          "state": "SupportedAnalyticTemplate",
+          "subject_scope": "all imported straight feature-edge subjects"
+        },
+        {
+          "selection_code": "strategy.surface.cylinder",
+          "state": "SupportedAnalyticTemplate",
+          "subject_scope": "the imported cylindrical slot-end faces and logical regions"
+        },
+        {
+          "selection_code": "strategy.surface.planar",
+          "state": "SupportedAnalyticTemplate",
+          "subject_scope": "unperforated imported planar faces and logical regions"
+        }
+      ],
+      "module": "fixtures/generator/fixture_feature_recipes.cpp",
+      "title": "Slot, blind pocket, and rib feature plate"
+    },
+    "solid.fillet.chain_split_mismatch": {
+      "independent_oracle_intent": "Prove that the imported coplanar split and chain identities survive, independently measure the two-millimetre constant radius, support continuity, and shared chain, and show that radius and phase do not reset at the raw face split.",
+      "intended_obligation_ids": [
+        "SEM-007",
+        "SEM-012",
+        "SUP-004"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.blend_route_unproven",
+          "state": "DeferredResidualSurface",
+          "subject_scope": "the fillet chain crossing the imported raw face split"
+        }
+      ],
+      "module": "fixtures/generator/fixture_feature_recipes.cpp",
+      "title": "Constant fillet chain across a raw face split"
+    },
+    "solid.fillet.constant_variable": {
+      "independent_oracle_intent": "Identify the opposite imported vertical-edge neighborhoods, independently measure one constant two-millimetre radius and the other radius varying from one to three millimetres, and bind each law to its support pair and continuity evidence.",
+      "intended_obligation_ids": [
+        "SEM-007",
+        "SEM-008",
+        "SUP-004"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.blend_route_unproven",
+          "state": "DeferredResidualSurface",
+          "subject_scope": "the constant-radius and variable-radius fillet regions until their named routes are proven"
+        }
+      ],
+      "module": "fixtures/generator/fixture_feature_recipes.cpp",
+      "title": "Constant-radius and variable-radius fillets"
+    },
+    "solid.fillet.junction_t_y_x": {
+      "independent_oracle_intent": "Measure the three valid single-edge fillet strips and separately derive the T, Y, and X free-graph incidences from their shared vertices. The graphs are topology witnesses only and must not be reported as generated blend junction caps.",
+      "intended_obligation_ids": [
+        "SUP-005"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "the standalone T, Y, and X rail-incidence graphs"
+        }
+      ],
+      "module": "fixtures/generator/fixture_feature_recipes.cpp",
+      "title": "T, Y, and X blend-junction incidence witnesses"
+    },
+    "solid.fillet.rolling_ball_channel": {
+      "independent_oracle_intent": "Prove two concave imported channel-bottom strips at the independently derived bottom elevation, measure both two-millimetre radii, and verify support-face adjacency and rolling-ball geometry before recording the specialized semantic candidate.",
+      "intended_obligation_ids": [
+        "SEM-007",
+        "SEM-010",
+        "SUP-004"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.blend_route_unproven",
+          "state": "DeferredResidualSurface",
+          "subject_scope": "both rolling-ball channel fillet regions until a specialized route is proven"
+        }
+      ],
+      "module": "fixtures/generator/fixture_feature_recipes.cpp",
+      "title": "Rolling-ball channel fillets"
+    },
+    "solid.fillet.termination_matrix": {
+      "independent_oracle_intent": "For each imported cell, identify the constant-radius fillet, fit the terminating plane, cylinder, cone, or neighboring fillet support, and derive boundary count, adjacency, radius, and continuity independently. Keep these completed OCCT fillets separate from any claim that a meshing termination template exists.",
+      "intended_obligation_ids": [
+        "SEM-007",
+        "SEM-020",
+        "SUP-004"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.blend_route_unproven",
+          "state": "DeferredResidualSurface",
+          "subject_scope": "all fillet termination regions in the plane, cylinder, cone, and fillet matrix"
+        }
+      ],
+      "module": "fixtures/generator/fixture_feature_recipes.cpp",
+      "title": "Fillet termination support matrix"
+    },
+    "solid.nurbs.recovered_analytic": {
+      "independent_oracle_intent": "Inspect the imported side faces first. Only if a generic NURBS survives, independently fit the cylinder, publish maximum positional and normal residuals, and test the frozen recovery threshold. If STEP restores an analytic cylinder, record ProvenAnalytic and make no recovered-analytic claim.",
+      "intended_obligation_ids": [],
+      "intended_support_assignments": [],
+      "module": "fixtures/generator/fixture_trim_support_recipes.cpp",
+      "title": "NURBS-to-cylinder recovery feasibility case"
+    },
+    "solid.orientation.inverted_shell_face": {
+      "independent_oracle_intent": "Record the source reversed solid's negative signed volume and the standalone reversed face orientation, then independently record the imported orientations and signed volumes. Because STEP may canonicalize both, this recipe remains feasibility evidence and must not claim the derived-corruption orientation obligation.",
+      "intended_obligation_ids": [],
+      "intended_support_assignments": [],
+      "module": "fixtures/generator/fixture_pathology_recipes.cpp",
+      "title": "Inverted shell and reversed-face feasibility case"
+    },
+    "solid.planar.coplanar_split": {
+      "independent_oracle_intent": "Inspect the imported solid for distinct coplanar faces at the authored split, then independently compare normals, plane separation, and shared artificial-edge incidence. Because the STEP contract permits same-domain merging, make no semantic split claim unless those identities survive.",
+      "intended_obligation_ids": [],
+      "intended_support_assignments": [],
+      "module": "fixtures/generator/fixture_feature_recipes.cpp",
+      "title": "Coplanar split survival feasibility case"
+    },
+    "solid.revolution.full_partial_pole": {
+      "independent_oracle_intent": "Revolve the imported meridian algebraically around the independently fitted axis, verify full and partial angular sweeps, and prove that both axis endpoints collapse to poles. Bind each singularity and trim-domain result to the imported faces and edges.",
+      "intended_obligation_ids": [
+        "SEM-004",
+        "SRF-008",
+        "SRF-020",
+        "SRF-021",
+        "TRM-009"
+      ],
+      "intended_support_assignments": [],
+      "module": "fixtures/generator/fixture_surface_recipes.cpp",
+      "title": "Full and partial profiled revolutions with poles"
+    },
+    "solid.revolution.profiled": {
+      "independent_oracle_intent": "Reconstruct the imported z-axis, full angular sweep, radial profile, generator segments, seams, and exact surface types from measurements. A retained general revolution region remains deferred until a named revolution strategy is independently proven.",
+      "intended_obligation_ids": [
+        "SEM-004",
+        "SRF-008",
+        "SUP-004"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.revolution_route_unproven",
+          "state": "DeferredResidualSurface",
+          "subject_scope": "retained general surface-of-revolution faces and logical regions"
+        }
+      ],
+      "module": "fixtures/generator/fixture_feature_recipes.cpp",
+      "title": "Full profiled solid of revolution"
+    },
+    "solid.scale.unit_matrix": {
+      "independent_oracle_intent": "Independently measure the 0.01, 1, 25.4, and 1000 millimetre boxes, placements, volumes, tolerances, and imported source unit metadata. Treat this as geometric scale-extreme evidence only; one millimetre STEP file does not prove multiple model-unit labels.",
+      "intended_obligation_ids": [
+        "PAT-001"
+      ],
+      "intended_support_assignments": [],
+      "module": "fixtures/generator/fixture_pathology_recipes.cpp",
+      "title": "Four-scale box matrix"
+    },
+    "solid.sphere.full_hemisphere_band_shifted_seam": {
+      "independent_oracle_intent": "Fit every imported sphere centre and radius, reconstruct latitude and longitude ranges, derive the fundamental U period and seam phase, and count pole contacts for the full sphere, hemisphere, band, and shifted-seam variants.",
+      "intended_obligation_ids": [
+        "SRF-004",
+        "SRF-016",
+        "SRF-017",
+        "SRF-020",
+        "SRF-021",
+        "TRM-008",
+        "TRM-009"
+      ],
+      "intended_support_assignments": [],
+      "module": "fixtures/generator/fixture_surface_recipes.cpp",
+      "title": "Sphere domain, pole, and shifted-seam matrix"
+    },
+    "solid.stepped_coaxial.cylinder_cone": {
+      "independent_oracle_intent": "Fit a common z-axis, prove the radius-10 junction at z equals 16 millimetres and radius-6 top at z equals 30 millimetres, and record the angular discontinuity explicitly. This is positive coaxial and negative tangent-continuity evidence.",
+      "intended_obligation_ids": [
+        "SEM-002",
+        "SRF-002",
+        "SRF-003"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "strategy.curve.exact_circle",
+          "state": "SupportedAnalyticTemplate",
+          "subject_scope": "all imported circular transition-edge subjects"
+        },
+        {
+          "selection_code": "strategy.curve.exact_line",
+          "state": "SupportedAnalyticTemplate",
+          "subject_scope": "all imported straight transition-edge subjects"
+        },
+        {
+          "selection_code": "strategy.surface.cone_frustum",
+          "state": "SupportedAnalyticTemplate",
+          "subject_scope": "the imported conical transition face and logical region"
+        },
+        {
+          "selection_code": "strategy.surface.cylinder",
+          "state": "SupportedAnalyticTemplate",
+          "subject_scope": "the imported cylindrical transition face and logical region"
+        },
+        {
+          "selection_code": "strategy.surface.planar",
+          "state": "SupportedAnalyticTemplate",
+          "subject_scope": "the imported planar cap faces and logical regions"
+        }
+      ],
+      "module": "fixtures/generator/fixture_feature_recipes.cpp",
+      "title": "Stepped coaxial cylinder-to-cone transition"
+    },
+    "solid.tolerance.extremes": {
+      "independent_oracle_intent": "Measure every source and imported vertex, edge, and face tolerance for the low- and high-tolerance boxes, bind values to exact subject identities, and record any STEP recomputation. This is the procedural contribution only; derived inconsistent-tolerance evidence remains separately required.",
+      "intended_obligation_ids": [
+        "PAT-002"
+      ],
+      "intended_support_assignments": [],
+      "module": "fixtures/generator/fixture_pathology_recipes.cpp",
+      "title": "Low- and high-tolerance box pair"
+    },
+    "solid.torus.ring_horn_spindle_full_partial": {
+      "independent_oracle_intent": "Recover every imported major and minor radius, classify ring, horn, and spindle cases from their radius relation, derive both periods and trim intervals, and measure singular or self-intersecting loci without trusting the recipe labels.",
+      "intended_obligation_ids": [
+        "SRF-005",
+        "SRF-016",
+        "SRF-017",
+        "SRF-020",
+        "SRF-023",
+        "SUP-004"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.singular_torus_route_unproven",
+          "state": "DeferredResidualSurface",
+          "subject_scope": "valid horn and spindle torus regions without a named singular route"
+        },
+        {
+          "selection_code": "strategy.surface.torus_segment",
+          "state": "SupportedAnalyticTemplate",
+          "subject_scope": "regular ring-torus full and partial regions satisfying the existing segment preconditions"
+        }
+      ],
+      "module": "fixtures/generator/fixture_surface_recipes.cpp",
+      "title": "Ring, horn, spindle, full, and partial torus matrix"
+    },
+    "wire.bezier.rationality_degree_matrix": {
+      "independent_oracle_intent": "Extract each imported degree, pole list, rational flag, and weights, then independently evaluate quadratic and cubic Bernstein polynomials at fixed parameters. Bind results to exact free-wire and edge identities before recording unsupported topology.",
+      "intended_obligation_ids": [
+        "CRV-006",
+        "SUP-005"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "all free Bezier wire and edge subjects"
+        }
+      ],
+      "module": "fixtures/generator/fixture_curve_recipes.cpp",
+      "title": "Quadratic and cubic Bezier rationality matrix"
+    },
+    "wire.bspline.rationality_knot_matrix": {
+      "independent_oracle_intent": "Verify imported degree, poles, knots, multiplicities, weights, rational flags, and periodic state, then compare fixed samples with an independent Cox-de Boor evaluation. Distinguish mathematical periodicity from topological closure.",
+      "intended_obligation_ids": [
+        "CRV-007",
+        "CRV-013",
+        "SUP-005"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "all free B-spline wire and edge subjects"
+        }
+      ],
+      "module": "fixtures/generator/fixture_curve_recipes.cpp",
+      "title": "B-spline rationality, knot, and periodicity matrix"
+    },
+    "wire.composite.intersection_isoparametric": {
+      "independent_oracle_intent": "Derive the three-segment wire incidence, calculate the sphere-plane intersection radius as the square root of radius squared minus plane offset squared, and derive cylinder U and V isoparametric curves from the surface equation. Preserve construction provenance even when STEP uses an equivalent analytic curve.",
+      "intended_obligation_ids": [
+        "CRV-014",
+        "CRV-015",
+        "CRV-016",
+        "SUP-005"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "all composite, intersection, and isoparametric free-wire subjects"
+        }
+      ],
+      "module": "fixtures/generator/fixture_curve_recipes.cpp",
+      "title": "Composite, intersection, and isoparametric curve matrix"
+    },
+    "wire.conic.hyperbola_parabola": {
+      "independent_oracle_intent": "Verify imported bounded parameter intervals and endpoints, derive each focus and directrix, and evaluate independent implicit hyperbola and parabola residuals at fixed interior samples. Keep the bounded branch evidence separate from the unbounded basis.",
+      "intended_obligation_ids": [
+        "CRV-004",
+        "CRV-005",
+        "SUP-005"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "both free conic wire and edge subjects"
+        }
+      ],
+      "module": "fixtures/generator/fixture_curve_recipes.cpp",
+      "title": "Bounded hyperbola and parabola branches"
+    },
+    "wire.continuity.c0_c1_c2_cn": {
+      "independent_oracle_intent": "Derive continuity from the imported cubic knot multiplicities and independently compare one-sided derivatives through orders zero, one, and two at each internal knot. Verify the Bezier case has no internal knot and is polynomially smooth.",
+      "intended_obligation_ids": [
+        "CRV-021",
+        "SUP-005"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "all free continuity-matrix wire and edge subjects"
+        }
+      ],
+      "module": "fixtures/generator/fixture_curve_recipes.cpp",
+      "title": "Curve C0, C1, C2, and CN continuity matrix"
+    },
+    "wire.edge.near_zero": {
+      "independent_oracle_intent": "Measure the imported edge length and both endpoint coordinates independently, bind the value to its vertex tolerances, and record whether it remains a finite line edge. CRV-020 is only this recipe's procedural contribution to the required procedural-plus-derived evidence.",
+      "intended_obligation_ids": [
+        "CRV-020",
+        "SEM-023",
+        "SUP-005"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "the standalone near-zero wire and edge subjects"
+        }
+      ],
+      "module": "fixtures/generator/fixture_trim_support_recipes.cpp",
+      "title": "Near-zero finite straight edge"
+    },
+    "wire.ellipse.full_partial": {
+      "independent_oracle_intent": "Verify major and minor radii, evaluate an independent implicit ellipse residual, derive the full-period closure, and calculate partial-arc endpoints and parameter range. Distinguish a periodic basis from a topologically closed edge.",
+      "intended_obligation_ids": [
+        "CRV-003",
+        "CRV-013",
+        "SUP-005"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "the full and partial free ellipse wire subjects"
+        }
+      ],
+      "module": "fixtures/generator/fixture_curve_recipes.cpp",
+      "title": "Full and partial ellipse pair"
+    },
+    "wire.offset.nested_singular": {
+      "independent_oracle_intent": "Evaluate basis samples and normals independently, verify the regular and nested offset distances, and prove that the parabola offset by twice its focal length reaches the vertex curvature singularity. Do not claim retained trim or offset wrappers when STEP may flatten them.",
+      "intended_obligation_ids": [
+        "CRV-008",
+        "SUP-005"
+      ],
+      "intended_support_assignments": [
+        {
+          "selection_code": "reason.free_topology",
+          "state": "UnsupportedTopology",
+          "subject_scope": "all regular, nested, and singular free offset-curve subjects"
+        }
+      ],
+      "module": "fixtures/generator/fixture_curve_recipes.cpp",
+      "title": "Regular, nested, and singular offset curves"
+    }
+  },
+  "schema_version": "1.0.0"
+}

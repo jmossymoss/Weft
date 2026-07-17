@@ -1,0 +1,41 @@
+{
+  "artifact_format": "occt_ascii_brep",
+  "artifact_sha256": "2d8201dac15c1d7aabbfd3ef2613fbbb660bb5cf3a7b4a0a55a395f339ff714a",
+  "brep_valid": true,
+  "canonicalization": "sorted-pretty-json-v1",
+  "diagnostic_codes": [],
+  "draw_checkshape_summary": "This shape seems to be valid",
+  "fixture_id": "corrupt.self_intersection.curve",
+  "inspection_method": "DRAWEXE restore, checkshape, dump, mkcurve, and cvalue at both analytic crossing parameters",
+  "measurements": {
+    "crossing_pair_count": 1,
+    "crossing_point_millimetres": [
+      4.0,
+      4.0,
+      0.0
+    ],
+    "crossing_residual_millimetres": 1.7763568394002505e-15,
+    "edge_1_parameter_millimetres": 5.656854249492381,
+    "edge_3_parameter_millimetres": 5.656854249492381,
+    "mutation_operation_count": 9
+  },
+  "occt_version": "8.0.0.p1-e52c4021",
+  "processing": [
+    "no_healing",
+    "no_sameparameter_repair",
+    "no_sewing"
+  ],
+  "schema_version": "1.0.0",
+  "unique_topology": {
+    "assembly_products": 0,
+    "compounds": 1,
+    "compsolids": 0,
+    "edges": 6,
+    "faces": 0,
+    "instances": 0,
+    "shells": 0,
+    "solids": 0,
+    "vertices": 8,
+    "wires": 4
+  }
+}

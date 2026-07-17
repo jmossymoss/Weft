@@ -1,0 +1,744 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "expected": {
+    "boundary_loops": [],
+    "brep_valid": true,
+    "claims": [
+      {
+        "id": "claim.rec_001.oracle",
+        "obligation_id": "REC-001",
+        "predicate_codes": [
+          "predicate.reconnaissance.processing_disabled_import"
+        ],
+        "statement": "Freeze two valid closed square wires, their ordered edge and vertex identities, and the one-micrometre source tolerance before source-bound gap mutations. The clean wires must not be reported as within-tolerance or beyond-tolerance gap cases.",
+        "subject_refs": [
+          {
+            "id": "observation.normalization.model",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p1",
+            "kind": "observation"
+          }
+        ]
+      }
+    ],
+    "curve_variants": [
+      {
+        "concrete_type": "Geom_Line",
+        "condition_codes": [
+          "bounded"
+        ],
+        "count": 8,
+        "family_code": "line",
+        "label": "line.curve_imported",
+        "wrapper_stack": []
+      }
+    ],
+    "import_outcome": "success",
+    "model_classes": [
+      "free_topology"
+    ],
+    "model_topology": {
+      "closed_shells": 0,
+      "coincident_solid_signature_pairs": 0,
+      "free_edges": 8,
+      "free_wires": 0,
+      "inner_shells": 0,
+      "isolated_vertices": 0,
+      "maximum_faces_per_edge": 0,
+      "nonmanifold_vertices": 0,
+      "open_shells": 0,
+      "outer_shells": 0,
+      "shared_faces_between_solids": 0,
+      "standalone_shells": 0
+    },
+    "orientation_states": [
+      "FORWARD",
+      "REVERSED"
+    ],
+    "periodicity": [],
+    "semantic_candidates": [],
+    "singularity_codes": [],
+    "subject_universe": {
+      "edge_occurrence_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004",
+        "edge_occurrence.e0005",
+        "edge_occurrence.e0006",
+        "edge_occurrence.e0007",
+        "edge_occurrence.e0008"
+      ],
+      "face_occurrence_ids": [],
+      "logical_region_ids": []
+    },
+    "support": [
+      {
+        "geometry_family_code": "line",
+        "label": "edge.line.free_topology",
+        "selection_code": "reason.free_topology",
+        "state": "UnsupportedTopology",
+        "subject_count": 8,
+        "subject_ids": [
+          "edge_occurrence.e0001",
+          "edge_occurrence.e0002",
+          "edge_occurrence.e0003",
+          "edge_occurrence.e0004",
+          "edge_occurrence.e0005",
+          "edge_occurrence.e0006",
+          "edge_occurrence.e0007",
+          "edge_occurrence.e0008"
+        ],
+        "subject_kind": "edge"
+      }
+    ],
+    "surface_variants": [],
+    "topology_occurrences": {
+      "assembly_products": 3,
+      "compounds": 1,
+      "compsolids": 0,
+      "edges": 8,
+      "faces": 0,
+      "instances": 2,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 16,
+      "wires": 0
+    },
+    "unique_topology": {
+      "assembly_products": 3,
+      "compounds": 1,
+      "compsolids": 0,
+      "edges": 8,
+      "faces": 0,
+      "instances": 2,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 16,
+      "wires": 0
+    },
+    "validation_findings": [
+      {
+        "code": "topology.valid",
+        "evidence": "The processing-disabled STEP B-rep validity result is bound exactly and compared with the independently valid source construction.",
+        "expectation": "present",
+        "subject_kind": "model"
+      }
+    ]
+  },
+  "fixture_id": "baseline.pathology.wire_gap_thresholds",
+  "instances": [
+    {
+      "component_label": "component.c0001",
+      "label": "instance.i0001",
+      "local_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "parent_label": null,
+      "target_definition": "definition.d0002",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    },
+    {
+      "component_label": "component.c0002",
+      "label": "instance.i0002",
+      "local_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "parent_label": null,
+      "target_definition": "definition.d0003",
+      "target_kind": "simple_shape",
+      "transform_kind": "identity"
+    }
+  ],
+  "observations": [
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "reason.free_topology"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 8 edge subjects to UnsupportedTopology using reason.free_topology.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.edge.line.free_topology",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004",
+        "edge_occurrence.e0005",
+        "edge_occurrence.e0006",
+        "edge_occurrence.e0007",
+        "edge_occurrence.e0008"
+      ]
+    },
+    {
+      "concrete_type": "Geom_Line",
+      "condition_codes": [
+        "bounded"
+      ],
+      "exact_evaluator_kind": "occt.exact_curve",
+      "family_code": "line",
+      "id": "observation.geometry.line.curve_imported",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "curve",
+          "closed": false,
+          "lower": null,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": null
+        }
+      ],
+      "parameters": [],
+      "phase": "imported",
+      "subject_id": "line.curve_imported",
+      "taxonomy": "Curve",
+      "wrappers": []
+    },
+    {
+      "evidence": "Freeze two valid closed square wires, their ordered edge and vertex identities, and the one-micrometre source tolerance before source-bound gap mutations. The clean wires must not be reported as within-tolerance or beyond-tolerance gap cases.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.measurement.independent",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "construction.beyond_gap",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 0.005,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "construction.separation",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 35.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "construction.side",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 20.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "construction.vertex_tolerance",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 0.001,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "construction.within_gap",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 0.0005,
+            "value_type": "number"
+          }
+        }
+      ],
+      "pathology_code": "oracle.independent_measurements",
+      "phase": "source",
+      "subject_ids": [
+        "source.model"
+      ]
+    },
+    {
+      "evidence": "The processing-disabled STEP B-rep validity result is bound exactly and compared with the independently valid source construction.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.p1",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "topology.valid.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 1,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "topology.valid",
+      "phase": "imported",
+      "subject_ids": [
+        "oracle.finding.p1"
+      ]
+    },
+    {
+      "accepted_normalization_codes": [
+        "step.free_wire_flattened_to_free_edges",
+        "step.tolerances_recomputed_from_uncertainty"
+      ],
+      "changes": [],
+      "equivalence": "geometrically_equivalent",
+      "geometry_equivalent": true,
+      "id": "observation.normalization.model",
+      "imported_subject_ids": [
+        "imported.model"
+      ],
+      "kind": "source_import_normalization",
+      "outcome": "canonicalized",
+      "source_subject_ids": [
+        "source.model"
+      ],
+      "topology_equivalent": false
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.compound",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 1
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.compounds"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.compounds",
+      "tolerance_metres": 0,
+      "topology_kind": "compound",
+      "underlying_id": "topology.compounds",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.edge",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 8
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.edges"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.edges",
+      "tolerance_metres": 0,
+      "topology_kind": "edge",
+      "underlying_id": "topology.edges",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.vertex",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 16
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.vertices"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.vertices",
+      "tolerance_metres": 0,
+      "topology_kind": "vertex",
+      "underlying_id": "topology.vertices",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "baked_geometry_matrix_row_major": null,
+      "disposition": "retained_as_location",
+      "handedness": "right_handed",
+      "id": "observation.transform.instance.i0001",
+      "imported_location_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "instance_id": "instance.i0001",
+      "kind": "transform",
+      "linear_determinant": 1.0,
+      "parent_instance_id": null,
+      "source_affine_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "source_unit_scale_to_metres": 0.001,
+      "target_definition_id": "definition.d0002",
+      "transform_kind": "identity",
+      "world_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "baked_geometry_matrix_row_major": null,
+      "disposition": "retained_as_location",
+      "handedness": "right_handed",
+      "id": "observation.transform.instance.i0002",
+      "imported_location_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "instance_id": "instance.i0002",
+      "kind": "transform",
+      "linear_determinant": 1.0,
+      "parent_instance_id": null,
+      "source_affine_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "source_unit_scale_to_metres": 0.001,
+      "target_definition_id": "definition.d0003",
+      "transform_kind": "identity",
+      "world_matrix_row_major": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    }
+  ],
+  "oracle": {
+    "independent_from_production_classifier": true,
+    "method": "analytic_derivation",
+    "references": [
+      "final revision-6 processing-disabled STEP readback summary baseline.pathology.wire_gap_thresholds.json used only for exact import binding",
+      "fixtures/generator/fixture_pathology_recipes.cpp recipe baseline.pathology.wire_gap_thresholds",
+      "independent_oracle_intent: Freeze two valid closed square wires, their ordered edge and vertex identities, and the one-micrometre source tolerance before source-bound gap mutations. The clean wires must not be reported as within-tolerance or beyond-tolerance gap cases."
+    ],
+    "statement": "Freeze two valid closed square wires, their ordered edge and vertex identities, and the one-micrometre source tolerance before source-bound gap mutations. The clean wires must not be reported as within-tolerance or beyond-tolerance gap cases. Frozen construction parameters: beyond_gap=0.005 millimetres, separation=35.0 millimetres, side=20.0 millimetres, vertex_tolerance=0.001 millimetres, within_gap=0.0005 millimetres."
+  },
+  "schema_version": "1.0.0",
+  "tolerances": {
+    "edges_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "faces_metres": {
+      "maximum": null,
+      "minimum": null
+    },
+    "vertices_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    }
+  },
+  "units": {
+    "coordinate_space": "right_handed_si_metres_radians",
+    "scale_to_metres": 0.001,
+    "source_unit": "millimetre"
+  }
+}

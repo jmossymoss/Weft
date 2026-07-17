@@ -1,0 +1,23 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "71edf58bc1ea3b8c4c7f8cb4976aaf93af4204a597861c30b11095b57695c9ae",
+  "finding_disposition": "Accepted as a provenance-bound AP203 import fixture with an explicit invalid-BRep named outcome; no geometry is promoted for meshing.",
+  "fixture_id": "external.plasticity26.mixed_analytic_nurbs.ap203",
+  "producer_id": "producer.m1_external_derived_oracle",
+  "review_id": "review.external.plasticity26.mixed_analytic_nurbs.ap203.revision_1",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.nonrigid_import_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "artifact.hash",
+    "import.invalid_brep",
+    "source.provenance",
+    "transform.representation_loss"
+  ],
+  "source_binding": {
+    "artifact_sha256": "5db395ce8cea9dca675b7894d7410fb198ec0b3ed846debfe1992786c2adaa45",
+    "kind": "audited_external",
+    "source_contract_sha256": "8f036278f71ee2985d2c74021c74150b0f44681df87c5be7b28a23b4214fb08d"
+  }
+}

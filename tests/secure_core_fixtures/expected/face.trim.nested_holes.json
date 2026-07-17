@@ -1,0 +1,1036 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "expected": {
+    "boundary_loops": [
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0001",
+        "id": "boundary_loop.l0001",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 62.0,
+          "u_min": 0.0,
+          "v_max": 40.0,
+          "v_min": 0.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 1,
+        "face_occurrence_id": "face_occurrence.f0001",
+        "id": "boundary_loop.l0002",
+        "orientation": "REVERSED",
+        "role": "inner",
+        "uv_bounds": {
+          "u_max": 26.0,
+          "u_min": 10.0,
+          "v_max": 28.0,
+          "v_min": 12.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 1,
+        "face_occurrence_id": "face_occurrence.f0001",
+        "id": "boundary_loop.l0003",
+        "orientation": "REVERSED",
+        "role": "inner",
+        "uv_bounds": {
+          "u_max": 41.0,
+          "u_min": 35.0,
+          "v_max": 23.0,
+          "v_min": 17.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 1,
+        "face_occurrence_id": "face_occurrence.f0001",
+        "id": "boundary_loop.l0004",
+        "orientation": "REVERSED",
+        "role": "inner",
+        "uv_bounds": {
+          "u_max": 53.0,
+          "u_min": 47.0,
+          "v_max": 23.0,
+          "v_min": 17.0
+        }
+      }
+    ],
+    "brep_valid": true,
+    "claims": [
+      {
+        "id": "claim.srf_019.surface_per_loop_uv_bounds_total",
+        "obligation_id": "SRF-019",
+        "predicate_codes": [
+          "predicate.surface.per_loop_uv_bounds_total"
+        ],
+        "statement": "The processing-disabled imported evidence satisfies SRF-019 through predicate.surface.per_loop_uv_bounds_total; the referenced observations bind the exact post-STEP subjects.",
+        "subject_refs": [
+          {
+            "id": "boundary_loop.l0001",
+            "kind": "boundary_loop"
+          },
+          {
+            "id": "boundary_loop.l0002",
+            "kind": "boundary_loop"
+          },
+          {
+            "id": "boundary_loop.l0003",
+            "kind": "boundary_loop"
+          },
+          {
+            "id": "boundary_loop.l0004",
+            "kind": "boundary_loop"
+          },
+          {
+            "id": "observation.geometry.surface_plane",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.periodicity.surface_plane",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.edge",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.face",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.vertex",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.wire",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.face_occurrence_f0001",
+            "kind": "observation"
+          },
+          {
+            "id": "surface.plane",
+            "kind": "surface_variant"
+          }
+        ]
+      },
+      {
+        "id": "claim.srf_028.surface_inner_trim_loops",
+        "obligation_id": "SRF-028",
+        "predicate_codes": [
+          "predicate.surface.inner_trim_loops"
+        ],
+        "statement": "The processing-disabled imported evidence satisfies SRF-028 through predicate.surface.inner_trim_loops; the referenced observations bind the exact post-STEP subjects.",
+        "subject_refs": [
+          {
+            "id": "boundary_loop.l0002",
+            "kind": "boundary_loop"
+          },
+          {
+            "id": "boundary_loop.l0003",
+            "kind": "boundary_loop"
+          },
+          {
+            "id": "boundary_loop.l0004",
+            "kind": "boundary_loop"
+          },
+          {
+            "id": "observation.geometry.surface_plane",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.periodicity.surface_plane",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.face_occurrence_f0001",
+            "kind": "observation"
+          },
+          {
+            "id": "surface.plane",
+            "kind": "surface_variant"
+          }
+        ]
+      },
+      {
+        "id": "claim.sup_005.support_unsupported_topology_present",
+        "obligation_id": "SUP-005",
+        "predicate_codes": [
+          "predicate.support.unsupported_topology_present"
+        ],
+        "statement": "The processing-disabled imported evidence satisfies SUP-005 through predicate.support.unsupported_topology_present; the referenced observations bind the exact post-STEP subjects.",
+        "subject_refs": [
+          {
+            "id": "observation.consumer.support_assignment",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.imported",
+            "kind": "observation"
+          },
+          {
+            "id": "support.face.plane.reason_planar_holes_require_cut_graph.bucket_03",
+            "kind": "support"
+          },
+          {
+            "id": "support.logical_region.plane.reason_planar_holes_require_cut_graph.bucket_04",
+            "kind": "support"
+          }
+        ]
+      },
+      {
+        "id": "claim.trm_003.trim_multiply_perforated_disk",
+        "obligation_id": "TRM-003",
+        "predicate_codes": [
+          "predicate.trim.multiply_perforated_disk"
+        ],
+        "statement": "The processing-disabled imported evidence satisfies TRM-003 through predicate.trim.multiply_perforated_disk; the referenced observations bind the exact post-STEP subjects.",
+        "subject_refs": [
+          {
+            "id": "boundary_loop.l0001",
+            "kind": "boundary_loop"
+          },
+          {
+            "id": "boundary_loop.l0002",
+            "kind": "boundary_loop"
+          },
+          {
+            "id": "boundary_loop.l0003",
+            "kind": "boundary_loop"
+          },
+          {
+            "id": "boundary_loop.l0004",
+            "kind": "boundary_loop"
+          },
+          {
+            "id": "observation.topology.edge",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.face",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.vertex",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.wire",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.face_occurrence_f0001",
+            "kind": "observation"
+          },
+          {
+            "id": "surface.plane",
+            "kind": "surface_variant"
+          }
+        ]
+      }
+    ],
+    "curve_variants": [
+      {
+        "concrete_type": "Geom_Circle",
+        "condition_codes": [
+          "basis_periodic",
+          "bounded",
+          "periodic"
+        ],
+        "count": 3,
+        "family_code": "circle",
+        "label": "curve.circle",
+        "wrapper_stack": []
+      },
+      {
+        "concrete_type": "Geom_Line",
+        "condition_codes": [
+          "bounded",
+          "mathematically_unbounded_basis",
+          "trimmed_by_edge_range"
+        ],
+        "count": 4,
+        "family_code": "line",
+        "label": "curve.line",
+        "wrapper_stack": []
+      }
+    ],
+    "import_outcome": "success",
+    "model_classes": [
+      "open_manifold",
+      "open_shell",
+      "procedural_fixture",
+      "standalone_shell"
+    ],
+    "model_topology": {
+      "closed_shells": 0,
+      "coincident_solid_signature_pairs": 0,
+      "free_edges": 0,
+      "free_wires": 0,
+      "inner_shells": 0,
+      "isolated_vertices": 0,
+      "maximum_faces_per_edge": 1,
+      "nonmanifold_vertices": 0,
+      "open_shells": 1,
+      "outer_shells": 0,
+      "shared_faces_between_solids": 0,
+      "standalone_shells": 1
+    },
+    "orientation_states": [
+      "FORWARD",
+      "REVERSED"
+    ],
+    "periodicity": [
+      {
+        "label": "surface.plane",
+        "u_closed": false,
+        "u_periodic": false,
+        "v_closed": false,
+        "v_periodic": false
+      }
+    ],
+    "semantic_candidates": [],
+    "singularity_codes": [],
+    "subject_universe": {
+      "edge_occurrence_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004",
+        "edge_occurrence.e0005",
+        "edge_occurrence.e0006",
+        "edge_occurrence.e0007"
+      ],
+      "face_occurrence_ids": [
+        "face_occurrence.f0001"
+      ],
+      "logical_region_ids": [
+        "logical_region.r0001"
+      ]
+    },
+    "support": [
+      {
+        "geometry_family_code": "circle",
+        "label": "support.edge.circle.strategy_curve_exact_circle.bucket_01",
+        "selection_code": "strategy.curve.exact_circle",
+        "state": "SupportedAnalyticTemplate",
+        "subject_count": 3,
+        "subject_ids": [
+          "edge_occurrence.e0001",
+          "edge_occurrence.e0002",
+          "edge_occurrence.e0003"
+        ],
+        "subject_kind": "edge"
+      },
+      {
+        "geometry_family_code": "line",
+        "label": "support.edge.line.strategy_curve_exact_line.bucket_02",
+        "selection_code": "strategy.curve.exact_line",
+        "state": "SupportedAnalyticTemplate",
+        "subject_count": 4,
+        "subject_ids": [
+          "edge_occurrence.e0004",
+          "edge_occurrence.e0005",
+          "edge_occurrence.e0006",
+          "edge_occurrence.e0007"
+        ],
+        "subject_kind": "edge"
+      },
+      {
+        "geometry_family_code": "plane",
+        "label": "support.face.plane.reason_planar_holes_require_cut_graph.bucket_03",
+        "selection_code": "reason.planar_holes_require_cut_graph",
+        "state": "UnsupportedTopology",
+        "subject_count": 1,
+        "subject_ids": [
+          "face_occurrence.f0001"
+        ],
+        "subject_kind": "face"
+      },
+      {
+        "geometry_family_code": "plane",
+        "label": "support.logical_region.plane.reason_planar_holes_require_cut_graph.bucket_04",
+        "selection_code": "reason.planar_holes_require_cut_graph",
+        "state": "UnsupportedTopology",
+        "subject_count": 1,
+        "subject_ids": [
+          "logical_region.r0001"
+        ],
+        "subject_kind": "logical_region"
+      }
+    ],
+    "surface_variants": [
+      {
+        "concrete_type": "Geom_Plane",
+        "condition_codes": [
+          "bounded_trim_layout"
+        ],
+        "count": 1,
+        "family_code": "plane",
+        "label": "surface.plane",
+        "trim_domain_class": "multiply_perforated_disk",
+        "wrapper_stack": []
+      }
+    ],
+    "topology_occurrences": {
+      "assembly_products": 1,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 7,
+      "faces": 1,
+      "instances": 0,
+      "shells": 1,
+      "solids": 0,
+      "vertices": 14,
+      "wires": 4
+    },
+    "unique_topology": {
+      "assembly_products": 1,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 7,
+      "faces": 1,
+      "instances": 0,
+      "shells": 1,
+      "solids": 0,
+      "vertices": 7,
+      "wires": 4
+    },
+    "validation_findings": [
+      {
+        "code": "edge.degenerated",
+        "evidence": "Degenerated edge count from imported topology.",
+        "expectation": "absent",
+        "subject_kind": "edge"
+      },
+      {
+        "code": "edge.missing_3d_curve",
+        "evidence": "Missing 3D-curve count from imported topology.",
+        "expectation": "absent",
+        "subject_kind": "edge"
+      },
+      {
+        "code": "edge.periodic_seam",
+        "evidence": "Periodic seam incidence from imported topology.",
+        "expectation": "absent",
+        "subject_kind": "edge"
+      },
+      {
+        "code": "import.unprocessed_brep_invalid",
+        "evidence": "Validity is measured before any repair or shape processing.",
+        "expectation": "absent",
+        "subject_kind": "model"
+      },
+      {
+        "code": "tolerance.uniform_kernel_precision",
+        "evidence": "All populated imported tolerance ranges equal 10^-10 metres.",
+        "expectation": "present",
+        "subject_kind": "model"
+      },
+      {
+        "code": "topology.closed_shell",
+        "evidence": "A closed shell has no free boundary incidence.",
+        "expectation": "absent",
+        "subject_kind": "shell"
+      },
+      {
+        "code": "topology.manifold",
+        "evidence": "No imported edge has non-manifold face incidence.",
+        "expectation": "present",
+        "subject_kind": "model"
+      },
+      {
+        "code": "topology.valid",
+        "evidence": "BRepCheck_Analyzer result on the processing-disabled readback.",
+        "expectation": "present",
+        "subject_kind": "model"
+      }
+    ]
+  },
+  "fixture_id": "face.trim.nested_holes",
+  "instances": [],
+  "observations": [
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "support.assignment_total",
+        "support.viewer_state_defined"
+      ],
+      "consumer_code": "consumer.support_gate",
+      "consumer_kind": "mesher",
+      "evidence": "Every imported edge, face, and logical-region proxy is assigned exactly once; blocked buckets fail the component mesh gate by name.",
+      "expected_outcome": "named_failure",
+      "id": "observation.consumer.support_assignment",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "authoritative_brep",
+      "subject_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004",
+        "edge_occurrence.e0005",
+        "edge_occurrence.e0006",
+        "edge_occurrence.e0007",
+        "face_occurrence.f0001",
+        "logical_region.r0001"
+      ]
+    },
+    {
+      "concrete_type": "Geom_Circle",
+      "condition_codes": [
+        "basis_periodic",
+        "bounded",
+        "periodic"
+      ],
+      "exact_evaluator_kind": "evaluator.circle",
+      "family_code": "circle",
+      "id": "observation.geometry.curve_circle",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "curve",
+          "closed": true,
+          "lower": 0.0,
+          "period": 6.283185307179586,
+          "periodic": true,
+          "seam_parameters": [
+            0.0,
+            6.283185307179586
+          ],
+          "unit": "unitless",
+          "upper": 1.0
+        }
+      ],
+      "parameters": [],
+      "phase": "imported",
+      "subject_id": "curve.circle",
+      "taxonomy": "Curve",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_Line",
+      "condition_codes": [
+        "bounded",
+        "mathematically_unbounded_basis",
+        "trimmed_by_edge_range"
+      ],
+      "exact_evaluator_kind": "evaluator.line",
+      "family_code": "line",
+      "id": "observation.geometry.curve_line",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "curve",
+          "closed": false,
+          "lower": 0.0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 1.0
+        }
+      ],
+      "parameters": [],
+      "phase": "imported",
+      "subject_id": "curve.line",
+      "taxonomy": "Curve",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_Plane",
+      "condition_codes": [
+        "bounded_trim_layout"
+      ],
+      "exact_evaluator_kind": "evaluator.plane",
+      "family_code": "plane",
+      "id": "observation.geometry.surface_plane",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": 0.0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 62.0
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0.0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": 40.0
+        }
+      ],
+      "parameters": [],
+      "phase": "imported",
+      "subject_id": "surface.plane",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "evidence": "The imported shape is evaluated before any repair or processing.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.imported",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "topology.valid.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 1,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "topology.valid",
+      "phase": "imported",
+      "subject_ids": [
+        "edge_occurrence.e0001"
+      ]
+    },
+    {
+      "axes": [
+        {
+          "axis": "u",
+          "closed": false,
+          "period": null,
+          "periodic": false,
+          "principal_lower": null,
+          "principal_upper": null,
+          "seam_parameters": [],
+          "unit": "unitless"
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "period": null,
+          "periodic": false,
+          "principal_lower": null,
+          "principal_upper": null,
+          "seam_parameters": [],
+          "unit": "unitless"
+        }
+      ],
+      "id": "observation.periodicity.surface_plane",
+      "kind": "periodicity_singularity",
+      "phase": "imported",
+      "singularities": [],
+      "subject_id": "surface.plane"
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "processing_disabled_readback"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.edge",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.occurrence_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 7
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.edges"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.edges",
+      "tolerance_metres": 1e-10,
+      "topology_kind": "edge",
+      "underlying_id": "topology.edges",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "processing_disabled_readback"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.face",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.occurrence_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 1
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.faces"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.faces",
+      "tolerance_metres": 1e-10,
+      "topology_kind": "face",
+      "underlying_id": "topology.faces",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "processing_disabled_readback"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.vertex",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.occurrence_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 14
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.vertices"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.vertices",
+      "tolerance_metres": 1e-10,
+      "topology_kind": "vertex",
+      "underlying_id": "topology.vertices",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "processing_disabled_readback"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.wire",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.occurrence_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 4
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.wires"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.wires",
+      "tolerance_metres": 0.0,
+      "topology_kind": "wire",
+      "underlying_id": "topology.wires",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "condition_codes": [
+        "closed_imported_loops",
+        "processing_disabled_readback"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "face_occurrence.f0001",
+      "id": "observation.trim.face_occurrence_f0001",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop_l0001.c01",
+            "oracle.coedge.boundary_loop_l0001.c02",
+            "oracle.coedge.boundary_loop_l0001.c03",
+            "oracle.coedge.boundary_loop_l0001.c04"
+          ],
+          "loop_id": "boundary_loop.l0001",
+          "max_gap_metres": 0.0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 2480.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 62.0,
+            "u_min": 0.0,
+            "v_max": 40.0,
+            "v_min": 0.0
+          },
+          "wire_id": "oracle.wire.boundary_loop_l0001"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop_l0002.c01"
+          ],
+          "loop_id": "boundary_loop.l0002",
+          "max_gap_metres": 0.0,
+          "nesting_depth": 1,
+          "nesting_parent_loop_id": "boundary_loop.l0001",
+          "orientation": "REVERSED",
+          "role": "inner",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": -256.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 26.0,
+            "u_min": 10.0,
+            "v_max": 28.0,
+            "v_min": 12.0
+          },
+          "wire_id": "oracle.wire.boundary_loop_l0002"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop_l0003.c01"
+          ],
+          "loop_id": "boundary_loop.l0003",
+          "max_gap_metres": 0.0,
+          "nesting_depth": 1,
+          "nesting_parent_loop_id": "boundary_loop.l0001",
+          "orientation": "REVERSED",
+          "role": "inner",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": -36.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 41.0,
+            "u_min": 35.0,
+            "v_max": 23.0,
+            "v_min": 17.0
+          },
+          "wire_id": "oracle.wire.boundary_loop_l0003"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop_l0004.c01"
+          ],
+          "loop_id": "boundary_loop.l0004",
+          "max_gap_metres": 0.0,
+          "nesting_depth": 1,
+          "nesting_parent_loop_id": "boundary_loop.l0001",
+          "orientation": "REVERSED",
+          "role": "inner",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": -36.0,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 53.0,
+            "u_min": 47.0,
+            "v_max": 23.0,
+            "v_min": 17.0
+          },
+          "wire_id": "oracle.wire.boundary_loop_l0004"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "multiply_perforated_disk"
+    }
+  ],
+  "oracle": {
+    "independent_from_production_classifier": true,
+    "method": "analytic_derivation",
+    "references": [
+      "fixtures/generator/fixture_trim_support_recipes.cpp recipe face.trim.nested_holes",
+      "independent_oracle_intent: Build the imported winding and containment tree, verify one rectangular outer loop and three disjoint depth-one circular holes, and derive all loop UV bounds independently. Do not claim a depth-two island because this construction contains no nested retained island.",
+      "post-STEP processing-disabled summary face.trim.nested_holes"
+    ],
+    "statement": "Build the imported winding and containment tree, verify one rectangular outer loop and three disjoint depth-one circular holes, and derive all loop UV bounds independently. Do not claim a depth-two island because this construction contains no nested retained island."
+  },
+  "schema_version": "1.0.0",
+  "tolerances": {
+    "edges_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "faces_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "vertices_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    }
+  },
+  "units": {
+    "coordinate_space": "right_handed_si_metres_radians",
+    "scale_to_metres": 0.001,
+    "source_unit": "millimetre"
+  }
+}

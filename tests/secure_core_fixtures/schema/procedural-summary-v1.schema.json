@@ -1,0 +1,998 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.weftocct.example/v1/procedural-summary-v1.schema.json",
+  "title": "CAD mesher deterministic procedural fixture summary v1",
+  "description": "Strict metadata emitted by the OCCT procedural fixture generator. Source observations describe authored B-rep state; roundtrip observations describe the unprocessed STEP/XDE import. The document is generator evidence and is never an independent oracle.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "fixture_id",
+    "generator",
+    "xde",
+    "observations",
+    "source",
+    "roundtrip"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "fixture_id": { "$ref": "#/$defs/stable_code" },
+    "generator": { "$ref": "#/$defs/generator_metadata" },
+    "xde": { "$ref": "#/$defs/xde_summary" },
+    "source": { "$ref": "#/$defs/shape_summary" },
+    "roundtrip": { "$ref": "#/$defs/roundtrip_result" },
+    "observations": { "$ref": "#/$defs/generated_observations" }
+  },
+  "$defs": {
+    "stable_code": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*$"
+    },
+    "nonnegative_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "positive_number": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "nullable_nonnegative_number": {
+      "oneOf": [
+        { "type": "number", "minimum": 0 },
+        { "type": "null" }
+      ]
+    },
+    "affine_matrix": {
+      "type": "array",
+      "minItems": 16,
+      "maxItems": 16,
+      "prefixItems": [
+        { "type": "number" },
+        { "type": "number" },
+        { "type": "number" },
+        { "type": "number" },
+        { "type": "number" },
+        { "type": "number" },
+        { "type": "number" },
+        { "type": "number" },
+        { "type": "number" },
+        { "type": "number" },
+        { "type": "number" },
+        { "type": "number" },
+        { "type": "number", "const": 0 },
+        { "type": "number", "const": 0 },
+        { "type": "number", "const": 0 },
+        { "type": "number", "const": 1 }
+      ],
+      "items": false,
+      "x-canonical-order": "fixed row-major matrix element order"
+    },
+    "construction_parameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "unit", "value"],
+      "properties": {
+        "name": { "$ref": "#/$defs/stable_code" },
+        "unit": {
+          "enum": ["unitless", "millimetres", "metres", "inches", "radians"]
+        },
+        "value": { "type": "number" }
+      }
+    },
+    "roundtrip_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expected_brep_valid",
+        "topology_counts",
+        "geometry_families",
+        "concrete_types",
+        "occurrence_graph",
+        "boundary_loops",
+        "model_topology",
+        "tolerances",
+        "accepted_normalization_codes"
+      ],
+      "properties": {
+        "expected_brep_valid": { "type": "boolean" },
+        "topology_counts": { "type": "boolean" },
+        "geometry_families": { "type": "boolean" },
+        "concrete_types": { "type": "boolean" },
+        "occurrence_graph": { "type": "boolean" },
+        "boundary_loops": { "type": "boolean" },
+        "model_topology": { "type": "boolean" },
+        "tolerances": { "type": "boolean" },
+        "accepted_normalization_codes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/stable_code" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending normalization code"
+        }
+      }
+    },
+    "generator_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "evidence_lane",
+        "occt_version",
+        "step_schema",
+        "writer",
+        "length_unit",
+        "tessellated",
+        "surface_curve_mode",
+        "shape_processing",
+        "read_same_parameter_repair",
+        "read_tessellated",
+        "read_surface_curve_mode",
+        "clean_duplicates",
+        "write_nonmanifold",
+        "read_nonmanifold",
+        "boundary_loop_uv_quantum",
+        "tolerance_quantum_mm",
+        "location_quantum",
+        "coincidence_quantum_mm",
+        "construction_parameters",
+        "roundtrip_contract"
+      ],
+      "properties": {
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "occt_version": { "type": "string", "minLength": 1 },
+        "evidence_lane": { "const": "occt_procedural" },
+        "step_schema": { "enum": ["AP203", "AP214IS", "AP242DIS"] },
+        "writer": { "enum": ["STEPControl_Writer", "STEPCAFControl_Writer"] },
+        "length_unit": { "enum": ["millimetre", "metre", "inch"] },
+        "tessellated": { "type": "boolean" },
+        "surface_curve_mode": { "type": "boolean" },
+        "shape_processing": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/stable_code" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending enabled shape-processing code"
+        },
+        "read_same_parameter_repair": { "type": "boolean" },
+        "read_tessellated": { "type": "boolean" },
+        "read_surface_curve_mode": { "enum": ["default", "on", "off"] },
+        "clean_duplicates": { "type": "boolean" },
+        "write_nonmanifold": { "type": "boolean" },
+        "read_nonmanifold": { "type": "boolean" },
+        "boundary_loop_uv_quantum": { "$ref": "#/$defs/positive_number" },
+        "tolerance_quantum_mm": { "$ref": "#/$defs/positive_number" },
+        "location_quantum": { "$ref": "#/$defs/positive_number" },
+        "coincidence_quantum_mm": { "$ref": "#/$defs/positive_number" },
+        "construction_parameters": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/construction_parameter" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending parameter name"
+        },
+        "roundtrip_contract": { "$ref": "#/$defs/roundtrip_contract" }
+      }
+    },
+    "xde_instance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "component_label",
+        "parent_label",
+        "target_definition",
+        "target_kind",
+        "transform_kind",
+        "local_matrix_row_major",
+        "matrix_row_major"
+      ],
+      "properties": {
+        "label": { "$ref": "#/$defs/stable_code" },
+        "component_label": { "$ref": "#/$defs/stable_code" },
+        "parent_label": {
+          "oneOf": [
+            { "$ref": "#/$defs/stable_code" },
+            { "type": "null" }
+          ]
+        },
+        "target_definition": { "$ref": "#/$defs/stable_code" },
+        "target_kind": { "enum": ["assembly", "simple_shape"] },
+        "transform_kind": { "enum": ["identity", "rigid", "mirrored", "scaled", "general_affine"] },
+        "local_matrix_row_major": { "$ref": "#/$defs/affine_matrix" },
+        "matrix_row_major": { "$ref": "#/$defs/affine_matrix" }
+      }
+    },
+    "xde_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reader",
+        "product_definitions",
+        "free_products",
+        "simple_shape_definitions",
+        "assembly_definitions",
+        "unique_component_labels",
+        "component_instances",
+        "instances"
+      ],
+      "properties": {
+        "reader": { "const": "STEPCAFControl_Reader" },
+        "product_definitions": { "$ref": "#/$defs/nonnegative_count" },
+        "free_products": { "$ref": "#/$defs/nonnegative_count" },
+        "simple_shape_definitions": { "$ref": "#/$defs/nonnegative_count" },
+        "assembly_definitions": { "$ref": "#/$defs/nonnegative_count" },
+        "unique_component_labels": { "$ref": "#/$defs/nonnegative_count" },
+        "component_instances": { "$ref": "#/$defs/nonnegative_count" },
+        "instances": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/xde_instance" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending instance label"
+        }
+      }
+    },
+    "orientation_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["FORWARD", "REVERSED", "INTERNAL", "EXTERNAL"],
+      "properties": {
+        "FORWARD": { "$ref": "#/$defs/nonnegative_count" },
+        "REVERSED": { "$ref": "#/$defs/nonnegative_count" },
+        "INTERNAL": { "$ref": "#/$defs/nonnegative_count" },
+        "EXTERNAL": { "$ref": "#/$defs/nonnegative_count" }
+      }
+    },
+    "topology_count": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unique", "occurrences", "orientations"],
+      "properties": {
+        "unique": { "$ref": "#/$defs/nonnegative_count" },
+        "occurrences": { "$ref": "#/$defs/nonnegative_count" },
+        "orientations": { "$ref": "#/$defs/orientation_counts" }
+      }
+    },
+    "topology_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "compound",
+        "compsolid",
+        "solid",
+        "shell",
+        "face",
+        "wire",
+        "edge",
+        "vertex"
+      ],
+      "properties": {
+        "compound": { "$ref": "#/$defs/topology_count" },
+        "compsolid": { "$ref": "#/$defs/topology_count" },
+        "solid": { "$ref": "#/$defs/topology_count" },
+        "shell": { "$ref": "#/$defs/topology_count" },
+        "face": { "$ref": "#/$defs/topology_count" },
+        "wire": { "$ref": "#/$defs/topology_count" },
+        "edge": { "$ref": "#/$defs/topology_count" },
+        "vertex": { "$ref": "#/$defs/topology_count" }
+      }
+    },
+    "edge_occurrence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "family",
+        "concrete_type",
+        "orientation",
+        "partner_ordinal",
+        "degenerated",
+        "missing_3d_curve",
+        "periodic_seam",
+        "face_use_count",
+        "shell_role",
+        "geometry_location_matrix_row_major",
+        "occurrence_location_matrix_row_major"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^edge_occurrence\\.e[0-9]{4,}$"
+        },
+        "family": { "type": "string", "minLength": 1 },
+        "concrete_type": { "type": "string", "minLength": 1 },
+        "orientation": { "enum": ["FORWARD", "REVERSED", "INTERNAL", "EXTERNAL"] },
+        "partner_ordinal": { "type": "integer", "minimum": 1 },
+        "degenerated": { "type": "boolean" },
+        "missing_3d_curve": { "type": "boolean" },
+        "periodic_seam": { "type": "boolean" },
+        "face_use_count": { "$ref": "#/$defs/nonnegative_count" },
+        "shell_role": { "enum": ["outer", "inner", "standalone"] },
+        "geometry_location_matrix_row_major": { "$ref": "#/$defs/affine_matrix" },
+        "occurrence_location_matrix_row_major": { "$ref": "#/$defs/affine_matrix" }
+      }
+    },
+    "face_occurrence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "family",
+        "concrete_type",
+        "orientation",
+        "partner_ordinal",
+        "solid_use_count",
+        "shell_role",
+        "geometry_location_matrix_row_major",
+        "occurrence_location_matrix_row_major"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^face_occurrence\\.f[0-9]{4,}$"
+        },
+        "family": { "type": "string", "minLength": 1 },
+        "concrete_type": { "type": "string", "minLength": 1 },
+        "orientation": { "enum": ["FORWARD", "REVERSED", "INTERNAL", "EXTERNAL"] },
+        "partner_ordinal": { "type": "integer", "minimum": 1 },
+        "solid_use_count": { "$ref": "#/$defs/nonnegative_count" },
+        "shell_role": { "enum": ["outer", "inner", "standalone"] },
+        "geometry_location_matrix_row_major": { "$ref": "#/$defs/affine_matrix" },
+        "occurrence_location_matrix_row_major": { "$ref": "#/$defs/affine_matrix" }
+      }
+    },
+    "uv_bounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["u_min", "u_max", "v_min", "v_max"],
+      "properties": {
+        "u_min": { "type": "number" },
+        "u_max": { "type": "number" },
+        "v_min": { "type": "number" },
+        "v_max": { "type": "number" }
+      }
+    },
+    "boundary_loop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "face_occurrence_id",
+        "role",
+        "orientation",
+        "closed",
+        "edge_occurrence_count",
+        "uv_bounds"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^boundary_loop\\.l[0-9]{4,}$"
+        },
+        "face_occurrence_id": {
+          "type": "string",
+          "pattern": "^face_occurrence\\.f[0-9]{4,}$"
+        },
+        "role": { "enum": ["outer", "inner"] },
+        "orientation": { "enum": ["FORWARD", "REVERSED", "INTERNAL", "EXTERNAL"] },
+        "closed": { "type": "boolean" },
+        "edge_occurrence_count": { "$ref": "#/$defs/nonnegative_count" },
+        "uv_bounds": { "$ref": "#/$defs/uv_bounds" }
+      }
+    },
+    "logical_region_proxy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "face_occurrence_id", "family", "concrete_type"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^logical_region\\.r[0-9]{4,}$"
+        },
+        "face_occurrence_id": {
+          "type": "string",
+          "pattern": "^face_occurrence\\.f[0-9]{4,}$"
+        },
+        "family": { "type": "string", "minLength": 1 },
+        "concrete_type": { "type": "string", "minLength": 1 }
+      }
+    },
+    "model_topology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "closed_shells",
+        "open_shells",
+        "outer_shells",
+        "inner_shells",
+        "standalone_shells",
+        "shared_faces_between_solids",
+        "maximum_faces_per_edge",
+        "nonmanifold_vertices",
+        "free_wires",
+        "free_edges",
+        "isolated_vertices",
+        "coincident_solid_signature_pairs"
+      ],
+      "properties": {
+        "closed_shells": { "$ref": "#/$defs/nonnegative_count" },
+        "open_shells": { "$ref": "#/$defs/nonnegative_count" },
+        "outer_shells": { "$ref": "#/$defs/nonnegative_count" },
+        "inner_shells": { "$ref": "#/$defs/nonnegative_count" },
+        "standalone_shells": { "$ref": "#/$defs/nonnegative_count" },
+        "shared_faces_between_solids": { "$ref": "#/$defs/nonnegative_count" },
+        "maximum_faces_per_edge": { "$ref": "#/$defs/nonnegative_count" },
+        "nonmanifold_vertices": { "$ref": "#/$defs/nonnegative_count" },
+        "free_wires": { "$ref": "#/$defs/nonnegative_count" },
+        "free_edges": { "$ref": "#/$defs/nonnegative_count" },
+        "isolated_vertices": { "$ref": "#/$defs/nonnegative_count" },
+        "coincident_solid_signature_pairs": { "$ref": "#/$defs/nonnegative_count" }
+      }
+    },
+    "curve_family_counts": {
+      "type": "object",
+      "properties": {
+        "Line": { "$ref": "#/$defs/nonnegative_count" },
+        "Circle": { "$ref": "#/$defs/nonnegative_count" },
+        "Ellipse": { "$ref": "#/$defs/nonnegative_count" },
+        "Hyperbola": { "$ref": "#/$defs/nonnegative_count" },
+        "Parabola": { "$ref": "#/$defs/nonnegative_count" },
+        "BezierCurve": { "$ref": "#/$defs/nonnegative_count" },
+        "BSplineCurve": { "$ref": "#/$defs/nonnegative_count" },
+        "OffsetCurve": { "$ref": "#/$defs/nonnegative_count" },
+        "OtherCurve": { "$ref": "#/$defs/nonnegative_count" }
+      },
+      "additionalProperties": false
+    },
+    "surface_family_counts": {
+      "type": "object",
+      "properties": {
+        "Plane": { "$ref": "#/$defs/nonnegative_count" },
+        "Cylinder": { "$ref": "#/$defs/nonnegative_count" },
+        "Cone": { "$ref": "#/$defs/nonnegative_count" },
+        "Sphere": { "$ref": "#/$defs/nonnegative_count" },
+        "Torus": { "$ref": "#/$defs/nonnegative_count" },
+        "BezierSurface": { "$ref": "#/$defs/nonnegative_count" },
+        "BSplineSurface": { "$ref": "#/$defs/nonnegative_count" },
+        "SurfaceOfRevolution": { "$ref": "#/$defs/nonnegative_count" },
+        "SurfaceOfExtrusion": { "$ref": "#/$defs/nonnegative_count" },
+        "OffsetSurface": { "$ref": "#/$defs/nonnegative_count" },
+        "OtherSurface": { "$ref": "#/$defs/nonnegative_count" }
+      },
+      "additionalProperties": false
+    },
+    "concrete_type_counts": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/nonnegative_count" }
+    },
+    "edge_conditions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "degenerated",
+        "missing_3d_curve",
+        "periodic_seam",
+        "free_boundary",
+        "nonmanifold"
+      ],
+      "properties": {
+        "degenerated": { "$ref": "#/$defs/nonnegative_count" },
+        "missing_3d_curve": { "$ref": "#/$defs/nonnegative_count" },
+        "periodic_seam": { "$ref": "#/$defs/nonnegative_count" },
+        "free_boundary": { "$ref": "#/$defs/nonnegative_count" },
+        "nonmanifold": { "$ref": "#/$defs/nonnegative_count" }
+      }
+    },
+    "tolerance_range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max"],
+      "properties": {
+        "min": { "$ref": "#/$defs/nullable_nonnegative_number" },
+        "max": { "$ref": "#/$defs/nullable_nonnegative_number" }
+      }
+    },
+    "tolerance_ranges": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vertex", "edge", "face"],
+      "properties": {
+        "vertex": { "$ref": "#/$defs/tolerance_range" },
+        "edge": { "$ref": "#/$defs/tolerance_range" },
+        "face": { "$ref": "#/$defs/tolerance_range" }
+      }
+    },
+    "shape_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "valid",
+        "root_shape_type",
+        "topology",
+        "edge_occurrences",
+        "face_occurrences",
+        "boundary_loops",
+        "logical_region_proxies",
+        "model_topology",
+        "curve_families",
+        "curve_concrete_types",
+        "surface_families",
+        "surface_concrete_types",
+        "edge_conditions",
+        "tolerance_ranges_mm"
+      ],
+      "properties": {
+        "valid": { "type": "boolean" },
+        "root_shape_type": {
+          "enum": ["Compound", "CompSolid", "Solid", "Shell", "Face", "Wire", "Edge", "Vertex", "Shape"]
+        },
+        "topology": { "$ref": "#/$defs/topology_summary" },
+        "edge_occurrences": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/edge_occurrence" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending edge occurrence id"
+        },
+        "face_occurrences": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/face_occurrence" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending face occurrence id"
+        },
+        "boundary_loops": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/boundary_loop" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending boundary-loop id"
+        },
+        "logical_region_proxies": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/logical_region_proxy" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending logical-region id"
+        },
+        "model_topology": { "$ref": "#/$defs/model_topology" },
+        "curve_families": { "$ref": "#/$defs/curve_family_counts" },
+        "curve_concrete_types": { "$ref": "#/$defs/concrete_type_counts" },
+        "surface_families": { "$ref": "#/$defs/surface_family_counts" },
+        "surface_concrete_types": { "$ref": "#/$defs/concrete_type_counts" },
+        "edge_conditions": { "$ref": "#/$defs/edge_conditions" },
+        "tolerance_ranges_mm": { "$ref": "#/$defs/tolerance_ranges" }
+      }
+    },
+    "generated_code": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z0-9][a-z0-9_]*)*$"
+    },
+    "generated_observation_unit": {
+      "enum": [
+        "unitless",
+        "millimetre",
+        "radian",
+        "curve_parameter",
+        "surface_parameter"
+      ]
+    },
+    "generated_parameter_domain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["axis", "closed", "lower", "period", "periodic", "unit", "upper"],
+      "properties": {
+        "axis": { "enum": ["curve", "u", "v"] },
+        "closed": { "type": "boolean" },
+        "lower": { "type": "number" },
+        "period": {
+          "oneOf": [
+            { "type": "number", "exclusiveMinimum": 0 },
+            { "type": "null" }
+          ]
+        },
+        "periodic": { "type": "boolean" },
+        "unit": { "enum": ["curve_parameter", "surface_parameter"] },
+        "upper": { "type": "number" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "periodic": { "const": true } },
+            "required": ["periodic"]
+          },
+          "then": {
+            "properties": {
+              "period": { "type": "number", "exclusiveMinimum": 0 }
+            }
+          },
+          "else": {
+            "properties": {
+              "period": { "type": "null" }
+            }
+          }
+        }
+      ]
+    },
+    "generated_numeric_property": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "unit", "value"],
+      "properties": {
+        "code": { "$ref": "#/$defs/generated_code" },
+        "unit": { "$ref": "#/$defs/generated_observation_unit" },
+        "value": { "type": "number" }
+      }
+    },
+    "generated_integer_property": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "value"],
+      "properties": {
+        "code": { "$ref": "#/$defs/generated_code" },
+        "value": { "type": "integer" }
+      }
+    },
+    "generated_boolean_property": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "value"],
+      "properties": {
+        "code": { "$ref": "#/$defs/generated_code" },
+        "value": { "type": "boolean" }
+      }
+    },
+    "generated_numeric_sequence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "unit", "values"],
+      "properties": {
+        "code": { "$ref": "#/$defs/generated_code" },
+        "unit": { "$ref": "#/$defs/generated_observation_unit" },
+        "values": {
+          "type": "array",
+          "items": { "type": "number" },
+          "x-canonical-order": "semantic knot, pole, weight, or sample order"
+        }
+      }
+    },
+    "generated_integer_sequence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "values"],
+      "properties": {
+        "code": { "$ref": "#/$defs/generated_code" },
+        "values": {
+          "type": "array",
+          "items": { "type": "integer" },
+          "x-canonical-order": "semantic multiplicity or parameter order"
+        }
+      }
+    },
+    "generated_vertex_parameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["parameter", "role", "tolerance_mm", "vertex_partner_ordinal"],
+      "properties": {
+        "parameter": {
+          "oneOf": [
+            { "type": "number" },
+            { "type": "null" }
+          ]
+        },
+        "role": { "enum": ["start", "end"] },
+        "tolerance_mm": { "type": "number", "minimum": 0 },
+        "vertex_partner_ordinal": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "generated_geometry_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "boolean_properties",
+        "concrete_type",
+        "domains",
+        "family",
+        "id",
+        "integer_properties",
+        "integer_sequences",
+        "numeric_properties",
+        "numeric_sequences",
+        "partner_ordinal",
+        "subject_kind",
+        "vertex_parameters",
+        "wrapper_stack"
+      ],
+      "properties": {
+        "boolean_properties": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/generated_boolean_property" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending property code"
+        },
+        "concrete_type": { "type": "string", "minLength": 1 },
+        "domains": {
+          "type": "array",
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/generated_parameter_domain" },
+          "uniqueItems": true,
+          "x-canonical-order": "axis order curve, u, v"
+        },
+        "family": {
+          "enum": [
+            "line",
+            "circle",
+            "ellipse",
+            "hyperbola",
+            "parabola",
+            "bezier",
+            "bspline",
+            "offset",
+            "intersection",
+            "composite",
+            "isoparametric",
+            "pcurve_only",
+            "plane",
+            "cylinder",
+            "cone",
+            "sphere",
+            "torus",
+            "revolution",
+            "extrusion",
+            "ruled",
+            "swept",
+            "plate",
+            "kernel_specific"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^geometry\\.(edge|face)\\.[1-9][0-9]*$"
+        },
+        "integer_properties": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/generated_integer_property" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending property code"
+        },
+        "integer_sequences": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/generated_integer_sequence" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending property code"
+        },
+        "numeric_properties": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/generated_numeric_property" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending property code"
+        },
+        "numeric_sequences": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/generated_numeric_sequence" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending property code"
+        },
+        "partner_ordinal": { "type": "integer", "minimum": 1 },
+        "subject_kind": { "enum": ["edge", "face"] },
+        "vertex_parameters": {
+          "type": "array",
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/generated_vertex_parameter" },
+          "uniqueItems": true,
+          "x-canonical-order": "start endpoint followed by end endpoint"
+        },
+        "wrapper_stack": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "x-canonical-order": "semantic outermost-to-innermost wrapper order"
+        }
+      }
+    },
+    "generated_pcurve_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "concrete_type",
+        "condition_codes",
+        "degenerated",
+        "edge_partner_ordinal",
+        "edge_range_lower",
+        "edge_range_upper",
+        "edge_tolerance_mm",
+        "face_partner_ordinal",
+        "id",
+        "maximum_curve_surface_residual_mm",
+        "order_in_wire",
+        "orientation",
+        "pcurve_range_lower",
+        "pcurve_range_upper",
+        "representation_index",
+        "same_parameter",
+        "same_range",
+        "wire_ordinal"
+      ],
+      "properties": {
+        "concrete_type": { "type": "string", "minLength": 1 },
+        "condition_codes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/generated_code" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending condition code"
+        },
+        "degenerated": { "type": "boolean" },
+        "edge_partner_ordinal": { "type": "integer", "minimum": 1 },
+        "edge_range_lower": { "type": "number" },
+        "edge_range_upper": { "type": "number" },
+        "edge_tolerance_mm": { "type": "number", "minimum": 0 },
+        "face_partner_ordinal": { "type": "integer", "minimum": 1 },
+        "id": {
+          "type": "string",
+          "pattern": "^pcurve\\.[1-9][0-9]*$"
+        },
+        "maximum_curve_surface_residual_mm": {
+          "oneOf": [
+            { "type": "number", "minimum": 0 },
+            { "type": "null" }
+          ]
+        },
+        "order_in_wire": { "type": "integer", "minimum": 1 },
+        "orientation": { "enum": ["FORWARD", "REVERSED", "INTERNAL", "EXTERNAL"] },
+        "pcurve_range_lower": { "type": "number" },
+        "pcurve_range_upper": { "type": "number" },
+        "representation_index": { "type": "integer", "minimum": 1 },
+        "same_parameter": { "type": "boolean" },
+        "same_range": { "type": "boolean" },
+        "wire_ordinal": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "generated_continuity_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "edge_partner_ordinal",
+        "first_face_partner_ordinal",
+        "id",
+        "occt_continuity",
+        "second_face_partner_ordinal"
+      ],
+      "properties": {
+        "edge_partner_ordinal": { "type": "integer", "minimum": 1 },
+        "first_face_partner_ordinal": { "type": "integer", "minimum": 1 },
+        "id": {
+          "type": "string",
+          "pattern": "^continuity\\.[1-9][0-9]*$"
+        },
+        "occt_continuity": {
+          "enum": ["C0", "G1", "C1", "G2", "C2", "C3", "CN", "unknown"]
+        },
+        "second_face_partner_ordinal": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "generated_evaluation_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "condition_codes",
+        "id",
+        "normal_norm",
+        "outcome",
+        "partner_ordinal",
+        "subject_kind",
+        "u_derivative_norm",
+        "uv_metric_condition",
+        "v_derivative_norm"
+      ],
+      "properties": {
+        "condition_codes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/generated_code" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending condition code"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^evaluation\\.face\\.[1-9][0-9]*$"
+        },
+        "normal_norm": { "$ref": "#/$defs/nullable_nonnegative_number" },
+        "outcome": { "enum": ["success", "failure"] },
+        "partner_ordinal": { "type": "integer", "minimum": 1 },
+        "subject_kind": { "const": "face" },
+        "u_derivative_norm": { "$ref": "#/$defs/nullable_nonnegative_number" },
+        "uv_metric_condition": { "$ref": "#/$defs/nullable_nonnegative_number" },
+        "v_derivative_norm": { "$ref": "#/$defs/nullable_nonnegative_number" }
+      }
+    },
+    "generated_fixture_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["continuity", "evaluations", "geometry", "pcurves"],
+      "properties": {
+        "continuity": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/generated_continuity_observation" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending numeric observation id"
+        },
+        "evaluations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/generated_evaluation_observation" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending face partner ordinal"
+        },
+        "geometry": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/generated_geometry_observation" },
+          "uniqueItems": true,
+          "x-canonical-order": "edge partner ordinal followed by face partner ordinal"
+        },
+        "pcurves": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/generated_pcurve_observation" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending numeric observation id in face, wire, and coedge traversal order"
+        }
+      }
+    },
+    "generated_observations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["roundtrip", "source"],
+      "properties": {
+        "roundtrip": { "$ref": "#/$defs/generated_fixture_evidence" },
+        "source": { "$ref": "#/$defs/generated_fixture_evidence" }
+      },
+      "description": "Deterministic source and unprocessed-import observations emitted by the generator. They are comparison evidence only and remain distinct from the independent expectation observations."
+    },
+    "import_diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "severity",
+        "phase",
+        "step_entity_number",
+        "step_entity_type",
+        "message"
+      ],
+      "properties": {
+        "code": { "$ref": "#/$defs/stable_code" },
+        "severity": { "enum": ["info", "warning", "error"] },
+        "phase": { "enum": ["load", "transfer", "xde_transfer", "validation"] },
+        "step_entity_number": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "null" }
+          ]
+        },
+        "step_entity_type": {
+          "oneOf": [
+            { "type": "string", "minLength": 1 },
+            { "type": "null" }
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    },
+    "named_import_failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "phase", "code", "diagnostics"],
+      "properties": {
+        "status": { "const": "named_failure" },
+        "phase": { "enum": ["load", "transfer", "xde_transfer", "validation"] },
+        "code": { "$ref": "#/$defs/stable_code" },
+        "diagnostics": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/import_diagnostic" },
+          "uniqueItems": true,
+          "x-canonical-order": "ascending phase, STEP entity number, severity, then code"
+        }
+      }
+    },
+    "roundtrip_result": {
+      "oneOf": [
+        { "$ref": "#/$defs/shape_summary" },
+        { "$ref": "#/$defs/named_import_failure" }
+      ]
+    }
+  }
+}

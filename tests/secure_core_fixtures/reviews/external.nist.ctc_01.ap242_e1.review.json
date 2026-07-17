@@ -1,0 +1,23 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "823a9d775d05e24ee328a2f3174c054df23deb8e28889be9af1314b9ceb0494d",
+  "finding_disposition": "Accepted as a provenance-bound AP242 import fixture with an explicit invalid-BRep named outcome; it is not promoted as valid meshing geometry.",
+  "fixture_id": "external.nist.ctc_01.ap242_e1",
+  "producer_id": "producer.m1_external_derived_oracle",
+  "review_id": "review.external.nist.ctc_01.ap242_e1.revision_1",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.nonrigid_import_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "artifact.hash",
+    "import.invalid_brep",
+    "source.provenance",
+    "transform.representation_loss"
+  ],
+  "source_binding": {
+    "artifact_sha256": "85a5752da05f53c456ca3a9e038c90358e1d5a3141d1f0d6e5f0970f2356e821",
+    "kind": "audited_external",
+    "source_contract_sha256": "0f2eb6bc6c3110e68fbcd8a89313ec9beaf6c7523026626507550969475c5e5d"
+  }
+}

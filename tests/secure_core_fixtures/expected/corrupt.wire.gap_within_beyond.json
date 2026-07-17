@@ -1,0 +1,506 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "expected": {
+    "boundary_loops": [],
+    "brep_valid": false,
+    "claims": [
+      {
+        "id": "claim.pat_003.wire_gap_thresholds",
+        "obligation_id": "PAT-003",
+        "predicate_codes": [
+          "predicate.pathology.wire_gap_thresholds"
+        ],
+        "statement": "The source-bound mutation preserves both wire identities without sewing and creates one 0.0005 mm endpoint deviation within the 0.001 mm tolerance plus one 0.005 mm deviation beyond it; the retained compound therefore fails native validity.",
+        "subject_refs": [
+          {
+            "id": "observation.measurement.exact_mutation",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.normalization.source_to_derived",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.native_validity",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.wire_beyond",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.wire_within",
+            "kind": "observation"
+          }
+        ]
+      }
+    ],
+    "curve_variants": [],
+    "import_outcome": "named_failure",
+    "model_classes": [
+      "derived_pathology",
+      "free_topology",
+      "invalid_import"
+    ],
+    "model_topology": {
+      "closed_shells": 0,
+      "coincident_solid_signature_pairs": 0,
+      "free_edges": 0,
+      "free_wires": 2,
+      "inner_shells": 0,
+      "isolated_vertices": 0,
+      "maximum_faces_per_edge": 0,
+      "nonmanifold_vertices": 0,
+      "open_shells": 0,
+      "outer_shells": 0,
+      "shared_faces_between_solids": 0,
+      "standalone_shells": 0
+    },
+    "orientation_states": [
+      "FORWARD",
+      "REVERSED"
+    ],
+    "periodicity": [],
+    "semantic_candidates": [],
+    "singularity_codes": [],
+    "subject_universe": {
+      "edge_occurrence_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004",
+        "edge_occurrence.e0005",
+        "edge_occurrence.e0006",
+        "edge_occurrence.e0007",
+        "edge_occurrence.e0008"
+      ],
+      "face_occurrence_ids": [],
+      "logical_region_ids": []
+    },
+    "support": [
+      {
+        "geometry_family_code": "line",
+        "label": "support.edge.line.invalid_imported_geometry",
+        "selection_code": "reason.invalid_imported_geometry",
+        "state": "InvalidImportedGeometry",
+        "subject_count": 8,
+        "subject_ids": [
+          "edge_occurrence.e0001",
+          "edge_occurrence.e0002",
+          "edge_occurrence.e0003",
+          "edge_occurrence.e0004",
+          "edge_occurrence.e0005",
+          "edge_occurrence.e0006",
+          "edge_occurrence.e0007",
+          "edge_occurrence.e0008"
+        ],
+        "subject_kind": "edge"
+      }
+    ],
+    "surface_variants": [],
+    "topology_occurrences": {
+      "assembly_products": 1,
+      "compounds": 1,
+      "compsolids": 0,
+      "edges": 8,
+      "faces": 0,
+      "instances": 0,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 16,
+      "wires": 2
+    },
+    "unique_topology": {
+      "assembly_products": 1,
+      "compounds": 1,
+      "compsolids": 0,
+      "edges": 8,
+      "faces": 0,
+      "instances": 0,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 8,
+      "wires": 2
+    },
+    "validation_findings": [
+      {
+        "code": "import.unprocessed_brep_invalid",
+        "evidence": "The hash-bound native BRep is checked directly without sewing, healing, SameParameter repair, or topology replacement.",
+        "expectation": "present",
+        "subject_kind": "model"
+      },
+      {
+        "code": "pathology.wire.endpoint_gap_thresholds",
+        "evidence": "The exact declared ASCII replacements and independent analytic measurement retain this pathology in the native artifact.",
+        "expectation": "present",
+        "subject_kind": "wire"
+      },
+      {
+        "code": "topology.valid",
+        "evidence": "BRepCheck_Analyzer result for the deterministic native artifact.",
+        "expectation": "absent",
+        "subject_kind": "model"
+      }
+    ]
+  },
+  "fixture_id": "corrupt.wire.gap_within_beyond",
+  "instances": [],
+  "observations": [
+    {
+      "evidence": "Each closing line keeps its upper endpoint fixed and uses a unit direction plus matching parameter length whose lower endpoint is displaced in X by exactly 0.0005 mm or 0.005 mm. Shared topological vertices are not moved or sewn.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.measurement.exact_mutation",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "derived.beyond_gap",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 0.005,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "derived.beyond_gap_tolerance_ratio",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "unitless",
+            "value": 5.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "derived.source_tolerance",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 0.001,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "derived.within_gap",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "millimetres",
+            "value": 0.0005,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "derived.within_gap_tolerance_ratio",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "unitless",
+            "value": 0.5,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "mutation.artifact_sha256",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": "8a66150e0db8d512f205ca08fd8753b07a296001800d500dee8dd050b60b7f16",
+            "value_type": "text"
+          }
+        },
+        {
+          "code": "mutation.baseline_sha256",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": "527ac05bc9bef4da134557fb142ff1259bcd49c4ef46331fadad74e1e617bab3",
+            "value_type": "text"
+          }
+        },
+        {
+          "code": "mutation.operation_count",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 4,
+            "value_type": "integer"
+          }
+        },
+        {
+          "code": "mutation.runner_sha256",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": "aa7148e4771621371a44509728fac5efad7e7ebdec3a367ec1c16d58ab981630",
+            "value_type": "text"
+          }
+        }
+      ],
+      "pathology_code": "pathology.wire.endpoint_gap_thresholds",
+      "phase": "native",
+      "subject_ids": [
+        "wire_occurrence.w0001",
+        "wire_occurrence.w0002"
+      ]
+    },
+    {
+      "evidence": "The first closing endpoint deviation remains within the frozen 0.001 mm tolerance, while the second is five times that tolerance and makes the retained compound invalid without repair.",
+      "expectation": "named_failure",
+      "expected_failure_code": "import.unprocessed_brep_invalid",
+      "id": "observation.pathology.native_validity",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "brep.compound_valid",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "code": "brep.wire_beyond_valid",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "code": "brep.wire_within_valid",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": true,
+            "value_type": "boolean"
+          }
+        }
+      ],
+      "pathology_code": "topology.validity",
+      "phase": "native",
+      "subject_ids": [
+        "wire_occurrence.w0002"
+      ]
+    },
+    {
+      "accepted_normalization_codes": [
+        "derived.ascii_brep.wire_endpoint_gap_patch"
+      ],
+      "changes": [
+        {
+          "disposition": "introduced",
+          "field_path": "/ascii_brep/wires/wire_1/closing_endpoint_gap",
+          "imported_value": {
+            "unit": "millimetres",
+            "value": 0.0005,
+            "value_type": "number"
+          },
+          "normalization_code": "derived.ascii_brep.wire_endpoint_gap_patch",
+          "source_value": {
+            "unit": "millimetres",
+            "value": 0.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "disposition": "introduced",
+          "field_path": "/ascii_brep/wires/wire_2/closing_endpoint_gap",
+          "imported_value": {
+            "unit": "millimetres",
+            "value": 0.005,
+            "value_type": "number"
+          },
+          "normalization_code": "derived.ascii_brep.wire_endpoint_gap_patch",
+          "source_value": {
+            "unit": "millimetres",
+            "value": 0.0,
+            "value_type": "number"
+          }
+        }
+      ],
+      "equivalence": "intentionally_changed",
+      "geometry_equivalent": false,
+      "id": "observation.normalization.source_to_derived",
+      "imported_subject_ids": [
+        "wire_occurrence.w0001",
+        "wire_occurrence.w0002"
+      ],
+      "kind": "source_import_normalization",
+      "outcome": "introduced",
+      "source_subject_ids": [
+        "baseline.wire_occurrence.w0001",
+        "baseline.wire_occurrence.w0002"
+      ],
+      "topology_equivalent": true
+    },
+    {
+      "child_ids": [
+        "edge_occurrence.e0005",
+        "edge_occurrence.e0006",
+        "edge_occurrence.e0007",
+        "edge_occurrence.e0008"
+      ],
+      "condition_codes": [
+        "artifact.derived_ascii_brep",
+        "gap.beyond_tolerance"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.wire_beyond",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": "compound_occurrence.c0001",
+      "phase": "native",
+      "relations": [],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "wire_occurrence.w0002",
+      "tolerance_metres": 1e-06,
+      "topology_kind": "wire",
+      "underlying_id": "wire.partner_0002",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004"
+      ],
+      "condition_codes": [
+        "artifact.derived_ascii_brep",
+        "gap.within_tolerance"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.wire_within",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": "compound_occurrence.c0001",
+      "phase": "native",
+      "relations": [],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "wire_occurrence.w0001",
+      "tolerance_metres": 1e-06,
+      "topology_kind": "wire",
+      "underlying_id": "wire.partner_0001",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    }
+  ],
+  "oracle": {
+    "independent_from_production_classifier": true,
+    "method": "analytic_derivation",
+    "references": [
+      "fixtures/baselines/baseline.pathology.wire_gap_thresholds.brep hash-bound clean two-wire baseline",
+      "fixtures/lanes/derived_artifact.py transform.declared_ascii_patch.v1",
+      "fixtures/nonprocedural-obligation-authoring-map.json PAT-003"
+    ],
+    "statement": "The source-bound mutation preserves both wire identities without sewing and creates one 0.0005 mm endpoint deviation within the 0.001 mm tolerance plus one 0.005 mm deviation beyond it; the retained compound therefore fails native validity."
+  },
+  "schema_version": "1.0.0",
+  "tolerances": {
+    "edges_metres": {
+      "maximum": 1e-06,
+      "minimum": 1e-06
+    },
+    "faces_metres": {
+      "maximum": null,
+      "minimum": null
+    },
+    "vertices_metres": {
+      "maximum": 1e-06,
+      "minimum": 1e-06
+    }
+  },
+  "units": {
+    "coordinate_space": "right_handed_si_metres_radians",
+    "scale_to_metres": 0.001,
+    "source_unit": "millimetre"
+  }
+}

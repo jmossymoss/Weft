@@ -1,0 +1,32 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "5316399113709757a78fc2f45d7c451f9d3f3b6f7e39169ab4e27f1af728e412",
+  "finding_disposition": "Accepted source/native M1 witness with exact representation-survival or representation-loss boundaries. These claims establish fixture readiness only; no M2/M3 consumer verification is promoted.",
+  "fixture_id": "face.rectangular_trimmed.wrapper",
+  "producer_id": "producer.fixture_surface_recipes",
+  "review_id": "review.face_rectangular_trimmed_wrapper.revision_6",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.surface_oracle_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "claims.profile_binding",
+    "construction.parameters",
+    "geometry.source_and_imported",
+    "normalization.contract",
+    "normalization.representation_loss",
+    "provenance.native_brep_hash",
+    "source.native_contract",
+    "support.assignment",
+    "topology.counts",
+    "units.tolerances"
+  ],
+  "source_binding": {
+    "artifact_sha256": "5aa42b7ca3446d3e4de52ef84e06c4d13dfd9cbea35059178ed455dadaf0fe8c",
+    "construction_parameters_sha256": "3417d473cd081372f389c5170f525e6563f86eaf4d4ec9b4c4c98910103ee318",
+    "generator_revision": 6,
+    "kind": "occt_procedural",
+    "source_contract_sha256": "3f654fdc1fc60279c6749de4142f5a58a54575bd592bceca0897e75a387b4287",
+    "summary_sha256": "bc41340b1f41cc44b8ba73fb7c4d18b11a083c2e7eb10f2c681285d1faf8b61a"
+  }
+}

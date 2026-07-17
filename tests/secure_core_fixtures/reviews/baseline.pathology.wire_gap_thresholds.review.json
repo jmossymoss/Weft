@@ -1,0 +1,30 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "48c88d421228ab5f83b5a8aefff8e33246193462563c10ce0d5758cd31a4bd70",
+  "finding_disposition": "Fresh-context recipe, parameter, topology, normalization, invalid-import, STEP, summary, native-BRep, claim-profile, and source-contract checks passed without promoting lost or invalid imported subjects.",
+  "fixture_id": "baseline.pathology.wire_gap_thresholds",
+  "producer_id": "producer.m1_feature_pathology_oracle_authoring",
+  "review_id": "review.baseline_pathology_wire_gap_thresholds.revision_6",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.feature_pathology_oracle_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "artifacts.native_brep_binding",
+    "claims.profile_binding",
+    "construction.parameters",
+    "geometry.source_derivation",
+    "normalization.explicit",
+    "support.occurrence_identity",
+    "topology.readback",
+    "units.tolerances"
+  ],
+  "source_binding": {
+    "artifact_sha256": "ffe171e86541e160d6f0ecd558bbe1e2069b68a3e9632090207b611253759379",
+    "construction_parameters_sha256": "3d91b1f0baab9d8a9a3cd33317ff2da9bdfa8abf82d5312e75d7b9dcc57b2f84",
+    "generator_revision": 6,
+    "kind": "occt_procedural",
+    "source_contract_sha256": "3c4091839d2daf5e474ce608628a694df4b4a5871059eae2f49f93d235052364",
+    "summary_sha256": "4daf7842daba147efd962bcc1e725ab7b086fadb0ef52fedc770289001a42695"
+  }
+}

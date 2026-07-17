@@ -1,0 +1,23 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "2002f9dbe6603c45997767c9daabc4ed7e3391c2106cfb8904a4ea6ec895f10c",
+  "finding_disposition": "Accepted as the paired PAT-003 threshold witness: one geometric endpoint gap is within tolerance, one is beyond, and neither topological vertex is moved.",
+  "fixture_id": "corrupt.wire.gap_within_beyond",
+  "producer_id": "producer.m1_derived_pathology_oracle",
+  "review_id": "review.corrupt.wire.gap_within_beyond.revision_1",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.derived_pathology_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "artifact.hash",
+    "mutation.exact_ascii_patch",
+    "oracle.independent_measurement",
+    "source.provenance"
+  ],
+  "source_binding": {
+    "artifact_sha256": "8a66150e0db8d512f205ca08fd8753b07a296001800d500dee8dd050b60b7f16",
+    "kind": "derived_corruption",
+    "source_contract_sha256": "6183e8b96fd7b6e409192899eaf2e92b651f06dddf2f07ee3154f1dce1752828"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "75ada92ffdccb959aeb6211714b67f8fb617b86a79357e33d6319cd89bc9b54e",
+  "finding_disposition": "Fresh-context fault-contract, exact-observation, deterministic-runner, and source-binding review passed; no unresolved finding remains.",
+  "fixture_id": "fault.surface.derivative_failure",
+  "producer_id": "producer.m1_native_fault_foundation",
+  "review_id": "review.fault_surface_derivative_failure.revision_1",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.m1_native_fault_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "claims.typed_binding",
+    "fault.contract",
+    "native.runner_binding",
+    "observations.exact_values"
+  ],
+  "source_binding": {
+    "fault_code": "fault.surface.derivative_failure",
+    "harness_source_sha256": "a95831c06005760170cb95034ba6500190f9218a681f0e88edde66a93ec60d2e",
+    "kind": "native_fault_injection",
+    "source_contract_sha256": "d59d89fbdefe3728e9f4d2048ad1c18e32f9a2611dc9d65a2f7a5506ef153079",
+    "test_id": "test.native_fault.surface.derivative_failure"
+  }
+}

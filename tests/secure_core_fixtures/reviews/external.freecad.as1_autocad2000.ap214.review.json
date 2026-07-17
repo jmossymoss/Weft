@@ -1,0 +1,23 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "01411485562d0c25aaaaf09008716ff5332083609711bd1a98f9ba7cc4c2b0fd",
+  "finding_disposition": "Accepted as a provenance-bound AP214IS import fixture with an explicit invalid-BRep named outcome; no geometry is promoted for meshing.",
+  "fixture_id": "external.freecad.as1_autocad2000.ap214",
+  "producer_id": "producer.m1_external_derived_oracle",
+  "review_id": "review.external.freecad.as1_autocad2000.ap214.revision_1",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.nonrigid_import_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "artifact.hash",
+    "import.invalid_brep",
+    "source.provenance",
+    "transform.representation_loss"
+  ],
+  "source_binding": {
+    "artifact_sha256": "1bb1a0e55dc4a0169e329529eb520596690f8745077c1bdd2f9fa41fa5a2aa95",
+    "kind": "audited_external",
+    "source_contract_sha256": "2e51e690f5b72aa6d0e952ed70cbc92cd841f4de5e7b0523f95d9f874bb70f7b"
+  }
+}

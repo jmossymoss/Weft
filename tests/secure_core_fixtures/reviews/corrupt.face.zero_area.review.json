@@ -1,0 +1,23 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "c0deea9d581a0b75435a9c1ad24045741de99363ef102781f28b5a10e1944b05",
+  "finding_disposition": "Accepted as the separately addressable zero-area PAT-005 witness. The source contract binds coincident boundary geometry, zero area, and exact hashes.",
+  "fixture_id": "corrupt.face.zero_area",
+  "producer_id": "producer.m1_derived_pathology_oracle",
+  "review_id": "review.corrupt.face.zero_area.revision_1",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.derived_pathology_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "artifact.hash",
+    "mutation.exact_ascii_patch",
+    "oracle.independent_measurement",
+    "source.provenance"
+  ],
+  "source_binding": {
+    "artifact_sha256": "a01c73913b6f04054ce85619fa0a846e572a01bac2c99933c0b87fa8a815d7ea",
+    "kind": "derived_corruption",
+    "source_contract_sha256": "67576f6aa25b5aa776f3aae537a00e146b580232a55b6ad6db122365c5fa2d9a"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "13406efb8212df9553c263d7389540d229d1b44cc7226d87d5a45f1faf89843c",
+  "finding_disposition": "Accepted as the separately addressable near-zero-area PAT-005 witness. The source contract binds all height-bearing replacements and exact hashes; native validity is distinguished from meshing admission.",
+  "fixture_id": "corrupt.face.near_zero_area",
+  "producer_id": "producer.m1_derived_pathology_oracle",
+  "review_id": "review.corrupt.face.near_zero_area.revision_1",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.derived_pathology_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "artifact.hash",
+    "mutation.exact_ascii_patch",
+    "oracle.independent_measurement",
+    "source.provenance"
+  ],
+  "source_binding": {
+    "artifact_sha256": "32f90fb2515154fe51660038442b9433de10b372d205f69cde116be48fd78803",
+    "kind": "derived_corruption",
+    "source_contract_sha256": "f4719ba55c633c7ce9c4390a34dbb68049bc4b888fad56790ba5f220b1916e1f"
+  }
+}

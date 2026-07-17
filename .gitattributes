@@ -1,1 +1,5 @@
 *.sh text eol=lf
+
+# Frozen geometry evidence is byte- and hash-bound. Never normalise line
+# endings in STEP, BRep, JSON, source, or licence records under this tree.
+tests/secure_core_fixtures/** -text

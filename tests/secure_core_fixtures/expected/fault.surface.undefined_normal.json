@@ -1,0 +1,267 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "expected": {
+    "boundary_loops": [],
+    "brep_valid": true,
+    "claims": [
+      {
+        "id": "claim.pat_013.undefined_normal",
+        "obligation_id": "PAT-013",
+        "predicate_codes": [
+          "predicate.pathology.evaluator.undefined_normal"
+        ],
+        "statement": "Parallel exact surface tangents retain a deterministic undefined unit normal; no normal is fabricated.",
+        "subject_refs": [
+          {
+            "id": "observation.pathology.surface.undefined_normal",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.validation.surface_evaluation_contract",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.periodicity.surface.undefined_normal",
+            "kind": "observation"
+          },
+          {
+            "id": "surface.undefined_normal.parallel_tangents",
+            "kind": "singularity"
+          },
+          {
+            "id": "surface.undefined_normal",
+            "kind": "validation_finding"
+          }
+        ]
+      }
+    ],
+    "curve_variants": [],
+    "import_outcome": "native_only",
+    "model_classes": [
+      "native_evaluator_fault_contract"
+    ],
+    "orientation_states": [],
+    "periodicity": [],
+    "semantic_candidates": [],
+    "singularity_codes": [
+      "surface.undefined_normal.parallel_tangents"
+    ],
+    "subject_universe": {
+      "edge_occurrence_ids": [],
+      "face_occurrence_ids": [],
+      "logical_region_ids": []
+    },
+    "support": [],
+    "surface_variants": [],
+    "topology_occurrences": {
+      "assembly_products": 0,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 0,
+      "faces": 0,
+      "instances": 0,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 0,
+      "wires": 0
+    },
+    "unique_topology": {
+      "assembly_products": 0,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 0,
+      "faces": 0,
+      "instances": 0,
+      "shells": 0,
+      "solids": 0,
+      "vertices": 0,
+      "wires": 0
+    },
+    "validation_findings": [
+      {
+        "code": "surface.undefined_normal",
+        "evidence": "The exact surface sample retains parallel tangents and an undefined unit normal.",
+        "expectation": "present",
+        "subject_kind": "model"
+      },
+      {
+        "code": "topology.valid",
+        "evidence": "The native-only fixture serializes no B-rep; its empty topology population remains valid while the fault is isolated at the public contract boundary.",
+        "expectation": "present",
+        "subject_kind": "model"
+      }
+    ]
+  },
+  "fixture_id": "fault.surface.undefined_normal",
+  "instances": [],
+  "observations": [
+    {
+      "evidence": "At UV (0.25, 0.75), finite parallel derivatives (1,0,0) and (2,0,0) require the unit normal to remain undefined.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.surface.undefined_normal",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "surface.derivative_u",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "unitless",
+            "value": [
+              1,
+              0,
+              0
+            ],
+            "value_type": "vector3"
+          }
+        },
+        {
+          "code": "surface.derivative_v",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "unitless",
+            "value": [
+              2,
+              0,
+              0
+            ],
+            "value_type": "vector3"
+          }
+        },
+        {
+          "code": "surface.parameter",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "unitless",
+            "value": [
+              0.25,
+              0.75
+            ],
+            "value_type": "point2"
+          }
+        },
+        {
+          "code": "surface.unit_normal",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "value": "undefined",
+            "value_type": "state"
+          }
+        }
+      ],
+      "pathology_code": "surface.undefined_normal",
+      "phase": "native",
+      "subject_ids": [
+        "face:0000000000000001"
+      ]
+    },
+    {
+      "evidence": "is_valid_surface_evaluation accepts the exact finite sample only because its parallel tangents retain a null unit normal.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.validation.surface_evaluation_contract",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "validation.surface_evaluation_contract",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "value": true,
+            "value_type": "boolean"
+          }
+        }
+      ],
+      "pathology_code": "validation.surface_evaluation_contract",
+      "phase": "native",
+      "subject_ids": [
+        "face:0000000000000001"
+      ]
+    },
+    {
+      "axes": [
+        {
+          "axis": "u",
+          "closed": false,
+          "period": null,
+          "periodic": false,
+          "principal_lower": null,
+          "principal_upper": null,
+          "seam_parameters": [],
+          "unit": "unitless"
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "period": null,
+          "periodic": false,
+          "principal_lower": null,
+          "principal_upper": null,
+          "seam_parameters": [],
+          "unit": "unitless"
+        }
+      ],
+      "id": "observation.periodicity.surface.undefined_normal",
+      "kind": "periodicity_singularity",
+      "phase": "native",
+      "singularities": [
+        {
+          "code": "surface.undefined_normal.parallel_tangents",
+          "incident_subject_ids": [
+            "face:0000000000000001"
+          ],
+          "kind": "kernel_specific",
+          "point_metres": [
+            0,
+            0,
+            0
+          ],
+          "singularity_id": "singularity.native.undefined_normal",
+          "topology_disposition": "unresolved",
+          "u_parameter": 0.25,
+          "unit_normal_defined": false,
+          "v_parameter": 0.75
+        }
+      ],
+      "subject_id": "face:0000000000000001"
+    }
+  ],
+  "oracle": {
+    "independent_from_production_classifier": true,
+    "method": "fault_contract",
+    "references": [
+      "fixtures/nonprocedural-obligation-authoring-map.json#PAT-013/fault.surface.undefined_normal",
+      "tests/fixtures/native_fault_fixture.cpp#fault.surface.undefined_normal"
+    ],
+    "statement": "Finite parallel surface derivatives at UV (0.25, 0.75) must retain a null unit normal rather than fabricate a direction."
+  },
+  "schema_version": "1.0.0",
+  "tolerances": {
+    "edges_metres": {
+      "maximum": null,
+      "minimum": null
+    },
+    "faces_metres": {
+      "maximum": null,
+      "minimum": null
+    },
+    "vertices_metres": {
+      "maximum": null,
+      "minimum": null
+    }
+  },
+  "units": {
+    "coordinate_space": "right_handed_si_metres_radians",
+    "scale_to_metres": 1,
+    "source_unit": "metre"
+  }
+}

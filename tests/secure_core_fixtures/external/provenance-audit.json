@@ -1,0 +1,897 @@
+{
+  "assets": [
+    {
+      "artifact": {
+        "bytes": 83424,
+        "path": "fixtures/external/freecad_as1_autocad2000_ap214.step",
+        "sha256": "1bb1a0e55dc4a0169e329529eb520596690f8745077c1bdd2f9fa41fa5a2aa95"
+      },
+      "authoring_source": {
+        "acquired_on": "2026-07-14",
+        "application_claim": "AutoCAD",
+        "claim_basis": "file_header",
+        "construction_description": "The retained STEPnet AS1 assembly sample is the exact blob hosted by the official FreeCAD repository. Its header identifies AutoCAD STEP 2000 and AutoCAD 2000; detailed original construction steps are not recorded.",
+        "header_confirms_application": true,
+        "project_authorship": {
+          "evidence": "The exact upstream blob and commit are bound by the retained provenance record; the original STEPnet sample author is not named.",
+          "header_author": null,
+          "status": "external_owner_verified"
+        },
+        "source_url": "https://github.com/FreeCAD/FreeCAD/blob/a8473f81e18ef69e63dec060de340f6976eeab06/data/tests/Step/as1-ac-214.stp",
+        "version_claim": "2000"
+      },
+      "disposition": {
+        "decision": "accepted",
+        "duplicate_of": null,
+        "reason": "Distinct AutoCAD/FreeCAD-hosted payload with an AP214 FILE_SCHEMA declaration, independent provenance, and redistribution evidence."
+      },
+      "export_settings": {
+        "declared": [
+          "STEPnet AS1 sample exported as STEP AP214 by AutoCAD 2000"
+        ],
+        "detected_from_payload": [
+          "AP214 FILE_SCHEMA declaration",
+          "advanced B-rep representation",
+          "assembly and product structure",
+          "millimetre length unit",
+          "presentation style assignments"
+        ],
+        "missing": [
+          "detailed AutoCAD STEP exporter option record",
+          "translator healing and tolerance settings"
+        ]
+      },
+      "exporter": {
+        "independent_of_other_assets": true,
+        "name": "AutoCAD STEP",
+        "version_claims": [
+          {
+            "source": "file_name_originating_system",
+            "value": "AutoCAD 2000"
+          },
+          {
+            "source": "file_name_preprocessor_version",
+            "value": "AutoCAD STEP 2000"
+          }
+        ]
+      },
+      "geometry_audit": {
+        "analytic_families": [
+          "circle",
+          "cylinder",
+          "line",
+          "plane"
+        ],
+        "b_spline_or_nurbs_present": false,
+        "data_section_bytes": 83199,
+        "data_section_equivalence_group": "freecad.as1_autocad2000.ap214_payload",
+        "data_section_sha256": "1ca20037d50d1ab722d12d4ab548096f679c34d5eae41f0d6f5a69c7b45b4cb2",
+        "entity_counts": {
+          "advanced_face": 53,
+          "b_spline_curve_with_knots": 0,
+          "b_spline_surface_with_knots": 0,
+          "b_spline_tokens": 0,
+          "bezier_curve": 0,
+          "bezier_surface": 0,
+          "bezier_tokens": 0,
+          "circle": 56,
+          "closed_shell": 5,
+          "conical_surface": 0,
+          "cylindrical_surface": 28,
+          "edge_curve": 126,
+          "edge_loop": 76,
+          "ellipse": 0,
+          "hyperbola": 0,
+          "line": 70,
+          "manifold_solid_brep": 5,
+          "offset_curve": 0,
+          "offset_surface": 0,
+          "parabola": 0,
+          "plane": 25,
+          "rational_b_spline_curve": 0,
+          "rational_b_spline_surface": 0,
+          "rational_tokens": 0,
+          "spherical_surface": 0,
+          "surface_of_linear_extrusion": 0,
+          "surface_of_revolution": 0,
+          "toroidal_surface": 0,
+          "vertex_point": 84
+        },
+        "method": "read-only STEP token and entity audit",
+        "rational_nurbs_present": false,
+        "summary": "The DATA section contains five closed manifold solids in an assembly/product structure, with 25 planes, 28 cylinders, 70 lines, and 56 circles; it contains no B-spline, Bezier, rational, or material token."
+      },
+      "inspection_summary": {
+        "bytes": 1385539,
+        "path": "fixtures/external/inspection/freecad_as1_autocad2000_ap214.summary.json",
+        "sha256": "ef9040b8aff6322f9788dab1b8c1c3760fca88b1cd80edc493c9bf1a107c498a"
+      },
+      "licence": {
+        "evidence": "The exact upstream artifact is retained with the FreeCAD repository licence text under LGPL-2.1-only.",
+        "evidence_record": {
+          "bytes": 27030,
+          "path": "fixtures/licences/freecad-lgpl-2.1.txt",
+          "sha256": "7ffe1954587c77dfba1cf8eb9b2ea743671fa6e63f9e7a2f258119d42e14eefe"
+        },
+        "identifier": "LGPL-2.1-only",
+        "redistribution_permission": "allowed"
+      },
+      "oracle_record": {
+        "bytes": 25942,
+        "path": "fixtures/expected/external.freecad.as1_autocad2000.ap214.json",
+        "sha256": "01411485562d0c25aaaaf09008716ff5332083609711bd1a98f9ba7cc4c2b0fd"
+      },
+      "presentation_audit": {
+        "colour_rgb": 0,
+        "material_tokens": 0,
+        "presentation_style_assignment": 5,
+        "styled_item": 5,
+        "summary": "The payload contains five styled items and five presentation-style assignments but no RGB colour or literal MATERIAL token; presentation evidence is not material semantics.",
+        "surface_style_tokens": 10
+      },
+      "provenance_record": {
+        "bytes": 1194,
+        "path": "fixtures/provenance/external.freecad.as1_autocad2000.ap214.json",
+        "sha256": "2055d5cc98038b7ad1b5da00e9b23f510665d9ec459859d1bd7d2fa4c505ff15"
+      },
+      "readiness": {
+        "blocking_reasons": [],
+        "fixture_ready": true,
+        "remaining_work": [],
+        "status": "fixture_ready"
+      },
+      "review_record": {
+        "bytes": 1020,
+        "path": "fixtures/reviews/external.freecad.as1_autocad2000.ap214.review.json",
+        "sha256": "ff0f669b2ad2df702cdb3d2f8c50f422e0dbf4f7bf5ed0f7827b3b737a4fe99f"
+      },
+      "schema_audit": {
+        "comparison": "match",
+        "declared_schema_credit_allowed": true,
+        "detected_declaration": "AUTOMOTIVE_DESIGN { 1 2 10303 214 0 1 1 1 }",
+        "detected_family": "AP214",
+        "filename_intent": "The retained upstream name as1-ac-214.stp and corpus name both declare AP214 intent.",
+        "requested_family": "AP214"
+      },
+      "step_header": {
+        "authorisation": ", , ",
+        "authors": [
+          ""
+        ],
+        "file_description": [
+          ""
+        ],
+        "file_name_field": "as1-ac-214.stp",
+        "organizations": [
+          ""
+        ],
+        "originating_system": "AutoCAD 2000",
+        "preprocessor_version": "AutoCAD STEP 2000",
+        "timestamp": "1999-09-09T14:22:00"
+      }
+    },
+    {
+      "artifact": {
+        "bytes": 396445,
+        "path": "fixtures/external/nist_ctc_01_ap242_e1.step",
+        "sha256": "85a5752da05f53c456ca3a9e038c90358e1d5a3141d1f0d6e5f0970f2356e821"
+      },
+      "authoring_source": {
+        "acquired_on": "2026-07-14",
+        "application_claim": "Undisclosed CAD system in NIST MBE PMI corpus",
+        "claim_basis": "owner_record",
+        "construction_description": "NIST identifies the file as CTC-01 geometry with PMI representation and/or presentation and states that the corpus was generated by different CAD systems; the individual CAD-system identity was intentionally removed.",
+        "header_confirms_application": false,
+        "project_authorship": {
+          "evidence": "The exact NIST bundle entry, source URL, bundle digest, unrestricted-use statement, and publisher are retained in the licence and provenance records.",
+          "header_author": null,
+          "status": "external_owner_verified"
+        },
+        "source_url": "https://www.nist.gov/ctl/smart-connected-systems-division/smart-connected-manufacturing-systems-group/mbe-pmi-0",
+        "version_claim": "not disclosed by NIST"
+      },
+      "disposition": {
+        "decision": "accepted",
+        "duplicate_of": null,
+        "reason": "Distinct NIST corpus payload with an AP242 edition-1 FILE_SCHEMA declaration, independent provenance, and unrestricted-use evidence."
+      },
+      "export_settings": {
+        "declared": [
+          "NIST CTC-01 serialized as STEP AP242 edition 1"
+        ],
+        "detected_from_payload": [
+          "AP242 edition-1 FILE_SCHEMA declaration",
+          "advanced B-rep representation",
+          "millimetre length unit",
+          "PMI representation and presentation entities"
+        ],
+        "missing": [
+          "individual CAD application and version",
+          "original CAD exporter option record",
+          "translator healing and tolerance settings"
+        ]
+      },
+      "exporter": {
+        "independent_of_other_assets": true,
+        "name": "Undisclosed CAD system in NIST MBE PMI corpus",
+        "version_claims": [
+          {
+            "source": "provenance_record",
+            "value": "not disclosed by NIST"
+          }
+        ]
+      },
+      "geometry_audit": {
+        "analytic_families": [
+          "circle",
+          "cone",
+          "cylinder",
+          "line",
+          "plane"
+        ],
+        "b_spline_or_nurbs_present": true,
+        "data_section_bytes": 396074,
+        "data_section_equivalence_group": "nist.ctc_01.ap242_e1_payload",
+        "data_section_sha256": "b474074a87fa7f817d63e2277f6e7a0c557a88db1ab69cb2f11d40a64720571f",
+        "entity_counts": {
+          "advanced_face": 117,
+          "b_spline_curve_with_knots": 14,
+          "b_spline_surface_with_knots": 0,
+          "b_spline_tokens": 14,
+          "bezier_curve": 0,
+          "bezier_surface": 0,
+          "bezier_tokens": 0,
+          "circle": 90,
+          "closed_shell": 1,
+          "conical_surface": 4,
+          "cylindrical_surface": 57,
+          "edge_curve": 318,
+          "edge_loop": 140,
+          "ellipse": 0,
+          "hyperbola": 0,
+          "line": 214,
+          "manifold_solid_brep": 1,
+          "offset_curve": 0,
+          "offset_surface": 0,
+          "parabola": 0,
+          "plane": 79,
+          "rational_b_spline_curve": 0,
+          "rational_b_spline_surface": 0,
+          "rational_tokens": 0,
+          "spherical_surface": 0,
+          "surface_of_linear_extrusion": 0,
+          "surface_of_revolution": 0,
+          "toroidal_surface": 0,
+          "vertex_point": 206
+        },
+        "method": "read-only STEP token and entity audit",
+        "rational_nurbs_present": false,
+        "summary": "The DATA section contains one closed manifold solid, 117 advanced faces, AP242 PMI/presentation records, 79 plane entities, 57 cylinders, 4 cones, 214 lines, 90 circles, and 14 B-spline curves. It contains no literal MATERIAL token."
+      },
+      "inspection_summary": {
+        "bytes": 1634944,
+        "path": "fixtures/external/inspection/nist_ctc_01_ap242_e1.summary.json",
+        "sha256": "838dd50096917599cf7229accc00ebc697e3eeee3ebe01c2150013f3fc7fc9df"
+      },
+      "licence": {
+        "evidence": "NIST states that the test cases, CAD models, and STEP files can be used without restriction; the retained record includes the source URL and bundle digest.",
+        "evidence_record": {
+          "bytes": 698,
+          "path": "fixtures/licences/nist-pmi-unrestricted-use.md",
+          "sha256": "1b752aa9facd18c30f84bf776c9b0d06fa0e612ab29ba45c7d2623b2034f476a"
+        },
+        "identifier": "NIST-PMI-unrestricted-use",
+        "redistribution_permission": "allowed"
+      },
+      "oracle_record": {
+        "bytes": 6047,
+        "path": "fixtures/expected/external.nist.ctc_01.ap242_e1.json",
+        "sha256": "823a9d775d05e24ee328a2f3174c054df23deb8e28889be9af1314b9ceb0494d"
+      },
+      "presentation_audit": {
+        "colour_rgb": 3,
+        "material_tokens": 0,
+        "presentation_style_assignment": 50,
+        "styled_item": 554,
+        "summary": "The payload contains extensive PMI/presentation evidence, 554 styled items, 50 presentation-style assignments, and 3 RGB colours, but no literal MATERIAL token; PMI and style records are not material semantics.",
+        "surface_style_tokens": 7
+      },
+      "provenance_record": {
+        "bytes": 1245,
+        "path": "fixtures/provenance/external.nist.ctc_01.ap242_e1.json",
+        "sha256": "81de50cd8ea29a12628fe0bc240c04ab0ac66fa0113bfdbe7e43db6b14c543f6"
+      },
+      "readiness": {
+        "blocking_reasons": [],
+        "fixture_ready": true,
+        "remaining_work": [],
+        "status": "fixture_ready"
+      },
+      "review_record": {
+        "bytes": 1009,
+        "path": "fixtures/reviews/external.nist.ctc_01.ap242_e1.review.json",
+        "sha256": "8c2eb81e7c142fe6ddc5779ac73a437e8b442d60536a7f21ac93875824859d6f"
+      },
+      "schema_audit": {
+        "comparison": "match",
+        "declared_schema_credit_allowed": true,
+        "detected_declaration": "AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }",
+        "detected_family": "AP242",
+        "filename_intent": "The source name nist_ctc_01_asme1_ap242-e1.stp and corpus name both declare AP242 edition-1 intent.",
+        "requested_family": "AP242"
+      },
+      "step_header": {
+        "authorisation": "",
+        "authors": [
+          ""
+        ],
+        "file_description": [
+          "CTC-01 geometry with PMI representation and/or presentation",
+          "from the NIST MBE PMI Validation and Conformance Testing Project"
+        ],
+        "file_name_field": "nist_ctc_01_asme1_ap242-e1.stp",
+        "organizations": [
+          ""
+        ],
+        "originating_system": "",
+        "preprocessor_version": "",
+        "timestamp": "2021-12-21T09:14:03"
+      }
+    },
+    {
+      "artifact": {
+        "bytes": 730601,
+        "path": "fixtures/external/plasticity26_startup_analytic.step",
+        "sha256": "5db395ce8cea9dca675b7894d7410fb198ec0b3ed846debfe1992786c2adaa45"
+      },
+      "authoring_source": {
+        "acquired_on": "2026-07-14",
+        "application_claim": "Plasticity",
+        "claim_basis": "written_acquisition_record",
+        "construction_description": "Jordan Moss confirmed authorship of the Plasticity 26.1.3 two-part source model. Read-only inspection finds two styled solids with mixed analytic and B-spline geometry; detailed construction steps are not recorded.",
+        "header_confirms_application": false,
+        "project_authorship": {
+          "evidence": "Jordan Moss confirmed authorship and redistribution permission on 2026-07-14; the STEP FILE_NAME author is 'jordan'.",
+          "header_author": "jordan",
+          "status": "verified_project_authored"
+        },
+        "source_url": null,
+        "version_claim": "26.1.3"
+      },
+      "disposition": {
+        "decision": "accepted",
+        "duplicate_of": null,
+        "reason": "Project-authored Plasticity/HOOPS Exchange payload with a genuine AP203 declaration, direct redistribution permission, and a distinct DATA section."
+      },
+      "export_settings": {
+        "declared": [
+          "requested AP203 selection"
+        ],
+        "detected_from_payload": [
+          "AP203 FILE_SCHEMA declaration",
+          "advanced B-rep representation",
+          "millimetre length unit",
+          "mixed analytic and B-spline curve and surface entities",
+          "product and presentation records"
+        ],
+        "missing": [
+          "detailed Plasticity construction-step record",
+          "healing, tolerance, and advanced translator settings"
+        ]
+      },
+      "exporter": {
+        "independent_of_other_assets": true,
+        "name": "HOOPS Exchange via Plasticity",
+        "version_claims": [
+          {
+            "source": "header_comment",
+            "value": "25.8.0"
+          },
+          {
+            "source": "file_name_preprocessor_version",
+            "value": "2025.8"
+          }
+        ]
+      },
+      "geometry_audit": {
+        "analytic_families": [
+          "circle",
+          "cone",
+          "cylinder",
+          "line",
+          "plane"
+        ],
+        "b_spline_or_nurbs_present": true,
+        "data_section_bytes": 730122,
+        "data_section_equivalence_group": "plasticity26.startup_mixed_geometry.ap203_payload",
+        "data_section_sha256": "db275c484597bdadcd3dcbd09267926f5018a1eaf6dfed0cec086d0b097e0cd9",
+        "entity_counts": {
+          "advanced_face": 222,
+          "b_spline_curve_with_knots": 303,
+          "b_spline_surface_with_knots": 93,
+          "b_spline_tokens": 412,
+          "bezier_curve": 0,
+          "bezier_surface": 0,
+          "bezier_tokens": 0,
+          "circle": 122,
+          "closed_shell": 2,
+          "conical_surface": 4,
+          "cylindrical_surface": 71,
+          "edge_curve": 598,
+          "edge_loop": 249,
+          "ellipse": 0,
+          "hyperbola": 0,
+          "line": 173,
+          "manifold_solid_brep": 2,
+          "offset_curve": 0,
+          "offset_surface": 0,
+          "parabola": 0,
+          "plane": 54,
+          "rational_b_spline_curve": 0,
+          "rational_b_spline_surface": 8,
+          "rational_tokens": 8,
+          "spherical_surface": 0,
+          "surface_of_linear_extrusion": 0,
+          "surface_of_revolution": 0,
+          "toroidal_surface": 0,
+          "vertex_point": 407
+        },
+        "method": "read-only STEP token and entity audit",
+        "rational_nurbs_present": true,
+        "summary": "The DATA section contains two closed manifold solids and mixed analytic/B-spline geometry: 54 planes, 71 cylinders, 4 cones, 93 B-spline surfaces including 8 rational surfaces, 173 lines, 122 circles, and 303 B-spline curves."
+      },
+      "inspection_summary": {
+        "bytes": 3276250,
+        "path": "fixtures/external/inspection/plasticity26_startup_analytic.summary.json",
+        "sha256": "0c9a002fc6d99c1c7aec6ab532359acfd555d480939ab33f463c3c41403c38b4"
+      },
+      "licence": {
+        "evidence": "Model author Jordan Moss granted repository redistribution permission for the supplied model and STEP exports on 2026-07-14.",
+        "evidence_record": {
+          "bytes": 500,
+          "path": "fixtures/licences/jordan-plasticity-export-permission.md",
+          "sha256": "4eed544ca70ed1c3952418da08f15d1af05b71ff1cd854bd5cae2f1ba5a96e88"
+        },
+        "identifier": "Jordan-written-redistribution-permission-2026-07-14",
+        "redistribution_permission": "allowed"
+      },
+      "oracle_record": {
+        "bytes": 4611,
+        "path": "fixtures/expected/external.plasticity26.mixed_analytic_nurbs.ap203.json",
+        "sha256": "71edf58bc1ea3b8c4c7f8cb4976aaf93af4204a597861c30b11095b57695c9ae"
+      },
+      "presentation_audit": {
+        "colour_rgb": 2,
+        "material_tokens": 0,
+        "presentation_style_assignment": 2,
+        "styled_item": 2,
+        "summary": "The payload contains two styled items, two RGB colours, and two presentation-style assignments, but no literal MATERIAL entity token; product and style evidence is not material semantics.",
+        "surface_style_tokens": 4
+      },
+      "provenance_record": {
+        "bytes": 1241,
+        "path": "fixtures/provenance/external.plasticity26.mixed_analytic_nurbs.ap203.json",
+        "sha256": "4057f1158c90fbb09a68f28b51f365d912c56915f0b5f3ecf8af8262391477b5"
+      },
+      "readiness": {
+        "blocking_reasons": [],
+        "fixture_ready": true,
+        "remaining_work": [],
+        "status": "fixture_ready"
+      },
+      "review_record": {
+        "bytes": 1038,
+        "path": "fixtures/reviews/external.plasticity26.mixed_analytic_nurbs.ap203.review.json",
+        "sha256": "4a696b50284ab6a2ebddc586f83edf467d58f0b2a19c677d9dade6f6265390aa"
+      },
+      "schema_audit": {
+        "comparison": "match",
+        "declared_schema_credit_allowed": true,
+        "detected_declaration": "AP203_CONFIGURATION_CONTROLLED_3D_DESIGN_OF_MECHANICAL_PARTS_AND_ASSEMBLIES_MIM_LF",
+        "detected_family": "AP203",
+        "filename_intent": "The unsuffixed filename does not declare a schema, but the written export record confirms requested AP203 selection.",
+        "requested_family": "AP203"
+      },
+      "step_header": {
+        "authorisation": "Unknown authorisation",
+        "authors": [
+          "jordan"
+        ],
+        "file_description": [
+          "HOOPS Exchange Step"
+        ],
+        "file_name_field": "D:\\weftocct\\fixtures\\external\\plasticity26_startup_analytic.step",
+        "organizations": [
+          "Unknown organisation"
+        ],
+        "originating_system": "HOOPS Exchange",
+        "preprocessor_version": "HOOPS Exchange 2025.8",
+        "timestamp": "2026-07-14T18:54:58+01:00"
+      }
+    },
+    {
+      "artifact": {
+        "bytes": 730605,
+        "path": "fixtures/external/plasticity26_startup_analytic_214.step",
+        "sha256": "307d823719710be44a2866e396f719a04fdc9f42a3b01ebb005e25223ec83829"
+      },
+      "authoring_source": {
+        "acquired_on": "2026-07-14",
+        "application_claim": "Plasticity",
+        "claim_basis": "written_acquisition_record",
+        "construction_description": "Jordan Moss confirmed authorship of the Plasticity 26.1.3 source model; this renamed export has the same AP203 DATA section as the accepted unsuffixed artifact.",
+        "header_confirms_application": false,
+        "project_authorship": {
+          "evidence": "Jordan Moss confirmed authorship and redistribution permission on 2026-07-14; the STEP FILE_NAME author is 'jordan'.",
+          "header_author": "jordan",
+          "status": "verified_project_authored"
+        },
+        "source_url": null,
+        "version_claim": "26.1.3"
+      },
+      "disposition": {
+        "decision": "rejected_duplicate",
+        "duplicate_of": "fixtures/external/plasticity26_startup_analytic.step",
+        "reason": "Rejected from accepted corpus membership: despite the _214 filename, it declares AP203 and its DATA section is byte-identical to the accepted Plasticity AP203 artifact."
+      },
+      "export_settings": {
+        "declared": [],
+        "detected_from_payload": [
+          "AP203 FILE_SCHEMA declaration",
+          "advanced B-rep representation",
+          "millimetre length unit",
+          "mixed analytic and B-spline curve and surface entities",
+          "product and presentation records"
+        ],
+        "missing": [
+          "evidence of an AP214 export selection",
+          "healing, tolerance, and advanced translator settings"
+        ]
+      },
+      "exporter": {
+        "independent_of_other_assets": false,
+        "name": "HOOPS Exchange via Plasticity",
+        "version_claims": [
+          {
+            "source": "header_comment",
+            "value": "25.8.0"
+          },
+          {
+            "source": "file_name_preprocessor_version",
+            "value": "2025.8"
+          }
+        ]
+      },
+      "geometry_audit": {
+        "analytic_families": [
+          "circle",
+          "cone",
+          "cylinder",
+          "line",
+          "plane"
+        ],
+        "b_spline_or_nurbs_present": true,
+        "data_section_bytes": 730122,
+        "data_section_equivalence_group": "plasticity26.startup_mixed_geometry.ap203_payload",
+        "data_section_sha256": "db275c484597bdadcd3dcbd09267926f5018a1eaf6dfed0cec086d0b097e0cd9",
+        "entity_counts": {
+          "advanced_face": 222,
+          "b_spline_curve_with_knots": 303,
+          "b_spline_surface_with_knots": 93,
+          "b_spline_tokens": 412,
+          "bezier_curve": 0,
+          "bezier_surface": 0,
+          "bezier_tokens": 0,
+          "circle": 122,
+          "closed_shell": 2,
+          "conical_surface": 4,
+          "cylindrical_surface": 71,
+          "edge_curve": 598,
+          "edge_loop": 249,
+          "ellipse": 0,
+          "hyperbola": 0,
+          "line": 173,
+          "manifold_solid_brep": 2,
+          "offset_curve": 0,
+          "offset_surface": 0,
+          "parabola": 0,
+          "plane": 54,
+          "rational_b_spline_curve": 0,
+          "rational_b_spline_surface": 8,
+          "rational_tokens": 8,
+          "spherical_surface": 0,
+          "surface_of_linear_extrusion": 0,
+          "surface_of_revolution": 0,
+          "toroidal_surface": 0,
+          "vertex_point": 407
+        },
+        "method": "read-only STEP token and entity audit",
+        "rational_nurbs_present": true,
+        "summary": "The AP203 DATA section is byte-identical to the accepted unsuffixed Plasticity artifact and receives no distinct geometry or AP214 credit."
+      },
+      "inspection_summary": null,
+      "licence": {
+        "evidence": "Model author Jordan Moss granted repository redistribution permission for the supplied model and STEP exports on 2026-07-14.",
+        "evidence_record": {
+          "bytes": 500,
+          "path": "fixtures/licences/jordan-plasticity-export-permission.md",
+          "sha256": "4eed544ca70ed1c3952418da08f15d1af05b71ff1cd854bd5cae2f1ba5a96e88"
+        },
+        "identifier": "Jordan-written-redistribution-permission-2026-07-14",
+        "redistribution_permission": "allowed"
+      },
+      "oracle_record": null,
+      "presentation_audit": {
+        "colour_rgb": 2,
+        "material_tokens": 0,
+        "presentation_style_assignment": 2,
+        "styled_item": 2,
+        "summary": "The AP203 DATA section is byte-identical to the accepted artifact; product and style records do not establish AP214 or material semantics.",
+        "surface_style_tokens": 4
+      },
+      "provenance_record": {
+        "bytes": 1241,
+        "path": "fixtures/provenance/external.plasticity26.mixed_analytic_nurbs.ap203.json",
+        "sha256": "3d4afaee0cf7bf9d3751fc42b4ed7acb9fe0a18ebd12c5c3dcd9c576fa2b1dea"
+      },
+      "readiness": {
+        "blocking_reasons": [],
+        "fixture_ready": false,
+        "remaining_work": [],
+        "status": "rejected_duplicate"
+      },
+      "review_record": null,
+      "schema_audit": {
+        "comparison": "mismatch",
+        "declared_schema_credit_allowed": false,
+        "detected_declaration": "AP203_CONFIGURATION_CONTROLLED_3D_DESIGN_OF_MECHANICAL_PARTS_AND_ASSEMBLIES_MIM_LF",
+        "detected_family": "AP203",
+        "filename_intent": "The _214 filename suffix declares AP214 intent, but the payload still declares AP203.",
+        "requested_family": "AP214"
+      },
+      "step_header": {
+        "authorisation": "Unknown authorisation",
+        "authors": [
+          "jordan"
+        ],
+        "file_description": [
+          "HOOPS Exchange Step"
+        ],
+        "file_name_field": "D:\\weftocct\\fixtures\\external\\plasticity26_startup_analytic_214.step",
+        "organizations": [
+          "Unknown organisation"
+        ],
+        "originating_system": "HOOPS Exchange",
+        "preprocessor_version": "HOOPS Exchange 2025.8",
+        "timestamp": "2026-07-14T18:55:03+01:00"
+      }
+    },
+    {
+      "artifact": {
+        "bytes": 730605,
+        "path": "fixtures/external/plasticity26_startup_analytic_242.step",
+        "sha256": "d905192d7fd210ea2bfc0e0b5502882ffdf70520127dc649e4179f17afef3294"
+      },
+      "authoring_source": {
+        "acquired_on": "2026-07-14",
+        "application_claim": "Plasticity",
+        "claim_basis": "written_acquisition_record",
+        "construction_description": "Jordan Moss confirmed authorship of the Plasticity 26.1.3 source model; this renamed export has the same AP203 DATA section as the accepted unsuffixed artifact.",
+        "header_confirms_application": false,
+        "project_authorship": {
+          "evidence": "Jordan Moss confirmed authorship and redistribution permission on 2026-07-14; the STEP FILE_NAME author is 'jordan'.",
+          "header_author": "jordan",
+          "status": "verified_project_authored"
+        },
+        "source_url": null,
+        "version_claim": "26.1.3"
+      },
+      "disposition": {
+        "decision": "rejected_duplicate",
+        "duplicate_of": "fixtures/external/plasticity26_startup_analytic.step",
+        "reason": "Rejected from accepted corpus membership: despite the _242 filename, it declares AP203 and its DATA section is byte-identical to the accepted Plasticity AP203 artifact."
+      },
+      "export_settings": {
+        "declared": [],
+        "detected_from_payload": [
+          "AP203 FILE_SCHEMA declaration",
+          "advanced B-rep representation",
+          "millimetre length unit",
+          "mixed analytic and B-spline curve and surface entities",
+          "product and presentation records"
+        ],
+        "missing": [
+          "evidence of an AP242 export selection",
+          "healing, tolerance, and advanced translator settings"
+        ]
+      },
+      "exporter": {
+        "independent_of_other_assets": false,
+        "name": "HOOPS Exchange via Plasticity",
+        "version_claims": [
+          {
+            "source": "header_comment",
+            "value": "25.8.0"
+          },
+          {
+            "source": "file_name_preprocessor_version",
+            "value": "2025.8"
+          }
+        ]
+      },
+      "geometry_audit": {
+        "analytic_families": [
+          "circle",
+          "cone",
+          "cylinder",
+          "line",
+          "plane"
+        ],
+        "b_spline_or_nurbs_present": true,
+        "data_section_bytes": 730122,
+        "data_section_equivalence_group": "plasticity26.startup_mixed_geometry.ap203_payload",
+        "data_section_sha256": "db275c484597bdadcd3dcbd09267926f5018a1eaf6dfed0cec086d0b097e0cd9",
+        "entity_counts": {
+          "advanced_face": 222,
+          "b_spline_curve_with_knots": 303,
+          "b_spline_surface_with_knots": 93,
+          "b_spline_tokens": 412,
+          "bezier_curve": 0,
+          "bezier_surface": 0,
+          "bezier_tokens": 0,
+          "circle": 122,
+          "closed_shell": 2,
+          "conical_surface": 4,
+          "cylindrical_surface": 71,
+          "edge_curve": 598,
+          "edge_loop": 249,
+          "ellipse": 0,
+          "hyperbola": 0,
+          "line": 173,
+          "manifold_solid_brep": 2,
+          "offset_curve": 0,
+          "offset_surface": 0,
+          "parabola": 0,
+          "plane": 54,
+          "rational_b_spline_curve": 0,
+          "rational_b_spline_surface": 8,
+          "rational_tokens": 8,
+          "spherical_surface": 0,
+          "surface_of_linear_extrusion": 0,
+          "surface_of_revolution": 0,
+          "toroidal_surface": 0,
+          "vertex_point": 407
+        },
+        "method": "read-only STEP token and entity audit",
+        "rational_nurbs_present": true,
+        "summary": "The AP203 DATA section is byte-identical to the accepted unsuffixed Plasticity artifact and receives no distinct geometry or AP242 credit."
+      },
+      "inspection_summary": null,
+      "licence": {
+        "evidence": "Model author Jordan Moss granted repository redistribution permission for the supplied model and STEP exports on 2026-07-14.",
+        "evidence_record": {
+          "bytes": 500,
+          "path": "fixtures/licences/jordan-plasticity-export-permission.md",
+          "sha256": "4eed544ca70ed1c3952418da08f15d1af05b71ff1cd854bd5cae2f1ba5a96e88"
+        },
+        "identifier": "Jordan-written-redistribution-permission-2026-07-14",
+        "redistribution_permission": "allowed"
+      },
+      "oracle_record": null,
+      "presentation_audit": {
+        "colour_rgb": 2,
+        "material_tokens": 0,
+        "presentation_style_assignment": 2,
+        "styled_item": 2,
+        "summary": "The AP203 DATA section is byte-identical to the accepted artifact; product and style records do not establish AP242 or material semantics.",
+        "surface_style_tokens": 4
+      },
+      "provenance_record": {
+        "bytes": 1241,
+        "path": "fixtures/provenance/external.plasticity26.mixed_analytic_nurbs.ap203.json",
+        "sha256": "3d4afaee0cf7bf9d3751fc42b4ed7acb9fe0a18ebd12c5c3dcd9c576fa2b1dea"
+      },
+      "readiness": {
+        "blocking_reasons": [],
+        "fixture_ready": false,
+        "remaining_work": [],
+        "status": "rejected_duplicate"
+      },
+      "review_record": null,
+      "schema_audit": {
+        "comparison": "mismatch",
+        "declared_schema_credit_allowed": false,
+        "detected_declaration": "AP203_CONFIGURATION_CONTROLLED_3D_DESIGN_OF_MECHANICAL_PARTS_AND_ASSEMBLIES_MIM_LF",
+        "detected_family": "AP203",
+        "filename_intent": "The _242 filename suffix declares AP242 intent, but the payload still declares AP203.",
+        "requested_family": "AP242"
+      },
+      "step_header": {
+        "authorisation": "Unknown authorisation",
+        "authors": [
+          "jordan"
+        ],
+        "file_description": [
+          "HOOPS Exchange Step"
+        ],
+        "file_name_field": "D:\\weftocct\\fixtures\\external\\plasticity26_startup_analytic_242.step",
+        "organizations": [
+          "Unknown organisation"
+        ],
+        "originating_system": "HOOPS Exchange",
+        "preprocessor_version": "HOOPS Exchange 2025.8",
+        "timestamp": "2026-07-14T18:55:07+01:00"
+      }
+    }
+  ],
+  "audit_date": "2026-07-14",
+  "audit_method": [
+    "Byte length and SHA-256 verification over each unchanged STEP payload and linked evidence file.",
+    "Exact FILE_NAME and FILE_SCHEMA header inspection.",
+    "Raw DATA-section byte comparison across all five STEP files.",
+    "Read-only generated inspection summaries for the three accepted assets, explicitly treated as non-independent observations.",
+    "Read-only lexical entity audit of each DATA section.",
+    "Retained provenance and redistribution-record verification."
+  ],
+  "canonicalization": "sorted-pretty-json-v1",
+  "corpus_assessment": {
+    "accepted_asset_count": 3,
+    "analytic_families_evidenced": [
+      "circle",
+      "cone",
+      "cylinder",
+      "line",
+      "plane"
+    ],
+    "asset_count": 5,
+    "b_spline_or_nurbs_evidenced": true,
+    "blocking_reasons": [],
+    "detected_schema_families": [
+      "AP203",
+      "AP214",
+      "AP242"
+    ],
+    "fixture_ready_schema_families": [
+      "AP203",
+      "AP214",
+      "AP242"
+    ],
+    "obligations": [
+      {
+        "id": "REC-010",
+        "reason": "Three distinct accepted and licensed external assets now have hash-bound read-only inspection summaries, independent named-outcome oracles, accepted reviews, and a canonical aggregate audit record.",
+        "status": "PARTIAL"
+      },
+      {
+        "id": "SRC-001",
+        "reason": "The accepted Plasticity AP203 asset provides partial real-world evidence for plane, cylinder, cone, line, circle, and B-spline/NURBS families; no claim is made for missing Plasticity-authored families or material semantics.",
+        "status": "PARTIAL"
+      },
+      {
+        "id": "SRC-002",
+        "reason": "Three accepted assets provide distinct HOOPS Exchange/Plasticity, AutoCAD, and undisclosed NIST-corpus exporter provenance, three distinct DATA sections, and independent per-asset named-outcome oracles.",
+        "status": "PARTIAL"
+      },
+      {
+        "id": "SRC-003",
+        "reason": "Distinct accepted files declare AP203, AP214, and AP242 respectively; the renamed Plasticity clones still declare AP203, are DATA-equivalent duplicates, and receive no AP214 or AP242 credit.",
+        "status": "PARTIAL"
+      }
+    ],
+    "rational_nurbs_evidenced": true,
+    "readiness": "partial",
+    "rejected_duplicate_count": 2,
+    "remaining_work": [
+      "Complete M2 and M3 consumer verification against the fixture-ready external corpus.",
+      "Treat broader Plasticity-authored family coverage as future corpus expansion rather than inferred evidence from this asset."
+    ],
+    "schema_mismatch_assets": [
+      "fixtures/external/plasticity26_startup_analytic_214.step",
+      "fixtures/external/plasticity26_startup_analytic_242.step"
+    ],
+    "unique_data_section_count": 3,
+    "unique_exporter_count": 3
+  },
+  "schema": "fixtures/schema/external-provenance-audit-matrix-v1.schema.json",
+  "schema_version": "1.0.0"
+}

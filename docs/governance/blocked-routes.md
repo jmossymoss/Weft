@@ -9,3 +9,4 @@
 | BR-005 | Authoritative weld/fallback triangulation | Post-hoc repair can conceal gaps, missing faces, and unrelated topology | Boundary-exact CDT floor assembled by shared indices and validated before export | OPEN |
 | BR-006 | CGAL-backed distribution | Prototype policy permits GPL/commercial packages only for local research | Commercial license or permissive replacement plus license audit | OPEN |
 | BR-007 | Unreviewed twisted-cylinder fixture import | The current fixture work in `D:/weftocct` is uncommitted user work | Independent review and committed evidence before copying | OPEN |
+| BR-008 | Non-rigid STEP transform without a typed account | XDE may drop scale/reflection unless retention or baking is independently proven | Retained-affine or baked-geometry account with composition and parity validation | ENFORCED |

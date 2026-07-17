@@ -1,0 +1,32 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "8dbc36e4acd8cfc5001f0b2f07a46bb4b972f57d40ecb63cc0e676815d4b7960",
+  "finding_disposition": "Fresh-context topology, loop-UV, concavity, support-state, and coverage audits passed after all findings were resolved; no P0 or P1 finding remains for corpus revision 4.",
+  "fixture_id": "solid.prism.concave",
+  "producer_id": "producer.m1_planar_trim_tranche",
+  "review_id": "review.solid_prism_concave.revision_1",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.m1_planar_trim_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "claims.typed_binding",
+    "construction.parameters",
+    "geometry.conditions",
+    "geometry.taxonomy",
+    "provenance.xde_readback",
+    "support.occurrence_identity",
+    "topology.boundary_loops",
+    "topology.counts",
+    "trims.concavity",
+    "units.tolerances"
+  ],
+  "source_binding": {
+    "artifact_sha256": "180d6eb3ab38b9a9592dd7b6c5df50adec314cc22a904be19b79f0b03a703055",
+    "construction_parameters_sha256": "6b2c822ff1991d83bd5df3bdd580929870713c9c2310a194de01a5609ca8b9f0",
+    "generator_revision": 3,
+    "kind": "occt_procedural",
+    "source_contract_sha256": "fa08d97c71349a297e66dd572e4d3cf76f5e39ba5246f7ee5aa0975f6d07f46c",
+    "summary_sha256": "e17a949285a16851cfadf0c89a28b46f64d7fa0bfa831b752bbd9ababa786f76"
+  }
+}

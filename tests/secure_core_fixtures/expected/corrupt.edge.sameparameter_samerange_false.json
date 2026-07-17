@@ -1,0 +1,613 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "expected": {
+    "boundary_loops": [
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0001",
+        "id": "boundary_loop.l0001",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 6.283185307,
+          "u_min": 0.0,
+          "v_max": 18.0,
+          "v_min": 0.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 1,
+        "face_occurrence_id": "face_occurrence.f0002",
+        "id": "boundary_loop.l0002",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7.0,
+          "u_min": -7.0,
+          "v_max": 7.0,
+          "v_min": -7.0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 1,
+        "face_occurrence_id": "face_occurrence.f0003",
+        "id": "boundary_loop.l0003",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 7.0,
+          "u_min": -7.0,
+          "v_max": 7.0,
+          "v_min": -7.0
+        }
+      }
+    ],
+    "brep_valid": false,
+    "claims": [
+      {
+        "id": "claim.crv_023.corrupt_edge_sameparameter_samerange_false",
+        "obligation_id": "CRV-023",
+        "predicate_codes": [
+          "predicate.curve.sameparameter_samerange_false"
+        ],
+        "statement": "Clear both SameParameter and SameRange on the selected seam edge without changing its curve representations. Exact artifact c400ae0bb2102165a07673bb0df8ba28a17e998c84daf1ade7b4bc95a963ba1e is retained without repair; observed validity is False.",
+        "subject_refs": [
+          {
+            "id": "observation.coedge.cylinder_top",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.curve.circle",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.exact_mutation",
+            "kind": "observation"
+          }
+        ]
+      }
+    ],
+    "curve_variants": [
+      {
+        "concrete_type": "Geom_Circle",
+        "condition_codes": [
+          "basis_periodic",
+          "bounded",
+          "periodic"
+        ],
+        "count": 2,
+        "family_code": "circle",
+        "label": "curve.circle",
+        "wrapper_stack": []
+      },
+      {
+        "concrete_type": "Geom_Line",
+        "condition_codes": [
+          "bounded",
+          "mathematically_unbounded_basis",
+          "trimmed_by_edge_range"
+        ],
+        "count": 1,
+        "family_code": "line",
+        "label": "curve.line",
+        "wrapper_stack": []
+      }
+    ],
+    "import_outcome": "native_only",
+    "model_classes": [
+      "closed_manifold",
+      "derived_corruption",
+      "invalid_import",
+      "outer_shell_only"
+    ],
+    "model_topology": {
+      "closed_shells": 1,
+      "coincident_solid_signature_pairs": 0,
+      "free_edges": 0,
+      "free_wires": 0,
+      "inner_shells": 0,
+      "isolated_vertices": 0,
+      "maximum_faces_per_edge": 2,
+      "nonmanifold_vertices": 0,
+      "open_shells": 0,
+      "outer_shells": 1,
+      "shared_faces_between_solids": 0,
+      "standalone_shells": 0
+    },
+    "orientation_states": [
+      "FORWARD",
+      "REVERSED"
+    ],
+    "periodicity": [
+      {
+        "label": "surface.cylinder",
+        "u_closed": true,
+        "u_periodic": true,
+        "v_closed": false,
+        "v_periodic": false
+      },
+      {
+        "label": "surface.plane",
+        "u_closed": false,
+        "u_periodic": false,
+        "v_closed": false,
+        "v_periodic": false
+      }
+    ],
+    "semantic_candidates": [],
+    "singularity_codes": [],
+    "subject_universe": {
+      "edge_occurrence_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004",
+        "edge_occurrence.e0005",
+        "edge_occurrence.e0006"
+      ],
+      "face_occurrence_ids": [
+        "face_occurrence.f0001",
+        "face_occurrence.f0002",
+        "face_occurrence.f0003"
+      ],
+      "logical_region_ids": [
+        "logical_region.r0001",
+        "logical_region.r0002",
+        "logical_region.r0003"
+      ]
+    },
+    "support": [
+      {
+        "geometry_family_code": "circle",
+        "label": "support.edge.circle.invalid_imported_geometry.bucket_01",
+        "selection_code": "reason.invalid_imported_geometry",
+        "state": "InvalidImportedGeometry",
+        "subject_count": 4,
+        "subject_ids": [
+          "edge_occurrence.e0001",
+          "edge_occurrence.e0002",
+          "edge_occurrence.e0003",
+          "edge_occurrence.e0004"
+        ],
+        "subject_kind": "edge"
+      },
+      {
+        "geometry_family_code": "line",
+        "label": "support.edge.line.invalid_imported_geometry.bucket_02",
+        "selection_code": "reason.invalid_imported_geometry",
+        "state": "InvalidImportedGeometry",
+        "subject_count": 2,
+        "subject_ids": [
+          "edge_occurrence.e0005",
+          "edge_occurrence.e0006"
+        ],
+        "subject_kind": "edge"
+      },
+      {
+        "geometry_family_code": "cylinder",
+        "label": "support.face.cylinder.invalid_imported_geometry.bucket_03",
+        "selection_code": "reason.invalid_imported_geometry",
+        "state": "InvalidImportedGeometry",
+        "subject_count": 1,
+        "subject_ids": [
+          "face_occurrence.f0001"
+        ],
+        "subject_kind": "face"
+      },
+      {
+        "geometry_family_code": "plane",
+        "label": "support.face.plane.invalid_imported_geometry.bucket_04",
+        "selection_code": "reason.invalid_imported_geometry",
+        "state": "InvalidImportedGeometry",
+        "subject_count": 2,
+        "subject_ids": [
+          "face_occurrence.f0002",
+          "face_occurrence.f0003"
+        ],
+        "subject_kind": "face"
+      },
+      {
+        "geometry_family_code": "cylinder",
+        "label": "support.logical_region.cylinder.invalid_imported_geometry.bucket_05",
+        "selection_code": "reason.invalid_imported_geometry",
+        "state": "InvalidImportedGeometry",
+        "subject_count": 1,
+        "subject_ids": [
+          "logical_region.r0001"
+        ],
+        "subject_kind": "logical_region"
+      },
+      {
+        "geometry_family_code": "plane",
+        "label": "support.logical_region.plane.invalid_imported_geometry.bucket_06",
+        "selection_code": "reason.invalid_imported_geometry",
+        "state": "InvalidImportedGeometry",
+        "subject_count": 2,
+        "subject_ids": [
+          "logical_region.r0002",
+          "logical_region.r0003"
+        ],
+        "subject_kind": "logical_region"
+      }
+    ],
+    "surface_variants": [
+      {
+        "concrete_type": "Geom_CylindricalSurface",
+        "condition_codes": [
+          "bounded_trim_layout",
+          "u_periodic_basis"
+        ],
+        "count": 1,
+        "family_code": "cylinder",
+        "label": "surface.cylinder",
+        "trim_domain_class": "convex_simple_region",
+        "wrapper_stack": []
+      },
+      {
+        "concrete_type": "Geom_Plane",
+        "condition_codes": [
+          "bounded_trim_layout"
+        ],
+        "count": 2,
+        "family_code": "plane",
+        "label": "surface.plane",
+        "trim_domain_class": "convex_simple_region",
+        "wrapper_stack": []
+      }
+    ],
+    "topology_occurrences": {
+      "assembly_products": 0,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 6,
+      "faces": 3,
+      "instances": 0,
+      "shells": 1,
+      "solids": 1,
+      "vertices": 12,
+      "wires": 3
+    },
+    "unique_topology": {
+      "assembly_products": 0,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 3,
+      "faces": 3,
+      "instances": 0,
+      "shells": 1,
+      "solids": 1,
+      "vertices": 2,
+      "wires": 3
+    },
+    "validation_findings": [
+      {
+        "code": "brepcheck_invalidsameparameterflag",
+        "evidence": "Named diagnostic emitted by the direct OCCT inspection of the hash-bound artifact.",
+        "expectation": "named_failure",
+        "subject_kind": "model"
+      },
+      {
+        "code": "brepcheck_invalidsamerangeflag",
+        "evidence": "Named diagnostic emitted by the direct OCCT inspection of the hash-bound artifact.",
+        "expectation": "named_failure",
+        "subject_kind": "model"
+      },
+      {
+        "code": "import.unprocessed_brep_invalid",
+        "evidence": "The exact derived artifact is loaded or parsed without healing, sewing, SameParameter repair, or partial-shape acceptance.",
+        "expectation": "present",
+        "subject_kind": "model"
+      },
+      {
+        "code": "topology.valid",
+        "evidence": "Direct BRepCheck result, or absence of a BRep after the named STEP parser failure.",
+        "expectation": "absent",
+        "subject_kind": "model"
+      }
+    ]
+  },
+  "fixture_id": "corrupt.edge.sameparameter_samerange_false",
+  "instances": [],
+  "observations": [
+    {
+      "coedge_id": "coedge.cylinder_top",
+      "condition_codes": [
+        "matching_domains",
+        "stored_flags_false"
+      ],
+      "edge_id": "edge_occurrence.e0001",
+      "face_id": "face_occurrence.f0001",
+      "id": "observation.coedge.cylinder_top",
+      "instance_id": null,
+      "kind": "coedge",
+      "ordinal_in_wire": 0,
+      "orientation": "FORWARD",
+      "pcurve_query": {
+        "error_code": null,
+        "status": "Succeeded"
+      },
+      "pcurve_representations": [
+        {
+          "edge_domain": {
+            "axis": "curve",
+            "closed": false,
+            "lower": 0.0,
+            "period": null,
+            "periodic": false,
+            "seam_parameters": [],
+            "unit": "radians",
+            "upper": 6.28318530717959
+          },
+          "geometry": {
+            "concrete_type": "Geom2d_Line",
+            "family_code": "line",
+            "parameters": [
+              {
+                "name": "v_constant",
+                "value": {
+                  "unit": "metres",
+                  "value": 0.018,
+                  "value_type": "number"
+                }
+              }
+            ],
+            "wrappers": []
+          },
+          "max_curve_surface_discrepancy_metres": 0.0,
+          "pcurve_domain": {
+            "axis": "curve",
+            "closed": false,
+            "lower": 0.0,
+            "period": null,
+            "periodic": false,
+            "seam_parameters": [],
+            "unit": "radians",
+            "upper": 6.28318530717959
+          },
+          "representation_index": 0,
+          "same_parameter": false,
+          "same_range": false,
+          "seam_representation": false
+        }
+      ],
+      "phase": "native",
+      "wire_id": "wire.cylinder_side"
+    },
+    {
+      "concrete_type": "Geom_Circle",
+      "condition_codes": [
+        "bounded",
+        "periodic_basis"
+      ],
+      "exact_evaluator_kind": "occt.native_exact_geometry",
+      "family_code": "circle",
+      "id": "observation.geometry.curve.circle",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "curve",
+          "closed": false,
+          "lower": 0.0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "radians",
+          "upper": 6.28318530717959
+        }
+      ],
+      "parameters": [],
+      "phase": "native",
+      "subject_id": "edge_occurrence.e0001",
+      "taxonomy": "Curve",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_CylindricalSurface",
+      "condition_codes": [
+        "bounded",
+        "u_periodic_basis"
+      ],
+      "exact_evaluator_kind": "occt.native_exact_geometry",
+      "family_code": "cylinder",
+      "id": "observation.geometry.surface.cylinder",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "curve",
+          "closed": false,
+          "lower": 0.0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "radians",
+          "upper": 6.28318530717959
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": 0.0,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "metres",
+          "upper": 0.018
+        }
+      ],
+      "parameters": [],
+      "phase": "native",
+      "subject_id": "face_occurrence.f0001",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "evidence": "Only the two edge flags are cleared; all curve records and domains remain byte-identical to the baseline, and BRepCheck reports both false flags invalid.",
+      "expectation": "named_failure",
+      "expected_failure_code": "brepcheck_invalidsameparameterflag",
+      "id": "observation.pathology.exact_mutation",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "edge.tolerance",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "metres",
+            "value": 1e-10,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "mutation.artifact_sha256",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": "c400ae0bb2102165a07673bb0df8ba28a17e998c84daf1ade7b4bc95a963ba1e",
+            "value_type": "text"
+          }
+        },
+        {
+          "code": "mutation.operation_count",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 1,
+            "value_type": "integer"
+          }
+        },
+        {
+          "code": "pcurve.max_residual",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "unit": "metres",
+            "value": 0.0,
+            "value_type": "number"
+          }
+        },
+        {
+          "code": "pcurve.same_parameter",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        {
+          "code": "pcurve.same_range",
+          "comparison": "exact",
+          "sample_count": 1,
+          "tolerance": null,
+          "value": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        }
+      ],
+      "pathology_code": "corrupt.edge.sameparameter_samerange_false",
+      "phase": "native",
+      "subject_ids": [
+        "edge_occurrence.e0001"
+      ]
+    },
+    {
+      "child_ids": [
+        "vertex_occurrence.v0001",
+        "vertex_occurrence.v0002"
+      ],
+      "condition_codes": [
+        "artifact.derived_ascii_brep",
+        "corrupt.edge.sameparameter_samerange_false"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.selected_edge",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "native",
+      "relations": [],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "edge_occurrence.e0001",
+      "tolerance_metres": 1e-10,
+      "topology_kind": "edge",
+      "underlying_id": "edge_occurrence.e0001.partner",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    }
+  ],
+  "oracle": {
+    "independent_from_production_classifier": true,
+    "method": "analytic_derivation",
+    "references": [
+      "fixtures/baselines/face.cylinder.seam_dual_pcurve.brep baseline c26afc85cc4df7f02acb3aa3862544a2ceb262e5406e50087953cd61968a7085",
+      "fixtures/derived/corrupt.edge.sameparameter_samerange_false.brep artifact c400ae0bb2102165a07673bb0df8ba28a17e998c84daf1ade7b4bc95a963ba1e",
+      "fixtures/derived/inspection/corrupt.edge.sameparameter_samerange_false.inspection.json inspection 195c728e483c336a63fd630d7570e6fb92c3816fb1c3291f3cf1badb0797c1d4",
+      "fixtures/lanes/derived_artifact.py transform.declared_ascii_patch.v1",
+      "fixtures/nonprocedural-obligation-authoring-map.json selected derived assignments"
+    ],
+    "statement": "Clear both SameParameter and SameRange on the selected seam edge without changing its curve representations. The exact mutation, analytic measurements, and direct OCCT diagnostic are independently frozen."
+  },
+  "schema_version": "1.0.0",
+  "tolerances": {
+    "edges_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "faces_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "vertices_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    }
+  },
+  "units": {
+    "coordinate_space": "right_handed_si_metres_radians",
+    "scale_to_metres": 0.001,
+    "source_unit": "millimetre"
+  }
+}

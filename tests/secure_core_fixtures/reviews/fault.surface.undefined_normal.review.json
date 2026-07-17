@@ -1,0 +1,25 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "5caf303654135a3de5ca05f71f17931bd278e6700b16234cbad8656c9f4df303",
+  "finding_disposition": "Fresh-context fault-contract, exact-observation, deterministic-runner, and source-binding review passed; no unresolved finding remains.",
+  "fixture_id": "fault.surface.undefined_normal",
+  "producer_id": "producer.m1_native_fault_foundation",
+  "review_id": "review.fault_surface_undefined_normal.revision_1",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.m1_native_fault_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "claims.typed_binding",
+    "fault.contract",
+    "native.runner_binding",
+    "observations.exact_values"
+  ],
+  "source_binding": {
+    "fault_code": "fault.surface.undefined_normal",
+    "harness_source_sha256": "a95831c06005760170cb95034ba6500190f9218a681f0e88edde66a93ec60d2e",
+    "kind": "native_fault_injection",
+    "source_contract_sha256": "6b974e7855f332ef8460e0d37e2ee417a59808c318fb5429a77f83d513105854",
+    "test_id": "test.native_fault.surface.undefined_normal"
+  }
+}

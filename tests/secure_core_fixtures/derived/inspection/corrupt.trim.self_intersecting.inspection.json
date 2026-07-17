@@ -1,0 +1,41 @@
+{
+  "artifact_format": "occt_ascii_brep",
+  "artifact_sha256": "8c27a53007e3c910b10816ec3470c44661317b0f7f7b753fafe6f44a3dd00d03",
+  "brep_valid": false,
+  "canonicalization": "sorted-pretty-json-v1",
+  "diagnostic_codes": [
+    "BRepCheck_SelfIntersectingWire",
+    "BRepCheck_UnorientableShape"
+  ],
+  "fixture_id": "corrupt.trim.self_intersecting",
+  "inspection_method": "DRAWEXE direct BRepTools restore plus BRepCheck, or STEPControl parser for named failure",
+  "measurements": {
+    "mutation_operation_count": 11,
+    "self_intersection_count": 1,
+    "self_intersection_point_metres": [
+      0.03,
+      0.02,
+      0.0
+    ]
+  },
+  "occt_version": "8.0.0.p1-e52c4021",
+  "processing": [
+    "no_healing",
+    "no_sameparameter_repair",
+    "no_sewing",
+    "no_partial_shape_acceptance"
+  ],
+  "schema_version": "1.0.0",
+  "unique_topology": {
+    "assembly_products": 0,
+    "compounds": 0,
+    "compsolids": 0,
+    "edges": 7,
+    "faces": 1,
+    "instances": 0,
+    "shells": 0,
+    "solids": 0,
+    "vertices": 7,
+    "wires": 4
+  }
+}

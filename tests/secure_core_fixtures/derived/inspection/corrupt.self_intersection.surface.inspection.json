@@ -1,0 +1,48 @@
+{
+  "artifact_format": "occt_ascii_brep",
+  "artifact_sha256": "74f937c77ba949cd7533bdc2b3028296175a9d541e4ae688b82c23836039ce0f",
+  "brep_valid": false,
+  "canonicalization": "sorted-pretty-json-v1",
+  "diagnostic_codes": [
+    "BRepCheck_InvalidCurveOnSurface",
+    "BRepCheck_InvalidSameParameterFlag",
+    "BRepCheck_UnorientableShape"
+  ],
+  "fixture_id": "corrupt.self_intersection.surface",
+  "inspection_method": "DRAWEXE restore, checkshape, mksurface, dump, bounds, and svalue with first derivatives",
+  "measurements": {
+    "duplicate_image_residual_millimetres": 3.552713678800501e-15,
+    "duplicate_u_parameters": [
+      0.0,
+      1.0
+    ],
+    "fold_du_norm": 0.0,
+    "fold_point_millimetres": [
+      18.0,
+      5.648038049940547,
+      0.0
+    ],
+    "fold_u_parameter": 0.42,
+    "mutation_operation_count": 3,
+    "surface_u_closed": true
+  },
+  "occt_version": "8.0.0.p1-e52c4021",
+  "processing": [
+    "no_healing",
+    "no_sameparameter_repair",
+    "no_sewing"
+  ],
+  "schema_version": "1.0.0",
+  "unique_topology": {
+    "assembly_products": 0,
+    "compounds": 1,
+    "compsolids": 0,
+    "edges": 11,
+    "faces": 3,
+    "instances": 0,
+    "shells": 0,
+    "solids": 0,
+    "vertices": 10,
+    "wires": 3
+  }
+}

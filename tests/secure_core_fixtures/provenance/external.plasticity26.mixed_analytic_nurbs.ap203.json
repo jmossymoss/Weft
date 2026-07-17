@@ -1,0 +1,18 @@
+{
+  "acquired_on": "2026-07-14",
+  "artifact_sha256": "5db395ce8cea9dca675b7894d7410fb198ec0b3ed846debfe1992786c2adaa45",
+  "audit_statement": "Jordan Moss confirmed authorship and redistribution permission for the source model and exports. The selected artifact contains two styled solid bodies with analytic and B-spline geometry. Its Part 21 FILE_SCHEMA declaration is AP203; the similarly named 214 and 242 exports have byte-identical DATA sections and also declare AP203, so they receive no AP214 or AP242 credit.",
+  "canonicalization": "sorted-pretty-json-v1",
+  "export_settings": "Plasticity 26.1.3 STEP export of the project-authored two-part model with presentation colours and styles; requested AP203 selection. Healing, tolerance, and advanced translator options were not exposed or recorded.",
+  "exporter": {
+    "name": "HOOPS Exchange via Plasticity",
+    "version": "25.8.0"
+  },
+  "fixture_id": "external.plasticity26.mixed_analytic_nurbs.ap203",
+  "licence_identifier": "Jordan-written-redistribution-permission-2026-07-14",
+  "owner": "Jordan Moss",
+  "redistribution_allowed": true,
+  "schema_version": "1.0.0",
+  "source": "Project-authored Plasticity 26.1.3 model supplied by Jordan Moss",
+  "step_schema": "AP203"
+}

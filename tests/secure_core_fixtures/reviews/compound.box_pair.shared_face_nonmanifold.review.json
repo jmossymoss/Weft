@@ -1,0 +1,33 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "decision": "accepted",
+  "expectation_sha256": "81793f2ab8a0dca5c5430bd574147490d560119c2da449f7296a5d3559e87b81",
+  "finding_disposition": "Independent construction, topology-incidence, instance-placement, support-state, and provenance review found no unresolved P0 or P1 findings for corpus revision 5.",
+  "fixture_id": "compound.box_pair.shared_face_nonmanifold",
+  "producer_id": "producer.m1_topology_model_tranche",
+  "review_id": "review.compound_box_pair_shared_face_nonmanifold.revision_1",
+  "reviewed_on": "2026-07-14",
+  "reviewer_id": "reviewer.fresh_context.m1_topology_model_audit",
+  "schema_version": "1.0.0",
+  "scope": [
+    "claims.typed_binding",
+    "construction.parameters",
+    "geometry.conditions",
+    "geometry.taxonomy",
+    "model.topology",
+    "provenance.xde_readback",
+    "support.occurrence_identity",
+    "topology.boundary_loops",
+    "topology.counts",
+    "topology.nonmanifold_incidence",
+    "units.tolerances"
+  ],
+  "source_binding": {
+    "artifact_sha256": "661d5744321026b6234c7b880bf2fe94aca96722a509dd445687c9fc889b2a79",
+    "construction_parameters_sha256": "e9028030225ae935aa69c3d7668b77fdb57c88f3b50a925c14d48c986baad934",
+    "generator_revision": 3,
+    "kind": "occt_procedural",
+    "source_contract_sha256": "f34c1cbaeaddeaa8dd5eddb5a9995839edc79dc31a17c0b40f3f3f88d124b94b",
+    "summary_sha256": "c645fc024a4553c9f75a9c021d856b2f11528eb47cd2df0cd3353dce8bebfb9d"
+  }
+}

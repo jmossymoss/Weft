@@ -1,0 +1,2603 @@
+{
+  "canonicalization": "sorted-pretty-json-v1",
+  "expected": {
+    "boundary_loops": [
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0001",
+        "id": "boundary_loop.l0001",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 4.71238898,
+          "u_min": 0,
+          "v_max": 25,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 3,
+        "face_occurrence_id": "face_occurrence.f0002",
+        "id": "boundary_loop.l0002",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 10,
+          "u_min": -10,
+          "v_max": 10,
+          "v_min": -10
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 3,
+        "face_occurrence_id": "face_occurrence.f0003",
+        "id": "boundary_loop.l0003",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 10,
+          "u_min": -10,
+          "v_max": 10,
+          "v_min": -10
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0004",
+        "id": "boundary_loop.l0004",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 10,
+          "u_min": 0,
+          "v_max": 25,
+          "v_min": 0
+        }
+      },
+      {
+        "closed": true,
+        "edge_occurrence_count": 4,
+        "face_occurrence_id": "face_occurrence.f0005",
+        "id": "boundary_loop.l0005",
+        "orientation": "FORWARD",
+        "role": "outer",
+        "uv_bounds": {
+          "u_max": 10,
+          "u_min": 0,
+          "v_max": 25,
+          "v_min": 0
+        }
+      }
+    ],
+    "brep_valid": true,
+    "claims": [
+      {
+        "id": "claim.crv_002.evidence",
+        "obligation_id": "CRV-002",
+        "predicate_codes": [
+          "predicate.curve.circle_exact"
+        ],
+        "statement": "Hand-derived three-quarter-cylinder oracle and deterministic no-processing AP242 round trip provide the partial-periodic-basis variant.",
+        "subject_refs": [
+          {
+            "id": "circle.cap_arcs",
+            "kind": "curve_variant"
+          },
+          {
+            "id": "observation.geometry.circle.cap_arcs",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.crv_013.evidence",
+        "obligation_id": "CRV-013",
+        "predicate_codes": [
+          "predicate.curve.periodic_closed_distinguished"
+        ],
+        "statement": "Hand-derived three-quarter-cylinder oracle and deterministic no-processing AP242 round trip provide the partial-periodic-basis variant.",
+        "subject_refs": [
+          {
+            "id": "circle.cap_arcs",
+            "kind": "curve_variant"
+          },
+          {
+            "id": "observation.geometry.circle.cap_arcs",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.periodicity.plane.cap_sectors",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.periodicity.plane.radial_closures",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.periodicity.surface.cylinder_patch",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.sem_019.evidence",
+        "obligation_id": "SEM-019",
+        "predicate_codes": [
+          "predicate.semantic.primitive_analytic"
+        ],
+        "statement": "Hand-derived three-quarter-cylinder oracle and deterministic no-processing AP242 round trip provide the partial-periodic-basis variant.",
+        "subject_refs": [
+          {
+            "id": "observation.semantic.primitive.partial_cylinder",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.edge",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.face",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.shell",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.solid",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.vertex",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.wire",
+            "kind": "observation"
+          },
+          {
+            "id": "primitive.partial_cylinder",
+            "kind": "semantic_candidate"
+          }
+        ]
+      },
+      {
+        "id": "claim.srf_002.evidence",
+        "obligation_id": "SRF-002",
+        "predicate_codes": [
+          "predicate.surface.cylinder_exact"
+        ],
+        "statement": "Hand-derived three-quarter-cylinder oracle and deterministic no-processing AP242 round trip provide the partial-periodic-basis variant.",
+        "subject_refs": [
+          {
+            "id": "observation.geometry.surface.cylinder_patch",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.surface.cylinder_patch",
+            "kind": "observation"
+          },
+          {
+            "id": "surface.cylinder_patch",
+            "kind": "surface_variant"
+          }
+        ]
+      },
+      {
+        "id": "claim.srf_015.evidence",
+        "obligation_id": "SRF-015",
+        "predicate_codes": [
+          "predicate.surface.trim_domain_recorded"
+        ],
+        "statement": "Hand-derived three-quarter-cylinder oracle and deterministic no-processing AP242 round trip provide the partial-periodic-basis variant.",
+        "subject_refs": [
+          {
+            "id": "observation.geometry.plane.cap_sectors",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.plane.radial_closures",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.surface.cylinder_patch",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.plane.cap_sectors",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.plane.radial_closures",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.surface.cylinder_patch",
+            "kind": "observation"
+          },
+          {
+            "id": "plane.cap_sectors",
+            "kind": "surface_variant"
+          },
+          {
+            "id": "plane.radial_closures",
+            "kind": "surface_variant"
+          },
+          {
+            "id": "surface.cylinder_patch",
+            "kind": "surface_variant"
+          }
+        ]
+      },
+      {
+        "id": "claim.srf_016.evidence",
+        "obligation_id": "SRF-016",
+        "predicate_codes": [
+          "predicate.surface.periodicity_recorded"
+        ],
+        "statement": "Hand-derived three-quarter-cylinder oracle and deterministic no-processing AP242 round trip provide the partial-periodic-basis variant.",
+        "subject_refs": [
+          {
+            "id": "observation.geometry.surface.cylinder_patch",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.periodicity.surface.cylinder_patch",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.edge",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.face",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.shell",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.solid",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.vertex",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.wire",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.surface.cylinder_patch",
+            "kind": "observation"
+          },
+          {
+            "id": "surface.cylinder_patch",
+            "kind": "periodicity"
+          }
+        ]
+      },
+      {
+        "id": "claim.sup_001.evidence",
+        "obligation_id": "SUP-001",
+        "predicate_codes": [
+          "predicate.support.analytic_template_total"
+        ],
+        "statement": "Hand-derived three-quarter-cylinder oracle and deterministic no-processing AP242 round trip provide the partial-periodic-basis variant.",
+        "subject_refs": [
+          {
+            "id": "observation.consumer.edge.circle_arcs",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.edge.lines",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.face.cylinder",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.face.planes",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.region.cylinder",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.region.planes",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.semantic.primitive.partial_cylinder",
+            "kind": "observation"
+          },
+          {
+            "id": "edge.circle_arcs",
+            "kind": "support"
+          },
+          {
+            "id": "edge.lines",
+            "kind": "support"
+          },
+          {
+            "id": "face.cylinder",
+            "kind": "support"
+          },
+          {
+            "id": "face.planes",
+            "kind": "support"
+          },
+          {
+            "id": "region.cylinder",
+            "kind": "support"
+          },
+          {
+            "id": "region.planes",
+            "kind": "support"
+          }
+        ]
+      },
+      {
+        "id": "claim.sup_009.evidence",
+        "obligation_id": "SUP-009",
+        "predicate_codes": [
+          "predicate.support.assignment_total"
+        ],
+        "statement": "Hand-derived three-quarter-cylinder oracle and deterministic no-processing AP242 round trip provide the partial-periodic-basis variant.",
+        "subject_refs": [
+          {
+            "id": "observation.consumer.edge.circle_arcs",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.edge.lines",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.face.cylinder",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.face.planes",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.region.cylinder",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.consumer.region.planes",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.edge",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.face",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.shell",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.solid",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.vertex",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.wire",
+            "kind": "observation"
+          },
+          {
+            "id": "subject_universe.edge_occurrences",
+            "kind": "subject_universe"
+          },
+          {
+            "id": "subject_universe.face_occurrences",
+            "kind": "subject_universe"
+          },
+          {
+            "id": "subject_universe.logical_regions",
+            "kind": "subject_universe"
+          },
+          {
+            "id": "edge.circle_arcs",
+            "kind": "support"
+          },
+          {
+            "id": "edge.lines",
+            "kind": "support"
+          },
+          {
+            "id": "face.cylinder",
+            "kind": "support"
+          },
+          {
+            "id": "face.planes",
+            "kind": "support"
+          },
+          {
+            "id": "region.cylinder",
+            "kind": "support"
+          },
+          {
+            "id": "region.planes",
+            "kind": "support"
+          }
+        ]
+      },
+      {
+        "id": "claim.top_003.evidence",
+        "obligation_id": "TOP-003",
+        "predicate_codes": [
+          "predicate.topology.solid_shell_validity"
+        ],
+        "statement": "Hand-derived three-quarter-cylinder oracle and deterministic no-processing AP242 round trip provide the partial-periodic-basis variant.",
+        "subject_refs": [
+          {
+            "id": "observation.pathology.p7",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.shell",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.solid",
+            "kind": "observation"
+          },
+          {
+            "id": "topology.shells",
+            "kind": "topology"
+          },
+          {
+            "id": "topology.solids",
+            "kind": "topology"
+          },
+          {
+            "id": "topology.valid",
+            "kind": "validation_finding"
+          }
+        ]
+      },
+      {
+        "id": "claim.top_005.evidence",
+        "obligation_id": "TOP-005",
+        "predicate_codes": [
+          "predicate.topology.face_inventory"
+        ],
+        "statement": "Hand-derived three-quarter-cylinder oracle and deterministic no-processing AP242 round trip provide the partial-periodic-basis variant.",
+        "subject_refs": [
+          {
+            "id": "observation.geometry.plane.cap_sectors",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.plane.radial_closures",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.geometry.surface.cylinder_patch",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.face",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.plane.cap_sectors",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.plane.radial_closures",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.surface.cylinder_patch",
+            "kind": "observation"
+          },
+          {
+            "id": "plane.cap_sectors",
+            "kind": "surface_variant"
+          },
+          {
+            "id": "plane.radial_closures",
+            "kind": "surface_variant"
+          },
+          {
+            "id": "surface.cylinder_patch",
+            "kind": "surface_variant"
+          },
+          {
+            "id": "topology.faces",
+            "kind": "topology"
+          }
+        ]
+      },
+      {
+        "id": "claim.top_006.evidence",
+        "obligation_id": "TOP-006",
+        "predicate_codes": [
+          "predicate.topology.wire_inventory"
+        ],
+        "statement": "Hand-derived three-quarter-cylinder oracle and deterministic no-processing AP242 round trip provide the partial-periodic-basis variant.",
+        "subject_refs": [
+          {
+            "id": "observation.pathology.p1",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p2",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p3",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p4",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p5",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p6",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p7",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.wire",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.plane.cap_sectors",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.plane.radial_closures",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.surface.cylinder_patch",
+            "kind": "observation"
+          },
+          {
+            "id": "topology.wires",
+            "kind": "topology"
+          }
+        ]
+      },
+      {
+        "id": "claim.top_008.evidence",
+        "obligation_id": "TOP-008",
+        "predicate_codes": [
+          "predicate.topology.vertex_inventory"
+        ],
+        "statement": "Hand-derived three-quarter-cylinder oracle and deterministic no-processing AP242 round trip provide the partial-periodic-basis variant.",
+        "subject_refs": [
+          {
+            "id": "observation.topology.vertex",
+            "kind": "observation"
+          },
+          {
+            "id": "topology.vertices",
+            "kind": "topology"
+          }
+        ]
+      },
+      {
+        "id": "claim.top_012.evidence",
+        "obligation_id": "TOP-012",
+        "predicate_codes": [
+          "predicate.model.single_solid"
+        ],
+        "statement": "Hand-derived three-quarter-cylinder oracle and deterministic no-processing AP242 round trip provide the partial-periodic-basis variant.",
+        "subject_refs": [
+          {
+            "id": "single_solid",
+            "kind": "model_class"
+          },
+          {
+            "id": "observation.normalization.model",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.edge",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.face",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.shell",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.solid",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.vertex",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.wire",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.top_013.evidence",
+        "obligation_id": "TOP-013",
+        "predicate_codes": [
+          "predicate.model.closed_manifold"
+        ],
+        "statement": "Hand-derived three-quarter-cylinder oracle and deterministic no-processing AP242 round trip provide the partial-periodic-basis variant.",
+        "subject_refs": [
+          {
+            "id": "closed_manifold",
+            "kind": "model_class"
+          },
+          {
+            "id": "observation.pathology.p1",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p2",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p3",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p4",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p5",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p6",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.pathology.p7",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.edge",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.face",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.shell",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.solid",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.vertex",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.wire",
+            "kind": "observation"
+          }
+        ]
+      },
+      {
+        "id": "claim.trm_005.evidence",
+        "obligation_id": "TRM-005",
+        "predicate_codes": [
+          "predicate.trim.outer_boundary"
+        ],
+        "statement": "Hand-derived three-quarter-cylinder oracle and deterministic no-processing AP242 round trip provide the partial-periodic-basis variant.",
+        "subject_refs": [
+          {
+            "id": "observation.topology.edge",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.face",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.shell",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.solid",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.vertex",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.topology.wire",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.plane.radial_closures",
+            "kind": "observation"
+          },
+          {
+            "id": "observation.trim.surface.cylinder_patch",
+            "kind": "observation"
+          },
+          {
+            "id": "plane.radial_closures",
+            "kind": "surface_variant"
+          },
+          {
+            "id": "surface.cylinder_patch",
+            "kind": "surface_variant"
+          }
+        ]
+      }
+    ],
+    "curve_variants": [
+      {
+        "concrete_type": "Geom_Circle",
+        "condition_codes": [
+          "basis_closed",
+          "basis_periodic",
+          "partial",
+          "trimmed_by_edge_range"
+        ],
+        "count": 2,
+        "family_code": "circle",
+        "label": "circle.cap_arcs",
+        "wrapper_stack": []
+      },
+      {
+        "concrete_type": "Geom_Line",
+        "condition_codes": [
+          "axial_or_radial_closure",
+          "bounded",
+          "trimmed_by_edge_range"
+        ],
+        "count": 7,
+        "family_code": "line",
+        "label": "line.closure_edges",
+        "wrapper_stack": []
+      }
+    ],
+    "import_outcome": "success",
+    "model_classes": [
+      "closed_manifold",
+      "outer_shell_only",
+      "single_solid"
+    ],
+    "orientation_states": [
+      "FORWARD",
+      "REVERSED"
+    ],
+    "periodicity": [
+      {
+        "label": "plane.cap_sectors",
+        "u_closed": false,
+        "u_periodic": false,
+        "v_closed": false,
+        "v_periodic": false
+      },
+      {
+        "label": "plane.radial_closures",
+        "u_closed": false,
+        "u_periodic": false,
+        "v_closed": false,
+        "v_periodic": false
+      },
+      {
+        "label": "surface.cylinder_patch",
+        "u_closed": true,
+        "u_periodic": true,
+        "v_closed": false,
+        "v_periodic": false
+      }
+    ],
+    "semantic_candidates": [
+      {
+        "code": "primitive.partial_cylinder",
+        "confidence": "ProvenAnalytic",
+        "evidence": "A radius-10 cylinder is swept through 3*pi/2 radians over 25 millimetres and closed by two sector caps and two radial planes.",
+        "subject_count": 5
+      }
+    ],
+    "singularity_codes": [],
+    "subject_universe": {
+      "edge_occurrence_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004",
+        "edge_occurrence.e0005",
+        "edge_occurrence.e0006",
+        "edge_occurrence.e0007",
+        "edge_occurrence.e0008",
+        "edge_occurrence.e0009",
+        "edge_occurrence.e0010",
+        "edge_occurrence.e0011",
+        "edge_occurrence.e0012",
+        "edge_occurrence.e0013",
+        "edge_occurrence.e0014",
+        "edge_occurrence.e0015",
+        "edge_occurrence.e0016",
+        "edge_occurrence.e0017",
+        "edge_occurrence.e0018"
+      ],
+      "face_occurrence_ids": [
+        "face_occurrence.f0001",
+        "face_occurrence.f0002",
+        "face_occurrence.f0003",
+        "face_occurrence.f0004",
+        "face_occurrence.f0005"
+      ],
+      "logical_region_ids": [
+        "logical_region.r0001",
+        "logical_region.r0002",
+        "logical_region.r0003",
+        "logical_region.r0004",
+        "logical_region.r0005"
+      ]
+    },
+    "support": [
+      {
+        "geometry_family_code": "circle",
+        "label": "edge.circle_arcs",
+        "selection_code": "strategy.curve.exact_circle",
+        "state": "SupportedAnalyticTemplate",
+        "subject_count": 4,
+        "subject_ids": [
+          "edge_occurrence.e0001",
+          "edge_occurrence.e0002",
+          "edge_occurrence.e0003",
+          "edge_occurrence.e0004"
+        ],
+        "subject_kind": "edge"
+      },
+      {
+        "geometry_family_code": "line",
+        "label": "edge.lines",
+        "selection_code": "strategy.curve.exact_line",
+        "state": "SupportedAnalyticTemplate",
+        "subject_count": 14,
+        "subject_ids": [
+          "edge_occurrence.e0005",
+          "edge_occurrence.e0006",
+          "edge_occurrence.e0007",
+          "edge_occurrence.e0008",
+          "edge_occurrence.e0009",
+          "edge_occurrence.e0010",
+          "edge_occurrence.e0011",
+          "edge_occurrence.e0012",
+          "edge_occurrence.e0013",
+          "edge_occurrence.e0014",
+          "edge_occurrence.e0015",
+          "edge_occurrence.e0016",
+          "edge_occurrence.e0017",
+          "edge_occurrence.e0018"
+        ],
+        "subject_kind": "edge"
+      },
+      {
+        "geometry_family_code": "cylinder",
+        "label": "face.cylinder",
+        "selection_code": "strategy.surface.cylinder_partial",
+        "state": "SupportedAnalyticTemplate",
+        "subject_count": 1,
+        "subject_ids": [
+          "face_occurrence.f0001"
+        ],
+        "subject_kind": "face"
+      },
+      {
+        "geometry_family_code": "plane",
+        "label": "face.planes",
+        "selection_code": "strategy.surface.planar",
+        "state": "SupportedAnalyticTemplate",
+        "subject_count": 4,
+        "subject_ids": [
+          "face_occurrence.f0002",
+          "face_occurrence.f0003",
+          "face_occurrence.f0004",
+          "face_occurrence.f0005"
+        ],
+        "subject_kind": "face"
+      },
+      {
+        "geometry_family_code": "cylinder",
+        "label": "region.cylinder",
+        "selection_code": "strategy.surface.cylinder_partial",
+        "state": "SupportedAnalyticTemplate",
+        "subject_count": 1,
+        "subject_ids": [
+          "logical_region.r0001"
+        ],
+        "subject_kind": "logical_region"
+      },
+      {
+        "geometry_family_code": "plane",
+        "label": "region.planes",
+        "selection_code": "strategy.surface.planar",
+        "state": "SupportedAnalyticTemplate",
+        "subject_count": 4,
+        "subject_ids": [
+          "logical_region.r0002",
+          "logical_region.r0003",
+          "logical_region.r0004",
+          "logical_region.r0005"
+        ],
+        "subject_kind": "logical_region"
+      }
+    ],
+    "surface_variants": [
+      {
+        "concrete_type": "Geom_Plane",
+        "condition_codes": [
+          "angular_span.three_pi_over_two",
+          "circular_arc_boundary",
+          "planar_cap"
+        ],
+        "count": 2,
+        "family_code": "plane",
+        "label": "plane.cap_sectors",
+        "trim_domain_class": "concave_simple_region",
+        "wrapper_stack": []
+      },
+      {
+        "concrete_type": "Geom_Plane",
+        "condition_codes": [
+          "bounded",
+          "radial_closure",
+          "rectangular_trim"
+        ],
+        "count": 2,
+        "family_code": "plane",
+        "label": "plane.radial_closures",
+        "trim_domain_class": "convex_simple_region",
+        "wrapper_stack": []
+      },
+      {
+        "concrete_type": "Geom_CylindricalSurface",
+        "condition_codes": [
+          "angular_span.three_pi_over_two",
+          "bounded_v",
+          "partial_u",
+          "u_closed",
+          "u_periodic"
+        ],
+        "count": 1,
+        "family_code": "cylinder",
+        "label": "surface.cylinder_patch",
+        "trim_domain_class": "convex_simple_region",
+        "wrapper_stack": []
+      }
+    ],
+    "topology_occurrences": {
+      "assembly_products": 1,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 18,
+      "faces": 5,
+      "instances": 0,
+      "shells": 1,
+      "solids": 1,
+      "vertices": 36,
+      "wires": 5
+    },
+    "unique_topology": {
+      "assembly_products": 1,
+      "compounds": 0,
+      "compsolids": 0,
+      "edges": 9,
+      "faces": 5,
+      "instances": 0,
+      "shells": 1,
+      "solids": 1,
+      "vertices": 6,
+      "wires": 5
+    },
+    "validation_findings": [
+      {
+        "code": "edge.degenerated",
+        "evidence": "The two radius-10 cap arcs span 3*pi/2 and every axial or radial closure line has positive length.",
+        "expectation": "absent",
+        "subject_kind": "edge"
+      },
+      {
+        "code": "edge.missing_3d_curve",
+        "evidence": "Two exact circle arcs and seven exact line segments account for every unique edge.",
+        "expectation": "absent",
+        "subject_kind": "edge"
+      },
+      {
+        "code": "edge.periodic_seam",
+        "evidence": "The retained U interval is 3*pi/2 rather than a full period, so its two longitudinal boundaries are distinct and no seam edge is identified.",
+        "expectation": "absent",
+        "subject_kind": "edge"
+      },
+      {
+        "code": "tolerance.uniform_kernel_precision",
+        "evidence": "The no-processing STEP round trip records 1e-7 millimetres, equal to 1e-10 metres, for every vertex, edge, and face tolerance.",
+        "expectation": "present",
+        "subject_kind": "model"
+      },
+      {
+        "code": "topology.closed_shell",
+        "evidence": "The lateral patch, two cap sectors, and two radial closures pair all nine unique boundary edges.",
+        "expectation": "present",
+        "subject_kind": "shell"
+      },
+      {
+        "code": "topology.manifold",
+        "evidence": "Each of the nine unique edges has exactly two face uses in one connected closed component.",
+        "expectation": "present",
+        "subject_kind": "solid"
+      },
+      {
+        "code": "topology.valid",
+        "evidence": "V-E+F equals 6-9+5=2 and the 3*pi/2 sweep is strictly between zero and a full period.",
+        "expectation": "present",
+        "subject_kind": "model"
+      }
+    ]
+  },
+  "fixture_id": "solid.cylinder.partial",
+  "instances": [],
+  "observations": [
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "strategy.curve.exact_circle"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 4 edge subjects to SupportedAnalyticTemplate using strategy.curve.exact_circle.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.edge.circle_arcs",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "edge_occurrence.e0001",
+        "edge_occurrence.e0002",
+        "edge_occurrence.e0003",
+        "edge_occurrence.e0004"
+      ]
+    },
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "strategy.curve.exact_line"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 14 edge subjects to SupportedAnalyticTemplate using strategy.curve.exact_line.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.edge.lines",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "edge_occurrence.e0005",
+        "edge_occurrence.e0006",
+        "edge_occurrence.e0007",
+        "edge_occurrence.e0008",
+        "edge_occurrence.e0009",
+        "edge_occurrence.e0010",
+        "edge_occurrence.e0011",
+        "edge_occurrence.e0012",
+        "edge_occurrence.e0013",
+        "edge_occurrence.e0014",
+        "edge_occurrence.e0015",
+        "edge_occurrence.e0016",
+        "edge_occurrence.e0017",
+        "edge_occurrence.e0018"
+      ]
+    },
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "strategy.surface.cylinder_partial"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 1 face subjects to SupportedAnalyticTemplate using strategy.surface.cylinder_partial.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.face.cylinder",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "face_occurrence.f0001"
+      ]
+    },
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "strategy.surface.planar"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 4 face subjects to SupportedAnalyticTemplate using strategy.surface.planar.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.face.planes",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "face_occurrence.f0002",
+        "face_occurrence.f0003",
+        "face_occurrence.f0004",
+        "face_occurrence.f0005"
+      ]
+    },
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "strategy.surface.cylinder_partial"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 1 logical_region subjects to SupportedAnalyticTemplate using strategy.surface.cylinder_partial.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.region.cylinder",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "logical_region.r0001"
+      ]
+    },
+    {
+      "artifact": null,
+      "assertion_codes": [
+        "strategy.surface.planar"
+      ],
+      "consumer_code": "oracle.support_assignment",
+      "consumer_kind": "inventory",
+      "evidence": "Independent oracle assigns 4 logical_region subjects to SupportedAnalyticTemplate using strategy.surface.planar.",
+      "expected_outcome": "present",
+      "id": "observation.consumer.region.planes",
+      "kind": "consumer_evidence",
+      "measurements": [],
+      "representation_kind": "inventory_report",
+      "subject_ids": [
+        "logical_region.r0002",
+        "logical_region.r0003",
+        "logical_region.r0004",
+        "logical_region.r0005"
+      ]
+    },
+    {
+      "concrete_type": "Geom_Circle",
+      "condition_codes": [
+        "basis_closed",
+        "basis_periodic",
+        "partial",
+        "trimmed_by_edge_range"
+      ],
+      "exact_evaluator_kind": "occt.exact_curve",
+      "family_code": "circle",
+      "id": "observation.geometry.circle.cap_arcs",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "curve",
+          "closed": true,
+          "lower": null,
+          "period": 6.283185307179586,
+          "periodic": true,
+          "seam_parameters": [],
+          "unit": "radians",
+          "upper": null
+        }
+      ],
+      "parameters": [],
+      "phase": "imported",
+      "subject_id": "circle.cap_arcs",
+      "taxonomy": "Curve",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_Line",
+      "condition_codes": [
+        "axial_or_radial_closure",
+        "bounded",
+        "trimmed_by_edge_range"
+      ],
+      "exact_evaluator_kind": "occt.exact_curve",
+      "family_code": "line",
+      "id": "observation.geometry.line.closure_edges",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "curve",
+          "closed": false,
+          "lower": null,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": null
+        }
+      ],
+      "parameters": [],
+      "phase": "imported",
+      "subject_id": "line.closure_edges",
+      "taxonomy": "Curve",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_Plane",
+      "condition_codes": [
+        "angular_span.three_pi_over_two",
+        "circular_arc_boundary",
+        "planar_cap"
+      ],
+      "exact_evaluator_kind": "occt.exact_surface",
+      "family_code": "plane",
+      "id": "observation.geometry.plane.cap_sectors",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": null,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": null
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": null,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": null
+        }
+      ],
+      "parameters": [],
+      "phase": "imported",
+      "subject_id": "plane.cap_sectors",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_Plane",
+      "condition_codes": [
+        "bounded",
+        "radial_closure",
+        "rectangular_trim"
+      ],
+      "exact_evaluator_kind": "occt.exact_surface",
+      "family_code": "plane",
+      "id": "observation.geometry.plane.radial_closures",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": false,
+          "lower": null,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": null
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": null,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": null
+        }
+      ],
+      "parameters": [],
+      "phase": "imported",
+      "subject_id": "plane.radial_closures",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "concrete_type": "Geom_CylindricalSurface",
+      "condition_codes": [
+        "angular_span.three_pi_over_two",
+        "bounded_v",
+        "partial_u",
+        "u_closed",
+        "u_periodic"
+      ],
+      "exact_evaluator_kind": "occt.exact_surface",
+      "family_code": "cylinder",
+      "id": "observation.geometry.surface.cylinder_patch",
+      "kind": "geometry",
+      "parameter_domains": [
+        {
+          "axis": "u",
+          "closed": true,
+          "lower": null,
+          "period": 6.283185307179586,
+          "periodic": true,
+          "seam_parameters": [],
+          "unit": "radians",
+          "upper": null
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "lower": null,
+          "period": null,
+          "periodic": false,
+          "seam_parameters": [],
+          "unit": "unitless",
+          "upper": null
+        }
+      ],
+      "parameters": [],
+      "phase": "imported",
+      "subject_id": "surface.cylinder_patch",
+      "taxonomy": "Surface",
+      "wrappers": []
+    },
+    {
+      "evidence": "The two radius-10 cap arcs span 3*pi/2 and every axial or radial closure line has positive length.",
+      "expectation": "absent",
+      "expected_failure_code": null,
+      "id": "observation.pathology.p1",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "edge.degenerated.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 0,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "edge.degenerated",
+      "phase": "imported",
+      "subject_ids": [
+        "oracle.finding.p1"
+      ]
+    },
+    {
+      "evidence": "Two exact circle arcs and seven exact line segments account for every unique edge.",
+      "expectation": "absent",
+      "expected_failure_code": null,
+      "id": "observation.pathology.p2",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "edge.missing_3d_curve.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 0,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "edge.missing_3d_curve",
+      "phase": "imported",
+      "subject_ids": [
+        "oracle.finding.p2"
+      ]
+    },
+    {
+      "evidence": "The retained U interval is 3*pi/2 rather than a full period, so its two longitudinal boundaries are distinct and no seam edge is identified.",
+      "expectation": "absent",
+      "expected_failure_code": null,
+      "id": "observation.pathology.p3",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "edge.periodic_seam.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 0,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "edge.periodic_seam",
+      "phase": "imported",
+      "subject_ids": [
+        "oracle.finding.p3"
+      ]
+    },
+    {
+      "evidence": "The no-processing STEP round trip records 1e-7 millimetres, equal to 1e-10 metres, for every vertex, edge, and face tolerance.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.p4",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "tolerance.uniform_kernel_precision.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 1,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "tolerance.uniform_kernel_precision",
+      "phase": "imported",
+      "subject_ids": [
+        "oracle.finding.p4"
+      ]
+    },
+    {
+      "evidence": "The lateral patch, two cap sectors, and two radial closures pair all nine unique boundary edges.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.p5",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "topology.closed_shell.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 1,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "topology.closed_shell",
+      "phase": "imported",
+      "subject_ids": [
+        "oracle.finding.p5"
+      ]
+    },
+    {
+      "evidence": "Each of the nine unique edges has exactly two face uses in one connected closed component.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.p6",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "topology.manifold.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 1,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "topology.manifold",
+      "phase": "imported",
+      "subject_ids": [
+        "oracle.finding.p6"
+      ]
+    },
+    {
+      "evidence": "V-E+F equals 6-9+5=2 and the 3*pi/2 sweep is strictly between zero and a full period.",
+      "expectation": "present",
+      "expected_failure_code": null,
+      "id": "observation.pathology.p7",
+      "kind": "pathology_measurement",
+      "measurements": [
+        {
+          "code": "topology.valid.count",
+          "comparison": "exact",
+          "sample_count": null,
+          "tolerance": null,
+          "value": {
+            "unit": "count",
+            "value": 1,
+            "value_type": "integer"
+          }
+        }
+      ],
+      "pathology_code": "topology.valid",
+      "phase": "imported",
+      "subject_ids": [
+        "oracle.finding.p7"
+      ]
+    },
+    {
+      "axes": [
+        {
+          "axis": "u",
+          "closed": false,
+          "period": null,
+          "periodic": false,
+          "principal_lower": null,
+          "principal_upper": null,
+          "seam_parameters": [],
+          "unit": "unitless"
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "period": null,
+          "periodic": false,
+          "principal_lower": null,
+          "principal_upper": null,
+          "seam_parameters": [],
+          "unit": "unitless"
+        }
+      ],
+      "id": "observation.periodicity.plane.cap_sectors",
+      "kind": "periodicity_singularity",
+      "phase": "imported",
+      "singularities": [],
+      "subject_id": "plane.cap_sectors"
+    },
+    {
+      "axes": [
+        {
+          "axis": "u",
+          "closed": false,
+          "period": null,
+          "periodic": false,
+          "principal_lower": null,
+          "principal_upper": null,
+          "seam_parameters": [],
+          "unit": "unitless"
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "period": null,
+          "periodic": false,
+          "principal_lower": null,
+          "principal_upper": null,
+          "seam_parameters": [],
+          "unit": "unitless"
+        }
+      ],
+      "id": "observation.periodicity.plane.radial_closures",
+      "kind": "periodicity_singularity",
+      "phase": "imported",
+      "singularities": [],
+      "subject_id": "plane.radial_closures"
+    },
+    {
+      "axes": [
+        {
+          "axis": "u",
+          "closed": true,
+          "period": 6.283185307179586,
+          "periodic": true,
+          "principal_lower": 0,
+          "principal_upper": 6.283185307179586,
+          "seam_parameters": [
+            0
+          ],
+          "unit": "radians"
+        },
+        {
+          "axis": "v",
+          "closed": false,
+          "period": null,
+          "periodic": false,
+          "principal_lower": null,
+          "principal_upper": null,
+          "seam_parameters": [],
+          "unit": "unitless"
+        }
+      ],
+      "id": "observation.periodicity.surface.cylinder_patch",
+      "kind": "periodicity_singularity",
+      "phase": "imported",
+      "singularities": [],
+      "subject_id": "surface.cylinder_patch"
+    },
+    {
+      "candidate_code": "primitive.partial_cylinder",
+      "confidence": "ProvenAnalytic",
+      "continuity_observation_ids": [],
+      "evidence": "A radius-10 cylinder is swept through 3*pi/2 radians over 25 millimetres and closed by two sector caps and two radial planes.",
+      "evidence_codes": [
+        "evidence.independent_oracle"
+      ],
+      "fitted_parameters": [],
+      "id": "observation.semantic.primitive.partial_cylinder",
+      "kind": "semantic_evidence",
+      "max_residual_metres": null,
+      "phase": "imported",
+      "residual_observation_ids": [],
+      "subject_ids": [
+        "primitive.partial_cylinder"
+      ]
+    },
+    {
+      "accepted_normalization_codes": [],
+      "changes": [],
+      "equivalence": "exact",
+      "geometry_equivalent": true,
+      "id": "observation.normalization.model",
+      "imported_subject_ids": [
+        "imported.model"
+      ],
+      "kind": "source_import_normalization",
+      "outcome": "preserved",
+      "source_subject_ids": [
+        "source.model"
+      ],
+      "topology_equivalent": true
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.edge",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 9
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.edges"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.edges",
+      "tolerance_metres": 0,
+      "topology_kind": "edge",
+      "underlying_id": "topology.edges",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.face",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 5
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.faces"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.faces",
+      "tolerance_metres": 0,
+      "topology_kind": "face",
+      "underlying_id": "topology.faces",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.shell",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 1
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.shells"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.shells",
+      "tolerance_metres": 0,
+      "topology_kind": "shell",
+      "underlying_id": "topology.shells",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.solid",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 1
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.solids"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.solids",
+      "tolerance_metres": 0,
+      "topology_kind": "solid",
+      "underlying_id": "topology.solids",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.vertex",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 6
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.vertices"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.vertices",
+      "tolerance_metres": 0,
+      "topology_kind": "vertex",
+      "underlying_id": "topology.vertices",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "child_ids": [],
+      "condition_codes": [
+        "oracle.aggregate_unique_inventory"
+      ],
+      "has_exact_representation": true,
+      "id": "observation.topology.wire",
+      "instance_id": null,
+      "kind": "topology_occurrence",
+      "orientation": "FORWARD",
+      "parent_id": null,
+      "phase": "imported",
+      "relations": [
+        {
+          "code": "oracle.unique_count",
+          "parameter": {
+            "unit": "unitless",
+            "value": 5
+          },
+          "semantic_ordinal": null,
+          "target_id": "topology.wires"
+        }
+      ],
+      "source_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "subject_id": "topology.wires",
+      "tolerance_metres": 0,
+      "topology_kind": "wire",
+      "underlying_id": "topology.wires",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "baked_geometry_matrix_row_major": null,
+      "disposition": "retained_as_location",
+      "handedness": "right_handed",
+      "id": "observation.transform.instance.synthetic_identity",
+      "imported_location_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "instance_id": "instance.synthetic_identity",
+      "kind": "transform",
+      "linear_determinant": 1,
+      "parent_instance_id": null,
+      "source_affine_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "source_unit_scale_to_metres": 0.001,
+      "target_definition_id": "definition.synthetic_identity",
+      "transform_kind": "identity",
+      "world_matrix_row_major": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "condition_codes": [
+        "angular_span.three_pi_over_two",
+        "circular_arc_boundary",
+        "planar_cap"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "plane.cap_sectors",
+      "id": "observation.trim.plane.cap_sectors",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0001.c1",
+            "oracle.coedge.boundary_loop.l0001.c2",
+            "oracle.coedge.boundary_loop.l0001.c3",
+            "oracle.coedge.boundary_loop.l0001.c4"
+          ],
+          "loop_id": "boundary_loop.l0001",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 117.8097245,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 4.71238898,
+            "u_min": 0,
+            "v_max": 25,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0001"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0002.c1",
+            "oracle.coedge.boundary_loop.l0002.c2",
+            "oracle.coedge.boundary_loop.l0002.c3"
+          ],
+          "loop_id": "boundary_loop.l0002",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 400,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 10,
+            "u_min": -10,
+            "v_max": 10,
+            "v_min": -10
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0002"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0003.c1",
+            "oracle.coedge.boundary_loop.l0003.c2",
+            "oracle.coedge.boundary_loop.l0003.c3"
+          ],
+          "loop_id": "boundary_loop.l0003",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 400,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 10,
+            "u_min": -10,
+            "v_max": 10,
+            "v_min": -10
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0003"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0004.c1",
+            "oracle.coedge.boundary_loop.l0004.c2",
+            "oracle.coedge.boundary_loop.l0004.c3",
+            "oracle.coedge.boundary_loop.l0004.c4"
+          ],
+          "loop_id": "boundary_loop.l0004",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 250,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 10,
+            "u_min": 0,
+            "v_max": 25,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0004"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0005.c1",
+            "oracle.coedge.boundary_loop.l0005.c2",
+            "oracle.coedge.boundary_loop.l0005.c3",
+            "oracle.coedge.boundary_loop.l0005.c4"
+          ],
+          "loop_id": "boundary_loop.l0005",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 250,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 10,
+            "u_min": 0,
+            "v_max": 25,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0005"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "concave_simple_region"
+    },
+    {
+      "condition_codes": [
+        "bounded",
+        "radial_closure",
+        "rectangular_trim"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "plane.radial_closures",
+      "id": "observation.trim.plane.radial_closures",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0001.c1",
+            "oracle.coedge.boundary_loop.l0001.c2",
+            "oracle.coedge.boundary_loop.l0001.c3",
+            "oracle.coedge.boundary_loop.l0001.c4"
+          ],
+          "loop_id": "boundary_loop.l0001",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 117.8097245,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 4.71238898,
+            "u_min": 0,
+            "v_max": 25,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0001"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0002.c1",
+            "oracle.coedge.boundary_loop.l0002.c2",
+            "oracle.coedge.boundary_loop.l0002.c3"
+          ],
+          "loop_id": "boundary_loop.l0002",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 400,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 10,
+            "u_min": -10,
+            "v_max": 10,
+            "v_min": -10
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0002"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0003.c1",
+            "oracle.coedge.boundary_loop.l0003.c2",
+            "oracle.coedge.boundary_loop.l0003.c3"
+          ],
+          "loop_id": "boundary_loop.l0003",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 400,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 10,
+            "u_min": -10,
+            "v_max": 10,
+            "v_min": -10
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0003"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0004.c1",
+            "oracle.coedge.boundary_loop.l0004.c2",
+            "oracle.coedge.boundary_loop.l0004.c3",
+            "oracle.coedge.boundary_loop.l0004.c4"
+          ],
+          "loop_id": "boundary_loop.l0004",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 250,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 10,
+            "u_min": 0,
+            "v_max": 25,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0004"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0005.c1",
+            "oracle.coedge.boundary_loop.l0005.c2",
+            "oracle.coedge.boundary_loop.l0005.c3",
+            "oracle.coedge.boundary_loop.l0005.c4"
+          ],
+          "loop_id": "boundary_loop.l0005",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 250,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 10,
+            "u_min": 0,
+            "v_max": 25,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0005"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    },
+    {
+      "condition_codes": [
+        "angular_span.three_pi_over_two",
+        "bounded_v",
+        "partial_u",
+        "u_closed",
+        "u_periodic"
+      ],
+      "disconnected_region_count": 1,
+      "face_id": "surface.cylinder_patch",
+      "id": "observation.trim.surface.cylinder_patch",
+      "kind": "trim",
+      "loops": [
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0001.c1",
+            "oracle.coedge.boundary_loop.l0001.c2",
+            "oracle.coedge.boundary_loop.l0001.c3",
+            "oracle.coedge.boundary_loop.l0001.c4"
+          ],
+          "loop_id": "boundary_loop.l0001",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 117.8097245,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 4.71238898,
+            "u_min": 0,
+            "v_max": 25,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0001"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0002.c1",
+            "oracle.coedge.boundary_loop.l0002.c2",
+            "oracle.coedge.boundary_loop.l0002.c3"
+          ],
+          "loop_id": "boundary_loop.l0002",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 400,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 10,
+            "u_min": -10,
+            "v_max": 10,
+            "v_min": -10
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0002"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0003.c1",
+            "oracle.coedge.boundary_loop.l0003.c2",
+            "oracle.coedge.boundary_loop.l0003.c3"
+          ],
+          "loop_id": "boundary_loop.l0003",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 400,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 10,
+            "u_min": -10,
+            "v_max": 10,
+            "v_min": -10
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0003"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0004.c1",
+            "oracle.coedge.boundary_loop.l0004.c2",
+            "oracle.coedge.boundary_loop.l0004.c3",
+            "oracle.coedge.boundary_loop.l0004.c4"
+          ],
+          "loop_id": "boundary_loop.l0004",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 250,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 10,
+            "u_min": 0,
+            "v_max": 25,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0004"
+        },
+        {
+          "closed": true,
+          "coedge_ids": [
+            "oracle.coedge.boundary_loop.l0005.c1",
+            "oracle.coedge.boundary_loop.l0005.c2",
+            "oracle.coedge.boundary_loop.l0005.c3",
+            "oracle.coedge.boundary_loop.l0005.c4"
+          ],
+          "loop_id": "boundary_loop.l0005",
+          "max_gap_metres": 0,
+          "nesting_depth": 0,
+          "nesting_parent_loop_id": null,
+          "orientation": "FORWARD",
+          "role": "outer",
+          "seam_crossing_count": 0,
+          "seam_unwrap_offsets": [],
+          "self_intersection_count": 0,
+          "signed_uv_area": 250,
+          "singularity_ids": [],
+          "uv_bounds": {
+            "u_max": 10,
+            "u_min": 0,
+            "v_max": 25,
+            "v_min": 0
+          },
+          "wire_id": "oracle.wire.boundary_loop.l0005"
+        }
+      ],
+      "phase": "imported",
+      "trim_domain_class": "convex_simple_region"
+    }
+  ],
+  "oracle": {
+    "independent_from_production_classifier": true,
+    "method": "analytic_derivation",
+    "references": [
+      "fixtures/generator/fixture_generator.cpp recipe solid.cylinder.partial",
+      "independent incidence derivation for a 3*pi/2 capped cylindrical sector",
+      "post-STEP metadata solid.cylinder.partial from the no-processing AP242 round trip"
+    ],
+    "statement": "A 3*pi/2 cylindrical sector has one cylindrical patch, two planar sector caps, and two radial closure planes. The two circular arcs, two outer axial lines, four radial cap lines, and one shared axis line give nine edges and six vertices; paired face uses yield eighteen edge and thirty-six endpoint occurrences."
+  },
+  "schema_version": "1.0.0",
+  "tolerances": {
+    "edges_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "faces_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    },
+    "vertices_metres": {
+      "maximum": 1e-10,
+      "minimum": 1e-10
+    }
+  },
+  "units": {
+    "coordinate_space": "right_handed_si_metres_radians",
+    "scale_to_metres": 0.001,
+    "source_unit": "millimetre"
+  }
+}
