@@ -7,6 +7,8 @@ may supersede a result but must not rewrite what an earlier run proved.
 - `m0-legacy-baseline-2026-07-17.md` - pre-rewrite Release test baseline.
 - `m0-strict-build-2026-07-17.md` - MSVC warnings-as-errors and static-analysis build evidence.
 - `m0-parallel-test-isolation-2026-07-17.md` - process-isolated temporary artifacts and concurrent strict/static test evidence.
+- `m0-windows-clean-legacy-removal-2026-07-17.md` - clean MSVC build/analyzer,
+  retired source deletion, single-owner build graph, and secure CLI proof.
 - `m1-secure-import-2026-07-17.md` - processing-disabled source/working import contract evidence.
 - `m2-reconnaissance-2026-07-17.md` - total face/edge classification and planar projection evidence.
 - `m3-interval-solver-2026-07-17.md` - exact equality/minimum/parity count assignment evidence.

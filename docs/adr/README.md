@@ -38,3 +38,5 @@ Current records:
   boundary identity.
 - `ADR-0020-bounded-exact-chain-sums.md` - exact independent boundary-chain
   totals with deterministic complexity and unsupported-coupling refusals.
+- `ADR-0021-retire-legacy-production-generators.md` - physical removal of the
+  retired geometry engines after secure routing and baseline capture.

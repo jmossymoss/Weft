@@ -2,7 +2,7 @@
 
 | ID | Route | Why blocked | Proof required to unblock | Status |
 |---|---|---|---|---|
-| BR-001 | Legacy/experimental generator in production | Every reachable product mesh route is secure-only; `cache-check` explicitly refuses. Historical generators and CLI benchmark bodies remain compiled only for frozen evidence | Remove dormant generator/benchmark code after equivalent secure gates exist | ENFORCED |
+| BR-001 | Legacy/experimental generator in production | Every reachable product mesh route is secure-only; `cache-check` explicitly refuses. Retired generator implementations, CLI benchmark bodies, and the frozen executable pipeline test were removed in `9ec3f3f` | Reintroduction requires a new ADR and complete secure-core proof; historical source may not be restored as a selector or fallback | ENFORCED |
 | BR-002 | Default unrestricted OCCT healing | It mutates the only retained shape and cannot prove source correspondence | Immutable source import plus bounded repair profile and complete certificate | OPEN |
 | BR-003 | P-curve synthesis in conservative repair | New representation data is not source evidence | Explicit compatibility profile, ADR, discrepancy proof, and source-to-working mapping | OPEN |
 | BR-004 | Face-local edge sampling | Equal coordinates/counts do not prove shared identity or phase | Immutable canonical boundary with per-coedge UV mappings and registration witnesses | OPEN |
