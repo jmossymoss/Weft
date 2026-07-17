@@ -46,3 +46,6 @@ Current records:
 - `ADR-0023-topology-isolated-conservative-working-copy.md` - faithful
   topology isolation without p-curve materialization, exact-use rebinding, and
   independently certified identity correspondence.
+- `ADR-0024-bounded-parameterization-flag-reconciliation.md` - flag-only
+  SameParameter/SameRange reconciliation after complete stored-p-curve range
+  and source-tolerance proof.

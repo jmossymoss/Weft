@@ -16,6 +16,9 @@ may supersede a result but must not rewrite what an earlier run proved.
 - `m1-topology-isolated-working-copy-2026-07-17.md` - byte-identical but
   TShape-distinct conservative working topology, rejected OCCT copy routes,
   exact-use rebinding, and full Windows corpus proof.
+- `m1-bounded-parameterization-repair-2026-07-17.md` - flag-only
+  SameParameter/SameRange repair, exact modified correspondence, complete
+  p-curve-use evidence, and adversarial refusals.
 - `m2-reconnaissance-2026-07-17.md` - total face/edge classification and planar projection evidence.
 - `m3-interval-solver-2026-07-17.md` - exact equality/minimum/parity count assignment evidence.
 - `m3-canonical-boundaries-2026-07-17.md` - atomic shared-edge samples, UV uses, and azimuth registration evidence.

@@ -32,10 +32,11 @@ B-rep digest. That is a representation change, not a valid identity copy.
 - Exact XDE leaf uses are rebound through the copier's complete TShape map.
   OCCT `BRepTools_History` is used only for its supported vertex, edge, face,
   and solid families.
-- Higher-order identity correspondence uses equal canonical native B-rep
-  digests plus equal independently validated occurrence paths and metadata.
-  Digest equality alone never makes an invalid or incomplete topology
-  meshable.
+- Higher-order correspondence uses the copier's exact TShape-derivation map
+  plus equal independently validated occurrence paths and metadata. Equal
+  canonical native B-rep digests determine whether the mapped relation is an
+  identity rather than a modification; a digest is never mapping evidence by
+  itself. ADR-0024 supersedes the original digest/order mapping mechanism.
 - Compatibility repair continues to receive a geometry-deep copy before any
   historical mutation and remains non-meshable until its non-identity
   occurrence correspondence is complete.
