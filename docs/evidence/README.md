@@ -19,4 +19,5 @@ may supersede a result but must not rewrite what an earlier run proved.
 - `m4-certified-planar-box-2026-07-17.md` - no-weld global canonical assembly, closed-box incidence, provenance, and MeshingResult evidence.
 - `m4-planar-hole-cdt-2026-07-17.md` - exact visibility bridges, constrained planar holes, and real perforated-face certification evidence.
 - `m4-m6-certified-cylinder-2026-07-17.md` - registered periodic wall, analytic curved error checks, and closed capped-cylinder certification evidence.
+- `m6-secure-orchestration-2026-07-17.md` - atomic plane/cylinder/through-hole secure pipeline and combined certificate evidence.
 - `m1-m2-frozen-corpus-2026-07-17.md` - frozen 106-record catalogue, committed STEP outcomes, and 77-fixture import/accounting evidence.
