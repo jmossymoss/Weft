@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <limits>
 #include <utility>
 
@@ -237,6 +238,30 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                 "working edge does not resolve to one source edge", {edgeId});
         }
 
+        // A seam face traverses this edge with two coedge occurrences whose
+        // orientations must pair bijectively with the two stored p-curves;
+        // each occurrence owns exactly its own oriented representation.
+        std::map<StableId, std::vector<const CoedgeRecord*>> coedgesByFace;
+        for (const CoedgeRecord& coedge : snapshot.coedges) {
+            if (coedge.edgeId == edgeId) {
+                coedgesByFace[coedge.faceId].push_back(&coedge);
+            }
+        }
+        for (const auto& [faceId, occurrences] : coedgesByFace) {
+            if (occurrences.size() == 1) continue;
+            const bool paired = occurrences.size() == 2 &&
+                occurrences[0]->orientation != occurrences[1]->orientation &&
+                !occurrences[0]->pcurveRepresentations.empty() &&
+                !occurrences[1]->pcurveRepresentations.empty();
+            if (!paired) {
+                return buildFailure(
+                    report, "boundary.seam_occurrence_unresolved",
+                    "repeated wire occurrences of this edge cannot be paired "
+                    "one-to-one with oriented stored p-curves",
+                    {edgeId, faceId});
+            }
+        }
+
         std::vector<MappingState> mappings;
         for (const CoedgeRecord& coedge : snapshot.coedges) {
             if (coedge.edgeId != edgeId) continue;
@@ -263,12 +288,9 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                      BoundaryUvMappingKind::DerivedPlanarProjection, periods});
                 continue;
             }
-            for (const PcurveRef& representation :
-                 coedge.pcurveRepresentations) {
-                mappings.push_back(
-                    {&coedge, face, representation,
-                     BoundaryUvMappingKind::StoredPcurve, periods});
-            }
+            mappings.push_back(
+                {&coedge, face, coedge.pcurveRepresentations.front(),
+                 BoundaryUvMappingKind::StoredPcurve, periods});
         }
         if (mappings.empty()) {
             return buildFailure(report, "boundary.edge_has_no_coedge",
