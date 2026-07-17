@@ -125,10 +125,18 @@ struct CoedgeRecord {
     std::vector<std::string> conditionCodes;
 };
 
+struct EdgeTopologyRecord {
+    StableId id;
+    std::optional<StableId> lowerVertex;
+    std::optional<StableId> upperVertex;
+    bool degenerate = false;
+};
+
 struct BRepSnapshot {
     Model model;
     std::vector<TopologyOccurrence> occurrences;
     std::vector<CoedgeRecord> coedges;
+    std::vector<EdgeTopologyRecord> edgeTopology;
 };
 
 struct SourceBRep {
@@ -254,6 +262,14 @@ struct SurfaceEvaluation {
     std::optional<std::array<double, 3>> unitNormal;
 };
 
+struct PlanarProjectionEvaluation {
+    StableId faceId;
+    std::array<double, 3> inputPosition{};
+    std::array<double, 2> uv{};
+    std::array<double, 3> surfacePosition{};
+    double discrepancy = 0.0;
+};
+
 struct CurveOnSurfaceEvaluation {
     PcurveRef reference;
     double edgeParameter = 0.0;
@@ -289,6 +305,8 @@ public:
         PcurveRef representation, double parameter) const = 0;
     virtual EvaluationResult<SurfaceEvaluation> evaluateSurface(
         StableId face, std::array<double, 2> uv) const = 0;
+    virtual EvaluationResult<PlanarProjectionEvaluation> projectPointToPlane(
+        StableId face, std::array<double, 3> position) const = 0;
     virtual EvaluationResult<CurveOnSurfaceEvaluation> evaluateCurveOnSurface(
         PcurveRef representation, double edgeParameter) const = 0;
 };

@@ -4,9 +4,12 @@
 #include "weft/io/system.hpp"
 
 #include <BRepCheck_Analyzer.hxx>
+#include <BRepAdaptor_Surface.hxx>
 #include <BRepTools.hxx>
 #include <BRepTools_WireExplorer.hxx>
 #include <BRep_Tool.hxx>
+#include <ElSLib.hxx>
+#include <GeomAbs_SurfaceType.hxx>
 #include <Geom2d_Curve.hxx>
 #include <Geom_Curve.hxx>
 #include <Geom_Surface.hxx>
@@ -95,6 +98,45 @@ BRepSnapshot buildSnapshot(Model model) {
     addOccurrences(wires, StableIdKind::Wire);
     addOccurrences(snapshot.model.edges, StableIdKind::Edge);
     addOccurrences(vertices, StableIdKind::Vertex);
+
+    snapshot.edgeTopology.reserve(
+        static_cast<std::size_t>(snapshot.model.edges.Extent()));
+    for (int edgeIndex = 1; edgeIndex <= snapshot.model.edges.Extent();
+         ++edgeIndex) {
+        const TopoDS_Edge edge =
+            TopoDS::Edge(snapshot.model.edges(edgeIndex));
+        EdgeTopologyRecord record;
+        record.id = stableId(StableIdKind::Edge, edgeIndex);
+        record.degenerate = BRep_Tool::Degenerated(edge);
+        try {
+            TopoDS_Vertex firstVertex;
+            TopoDS_Vertex lastVertex;
+            TopExp::Vertices(edge, firstVertex, lastVertex, true);
+            const auto vertexId = [&](const TopoDS_Vertex& vertex)
+                -> std::optional<StableId> {
+                if (vertex.IsNull()) return std::nullopt;
+                const int index = vertices.FindIndex(vertex);
+                if (index <= 0) return std::nullopt;
+                return stableId(StableIdKind::Vertex, index);
+            };
+            record.lowerVertex = vertexId(firstVertex);
+            record.upperVertex = vertexId(lastVertex);
+            if (!firstVertex.IsNull() && !lastVertex.IsNull() &&
+                !firstVertex.IsSame(lastVertex)) {
+                const double firstParameter =
+                    BRep_Tool::Parameter(firstVertex, edge);
+                const double lastParameter =
+                    BRep_Tool::Parameter(lastVertex, edge);
+                if (lastParameter < firstParameter) {
+                    std::swap(record.lowerVertex, record.upperVertex);
+                }
+            }
+        } catch (const Standard_Failure&) {
+            record.lowerVertex.reset();
+            record.upperVertex.reset();
+        }
+        snapshot.edgeTopology.push_back(std::move(record));
+    }
 
     std::uint64_t coedgeOrdinal = 0;
     for (int faceIndex = 1; faceIndex <= snapshot.model.faces.Extent(); ++faceIndex) {
@@ -309,6 +351,56 @@ public:
         } catch (const Standard_Failure& error) {
             return evaluationFailure<SurfaceEvaluation>(
                 "geometry.surface_evaluation_failure", error.what(), faceId);
+        }
+    }
+
+    EvaluationResult<PlanarProjectionEvaluation> projectPointToPlane(
+        StableId faceId, std::array<double, 3> position) const override {
+        const TopoDS_Face face = faceShape(faceId);
+        if (face.IsNull()) {
+            return evaluationFailure<PlanarProjectionEvaluation>(
+                "geometry.face_not_found", "face id does not resolve", faceId);
+        }
+        if (!std::all_of(position.begin(), position.end(),
+                         [](double coordinate) {
+                             return std::isfinite(coordinate);
+                         })) {
+            return evaluationFailure<PlanarProjectionEvaluation>(
+                "geometry.planar_projection_input_invalid",
+                "planar projection position is non-finite", faceId);
+        }
+        try {
+            BRepAdaptor_Surface adaptor(face, true);
+            if (adaptor.GetType() != GeomAbs_Plane) {
+                return evaluationFailure<PlanarProjectionEvaluation>(
+                    "geometry.surface_not_plane",
+                    "planar projection is restricted to exactly classified planes",
+                    faceId);
+            }
+            double u = 0.0;
+            double v = 0.0;
+            const gp_Pnt point(position[0], position[1], position[2]);
+            ElSLib::Parameters(adaptor.Plane(), point, u, v);
+            const auto surface = evaluateSurface(faceId, {u, v});
+            if (!surface) {
+                return evaluationFailure<PlanarProjectionEvaluation>(
+                    "geometry.planar_projection_surface_failure",
+                    "projected planar UV did not evaluate", faceId);
+            }
+            PlanarProjectionEvaluation evaluation;
+            evaluation.faceId = faceId;
+            evaluation.inputPosition = position;
+            evaluation.uv = {u, v};
+            evaluation.surfacePosition = surface.value->position;
+            evaluation.discrepancy = std::hypot(
+                position[0] - evaluation.surfacePosition[0],
+                position[1] - evaluation.surfacePosition[1],
+                position[2] - evaluation.surfacePosition[2]);
+            return EvaluationResult<PlanarProjectionEvaluation>{evaluation,
+                                                                 std::nullopt};
+        } catch (const Standard_Failure& error) {
+            return evaluationFailure<PlanarProjectionEvaluation>(
+                "geometry.planar_projection_failure", error.what(), faceId);
         }
     }
 
