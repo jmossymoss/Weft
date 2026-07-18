@@ -877,8 +877,14 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
             }
             const bool evaluates = exactSurfaceEvaluates(
                 *imported.workingEvaluator, faceId, u0, u1, v0, v1);
+            // Analytic cylinders/cones/spheres/tori may derive UV via ElSLib
+            // when STEP omitted p-curves (common on Plasticity MP9).
+            const bool analyticUvDerivable =
+                family.code == "plane" || family.code == "cylinder" ||
+                family.code == "cone" || family.code == "sphere" ||
+                family.code == "torus";
             const bool representationReady =
-                family.code == "plane" ||
+                analyticUvDerivable ||
                 curvedFaceHasExactMappings(imported, faceId);
             const bool mappedFourSided =
                 std::find(record.conditionCodes.begin(),

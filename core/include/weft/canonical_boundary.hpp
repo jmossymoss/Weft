@@ -174,8 +174,9 @@ struct AzimuthRegistrationResult {
     explicit operator bool() const noexcept { return permutation.has_value(); }
 };
 
-// Returns a pure cyclic permutation aligning two equally sampled coaxial
-// rings. Reflections and non-uniform/twisted pairs fail closed.
+// Returns a cyclic permutation aligning two equally sampled coaxial rings.
+// Opposite rim winding (common on open cylinder bands) is handled by a
+// reflection-aware permutation. Non-uniform/twisted pairs fail closed.
 AzimuthRegistrationResult azimuthRegistration(
     const std::vector<std::array<double, 3>>& ringA,
     const std::vector<std::array<double, 3>>& ringB);

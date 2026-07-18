@@ -271,11 +271,17 @@ void testAzimuthRegistration() {
         weft::azimuthRegistration(rotatedOriginLower, rotatedOriginUpper);
     CHECK(rotatedOrigin);
 
+    // Opposite rim winding (open cylinder bands / MP9) is supported via a
+    // reflection-aware cyclic permutation.
     const auto reflected = weft::azimuthRegistration(
         lower, ring(1.0, 0.0, -1.0));
-    CHECK(!reflected);
-    CHECK(reflected.failure &&
-          reflected.failure->code == "boundary.azimuth_reflection");
+    CHECK(reflected);
+    if (reflected) {
+        CHECK(reflected.permutation->size() == 12);
+        std::set<std::uint32_t> seen(reflected.permutation->begin(),
+                                     reflected.permutation->end());
+        CHECK(seen.size() == 12);
+    }
 
     const auto twisted = weft::azimuthRegistration(
         lower, ring(1.0, 0.0, 1.0, 4));

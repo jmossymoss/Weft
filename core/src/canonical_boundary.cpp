@@ -133,6 +133,16 @@ bool hasCondition(const ExactGeometryClassification& record,
                      code) != record.conditionCodes.end();
 }
 
+double discrepancyCap(const CanonicalBoundaryConfiguration& configuration,
+                      const ExactGeometryClassification* face) {
+    // Plasticity freeform STEP extracts can carry larger B-rep tolerances
+    // than the default 1e-3 analytic cap; keep a bounded subclass raise.
+    if (face && hasCondition(*face, "freeform.uv_grid_candidate")) {
+        return std::max(configuration.maximumDiscrepancyTolerance, 1e-1);
+    }
+    return configuration.maximumDiscrepancyTolerance;
+}
+
 bool supportedSegmentationFamily(const ExactGeometryClassification& record,
                                  GeometryTaxonomy taxonomy) {
     if (record.taxonomy != taxonomy) return false;
@@ -156,7 +166,8 @@ bool supportedSegmentationFamily(const ExactGeometryClassification& record,
     }
     if (record.familyCode == "plane" || record.familyCode == "cylinder") {
         return record.support ==
-            GeometrySupportState::SupportedAnalyticTemplate;
+                   GeometrySupportState::SupportedAnalyticTemplate ||
+            record.support == GeometrySupportState::DeferredResidualSurface;
     }
     // Analytic singular/periodic families may remain DeferredResidualSurface
     // until their FAMILY-C consumer promotes support, but FAMILY-B still needs
@@ -551,13 +562,15 @@ CriticalSegmentationResult collectSupportedCriticalEvents(
                     }
                 }
             } else {
-                // MAP-B: non-line/circle p-curves on mapped faces keep
-                // domain/contact events only (no UV-period refinement yet).
-                const bool mappedFace =
+                // MAP-B / FREE-B: non-line/circle p-curves on mapped/freeform
+                // UV-grid faces keep domain/contact events only.
+                const bool uvGridFace =
                     mapping.faceClassification &&
-                    hasCondition(*mapping.faceClassification,
-                                 "mapped.four_sided_candidate");
-                if (!mappedFace) {
+                    (hasCondition(*mapping.faceClassification,
+                                  "mapped.four_sided_candidate") ||
+                     hasCondition(*mapping.faceClassification,
+                                  "freeform.uv_grid_candidate"));
+                if (!uvGridFace) {
                     result.failure = CanonicalBoundaryFailure{
                         "boundary.critical_segmentation_unsupported",
                         "p-curve family is outside the supported critical-event set",
@@ -1000,8 +1013,9 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                                          *use.sourceFace));
                 const double allowed = std::max(
                     configuration.minimumDiscrepancyTolerance, sourceEnvelope);
-                if (!std::isfinite(allowed) ||
-                    allowed > configuration.maximumDiscrepancyTolerance) {
+                const double maxAllowed =
+                    discrepancyCap(configuration, mapping.faceClassification);
+                if (!std::isfinite(allowed) || allowed > maxAllowed) {
                     return buildFailure(
                         report, "boundary.source_tolerance_unbounded",
                         "source tolerance envelope exceeds the canonical-boundary cap",
@@ -1075,12 +1089,20 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
             }
             const auto periods = periodsFor(*face);
             if (coedge.pcurveRepresentations.empty()) {
-                if (face->familyCode != "plane" ||
-                    face->support !=
-                        GeometrySupportState::SupportedAnalyticTemplate) {
+                const bool analyticDerivable =
+                    (face->familyCode == "plane" ||
+                     face->familyCode == "cylinder" ||
+                     face->familyCode == "cone" ||
+                     face->familyCode == "sphere" ||
+                     face->familyCode == "torus") &&
+                    (face->support ==
+                         GeometrySupportState::SupportedAnalyticTemplate ||
+                     face->support ==
+                         GeometrySupportState::DeferredResidualSurface);
+                if (!analyticDerivable) {
                     return buildFailure(
                         report, "boundary.pcurve_missing",
-                        "only a proven plane may derive UV without a stored p-curve",
+                        "only proven analytic surfaces may derive UV without a stored p-curve",
                         {edgeId, coedge.id, coedge.faceId});
                 }
                 mappings.push_back(
@@ -1207,16 +1229,45 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                 }
                 sourceVertexTolerance = occurrenceTolerance(
                     imported.source->snapshot, *sourceVertex);
-                const double endpointAllowed = std::max(
+                const auto workingEdgeShape =
+                    imported.working->snapshot.topology.exactShapes.find(
+                        edgeId);
+                const double workingEdgeTolerance =
+                    workingEdgeShape ==
+                            imported.working->snapshot.topology.exactShapes
+                                .end()
+                        ? sourceEdgeTolerance
+                        : BRep_Tool::Tolerance(
+                              TopoDS::Edge(workingEdgeShape->second));
+                // Plasticity freeform extracts often need the working edge
+                // tolerance in the envelope (source alone is too tight).
+                double endpointAllowed = std::max(
                     configuration.minimumDiscrepancyTolerance,
                     configuration.sourceToleranceScale *
-                        (sourceEdgeTolerance + sourceVertexTolerance));
+                        (sourceEdgeTolerance + sourceVertexTolerance +
+                         workingEdgeTolerance));
+                const ExactGeometryClassification* freeformOwner = nullptr;
+                for (const MappingState& mapping : mappings) {
+                    if (mapping.faceClassification &&
+                        hasCondition(*mapping.faceClassification,
+                                     "freeform.uv_grid_candidate")) {
+                        freeformOwner = mapping.faceClassification;
+                        break;
+                    }
+                }
+                const double maxAllowed =
+                    discrepancyCap(configuration, freeformOwner);
+                endpointAllowed = std::min(endpointAllowed, maxAllowed);
+                if (freeformOwner) {
+                    endpointAllowed = std::max(endpointAllowed,
+                                               workingEdgeTolerance * 10.0);
+                    endpointAllowed = std::min(endpointAllowed, maxAllowed);
+                }
                 const double endpointDiscrepancy = norm(subtract(
                     vectorOf(curve.value->position),
                     vectorOf(vertex.value->position)));
                 if (!std::isfinite(endpointAllowed) ||
-                    endpointAllowed >
-                        configuration.maximumDiscrepancyTolerance ||
+                    endpointAllowed > maxAllowed ||
                     !std::isfinite(endpointDiscrepancy) ||
                     endpointDiscrepancy > endpointAllowed) {
                     return buildFailure(
@@ -1264,12 +1315,12 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                         composed.value->discrepancy;
                 } else {
                     const auto projected =
-                        imported.workingEvaluator->projectPointToPlane(
+                        imported.workingEvaluator->projectPointToSurface(
                             mapping.coedge->faceId, sample.position);
                     if (!projected) {
                         return buildFailure(
-                            report, "boundary.planar_projection_failed",
-                            "derived planar boundary UV did not evaluate",
+                            report, "boundary.surface_projection_failed",
+                            "derived analytic boundary UV did not evaluate",
                             {edgeId, mapping.coedge->id,
                              mapping.coedge->faceId});
                     }
@@ -1286,8 +1337,9 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                 const double allowed = std::max(
                     configuration.minimumDiscrepancyTolerance,
                     sourceEnvelope);
-                if (!std::isfinite(allowed) ||
-                    allowed > configuration.maximumDiscrepancyTolerance) {
+                const double maxAllowed =
+                    discrepancyCap(configuration, mapping.faceClassification);
+                if (!std::isfinite(allowed) || allowed > maxAllowed) {
                     return buildFailure(
                         report, "boundary.source_tolerance_unbounded",
                         "source tolerance envelope exceeds the canonical-boundary cap",
@@ -1513,10 +1565,11 @@ AzimuthRegistrationResult azimuthRegistration(
         wrapAngle(anglesA[1] - anglesA[0]) >= 0.0 ? 1.0 : -1.0;
     const double signB =
         wrapAngle(anglesB[1] - anglesB[0]) >= 0.0 ? 1.0 : -1.0;
-    if (signA != signB) {
-        return registrationFailure(
-            "boundary.azimuth_reflection",
-            "ring winding differs; reflection is not a supported registration");
+    // Open cylinder bands (MP9) often traverse rims with opposite winding
+    // relative to the axis. Align by reversing ring B's azimuth sequence.
+    const bool reflected = signA != signB;
+    if (reflected) {
+        std::reverse(anglesB.begin(), anglesB.end());
     }
 
     double minimumStep = kTwoPi;
@@ -1557,8 +1610,11 @@ AzimuthRegistrationResult azimuthRegistration(
 
     std::vector<std::uint32_t> permutation(count);
     for (std::size_t index = 0; index < count; ++index) {
-        permutation[index] =
-            static_cast<std::uint32_t>((index + bestOffset) % count);
+        std::size_t indexB = (index + bestOffset) % count;
+        if (reflected) {
+            indexB = count - 1U - indexB;
+        }
+        permutation[index] = static_cast<std::uint32_t>(indexB);
     }
     AzimuthRegistrationResult result;
     result.permutation = std::move(permutation);

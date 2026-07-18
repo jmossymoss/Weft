@@ -443,6 +443,10 @@ public:
         StableId face, std::array<double, 2> uv) const = 0;
     virtual EvaluationResult<PlanarProjectionEvaluation> projectPointToPlane(
         StableId face, std::array<double, 3> position) const = 0;
+    // Analytic (plane/cylinder/cone/sphere/torus) UV derivation from a 3D
+    // point via ElSLib. Used when a coedge has no stored p-curve.
+    virtual EvaluationResult<PlanarProjectionEvaluation> projectPointToSurface(
+        StableId face, std::array<double, 3> position) const = 0;
     virtual EvaluationResult<CurveOnSurfaceEvaluation> evaluateCurveOnSurface(
         PcurveRef representation, double edgeParameter) const = 0;
 };

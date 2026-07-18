@@ -255,14 +255,14 @@ void testNamedRefusals(const std::filesystem::path& path,
         }
     }
     CHECK(circleCount == 2);
-    const weft::CylinderWallResult reflectedRefusal =
+    // Opposite rim sample order must still register (reflection-aware).
+    const weft::CylinderWallResult reflectedWall =
         weft::buildFullCylinderWall(
             prepared.imported, prepared.reconnaissance, reflected,
             prepared.cylinderFace, acceptedConfiguration());
-    CHECK(!reflectedRefusal);
-    CHECK(reflectedRefusal.failure &&
-          reflectedRefusal.failure->code ==
-              "boundary.azimuth_reflection");
+    CHECK(reflectedWall);
+    CHECK(reflectedWall.value &&
+          !reflectedWall.value->triangles.empty());
 
     const auto mismatched = prepare(path, 32, 64, 1);
     CHECK(mismatched.has_value());

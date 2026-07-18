@@ -379,7 +379,7 @@ public:
         }
     }
 
-    EvaluationResult<PlanarProjectionEvaluation> projectPointToPlane(
+    EvaluationResult<PlanarProjectionEvaluation> projectPointToSurface(
         StableId faceId, std::array<double, 3> position) const override {
         const TopoDS_Face face = faceShape(faceId);
         if (face.IsNull()) {
@@ -391,26 +391,41 @@ public:
                              return std::isfinite(coordinate);
                          })) {
             return evaluationFailure<PlanarProjectionEvaluation>(
-                "geometry.planar_projection_input_invalid",
-                "planar projection position is non-finite", faceId);
+                "geometry.surface_projection_input_invalid",
+                "surface projection position is non-finite", faceId);
         }
         try {
             BRepAdaptor_Surface adaptor(face, true);
-            if (adaptor.GetType() != GeomAbs_Plane) {
-                return evaluationFailure<PlanarProjectionEvaluation>(
-                    "geometry.surface_not_plane",
-                    "planar projection is restricted to exactly classified planes",
-                    faceId);
-            }
             double u = 0.0;
             double v = 0.0;
             const gp_Pnt point(position[0], position[1], position[2]);
-            ElSLib::Parameters(adaptor.Plane(), point, u, v);
+            switch (adaptor.GetType()) {
+            case GeomAbs_Plane:
+                ElSLib::Parameters(adaptor.Plane(), point, u, v);
+                break;
+            case GeomAbs_Cylinder:
+                ElSLib::Parameters(adaptor.Cylinder(), point, u, v);
+                break;
+            case GeomAbs_Cone:
+                ElSLib::Parameters(adaptor.Cone(), point, u, v);
+                break;
+            case GeomAbs_Sphere:
+                ElSLib::Parameters(adaptor.Sphere(), point, u, v);
+                break;
+            case GeomAbs_Torus:
+                ElSLib::Parameters(adaptor.Torus(), point, u, v);
+                break;
+            default:
+                return evaluationFailure<PlanarProjectionEvaluation>(
+                    "geometry.surface_projection_unsupported",
+                    "surface projection supports only plane, cylinder, cone, sphere, and torus",
+                    faceId);
+            }
             const auto surface = evaluateSurface(faceId, {u, v});
             if (!surface) {
                 return evaluationFailure<PlanarProjectionEvaluation>(
-                    "geometry.planar_projection_surface_failure",
-                    "projected planar UV did not evaluate", faceId);
+                    "geometry.surface_projection_surface_failure",
+                    "projected surface UV did not evaluate", faceId);
             }
             PlanarProjectionEvaluation evaluation;
             evaluation.faceId = faceId;
@@ -425,9 +440,34 @@ public:
                                                                  std::nullopt};
         } catch (const Standard_Failure& error) {
             return evaluationFailure<PlanarProjectionEvaluation>(
+                "geometry.surface_projection_failure",
+                occtFailureMessage(error), faceId);
+        }
+    }
+
+    EvaluationResult<PlanarProjectionEvaluation> projectPointToPlane(
+        StableId faceId, std::array<double, 3> position) const override {
+        const auto projected = projectPointToSurface(faceId, position);
+        if (!projected) return projected;
+        const TopoDS_Face face = faceShape(faceId);
+        if (face.IsNull()) {
+            return evaluationFailure<PlanarProjectionEvaluation>(
+                "geometry.face_not_found", "face id does not resolve", faceId);
+        }
+        try {
+            BRepAdaptor_Surface adaptor(face, true);
+            if (adaptor.GetType() != GeomAbs_Plane) {
+                return evaluationFailure<PlanarProjectionEvaluation>(
+                    "geometry.surface_not_plane",
+                    "planar projection is restricted to exactly classified planes",
+                    faceId);
+            }
+        } catch (const Standard_Failure& error) {
+            return evaluationFailure<PlanarProjectionEvaluation>(
                 "geometry.planar_projection_failure",
                 occtFailureMessage(error), faceId);
         }
+        return projected;
     }
 
     EvaluationResult<CurveOnSurfaceEvaluation> evaluateCurveOnSurface(

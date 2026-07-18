@@ -3,6 +3,7 @@ build*/
 *.obj
 *.step
 !tests/fixtures/*.step
+!tests/fixtures/**/*.step
 compile_commands.json
 .cache/
 imgui.ini

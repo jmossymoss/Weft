@@ -910,6 +910,42 @@ void testApexCone() {
     }
 }
 
+std::filesystem::path findMp9Extract(const char* name) {
+    // CTest runs from build/<preset>/tests; CLI from repo root.
+    const std::filesystem::path candidates[] = {
+        std::filesystem::path("tests/fixtures/mp9_extracts") / name,
+        std::filesystem::path("../tests/fixtures/mp9_extracts") / name,
+        std::filesystem::path("../../tests/fixtures/mp9_extracts") / name,
+        std::filesystem::path("../../../tests/fixtures/mp9_extracts") / name,
+        std::filesystem::path("fixtures/mp9_extracts") / name,
+    };
+    for (const auto& candidate : candidates) {
+        if (std::filesystem::exists(candidate)) return candidate;
+    }
+    return {};
+}
+
+void testMp9ExtractFaces() {
+    // Plasticity MP9 face 10 (open cylinder band) and face 28 (5-edge freeform).
+    for (const char* name :
+         {"cylinder_band.step", "freeform_pent.step"}) {
+        const std::filesystem::path path = findMp9Extract(name);
+        CHECK(!path.empty());
+        if (path.empty()) continue;
+        const weft::ImportedModel imported =
+            weft::importStepSecure(path.string());
+        CHECK(imported.repair.meshable);
+        const weft::SecureMeshingResult result =
+            weft::generateSecureMesh(imported, configuration());
+        CHECK(result);
+        CHECK(result.value &&
+              result.value->certified.triangles.size() > 0);
+        std::printf("WEFT_MP9_EXTRACT %s tris=%zu\n", name,
+                    result.value ? result.value->certified.triangles.size()
+                                 : 0U);
+    }
+}
+
 void testPartialCylinder() {
     TemporaryStep step("partial_cylinder");
     weft::writeStep(weft::makeFixture("partial_cylinder"),
@@ -969,6 +1005,7 @@ int main() {
         testSecureCacheInvalidation();
         testNamedLodReporting();
         testPartialCylinder();
+        testMp9ExtractFaces();
         testCutoutHoleBody();
         testCutoutPlateSlotBody();
         testCutoutDeferredRefusals();
