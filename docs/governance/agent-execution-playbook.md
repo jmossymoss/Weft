@@ -828,7 +828,7 @@ only with indexed evidence.
 
 ### WP-115 — Close M4 tessellation floor gate
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M4
 - Prerequisites: WP-110
 - Goal: prove the M4 ledger gate for supported automatic families and mark M4
@@ -838,7 +838,7 @@ only with indexed evidence.
 
 ### WP-116 — Close M5 non-vacuous validation gate
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M5
 - Prerequisites: WP-115
 - Goal: prove required validators are non-vacuous and adversaries refuse by
@@ -848,7 +848,7 @@ only with indexed evidence.
 
 ### WP-117 — Close M6 planar and cylinder templates gate
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M6
 - Prerequisites: WP-116
 - Goal: prove the M6 fixture family end to end; mark M6 `PASSED`.
