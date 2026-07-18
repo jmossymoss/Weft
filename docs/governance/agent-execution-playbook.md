@@ -536,7 +536,7 @@ only with indexed evidence.
 
 ### WP-070 — CONE-A reconnaissance
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-050
 - Goal: exact family/domain/trim classification for cone subjects and stable
