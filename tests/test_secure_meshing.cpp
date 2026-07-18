@@ -371,20 +371,12 @@ void testExactEdgeIntervals() {
 }
 
 void testUnsupportedAndConfigurationRefusals() {
-    const weft::SecureMeshingResult sphere = generateFixture("sphere");
-    CHECK(!sphere);
-    CHECK(sphere.failure);
-    CHECK(sphere.failure &&
-          (sphere.failure->code ==
-               "boundary.critical_segmentation_unsupported" ||
-           sphere.failure->code ==
-               "secure_pipeline.unsupported_surface_family" ||
-           sphere.failure->code ==
-               "secure_pipeline.unsupported_curve_family" ||
-           sphere.failure->code ==
-               "secure_pipeline.degenerate_curve_unsupported" ||
-           sphere.failure->code.rfind("boundary.", 0) == 0 ||
-           sphere.failure->code.rfind("secure_pipeline.", 0) == 0));
+    // Torus remains unsupported until TORUS-C.
+    const weft::SecureMeshingResult torus = generateFixture("torus");
+    CHECK(!torus);
+    CHECK(torus.failure);
+    CHECK(torus.failure->code.rfind("boundary.", 0) == 0 ||
+          torus.failure->code.rfind("secure_pipeline.", 0) == 0);
 
     weft::SecureMeshingConfiguration invalid = configuration();
     invalid.sampling.chordTolerance = -1.0;

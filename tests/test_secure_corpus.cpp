@@ -177,11 +177,12 @@ int main() {
             weft::importStepSecure(path.string());
         ++importSuccess;
         weft::SecureMeshingResult meshed;
-        if (std::string(fixture) == "cone") {
+        if (std::string(fixture) == "cone" || std::string(fixture) == "sphere") {
             weft::SecureMeshingConfiguration settings;
             settings.sampling.chordTolerance = 0.25;
             settings.sampling.normalAngleToleranceRadians = 0.35;
-            settings.sampling.minimumClosedCurveSegments = 8;
+            settings.sampling.minimumClosedCurveSegments =
+                std::string(fixture) == "sphere" ? 16 : 8;
             meshed = weft::generateSecureMesh(imported, settings);
         } else {
             meshed = weft::generateSecureMesh(imported);

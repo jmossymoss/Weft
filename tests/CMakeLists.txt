@@ -65,6 +65,12 @@ weft_enable_strict_warnings(weft_cone_template_tests)
 add_test(NAME cone_template COMMAND weft_cone_template_tests)
 weft_deploy_occt_dlls(weft_cone_template_tests)
 
+add_executable(weft_sphere_template_tests test_sphere_template.cpp)
+target_link_libraries(weft_sphere_template_tests PRIVATE weft_core)
+weft_enable_strict_warnings(weft_sphere_template_tests)
+add_test(NAME sphere_template COMMAND weft_sphere_template_tests)
+weft_deploy_occt_dlls(weft_sphere_template_tests)
+
 add_executable(weft_secure_meshing_tests test_secure_meshing.cpp)
 target_link_libraries(weft_secure_meshing_tests PRIVATE weft_core)
 weft_enable_strict_warnings(weft_secure_meshing_tests)

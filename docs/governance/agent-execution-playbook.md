@@ -17,7 +17,7 @@ Read these in order:
 The product route remains certified-only. OCCT triangle soup, welding, missing
 faces, silent healing, and unproven preview meshes are not export authority.
 The currently certified automatic families are planes (including holes),
-full/partial cylinders, and apex cones.
+full/partial cylinders, apex cones, and spheres.
 
 ## Token and documentation discipline
 
@@ -647,7 +647,7 @@ only with indexed evidence.
 
 ### WP-080 — SPHERE-A reconnaissance
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-075
 - Goal: exact family/domain/trim classification for sphere subjects and stable
@@ -658,7 +658,7 @@ only with indexed evidence.
 
 ### WP-081 — SPHERE-B canonical boundaries
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-080
 - Goal: critical segmentation, dual-pole singular stations, and count
@@ -669,7 +669,7 @@ only with indexed evidence.
 
 ### WP-082 — SPHERE-C certified floor
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-081
 - Goal: boundary-exact sphere tessellation with chord/normal bounds and body
@@ -679,7 +679,7 @@ only with indexed evidence.
 
 ### WP-083 — SPHERE-D modelling topology
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-082
 - Goal: deterministic quads/n-gons above the sphere floor with truthful
@@ -689,7 +689,7 @@ only with indexed evidence.
 
 ### WP-084 — SPHERE-E product integration
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-083
 - Goal: CLI/app/export admit certified sphere results through existing gates.
@@ -698,7 +698,7 @@ only with indexed evidence.
 
 ### WP-085 — SPHERE-F family proof
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-084
 - Goal: isolated, connected, adversarial, density-sweep, corpus, Linux

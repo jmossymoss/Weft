@@ -2,6 +2,7 @@
 
 #include "weft/cone_template.hpp"
 #include "weft/planar_trim_assembly.hpp"
+#include "weft/sphere_template.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -614,8 +615,66 @@ SecureMeshingResult generateSecureMesh(
             faceMeshes.push_back(*wall.value);
             continue;
         }
+        if (face.familyCode == "sphere") {
+            SphereWallConfiguration sphere;
+            sphere.maximumChordDeviation =
+                configuration.sampling.chordTolerance;
+            sphere.maximumNormalDeviationRadians =
+                configuration.sampling.normalAngleToleranceRadians;
+            double sphereRadius = 1.0;
+            if (face.parameterDomains.size() >= 2 &&
+                face.parameterDomains[0].lower &&
+                face.parameterDomains[1].lower &&
+                face.parameterDomains[1].upper) {
+                const double midV = (*face.parameterDomains[1].lower +
+                                     *face.parameterDomains[1].upper) *
+                    0.5;
+                const EvaluationResult<SurfaceEvaluation> equator =
+                    imported.workingEvaluator->evaluateSurface(
+                        face.subjectId, {*face.parameterDomains[0].lower, midV});
+                if (equator) {
+                    sphereRadius = vectorLength(equator.value->position);
+                    if (!(sphereRadius > 0.0)) sphereRadius = 1.0;
+                }
+            }
+            const SegmentCountResult azimuth = circularArcSegmentCount(
+                sphereRadius, 6.28318530717958647692, true,
+                configuration.sampling);
+            if (azimuth && *azimuth.count >= 3) {
+                sphere.azimuthIntervals = *azimuth.count;
+            } else {
+                sphere.azimuthIntervals = std::max<std::uint32_t>(
+                    16, configuration.sampling.minimumClosedCurveSegments);
+            }
+            // Guard parallel-circle sagitta near the equator.
+            sphere.azimuthIntervals =
+                std::max<std::uint32_t>(sphere.azimuthIntervals, 16);
+            const SphereWallResult wall = buildFullSphereWall(
+                imported, reconnaissance, *boundaries.value, face.subjectId,
+                sphere);
+            for (const SphereWallValidationEvidence& evidence :
+                 wall.validation) {
+                appendCoverage(result.validation,
+                               faceCode(evidence.code, face.subjectId),
+                               evidence.expected, evidence.checked,
+                               evidence.skipped, evidence.failed);
+            }
+            if (!wall) {
+                setFailure(result,
+                           wall.failure ? wall.failure->code
+                                        : "secure_pipeline.sphere_failed",
+                           wall.failure
+                               ? wall.failure->message
+                               : "certified sphere construction failed",
+                           wall.failure ? wall.failure->subjects
+                                        : std::vector<StableId>{});
+                return result;
+            }
+            faceMeshes.push_back(*wall.value);
+            continue;
+        }
         setFailure(result, "secure_pipeline.unsupported_surface_family",
-                   "the secure automatic pipeline currently supports only plane, cylinder, and apex-cone faces",
+                   "the secure automatic pipeline currently supports only plane, cylinder, apex-cone, and sphere faces",
                    {face.subjectId});
         return result;
     }

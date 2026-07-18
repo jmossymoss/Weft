@@ -1720,7 +1720,7 @@ void testUnknownExactFamilyInjection() {
         weft::probeSurfaceFamily(static_cast<int>(GeomAbs_Sphere));
     CHECK(sphere.familyCode == "sphere");
     CHECK(sphere.support ==
-          weft::GeometrySupportState::DeferredResidualSurface);
+          weft::GeometrySupportState::SupportedAnalyticTemplate);
 
     const weft::ExactFamilyProbe torus =
         weft::probeSurfaceFamily(static_cast<int>(GeomAbs_Torus));
@@ -1841,35 +1841,35 @@ void testConeReconnaissanceDeferred() {
                 meshed.value ? meshed.value->certified.triangles.size() : 0,
                 meshed.value ? meshed.value->certified.vertices.size() : 0);
 
-    // Sphere residual control: still deferred / named refusal.
-    const std::filesystem::path spherePath =
-        weft::test::uniqueTempPath("weft_secure_core_sphere", ".step");
-    weft::writeStep(weft::makeFixture("sphere"), spherePath.string());
-    const weft::ImportedModel sphere = weft::importStepSecure(
-        spherePath.string(), weft::RepairProfile::Conservative);
-    const weft::ReconnaissanceReport sphereReport = weft::reconnoitre(sphere);
-    CHECK(sphereReport.complete);
-    bool sawDeferredSphere = false;
+    // Torus residual control: still deferred / named refusal.
+    const std::filesystem::path torusPath =
+        weft::test::uniqueTempPath("weft_secure_core_torus", ".step");
+    weft::writeStep(weft::makeFixture("torus"), torusPath.string());
+    const weft::ImportedModel torus = weft::importStepSecure(
+        torusPath.string(), weft::RepairProfile::Conservative);
+    const weft::ReconnaissanceReport torusReport = weft::reconnoitre(torus);
+    CHECK(torusReport.complete);
+    bool sawDeferredTorus = false;
     for (const weft::ExactGeometryClassification& record :
-         sphereReport.records) {
+         torusReport.records) {
         if (record.taxonomy == weft::GeometryTaxonomy::Surface &&
-            record.familyCode == "sphere") {
+            record.familyCode == "torus") {
             CHECK(record.support ==
                   weft::GeometrySupportState::DeferredResidualSurface);
-            sawDeferredSphere = true;
+            sawDeferredTorus = true;
         }
     }
-    CHECK(sawDeferredSphere);
-    const weft::SecureMeshingResult sphereMesh =
-        weft::generateSecureMesh(sphere, settings);
-    CHECK(!sphereMesh);
-    CHECK(sphereMesh.failure);
-    std::printf("WEFT_CONE_A sphere_refusal=%s\n",
-                sphereMesh.failure ? sphereMesh.failure->code.c_str() : "-");
+    CHECK(sawDeferredTorus);
+    const weft::SecureMeshingResult torusMesh =
+        weft::generateSecureMesh(torus, settings);
+    CHECK(!torusMesh);
+    CHECK(torusMesh.failure);
+    std::printf("WEFT_CONE_A torus_refusal=%s\n",
+                torusMesh.failure ? torusMesh.failure->code.c_str() : "-");
 
     std::error_code ignored;
     std::filesystem::remove(conePath, ignored);
-    std::filesystem::remove(spherePath, ignored);
+    std::filesystem::remove(torusPath, ignored);
 }
 
 void testOracleTrimTaxonomySlice() {
