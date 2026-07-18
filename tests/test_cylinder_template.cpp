@@ -280,15 +280,35 @@ void testNamedRefusals(const std::filesystem::path& path,
     const auto axial = prepare(path, 64, 64, 2);
     CHECK(axial.has_value());
     if (axial) {
-        const weft::CylinderWallResult result =
+        const weft::CylinderWallResult missingProvenance =
             weft::buildFullCylinderWall(
                 axial->imported, axial->reconnaissance,
                 axial->boundaries, axial->cylinderFace,
                 acceptedConfiguration());
-        CHECK(!result);
-        CHECK(result.failure &&
-              result.failure->code ==
+        CHECK(!missingProvenance);
+        CHECK(missingProvenance.failure &&
+              missingProvenance.failure->code ==
                   "cylinder.axial_samples_require_interior_provenance");
+
+        weft::CylinderWallConfiguration withRings = acceptedConfiguration();
+        withRings.axialIntervals = 2;
+        const weft::CylinderWallResult certified =
+            weft::buildFullCylinderWall(
+                axial->imported, axial->reconnaissance, axial->boundaries,
+                axial->cylinderFace, withRings);
+        CHECK(certified);
+        CHECK(certified.value &&
+              certified.value->vertices.size() == 64 * 3);
+        CHECK(certified.value &&
+              certified.value->triangles.size() == 64 * 4);
+        std::size_t interiorVertices = 0;
+        if (certified.value) {
+            for (const weft::PlanarTrimVertex& vertex :
+                 certified.value->vertices) {
+                if (vertex.cylinderInterior) ++interiorVertices;
+            }
+        }
+        CHECK(interiorVertices == 64);
     }
 
     weft::CylinderWallConfiguration chord = acceptedConfiguration();

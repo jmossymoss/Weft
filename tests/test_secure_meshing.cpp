@@ -373,12 +373,23 @@ void testUnsupportedAndConfigurationRefusals() {
 
     weft::SecureMeshingConfiguration axial = configuration();
     axial.cylinderAxialIntervals = 2;
-    const weft::SecureMeshingResult axialRefusal =
+    const weft::SecureMeshingResult axialCertified =
         generateFixture("cylinder", axial);
-    CHECK(!axialRefusal);
-    CHECK(axialRefusal.failure &&
-          axialRefusal.failure->code ==
-              "cylinder.axial_samples_require_interior_provenance");
+    CHECK(axialCertified);
+    CHECK(axialCertified.value &&
+          axialCertified.value->certified.triangles.size() > 0);
+    CHECK(axialCertified.validation.complete());
+    bool sawInterior = false;
+    if (axialCertified.value) {
+        for (const weft::CertifiedVertex& vertex :
+             axialCertified.value->certified.vertices) {
+            if (vertex.cylinderInterior) {
+                sawInterior = true;
+                CHECK(vertex.cylinderInterior->axialRing == 1);
+            }
+        }
+    }
+    CHECK(sawInterior);
 }
 
 void testTemplateChainSumConsumer() {

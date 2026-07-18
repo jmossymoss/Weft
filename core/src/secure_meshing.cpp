@@ -544,6 +544,7 @@ SecureMeshingResult generateSecureMesh(
                 configuration.sampling.chordTolerance;
             cylinder.maximumNormalDeviationRadians =
                 configuration.sampling.normalAngleToleranceRadians;
+            cylinder.axialIntervals = configuration.cylinderAxialIntervals;
             const CylinderWallResult wall = buildFullCylinderWall(
                 imported, reconnaissance, *boundaries.value,
                 face.subjectId, cylinder);

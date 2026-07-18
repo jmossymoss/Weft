@@ -384,6 +384,11 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
     if (faceCoverage.failed != 0) return result;
 
     std::map<std::uint64_t, CertifiedVertex> verticesByCanonicalIndex;
+    std::map<std::tuple<StableId, std::uint32_t, std::uint32_t>,
+             std::uint32_t>
+        interiorToGlobal;
+    std::map<StableId, std::vector<std::uint32_t>> faceLocalToGlobal;
+    CertifiedMesh mesh;
     ValidationCoverage& boundaryProvenance =
         result.validation.checks[BoundaryProvenance];
     ValidationCoverage& identity =
@@ -399,22 +404,74 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
             return result;
         }
         identity.expected += faceMesh.vertices.size();
-        for (const PlanarTrimVertex& localVertex : faceMesh.vertices) {
+        std::vector<std::uint32_t> localToGlobal(faceMesh.vertices.size(),
+                                                 0xffffffffU);
+        for (std::size_t localIndex = 0; localIndex < faceMesh.vertices.size();
+             ++localIndex) {
+            const PlanarTrimVertex& localVertex = faceMesh.vertices[localIndex];
             ++identity.checked;
             boundaryProvenance.expected += localVertex.boundaryUses.size();
-            if (localVertex.boundaryUses.empty() ||
-                localVertex.canonicalVertexIndex ==
-                    InvalidCanonicalVertexIndex ||
-                localVertex.canonicalVertexIndex >=
-                    boundaries.canonicalVertexCount) {
+            const bool hasBoundary = !localVertex.boundaryUses.empty();
+            const bool hasInterior = localVertex.cylinderInterior.has_value();
+            if (!hasBoundary && !hasInterior) {
+                ++identity.failed;
+                setFailure(result, "certified.canonical_vertex_invalid",
+                           "a face vertex has no valid canonical or interior identity",
+                           {face});
+                return result;
+            }
+            if (hasBoundary &&
+                (localVertex.canonicalVertexIndex ==
+                     InvalidCanonicalVertexIndex ||
+                 localVertex.canonicalVertexIndex >=
+                     boundaries.canonicalVertexCount)) {
                 ++identity.failed;
                 setFailure(result, "certified.canonical_vertex_invalid",
                            "a face vertex has no valid canonical identity",
                            {face});
                 return result;
             }
+            if (hasInterior) {
+                const CylinderInteriorStation& station =
+                    *localVertex.cylinderInterior;
+                if (station.workingFace != face ||
+                    station.sourceFace != faceMesh.sourceFace ||
+                    station.uv != localVertex.uv) {
+                    ++identity.failed;
+                    setFailure(result, "certified.interior_station_invalid",
+                               "a cylinder interior station has inconsistent face/UV provenance",
+                               {face});
+                    return result;
+                }
+                const EvaluationResult<SurfaceEvaluation> evaluated =
+                    imported.workingEvaluator->evaluateSurface(face,
+                                                               station.uv);
+                if (!evaluated) {
+                    ++identity.failed;
+                    setFailure(result, "certified.interior_station_off_surface",
+                               "a cylinder interior station could not be evaluated on its face",
+                               {face});
+                    return result;
+                }
+                // Pure generated stations must lie exactly on the surface. Seam
+                // samples that also carry boundary provenance may differ from
+                // the surface evaluator by their recorded curve-on-surface
+                // discrepancy; those are reconciled through boundary uses.
+                if (!hasBoundary &&
+                    !exactPositionEqual(evaluated.value->position,
+                                        station.position)) {
+                    ++identity.failed;
+                    setFailure(result, "certified.interior_station_off_surface",
+                               "a cylinder interior station does not evaluate to its recorded position",
+                               {face});
+                    return result;
+                }
+            }
 
-            std::optional<std::array<double, 3>> resolvedPosition;
+            std::optional<std::array<double, 3>> resolvedPosition =
+                hasInterior ? std::optional<std::array<double, 3>>(
+                                  localVertex.cylinderInterior->position)
+                            : std::nullopt;
             std::vector<CertifiedVertexUse> resolvedUses;
             for (const PlanarTrimBoundaryUse& boundaryUse :
                  localVertex.boundaryUses) {
@@ -424,8 +481,9 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
                 CertifiedVertexUse certifiedUse{
                     face, faceMesh.sourceFace, boundaryUse};
                 if (!sample ||
-                    sample->canonicalVertexIndex !=
-                        localVertex.canonicalVertexIndex ||
+                    (hasBoundary &&
+                     sample->canonicalVertexIndex !=
+                         localVertex.canonicalVertexIndex) ||
                     !resolvesFaceUse(*sample, certifiedUse)) {
                     ++boundaryProvenance.failed;
                     setFailure(result, "certified.boundary_provenance_invalid",
@@ -445,41 +503,103 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
                 resolvedPosition = sample->position;
                 resolvedUses.push_back(std::move(certifiedUse));
             }
-
-            auto [found, inserted] = verticesByCanonicalIndex.emplace(
-                localVertex.canonicalVertexIndex,
-                CertifiedVertex{localVertex.canonicalVertexIndex,
-                                *resolvedPosition, {}});
-            CertifiedVertex& global = found->second;
-            if (!inserted &&
-                !exactPositionEqual(global.position, *resolvedPosition)) {
+            if (!resolvedPosition) {
                 ++identity.failed;
-                setFailure(result, "certified.vertex_position_mismatch",
-                           "one canonical vertex resolves to different 3D positions",
+                setFailure(result, "certified.canonical_vertex_invalid",
+                           "a face vertex has no resolvable 3D position",
                            {face});
                 return result;
             }
-            for (CertifiedVertexUse& use : resolvedUses) {
-                const bool duplicate = std::any_of(
-                    global.provenance.begin(), global.provenance.end(),
-                    [&](const CertifiedVertexUse& existing) {
-                        return sameProvenance(existing, use);
-                    });
-                if (!duplicate) global.provenance.push_back(std::move(use));
+            if (hasInterior &&
+                !exactPositionEqual(*resolvedPosition,
+                                    localVertex.cylinderInterior->position)) {
+                ++identity.failed;
+                setFailure(result, "certified.interior_station_conflict",
+                           "a cylinder interior station disagrees with its boundary sample position",
+                           {face});
+                return result;
             }
+
+            std::uint32_t globalIndex = 0xffffffffU;
+            if (hasBoundary) {
+                auto [found, inserted] = verticesByCanonicalIndex.emplace(
+                    localVertex.canonicalVertexIndex,
+                    CertifiedVertex{localVertex.canonicalVertexIndex,
+                                    *resolvedPosition, {}, std::nullopt});
+                CertifiedVertex& global = found->second;
+                if (!inserted &&
+                    !exactPositionEqual(global.position, *resolvedPosition)) {
+                    ++identity.failed;
+                    setFailure(result, "certified.vertex_position_mismatch",
+                               "one canonical vertex resolves to different 3D positions",
+                               {face});
+                    return result;
+                }
+                if (hasInterior) {
+                    if (global.cylinderInterior &&
+                        (global.cylinderInterior->axialRing !=
+                             localVertex.cylinderInterior->axialRing ||
+                         global.cylinderInterior->azimuthColumn !=
+                             localVertex.cylinderInterior->azimuthColumn)) {
+                        ++identity.failed;
+                        setFailure(result, "certified.interior_station_conflict",
+                                   "one canonical vertex carries conflicting interior stations",
+                                   {face});
+                        return result;
+                    }
+                    global.cylinderInterior = localVertex.cylinderInterior;
+                }
+                for (CertifiedVertexUse& use : resolvedUses) {
+                    const bool duplicate = std::any_of(
+                        global.provenance.begin(), global.provenance.end(),
+                        [&](const CertifiedVertexUse& existing) {
+                            return sameProvenance(existing, use);
+                        });
+                    if (!duplicate) {
+                        global.provenance.push_back(std::move(use));
+                    }
+                }
+                if (!inserted) {
+                    // Global index assigned after the canonical map is
+                    // linearized below; record a sentinel and fix up later.
+                    localToGlobal[localIndex] = 0xfffffffeU;
+                    continue;
+                }
+            } else {
+                const auto key = std::make_tuple(
+                    face, localVertex.cylinderInterior->axialRing,
+                    localVertex.cylinderInterior->azimuthColumn);
+                const auto existing = interiorToGlobal.find(key);
+                if (existing != interiorToGlobal.end()) {
+                    const CertifiedVertex& global =
+                        mesh.vertices[existing->second];
+                    if (!exactPositionEqual(global.position,
+                                            *resolvedPosition)) {
+                        ++identity.failed;
+                        setFailure(result, "certified.vertex_position_mismatch",
+                                   "one interior station resolves to different 3D positions",
+                                   {face});
+                        return result;
+                    }
+                    localToGlobal[localIndex] = existing->second;
+                    continue;
+                }
+                globalIndex = static_cast<std::uint32_t>(mesh.vertices.size());
+                CertifiedVertex vertex;
+                vertex.canonicalVertexIndex = InvalidCanonicalVertexIndex;
+                vertex.position = *resolvedPosition;
+                vertex.cylinderInterior = localVertex.cylinderInterior;
+                mesh.vertices.push_back(std::move(vertex));
+                interiorToGlobal.emplace(key, globalIndex);
+                localToGlobal[localIndex] = globalIndex;
+                continue;
+            }
+            (void)globalIndex;
+            localToGlobal[localIndex] = 0xfffffffeU;
         }
+        faceLocalToGlobal.emplace(face, std::move(localToGlobal));
     }
 
-    CertifiedMesh mesh;
-    if (verticesByCanonicalIndex.size() >
-        static_cast<std::size_t>(
-            std::numeric_limits<std::uint32_t>::max())) {
-        ++identity.failed;
-        setFailure(result, "certified.vertex_index_overflow",
-                   "the certified mesh exceeds the global index width", {});
-        return result;
-    }
-    mesh.vertices.reserve(verticesByCanonicalIndex.size());
     std::map<std::uint64_t, std::uint32_t> canonicalToGlobal;
     for (auto& [canonicalIndex, vertex] : verticesByCanonicalIndex) {
         std::sort(vertex.provenance.begin(), vertex.provenance.end(),
@@ -488,6 +608,24 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
             static_cast<std::uint32_t>(mesh.vertices.size());
         canonicalToGlobal.emplace(canonicalIndex, globalIndex);
         mesh.vertices.push_back(std::move(vertex));
+    }
+    for (auto& [face, localToGlobal] : faceLocalToGlobal) {
+        const PlanarCdtMesh& faceMesh = *meshesByFace.at(face);
+        for (std::size_t localIndex = 0; localIndex < localToGlobal.size();
+             ++localIndex) {
+            if (localToGlobal[localIndex] != 0xfffffffeU) continue;
+            const PlanarTrimVertex& localVertex = faceMesh.vertices[localIndex];
+            localToGlobal[localIndex] =
+                canonicalToGlobal.at(localVertex.canonicalVertexIndex);
+        }
+    }
+    if (mesh.vertices.size() >
+        static_cast<std::size_t>(
+            std::numeric_limits<std::uint32_t>::max())) {
+        ++identity.failed;
+        setFailure(result, "certified.vertex_index_overflow",
+                   "the certified mesh exceeds the global index width", {});
+        return result;
     }
 
     ValidationCoverage& triangleProvenance =
@@ -537,8 +675,8 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
                 }
                 const PlanarTrimVertex& localVertex =
                     faceMesh.vertices[localIndex];
-                triangle.vertices[corner] = canonicalToGlobal.at(
-                    localVertex.canonicalVertexIndex);
+                triangle.vertices[corner] =
+                    faceLocalToGlobal.at(face).at(localIndex);
                 triangle.cornerUv[corner] = localTriangle.cornerUv
                     ? (*localTriangle.cornerUv)[corner]
                     : localVertex.uv;

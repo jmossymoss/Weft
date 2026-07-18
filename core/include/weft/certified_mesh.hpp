@@ -44,6 +44,7 @@ struct CertifiedVertex {
     std::uint64_t canonicalVertexIndex = InvalidCanonicalVertexIndex;
     std::array<double, 3> position{};
     std::vector<CertifiedVertexUse> provenance;
+    std::optional<CylinderInteriorStation> cylinderInterior;
 };
 
 struct CertifiedTriangle {

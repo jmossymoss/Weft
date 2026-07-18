@@ -13,6 +13,10 @@ namespace weft {
 struct CylinderWallConfiguration {
     double maximumChordDeviation = 5e-5;
     double maximumNormalDeviationRadians = 0.017453292519943295;
+    // Number of equal axial intervals between the two rims. 1 preserves the
+    // original one-band boundary-only template. Values > 1 generate certified
+    // interior rings with CylinderInteriorStation provenance.
+    std::uint32_t axialIntervals = 1;
 };
 
 struct CylinderWallValidationEvidence {
@@ -42,10 +46,11 @@ struct CylinderWallResult {
     explicit operator bool() const noexcept { return value.has_value(); }
 };
 
-// Builds the boundary-exact one-band template for a proven full periodic
-// cylinder. Both rims must already have equal canonical counts. Every
-// face/coedge sample use is consumed; additional axial seam samples are a
-// named refusal until certified interior-vertex provenance is introduced.
+// Builds the boundary-exact full periodic cylinder wall. Both rims must already
+// have equal canonical counts. With axialIntervals == 1 this is the original
+// one-band template. With axialIntervals > 1, equal interior rings are
+// generated with CylinderInteriorStation provenance; every face/coedge sample
+// use must still be consumed (rim or matching interior seam sample).
 CylinderWallResult buildFullCylinderWall(
     const ImportedModel& imported,
     const ReconnaissanceReport& reconnaissance,
