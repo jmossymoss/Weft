@@ -161,3 +161,4 @@ prove completed work; they are not plans or handoff diaries.
 - `mp9-analytic-residuals-2026-07-18.md` - named cone/sphere/cylinder residual demotions.
 - `mp9-scale-perf-2026-07-18.md` - MP9 import/recon wall times and compat scale refuse.
 - `mp9-cone-frustum-consumer-2026-07-18.md` - truncated-cone revolved-band consumer + quads.
+- `mp9-sphere-cap-consumer-2026-07-18.md` - spherical-cap consumer + complex_cap demote.
