@@ -857,7 +857,7 @@ only with indexed evidence.
 
 ### WP-120 — MAP-A reconnaissance
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 expansion
 - Prerequisites: WP-117
 - Goal: classify four-sided mapped/Coons candidates and name unsupported
