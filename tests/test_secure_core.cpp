@@ -1729,6 +1729,72 @@ void testUnknownExactFamilyInjection() {
           weft::GeometrySupportState::SupportedAnalyticTemplate);
 }
 
+
+void testMappedFourSidedReconnaissance() {
+    const std::filesystem::path ribbonPath =
+        weft::test::uniqueTempPath("weft_secure_core_ribbon", ".step");
+    weft::writeStep(weft::makeFixture("ribbon"), ribbonPath.string());
+    const weft::ImportedModel ribbon = weft::importStepSecure(
+        ribbonPath.string(), weft::RepairProfile::Conservative);
+    const weft::ReconnaissanceReport report = weft::reconnoitre(ribbon);
+    CHECK(report.complete);
+    int fourSided = 0;
+    int nonFour = 0;
+    for (const weft::ExactGeometryClassification& record : report.records) {
+        if (record.taxonomy != weft::GeometryTaxonomy::Surface) continue;
+        const bool candidate = std::find(record.conditionCodes.begin(),
+                                         record.conditionCodes.end(),
+                                         "mapped.four_sided_candidate") !=
+            record.conditionCodes.end();
+        const bool deferredNonFour =
+            std::find(record.conditionCodes.begin(), record.conditionCodes.end(),
+                      "mapped.non_four_sided_deferred") !=
+            record.conditionCodes.end();
+        if (candidate) {
+            ++fourSided;
+            CHECK(record.familyCode == "bspline" ||
+                  record.familyCode == "extrusion" ||
+                  record.familyCode == "bezier" ||
+                  record.familyCode == "revolution");
+            CHECK(record.support ==
+                  weft::GeometrySupportState::DeferredResidualSurface ||
+                  record.support ==
+                      weft::GeometrySupportState::SupportedAnalyticTemplate);
+            std::printf("WEFT_MAP_A face family=%s support=%s four_sided=1\n",
+                        record.familyCode.c_str(),
+                        weft::geometrySupportStateName(record.support));
+        }
+        if (deferredNonFour) ++nonFour;
+    }
+    CHECK(fourSided >= 2);
+    std::printf("WEFT_MAP_A four_sided_candidates=%d non_four_sided=%d\n",
+                fourSided, nonFour);
+
+    const std::filesystem::path notchPath =
+        weft::test::uniqueTempPath("weft_secure_core_ribbonnotch", ".step");
+    weft::writeStep(weft::makeFixture("ribbonnotch"), notchPath.string());
+    const weft::ImportedModel notch = weft::importStepSecure(
+        notchPath.string(), weft::RepairProfile::Conservative);
+    const weft::ReconnaissanceReport notchReport = weft::reconnoitre(notch);
+    CHECK(notchReport.complete);
+    bool sawNonFourBSpline = false;
+    for (const weft::ExactGeometryClassification& record : notchReport.records) {
+        if (record.taxonomy != weft::GeometryTaxonomy::Surface) continue;
+        if (record.familyCode != "bspline") continue;
+        const bool deferredNonFour =
+            std::find(record.conditionCodes.begin(), record.conditionCodes.end(),
+                      "mapped.non_four_sided_deferred") !=
+            record.conditionCodes.end();
+        if (deferredNonFour) sawNonFourBSpline = true;
+    }
+    CHECK(sawNonFourBSpline);
+    std::printf("WEFT_MAP_A ribbonnotch_non_four_sided_bspline=1\n");
+
+    std::error_code ignored;
+    std::filesystem::remove(ribbonPath, ignored);
+    std::filesystem::remove(notchPath, ignored);
+}
+
 void testConeReconnaissanceDeferred() {
     const std::filesystem::path conePath =
         weft::test::uniqueTempPath("weft_secure_core_cone", ".step");
@@ -2163,6 +2229,7 @@ int main() {
         testRepeatedWireOccurrences();
         testTotalReconnaissance(path);
         testUnknownExactFamilyInjection();
+        testMappedFourSidedReconnaissance();
         testConeReconnaissanceDeferred();
         testOracleTrimTaxonomySlice();
         testProceduralTrimTaxonomyBattery();

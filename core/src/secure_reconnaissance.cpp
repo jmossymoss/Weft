@@ -706,6 +706,26 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                 record.conditionCodes.push_back(
                     "reason.multidomain_decomposition_unproven");
             }
+            // MAP-A: tag four-sided non-plane analytic/typed faces as Coons
+            // candidates. Support stays deferred until MAP-C has a consumer.
+            {
+                std::set<StableId> faceEdges;
+                for (const CoedgeRecord& coedge : snapshot.coedges) {
+                    if (coedge.faceId == faceId) {
+                        faceEdges.insert(coedge.edgeId);
+                    }
+                }
+                const bool mappedFamily =
+                    family.code == "bspline" || family.code == "bezier" ||
+                    family.code == "extrusion" || family.code == "revolution";
+                if (mappedFamily && faceEdges.size() == 4) {
+                    record.conditionCodes.push_back(
+                        "mapped.four_sided_candidate");
+                } else if (mappedFamily && faceEdges.size() != 4) {
+                    record.conditionCodes.push_back(
+                        "mapped.non_four_sided_deferred");
+                }
+            }
             const bool evaluates = exactSurfaceEvaluates(
                 *imported.workingEvaluator, faceId, u0, u1, v0, v1);
             const bool representationReady =
