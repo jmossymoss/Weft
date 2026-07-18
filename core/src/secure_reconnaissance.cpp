@@ -74,7 +74,7 @@ FamilyInfo surfaceFamily(GeomAbs_SurfaceType type) {
         case GeomAbs_Cylinder: return {"cylinder", true, true, true};
         case GeomAbs_Cone: return {"cone", true, true, true};
         case GeomAbs_Sphere: return {"sphere", true, true, true};
-        case GeomAbs_Torus: return {"torus", true, true, false};
+        case GeomAbs_Torus: return {"torus", true, true, true};
         case GeomAbs_BezierSurface: return {"bezier", false, true, false};
         case GeomAbs_BSplineSurface: return {"bspline", false, true, false};
         case GeomAbs_SurfaceOfRevolution:

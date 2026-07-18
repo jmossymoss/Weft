@@ -151,12 +151,12 @@ bool supportedSegmentationFamily(const ExactGeometryClassification& record,
     // Analytic singular/periodic families may remain DeferredResidualSurface
     // until their FAMILY-C consumer promotes support, but FAMILY-B still needs
     // singular/periodic critical events.
-    if (record.familyCode == "cone" || record.familyCode == "sphere") {
+    if (record.familyCode == "cone" || record.familyCode == "sphere" ||
+        record.familyCode == "torus") {
         return record.support ==
                    GeometrySupportState::SupportedAnalyticTemplate ||
             record.support == GeometrySupportState::DeferredResidualSurface;
     }
-    // Torus dual-periodic boundaries land in TORUS-B; keep deferred here.
     return false;
 }
 

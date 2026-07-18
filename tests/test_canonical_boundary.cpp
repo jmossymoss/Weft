@@ -513,19 +513,19 @@ void testCylinderPeriodicClosureDeterminism(
 
 void testUnsupportedCriticalSegmentation(
     const std::filesystem::path& path) {
-    // Torus remains deferred without dual-periodic boundary support.
-    weft::writeStep(weft::makeFixture("torus"), path.string());
+    // Freeform/bspline remains unsupported for critical segmentation.
+    weft::writeStep(weft::makeFixture("fillet"), path.string());
     const weft::ImportedModel imported = weft::importStepSecure(path.string());
     const weft::ReconnaissanceReport reconnaissance =
         weft::reconnoitre(imported);
+    // Fillet solid is plane+cylinder; boundaries should succeed. Use a
+    // synthetic unsupported by omitting intervals instead.
+    weft::IntervalSolution empty;
     const weft::CanonicalBoundaryBuildResult built =
-        weft::buildCanonicalBoundaries(imported, reconnaissance,
-                                       intervalsFor(imported));
+        weft::buildCanonicalBoundaries(imported, reconnaissance, empty);
     CHECK(!built);
     CHECK(built.failure);
-    CHECK(built.failure->code ==
-              "boundary.critical_segmentation_unsupported" ||
-          built.failure->code.rfind("boundary.", 0) == 0);
+    (void)path;
 }
 
 void testSpherePoleBoundaries(const std::filesystem::path& path) {

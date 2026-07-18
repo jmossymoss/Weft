@@ -166,7 +166,7 @@ int main() {
     }
 
     const char* fixtures[] = {"box", "cylinder", "partial_cylinder", "hole",
-                              "cone", "sphere"};
+                              "cone", "sphere", "torus"};
     constexpr std::size_t kFixtureExtra =
         sizeof(fixtures) / sizeof(fixtures[0]);
     for (const char* fixture : fixtures) {
@@ -177,12 +177,13 @@ int main() {
             weft::importStepSecure(path.string());
         ++importSuccess;
         weft::SecureMeshingResult meshed;
-        if (std::string(fixture) == "cone" || std::string(fixture) == "sphere") {
+        if (std::string(fixture) == "cone" || std::string(fixture) == "sphere" ||
+            std::string(fixture) == "torus") {
             weft::SecureMeshingConfiguration settings;
             settings.sampling.chordTolerance = 0.25;
             settings.sampling.normalAngleToleranceRadians = 0.35;
             settings.sampling.minimumClosedCurveSegments =
-                std::string(fixture) == "sphere" ? 16 : 8;
+                std::string(fixture) == "sphere" || std::string(fixture) == "torus" ? 16 : 8;
             meshed = weft::generateSecureMesh(imported, settings);
         } else {
             meshed = weft::generateSecureMesh(imported);

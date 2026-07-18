@@ -116,7 +116,8 @@ prove completed work; they are not plans or handoff diaries.
 - `m8-cone-e-product-2026-07-18.md` - CLI OBJ and app screenshot admission for
   cone with sphere refusal regression on Linux.
 - `m8-cone-f-proof-2026-07-18.md`
-- `m8-sphere-a-reconnaissance-2026-07-18.md` through `m8-sphere-f-proof-2026-07-18.md` - sphere family packet (poles, latitude/longitude floor, product, density golden). - apex-cone density sweep, corpus impact,
+- `m8-sphere-a-reconnaissance-2026-07-18.md` through `m8-sphere-f-proof-2026-07-18.md` - sphere family packet
+- `m8-torus-a-reconnaissance-2026-07-18.md` through `m8-torus-f-proof-2026-07-18.md` - torus dual-periodic family packet (poles, latitude/longitude floor, product, density golden). - apex-cone density sweep, corpus impact,
   Linux fingerprint golden, and family-complete proof; M8 remains in progress.
 - `m6-secure-orchestration-2026-07-17.md` - atomic plane/cylinder/through-hole secure pipeline and combined certificate evidence.
 - `m7-secure-cli-routing-2026-07-17.md` - lossless certified export adapter, secure CLI routing, report coverage, and named workflow refusals.

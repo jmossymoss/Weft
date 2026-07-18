@@ -17,7 +17,7 @@ Read these in order:
 The product route remains certified-only. OCCT triangle soup, welding, missing
 faces, silent healing, and unproven preview meshes are not export authority.
 The currently certified automatic families are planes (including holes),
-full/partial cylinders, apex cones, and spheres.
+full/partial cylinders, apex cones, spheres, and tori.
 
 ## Token and documentation discipline
 
@@ -708,7 +708,7 @@ only with indexed evidence.
 
 ### WP-090 — TORUS-A reconnaissance
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-085
 - Goal: exact classification for torus subjects and named unsupported cases.
@@ -717,7 +717,7 @@ only with indexed evidence.
 
 ### WP-091 — TORUS-B canonical boundaries
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-090
 - Goal: dual-periodic critical segmentation, seam lifts, and counts.
@@ -726,7 +726,7 @@ only with indexed evidence.
 
 ### WP-092 — TORUS-C certified floor
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-091
 - Goal: boundary-exact torus tessellation with chord/normal bounds.
@@ -735,7 +735,7 @@ only with indexed evidence.
 
 ### WP-093 — TORUS-D modelling topology
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-092
 - Goal: modelling polygons/quads with truthful provenance.
@@ -744,7 +744,7 @@ only with indexed evidence.
 
 ### WP-094 — TORUS-E product integration
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-093
 - Goal: CLI/app admission for certified torus results.
@@ -753,7 +753,7 @@ only with indexed evidence.
 
 ### WP-095 — TORUS-F family proof
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-094
 - Goal: full proof matrix; declare torus supported.

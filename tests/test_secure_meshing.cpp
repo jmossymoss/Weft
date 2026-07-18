@@ -371,13 +371,6 @@ void testExactEdgeIntervals() {
 }
 
 void testUnsupportedAndConfigurationRefusals() {
-    // Torus remains unsupported until TORUS-C.
-    const weft::SecureMeshingResult torus = generateFixture("torus");
-    CHECK(!torus);
-    CHECK(torus.failure);
-    CHECK(torus.failure->code.rfind("boundary.", 0) == 0 ||
-          torus.failure->code.rfind("secure_pipeline.", 0) == 0);
-
     weft::SecureMeshingConfiguration invalid = configuration();
     invalid.sampling.chordTolerance = -1.0;
     const weft::SecureMeshingResult refused =

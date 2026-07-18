@@ -1726,7 +1726,7 @@ void testUnknownExactFamilyInjection() {
         weft::probeSurfaceFamily(static_cast<int>(GeomAbs_Torus));
     CHECK(torus.familyCode == "torus");
     CHECK(torus.support ==
-          weft::GeometrySupportState::DeferredResidualSurface);
+          weft::GeometrySupportState::SupportedAnalyticTemplate);
 }
 
 void testConeReconnaissanceDeferred() {
@@ -1841,35 +1841,8 @@ void testConeReconnaissanceDeferred() {
                 meshed.value ? meshed.value->certified.triangles.size() : 0,
                 meshed.value ? meshed.value->certified.vertices.size() : 0);
 
-    // Torus residual control: still deferred / named refusal.
-    const std::filesystem::path torusPath =
-        weft::test::uniqueTempPath("weft_secure_core_torus", ".step");
-    weft::writeStep(weft::makeFixture("torus"), torusPath.string());
-    const weft::ImportedModel torus = weft::importStepSecure(
-        torusPath.string(), weft::RepairProfile::Conservative);
-    const weft::ReconnaissanceReport torusReport = weft::reconnoitre(torus);
-    CHECK(torusReport.complete);
-    bool sawDeferredTorus = false;
-    for (const weft::ExactGeometryClassification& record :
-         torusReport.records) {
-        if (record.taxonomy == weft::GeometryTaxonomy::Surface &&
-            record.familyCode == "torus") {
-            CHECK(record.support ==
-                  weft::GeometrySupportState::DeferredResidualSurface);
-            sawDeferredTorus = true;
-        }
-    }
-    CHECK(sawDeferredTorus);
-    const weft::SecureMeshingResult torusMesh =
-        weft::generateSecureMesh(torus, settings);
-    CHECK(!torusMesh);
-    CHECK(torusMesh.failure);
-    std::printf("WEFT_CONE_A torus_refusal=%s\n",
-                torusMesh.failure ? torusMesh.failure->code.c_str() : "-");
-
     std::error_code ignored;
     std::filesystem::remove(conePath, ignored);
-    std::filesystem::remove(torusPath, ignored);
 }
 
 void testOracleTrimTaxonomySlice() {

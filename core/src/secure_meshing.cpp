@@ -3,6 +3,7 @@
 #include "weft/cone_template.hpp"
 #include "weft/planar_trim_assembly.hpp"
 #include "weft/sphere_template.hpp"
+#include "weft/torus_template.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -673,8 +674,39 @@ SecureMeshingResult generateSecureMesh(
             faceMeshes.push_back(*wall.value);
             continue;
         }
+        if (face.familyCode == "torus") {
+            TorusWallConfiguration torus;
+            torus.maximumChordDeviation = configuration.sampling.chordTolerance;
+            torus.maximumNormalDeviationRadians =
+                configuration.sampling.normalAngleToleranceRadians;
+            torus.majorIntervals = std::max<std::uint32_t>(
+                16, configuration.sampling.minimumClosedCurveSegments);
+            torus.minorIntervals = std::max<std::uint32_t>(
+                12, configuration.sampling.minimumClosedCurveSegments / 2);
+            const TorusWallResult wall = buildFullTorusWall(
+                imported, reconnaissance, *boundaries.value, face.subjectId,
+                torus);
+            for (const TorusWallValidationEvidence& evidence : wall.validation) {
+                appendCoverage(result.validation,
+                               faceCode(evidence.code, face.subjectId),
+                               evidence.expected, evidence.checked,
+                               evidence.skipped, evidence.failed);
+            }
+            if (!wall) {
+                setFailure(result,
+                           wall.failure ? wall.failure->code
+                                        : "secure_pipeline.torus_failed",
+                           wall.failure ? wall.failure->message
+                                        : "certified torus construction failed",
+                           wall.failure ? wall.failure->subjects
+                                        : std::vector<StableId>{});
+                return result;
+            }
+            faceMeshes.push_back(*wall.value);
+            continue;
+        }
         setFailure(result, "secure_pipeline.unsupported_surface_family",
-                   "the secure automatic pipeline currently supports only plane, cylinder, apex-cone, and sphere faces",
+                   "the secure automatic pipeline currently supports only plane, cylinder, apex-cone, sphere, and torus faces",
                    {face.subjectId});
         return result;
     }
