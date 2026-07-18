@@ -206,11 +206,14 @@ IntervalProblemResult buildIntervalProblem(
 
     for (const ExactGeometryClassification& face : reconnaissance.records) {
         if (face.taxonomy != GeometryTaxonomy::Surface ||
-            face.familyCode != "cylinder" ||
-            face.trimDomain !=
-                TrimDomainClass::FullPeriodicWithCapBoundaries) {
+            face.familyCode != "cylinder") {
             continue;
         }
+        const bool fullPeriodic = face.trimDomain ==
+            TrimDomainClass::FullPeriodicWithCapBoundaries;
+        const bool partialBand = face.trimDomain ==
+            TrimDomainClass::PeriodicBandCrossingSeam;
+        if (!fullPeriodic && !partialBand) continue;
         std::set<StableId> rimBoundaries;
         for (const CoedgeRecord& coedge : snapshot.coedges) {
             if (coedge.faceId != face.subjectId) continue;
@@ -218,9 +221,14 @@ IntervalProblemResult buildIntervalProblem(
                 reconnaissance.find(coedge.edgeId);
             const EdgeTopologyRecord* topology =
                 edgeTopology(snapshot, coedge.edgeId);
-            if (edge && topology && edge->familyCode == "circle" &&
-                topology->lowerVertex && topology->upperVertex &&
-                *topology->lowerVertex == *topology->upperVertex) {
+            if (!edge || !topology || edge->familyCode != "circle" ||
+                !topology->lowerVertex || !topology->upperVertex) {
+                continue;
+            }
+            const bool closedRim =
+                *topology->lowerVertex == *topology->upperVertex;
+            if ((fullPeriodic && closedRim) ||
+                (partialBand && !closedRim)) {
                 rimBoundaries.insert(
                     {StableIdKind::Boundary, coedge.edgeId.ordinal});
             }
@@ -228,7 +236,9 @@ IntervalProblemResult buildIntervalProblem(
         if (rimBoundaries.size() != 2) {
             result.failure = SecureMeshingFailure{
                 "secure_pipeline.cylinder_rims_unresolved",
-                "a full cylinder does not resolve exactly two circular rim boundaries",
+                fullPeriodic
+                    ? "a full cylinder does not resolve exactly two circular rim boundaries"
+                    : "a partial cylinder does not resolve exactly two open circular rim arcs",
                 {face.subjectId}};
             return result;
         }

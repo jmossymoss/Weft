@@ -175,15 +175,20 @@ CylinderWallResult buildFullCylinderWall(
     }
     const ExactGeometryClassification* classification =
         reconnaissance.find(workingFace);
+    const bool fullPeriodic = classification &&
+        classification->trimDomain ==
+            TrimDomainClass::FullPeriodicWithCapBoundaries;
+    const bool partialBand = classification &&
+        classification->trimDomain ==
+            TrimDomainClass::PeriodicBandCrossingSeam;
     if (!classification ||
         classification->taxonomy != GeometryTaxonomy::Surface ||
         classification->familyCode != "cylinder" ||
         classification->support !=
             GeometrySupportState::SupportedAnalyticTemplate ||
-        classification->trimDomain !=
-            TrimDomainClass::FullPeriodicWithCapBoundaries) {
-        setFailure(result, Prerequisites, "cylinder.face_not_full_periodic",
-                   "only a proven supported full periodic cylinder may use this template",
+        (!fullPeriodic && !partialBand)) {
+        setFailure(result, Prerequisites, "cylinder.face_unsupported",
+                   "only a proven supported full or partial cylinder band may use this template",
                    {workingFace});
         return result;
     }
@@ -211,9 +216,11 @@ CylinderWallResult buildFullCylinderWall(
     for (const CanonicalBoundary& boundary : boundaries.boundaries) {
         const ExactGeometryClassification* edgeClass =
             reconnaissance.find(boundary.edge);
-        const bool ringCandidate = boundary.closed && edgeClass &&
+        const bool ringCandidate = edgeClass &&
             edgeClass->taxonomy == GeometryTaxonomy::Curve &&
-            edgeClass->familyCode == "circle";
+            edgeClass->familyCode == "circle" &&
+            ((fullPeriodic && boundary.closed) ||
+             (partialBand && !boundary.closed));
         Ring ring;
         ring.boundary = &boundary;
         double vSum = 0.0;
@@ -245,9 +252,38 @@ CylinderWallResult buildFullCylinderWall(
     result.validation[BoundaryCoverage].expected = allFaceUses.size();
     if (rings.size() != 2 || allFaceUses.empty()) {
         setFailure(result, BoundaryCoverage, "cylinder.rim_topology_invalid",
-                   "a full cylinder wall requires exactly two canonical circular rims",
+                   fullPeriodic
+                       ? "a full cylinder wall requires exactly two canonical circular rims"
+                       : "a partial cylinder wall requires exactly two open circular rim arcs",
                    {workingFace});
         return result;
+    }
+    if (partialBand) {
+        std::size_t railCount = 0;
+        for (const CanonicalBoundary& boundary : boundaries.boundaries) {
+            const ExactGeometryClassification* edgeClass =
+                reconnaissance.find(boundary.edge);
+            bool onFace = false;
+            for (const CanonicalBoundarySample& sample : boundary.samples) {
+                for (const CoedgeUvUse& use : sample.faceUses) {
+                    if (use.face == workingFace) {
+                        onFace = true;
+                        break;
+                    }
+                }
+                if (onFace) break;
+            }
+            if (onFace && edgeClass &&
+                edgeClass->familyCode == "line") {
+                ++railCount;
+            }
+        }
+        if (railCount != 2) {
+            setFailure(result, BoundaryCoverage, "cylinder.rail_topology_invalid",
+                       "a partial cylinder wall requires exactly two linear side rails",
+                       {workingFace});
+            return result;
+        }
     }
     std::sort(rings.begin(), rings.end(), [](const Ring& first,
                                              const Ring& second) {
@@ -483,30 +519,41 @@ CylinderWallResult buildFullCylinderWall(
         return result;
     }
 
-    mesh.constrainedEdges.reserve(count * ringCount);
+    const std::size_t columnSpans =
+        fullPeriodic ? count : (count > 0 ? count - 1 : 0);
+    if (!fullPeriodic && columnSpans < 2) {
+        setFailure(result, BoundaryCoverage, "cylinder.rim_count_mismatch",
+                   "a partial cylinder wall needs at least three rim samples",
+                   {workingFace});
+        return result;
+    }
+    mesh.constrainedEdges.reserve(columnSpans * ringCount);
     for (std::size_t ringIndex = 0; ringIndex < ringCount; ++ringIndex) {
-        for (std::size_t index = 0; index < count; ++index) {
+        for (std::size_t index = 0; index < columnSpans; ++index) {
             const std::uint32_t base =
                 static_cast<std::uint32_t>(ringIndex * count);
-            const std::uint32_t next =
-                static_cast<std::uint32_t>((index + 1) % count);
+            const std::uint32_t next = fullPeriodic
+                ? static_cast<std::uint32_t>((index + 1) % count)
+                : static_cast<std::uint32_t>(index + 1);
             mesh.constrainedEdges.push_back(
                 {base + static_cast<std::uint32_t>(index), base + next});
         }
     }
 
     const std::size_t bandCount = ringCount - 1;
-    result.validation[TriangleOrientation].expected = count * 2 * bandCount;
-    result.validation[ChordBound].expected = count * bandCount;
-    result.validation[NormalBound].expected = count * 4 * bandCount;
+    result.validation[TriangleOrientation].expected =
+        columnSpans * 2 * bandCount;
+    result.validation[ChordBound].expected = columnSpans * bandCount;
+    result.validation[NormalBound].expected = columnSpans * 4 * bandCount;
     const double chordSquared = configuration.maximumChordDeviation *
         configuration.maximumChordDeviation;
     const double minimumNormalDot =
         std::cos(configuration.maximumNormalDeviationRadians);
-    mesh.triangles.reserve(count * 2 * bandCount);
+    mesh.triangles.reserve(columnSpans * 2 * bandCount);
     for (std::size_t band = 0; band < bandCount; ++band) {
-        for (std::size_t index = 0; index < count; ++index) {
-            const std::size_t next = (index + 1) % count;
+        for (std::size_t index = 0; index < columnSpans; ++index) {
+            const std::size_t next =
+                fullPeriodic ? ((index + 1) % count) : (index + 1);
             const std::uint32_t lower0 =
                 static_cast<std::uint32_t>(band * count + index);
             const std::uint32_t lower1 =

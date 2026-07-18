@@ -319,7 +319,7 @@ only with indexed evidence.
 
 ### WP-021 — Certify interior axial cylinder samples
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M4/M6
 - Prerequisites: WP-020
 - Goal: permit adaptive axial rings without losing source/template provenance.
@@ -333,7 +333,7 @@ only with indexed evidence.
   4. Add zero/one/multiple ring, reversed frame, tampered provenance, and
      excessive-error fixtures.
 - Tests: `cylinder_template|certified_mesh|secure_meshing`.
-- Evidence: `docs/evidence/m4-m6-axial-cylinder-samples-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m4-m6-axial-cylinder-samples-2026-07-18.md`.
 - Exit gate: extra rings pass only with complete provenance and analytic error
   proof; current extra-sample adversaries still fail when evidence is removed.
 

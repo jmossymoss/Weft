@@ -68,6 +68,12 @@ prove completed work; they are not plans or handoff diaries.
 - `m4-m5-triangle-intersections-2026-07-18.md` - exact 3D triangle intersection
   predicates, non-vacuous body coverage, topology-legal contacts, and named
   refusal adversaries on Linux strict/static-analysis lanes.
+- `m4-m6-axial-cylinder-samples-2026-07-18.md` - certified cylinder interior
+  axial rings with CylinderInteriorStation provenance and seam-sample
+  consumption on Linux strict/static-analysis lanes.
+- `m4-m6-partial-cylinder-2026-07-18.md` - open cylindrical bands
+  (`PeriodicBandCrossingSeam`) with two rim arcs and two rails certified
+  end to end on Linux strict/static-analysis lanes.
 - `m6-secure-orchestration-2026-07-17.md` - atomic plane/cylinder/through-hole secure pipeline and combined certificate evidence.
 - `m7-secure-cli-routing-2026-07-17.md` - lossless certified export adapter, secure CLI routing, report coverage, and named workflow refusals.
 - `m7-secure-app-live-link-2026-07-17.md` - secure app preview/export/hot-reload routing, visual proof, and deterministic atomic Blender link.

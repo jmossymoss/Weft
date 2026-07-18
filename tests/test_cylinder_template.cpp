@@ -344,7 +344,7 @@ void testNamedRefusals(const std::filesystem::path& path,
         CHECK(!wrongFace);
         CHECK(wrongFace.failure &&
               wrongFace.failure->code ==
-                  "cylinder.face_not_full_periodic");
+                  "cylinder.face_unsupported");
     }
 }
 

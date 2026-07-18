@@ -556,6 +556,49 @@ void testTemplateChainSumConsumer() {
     }
 }
 
+void testPartialCylinder() {
+    TemporaryStep step("partial_cylinder");
+    weft::writeStep(weft::makeFixture("partial_cylinder"),
+                    step.path().string());
+    const weft::ImportedModel imported =
+        weft::importStepSecure(step.path().string());
+    const weft::SecureMeshingResult result =
+        weft::generateSecureMesh(imported, configuration());
+    checkSuccessfulResult(result);
+    CHECK(result.value &&
+          result.value->certified.triangles.size() > 0);
+
+    // Malformed request: force unequal open-arc counts through an exact
+    // edge override on one rim arc.
+    weft::ReconnaissanceReport reconnaissance = weft::reconnoitre(imported);
+    for (const weft::ExactGeometryClassification& record :
+         reconnaissance.records) {
+        if (record.taxonomy != weft::GeometryTaxonomy::Curve ||
+            record.familyCode != "circle") {
+            continue;
+        }
+        const weft::EdgeTopologyRecord* topology = nullptr;
+        for (const weft::EdgeTopologyRecord& edge :
+             imported.working->snapshot.edgeTopology) {
+            if (edge.id == record.subjectId) {
+                topology = &edge;
+                break;
+            }
+        }
+        if (!topology || !topology->lowerVertex || !topology->upperVertex ||
+            *topology->lowerVertex == *topology->upperVertex) {
+            continue;
+        }
+        weft::SecureMeshingConfiguration mismatched = configuration();
+        mismatched.exactEdgeIntervalCounts[record.subjectId] = 7;
+        const weft::SecureMeshingResult refused =
+            weft::generateSecureMesh(imported, mismatched);
+        CHECK(!refused);
+        CHECK(refused.failure);
+        break;
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -567,6 +610,7 @@ int main() {
         testExactEdgeIntervals();
         testUnsupportedAndConfigurationRefusals();
         testTemplateChainSumConsumer();
+        testPartialCylinder();
     } catch (const std::exception& error) {
         std::printf("FAIL secure-meshing exception: %s\n", error.what());
         ++failures;
