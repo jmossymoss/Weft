@@ -1,4 +1,8 @@
+#include "weft/fixture.hpp"
 #include "weft/secure_core.hpp"
+#include "weft/secure_meshing.hpp"
+
+#include "test_temp_path.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -105,19 +109,110 @@ int main() {
     };
 
     CHECK(std::filesystem::is_directory(root));
+    std::size_t importSuccess = 0;
+    std::size_t importRefusal = 0;
+    std::size_t meshCertified = 0;
+    std::size_t meshNamedRefusal = 0;
+    std::size_t meshInspectableOnly = 0;
+
     for (const CorpusCase& corpusCase : cases) {
         const std::filesystem::path path = root / corpusCase.relativePath;
         CHECK(std::filesystem::is_regular_file(path));
         if (!std::filesystem::is_regular_file(path)) continue;
         if (corpusCase.shouldImport) {
+            // Preserve the original import contract checks for meshable
+            // subjects; inspectable-only imports are classified without
+            // requiring a specific diagnostic vocabulary.
+            const weft::ImportedModel imported =
+                weft::importStepSecure(path.string());
+            CHECK(imported.source != nullptr);
+            CHECK(imported.working != nullptr);
+            ++importSuccess;
+            if (!imported.meshable()) {
+                ++meshInspectableOnly;
+                std::printf(
+                    "COVERAGE subject=%s terminal=inspectable_only\n",
+                    corpusCase.relativePath);
+                continue;
+            }
             verifySuccess(path);
+            const weft::SecureMeshingResult meshed =
+                weft::generateSecureMesh(imported);
+            if (meshed && meshed.value &&
+                meshed.value->validation.complete()) {
+                ++meshCertified;
+                std::printf(
+                    "COVERAGE subject=%s terminal=certified "
+                    "fingerprint=%s\n",
+                    corpusCase.relativePath,
+                    meshed.value->certified.topologyFingerprint.c_str());
+            } else {
+                ++meshNamedRefusal;
+                const std::string code = meshed.failure
+                    ? meshed.failure->code
+                    : "secure_pipeline.unknown_refusal";
+                std::printf(
+                    "COVERAGE subject=%s terminal=named_refusal code=%s\n",
+                    corpusCase.relativePath, code.c_str());
+                CHECK(meshed.failure.has_value());
+            }
         } else {
             verifyFailure(path, corpusCase.expectedFailure);
+            ++importRefusal;
+            std::printf(
+                "COVERAGE subject=%s terminal=import_refusal code=%s\n",
+                corpusCase.relativePath, corpusCase.expectedFailure);
         }
     }
 
+    const char* fixtures[] = {"box", "cylinder", "partial_cylinder", "hole",
+                              "sphere"};
+    for (const char* fixture : fixtures) {
+        const std::filesystem::path path = weft::test::uniqueTempPath(
+            std::string("weft_coverage_") + fixture, ".step");
+        weft::writeStep(weft::makeFixture(fixture), path.string());
+        const weft::ImportedModel imported =
+            weft::importStepSecure(path.string());
+        ++importSuccess;
+        const weft::SecureMeshingResult meshed =
+            weft::generateSecureMesh(imported);
+        if (meshed && meshed.value && meshed.value->validation.complete()) {
+            ++meshCertified;
+            std::printf(
+                "COVERAGE subject=fixture:%s terminal=certified "
+                "fingerprint=%s\n",
+                fixture,
+                meshed.value->certified.topologyFingerprint.c_str());
+        } else {
+            ++meshNamedRefusal;
+            const std::string code = meshed.failure
+                ? meshed.failure->code
+                : "secure_pipeline.unknown_refusal";
+            std::printf(
+                "COVERAGE subject=fixture:%s terminal=named_refusal code=%s\n",
+                fixture, code.c_str());
+            CHECK(meshed.failure.has_value());
+        }
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+    }
+
+    const std::size_t caseCount = cases.size();
+    std::printf(
+        "COVERAGE_TOTALS import_success=%zu import_refusal=%zu "
+        "mesh_certified=%zu mesh_named_refusal=%zu mesh_inspectable_only=%zu "
+        "case_total=%zu fixture_extra=5\n",
+        importSuccess, importRefusal, meshCertified, meshNamedRefusal,
+        meshInspectableOnly, caseCount);
+    CHECK(importRefusal + (importSuccess - 5) == caseCount);
+    CHECK(meshCertified + meshNamedRefusal + meshInspectableOnly ==
+          importSuccess);
+
     if (failures == 0) {
-        std::printf("secure committed STEP corpus checks passed (6 success, 3 refusal)\n");
+        std::printf(
+            "secure committed STEP corpus checks passed (%zu import success "
+            "incl fixtures, %zu import refusal); coverage baseline classified\n",
+            importSuccess, importRefusal);
         return EXIT_SUCCESS;
     }
     std::printf("%d secure committed STEP corpus failure(s)\n", failures);

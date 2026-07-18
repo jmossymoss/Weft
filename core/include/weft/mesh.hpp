@@ -56,6 +56,9 @@ struct PolyMesh {
     // triangle-only export can consume this certified representation without
     // allowing each downstream application to pick different diagonals.
     std::vector<std::vector<std::array<uint32_t, 3>>> certifiedTriangles;
+    // Which MeshingResult view produced this adapter payload
+    // (e.g. "certified", "modeling.certified_floor_alias").
+    std::string selectedOutput;
 
     size_t vertexCount() const { return vertices.size(); }
     size_t polygonCount() const { return polygons.size(); }

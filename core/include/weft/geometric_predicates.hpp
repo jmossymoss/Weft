@@ -8,6 +8,8 @@
 namespace weft {
 
 using PredicatePoint2 = std::array<double, 2>;
+using PredicatePoint3 = std::array<double, 3>;
+using PredicateTriangle3 = std::array<PredicatePoint3, 3>;
 
 enum class ExactSign {
     Negative = -1,
@@ -20,6 +22,16 @@ enum class SegmentIntersectionKind {
     Proper,
     EndpointTouch,
     CollinearOverlap,
+};
+
+// Geometric contact between two triangles in 3-space. "Shared" names describe
+// the contact dimension, not topological identity of mesh vertices.
+enum class TriangleIntersection3dKind {
+    None,
+    SharedVertexOnly,
+    SharedEdgeOnly,
+    ProperIntersection,
+    CoplanarOverlap,
 };
 
 struct PredicateFailure {
@@ -47,6 +59,11 @@ public:
         PredicatePoint2 a, PredicatePoint2 b,
         PredicatePoint2 c) const = 0;
 
+    // Positive means d lies above the oriented plane through a,b,c.
+    virtual PredicateResult<ExactSign> orient3d(
+        PredicatePoint3 a, PredicatePoint3 b, PredicatePoint3 c,
+        PredicatePoint3 d) const = 0;
+
     // For counter-clockwise a,b,c, positive means d is inside their circle.
     virtual PredicateResult<ExactSign> incircle(
         PredicatePoint2 a, PredicatePoint2 b, PredicatePoint2 c,
@@ -61,6 +78,11 @@ public:
     virtual PredicateResult<SegmentIntersectionKind> segmentIntersection(
         PredicatePoint2 a, PredicatePoint2 b, PredicatePoint2 c,
         PredicatePoint2 d) const = 0;
+
+    // Exact geometric contact classification. Topological vertex identity is
+    // applied by certified-mesh validation; this predicate is coordinate-only.
+    virtual PredicateResult<TriangleIntersection3dKind> triangleIntersection3d(
+        PredicateTriangle3 first, PredicateTriangle3 second) const = 0;
 };
 
 // Distribution-safe reference backend. Each finite IEEE-754 double is decoded

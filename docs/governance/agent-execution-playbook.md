@@ -298,7 +298,7 @@ only with indexed evidence.
 
 ### WP-020 — Reject body triangle intersections
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M4/M5
 - Prerequisites: WP-015
 - Goal: independently detect non-adjacent 3D triangle intersections before a
@@ -313,13 +313,13 @@ only with indexed evidence.
      and vacuous-validator fixtures.
   5. Integrate the result into `MeshingResult` and export admission.
 - Tests: `certified_mesh|secure_meshing`.
-- Evidence: `docs/evidence/m4-m5-triangle-intersections-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m4-m5-triangle-intersections-2026-07-18.md`.
 - Exit gate: all illegal intersections refuse by name; legal adjacency passes;
   expected/checked/skipped/failed counts are non-vacuous.
 
 ### WP-021 — Certify interior axial cylinder samples
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M4/M6
 - Prerequisites: WP-020
 - Goal: permit adaptive axial rings without losing source/template provenance.
@@ -333,13 +333,13 @@ only with indexed evidence.
   4. Add zero/one/multiple ring, reversed frame, tampered provenance, and
      excessive-error fixtures.
 - Tests: `cylinder_template|certified_mesh|secure_meshing`.
-- Evidence: `docs/evidence/m4-m6-axial-cylinder-samples-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m4-m6-axial-cylinder-samples-2026-07-18.md`.
 - Exit gate: extra rings pass only with complete provenance and analytic error
   proof; current extra-sample adversaries still fail when evidence is removed.
 
 ### WP-022 — Mesh and certify partial cylinders
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M4/M6
 - Prerequisites: WP-010, WP-013, WP-021
 - Goal: produce boundary-exact certified walls for open and seam-crossing
@@ -356,13 +356,13 @@ only with indexed evidence.
   6. Validate closure where caps exist, intersections, chord/normal bounds,
      and deterministic digests.
 - Tests: `cylinder_template|interval_solver|secure_meshing|certified_mesh`.
-- Evidence: `docs/evidence/m4-m6-partial-cylinder-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m4-m6-partial-cylinder-2026-07-18.md`.
 - Exit gate: the M6 partial-cylinder fixture family passes end to end with no
   weld; malformed bands refuse before generation by stable code.
 
 ### WP-023 — Prove mismatched cylinder reference frames
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M6
 - Prerequisites: WP-022
 - Goal: register compatible cylinders whose source faces use different but
@@ -376,13 +376,13 @@ only with indexed evidence.
   3. Apply it to canonical samples without changing source identity.
   4. Reject reflection/twist/incompatibility by distinct named codes.
 - Tests: `secure_core|canonical_boundary|cylinder_template|secure_meshing`.
-- Evidence: `docs/evidence/m6-cylinder-frame-registration-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m6-cylinder-frame-registration-2026-07-18.md`.
 - Exit gate: compatible fixtures share registered columns; all incompatible
   fixtures fail before wall assembly.
 
 ### WP-030 — Add incidence and Euler validation
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M5
 - Prerequisites: WP-020
 - Goal: compare source topology incidence with certified mesh incidence and
@@ -395,13 +395,13 @@ only with indexed evidence.
   4. Add closed, open, holed, multi-body, duplicated, missing-face, and vacuous
      evidence fixtures.
 - Tests: `secure_core|certified_mesh|secure_meshing`.
-- Evidence: `docs/evidence/m5-incidence-euler-validation-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m5-incidence-euler-validation-2026-07-18.md`.
 - Exit gate: every certified result has complete incidence accounting and zero
   unexplained topology delta.
 
 ### WP-031 — Certify modelling-mesh provenance
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M5/M6
 - Prerequisites: WP-030
 - Goal: stop treating an unexplained alias of the safety floor as independent
@@ -414,13 +414,13 @@ only with indexed evidence.
   3. Add vacuous, tampered, alias, and independent-output fixtures.
   4. Ensure exporters report which output they consume.
 - Tests: `certified_mesh|secure_meshing` plus CLI/export tests.
-- Evidence: `docs/evidence/m5-modelling-provenance-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m5-modelling-provenance-2026-07-18.md`.
 - Exit gate: no result can claim modelling topology without a non-vacuous
   certificate; a deliberate floor alias is explicit and truthful.
 
 ### WP-032 — Generate first independent modelling polygons
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M6
 - Prerequisites: WP-022, WP-023, WP-031
 - Goal: produce independently certified quads/n-gons for the planar and
@@ -435,13 +435,13 @@ only with indexed evidence.
   4. Add box, capped/full/partial cylinder, through-hole, density sweep, and
      tampered-ancestry fixtures.
 - Tests: all template, certified-mesh, secure-meshing, and export tests.
-- Evidence: `docs/evidence/m6-independent-modelling-topology-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m6-independent-modelling-topology-2026-07-18.md`.
 - Exit gate: the complete M6 fixture family has independent, modelable
   polygons and an unchanged certified floor.
 
 ### WP-040 — Audit all app and export admission paths
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M7
 - Prerequisites: WP-031
 - Goal: require a valid `MeshingResult` certificate at every regeneration,
@@ -454,13 +454,13 @@ only with indexed evidence.
   3. Add missing/tampered/stale-generation/refusal integration tests.
   4. Confirm no legacy or direct OCCT triangulation route remains reachable.
 - Tests: full Windows strict lane plus app/CLI smoke commands.
-- Evidence: `docs/evidence/m7-admission-path-audit-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m7-admission-path-audit-2026-07-18.md`.
 - Exit gate: every product route is enumerated and refuses uncertified or stale
   results before use.
 
 ### WP-041 — Apply one certified per-face recipe operation
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M7
 - Prerequisites: WP-032, WP-040
 - Goal: unblock the narrowest useful per-face recipe setting through a proven
@@ -474,13 +474,13 @@ only with indexed evidence.
   4. Certify requested, resolved, consumed, and resulting values.
   5. Prove save/reload and CLI/app replay digest equality.
 - Tests: `secure_recipe|secure_meshing` plus CLI/app replay.
-- Evidence: `docs/evidence/m7-certified-per-face-recipe-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m7-certified-per-face-recipe-2026-07-18.md`.
 - Exit gate: the operation has one complete certified consumer and
   deterministic replay; all other unsupported operations continue to refuse.
 
 ### WP-042 — Add secure cache and proxy invalidation
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M7
 - Prerequisites: WP-040, WP-041
 - Goal: reuse only artifacts whose source snapshot, recipe, settings,
@@ -493,13 +493,13 @@ only with indexed evidence.
   4. Prove unaffected certified artifacts remain byte-identical.
   5. Add source/recipe/settings/version/corruption/race invalidation tests.
 - Tests: app integration, `secure_recipe`, `secure_meshing`, full strict lane.
-- Evidence: `docs/evidence/m7-secure-cache-invalidation-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m7-secure-cache-invalidation-2026-07-18.md`.
 - Exit gate: cache hits are reproducible and certified; every stale or partial
   entry is rejected by name.
 
 ### WP-043 — Complete editing, overlays, and LOD reporting
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M7
 - Prerequisites: WP-042
 - Goal: complete the remaining M7 workflow gate without allowing UI state to
@@ -513,12 +513,12 @@ only with indexed evidence.
   4. Reject unsupported manual operations before mutating authoritative state.
   5. Prove hot reload and Blender link preserve the same report/digest.
 - Tests: app/CLI/live-link integration and full strict lane.
-- Evidence: `docs/evidence/m7-certified-editing-overlays-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m7-certified-editing-overlays-2026-07-18.md`.
 - Exit gate: the full M7 ledger gate passes and M7 can be marked `PASSED`.
 
 ### WP-050 — Classify the frozen corpus against the certified pipeline
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M4/M8 readiness
 - Prerequisites: WP-043
 - Goal: establish the measured coverage baseline before adding another surface
@@ -531,7 +531,7 @@ only with indexed evidence.
   3. Assert every subject ends in certified output or one stable named refusal.
   4. Group gaps by user value and geometry family without changing status.
 - Tests: committed/generated corpus plus secure global sweep.
-- Evidence: `docs/evidence/m4-m8-certified-coverage-baseline-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m4-m8-certified-coverage-baseline-2026-07-18.md`.
 - Exit gate: corpus totals reconcile exactly and no failure is unclassified.
 
 ## M8 family packet

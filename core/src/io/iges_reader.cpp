@@ -4,10 +4,14 @@
 
 #include "weft/io/reader.hpp"
 
+#include <Standard_Version.hxx>
+
 #include <IFSelect_ReturnStatus.hxx>
 #include <IGESCAFControl_Reader.hxx>
 #include <IGESControl_Controller.hxx>
+#if OCC_VERSION_HEX >= 0x070800
 #include <ShapeProcess.hxx>
+#endif
 #include <TDocStd_Document.hxx>
 #include <TopoDS_Shape.hxx>
 #include <XCAFApp_Application.hxx>
@@ -111,6 +115,7 @@ public:
                 "IGES reader has no immutable source snapshot: " + m_path);
         }
 
+#if OCC_VERSION_HEX >= 0x070800
         const ShapeProcess::OperationsFlags noShapeProcessing;
         m_reader.SetShapeProcessFlags(noShapeProcessing);
         const auto processing = m_reader.GetShapeProcessFlags();
@@ -120,6 +125,7 @@ public:
                 "OCCT did not retain the processing-disabled IGES policy: " +
                     m_path);
         }
+#endif
 
         const int requestedRootCount = m_reader.NbRootsForTransfer();
         if (requestedRootCount <= 0) {

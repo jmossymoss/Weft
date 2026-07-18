@@ -45,6 +45,10 @@ TopoDS_Shape makeFixture(const std::string& name) {
     if (name == "cylinder") {
         return BRepPrimAPI_MakeCylinder(10.0, 30.0).Shape();
     }
+    if (name == "partial_cylinder") {
+        // 270-degree open cylindrical band with two linear side rails.
+        return BRepPrimAPI_MakeCylinder(10.0, 30.0, 1.5 * M_PI).Shape();
+    }
     if (name == "box") {
         return BRepPrimAPI_MakeBox(20.0, 30.0, 15.0).Shape();
     }
@@ -640,7 +644,7 @@ TopoDS_Shape makeFixture(const std::string& name) {
     }
     throw std::runtime_error(
         "unknown fixture: " + name +
-        " (expected cylinder|box|cone|sphere|torus|fillet|hole|demo|boss|"
+        " (expected cylinder|partial_cylinder|box|cone|sphere|torus|fillet|hole|demo|boss|"
         "hairline|canrev|slitdrill|microedge|filletslot|torture)");
 }
 

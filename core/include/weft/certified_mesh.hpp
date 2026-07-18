@@ -1,11 +1,13 @@
 #pragma once
 
+#include "weft/geometric_predicates.hpp"
 #include "weft/meshers.hpp"
 #include "weft/planar_cdt.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -42,6 +44,7 @@ struct CertifiedVertex {
     std::uint64_t canonicalVertexIndex = InvalidCanonicalVertexIndex;
     std::array<double, 3> position{};
     std::vector<CertifiedVertexUse> provenance;
+    std::optional<CylinderInteriorStation> cylinderInterior;
 };
 
 struct CertifiedTriangle {
@@ -63,11 +66,21 @@ struct ModelingPolygon {
     std::vector<std::uint32_t> vertices;
 };
 
+enum class ModelingProvenanceKind {
+    Absent = 0,
+    CertifiedFloorAlias,
+    Independent,
+};
+
 struct ModelingMesh {
     std::vector<CertifiedVertex> vertices;
     std::vector<ModelingPolygon> polygons;
+    ModelingProvenanceKind provenance = ModelingProvenanceKind::Absent;
+    // Compatibility mirrors: true only for CertifiedFloorAlias.
     bool aliasesCertified = false;
     std::optional<std::string> safeFloorReason;
+    // Required and complete when provenance == Independent.
+    ValidationCertificate independentValidation;
 };
 
 struct MeshingResult {
@@ -76,6 +89,33 @@ struct MeshingResult {
     GenerationReport generation;
     ValidationCertificate validation;
 };
+
+struct ModelingProvenanceFailure {
+    std::string code;
+    std::string message;
+};
+
+struct ModelingProvenanceResult {
+    ValidationCoverage coverage{"modeling.provenance"};
+    ModelingProvenanceKind kind = ModelingProvenanceKind::Absent;
+    std::string selectedOutput;
+    std::optional<ModelingProvenanceFailure> failure;
+
+    explicit operator bool() const noexcept {
+        return !failure.has_value() && coverage.complete();
+    }
+};
+
+// Validates that modelling output truthfully declares absent / floor-alias /
+// independent provenance. Independent claims require a non-vacuous certificate.
+ModelingProvenanceResult validateModelingProvenance(
+    const MeshingResult& result);
+
+// Builds independent modelling polygons (quads where triangle pairs share an
+// edge) above an unchanged certified triangle floor. Returns nullopt when no
+// independent polygons can be proven.
+std::optional<ModelingMesh> tryBuildIndependentModelingMesh(
+    const CertifiedMesh& certified);
 
 ModelingMesh makeCertifiedFloorModelingMesh(
     const CertifiedMesh& certified,
@@ -124,5 +164,47 @@ CertifiedMeshAssemblyResult assembleCertifiedPlanarMesh(
     std::span<const PlanarCdtMesh> faceMeshes,
     std::span<const StableId> expectedWorkingFaces,
     const CertifiedMeshAssemblyConfiguration& configuration = {});
+
+// Independent body-level triangle intersection certificate. Legal contacts are
+// those explained by shared canonical vertex indices; all other geometric
+// contacts refuse by name. Coverage expected equals the unordered pair count.
+struct CertifiedTriangleIntersectionResult {
+    ValidationCoverage coverage{"certified.triangle_intersection"};
+    std::optional<CertifiedMeshAssemblyFailure> failure;
+
+    explicit operator bool() const noexcept {
+        return !failure.has_value() && coverage.complete();
+    }
+};
+
+CertifiedTriangleIntersectionResult validateCertifiedTriangleIntersections(
+    const CertifiedMesh& mesh,
+    std::shared_ptr<const GeometricPredicates> predicates =
+        makeExactDyadicPredicates());
+
+// Compares certified-mesh incidence with the closed/open expectation implied by
+// assembly configuration and reports Euler characteristic coverage. Source-open
+// bodies may skip the closed χ=2 expectation without treating that as a meshing
+// defect.
+struct CertifiedIncidenceEulerResult {
+    ValidationCoverage coverage{"certified.incidence_euler"};
+    std::size_t meshVertices = 0;
+    std::size_t meshEdges = 0;
+    std::size_t meshTriangles = 0;
+    std::size_t boundaryEdges = 0;
+    std::size_t connectedComponents = 0;
+    int eulerCharacteristic = 0;
+    int expectedEulerCharacteristic = 0;
+    bool sourceTreatedAsOpen = false;
+    std::optional<CertifiedMeshAssemblyFailure> failure;
+
+    explicit operator bool() const noexcept {
+        return !failure.has_value() && coverage.complete();
+    }
+};
+
+CertifiedIncidenceEulerResult validateCertifiedIncidenceEuler(
+    const CertifiedMesh& mesh,
+    bool requireClosedManifold = true);
 
 }  // namespace weft

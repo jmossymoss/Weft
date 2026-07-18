@@ -781,6 +781,13 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
             4096U, configuration.sampling.minimumClosedCurveSegments);
         configuration.cylinderAxialIntervals =
             static_cast<std::uint32_t>(selected.defaults.axial);
+        if (selected.perFace.size() == 1) {
+            const int faceAxial = selected.perFace.begin()->second.axial;
+            if (faceAxial >= 1) {
+                configuration.cylinderAxialIntervals =
+                    static_cast<std::uint32_t>(faceAxial);
+            }
+        }
         for (const auto& [edgeId, count] : selected.perEdge) {
             if (edgeId < 1 || count < 1) {
                 throw std::runtime_error(
@@ -805,6 +812,17 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
                 "secure meshing refused [" + code + "]: " + message);
         }
         latestSecureResult = std::move(*generated.value);
+        const weft::CertifiedAdmissionResult admitted =
+            weft::admitCertifiedMeshingResult(latestSecureResult);
+        if (!admitted) {
+            throw std::runtime_error(
+                "secure admission refused [" +
+                (admitted.failure ? admitted.failure->code
+                                  : std::string("admission.unknown")) +
+                "]: " +
+                (admitted.failure ? admitted.failure->message
+                                  : std::string("uncertified result")));
+        }
         return weft::makeCertifiedPolyMeshAdapter(latestSecureResult);
     };
 

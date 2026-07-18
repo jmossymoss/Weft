@@ -58,9 +58,10 @@ if(MSVC)
 endif()
 
 target_include_directories(weft_core
-  PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
-  PUBLIC ${OpenCASCADE_INCLUDE_DIR}
-)
+  PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+# Treat OCCT headers as system includes so toolchain deprecations inside
+# OCCT (for example std::iterator in 7.6) do not fail -Werror builds.
+target_include_directories(weft_core SYSTEM PUBLIC ${OpenCASCADE_INCLUDE_DIR})
 
 # The public io registry API uses std::span, so consumers that include those
 # headers must compile as C++20 too. Propagate the requirement through the

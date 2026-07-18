@@ -10,6 +10,7 @@ namespace weft {
 // exercised without external CAD files.
 //
 //   "cylinder" - a single solid cylinder (r=10, h=30)
+//   "partial_cylinder" - solid cylinder sector (r=10, h=30, 270 deg)
 //   "box"      - a single solid box (20 x 30 x 15)
 //   "cone"     - solid cone to an apex (r=10, h=20)
 //   "sphere"   - solid sphere (r=10)

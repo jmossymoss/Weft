@@ -351,6 +351,10 @@ weft::SecureMeshingConfiguration recipeMeshingConfiguration(
     configuration.sampling.normalAngleToleranceRadians = 0.1;
     configuration.sampling.minimumClosedCurveSegments = 16;
     configuration.sampling.maximumSegmentCount = 4096;
+    configuration.cylinderAxialIntervals = 1;
+    if (const auto axial = weft::certifiedPerFaceCylinderAxial(resolved)) {
+        configuration.cylinderAxialIntervals = *axial;
+    }
     for (const auto& [edgeId, count] : resolved.settings.perEdge) {
         if (edgeId < 1 || count < 1) continue;
         configuration.exactEdgeIntervalCounts.emplace(
@@ -359,6 +363,54 @@ weft::SecureMeshingConfiguration recipeMeshingConfiguration(
             static_cast<std::uint32_t>(count));
     }
     return configuration;
+}
+
+void testCertifiedPerFaceCylinderAxial(
+    const weft::ImportedModel& cylinderImported,
+    const std::filesystem::path& recipePath) {
+    weft::StableId cylinderFace{};
+    const weft::ReconnaissanceReport reconnaissance =
+        weft::reconnoitre(cylinderImported);
+    for (const weft::ExactGeometryClassification& record :
+         reconnaissance.records) {
+        if (record.taxonomy == weft::GeometryTaxonomy::Surface &&
+            record.familyCode == "cylinder") {
+            cylinderFace = record.subjectId;
+            break;
+        }
+    }
+    CHECK(cylinderFace.valid());
+
+    weft::Recipe withAxial;
+    withAxial.settings.perFace[static_cast<int>(cylinderFace.ordinal)].axial =
+        2;
+    const weft::RecipeV2MigrationResult migrated =
+        weft::migrateRecipeV1(cylinderImported, withAxial);
+    CHECK(migrated.complete());
+    const weft::RecipeV2Resolution resolved =
+        weft::resolveRecipeV2(cylinderImported, migrated.recipe);
+    CHECK(resolved.complete());
+    CHECK(weft::validateSecureRecipeApplication(resolved).empty());
+    CHECK(weft::certifiedPerFaceCylinderAxial(resolved) == 2U);
+
+    weft::saveRecipeV2(migrated.recipe, recipePath.string());
+    const weft::RecipeV2 loaded = weft::loadRecipeV2(recipePath.string());
+    const weft::RecipeV2Resolution replayed =
+        weft::resolveRecipeV2(cylinderImported, loaded);
+    CHECK(weft::certifiedPerFaceCylinderAxial(replayed) == 2U);
+
+    const weft::SecureMeshingConfiguration configuration =
+        recipeMeshingConfiguration(replayed);
+    CHECK(configuration.cylinderAxialIntervals == 2);
+    const weft::SecureMeshingResult first =
+        weft::generateSecureMesh(cylinderImported, configuration);
+    const weft::SecureMeshingResult second =
+        weft::generateSecureMesh(cylinderImported, configuration);
+    CHECK(first);
+    CHECK(second);
+    CHECK(first.value && second.value &&
+          first.value->certified.topologyFingerprint ==
+              second.value->certified.topologyFingerprint);
 }
 
 void testRecipeChainSumTemplateReplay(
@@ -417,6 +469,19 @@ int main() {
         testWorkingRecipeCapture(imported);
         testV1RefusalsAndMalformedFile(imported, files.malformed());
         testRecipeChainSumTemplateReplay(imported, files.recipe());
+
+        const std::filesystem::path cylinderStep = weft::test::uniqueTempPath(
+            "weft_secure_recipe_cylinder", ".step");
+        const std::filesystem::path cylinderRecipe =
+            weft::test::uniqueTempPath("weft_secure_recipe_cylinder",
+                                       ".recipe");
+        weft::writeStep(weft::makeFixture("cylinder"), cylinderStep.string());
+        const weft::ImportedModel cylinderImported =
+            weft::importStepSecure(cylinderStep.string());
+        testCertifiedPerFaceCylinderAxial(cylinderImported, cylinderRecipe);
+        std::error_code ignored;
+        std::filesystem::remove(cylinderStep, ignored);
+        std::filesystem::remove(cylinderRecipe, ignored);
     } catch (const std::exception& error) {
         std::printf("FAIL secure-recipe exception: %s\n", error.what());
         ++failures;

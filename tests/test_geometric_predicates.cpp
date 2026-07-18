@@ -211,6 +211,106 @@ void testSegmentIntersection(const weft::GeometricPredicates& predicates) {
               weft::SegmentIntersectionKind::EndpointTouch);
 }
 
+void testOrient3d(const weft::GeometricPredicates& predicates) {
+    const auto positive = predicates.orient3d(
+        {0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0});
+    CHECK(positive && *positive.value == weft::ExactSign::Positive);
+    const auto negative = predicates.orient3d(
+        {0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, -1.0});
+    CHECK(negative && *negative.value == weft::ExactSign::Negative);
+    const auto zero = predicates.orient3d(
+        {0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.5, 0.5, 0.0});
+    CHECK(zero && *zero.value == weft::ExactSign::Zero);
+
+    DeterministicLcg random(0xD1A6E71CULL);
+    for (int iteration = 0; iteration < 500; ++iteration) {
+        const std::int64_t coords[12] = {
+            random.coordinate(50), random.coordinate(50), random.coordinate(50),
+            random.coordinate(50), random.coordinate(50), random.coordinate(50),
+            random.coordinate(50), random.coordinate(50), random.coordinate(50),
+            random.coordinate(50), random.coordinate(50), random.coordinate(50)};
+        // Match orient3d(a,b,c,d) = det(b-a, c-a, d-a).
+        const std::int64_t bx = coords[3] - coords[0];
+        const std::int64_t by = coords[4] - coords[1];
+        const std::int64_t bz = coords[5] - coords[2];
+        const std::int64_t cx = coords[6] - coords[0];
+        const std::int64_t cy = coords[7] - coords[1];
+        const std::int64_t cz = coords[8] - coords[2];
+        const std::int64_t dx = coords[9] - coords[0];
+        const std::int64_t dy = coords[10] - coords[1];
+        const std::int64_t dz = coords[11] - coords[2];
+        const std::int64_t determinant =
+            bx * (cy * dz - cz * dy) - by * (cx * dz - cz * dx) +
+            bz * (cx * dy - cy * dx);
+        const auto exact = predicates.orient3d(
+            {static_cast<double>(coords[0]), static_cast<double>(coords[1]),
+             static_cast<double>(coords[2])},
+            {static_cast<double>(coords[3]), static_cast<double>(coords[4]),
+             static_cast<double>(coords[5])},
+            {static_cast<double>(coords[6]), static_cast<double>(coords[7]),
+             static_cast<double>(coords[8])},
+            {static_cast<double>(coords[9]), static_cast<double>(coords[10]),
+             static_cast<double>(coords[11])});
+        CHECK(exact && *exact.value == signOf(determinant));
+    }
+
+    const auto invalid = predicates.orient3d(
+        {0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {0.0, 1.0, 0.0},
+        {std::numeric_limits<double>::quiet_NaN(), 0.0, 0.0});
+    CHECK(!invalid);
+    CHECK(invalid.failure &&
+          invalid.failure->code == "predicate.non_finite_input");
+}
+
+void testTriangleIntersection3d(const weft::GeometricPredicates& predicates) {
+    const weft::PredicateTriangle3 base{
+        {{0.0, 0.0, 0.0}, {2.0, 0.0, 0.0}, {0.0, 2.0, 0.0}}};
+    const weft::PredicateTriangle3 adjacent{
+        {{2.0, 0.0, 0.0}, {2.0, 2.0, 0.0}, {0.0, 2.0, 0.0}}};
+    const auto edgeShare = predicates.triangleIntersection3d(base, adjacent);
+    CHECK(edgeShare &&
+          (*edgeShare.value == weft::TriangleIntersection3dKind::SharedEdgeOnly ||
+           *edgeShare.value ==
+               weft::TriangleIntersection3dKind::CoplanarOverlap));
+
+    const weft::PredicateTriangle3 vertexTouch{
+        {{0.0, 0.0, 0.0}, {-1.0, 0.0, 1.0}, {-1.0, 1.0, 0.0}}};
+    const auto vertex = predicates.triangleIntersection3d(base, vertexTouch);
+    CHECK(vertex &&
+          *vertex.value == weft::TriangleIntersection3dKind::SharedVertexOnly);
+
+    const weft::PredicateTriangle3 stabbing{
+        {{0.5, 0.5, -1.0}, {0.5, 0.5, 1.0}, {1.5, -0.5, 0.0}}};
+    const auto proper = predicates.triangleIntersection3d(base, stabbing);
+    CHECK(proper &&
+          *proper.value == weft::TriangleIntersection3dKind::ProperIntersection);
+
+    const weft::PredicateTriangle3 overlap{
+        {{0.5, 0.5, 0.0}, {1.5, 0.5, 0.0}, {0.5, 1.5, 0.0}}};
+    const auto coplanar = predicates.triangleIntersection3d(base, overlap);
+    CHECK(coplanar &&
+          *coplanar.value == weft::TriangleIntersection3dKind::CoplanarOverlap);
+
+    const weft::PredicateTriangle3 separated{
+        {{3.0, 3.0, 3.0}, {4.0, 3.0, 3.0}, {3.0, 4.0, 3.0}}};
+    const auto none = predicates.triangleIntersection3d(base, separated);
+    CHECK(none && *none.value == weft::TriangleIntersection3dKind::None);
+
+    const weft::PredicateTriangle3 nearContact{
+        {{0.0, 0.0, 1e-9}, {2.0, 0.0, 1e-9}, {0.0, 2.0, 1e-9}}};
+    const auto near = predicates.triangleIntersection3d(base, nearContact);
+    CHECK(near && *near.value == weft::TriangleIntersection3dKind::None);
+
+    const auto invalid = predicates.triangleIntersection3d(
+        base,
+        {{{std::numeric_limits<double>::infinity(), 0.0, 0.0},
+          {1.0, 0.0, 0.0},
+          {0.0, 1.0, 0.0}}});
+    CHECK(!invalid);
+    CHECK(invalid.failure &&
+          invalid.failure->code == "predicate.non_finite_input");
+}
+
 }  // namespace
 
 int main() {
@@ -222,6 +322,8 @@ int main() {
         testSquaredDistanceComparison(*predicates);
         testIntegerPropertyBattery(*predicates);
         testSegmentIntersection(*predicates);
+        testOrient3d(*predicates);
+        testTriangleIntersection3d(*predicates);
     }
     if (failures == 0) {
         std::printf("exact geometric predicate checks passed\n");

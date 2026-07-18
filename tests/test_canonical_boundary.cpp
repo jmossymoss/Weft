@@ -233,6 +233,7 @@ void testAzimuthRegistration() {
         }
     }
 
+    // Shifted angle / cyclic phase: compatible frames share columns.
     const auto rotated = weft::azimuthRegistration(
         lower, ring(1.0, 3.0 * twoPi / 12.0, 1.0));
     CHECK(rotated);
@@ -241,20 +242,63 @@ void testAzimuthRegistration() {
         CHECK((*rotated.permutation)[3] == 0);
     }
 
+    // Reversed axis (swap rings): still a pure cyclic registration.
+    const auto reversedAxis = weft::azimuthRegistration(
+        ring(1.0, 0.0, 1.0), lower);
+    CHECK(reversedAxis);
+    if (reversedAxis) {
+        for (std::uint32_t index = 0; index < 12; ++index) {
+            CHECK((*reversedAxis.permutation)[index] == index);
+        }
+    }
+
+    // Rotated origin in the XY plane of each ring (same relative samples).
+    auto rotatedOriginLower = lower;
+    auto rotatedOriginUpper = ring(1.0, 0.0, 1.0);
+    for (auto& point : rotatedOriginLower) {
+        point[0] += 5.0;
+        point[1] -= 2.0;
+    }
+    for (auto& point : rotatedOriginUpper) {
+        point[0] += 5.0;
+        point[1] -= 2.0;
+    }
+    const auto rotatedOrigin =
+        weft::azimuthRegistration(rotatedOriginLower, rotatedOriginUpper);
+    CHECK(rotatedOrigin);
+
     const auto reflected = weft::azimuthRegistration(
         lower, ring(1.0, 0.0, -1.0));
     CHECK(!reflected);
     CHECK(reflected.failure &&
-          reflected.failure->code ==
-              "boundary.azimuth_registration_failed");
+          reflected.failure->code == "boundary.azimuth_reflection");
 
-    const auto nonUniform = weft::azimuthRegistration(
+    const auto twisted = weft::azimuthRegistration(
         lower, ring(1.0, 0.0, 1.0, 4));
-    CHECK(!nonUniform);
+    CHECK(!twisted);
+    CHECK(twisted.failure &&
+          twisted.failure->code == "boundary.azimuth_twist");
 
     const auto invalidReference = weft::azimuthRegistration(
-        ring(0.0, 0.0, 1.0, 4), ring(1.0, 0.0, 1.0));
+        {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}},
+        ring(1.0, 0.0, 1.0));
     CHECK(!invalidReference);
+    CHECK(invalidReference.failure &&
+          invalidReference.failure->code ==
+              "boundary.azimuth_incompatible");
+
+    const auto countMismatch = weft::azimuthRegistration(
+        lower, ring(1.0, 0.0, 1.0));
+    // Same count — keep a true incompatible count case:
+    auto shortRing = lower;
+    shortRing.pop_back();
+    const auto incompatible =
+        weft::azimuthRegistration(lower, shortRing);
+    CHECK(!incompatible);
+    CHECK(incompatible.failure &&
+          incompatible.failure->code ==
+              "boundary.azimuth_incompatible");
+    (void)countMismatch;
 }
 
 void testPartialPeriodicCurveIsOpen(const std::filesystem::path& path) {

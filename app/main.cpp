@@ -775,6 +775,8 @@ struct App {
     weft::SecureMeshingConfiguration genSecureConfiguration;
     weft::PolyMesh genMesh;
     weft::MeshingResult genSecureResult;
+    std::uint64_t generationEpoch = 0;
+    std::uint64_t genWorkerEpoch = 0;
     weft::GenerationReport genReport;
     std::string genError;
     // A defaults control being hovered highlights the faces it drives —
@@ -1026,6 +1028,13 @@ static weft::SecureMeshingConfiguration secureConfiguration(
         4096U, result.sampling.minimumClosedCurveSegments);
     result.cylinderAxialIntervals =
         static_cast<std::uint32_t>(defaults.axial);
+    if (settings.perFace.size() == 1) {
+        const int faceAxial = settings.perFace.begin()->second.axial;
+        if (faceAxial >= 1) {
+            result.cylinderAxialIntervals =
+                static_cast<std::uint32_t>(faceAxial);
+        }
+    }
     for (const auto& [edgeId, count] : settings.perEdge) {
         if (edgeId < 1 || count < 1) {
             throw std::runtime_error(
@@ -1583,8 +1592,11 @@ static void startGenerate(App& app) {
     app.genBusy = true;
     app.genReady = false;
     app.dirty = false;
+    ++app.generationEpoch;
+    app.genWorkerEpoch = app.generationEpoch;
     App* a = &app;  // outlives the thread (owned by main)
-    app.genThread = std::thread([a] {
+    const std::uint64_t workerEpoch = app.genWorkerEpoch;
+    app.genThread = std::thread([a, workerEpoch] {
         try {
             weft::SecureMeshingResult generated = weft::generateSecureMesh(
                 a->secureImported, a->genSecureConfiguration);
@@ -1592,6 +1604,18 @@ static void startGenerate(App& app) {
                 throw secureGenerationError(generated);
             }
             a->genSecureResult = std::move(*generated.value);
+            const weft::CertifiedAdmissionResult admitted =
+                weft::admitCertifiedMeshingResult(
+                    a->genSecureResult, a->generationEpoch, workerEpoch);
+            if (!admitted) {
+                throw std::runtime_error(
+                    "secure admission refused [" +
+                    (admitted.failure ? admitted.failure->code
+                                      : std::string("admission.unknown")) +
+                    "]: " +
+                    (admitted.failure ? admitted.failure->message
+                                      : std::string("uncertified result")));
+            }
             a->genMesh =
                 weft::makeCertifiedPolyMeshAdapter(a->genSecureResult);
             a->genReport = a->genSecureResult.generation;
@@ -2255,6 +2279,17 @@ static weft::PolyMesh finalizedMeshForExport(App& app) {
     weft::SecureMeshingResult generated =
         weft::generateSecureMesh(app.secureImported, configuration);
     if (!generated) throw secureGenerationError(generated);
+    const weft::CertifiedAdmissionResult admitted =
+        weft::admitCertifiedMeshingResult(*generated.value);
+    if (!admitted) {
+        throw std::runtime_error(
+            "secure admission refused [" +
+            (admitted.failure ? admitted.failure->code
+                              : std::string("admission.unknown")) +
+            "]: " +
+            (admitted.failure ? admitted.failure->message
+                              : std::string("uncertified result")));
+    }
     return weft::makeCertifiedPolyMeshAdapter(*generated.value);
 }
 

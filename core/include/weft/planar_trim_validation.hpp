@@ -3,6 +3,7 @@
 #include "weft/canonical_boundary.hpp"
 #include "weft/geometric_predicates.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -37,8 +38,21 @@ struct PlanarTrimBoundaryUse {
     std::optional<PcurveRef> representation;
 };
 
+// Provenance for generated cylinder interior stations that are not owned by a
+// canonical boundary sample. Seam samples at the same (u,v) may still attach
+// as ordinary boundaryUses on the same vertex.
+struct CylinderInteriorStation {
+    StableId workingFace;
+    std::optional<StableId> sourceFace;
+    PredicatePoint2 uv{};
+    std::array<double, 3> position{};
+    std::uint32_t axialRing = 0;
+    std::uint32_t azimuthColumn = 0;
+};
+
 struct PlanarTrimVertex {
     std::vector<PlanarTrimBoundaryUse> boundaryUses;
+    std::optional<CylinderInteriorStation> cylinderInterior;
     std::uint64_t canonicalVertexIndex = InvalidCanonicalVertexIndex;
     PredicatePoint2 uv{};
 };

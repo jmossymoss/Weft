@@ -1,11 +1,12 @@
 #include "secure_core_internal.hpp"
 
+#include "weft/occt_shape_hash.hpp"
+
 #include <BRep_Tool.hxx>
 #include <Geom2d_Curve.hxx>
 #include <Standard_Failure.hxx>
 #include <TopAbs_Orientation.hxx>
 #include <TopLoc_Location.hxx>
-#include <TopTools_ShapeMapHasher.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
@@ -587,8 +588,8 @@ private:
     std::map<StableIdKind, std::uint64_t> nextOrdinals_;
     std::uint64_t nextCoedgeOrdinal_ = 0;
     std::vector<ExactUseBinding> exactUseBindings_;
-    std::unordered_map<TopoDS_Shape, ExactUseBindingBucket,
-                       TopTools_ShapeMapHasher, TopTools_ShapeMapHasher>
+    std::unordered_map<TopoDS_Shape, ExactUseBindingBucket, OcctShapeHash,
+                       OcctShapeEqual>
         exactUseBindingIndices_;
     std::set<std::set<int>> assemblyContainerBodySets_;
     std::map<StableId, std::size_t> instanceIndices_;

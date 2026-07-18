@@ -65,6 +65,43 @@ prove completed work; they are not plans or handoff diaries.
 - `m4-certified-planar-box-2026-07-17.md` - no-weld global canonical assembly, closed-box incidence, provenance, and MeshingResult evidence.
 - `m4-planar-hole-cdt-2026-07-17.md` - exact visibility bridges, constrained planar holes, and real perforated-face certification evidence.
 - `m4-m6-certified-cylinder-2026-07-17.md` - registered periodic wall, analytic curved error checks, and closed capped-cylinder certification evidence.
+- `m4-m5-triangle-intersections-2026-07-18.md` - exact 3D triangle intersection
+  predicates, non-vacuous body coverage, topology-legal contacts, and named
+  refusal adversaries on Linux strict/static-analysis lanes.
+- `m4-m6-axial-cylinder-samples-2026-07-18.md` - certified cylinder interior
+  axial rings with CylinderInteriorStation provenance and seam-sample
+  consumption on Linux strict/static-analysis lanes.
+- `m4-m6-partial-cylinder-2026-07-18.md` - open cylindrical bands
+  (`PeriodicBandCrossingSeam`) with two rim arcs and two rails certified
+  end to end on Linux strict/static-analysis lanes.
+- `m6-cylinder-frame-registration-2026-07-18.md` - distinct azimuth
+  reflection/twist/incompatibility refusals and compatible phase/origin/axis
+  registrations on Linux strict/static-analysis lanes.
+- `m5-incidence-euler-validation-2026-07-18.md` - certified incidence/Euler
+  coverage for closed and open bodies, including through-hole χ=0, on Linux
+  strict/static-analysis lanes.
+- `m5-modelling-provenance-2026-07-18.md` - explicit Absent/FloorAlias/Independent
+  modelling provenance with adapter selected-output reporting on Linux
+  strict/static-analysis lanes.
+- `m6-independent-modelling-topology-2026-07-18.md` - independent modelling
+  quads paired from certified triangle strips with non-vacuous independent
+  certificates on Linux strict/static-analysis lanes.
+- `m7-admission-path-audit-2026-07-18.md` - centralized MeshingResult admission
+  for CLI/app regenerate/export routes with incomplete/stale/provenance
+  refusals on Linux strict/static-analysis lanes.
+- `m7-certified-per-face-recipe-2026-07-18.md` - axial-only per-face cylinder
+  consumer with save/reload deterministic replay on Linux strict/static-analysis
+  lanes.
+- `m7-secure-cache-invalidation-2026-07-18.md` - SecureCacheKey lookup with
+  named mismatch/corruption refusals and app generation-epoch stale admission
+  on Linux strict/static-analysis lanes.
+- `m7-certified-editing-overlays-2026-07-18.md` - named LOD/density effect
+  reporting and refusal-gated editing/admission completing the M7 workflow
+  gate on Linux strict/static-analysis lanes.
+- `m4-m8-certified-coverage-baseline-2026-07-18.md` - frozen committed STEP plus
+  built-in fixture classification into certified / named-refusal /
+  inspectable-only terminals with reconciled totals on Linux
+  strict/static-analysis lanes.
 - `m6-secure-orchestration-2026-07-17.md` - atomic plane/cylinder/through-hole secure pipeline and combined certificate evidence.
 - `m7-secure-cli-routing-2026-07-17.md` - lossless certified export adapter, secure CLI routing, report coverage, and named workflow refusals.
 - `m7-secure-app-live-link-2026-07-17.md` - secure app preview/export/hot-reload routing, visual proof, and deterministic atomic Blender link.

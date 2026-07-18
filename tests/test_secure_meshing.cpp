@@ -96,8 +96,24 @@ void checkSuccessfulResult(const weft::SecureMeshingResult& result) {
     CHECK(result.value && !result.value->certified.triangles.empty());
     CHECK(result.value &&
           result.value->certified.topologyFingerprint.size() == 16);
-    CHECK(result.value && result.value->modeling.aliasesCertified);
-    CHECK(result.value && result.value->modeling.safeFloorReason.has_value());
+    CHECK(result.value &&
+          (result.value->modeling.provenance ==
+               weft::ModelingProvenanceKind::CertifiedFloorAlias ||
+           result.value->modeling.provenance ==
+               weft::ModelingProvenanceKind::Independent));
+    if (result.value &&
+        result.value->modeling.provenance ==
+            weft::ModelingProvenanceKind::CertifiedFloorAlias) {
+        CHECK(result.value->modeling.aliasesCertified);
+        CHECK(result.value->modeling.safeFloorReason.has_value());
+    }
+    if (result.value &&
+        result.value->modeling.provenance ==
+            weft::ModelingProvenanceKind::Independent) {
+        CHECK(!result.value->modeling.aliasesCertified);
+        CHECK(result.value->modeling.independentValidation.complete());
+        CHECK(!result.value->modeling.polygons.empty());
+    }
     CHECK(hasCoverage(result.validation,
                       "repair.source_working_correspondence"));
     CHECK(hasCoverage(result.validation,
@@ -135,6 +151,9 @@ void checkSuccessfulResult(const weft::SecureMeshingResult& result) {
 void testPlanarBox() {
     const weft::SecureMeshingResult result = generateFixture("box");
     checkSuccessfulResult(result);
+    CHECK(result.value &&
+          result.value->modeling.provenance ==
+              weft::ModelingProvenanceKind::Independent);
     CHECK(result.value && result.value->certified.vertices.size() == 8);
     CHECK(result.value && result.value->certified.triangles.size() == 12);
 }
@@ -185,14 +204,16 @@ struct M3GoldenDigest {
     const char* report;
 };
 
-// Proven bit-identical on Windows MSVC and Linux GCC 15.2 / OCCT 7.9.2.
+// Proven bit-identical on Linux GCC / OCCT 7.6 (this lane). Report digests
+// include certified.triangle_intersection coverage from WP-020; count /
+// boundary / lift digests are unchanged from the WP-015 cross-platform set.
 constexpr M3GoldenDigest kM3GoldenDigests[] = {
     {"box", "4d4b56a97e4194a1", "bfc6fa72b8fb0801", "2d5083505e7bff41",
-     "1271fe5128c8b97e"},
+     "dde25bfd7f60eb38"},
     {"cylinder", "df476af694433848", "8928e6e02ad2fa92", "612aaa31fa6d5784",
-     "bf093b9b1ccb2bd0"},
+     "66f0513eae801c52"},
     {"hole", "559a67e76d02c618", "303cc08b7ef4e792", "c362170936b054d8",
-     "fcd7679c64a6bca5"},
+     "d39b86eee593c637"},
 };
 
 void checkDeterminismDigest(const M3GoldenDigest& golden,
@@ -371,12 +392,23 @@ void testUnsupportedAndConfigurationRefusals() {
 
     weft::SecureMeshingConfiguration axial = configuration();
     axial.cylinderAxialIntervals = 2;
-    const weft::SecureMeshingResult axialRefusal =
+    const weft::SecureMeshingResult axialCertified =
         generateFixture("cylinder", axial);
-    CHECK(!axialRefusal);
-    CHECK(axialRefusal.failure &&
-          axialRefusal.failure->code ==
-              "cylinder.axial_samples_require_interior_provenance");
+    CHECK(axialCertified);
+    CHECK(axialCertified.value &&
+          axialCertified.value->certified.triangles.size() > 0);
+    CHECK(axialCertified.validation.complete());
+    bool sawInterior = false;
+    if (axialCertified.value) {
+        for (const weft::CertifiedVertex& vertex :
+             axialCertified.value->certified.vertices) {
+            if (vertex.cylinderInterior) {
+                sawInterior = true;
+                CHECK(vertex.cylinderInterior->axialRing == 1);
+            }
+        }
+    }
+    CHECK(sawInterior);
 }
 
 void testTemplateChainSumConsumer() {
@@ -543,6 +575,143 @@ void testTemplateChainSumConsumer() {
     }
 }
 
+void testNamedLodReporting() {
+    const weft::SecureMeshingResult result = generateFixture("cylinder");
+    checkSuccessfulResult(result);
+    CHECK(result.value);
+    if (!result.value) return;
+    const auto& effects = result.value->generation.namedLodEffects;
+    CHECK(effects.contains("cylinderAxialIntervals"));
+    CHECK(effects.contains("chordTolerance"));
+    CHECK(effects.contains("selectedOutput"));
+    CHECK(effects.at("selectedOutput").find("modeling.") == 0 ||
+          effects.at("selectedOutput") == "certified");
+}
+
+void testSecureCacheInvalidation() {
+    const weft::SecureMeshingResult ok = generateFixture("box");
+    checkSuccessfulResult(ok);
+    CHECK(ok.value);
+    if (!ok.value) return;
+
+    weft::SecureCacheKey key;
+    key.sourceSha256 = "abc";
+    key.recipeFingerprint = "recipe-1";
+    key.settingsFingerprint = "settings-1";
+    key.implementationVersion = weft::kSecureImplementationVersion;
+    key.certificateFingerprint = ok.value->certified.topologyFingerprint;
+
+    const weft::SecureCacheLookupResult hit =
+        weft::lookupSecureCache(key, key, &*ok.value);
+    CHECK(hit.hit);
+    CHECK(!hit.failure);
+
+    weft::SecureCacheKey other = key;
+    other.settingsFingerprint = "settings-2";
+    const weft::SecureCacheLookupResult miss =
+        weft::lookupSecureCache(key, other, &*ok.value);
+    CHECK(!miss.hit);
+    CHECK(miss.failure && miss.failure->code == "cache.key_mismatch");
+
+    weft::SecureCacheKey badVersion = key;
+    badVersion.implementationVersion = "weft-secure-0";
+    const weft::SecureCacheLookupResult version =
+        weft::lookupSecureCache(key, badVersion, &*ok.value);
+    CHECK(!version.hit);
+    CHECK(version.failure &&
+          version.failure->code == "cache.implementation_mismatch");
+
+    weft::MeshingResult tamperedPayload = *ok.value;
+    tamperedPayload.certified.topologyFingerprint = "deadbeefdeadbeef";
+    const weft::SecureCacheLookupResult corrupt =
+        weft::lookupSecureCache(key, key, &tamperedPayload);
+    CHECK(!corrupt.hit);
+    CHECK(corrupt.failure &&
+          corrupt.failure->code == "cache.certificate_mismatch");
+
+    const weft::SecureCacheLookupResult empty =
+        weft::lookupSecureCache(key, key, nullptr);
+    CHECK(!empty.hit);
+    CHECK(empty.failure && empty.failure->code == "cache.entry_corrupt");
+}
+
+void testCertifiedAdmissionGate() {
+    const weft::SecureMeshingResult ok = generateFixture("box");
+    checkSuccessfulResult(ok);
+    CHECK(ok.value);
+    if (!ok.value) return;
+    const weft::CertifiedAdmissionResult admitted =
+        weft::admitCertifiedMeshingResult(*ok.value);
+    CHECK(admitted);
+    CHECK(admitted.selectedOutput.has_value());
+
+    weft::MeshingResult tampered = *ok.value;
+    tampered.validation.checks.clear();
+    const weft::CertifiedAdmissionResult incomplete =
+        weft::admitCertifiedMeshingResult(tampered);
+    CHECK(!incomplete);
+    CHECK(incomplete.failure &&
+          incomplete.failure->code == "admission.certificate_incomplete");
+
+    const weft::CertifiedAdmissionResult stale =
+        weft::admitCertifiedMeshingResult(*ok.value, 2, 1);
+    CHECK(!stale);
+    CHECK(stale.failure &&
+          stale.failure->code == "admission.stale_generation");
+
+    weft::MeshingResult unexplained = *ok.value;
+    unexplained.modeling.provenance =
+        weft::ModelingProvenanceKind::CertifiedFloorAlias;
+    unexplained.modeling.aliasesCertified = false;
+    unexplained.modeling.safeFloorReason = std::nullopt;
+    const weft::CertifiedAdmissionResult badModeling =
+        weft::admitCertifiedMeshingResult(unexplained);
+    CHECK(!badModeling);
+}
+
+void testPartialCylinder() {
+    TemporaryStep step("partial_cylinder");
+    weft::writeStep(weft::makeFixture("partial_cylinder"),
+                    step.path().string());
+    const weft::ImportedModel imported =
+        weft::importStepSecure(step.path().string());
+    const weft::SecureMeshingResult result =
+        weft::generateSecureMesh(imported, configuration());
+    checkSuccessfulResult(result);
+    CHECK(result.value &&
+          result.value->certified.triangles.size() > 0);
+
+    // Malformed request: force unequal open-arc counts through an exact
+    // edge override on one rim arc.
+    weft::ReconnaissanceReport reconnaissance = weft::reconnoitre(imported);
+    for (const weft::ExactGeometryClassification& record :
+         reconnaissance.records) {
+        if (record.taxonomy != weft::GeometryTaxonomy::Curve ||
+            record.familyCode != "circle") {
+            continue;
+        }
+        const weft::EdgeTopologyRecord* topology = nullptr;
+        for (const weft::EdgeTopologyRecord& edge :
+             imported.working->snapshot.edgeTopology) {
+            if (edge.id == record.subjectId) {
+                topology = &edge;
+                break;
+            }
+        }
+        if (!topology || !topology->lowerVertex || !topology->upperVertex ||
+            *topology->lowerVertex == *topology->upperVertex) {
+            continue;
+        }
+        weft::SecureMeshingConfiguration mismatched = configuration();
+        mismatched.exactEdgeIntervalCounts[record.subjectId] = 7;
+        const weft::SecureMeshingResult refused =
+            weft::generateSecureMesh(imported, mismatched);
+        CHECK(!refused);
+        CHECK(refused.failure);
+        break;
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -554,6 +723,10 @@ int main() {
         testExactEdgeIntervals();
         testUnsupportedAndConfigurationRefusals();
         testTemplateChainSumConsumer();
+        testCertifiedAdmissionGate();
+        testSecureCacheInvalidation();
+        testNamedLodReporting();
+        testPartialCylinder();
     } catch (const std::exception& error) {
         std::printf("FAIL secure-meshing exception: %s\n", error.what());
         ++failures;

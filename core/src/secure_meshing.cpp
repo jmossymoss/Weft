@@ -206,11 +206,14 @@ IntervalProblemResult buildIntervalProblem(
 
     for (const ExactGeometryClassification& face : reconnaissance.records) {
         if (face.taxonomy != GeometryTaxonomy::Surface ||
-            face.familyCode != "cylinder" ||
-            face.trimDomain !=
-                TrimDomainClass::FullPeriodicWithCapBoundaries) {
+            face.familyCode != "cylinder") {
             continue;
         }
+        const bool fullPeriodic = face.trimDomain ==
+            TrimDomainClass::FullPeriodicWithCapBoundaries;
+        const bool partialBand = face.trimDomain ==
+            TrimDomainClass::PeriodicBandCrossingSeam;
+        if (!fullPeriodic && !partialBand) continue;
         std::set<StableId> rimBoundaries;
         for (const CoedgeRecord& coedge : snapshot.coedges) {
             if (coedge.faceId != face.subjectId) continue;
@@ -218,9 +221,14 @@ IntervalProblemResult buildIntervalProblem(
                 reconnaissance.find(coedge.edgeId);
             const EdgeTopologyRecord* topology =
                 edgeTopology(snapshot, coedge.edgeId);
-            if (edge && topology && edge->familyCode == "circle" &&
-                topology->lowerVertex && topology->upperVertex &&
-                *topology->lowerVertex == *topology->upperVertex) {
+            if (!edge || !topology || edge->familyCode != "circle" ||
+                !topology->lowerVertex || !topology->upperVertex) {
+                continue;
+            }
+            const bool closedRim =
+                *topology->lowerVertex == *topology->upperVertex;
+            if ((fullPeriodic && closedRim) ||
+                (partialBand && !closedRim)) {
                 rimBoundaries.insert(
                     {StableIdKind::Boundary, coedge.edgeId.ordinal});
             }
@@ -228,7 +236,9 @@ IntervalProblemResult buildIntervalProblem(
         if (rimBoundaries.size() != 2) {
             result.failure = SecureMeshingFailure{
                 "secure_pipeline.cylinder_rims_unresolved",
-                "a full cylinder does not resolve exactly two circular rim boundaries",
+                fullPeriodic
+                    ? "a full cylinder does not resolve exactly two circular rim boundaries"
+                    : "a partial cylinder does not resolve exactly two open circular rim arcs",
                 {face.subjectId}};
             return result;
         }
@@ -544,6 +554,7 @@ SecureMeshingResult generateSecureMesh(
                 configuration.sampling.chordTolerance;
             cylinder.maximumNormalDeviationRadians =
                 configuration.sampling.normalAngleToleranceRadians;
+            cylinder.axialIntervals = configuration.cylinderAxialIntervals;
             const CylinderWallResult wall = buildFullCylinderWall(
                 imported, reconnaissance, *boundaries.value,
                 face.subjectId, cylinder);
@@ -612,20 +623,159 @@ SecureMeshingResult generateSecureMesh(
                 static_cast<int>(interval.count));
         }
     }
+    generation.namedLodEffects["cylinderAxialIntervals"] =
+        std::to_string(configuration.cylinderAxialIntervals) +
+        " axial intervals on cylinder walls";
+    generation.namedLodEffects["chordTolerance"] =
+        std::to_string(configuration.sampling.chordTolerance) +
+        " model-unit chord budget";
+    generation.namedLodEffects["normalAngleToleranceRadians"] =
+        std::to_string(configuration.sampling.normalAngleToleranceRadians) +
+        " facet normal turn budget";
+    generation.namedLodEffects["minimumClosedCurveSegments"] =
+        std::to_string(configuration.sampling.minimumClosedCurveSegments) +
+        " minimum closed-curve segments";
+    generation.namedLodEffects["exactEdgeOverrides"] =
+        std::to_string(configuration.exactEdgeIntervalCounts.size()) +
+        " exact per-edge interval constraints";
     MeshingResult meshed = makeCertifiedFloorMeshingResult(
         *assembled.value, result.validation, std::move(generation),
         "structured modeling topology is not yet proven for every face");
+    if (auto independent =
+            tryBuildIndependentModelingMesh(meshed.certified)) {
+        meshed.modeling = std::move(*independent);
+    }
     if (const auto consumption = certifySolvedIntervalConsumption(
             *intervals.solution, *boundaries.value, &meshed)) {
         result.failure = consumption;
         return result;
     }
+    const ModelingProvenanceResult modeling =
+        validateModelingProvenance(meshed);
+    appendCoverage(result.validation, modeling.coverage.code,
+                   modeling.coverage.expected, modeling.coverage.checked,
+                   modeling.coverage.skipped, modeling.coverage.failed);
+    appendCoverage(meshed.validation, modeling.coverage.code,
+                   modeling.coverage.expected, modeling.coverage.checked,
+                   modeling.coverage.skipped, modeling.coverage.failed);
+    if (!modeling) {
+        setFailure(result,
+                   modeling.failure ? modeling.failure->code
+                                    : "modeling.provenance_incomplete",
+                   modeling.failure
+                       ? modeling.failure->message
+                       : "modelling provenance validation failed");
+        return result;
+    }
+    meshed.generation.namedLodEffects["selectedOutput"] =
+        modeling.selectedOutput;
     result.value = std::move(meshed);
     return result;
 }
 
+CertifiedAdmissionResult admitCertifiedMeshingResult(
+    const MeshingResult& result,
+    std::optional<std::uint64_t> expectedGenerationEpoch,
+    std::optional<std::uint64_t> actualGenerationEpoch) {
+    CertifiedAdmissionResult out;
+    if (!result.validation.complete()) {
+        out.failure = CertifiedAdmissionFailure{
+            "admission.certificate_incomplete",
+            "MeshingResult validation certificate is incomplete"};
+        return out;
+    }
+    if (result.certified.triangles.empty() ||
+        result.certified.topologyFingerprint.empty()) {
+        out.failure = CertifiedAdmissionFailure{
+            "admission.certified_mesh_empty",
+            "MeshingResult has no certified mesh to admit"};
+        return out;
+    }
+    if (expectedGenerationEpoch && actualGenerationEpoch &&
+        *expectedGenerationEpoch != *actualGenerationEpoch) {
+        out.failure = CertifiedAdmissionFailure{
+            "admission.stale_generation",
+            "MeshingResult generation epoch does not match the request"};
+        return out;
+    }
+    const ModelingProvenanceResult modeling =
+        validateModelingProvenance(result);
+    if (!modeling) {
+        out.failure = CertifiedAdmissionFailure{
+            modeling.failure ? modeling.failure->code
+                             : "admission.modeling_provenance_invalid",
+            modeling.failure
+                ? modeling.failure->message
+                : "modelling provenance is invalid for admission"};
+        return out;
+    }
+    out.selectedOutput = modeling.selectedOutput;
+    return out;
+}
+
+std::string fingerprintSecureCacheKey(const SecureCacheKey& key) {
+    return key.sourceSha256 + "|" + key.recipeFingerprint + "|" +
+        key.settingsFingerprint + "|" + key.implementationVersion + "|" +
+        key.certificateFingerprint;
+}
+
+bool secureCacheKeysMatch(const SecureCacheKey& left,
+                          const SecureCacheKey& right) {
+    return fingerprintSecureCacheKey(left) == fingerprintSecureCacheKey(right);
+}
+
+SecureCacheLookupResult lookupSecureCache(
+    const SecureCacheKey& request, const SecureCacheKey& cached,
+    const MeshingResult* cachedResult) {
+    SecureCacheLookupResult out;
+    if (request.implementationVersion != kSecureImplementationVersion ||
+        cached.implementationVersion != kSecureImplementationVersion) {
+        out.failure = CertifiedAdmissionFailure{
+            "cache.implementation_mismatch",
+            "secure cache implementation version does not match"};
+        return out;
+    }
+    if (!secureCacheKeysMatch(request, cached)) {
+        out.failure = CertifiedAdmissionFailure{
+            "cache.key_mismatch",
+            "secure cache key does not match the request"};
+        return out;
+    }
+    if (!cachedResult) {
+        out.failure = CertifiedAdmissionFailure{
+            "cache.entry_corrupt",
+            "secure cache entry has no MeshingResult payload"};
+        return out;
+    }
+    if (cached.certificateFingerprint !=
+        cachedResult->certified.topologyFingerprint) {
+        out.failure = CertifiedAdmissionFailure{
+            "cache.certificate_mismatch",
+            "secure cache certificate fingerprint does not match the payload"};
+        return out;
+    }
+    const CertifiedAdmissionResult admitted =
+        admitCertifiedMeshingResult(*cachedResult);
+    if (!admitted) {
+        out.failure = admitted.failure;
+        return out;
+    }
+    out.hit = true;
+    return out;
+}
+
 PolyMesh makeCertifiedPolyMeshAdapter(const MeshingResult& result) {
     PolyMesh adapter;
+    const CertifiedAdmissionResult admitted =
+        admitCertifiedMeshingResult(result);
+    if (!admitted) {
+        // Fail closed: return an empty adapter rather than an uncertified mesh.
+        adapter.selectedOutput = admitted.failure->code;
+        return adapter;
+    }
+    const ModelingProvenanceResult modeling =
+        validateModelingProvenance(result);
+    adapter.selectedOutput = modeling ? modeling.selectedOutput : "certified";
     adapter.vertices.reserve(result.certified.vertices.size());
     adapter.anchors.reserve(result.certified.vertices.size());
     adapter.constraints.reserve(result.certified.vertices.size());
