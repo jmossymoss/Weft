@@ -1730,6 +1730,66 @@ void testUnknownExactFamilyInjection() {
 }
 
 
+
+void testCutoutReconnaissance() {
+    const std::filesystem::path holePath =
+        weft::test::uniqueTempPath("weft_secure_core_hole", ".step");
+    weft::writeStep(weft::makeFixture("hole"), holePath.string());
+    const weft::ImportedModel hole = weft::importStepSecure(
+        holePath.string(), weft::RepairProfile::Conservative);
+    const weft::ReconnaissanceReport report = weft::reconnoitre(hole);
+    CHECK(report.complete);
+    int planarPerforated = 0;
+    int cylindricalBore = 0;
+    for (const weft::ExactGeometryClassification& record : report.records) {
+        if (record.taxonomy != weft::GeometryTaxonomy::Surface) continue;
+        const bool perforated =
+            std::find(record.conditionCodes.begin(), record.conditionCodes.end(),
+                      "cutout.planar_perforated") != record.conditionCodes.end();
+        const bool bore =
+            std::find(record.conditionCodes.begin(), record.conditionCodes.end(),
+                      "cutout.cylindrical_bore") != record.conditionCodes.end();
+        if (perforated) {
+            ++planarPerforated;
+            CHECK(record.familyCode == "plane");
+            CHECK(record.trimDomain.has_value());
+            CHECK(*record.trimDomain == weft::TrimDomainClass::Annulus ||
+                  *record.trimDomain ==
+                      weft::TrimDomainClass::MultiplyPerforatedDisk);
+        }
+        if (bore) {
+            ++cylindricalBore;
+            CHECK(record.familyCode == "cylinder");
+        }
+        if (perforated || bore) {
+            std::printf("WEFT_CUT_A face family=%s trim=%s cutout=%s\n",
+                        record.familyCode.c_str(),
+                        record.trimDomain
+                            ? weft::trimDomainClassName(*record.trimDomain)
+                            : "-",
+                        perforated ? "planar_perforated" : "cylindrical_bore");
+        }
+    }
+    CHECK(planarPerforated >= 1);
+    CHECK(cylindricalBore >= 1);
+    std::printf("WEFT_CUT_A planar_perforated=%d cylindrical_bore=%d\n",
+                planarPerforated, cylindricalBore);
+
+    weft::SecureMeshingConfiguration settings;
+    settings.sampling.chordTolerance = 0.25;
+    settings.sampling.normalAngleToleranceRadians = 0.35;
+    settings.sampling.minimumClosedCurveSegments = 16;
+    const weft::SecureMeshingResult meshed =
+        weft::generateSecureMesh(hole, settings);
+    CHECK(meshed);
+    CHECK(meshed.value && !meshed.value->certified.triangles.empty());
+    std::printf("WEFT_CUT_A mesh_ok tris=%zu\n",
+                meshed.value->certified.triangles.size());
+
+    std::error_code ignored;
+    std::filesystem::remove(holePath, ignored);
+}
+
 void testMappedFourSidedReconnaissance() {
     const std::filesystem::path ribbonPath =
         weft::test::uniqueTempPath("weft_secure_core_ribbon", ".step");
@@ -2229,6 +2289,7 @@ int main() {
         testRepeatedWireOccurrences();
         testTotalReconnaissance(path);
         testUnknownExactFamilyInjection();
+        testCutoutReconnaissance();
         testMappedFourSidedReconnaissance();
         testConeReconnaissanceDeferred();
         testOracleTrimTaxonomySlice();

@@ -726,6 +726,62 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                         "mapped.non_four_sided_deferred");
                 }
             }
+            // CUT-A: planar faces with hole trim + cylindrical bore walls.
+            if (family.code == "plane" && record.trimDomain &&
+                (*record.trimDomain == TrimDomainClass::Annulus ||
+                 *record.trimDomain ==
+                     TrimDomainClass::MultiplyPerforatedDisk)) {
+                record.conditionCodes.push_back("cutout.planar_perforated");
+            }
+            if (family.code == "cylinder" && record.trimDomain &&
+                (*record.trimDomain ==
+                     TrimDomainClass::FullPeriodicWithCapBoundaries ||
+                 *record.trimDomain ==
+                     TrimDomainClass::PeriodicBandCrossingSeam)) {
+                // A cylinder adjacent only to perforated planes is a bore.
+                bool touchesPerforatedPlane = false;
+                for (const CoedgeRecord& coedge : snapshot.coedges) {
+                    if (coedge.faceId != faceId) continue;
+                    for (const CoedgeRecord& other : snapshot.coedges) {
+                        if (other.edgeId != coedge.edgeId ||
+                            other.faceId == faceId) {
+                            continue;
+                        }
+                        const ExactGeometryClassification* neighbor = nullptr;
+                        for (const ExactGeometryClassification& prior :
+                             report.records) {
+                            if (prior.subjectId == other.faceId) {
+                                neighbor = &prior;
+                                break;
+                            }
+                        }
+                        // Neighbor may not be classified yet (faces are in
+                        // ascending index order). Fall back to edge count:
+                        // through-hole bores typically share circular edges
+                        // with planar faces that have >4 boundary edges.
+                        std::set<StableId> neighborEdges;
+                        for (const CoedgeRecord& nc : snapshot.coedges) {
+                            if (nc.faceId == other.faceId) {
+                                neighborEdges.insert(nc.edgeId);
+                            }
+                        }
+                        if (neighborEdges.size() >= 5) {
+                            touchesPerforatedPlane = true;
+                        }
+                        if (neighbor &&
+                            std::find(neighbor->conditionCodes.begin(),
+                                      neighbor->conditionCodes.end(),
+                                      "cutout.planar_perforated") !=
+                                neighbor->conditionCodes.end()) {
+                            touchesPerforatedPlane = true;
+                        }
+                    }
+                }
+                if (touchesPerforatedPlane) {
+                    record.conditionCodes.push_back(
+                        "cutout.cylindrical_bore");
+                }
+            }
             const bool evaluates = exactSurfaceEvaluates(
                 *imported.workingEvaluator, faceId, u0, u1, v0, v1);
             const bool representationReady =

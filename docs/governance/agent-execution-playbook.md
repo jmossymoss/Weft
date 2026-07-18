@@ -18,7 +18,7 @@ The product route remains certified-only. OCCT triangle soup, welding, missing
 faces, silent healing, and unproven preview meshes are not export authority.
 The currently certified automatic families are planes (including holes),
 full/partial cylinders, apex cones, spheres, tori, analytic fillet/blend strips,
-and four-sided mapped patches.
+four-sided mapped patches, and circular through-hole cutouts.
 
 ## Token and documentation discipline
 
@@ -913,7 +913,7 @@ only with indexed evidence.
 
 ### WP-130 — CUT-A reconnaissance
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 expansion
 - Prerequisites: WP-125
 - Goal: classify plate cutouts/holes/slots; name unsupported cut graphs.
@@ -922,7 +922,7 @@ only with indexed evidence.
 
 ### WP-131 — CUT-B canonical boundaries
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 expansion
 - Prerequisites: WP-130
 - Goal: outer + hole wire boundaries with separated source-defect accounting.
@@ -931,7 +931,7 @@ only with indexed evidence.
 
 ### WP-132 — CUT-C certified floor
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 expansion
 - Prerequisites: WP-131
 - Goal: certify plate+hole / plate+slot floors through secure meshing.
@@ -940,7 +940,7 @@ only with indexed evidence.
 
 ### WP-133 — CUT-D modelling topology
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 expansion
 - Prerequisites: WP-132
 - Goal: modelling collar/quads with truthful provenance.
@@ -949,7 +949,7 @@ only with indexed evidence.
 
 ### WP-134 — CUT-E product integration
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 expansion
 - Prerequisites: WP-133
 - Goal: CLI + desktop app for cutout solids.
@@ -958,7 +958,7 @@ only with indexed evidence.
 
 ### WP-135 — CUT-F family proof
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 expansion
 - Prerequisites: WP-134
 - Goal: proof matrix; declare cutout family supported.

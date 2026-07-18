@@ -659,6 +659,34 @@ void testCertifiedAdmissionGate() {
 }
 
 
+
+void testCutoutHoleBody() {
+    TemporaryStep step("hole");
+    weft::writeStep(weft::makeFixture("hole"), step.path().string());
+    const weft::ImportedModel imported =
+        weft::importStepSecure(step.path().string());
+    const weft::ReconnaissanceReport recon = weft::reconnoitre(imported);
+    bool sawPerforated = false;
+    bool sawBore = false;
+    for (const weft::ExactGeometryClassification& record : recon.records) {
+        for (const std::string& code : record.conditionCodes) {
+            if (code == "cutout.planar_perforated") sawPerforated = true;
+            if (code == "cutout.cylindrical_bore") sawBore = true;
+        }
+    }
+    CHECK(sawPerforated);
+    CHECK(sawBore);
+    weft::SecureMeshingConfiguration settings = configuration();
+    settings.sampling.minimumClosedCurveSegments = 16;
+    const weft::SecureMeshingResult result =
+        weft::generateSecureMesh(imported, settings);
+    checkSuccessfulResult(result);
+    CHECK(result.value && result.value->certified.triangles.size() >= 32);
+    std::printf("WEFT_CUT_C tris=%zu fingerprint=%s\n",
+                result.value->certified.triangles.size(),
+                result.value->certified.topologyFingerprint.c_str());
+}
+
 void testFilletSolid() {
     TemporaryStep step("fillet");
     weft::writeStep(weft::makeFixture("fillet"), step.path().string());
@@ -792,6 +820,7 @@ int main() {
         testSecureCacheInvalidation();
         testNamedLodReporting();
         testPartialCylinder();
+        testCutoutHoleBody();
         testFilletSolid();
         testApexCone();
     } catch (const std::exception& error) {
