@@ -1,6 +1,7 @@
 #include "weft/fixture.hpp"
 #include "weft/model.hpp"
 #include "weft/secure_meshing.hpp"
+#include "weft/secure_recipe.hpp"
 
 #include "test_temp_path.hpp"
 
@@ -658,6 +659,62 @@ void testCertifiedAdmissionGate() {
     CHECK(!badModeling);
 }
 
+void testMapCutFreeAdmissionAndRecipeRefusal() {
+    for (const char* fixture :
+         {"mapped_patch", "hole", "plate_slot", "freeform_patch"}) {
+        TemporaryStep step(fixture);
+        weft::writeStep(weft::makeFixture(fixture), step.path().string());
+        const weft::ImportedModel imported =
+            weft::importStepSecure(step.path().string());
+        weft::SecureMeshingConfiguration settings = configuration();
+        if (std::string(fixture) == "hole") {
+            settings.sampling.minimumClosedCurveSegments = 16;
+        }
+        const weft::SecureMeshingResult meshed =
+            weft::generateSecureMesh(imported, settings);
+        checkSuccessfulResult(meshed);
+        CHECK(meshed.value);
+        if (!meshed.value) continue;
+        const weft::CertifiedAdmissionResult admitted =
+            weft::admitCertifiedMeshingResult(*meshed.value);
+        CHECK(admitted);
+        CHECK(admitted.selectedOutput.has_value());
+        std::printf("WEFT_APP_151 fixture=%s admission=ok\n", fixture);
+
+        // Unsupported recipe ops still refuse by name (BR-010 path).
+        weft::RecipeV2 recipe;
+        CHECK(imported.source);
+        recipe.sourceSha256 = imported.source->metadata.sourceSha256;
+        recipe.defaults.chordTolerance = settings.sampling.chordTolerance;
+        recipe.defaults.radial = 16;
+        weft::ReferencedFaceSettings faceSetting;
+        faceSetting.face = weft::makeSourceEntityReference(
+            imported, {weft::StableIdKind::Face, 1});
+        faceSetting.settings = recipe.defaults;
+        faceSetting.settings.radial = 24;
+        recipe.faceSettings.push_back(faceSetting);
+        weft::ReferencedManualOperation op;
+        op.face = faceSetting.face;
+        op.operation.kind = weft::ManualOp::Kind::LoopInsert;
+        op.operation.faceId = 1;
+        recipe.operations.push_back(op);
+        const weft::RecipeV2Resolution resolved =
+            weft::resolveRecipeV2(imported, recipe);
+        const std::vector<weft::RecipeMigrationIssue> issues =
+            weft::validateSecureRecipeApplication(resolved);
+        bool sawUnimplemented = false;
+        for (const weft::RecipeMigrationIssue& issue : issues) {
+            if (issue.code.find("unimplemented") != std::string::npos) {
+                sawUnimplemented = true;
+                std::printf("WEFT_APP_151 fixture=%s recipe_refusal=%s\n",
+                            fixture, issue.code.c_str());
+                break;
+            }
+        }
+        CHECK(sawUnimplemented);
+    }
+}
+
 
 
 void testCutoutHoleBody() {
@@ -908,6 +965,7 @@ int main() {
         testUnsupportedAndConfigurationRefusals();
         testTemplateChainSumConsumer();
         testCertifiedAdmissionGate();
+        testMapCutFreeAdmissionAndRecipeRefusal();
         testSecureCacheInvalidation();
         testNamedLodReporting();
         testPartialCylinder();

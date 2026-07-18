@@ -1,12 +1,12 @@
-# M8 app editing/overlays evidence - 2026-07-18
+# M8 app editing/overlays evidence - 2026-07-18 (reopened)
 
-## Proven increment
+## WEFT_APP_151
 
-New MAP/CUT/FREE families enter the app through the same M7 admission path
-(`admitCertifiedMeshingResult`) already proven for editing/overlays/hot-reload.
-Unsupported ops continue to refuse by name (BR-010). No new legacy selector
-was introduced.
+```
+fixture=mapped_patch admission=ok recipe_refusal=secure_recipe.application.face_settings_unimplemented
+fixture=hole admission=ok recipe_refusal=secure_recipe.application.face_settings_unimplemented
+fixture=plate_slot admission=ok recipe_refusal=secure_recipe.application.face_settings_unimplemented
+fixture=freeform_patch admission=ok recipe_refusal=secure_recipe.application.face_settings_unimplemented
+```
 
-## Status
-
-WP-151 closed (reuses M7 editing/overlays gate + family matrix admission).
+Admission via `admitCertifiedMeshingResult`; unsupported recipe ops refuse by name.

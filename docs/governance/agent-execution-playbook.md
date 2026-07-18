@@ -1031,7 +1031,7 @@ only with indexed evidence.
 
 ### WP-151 — App editing and overlays on new families
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: App readiness
 - Prerequisites: WP-150
 - Goal: supported recipe edits/overlays/hot-reload remain truthful on MAP/CUT/
@@ -1041,7 +1041,7 @@ only with indexed evidence.
 
 ### WP-152 — Running-app gate
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: App readiness
 - Prerequisites: WP-151
 - Goal: binary “app ready” checklist (cold start, fixture sweep, density,
