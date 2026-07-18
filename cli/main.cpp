@@ -62,6 +62,8 @@ void usage() {
         "    --gap-tsv FILE    write one row per face/unsupported curve\n"
         "    --probe-limit N   mesh up to N sample faces per surface family\n"
         "                      (default 0 = no probes); logs WEFT_PROBE lines\n"
+        "    --probe-body      also run full-body generateSecureMesh (slow on\n"
+        "                      MP9; off by default so inventory exits cleanly)\n"
         "\n"
         "  weft extract <in.step> --faces ID[,ID...] --rings N -o <out.step>\n"
         "      write selected source faces plus N adjacency rings as a small\n"
@@ -1123,6 +1125,7 @@ int cmdInventory(const std::vector<std::string>& args) {
     weft::RepairProfile repairProfile = weft::RepairProfile::Conservative;
     std::string gapTsv;
     int probeLimit = 0;
+    bool probeBody = false;
     for (size_t i = 1; i < args.size(); ++i) {
         if (args[i] == "--repair") {
             if (i + 1 >= args.size()) {
@@ -1150,6 +1153,8 @@ int cmdInventory(const std::vector<std::string>& args) {
             if (probeLimit < 0) {
                 throw std::runtime_error("--probe-limit must be >= 0");
             }
+        } else if (args[i] == "--probe-body") {
+            probeBody = true;
         } else {
             throw std::runtime_error("unknown inventory flag: " + args[i]);
         }
@@ -1344,13 +1349,16 @@ int cmdInventory(const std::vector<std::string>& args) {
             std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t0)
                 .count()));
 
-    // Body-level first refusal (same path the app uses after load).
-    {
+    // Optional body mesh (same path as the app). Off by default: on MP9 it
+    // re-enters interval solving over ~11k edges and holds stdout/TSV handles
+    // until finished or killed.
+    if (probeBody) {
         std::fprintf(stderr, "WEFT_PROGRESS inventory.body_mesh_probe.begin\n");
         weft::SecureMeshingConfiguration configuration;
         configuration.progressToStderr = true;
         configuration.sampling.chordTolerance = 0.1;
-        configuration.sampling.normalAngleToleranceRadians = 20.0 * 3.141592653589793 / 180.0;
+        configuration.sampling.normalAngleToleranceRadians =
+            20.0 * 3.141592653589793 / 180.0;
         configuration.sampling.minimumClosedCurveSegments = 16;
         const weft::SecureMeshingResult body =
             weft::generateSecureMesh(imported, configuration);
@@ -1372,6 +1380,9 @@ int cmdInventory(const std::vector<std::string>& args) {
             }
         }
         std::fprintf(stderr, "WEFT_PROGRESS inventory.body_mesh_probe.done\n");
+    } else {
+        std::printf(
+            "WEFT_INVENTORY body_probe=skipped (pass --probe-body to run)\n");
     }
 
     if (probeLimit > 0 && imported.working) {

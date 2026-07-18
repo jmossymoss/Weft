@@ -77,6 +77,25 @@ IntervalProblemResult buildIntervalProblem(
             "cylinder axial intervals must be positive", {}};
         return result;
     }
+    // Fail fast on unsupported curve families (e.g. 211 ellipses on MP9)
+    // before the expensive per-edge bspline UV-span walk.
+    for (const ExactGeometryClassification& record : reconnaissance.records) {
+        if (record.taxonomy != GeometryTaxonomy::Curve) continue;
+        const bool supportedCurve =
+            record.familyCode == "line" || record.familyCode == "circle" ||
+            record.familyCode == "bspline" || record.familyCode == "bezier" ||
+            std::find(record.conditionCodes.begin(),
+                      record.conditionCodes.end(),
+                      "degenerate") != record.conditionCodes.end();
+        if (!supportedCurve) {
+            result.failure = SecureMeshingFailure{
+                "secure_pipeline.unsupported_curve_family",
+                "curve family '" + record.familyCode +
+                    "' has no certified automatic interval consumer",
+                {record.subjectId}};
+            return result;
+        }
+    }
     IntervalProblem problem;
     const BRepSnapshot& snapshot = imported.working->snapshot;
     for (const auto& [edge, count] :

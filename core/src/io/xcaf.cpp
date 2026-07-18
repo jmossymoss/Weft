@@ -639,6 +639,20 @@ ImportedModel cafToImportedModel(const TopoDS_Shape& oneShape,
     std::vector<ToleranceChange> toleranceChanges;
     std::vector<ImportDiagnostic> namedRefusals;
     weft::secure_detail::importProgress("working_derivation.begin");
+    // Refuse compatibility on large models before deriveCompatibilityWorking
+    // (which previously deep-copied first and hung/OOM'd the app).
+    if (profile == RepairProfile::Compatibility &&
+        source.faces.Extent() > 2000 &&
+        std::getenv("WEFT_FULL_HEAL") == nullptr) {
+        weft::secure_detail::importProgress(
+            "compatibility.scale_refused_before_copy");
+        throw SecureImportError(
+            "import.repair.compatibility_scale_refused",
+            "compatibility profile is refused for models with more than 2000 "
+            "faces (got " +
+                std::to_string(source.faces.Extent()) +
+                "); keep the conservative profile or set WEFT_FULL_HEAL=1");
+    }
     if (profile == RepairProfile::Conservative) {
         secure_detail::ConservativeWorkingDerivation derivation =
             secure_detail::deriveConservativeWorking(source);
