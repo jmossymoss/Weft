@@ -154,11 +154,52 @@ void testConeChordRefusal() {
     std::filesystem::remove(path, ignored);
 }
 
+void testTruncatedConeFrustumBody() {
+    const std::filesystem::path path =
+        weft::test::uniqueTempPath("weft_cone_frustum", ".step");
+    weft::writeStep(weft::makeFixture("truncated_cone"), path.string());
+    const weft::ImportedModel imported = weft::importStepSecure(path.string());
+    const weft::ReconnaissanceReport recon = weft::reconnoitre(imported);
+    bool sawSupportedCone = false;
+    for (const weft::ExactGeometryClassification& record : recon.records) {
+        if (record.taxonomy == weft::GeometryTaxonomy::Surface &&
+            record.familyCode == "cone") {
+            CHECK(record.support ==
+                  weft::GeometrySupportState::SupportedAnalyticTemplate);
+            CHECK(record.trimDomain !=
+                  weft::TrimDomainClass::TouchesOneSingularity);
+            sawSupportedCone = true;
+        }
+    }
+    CHECK(sawSupportedCone);
+    const weft::SecureMeshingResult result =
+        weft::generateSecureMesh(imported, configuration());
+    CHECK(result);
+    CHECK(result.value && result.value->certified.triangles.size() > 0);
+    // Structured frustum band should pair into modelling quads.
+    std::size_t quads = 0;
+    if (result.value) {
+        CHECK(result.value->modeling.provenance ==
+              weft::ModelingProvenanceKind::Independent);
+        for (const weft::ModelingPolygon& polygon :
+             result.value->modeling.polygons) {
+            if (polygon.vertices.size() == 4) ++quads;
+        }
+    }
+    CHECK(quads > 0);
+    std::printf("WEFT_CONE_FRUSTUM tris=%zu quads=%zu\n",
+                result.value ? result.value->certified.triangles.size() : 0U,
+                quads);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 }  // namespace
 
 int main() {
     try {
         testApexConeBody();
+        testTruncatedConeFrustumBody();
         testConeDensitySweepAndDeterminism();
         testConeChordRefusal();
     } catch (const std::exception& error) {

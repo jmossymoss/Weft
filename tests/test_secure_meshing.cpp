@@ -953,8 +953,9 @@ void testEllipseHoleBody() {
 void testMp9ExtractFaces() {
     // Plasticity MP9 face 10 (open cylinder band), face 28 (5-edge freeform),
     // and face 250 (four-sided offset patch).
-    for (const char* name : {"cylinder_band.step", "freeform_pent.step",
-                             "offset_quad.step"}) {
+    for (const char* name :
+         {"cylinder_band.step", "freeform_pent.step", "offset_quad.step",
+          "cone_frustum.step"}) {
         const std::filesystem::path path = findMp9Extract(name);
         CHECK(!path.empty());
         if (path.empty()) continue;

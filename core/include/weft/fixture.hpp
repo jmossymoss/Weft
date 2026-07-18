@@ -13,6 +13,7 @@ namespace weft {
 //   "partial_cylinder" - solid cylinder sector (r=10, h=30, 270 deg)
 //   "box"      - a single solid box (20 x 30 x 15)
 //   "cone"     - solid cone to an apex (r=10, h=20)
+//   "truncated_cone" - solid frustum (r1=10, r2=4, h=20)
 //   "sphere"   - solid sphere (r=10)
 //   "torus"    - solid torus (R=10, r=3)
 //   "fillet"   - box with one long edge blended r=4 (a fillet strip with

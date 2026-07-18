@@ -46,11 +46,12 @@ struct CylinderWallResult {
     explicit operator bool() const noexcept { return value.has_value(); }
 };
 
-// Builds the boundary-exact full periodic cylinder wall. Both rims must already
-// have equal canonical counts. With axialIntervals == 1 this is the original
-// one-band template. With axialIntervals > 1, equal interior rings are
-// generated with CylinderInteriorStation provenance; every face/coedge sample
-// use must still be consumed (rim or matching interior seam sample).
+// Builds the boundary-exact full/partial revolved band wall for a supported
+// cylinder or truncated (non-apex) cone. Both rims must already have equal
+// canonical counts. With axialIntervals == 1 this is the original one-band
+// template. With axialIntervals > 1, equal interior rings are generated with
+// CylinderInteriorStation provenance; every face/coedge sample use must still
+// be consumed (rim or matching interior seam sample).
 CylinderWallResult buildFullCylinderWall(
     const ImportedModel& imported,
     const ReconnaissanceReport& reconnaissance,

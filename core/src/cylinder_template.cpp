@@ -181,14 +181,20 @@ CylinderWallResult buildFullCylinderWall(
     const bool partialBand = classification &&
         classification->trimDomain ==
             TrimDomainClass::PeriodicBandCrossingSeam;
+    // Cylinder bands and truncated (non-apex) cones share the same two-rim
+    // azimuth + axial template; surface evaluation is face-generic.
+    const bool revolvedBandFamily =
+        classification &&
+        (classification->familyCode == "cylinder" ||
+         classification->familyCode == "cone");
     if (!classification ||
         classification->taxonomy != GeometryTaxonomy::Surface ||
-        classification->familyCode != "cylinder" ||
+        !revolvedBandFamily ||
         classification->support !=
             GeometrySupportState::SupportedAnalyticTemplate ||
         (!fullPeriodic && !partialBand)) {
         setFailure(result, Prerequisites, "cylinder.face_unsupported",
-                   "only a proven supported full or partial cylinder band may use this template",
+                   "only a proven supported full or partial cylinder/cone band may use this template",
                    {workingFace});
         return result;
     }
@@ -198,7 +204,7 @@ CylinderWallResult buildFullCylinderWall(
         !std::isfinite(*classification->parameterDomains[0].period) ||
         !(*classification->parameterDomains[0].period > 0.0)) {
         setFailure(result, Prerequisites, "cylinder.period_missing",
-                   "the cylindrical U period is not proven", {workingFace});
+                   "the revolved U period is not proven", {workingFace});
         return result;
     }
     const double period = *classification->parameterDomains[0].period;
@@ -206,7 +212,7 @@ CylinderWallResult buildFullCylinderWall(
         uniqueSourceForWorking(imported, workingFace);
     if (!sourceFace || sourceFace->kind != StableIdKind::Face) {
         setFailure(result, Prerequisites, "cylinder.source_face_missing",
-                   "the cylinder does not resolve to exactly one source face",
+                   "the revolved band does not resolve to exactly one source face",
                    {workingFace});
         return result;
     }

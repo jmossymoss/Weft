@@ -61,6 +61,11 @@ TopoDS_Shape makeFixture(const std::string& name) {
     if (name == "cone") {
         return BRepPrimAPI_MakeCone(10.0, 0.0, 20.0).Shape();
     }
+    if (name == "truncated_cone") {
+        // Frustum / non-apex cone band (r1=10, r2=4, h=20) for the
+        // revolved-band consumer shared with cylinders.
+        return BRepPrimAPI_MakeCone(10.0, 4.0, 20.0).Shape();
+    }
     if (name == "sphere") {
         return BRepPrimAPI_MakeSphere(10.0).Shape();
     }
@@ -747,8 +752,8 @@ TopoDS_Shape makeFixture(const std::string& name) {
     }
     throw std::runtime_error(
         "unknown fixture: " + name +
-        " (expected cylinder|partial_cylinder|box|cone|sphere|torus|fillet|hole|"
-        "ellipse_hole|plate_slot|demo|boss|"
+        " (expected cylinder|partial_cylinder|box|cone|truncated_cone|sphere|"
+        "torus|fillet|hole|ellipse_hole|plate_slot|demo|boss|"
         "hairline|canrev|slitdrill|microedge|filletslot|torture|ribbon|ribbonnotch|"
         "mapped_patch|freeform_patch)");
 }

@@ -186,8 +186,8 @@ IntervalProblemResult buildIntervalProblem(
                 return result;
             }
             count = *demanded.count;
-            // Partial cylinder bands need ≥2 rim intervals (3 samples) so
-            // the wall template can form at least two azimuth columns.
+            // Partial cylinder/cone bands need ≥2 rim intervals (3 samples)
+            // so the wall template can form at least two azimuth columns.
             if (!fullCircle) {
                 count = std::max<std::uint32_t>(count, 2);
             }
@@ -360,13 +360,18 @@ IntervalProblemResult buildIntervalProblem(
 
     for (const ExactGeometryClassification& face : reconnaissance.records) {
         if (face.taxonomy != GeometryTaxonomy::Surface ||
-            face.familyCode != "cylinder") {
+            (face.familyCode != "cylinder" && face.familyCode != "cone")) {
             continue;
         }
         const bool fullPeriodic = face.trimDomain ==
             TrimDomainClass::FullPeriodicWithCapBoundaries;
         const bool partialBand = face.trimDomain ==
             TrimDomainClass::PeriodicBandCrossingSeam;
+        // Apex cones are not two-rim bands.
+        if (face.familyCode == "cone" &&
+            face.trimDomain == TrimDomainClass::TouchesOneSingularity) {
+            continue;
+        }
         if (!fullPeriodic && !partialBand) continue;
         std::set<StableId> rimBoundaries;
         for (const CoedgeRecord& coedge : snapshot.coedges) {
@@ -842,31 +847,83 @@ SecureMeshingResult generateSecureMesh(
             continue;
         }
         if (face.familyCode == "cone") {
-            ConeWallConfiguration cone;
-            cone.maximumChordDeviation = configuration.sampling.chordTolerance;
-            cone.maximumNormalDeviationRadians =
-                configuration.sampling.normalAngleToleranceRadians;
-            const ConeWallResult wall = buildApexConeWall(
-                imported, reconnaissance, *boundaries.value, face.subjectId,
-                cone);
-            for (const ConeWallValidationEvidence& evidence : wall.validation) {
-                appendCoverage(result.validation,
-                               faceCode(evidence.code, face.subjectId),
-                               evidence.expected, evidence.checked,
-                               evidence.skipped, evidence.failed);
+            const bool apex =
+                face.trimDomain == TrimDomainClass::TouchesOneSingularity;
+            const bool frustumBand =
+                face.trimDomain ==
+                    TrimDomainClass::FullPeriodicWithCapBoundaries ||
+                face.trimDomain == TrimDomainClass::PeriodicBandCrossingSeam;
+            if (apex) {
+                ConeWallConfiguration cone;
+                cone.maximumChordDeviation =
+                    configuration.sampling.chordTolerance;
+                cone.maximumNormalDeviationRadians =
+                    configuration.sampling.normalAngleToleranceRadians;
+                const ConeWallResult wall = buildApexConeWall(
+                    imported, reconnaissance, *boundaries.value,
+                    face.subjectId, cone);
+                for (const ConeWallValidationEvidence& evidence :
+                     wall.validation) {
+                    appendCoverage(result.validation,
+                                   faceCode(evidence.code, face.subjectId),
+                                   evidence.expected, evidence.checked,
+                                   evidence.skipped, evidence.failed);
+                }
+                if (!wall) {
+                    setFailure(result,
+                               wall.failure ? wall.failure->code
+                                            : "secure_pipeline.cone_failed",
+                               wall.failure
+                                   ? wall.failure->message
+                                   : "certified apex-cone construction failed",
+                               wall.failure ? wall.failure->subjects
+                                            : std::vector<StableId>{});
+                    return result;
+                }
+                faceMeshes.push_back(*wall.value);
+                continue;
             }
-            if (!wall) {
-                setFailure(result,
-                           wall.failure ? wall.failure->code
-                                        : "secure_pipeline.cone_failed",
-                           wall.failure ? wall.failure->message
-                                        : "certified cone construction failed",
-                           wall.failure ? wall.failure->subjects
-                                        : std::vector<StableId>{});
-                return result;
+            if (frustumBand) {
+                // Truncated cone = revolved band; reuse cylinder wall consumer.
+                // At least one axial interval yields a pure quad ring between
+                // the two rims; bump to 2 when the caller left the default
+                // so modelling has a non-trivial strip lattice.
+                CylinderWallConfiguration band;
+                band.maximumChordDeviation =
+                    configuration.sampling.chordTolerance;
+                band.maximumNormalDeviationRadians =
+                    configuration.sampling.normalAngleToleranceRadians;
+                band.axialIntervals = std::max<std::uint32_t>(
+                    1U, configuration.cylinderAxialIntervals);
+                const CylinderWallResult wall = buildFullCylinderWall(
+                    imported, reconnaissance, *boundaries.value,
+                    face.subjectId, band);
+                for (const CylinderWallValidationEvidence& evidence :
+                     wall.validation) {
+                    appendCoverage(result.validation,
+                                   faceCode(evidence.code, face.subjectId),
+                                   evidence.expected, evidence.checked,
+                                   evidence.skipped, evidence.failed);
+                }
+                if (!wall) {
+                    setFailure(result,
+                               wall.failure
+                                   ? wall.failure->code
+                                   : "secure_pipeline.cone_frustum_failed",
+                               wall.failure
+                                   ? wall.failure->message
+                                   : "certified truncated-cone band failed",
+                               wall.failure ? wall.failure->subjects
+                                            : std::vector<StableId>{});
+                    return result;
+                }
+                faceMeshes.push_back(*wall.value);
+                continue;
             }
-            faceMeshes.push_back(*wall.value);
-            continue;
+            setFailure(result, "secure_pipeline.unsupported_surface_family",
+                       "cone trim is not an apex cone or truncated band",
+                       {face.subjectId});
+            return result;
         }
         if (face.familyCode == "sphere") {
             SphereWallConfiguration sphere;

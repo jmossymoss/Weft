@@ -160,3 +160,4 @@ prove completed work; they are not plans or handoff diaries.
 - `mp9-extrusion-offset-2026-07-18.md` - extrusion/offset certify or named refuse.
 - `mp9-analytic-residuals-2026-07-18.md` - named cone/sphere/cylinder residual demotions.
 - `mp9-scale-perf-2026-07-18.md` - MP9 import/recon wall times and compat scale refuse.
+- `mp9-cone-frustum-consumer-2026-07-18.md` - truncated-cone revolved-band consumer + quads.

@@ -953,10 +953,31 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                     record.conditionCodes.push_back(condition);
                     ++report.unsupportedSubjects;
                 };
-                if (family.code == "cone" &&
-                    record.trimDomain !=
-                        TrimDomainClass::TouchesOneSingularity) {
-                    demote("cone.non_apex_deferred");
+                if (family.code == "cone") {
+                    const bool apex =
+                        record.trimDomain ==
+                        TrimDomainClass::TouchesOneSingularity;
+                    const bool frustumBand =
+                        record.trimDomain ==
+                            TrimDomainClass::FullPeriodicWithCapBoundaries ||
+                        record.trimDomain ==
+                            TrimDomainClass::PeriodicBandCrossingSeam;
+                    if (!apex && !frustumBand) {
+                        demote("cone.non_apex_deferred");
+                    } else if (frustumBand &&
+                               record.trimDomain ==
+                                   TrimDomainClass::PeriodicBandCrossingSeam) {
+                        std::set<StableId> uniqueEdges;
+                        for (const CoedgeRecord& coedge : snapshot.coedges) {
+                            if (coedge.faceId == faceId) {
+                                uniqueEdges.insert(coedge.edgeId);
+                            }
+                        }
+                        // Same rail budget as cylinder bands (2 rims + 2 rails).
+                        if (uniqueEdges.size() > 4) {
+                            demote("cone.complex_boundary_deferred");
+                        }
+                    }
                 } else if (family.code == "sphere" &&
                            record.trimDomain !=
                                TrimDomainClass::TouchesTwoSingularities) {
