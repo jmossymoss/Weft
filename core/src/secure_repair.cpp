@@ -1266,6 +1266,19 @@ ConservativeWorkingDerivation deriveConservativeWorking(
 CompatibilityWorkingDerivation deriveCompatibilityWorking(
     const Model& source) {
     CompatibilityWorkingDerivation derivation;
+    // Refuse BEFORE the geometry-deep copy. On MP9-scale models the copy alone
+    // can OOM-crash the process; the previous guard ran after the copy.
+    constexpr int kCompatibilityHealFaceBudget = 2000;
+    if (source.faces.Extent() > kCompatibilityHealFaceBudget &&
+        std::getenv("WEFT_FULL_HEAL") == nullptr) {
+        throw SecureImportError(
+            "import.repair.compatibility_scale_refused",
+            "compatibility profile is refused for models with more than 2000 "
+            "faces (got " +
+                std::to_string(source.faces.Extent()) +
+                "); keep the conservative profile or set WEFT_FULL_HEAL=1");
+    }
+
     importProgress("compatibility.copy.begin");
     BRepBuilderAPI_Copy copier(source.shape, true, false);
     const TopoDS_Shape copiedRoot = copier.Shape();
@@ -1314,22 +1327,6 @@ CompatibilityWorkingDerivation deriveCompatibilityWorking(
             "geometry-deep working copy retained without sew/ShapeFix because "
             "the copy is already BRepCheck-valid"});
         return derivation;
-    }
-
-    // Large invalid assemblies: sew/ShapeFix on a second full copy is an
-    // unbounded memory and crash risk (MP9). Refuse by name so the app can
-    // surface the failure instead of terminating. Opt in with WEFT_FULL_HEAL.
-    ShapeMap copiedFaces;
-    TopExp::MapShapes(copiedRoot, TopAbs_FACE, copiedFaces);
-    constexpr int kCompatibilityHealFaceBudget = 2000;
-    if (copiedFaces.Extent() > kCompatibilityHealFaceBudget &&
-        std::getenv("WEFT_FULL_HEAL") == nullptr) {
-        throw SecureImportError(
-            "import.repair.compatibility_heal_scale_refused",
-            "compatibility sew/ShapeFix heal is refused for models with more "
-            "than 2000 faces (got " +
-                std::to_string(copiedFaces.Extent()) +
-                "); keep the conservative profile or set WEFT_FULL_HEAL=1");
     }
 
     importProgress("compatibility.heal.begin");

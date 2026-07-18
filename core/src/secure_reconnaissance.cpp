@@ -38,8 +38,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <limits>
 #include <map>
 #include <set>
+#include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -530,19 +535,39 @@ bool facesAreCoplanarPartners(const TopoDS_Face& left, const TopoDS_Face& right)
     return std::abs(leftPlane.Distance(rightPlane.Location())) <= 1.0e-7;
 }
 
-bool shareManifoldEdge(const TopoDS_Face& left, const TopoDS_Face& right,
-                       const EdgeFaceMap& edgeToFaces) {
-    for (int index = 1; index <= edgeToFaces.Extent(); ++index) {
-        const ShapeList& faces = edgeToFaces(index);
-        bool hasLeft = false;
-        bool hasRight = false;
-        for (ShapeList::Iterator it(faces); it.More(); it.Next()) {
-            if (it.Value().IsSame(left)) hasLeft = true;
-            if (it.Value().IsSame(right)) hasRight = true;
-        }
-        if (hasLeft && hasRight && faces.Extent() == 2) return true;
+using PlaneBucketKey = std::tuple<long, long, long, long>;
+
+PlaneBucketKey planeBucketKey(const TopoDS_Face& face) {
+    BRepAdaptor_Surface surface(face, true);
+    if (surface.GetType() != GeomAbs_Plane) {
+        return {0, 0, 0, std::numeric_limits<long>::min()};
     }
-    return false;
+    gp_Pln plane = surface.Plane();
+    gp_Dir direction = plane.Axis().Direction();
+    // Canonicalize opposite normals into one bucket.
+    if (direction.Z() < -1.0e-12 ||
+        (std::abs(direction.Z()) <= 1.0e-12 && direction.Y() < -1.0e-12) ||
+        (std::abs(direction.Z()) <= 1.0e-12 &&
+         std::abs(direction.Y()) <= 1.0e-12 && direction.X() < 0.0)) {
+        direction.Reverse();
+    }
+    const gp_Pnt origin = plane.Location();
+    const double offset =
+        direction.X() * origin.X() + direction.Y() * origin.Y() +
+        direction.Z() * origin.Z();
+    return {std::lround(direction.X() * 1.0e6),
+            std::lround(direction.Y() * 1.0e6),
+            std::lround(direction.Z() * 1.0e6), std::lround(offset * 1.0e6)};
+}
+
+void reconProgress(const char* stage) {
+    static const bool enabled = [] {
+        const char* value = std::getenv("WEFT_IMPORT_PROGRESS");
+        return value != nullptr && value[0] != '\0' && value[0] != '0';
+    }();
+    if (!enabled || stage == nullptr) return;
+    std::fprintf(stderr, "WEFT_PROGRESS recon.%s\n", stage);
+    std::fflush(stderr);
 }
 
 }  // namespace
@@ -897,67 +922,89 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
         report.regions.push_back(std::move(region));
     }
 
-    // Coplanar artificial splits: keep face subjects unique, but merge region
-    // accounts when two plane faces share exactly one manifold edge.
-    for (int leftIndex = 1; leftIndex <= snapshot.model.faces.Extent();
-         ++leftIndex) {
+    // Coplanar artificial splits: O(edges). Merge region accounts when two
+    // plane faces share a manifold edge. The previous all-pairs face scan was
+    // O(faces^2 * edges) via shareManifoldEdge and hung recon on MP9 (~4k
+    // faces) after import completed.
+    reconProgress("coplanar_merge.begin");
+    std::set<std::pair<std::uint64_t, std::uint64_t>> manifoldPlanePairs;
+    for (int edgeIndex = 1; edgeIndex <= edgeToFaces.Extent(); ++edgeIndex) {
+        const ShapeList& faces = edgeToFaces(edgeIndex);
+        if (faces.Extent() != 2) continue;
+        ShapeList::Iterator it(faces);
+        const TopoDS_Face leftFace = TopoDS::Face(it.Value());
+        it.Next();
+        const TopoDS_Face rightFace = TopoDS::Face(it.Value());
+        if (!facesAreCoplanarPartners(leftFace, rightFace)) continue;
+        int leftIndex = snapshot.model.faces.FindIndex(leftFace);
+        int rightIndex = snapshot.model.faces.FindIndex(rightFace);
+        if (leftIndex <= 0 || rightIndex <= 0) {
+            for (int index = 1; index <= snapshot.model.faces.Extent();
+                 ++index) {
+                if (leftIndex <= 0 &&
+                    snapshot.model.faces(index).IsPartner(leftFace)) {
+                    leftIndex = index;
+                }
+                if (rightIndex <= 0 &&
+                    snapshot.model.faces(index).IsPartner(rightFace)) {
+                    rightIndex = index;
+                }
+            }
+        }
+        if (leftIndex <= 0 || rightIndex <= 0 || leftIndex == rightIndex) {
+            continue;
+        }
+        if (leftIndex > rightIndex) std::swap(leftIndex, rightIndex);
+        manifoldPlanePairs.emplace(static_cast<std::uint64_t>(leftIndex),
+                                   static_cast<std::uint64_t>(rightIndex));
         const StableId leftId{StableIdKind::Face,
                               static_cast<std::uint64_t>(leftIndex)};
-        const TopoDS_Face leftFace =
-            TopoDS::Face(snapshot.model.faces(leftIndex));
-        for (int rightIndex = leftIndex + 1;
-             rightIndex <= snapshot.model.faces.Extent(); ++rightIndex) {
-            const StableId rightId{StableIdKind::Face,
-                                   static_cast<std::uint64_t>(rightIndex)};
-            const TopoDS_Face rightFace =
-                TopoDS::Face(snapshot.model.faces(rightIndex));
-            if (!facesAreCoplanarPartners(leftFace, rightFace)) continue;
-            if (!shareManifoldEdge(leftFace, rightFace, edgeToFaces)) continue;
-            const auto leftRegion = regionIndexByFace.find(leftId);
-            const auto rightRegion = regionIndexByFace.find(rightId);
-            if (leftRegion == regionIndexByFace.end() ||
-                rightRegion == regionIndexByFace.end()) {
-                continue;
-            }
-            if (leftRegion->second == rightRegion->second) continue;
-            LogicalRegion& keep = report.regions[leftRegion->second];
-            LogicalRegion& drop = report.regions[rightRegion->second];
-            keep.code = "region.plane.artificial_split_merged";
-            keep.conditionCodes.push_back(
-                "reason.artificial_split_merge_accounted");
-            keep.workingFaces.insert(keep.workingFaces.end(),
-                                     drop.workingFaces.begin(),
-                                     drop.workingFaces.end());
-            keep.sourceFaces.insert(keep.sourceFaces.end(),
-                                    drop.sourceFaces.begin(),
-                                    drop.sourceFaces.end());
-            keep.boundaryEdges.insert(keep.boundaryEdges.end(),
-                                      drop.boundaryEdges.begin(),
-                                      drop.boundaryEdges.end());
-            std::sort(keep.workingFaces.begin(), keep.workingFaces.end());
-            keep.workingFaces.erase(
-                std::unique(keep.workingFaces.begin(), keep.workingFaces.end()),
-                keep.workingFaces.end());
-            std::sort(keep.sourceFaces.begin(), keep.sourceFaces.end());
-            keep.sourceFaces.erase(
-                std::unique(keep.sourceFaces.begin(), keep.sourceFaces.end()),
-                keep.sourceFaces.end());
-            std::sort(keep.boundaryEdges.begin(), keep.boundaryEdges.end());
-            keep.boundaryEdges.erase(std::unique(keep.boundaryEdges.begin(),
-                                                 keep.boundaryEdges.end()),
-                                     keep.boundaryEdges.end());
-            for (const StableId& faceId : drop.workingFaces) {
-                regionIndexByFace[faceId] = leftRegion->second;
-            }
-            drop.workingFaces.clear();
-            drop.sourceFaces.clear();
-            drop.boundaryEdges.clear();
-            drop.code = "region.merged_away";
-            report.diagnostics.push_back(
-                {"reconnaissance.region.artificial_split_merged", leftId,
-                 "coplanar faces sharing a manifold edge accounted as one "
-                 "logical region"});
+        const StableId rightId{StableIdKind::Face,
+                               static_cast<std::uint64_t>(rightIndex)};
+        const auto leftRegion = regionIndexByFace.find(leftId);
+        const auto rightRegion = regionIndexByFace.find(rightId);
+        if (leftRegion == regionIndexByFace.end() ||
+            rightRegion == regionIndexByFace.end()) {
+            continue;
         }
+        if (leftRegion->second == rightRegion->second) continue;
+        LogicalRegion& keep = report.regions[leftRegion->second];
+        LogicalRegion& drop = report.regions[rightRegion->second];
+        keep.code = "region.plane.artificial_split_merged";
+        keep.conditionCodes.push_back(
+            "reason.artificial_split_merge_accounted");
+        keep.workingFaces.insert(keep.workingFaces.end(),
+                                 drop.workingFaces.begin(),
+                                 drop.workingFaces.end());
+        keep.sourceFaces.insert(keep.sourceFaces.end(),
+                                drop.sourceFaces.begin(),
+                                drop.sourceFaces.end());
+        keep.boundaryEdges.insert(keep.boundaryEdges.end(),
+                                  drop.boundaryEdges.begin(),
+                                  drop.boundaryEdges.end());
+        std::sort(keep.workingFaces.begin(), keep.workingFaces.end());
+        keep.workingFaces.erase(
+            std::unique(keep.workingFaces.begin(), keep.workingFaces.end()),
+            keep.workingFaces.end());
+        std::sort(keep.sourceFaces.begin(), keep.sourceFaces.end());
+        keep.sourceFaces.erase(
+            std::unique(keep.sourceFaces.begin(), keep.sourceFaces.end()),
+            keep.sourceFaces.end());
+        std::sort(keep.boundaryEdges.begin(), keep.boundaryEdges.end());
+        keep.boundaryEdges.erase(std::unique(keep.boundaryEdges.begin(),
+                                             keep.boundaryEdges.end()),
+                                 keep.boundaryEdges.end());
+        for (const StableId& faceId : drop.workingFaces) {
+            regionIndexByFace[faceId] = leftRegion->second;
+        }
+        drop.workingFaces.clear();
+        drop.sourceFaces.clear();
+        drop.boundaryEdges.clear();
+        drop.code = "region.merged_away";
+        report.diagnostics.push_back(
+            {"reconnaissance.region.artificial_split_merged", leftId,
+             "coplanar faces sharing a manifold edge accounted as one "
+             "logical region"});
     }
     report.regions.erase(
         std::remove_if(report.regions.begin(), report.regions.end(),
@@ -965,43 +1012,66 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                            return region.workingFaces.empty();
                        }),
         report.regions.end());
+    reconProgress("coplanar_merge.done");
 
-    // Multidomain same-support planes that do not share an edge: name the
-    // disconnected domains instead of inventing a false single-face trim.
-    for (int leftIndex = 1; leftIndex <= snapshot.model.faces.Extent();
-         ++leftIndex) {
-        const StableId leftId{StableIdKind::Face,
-                              static_cast<std::uint64_t>(leftIndex)};
-        const TopoDS_Face leftFace =
-            TopoDS::Face(snapshot.model.faces(leftIndex));
-        for (int rightIndex = leftIndex + 1;
-             rightIndex <= snapshot.model.faces.Extent(); ++rightIndex) {
-            const StableId rightId{StableIdKind::Face,
-                                   static_cast<std::uint64_t>(rightIndex)};
-            const TopoDS_Face rightFace =
-                TopoDS::Face(snapshot.model.faces(rightIndex));
-            if (!facesAreCoplanarPartners(leftFace, rightFace)) continue;
-            if (shareManifoldEdge(leftFace, rightFace, edgeToFaces)) continue;
-            for (ExactGeometryClassification& record : report.records) {
-                if (record.subjectId != leftId && record.subjectId != rightId) {
+    // Multidomain same-support planes that do not share an edge: bucket by
+    // discretized plane equation so we only compare coplanar candidates.
+    reconProgress("multidomain.begin");
+    std::map<PlaneBucketKey, std::vector<int>> planeBuckets;
+    for (int faceIndex = 1; faceIndex <= snapshot.model.faces.Extent();
+         ++faceIndex) {
+        const TopoDS_Face face =
+            TopoDS::Face(snapshot.model.faces(faceIndex));
+        const PlaneBucketKey key = planeBucketKey(face);
+        if (std::get<3>(key) == std::numeric_limits<long>::min()) continue;
+        planeBuckets[key].push_back(faceIndex);
+    }
+    for (const auto& [key, indices] : planeBuckets) {
+        (void)key;
+        if (indices.size() < 2) continue;
+        for (std::size_t i = 0; i < indices.size(); ++i) {
+            for (std::size_t j = i + 1; j < indices.size(); ++j) {
+                int leftIndex = indices[i];
+                int rightIndex = indices[j];
+                if (leftIndex > rightIndex) std::swap(leftIndex, rightIndex);
+                if (manifoldPlanePairs.count(
+                        {static_cast<std::uint64_t>(leftIndex),
+                         static_cast<std::uint64_t>(rightIndex)})) {
                     continue;
                 }
-                record.trimDomain =
-                    TrimDomainClass::MultipleDisconnectedDomains;
-                if (std::find(record.conditionCodes.begin(),
-                              record.conditionCodes.end(),
-                              "reason.multidomain_decomposition_unproven") ==
-                    record.conditionCodes.end()) {
-                    record.conditionCodes.push_back(
-                        "reason.multidomain_decomposition_unproven");
+                const TopoDS_Face leftFace =
+                    TopoDS::Face(snapshot.model.faces(leftIndex));
+                const TopoDS_Face rightFace =
+                    TopoDS::Face(snapshot.model.faces(rightIndex));
+                if (!facesAreCoplanarPartners(leftFace, rightFace)) continue;
+                const StableId leftId{StableIdKind::Face,
+                                      static_cast<std::uint64_t>(leftIndex)};
+                const StableId rightId{StableIdKind::Face,
+                                       static_cast<std::uint64_t>(rightIndex)};
+                for (ExactGeometryClassification& record : report.records) {
+                    if (record.subjectId != leftId &&
+                        record.subjectId != rightId) {
+                        continue;
+                    }
+                    record.trimDomain =
+                        TrimDomainClass::MultipleDisconnectedDomains;
+                    if (std::find(
+                            record.conditionCodes.begin(),
+                            record.conditionCodes.end(),
+                            "reason.multidomain_decomposition_unproven") ==
+                        record.conditionCodes.end()) {
+                        record.conditionCodes.push_back(
+                            "reason.multidomain_decomposition_unproven");
+                    }
                 }
+                report.diagnostics.push_back(
+                    {"reconnaissance.region.multidomain_deferred", leftId,
+                     "coplanar faces without a shared edge remain disconnected "
+                     "same-support domains"});
             }
-            report.diagnostics.push_back(
-                {"reconnaissance.region.multidomain_deferred", leftId,
-                 "coplanar faces without a shared edge remain disconnected "
-                 "same-support domains"});
         }
     }
+    reconProgress("multidomain.done");
 
     report.checkedSubjects = report.records.size();
     report.complete = report.checkedSubjects == report.expectedSubjects &&
