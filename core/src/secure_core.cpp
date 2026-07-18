@@ -1852,6 +1852,10 @@ ImportedModel buildImportedModel(
         }
         imported.diagnostics.events.push_back(std::move(refusal));
     }
+    const bool identityInvalidPair =
+        imported.repair.identity && !sourceValid && !workingValid &&
+        imported.correspondence.complete &&
+        imported.correspondence.topologyComplete;
     if (!sourceValid) {
         diagnostic("import.source.invalid", DiagnosticSeverity::Warning,
                    "the immutable source B-rep is invalid");
@@ -1861,10 +1865,6 @@ ImportedModel buildImportedModel(
         // an identity, correspondence-complete transfer. Treat that as a warning
         // when we later allow meshing; hard-error only when the working copy is
         // invalid for other non-identity reasons.
-        const bool identityInvalidPair =
-            imported.repair.identity && !sourceValid &&
-            imported.correspondence.complete &&
-            imported.correspondence.topologyComplete;
         diagnostic("import.working.invalid",
                    identityInvalidPair ? DiagnosticSeverity::Warning
                                        : DiagnosticSeverity::Error,
@@ -1918,6 +1918,24 @@ ImportedModel buildImportedModel(
                      {edgeId},
                      "edge has no stored p-curve use; SameParameter/SameRange "
                      "left unset under conservative repair (BR-003)"});
+                continue;
+            }
+            // Large identity-invalid Plasticity transfers (MP9: ~11k edges)
+            // retain p-curves that fail the bounded SameParameter proof. Hard-
+            // blocking meshable on every such edge left the body at
+            // import_not_meshable. Soften only for large identity-invalid
+            // pairs; small corrupt fixtures (range_mismatch) stay Error.
+            const bool largeIdentityInvalid =
+                identityInvalidPair &&
+                imported.working->snapshot.model.edges.Extent() > 500;
+            if (largeIdentityInvalid) {
+                imported.diagnostics.events.push_back(
+                    {{StableIdKind::Diagnostic, ++diagnosticOrdinal},
+                     "import.repair.same_parameter_range_unproven",
+                     DiagnosticSeverity::Warning,
+                     {edgeId},
+                     "SameParameter/SameRange unproven on large identity-invalid "
+                     "transfer; not clearing meshable (per-face refusal remains)"});
                 continue;
             }
             imported.diagnostics.events.push_back(

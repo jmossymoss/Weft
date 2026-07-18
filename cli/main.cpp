@@ -1282,11 +1282,27 @@ int cmdInventory(const std::vector<std::string>& args) {
                                                                            t0)
                         .count()),
                 recon.checkedSubjects);
+    std::size_t sameParamErrors = 0;
+    std::size_t sameParamWarnings = 0;
+    for (const weft::ImportDiagnostic& event : imported.diagnostics.events) {
+        if (event.code == "import.repair.same_parameter_range_unproven" ||
+            event.code == "import.repair.same_parameter_range_unproven_no_pcurve") {
+            if (event.severity == weft::DiagnosticSeverity::Error) {
+                ++sameParamErrors;
+            } else {
+                ++sameParamWarnings;
+            }
+        }
+    }
     std::printf(
-        "WEFT_INVENTORY meshable=%d recon_complete=%d supported_faces=%zu "
-        "unsupported_subjects=%zu\n",
-        imported.meshable() ? 1 : 0, recon.complete ? 1 : 0, supportedFaces,
-        unsupportedTotal);
+        "WEFT_INVENTORY meshable=%d source_valid=%d working_valid=%d "
+        "identity=%d recon_complete=%d supported_faces=%zu "
+        "unsupported_subjects=%zu same_parameter_errors=%zu "
+        "same_parameter_warnings=%zu\n",
+        imported.meshable() ? 1 : 0, imported.repair.sourceValid ? 1 : 0,
+        imported.repair.workingValid ? 1 : 0, imported.repair.identity ? 1 : 0,
+        recon.complete ? 1 : 0, supportedFaces, unsupportedTotal,
+        sameParamErrors, sameParamWarnings);
     for (const auto& [family, count] : faceFamilies) {
         std::printf("WEFT_INVENTORY face_family %s count=%zu\n", family.c_str(),
                     count);
