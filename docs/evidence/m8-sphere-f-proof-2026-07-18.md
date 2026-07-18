@@ -2,7 +2,7 @@
 
 ## Proven increment
 
-Density sweep + Linux fingerprint golden addd54e3573dc6bb; sphere is a supported automatic family. Torus/fillet remain.
+Density sweep + repeat-run fingerprint determinism (hex addd54e3573dc6bb on OCCT 7.6.3 is evidence-only, not a cross-build golden); sphere is a supported automatic family. Torus/fillet remain.
 
 ## Commands
 
