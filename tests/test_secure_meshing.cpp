@@ -688,6 +688,41 @@ void testApexCone() {
             return coverage.code.rfind("cone.chord_bound.face_", 0) == 0 &&
                 coverage.complete();
         }));
+    CHECK(result.value &&
+          (result.value->modeling.provenance ==
+               weft::ModelingProvenanceKind::Independent ||
+           result.value->modeling.provenance ==
+               weft::ModelingProvenanceKind::CertifiedFloorAlias));
+    if (result.value &&
+        result.value->modeling.provenance ==
+            weft::ModelingProvenanceKind::Independent) {
+        CHECK(!result.value->modeling.polygons.empty());
+        CHECK(result.value->modeling.independentValidation.complete());
+        std::printf("WEFT_CONE_D modeling=Independent polys=%zu\n",
+                    result.value->modeling.polygons.size());
+    } else if (result.value) {
+        CHECK(result.value->modeling.aliasesCertified);
+        CHECK(result.value->modeling.safeFloorReason.has_value());
+        std::printf("WEFT_CONE_D modeling=CertifiedFloorAlias reason=%s\n",
+                    result.value->modeling.safeFloorReason->c_str());
+    }
+
+    // Tampered independent claim must refuse.
+    if (result.value) {
+        weft::MeshingResult tampered = *result.value;
+        tampered.modeling.provenance =
+            weft::ModelingProvenanceKind::Independent;
+        tampered.modeling.aliasesCertified = false;
+        tampered.modeling.safeFloorReason = std::nullopt;
+        tampered.modeling.polygons.clear();
+        tampered.modeling.independentValidation = {};
+        const weft::ModelingProvenanceResult refused =
+            weft::validateModelingProvenance(tampered);
+        CHECK(!refused);
+        CHECK(refused.failure);
+        std::printf("WEFT_CONE_D adversary=%s\n",
+                    refused.failure ? refused.failure->code.c_str() : "-");
+    }
 }
 
 void testPartialCylinder() {
