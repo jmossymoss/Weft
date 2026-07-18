@@ -775,6 +775,8 @@ struct App {
     weft::SecureMeshingConfiguration genSecureConfiguration;
     weft::PolyMesh genMesh;
     weft::MeshingResult genSecureResult;
+    std::uint64_t generationEpoch = 0;
+    std::uint64_t genWorkerEpoch = 0;
     weft::GenerationReport genReport;
     std::string genError;
     // A defaults control being hovered highlights the faces it drives —
@@ -1590,8 +1592,11 @@ static void startGenerate(App& app) {
     app.genBusy = true;
     app.genReady = false;
     app.dirty = false;
+    ++app.generationEpoch;
+    app.genWorkerEpoch = app.generationEpoch;
     App* a = &app;  // outlives the thread (owned by main)
-    app.genThread = std::thread([a] {
+    const std::uint64_t workerEpoch = app.genWorkerEpoch;
+    app.genThread = std::thread([a, workerEpoch] {
         try {
             weft::SecureMeshingResult generated = weft::generateSecureMesh(
                 a->secureImported, a->genSecureConfiguration);
@@ -1600,7 +1605,8 @@ static void startGenerate(App& app) {
             }
             a->genSecureResult = std::move(*generated.value);
             const weft::CertifiedAdmissionResult admitted =
-                weft::admitCertifiedMeshingResult(a->genSecureResult);
+                weft::admitCertifiedMeshingResult(
+                    a->genSecureResult, a->generationEpoch, workerEpoch);
             if (!admitted) {
                 throw std::runtime_error(
                     "secure admission refused [" +

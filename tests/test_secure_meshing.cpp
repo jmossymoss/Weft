@@ -575,6 +575,53 @@ void testTemplateChainSumConsumer() {
     }
 }
 
+void testSecureCacheInvalidation() {
+    const weft::SecureMeshingResult ok = generateFixture("box");
+    checkSuccessfulResult(ok);
+    CHECK(ok.value);
+    if (!ok.value) return;
+
+    weft::SecureCacheKey key;
+    key.sourceSha256 = "abc";
+    key.recipeFingerprint = "recipe-1";
+    key.settingsFingerprint = "settings-1";
+    key.implementationVersion = weft::kSecureImplementationVersion;
+    key.certificateFingerprint = ok.value->certified.topologyFingerprint;
+
+    const weft::SecureCacheLookupResult hit =
+        weft::lookupSecureCache(key, key, &*ok.value);
+    CHECK(hit.hit);
+    CHECK(!hit.failure);
+
+    weft::SecureCacheKey other = key;
+    other.settingsFingerprint = "settings-2";
+    const weft::SecureCacheLookupResult miss =
+        weft::lookupSecureCache(key, other, &*ok.value);
+    CHECK(!miss.hit);
+    CHECK(miss.failure && miss.failure->code == "cache.key_mismatch");
+
+    weft::SecureCacheKey badVersion = key;
+    badVersion.implementationVersion = "weft-secure-0";
+    const weft::SecureCacheLookupResult version =
+        weft::lookupSecureCache(key, badVersion, &*ok.value);
+    CHECK(!version.hit);
+    CHECK(version.failure &&
+          version.failure->code == "cache.implementation_mismatch");
+
+    weft::MeshingResult tamperedPayload = *ok.value;
+    tamperedPayload.certified.topologyFingerprint = "deadbeefdeadbeef";
+    const weft::SecureCacheLookupResult corrupt =
+        weft::lookupSecureCache(key, key, &tamperedPayload);
+    CHECK(!corrupt.hit);
+    CHECK(corrupt.failure &&
+          corrupt.failure->code == "cache.certificate_mismatch");
+
+    const weft::SecureCacheLookupResult empty =
+        weft::lookupSecureCache(key, key, nullptr);
+    CHECK(!empty.hit);
+    CHECK(empty.failure && empty.failure->code == "cache.entry_corrupt");
+}
+
 void testCertifiedAdmissionGate() {
     const weft::SecureMeshingResult ok = generateFixture("box");
     checkSuccessfulResult(ok);
@@ -664,6 +711,7 @@ int main() {
         testUnsupportedAndConfigurationRefusals();
         testTemplateChainSumConsumer();
         testCertifiedAdmissionGate();
+        testSecureCacheInvalidation();
         testPartialCylinder();
     } catch (const std::exception& error) {
         std::printf("FAIL secure-meshing exception: %s\n", error.what());

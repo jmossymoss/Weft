@@ -696,6 +696,57 @@ CertifiedAdmissionResult admitCertifiedMeshingResult(
     return out;
 }
 
+std::string fingerprintSecureCacheKey(const SecureCacheKey& key) {
+    return key.sourceSha256 + "|" + key.recipeFingerprint + "|" +
+        key.settingsFingerprint + "|" + key.implementationVersion + "|" +
+        key.certificateFingerprint;
+}
+
+bool secureCacheKeysMatch(const SecureCacheKey& left,
+                          const SecureCacheKey& right) {
+    return fingerprintSecureCacheKey(left) == fingerprintSecureCacheKey(right);
+}
+
+SecureCacheLookupResult lookupSecureCache(
+    const SecureCacheKey& request, const SecureCacheKey& cached,
+    const MeshingResult* cachedResult) {
+    SecureCacheLookupResult out;
+    if (request.implementationVersion != kSecureImplementationVersion ||
+        cached.implementationVersion != kSecureImplementationVersion) {
+        out.failure = CertifiedAdmissionFailure{
+            "cache.implementation_mismatch",
+            "secure cache implementation version does not match"};
+        return out;
+    }
+    if (!secureCacheKeysMatch(request, cached)) {
+        out.failure = CertifiedAdmissionFailure{
+            "cache.key_mismatch",
+            "secure cache key does not match the request"};
+        return out;
+    }
+    if (!cachedResult) {
+        out.failure = CertifiedAdmissionFailure{
+            "cache.entry_corrupt",
+            "secure cache entry has no MeshingResult payload"};
+        return out;
+    }
+    if (cached.certificateFingerprint !=
+        cachedResult->certified.topologyFingerprint) {
+        out.failure = CertifiedAdmissionFailure{
+            "cache.certificate_mismatch",
+            "secure cache certificate fingerprint does not match the payload"};
+        return out;
+    }
+    const CertifiedAdmissionResult admitted =
+        admitCertifiedMeshingResult(*cachedResult);
+    if (!admitted) {
+        out.failure = admitted.failure;
+        return out;
+    }
+    out.hit = true;
+    return out;
+}
+
 PolyMesh makeCertifiedPolyMeshAdapter(const MeshingResult& result) {
     PolyMesh adapter;
     const CertifiedAdmissionResult admitted =

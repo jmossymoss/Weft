@@ -480,7 +480,7 @@ only with indexed evidence.
 
 ### WP-042 — Add secure cache and proxy invalidation
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M7
 - Prerequisites: WP-040, WP-041
 - Goal: reuse only artifacts whose source snapshot, recipe, settings,
@@ -493,7 +493,7 @@ only with indexed evidence.
   4. Prove unaffected certified artifacts remain byte-identical.
   5. Add source/recipe/settings/version/corruption/race invalidation tests.
 - Tests: app integration, `secure_recipe`, `secure_meshing`, full strict lane.
-- Evidence: `docs/evidence/m7-secure-cache-invalidation-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m7-secure-cache-invalidation-2026-07-18.md`.
 - Exit gate: cache hits are reproducible and certified; every stale or partial
   entry is rejected by name.
 

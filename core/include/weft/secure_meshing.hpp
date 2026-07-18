@@ -102,4 +102,29 @@ CertifiedAdmissionResult admitCertifiedMeshingResult(
     std::optional<std::uint64_t> expectedGenerationEpoch = std::nullopt,
     std::optional<std::uint64_t> actualGenerationEpoch = std::nullopt);
 
+struct SecureCacheKey {
+    std::string sourceSha256;
+    std::string recipeFingerprint;
+    std::string settingsFingerprint;
+    std::string implementationVersion;
+    std::string certificateFingerprint;
+};
+
+inline constexpr const char* kSecureImplementationVersion = "weft-secure-1";
+
+std::string fingerprintSecureCacheKey(const SecureCacheKey& key);
+bool secureCacheKeysMatch(const SecureCacheKey& left, const SecureCacheKey& right);
+
+struct SecureCacheLookupResult {
+    bool hit = false;
+    std::optional<CertifiedAdmissionFailure> failure;
+};
+
+// Returns a hit only when keys match byte-for-byte and the cached result still
+// admits. Mismatched or corrupt entries refuse by name.
+SecureCacheLookupResult lookupSecureCache(
+    const SecureCacheKey& request,
+    const SecureCacheKey& cached,
+    const MeshingResult* cachedResult);
+
 }  // namespace weft
