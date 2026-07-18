@@ -645,6 +645,187 @@ only with indexed evidence.
 - Exit gate: cone is recorded as a supported automatic family; sphere/torus
   remain deferred.
 
+### WP-080 — SPHERE-A reconnaissance
+
+- Status: `OPEN`
+- Milestone: M8
+- Prerequisites: WP-075
+- Goal: exact family/domain/trim classification for sphere subjects and stable
+  named unsupported residual cases.
+- Evidence: `docs/evidence/m8-sphere-a-reconnaissance-2026-07-18.md`.
+- Exit gate: every sphere fixture subject is accounted exactly once; non-sphere
+  residuals still refuse by stable name until their packets.
+
+### WP-081 — SPHERE-B canonical boundaries
+
+- Status: `OPEN`
+- Milestone: M8
+- Prerequisites: WP-080
+- Goal: critical segmentation, dual-pole singular stations, and count
+  constraints for sphere edges/faces.
+- Evidence: `docs/evidence/m8-sphere-b-boundaries-2026-07-18.md`.
+- Exit gate: supported sphere boundaries have bijective samples and UV uses;
+  pole/seam adversaries refuse by name before generation.
+
+### WP-082 — SPHERE-C certified floor
+
+- Status: `OPEN`
+- Milestone: M8
+- Prerequisites: WP-081
+- Goal: boundary-exact sphere tessellation with chord/normal bounds and body
+  certificates through `generateSecureMesh`.
+- Evidence: `docs/evidence/m8-sphere-c-certified-floor-2026-07-18.md`.
+- Exit gate: the solid-sphere fixture certifies end to end with no weld.
+
+### WP-083 — SPHERE-D modelling topology
+
+- Status: `OPEN`
+- Milestone: M8
+- Prerequisites: WP-082
+- Goal: deterministic quads/n-gons above the sphere floor with truthful
+  provenance.
+- Evidence: `docs/evidence/m8-sphere-d-modelling-2026-07-18.md`.
+- Exit gate: sphere results carry a non-vacuous modelling provenance certificate.
+
+### WP-084 — SPHERE-E product integration
+
+- Status: `OPEN`
+- Milestone: M8
+- Prerequisites: WP-083
+- Goal: CLI/app/export admit certified sphere results through existing gates.
+- Evidence: `docs/evidence/m8-sphere-e-product-2026-07-18.md`.
+- Exit gate: product routes export certified sphere meshes.
+
+### WP-085 — SPHERE-F family proof
+
+- Status: `OPEN`
+- Milestone: M8
+- Prerequisites: WP-084
+- Goal: isolated, connected, adversarial, density-sweep, corpus, Linux
+  determinism; declare sphere supported.
+- Evidence: `docs/evidence/m8-sphere-f-proof-2026-07-18.md`.
+- Exit gate: sphere is a supported automatic family.
+
+### WP-090 — TORUS-A reconnaissance
+
+- Status: `OPEN`
+- Milestone: M8
+- Prerequisites: WP-085
+- Goal: exact classification for torus subjects and named unsupported cases.
+- Evidence: `docs/evidence/m8-torus-a-reconnaissance-2026-07-18.md`.
+- Exit gate: torus fixture subjects accounted exactly once.
+
+### WP-091 — TORUS-B canonical boundaries
+
+- Status: `OPEN`
+- Milestone: M8
+- Prerequisites: WP-090
+- Goal: dual-periodic critical segmentation, seam lifts, and counts.
+- Evidence: `docs/evidence/m8-torus-b-boundaries-2026-07-18.md`.
+- Exit gate: torus boundaries bijective; seam adversaries refuse by name.
+
+### WP-092 — TORUS-C certified floor
+
+- Status: `OPEN`
+- Milestone: M8
+- Prerequisites: WP-091
+- Goal: boundary-exact torus tessellation with chord/normal bounds.
+- Evidence: `docs/evidence/m8-torus-c-certified-floor-2026-07-18.md`.
+- Exit gate: solid-torus fixture certifies end to end with no weld.
+
+### WP-093 — TORUS-D modelling topology
+
+- Status: `OPEN`
+- Milestone: M8
+- Prerequisites: WP-092
+- Goal: modelling polygons/quads with truthful provenance.
+- Evidence: `docs/evidence/m8-torus-d-modelling-2026-07-18.md`.
+- Exit gate: non-vacuous modelling provenance on torus results.
+
+### WP-094 — TORUS-E product integration
+
+- Status: `OPEN`
+- Milestone: M8
+- Prerequisites: WP-093
+- Goal: CLI/app admission for certified torus results.
+- Evidence: `docs/evidence/m8-torus-e-product-2026-07-18.md`.
+- Exit gate: product routes export certified torus meshes.
+
+### WP-095 — TORUS-F family proof
+
+- Status: `OPEN`
+- Milestone: M8
+- Prerequisites: WP-094
+- Goal: full proof matrix; declare torus supported.
+- Evidence: `docs/evidence/m8-torus-f-proof-2026-07-18.md`.
+- Exit gate: torus is a supported automatic family.
+
+### WP-100 — FILLET-A reconnaissance
+
+- Status: `OPEN`
+- Milestone: M8
+- Prerequisites: WP-095
+- Goal: classify blend faces on fillet/bossfillet fixtures (cylinder vs torus
+  bands) and name unsupported freeform blends.
+- Evidence: `docs/evidence/m8-fillet-a-reconnaissance-2026-07-18.md`.
+- Exit gate: every blend face is accounted; unsupported blends refuse by name.
+
+### WP-101 — FILLET-B canonical boundaries
+
+- Status: `OPEN`
+- Milestone: M8
+- Prerequisites: WP-100
+- Goal: boundaries for blend strips using cylinder/torus consumers.
+- Evidence: `docs/evidence/m8-fillet-b-boundaries-2026-07-18.md`.
+- Exit gate: fillet-strip boundaries complete or refuse by name.
+
+### WP-102 — FILLET-C certified floor
+
+- Status: `OPEN`
+- Milestone: M8
+- Prerequisites: WP-101
+- Goal: certify `fillet` (and torus-band blend when in scope) through secure
+  meshing without new weld paths.
+- Evidence: `docs/evidence/m8-fillet-c-certified-floor-2026-07-18.md`.
+- Exit gate: `makeFixture("fillet")` certifies end to end.
+
+### WP-103 — FILLET-D modelling topology
+
+- Status: `OPEN`
+- Milestone: M8
+- Prerequisites: WP-102
+- Goal: truthful modelling provenance on fillet solids.
+- Evidence: `docs/evidence/m8-fillet-d-modelling-2026-07-18.md`.
+- Exit gate: non-vacuous modelling provenance certificate.
+
+### WP-104 — FILLET-E product integration
+
+- Status: `OPEN`
+- Milestone: M8
+- Prerequisites: WP-103
+- Goal: CLI/app admission for certified fillet solids.
+- Evidence: `docs/evidence/m8-fillet-e-product-2026-07-18.md`.
+- Exit gate: product routes export certified fillet meshes.
+
+### WP-105 — FILLET-F family proof
+
+- Status: `OPEN`
+- Milestone: M8
+- Prerequisites: WP-104
+- Goal: full proof matrix; declare analytic fillet/blend supported.
+- Evidence: `docs/evidence/m8-fillet-f-proof-2026-07-18.md`.
+- Exit gate: analytic fillet/blend is a supported automatic family.
+
+### WP-110 — Close M8 selected-release gate
+
+- Status: `OPEN`
+- Milestone: M8
+- Prerequisites: WP-105
+- Goal: prove the selected M8 release scope (plane/cylinder/cone/sphere/torus/
+  analytic fillet) and mark M8 `PASSED`.
+- Evidence: `docs/evidence/m8-gate-closure-2026-07-18.md`.
+- Exit gate: M8 ledger row is `PASSED`; mapped/freeform remain OUT_OF_SCOPE.
+
 ## M8 family packet
 
 After M7 passes, repeat this packet for one family at a time. Choose the next
@@ -662,9 +843,10 @@ roadmap document.
 6. `FAMILY-F` proof: isolated, connected, adversarial, density-sweep, corpus,
    Windows/Linux determinism, and evidence.
 
-Initial priority after the coverage baseline: cone (WP-070…WP-075), sphere,
-torus, analytic fillet/blend connectors, then mapped/freeform regions. A
-family is not “supported” until all six steps pass.
+Selected M8 release scope: plane/cylinder/cone (done), sphere (WP-080…085),
+torus (WP-090…095), analytic fillet/blend (WP-100…105), then WP-110 gate.
+Mapped/freeform remain post-M8 named refusals. A family is not “supported”
+until all six steps pass.
 
 ## M9 release packet
 
