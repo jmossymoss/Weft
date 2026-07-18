@@ -14,14 +14,21 @@ enum class GeometryTaxonomy {
     Surface,
 };
 
+// Stable names match tests/secure_core_fixtures schema trim_domain_class.
 enum class TrimDomainClass {
     SimpleDisk,
     Annulus,
-    MultiplyPerforated,
+    MultiplyPerforatedDisk,
+    ConcaveSimpleRegion,
     ConvexSimpleRegion,
+    PeriodicBandCrossingSeam,
     FullPeriodicWithCapBoundaries,
     TouchesOneSingularity,
     TouchesTwoSingularities,
+    MultipleDisconnectedDomains,
+    SelfIntersectingOrInvalid,
+    OpenOrGappedLoop,
+    AmbiguousNestingOrOrientation,
     InvalidOrUnresolved,
 };
 
@@ -60,6 +67,7 @@ struct LogicalRegion {
     std::vector<StableId> workingFaces;
     std::vector<StableId> sourceFaces;
     std::vector<StableId> boundaryEdges;
+    std::vector<std::string> conditionCodes;
 };
 
 struct ReconnaissanceDiagnostic {
@@ -81,10 +89,24 @@ struct ReconnaissanceReport {
 };
 
 const char* geometrySupportStateName(GeometrySupportState state) noexcept;
+const char* trimDomainClassName(TrimDomainClass value) noexcept;
 
 // Total, read-only classification of the working B-rep. Every face and edge
 // receives exactly one record; unknown exact types are named and never folded
 // into a supported family.
 ReconnaissanceReport reconnoitre(const ImportedModel& imported);
+
+// Adversarial / unit proof that OtherCurve/OtherSurface stay unrecognised.
+// Returns family/support/reason for the raw OCCT adaptor type ordinal used by
+// reconnoitre (GeomAbs_CurveType / GeomAbs_SurfaceType).
+struct ExactFamilyProbe {
+    std::string familyCode;
+    GeometrySupportState support =
+        GeometrySupportState::UnrecognisedExactGeometry;
+    RecognitionConfidence confidence = RecognitionConfidence::NotRecognised;
+    std::string strategyOrReasonCode;
+};
+ExactFamilyProbe probeCurveFamily(int geomAbsCurveType) noexcept;
+ExactFamilyProbe probeSurfaceFamily(int geomAbsSurfaceType) noexcept;
 
 }  // namespace weft

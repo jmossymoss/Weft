@@ -9,11 +9,19 @@
 
 #include "test_temp_path.hpp"
 
+#include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepTools.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
+#include <GC_MakeCircle.hxx>
+#include <GeomAbs_CurveType.hxx>
+#include <GeomAbs_SurfaceType.hxx>
+#include <Geom_Circle.hxx>
 #include <IFSelect_ReturnStatus.hxx>
 #include <IGESControl_Controller.hxx>
 #include <IGESControl_Writer.hxx>
@@ -25,12 +33,19 @@
 #include <TCollection_ExtendedString.hxx>
 #include <TDataStd_Name.hxx>
 #include <TDocStd_Document.hxx>
+#include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
+#include <TopoDS_Shell.hxx>
+#include <TopoDS_Solid.hxx>
+#include <gp.hxx>
+#include <gp_Ax2.hxx>
+#include <gp_Circ.hxx>
+#include <gp_Dir.hxx>
 #include <gp_Pln.hxx>
+#include <gp_Pnt.hxx>
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
-#include <gp_Pnt.hxx>
 
 #include <algorithm>
 #include <cmath>
@@ -1173,6 +1188,213 @@ void testProductStepOrientationRepairWitness() {
     std::filesystem::remove(stepPath, ignored);
 }
 
+void testCompatibilityHealLaneCorrespondence() {
+    // Force the historical heal lane: Compatibility skips heal only when the
+    // deep copy is already BRepCheck-valid. Orientation-inverted shells stay
+    // invalid through copy and must rebind through sew/ShapeFix history.
+    const weft::ImportedModel healed = weft::importBRepSecure(
+        nativeFixturePath("derived",
+                          "corrupt.orientation.inverted_shell_face.brep")
+            .string(),
+        weft::RepairProfile::Compatibility);
+    CHECK(healed.source != nullptr);
+    CHECK(healed.working != nullptr);
+    CHECK(healed.repair.profile == weft::RepairProfile::Compatibility);
+    CHECK(!healed.repair.sourceValid);
+    CHECK(std::any_of(
+        healed.repair.operations.begin(), healed.repair.operations.end(),
+        [](const weft::RepairOperation& operation) {
+            return operation.code == "repair.compatibility_pipeline" &&
+                operation.detail.find("historical") != std::string::npos;
+        }));
+    CHECK(healed.repair.correspondenceComplete);
+    CHECK(healed.correspondence.topologyComplete);
+    CHECK(healed.repair.workingValid);
+    CHECK(healed.repair.meshable);
+}
+
+bool hasErrorCode(const weft::ImportedModel& imported, std::string_view code) {
+    return std::any_of(
+        imported.diagnostics.events.begin(), imported.diagnostics.events.end(),
+        [code](const weft::ImportDiagnostic& diagnostic) {
+            return diagnostic.code == code &&
+                (diagnostic.severity == weft::DiagnosticSeverity::Error ||
+                 diagnostic.severity == weft::DiagnosticSeverity::Fatal);
+        });
+}
+
+bool hasAnyNamedImportError(const weft::ImportedModel& imported) {
+    return std::any_of(
+        imported.diagnostics.events.begin(), imported.diagnostics.events.end(),
+        [](const weft::ImportDiagnostic& diagnostic) {
+            if (diagnostic.severity != weft::DiagnosticSeverity::Error &&
+                diagnostic.severity != weft::DiagnosticSeverity::Fatal) {
+                return false;
+            }
+            return diagnostic.code.rfind("import.", 0) == 0;
+        });
+}
+
+TopoDS_Shape makeOpenShellSolid() {
+    BRepPrimAPI_MakeBox box(1.0, 1.0, 1.0);
+    BRep_Builder builder;
+    TopoDS_Shell shell;
+    builder.MakeShell(shell);
+    int faceIndex = 0;
+    for (TopExp_Explorer explorer(box.Shape(), TopAbs_FACE); explorer.More();
+         explorer.Next()) {
+        if (faceIndex++ == 0) continue;
+        builder.Add(shell, explorer.Current());
+    }
+    shell.Closed(false);
+    TopoDS_Solid solid;
+    builder.MakeSolid(solid);
+    builder.Add(solid, shell);
+    return solid;
+}
+
+TopoDS_Shape makeNonManifoldShellSolid() {
+    // Three faces that meet along the shared X-axis edge after non-manifold
+    // sewing: XY, XZ, and a 45-degree face through the same axis.
+    BRepBuilderAPI_MakeFace xy(gp_Pln(gp::XOY()), 0.0, 1.0, 0.0, 1.0);
+    BRepBuilderAPI_MakeFace xz(
+        gp_Pln(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(0.0, 1.0, 0.0)), 0.0, 1.0, 0.0,
+        1.0);
+    BRepBuilderAPI_MakeFace diagonal(
+        gp_Pln(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(0.0, 1.0, 1.0)), 0.0, 1.0, 0.0,
+        1.0);
+    CHECK(xy.IsDone());
+    CHECK(xz.IsDone());
+    CHECK(diagonal.IsDone());
+    BRepBuilderAPI_Sewing sewer(1.0e-6, true, true, true, true);
+    sewer.Add(xy.Face());
+    sewer.Add(xz.Face());
+    sewer.Add(diagonal.Face());
+    sewer.Perform();
+    const TopoDS_Shape sewed = sewer.SewedShape();
+    CHECK(!sewed.IsNull());
+    BRep_Builder builder;
+    TopoDS_Shell shell;
+    builder.MakeShell(shell);
+    for (TopExp_Explorer explorer(sewed, TopAbs_FACE); explorer.More();
+         explorer.Next()) {
+        builder.Add(shell, explorer.Current());
+    }
+    shell.Closed(true);
+    TopoDS_Solid solid;
+    builder.MakeSolid(solid);
+    builder.Add(solid, shell);
+    return solid;
+}
+
+void testOrientationOpenAndNonManifoldRefusals() {
+    {
+        const std::filesystem::path path = weft::test::uniqueTempPath(
+            "weft_secure_orientation_open", ".brep");
+        CHECK(BRepTools::Write(makeOpenShellSolid(), path.string().c_str()));
+        const weft::ImportedModel imported = weft::importBRepSecure(
+            path.string(), weft::RepairProfile::Conservative);
+        CHECK(!imported.repair.meshable);
+        CHECK(hasErrorCode(imported, "import.repair.orientation_open_shell"));
+        CHECK(std::none_of(
+            imported.repair.operations.begin(), imported.repair.operations.end(),
+            [](const weft::RepairOperation& operation) {
+                return operation.code == "repair.orientation_face_adjacency";
+            }));
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+    }
+    {
+        const std::filesystem::path path = weft::test::uniqueTempPath(
+            "weft_secure_orientation_nonmanifold", ".brep");
+        CHECK(BRepTools::Write(makeNonManifoldShellSolid(),
+                               path.string().c_str()));
+        const weft::ImportedModel imported = weft::importBRepSecure(
+            path.string(), weft::RepairProfile::Conservative);
+        CHECK(!imported.repair.meshable);
+        CHECK(hasErrorCode(imported,
+                           "import.repair.orientation_non_manifold") ||
+              hasErrorCode(imported,
+                           "import.repair.orientation_open_shell") ||
+              hasErrorCode(imported,
+                           "import.repair.orientation_unsupported"));
+        CHECK(std::none_of(
+            imported.repair.operations.begin(), imported.repair.operations.end(),
+            [](const weft::RepairOperation& operation) {
+                return operation.code == "repair.orientation_face_adjacency";
+            }));
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+    }
+}
+
+void testCompatibilityHealNamedRefusalWhenIncomplete() {
+    // Self-intersecting shells exercise historical heal. Whatever the heal
+    // outcome, incomplete correspondence must carry a named heal refusal.
+    const weft::ImportedModel imported = weft::importBRepSecure(
+        nativeFixturePath("derived", "corrupt.self_intersection.shell.brep")
+            .string(),
+        weft::RepairProfile::Compatibility);
+    CHECK(imported.repair.profile == weft::RepairProfile::Compatibility);
+    const bool historical = std::any_of(
+        imported.repair.operations.begin(), imported.repair.operations.end(),
+        [](const weft::RepairOperation& operation) {
+            return operation.code == "repair.compatibility_pipeline" &&
+                operation.detail.find("historical") != std::string::npos;
+        });
+    if (!historical) {
+        CHECK(imported.repair.correspondenceComplete);
+        CHECK(imported.repair.meshable);
+        return;
+    }
+    if (imported.repair.correspondenceComplete) {
+        CHECK(imported.repair.meshable || imported.diagnostics.hasErrors());
+        return;
+    }
+    CHECK(hasErrorCode(imported, "import.heal.multi_way_split") ||
+          hasErrorCode(imported, "import.heal.correspondence_unbound"));
+    CHECK(!imported.repair.meshable);
+    CHECK(imported.diagnostics.hasErrors());
+}
+
+void testM1CertificateOrNamedRefusalGate() {
+    const std::vector<std::pair<std::string, weft::RepairProfile>> cases = {
+        {"corrupt.orientation.inverted_shell_face.brep",
+         weft::RepairProfile::Conservative},
+        {"corrupt.orientation.inverted_shell_face.brep",
+         weft::RepairProfile::Compatibility},
+        {"corrupt.edge.range_mismatch.brep",
+         weft::RepairProfile::Conservative},
+        {"corrupt.edge.sameparameter_samerange_false.brep",
+         weft::RepairProfile::Conservative},
+        {"corrupt.wire.gap_within_beyond.brep",
+         weft::RepairProfile::Conservative},
+        {"corrupt.wire.inconsistent_orientation.brep",
+         weft::RepairProfile::Conservative},
+        {"corrupt.self_intersection.shell.brep",
+         weft::RepairProfile::Compatibility},
+        {"corrupt.trim.open_gapped.brep", weft::RepairProfile::Conservative},
+    };
+    for (const auto& [filename, profile] : cases) {
+        const weft::ImportedModel imported = weft::importBRepSecure(
+            nativeFixturePath("derived", filename).string(), profile);
+        if (imported.repair.meshable) {
+            CHECK(imported.repair.correspondenceComplete);
+            CHECK(imported.correspondence.topologyComplete);
+            CHECK(imported.repair.workingValid);
+            CHECK(std::all_of(
+                imported.repair.validationEvidence.begin(),
+                imported.repair.validationEvidence.end(),
+                [](const weft::RepairValidationEvidence& evidence) {
+                    return evidence.complete();
+                }));
+        } else {
+            CHECK(imported.diagnostics.hasErrors());
+            CHECK(hasAnyNamedImportError(imported));
+        }
+    }
+}
+
 void testBoundedSewingRepair() {
     BRepBuilderAPI_MakeFace left(gp_Pln(gp::XOY()), 0.0, 1.0, 0.0, 1.0);
     BRepBuilderAPI_MakeFace right(gp_Pln(gp::XOY()), 1.0 + 1.0e-5, 2.0 + 1.0e-5,
@@ -1200,10 +1422,9 @@ void testBoundedSewingRepair() {
         }));
     CHECK(repaired.repair.workingEdges < repaired.repair.sourceEdges);
     CHECK(repaired.repair.workingFaces == repaired.repair.sourceFaces);
-    // Face-preserving free-edge merge is proven. Absorbed edge/vertex
-    // StableId correspondence is still incomplete, so meshable stays false.
-    CHECK(!repaired.repair.correspondenceComplete);
-    CHECK(!repaired.repair.meshable);
+    CHECK(repaired.repair.correspondenceComplete);
+    CHECK(repaired.correspondence.topologyComplete);
+    CHECK(repaired.repair.meshable);
 
     const weft::ImportedModel gap = importNativeRepairFixture(
         "corrupt.wire.gap_within_beyond.brep");
@@ -1407,6 +1628,236 @@ void testTotalReconnaissance(const std::filesystem::path& cylinderPath) {
     std::filesystem::remove(boxPath, ignored);
 }
 
+weft::ImportedModel importTempBRep(const TopoDS_Shape& shape,
+                                   std::string_view stem) {
+    const std::filesystem::path path =
+        weft::test::uniqueTempPath(std::string(stem), ".brep");
+    if (!BRepTools::Write(shape, path.string().c_str())) {
+        throw std::runtime_error("failed to write temporary BRep: " +
+                                 path.string());
+    }
+    weft::ImportedModel imported =
+        weft::importBRepSecure(path.string(), weft::RepairProfile::Conservative);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    return imported;
+}
+
+bool surfaceHasTrim(const weft::ReconnaissanceReport& report,
+                    weft::TrimDomainClass expected) {
+    return std::any_of(
+        report.records.begin(), report.records.end(),
+        [expected](const weft::ExactGeometryClassification& record) {
+            return record.taxonomy == weft::GeometryTaxonomy::Surface &&
+                record.trimDomain && *record.trimDomain == expected;
+        });
+}
+
+void testUnknownExactFamilyInjection() {
+    const weft::ExactFamilyProbe otherCurve =
+        weft::probeCurveFamily(static_cast<int>(GeomAbs_OtherCurve));
+    CHECK(otherCurve.familyCode == "kernel_specific");
+    CHECK(otherCurve.support ==
+          weft::GeometrySupportState::UnrecognisedExactGeometry);
+    CHECK(otherCurve.confidence == weft::RecognitionConfidence::NotRecognised);
+    CHECK(otherCurve.strategyOrReasonCode ==
+          "reason.unrecognised_exact_geometry");
+
+    const weft::ExactFamilyProbe otherSurface =
+        weft::probeSurfaceFamily(static_cast<int>(GeomAbs_OtherSurface));
+    CHECK(otherSurface.familyCode == "kernel_specific");
+    CHECK(otherSurface.support ==
+          weft::GeometrySupportState::UnrecognisedExactGeometry);
+    CHECK(otherSurface.confidence ==
+          weft::RecognitionConfidence::NotRecognised);
+    CHECK(otherSurface.strategyOrReasonCode ==
+          "reason.unrecognised_exact_geometry");
+
+    const weft::ExactFamilyProbe plane =
+        weft::probeSurfaceFamily(static_cast<int>(GeomAbs_Plane));
+    CHECK(plane.familyCode == "plane");
+    CHECK(plane.support ==
+          weft::GeometrySupportState::SupportedAnalyticTemplate);
+}
+
+void testOracleTrimTaxonomySlice() {
+    struct Case {
+        const char* filename;
+        weft::TrimDomainClass expected;
+    };
+    const Case cases[] = {
+        {"corrupt.trim.open_gapped.brep",
+         weft::TrimDomainClass::OpenOrGappedLoop},
+        {"corrupt.trim.self_intersecting.brep",
+         weft::TrimDomainClass::SelfIntersectingOrInvalid},
+        {"corrupt.trim.ambiguous_nesting.brep",
+         weft::TrimDomainClass::AmbiguousNestingOrOrientation},
+    };
+    for (const Case& item : cases) {
+        const weft::ImportedModel imported = importNativeRepairFixture(
+            item.filename);
+        const weft::ReconnaissanceReport report = weft::reconnoitre(imported);
+        CHECK(report.checkedSubjects == report.expectedSubjects);
+        CHECK(surfaceHasTrim(report, item.expected));
+        for (const weft::ExactGeometryClassification& record : report.records) {
+            if (record.taxonomy != weft::GeometryTaxonomy::Surface) continue;
+            CHECK(record.trimDomain.has_value());
+            CHECK(record.familyCode == "plane");
+            CHECK(std::string(weft::trimDomainClassName(*record.trimDomain)) ==
+                  weft::trimDomainClassName(item.expected));
+        }
+    }
+}
+
+void testProceduralTrimTaxonomyBattery() {
+    {
+        GC_MakeCircle circle(gp_Ax2(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(0.0, 0.0, 1.0)),
+                             5.0);
+        BRepBuilderAPI_MakeEdge edge(circle.Value());
+        BRepBuilderAPI_MakeWire wire(edge.Edge());
+        BRepBuilderAPI_MakeFace face(wire.Wire(), true);
+        CHECK(face.IsDone());
+        const weft::ImportedModel imported =
+            importTempBRep(face.Face(), "weft_m2_simple_disk");
+        const weft::ReconnaissanceReport report = weft::reconnoitre(imported);
+        CHECK(surfaceHasTrim(report, weft::TrimDomainClass::SimpleDisk));
+    }
+    {
+        const gp_Pln plane(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(0.0, 0.0, 1.0));
+        BRepBuilderAPI_MakeFace outer(plane, -10.0, 10.0, -10.0, 10.0);
+        GC_MakeCircle holeCircle(
+            gp_Ax2(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(0.0, 0.0, 1.0)), 3.0);
+        BRepBuilderAPI_MakeEdge holeEdge(holeCircle.Value());
+        BRepBuilderAPI_MakeWire holeWire(holeEdge.Edge());
+        TopoDS_Wire hole = holeWire.Wire();
+        hole.Reverse();
+        BRepBuilderAPI_MakeFace annulus(outer.Face());
+        annulus.Add(hole);
+        CHECK(annulus.IsDone());
+        const weft::ImportedModel imported =
+            importTempBRep(annulus.Face(), "weft_m2_annulus");
+        const weft::ReconnaissanceReport report = weft::reconnoitre(imported);
+        CHECK(surfaceHasTrim(report, weft::TrimDomainClass::Annulus));
+    }
+    {
+        const gp_Pln plane(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(0.0, 0.0, 1.0));
+        BRepBuilderAPI_MakeWire wire;
+        wire.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(0.0, 0.0, 0.0),
+                                         gp_Pnt(6.0, 0.0, 0.0)).Edge());
+        wire.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(6.0, 0.0, 0.0),
+                                         gp_Pnt(6.0, 2.0, 0.0)).Edge());
+        wire.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(6.0, 2.0, 0.0),
+                                         gp_Pnt(2.0, 2.0, 0.0)).Edge());
+        wire.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(2.0, 2.0, 0.0),
+                                         gp_Pnt(2.0, 4.0, 0.0)).Edge());
+        wire.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(2.0, 4.0, 0.0),
+                                         gp_Pnt(0.0, 4.0, 0.0)).Edge());
+        wire.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(0.0, 4.0, 0.0),
+                                         gp_Pnt(0.0, 0.0, 0.0)).Edge());
+        BRepBuilderAPI_MakeFace face(plane, wire.Wire());
+        CHECK(face.IsDone());
+        const weft::ImportedModel imported =
+            importTempBRep(face.Face(), "weft_m2_concave");
+        const weft::ReconnaissanceReport report = weft::reconnoitre(imported);
+        CHECK(surfaceHasTrim(report, weft::TrimDomainClass::ConcaveSimpleRegion));
+    }
+}
+
+void testCoplanarArtificialSplitRegionMerge() {
+    BRepPrimAPI_MakeBox left(13.0, 20.0, 14.0);
+    BRepPrimAPI_MakeBox right(gp_Pnt(13.0, 0.0, 0.0), 19.0, 20.0, 14.0);
+    BRepAlgoAPI_Fuse fuse(left.Shape(), right.Shape());
+    CHECK(fuse.IsDone());
+    const TopoDS_Shape split = fuse.Shape();
+    int faceCount = 0;
+    for (TopExp_Explorer explorer(split, TopAbs_FACE); explorer.More();
+         explorer.Next()) {
+        ++faceCount;
+    }
+    CHECK(faceCount > 6);
+
+    const weft::ImportedModel imported =
+        importTempBRep(split, "weft_m2_coplanar_split");
+    const weft::ReconnaissanceReport report = weft::reconnoitre(imported);
+    CHECK(report.complete);
+    const bool merged = std::any_of(
+        report.regions.begin(), report.regions.end(),
+        [](const weft::LogicalRegion& region) {
+            return region.code == "region.plane.artificial_split_merged" &&
+                region.workingFaces.size() >= 2 &&
+                std::find(region.conditionCodes.begin(),
+                          region.conditionCodes.end(),
+                          "reason.artificial_split_merge_accounted") !=
+                region.conditionCodes.end();
+        });
+    CHECK(merged);
+    CHECK(std::any_of(
+        report.diagnostics.begin(), report.diagnostics.end(),
+        [](const weft::ReconnaissanceDiagnostic& diagnostic) {
+            return diagnostic.code ==
+                "reconnaissance.region.artificial_split_merged";
+        }));
+}
+
+void testMultidomainSameSupportDeferred() {
+    const gp_Pln plane(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(0.0, 0.0, 1.0));
+    BRepBuilderAPI_MakeFace first(plane, 0.0, 4.0, 0.0, 4.0);
+    BRepBuilderAPI_MakeFace second(plane, 10.0, 14.0, 0.0, 4.0);
+    CHECK(first.IsDone());
+    CHECK(second.IsDone());
+    BRep_Builder builder;
+    TopoDS_Compound compound;
+    builder.MakeCompound(compound);
+    builder.Add(compound, first.Face());
+    builder.Add(compound, second.Face());
+
+    const weft::ImportedModel imported =
+        importTempBRep(compound, "weft_m2_multidomain");
+    const weft::ReconnaissanceReport report = weft::reconnoitre(imported);
+    CHECK(report.checkedSubjects == report.expectedSubjects);
+    int multidomainFaces = 0;
+    for (const weft::ExactGeometryClassification& record : report.records) {
+        if (record.taxonomy != weft::GeometryTaxonomy::Surface) continue;
+        CHECK(record.trimDomain ==
+              weft::TrimDomainClass::MultipleDisconnectedDomains);
+        CHECK(std::find(record.conditionCodes.begin(),
+                        record.conditionCodes.end(),
+                        "reason.multidomain_decomposition_unproven") !=
+              record.conditionCodes.end());
+        ++multidomainFaces;
+    }
+    CHECK(multidomainFaces == 2);
+    CHECK(std::any_of(
+        report.diagnostics.begin(), report.diagnostics.end(),
+        [](const weft::ReconnaissanceDiagnostic& diagnostic) {
+            return diagnostic.code ==
+                "reconnaissance.region.multidomain_deferred";
+        }));
+}
+
+void testM2OracleFamilyAndCylinderTrim(const std::filesystem::path& cylinderPath) {
+    const weft::ImportedModel cylinder = weft::importStepSecure(
+        cylinderPath.string(), weft::RepairProfile::Conservative);
+    const weft::ReconnaissanceReport report = weft::reconnoitre(cylinder);
+    CHECK(report.complete);
+    for (const weft::ExactGeometryClassification& record : report.records) {
+        CHECK(!record.familyCode.empty());
+        CHECK(record.familyCode != "kernel_specific");
+        CHECK(!record.strategyOrReasonCode.empty());
+        if (record.taxonomy != weft::GeometryTaxonomy::Surface) continue;
+        CHECK(record.trimDomain.has_value());
+        if (record.familyCode == "plane") {
+            CHECK(*record.trimDomain == weft::TrimDomainClass::SimpleDisk ||
+                  *record.trimDomain ==
+                      weft::TrimDomainClass::ConvexSimpleRegion);
+        }
+        if (record.familyCode == "cylinder") {
+            CHECK(*record.trimDomain ==
+                  weft::TrimDomainClass::FullPeriodicWithCapBoundaries);
+        }
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -1423,8 +1874,18 @@ int main() {
         testBoundedParameterizationRepair();
         testProductStepOrientationRepairWitness();
         testBoundedSewingRepair();
+        testCompatibilityHealLaneCorrespondence();
+        testOrientationOpenAndNonManifoldRefusals();
+        testCompatibilityHealNamedRefusalWhenIncomplete();
+        testM1CertificateOrNamedRefusalGate();
         testFaceAdjacencyOrientationRepair();
         testTotalReconnaissance(path);
+        testUnknownExactFamilyInjection();
+        testOracleTrimTaxonomySlice();
+        testProceduralTrimTaxonomyBattery();
+        testCoplanarArtificialSplitRegionMerge();
+        testMultidomainSameSupportDeferred();
+        testM2OracleFamilyAndCylinderTrim(path);
         std::error_code ignored;
         std::filesystem::remove(path, ignored);
     } catch (const std::exception& error) {

@@ -82,5 +82,6 @@ lanes remain green under strict MSVC.
 ## Consequences
 
 M1 gains a second bounded conservative repair. BR-015 remains enforced: solid
-reversal alone is still not an authorized repair. Multi-body compounds, open
-shells, INTERNAL/EXTERNAL policy, and wire-only orientation repair remain open.
+reversal alone is still not an authorized repair. Open and non-manifold shells
+receive named `import.repair.orientation_*` refusals. INTERNAL/EXTERNAL policy
+and wire-only orientation repair remain out of scope for this operation.

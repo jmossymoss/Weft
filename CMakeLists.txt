@@ -26,9 +26,27 @@ function(weft_enable_strict_warnings target)
     if(WEFT_WARNINGS_AS_ERRORS)
       target_compile_options(${target} PRIVATE -Werror)
     endif()
-    if(WEFT_STATIC_ANALYSIS AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-      target_compile_options(${target} PRIVATE -fanalyzer)
-    endif()
+  endif()
+endfunction()
+
+# GCC -fanalyzer is applied to weft_core only. Analyzing the interactive app
+# and large fixture-generator TUs trips GCC 15 cc1plus ICEs / multi-GB hangs;
+# those targets still build under the static-analysis preset with -Werror.
+# MSVC /analyze remains enabled for every Weft-owned target above.
+function(weft_enable_gcc_analyzer target)
+  if(WEFT_STATIC_ANALYSIS AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    # Keep -fanalyzer on for the secure-core library. GCC's C++ analyzer still
+    # emits many false positives through OCCT handles/shapes and libstdc++
+    # node clone paths; mirror MSVC /analyze:external- by not failing the
+    # build on those analyzer classes while still surfacing them as warnings.
+    target_compile_options(${target} PRIVATE
+      -fanalyzer
+      -Wno-error=analyzer-malloc-leak
+      -Wno-error=analyzer-use-of-uninitialized-value
+      -Wno-error=analyzer-possible-null-dereference
+      -Wno-error=analyzer-null-dereference
+      -Wno-error=analyzer-null-argument
+      -Wno-error=analyzer-out-of-bounds)
   endif()
 endfunction()
 

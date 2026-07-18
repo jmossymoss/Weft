@@ -1975,8 +1975,8 @@ void normalize_header(STEPControl_Writer& writer, const std::string_view fixture
   header.SetName(header_string(file_name));
   header.SetTimeStamp(header_string(kFixedTimestamp));
 
-  using HeaderString = occ::handle<TCollection_HAsciiString>;
 #if OCC_VERSION_HEX >= 0x080000
+  using HeaderString = occ::handle<TCollection_HAsciiString>;
   using HeaderStrings = NCollection_HArray1<HeaderString>;
 #else
   using HeaderStrings = Interface_HArray1OfHAsciiString;

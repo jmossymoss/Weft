@@ -1,26 +1,47 @@
 #include "weft/secure_reconnaissance.hpp"
+#include "weft/model.hpp"
 #include "weft/occt_failure.hpp"
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepGProp.hxx>
 #include <BRepTools.hxx>
+#include <BRepTopAdaptor_FClass2d.hxx>
 #include <BRep_Tool.hxx>
+#include <GProp_GProps.hxx>
+#include <Geom2d_Curve.hxx>
 #include <Geom_OffsetCurve.hxx>
 #include <Geom_OffsetSurface.hxx>
 #include <Geom_RectangularTrimmedSurface.hxx>
+#include <Geom_Surface.hxx>
 #include <Geom_TrimmedCurve.hxx>
+#include <GeomAbs_CurveType.hxx>
+#include <GeomAbs_SurfaceType.hxx>
+#include <Precision.hxx>
+#include <ShapeAnalysis_Wire.hxx>
 #include <Standard_Failure.hxx>
+#include <TopAbs.hxx>
+#include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Iterator.hxx>
+#include <TopoDS_Vertex.hxx>
 #include <TopoDS_Wire.hxx>
+#include <gp_Dir.hxx>
+#include <gp_Pln.hxx>
+#include <gp_Pnt.hxx>
+#include <gp_Pnt2d.hxx>
+#include <gp_Vec.hxx>
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <set>
 #include <utility>
+#include <vector>
 
 namespace weft {
 namespace {
@@ -42,6 +63,7 @@ FamilyInfo curveFamily(GeomAbs_CurveType type) {
         case GeomAbs_BezierCurve: return {"bezier", false, true, false};
         case GeomAbs_BSplineCurve: return {"bspline", false, true, false};
         case GeomAbs_OffsetCurve: return {"offset", false, true, false};
+        case GeomAbs_OtherCurve:
         default: return {"kernel_specific", false, false, false};
     }
 }
@@ -60,8 +82,31 @@ FamilyInfo surfaceFamily(GeomAbs_SurfaceType type) {
         case GeomAbs_SurfaceOfExtrusion:
             return {"extrusion", false, true, false};
         case GeomAbs_OffsetSurface: return {"offset", false, true, false};
+        case GeomAbs_OtherSurface:
         default: return {"kernel_specific", false, false, false};
     }
+}
+
+ExactFamilyProbe toProbe(const FamilyInfo& family) {
+    ExactFamilyProbe probe;
+    probe.familyCode = family.code;
+    if (!family.known) {
+        probe.confidence = RecognitionConfidence::NotRecognised;
+        probe.support = GeometrySupportState::UnrecognisedExactGeometry;
+        probe.strategyOrReasonCode = "reason.unrecognised_exact_geometry";
+        return probe;
+    }
+    if (family.analytic && family.firstTemplate) {
+        probe.confidence = RecognitionConfidence::ProvenAnalytic;
+        probe.support = GeometrySupportState::SupportedAnalyticTemplate;
+        probe.strategyOrReasonCode = "strategy." + family.code;
+        return probe;
+    }
+    probe.confidence = family.analytic ? RecognitionConfidence::ProvenAnalytic
+                                       : RecognitionConfidence::ExactlyTyped;
+    probe.support = GeometrySupportState::DeferredResidualSurface;
+    probe.strategyOrReasonCode = "reason.deferred_residual_surface";
+    return probe;
 }
 
 std::pair<std::string, std::vector<std::string>> concreteCurve(
@@ -129,16 +174,93 @@ std::vector<StableId> sourceSubjects(const ImportedModel& imported,
     return result;
 }
 
-TrimDomainClass classifyTrim(const TopoDS_Face& face,
-                             const BRepAdaptor_Surface& surface) {
-    if (surface.IsUPeriodic() || surface.IsVPeriodic()) {
-        return TrimDomainClass::FullPeriodicWithCapBoundaries;
+bool wireHasOpenGap(const TopoDS_Wire& wire, const TopoDS_Face& face) {
+    if (wire.IsNull()) return true;
+    if (!wire.Closed()) return true;
+    try {
+        TopoDS_Vertex first;
+        TopoDS_Vertex last;
+        TopExp::Vertices(wire, first, last);
+        if (first.IsNull() || last.IsNull()) return true;
+        // Endpoint coincidence is the hard open-loop witness. Broader
+        // ShapeAnalysis connectivity/gap probes false-positive on valid
+        // periodic seam wires (cylinder walls) under OCCT 7.9/8.0.
+        if (!first.IsSame(last) ||
+            BRep_Tool::Pnt(first).Distance(BRep_Tool::Pnt(last)) >
+                Precision::Confusion()) {
+            return true;
+        }
+        ShapeAnalysis_Wire analysis(wire, face, Precision::Confusion());
+        return analysis.CheckClosed(Precision::Confusion());
+    } catch (const Standard_Failure&) {
+        return false;
     }
+}
+
+bool wireSelfIntersects(const TopoDS_Wire& wire, const TopoDS_Face& face) {
+    if (wire.IsNull()) return false;
+    try {
+        ShapeAnalysis_Wire analysis(wire, face, Precision::Confusion());
+        return analysis.CheckSelfIntersection();
+    } catch (const Standard_Failure&) {
+        return false;
+    }
+}
+
+bool planarOuterWireIsConcave(const TopoDS_Face& face,
+                              const TopoDS_Wire& outer) {
+    if (outer.IsNull()) return false;
+    BRepAdaptor_Surface surface(face, true);
+    if (surface.GetType() != GeomAbs_Plane) return false;
+    const gp_Dir normal = surface.Plane().Axis().Direction();
+    std::vector<gp_Pnt> points;
+    for (TopoDS_Iterator edgeIt(outer); edgeIt.More(); edgeIt.Next()) {
+        if (edgeIt.Value().ShapeType() != TopAbs_EDGE) continue;
+        const TopoDS_Edge edge = TopoDS::Edge(edgeIt.Value());
+        TopoDS_Vertex first;
+        TopoDS_Vertex last;
+        TopExp::Vertices(edge, first, last);
+        if (first.IsNull()) continue;
+        const gp_Pnt point = BRep_Tool::Pnt(first);
+        if (points.empty() || points.back().Distance(point) > 1.0e-9) {
+            points.push_back(point);
+        }
+    }
+    if (points.size() < 3) return false;
+    if (points.front().Distance(points.back()) <= 1.0e-9) {
+        points.pop_back();
+    }
+    if (points.size() < 3) return false;
+
+    int sign = 0;
+    for (std::size_t index = 0; index < points.size(); ++index) {
+        const gp_Pnt& a = points[index];
+        const gp_Pnt& b = points[(index + 1) % points.size()];
+        const gp_Pnt& c = points[(index + 2) % points.size()];
+        const gp_Vec ab(a, b);
+        const gp_Vec bc(b, c);
+        const double orient = ab.Crossed(bc).Dot(gp_Vec(normal.XYZ()));
+        if (std::abs(orient) <= 1.0e-12) continue;
+        const int current = orient > 0.0 ? 1 : -1;
+        if (sign == 0) {
+            sign = current;
+        } else if (sign != current) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::size_t countWires(const TopoDS_Face& face) {
     std::size_t wires = 0;
     for (TopExp_Explorer explorer(face, TopAbs_WIRE); explorer.More();
          explorer.Next()) {
         ++wires;
     }
+    return wires;
+}
+
+std::size_t countDegenerateEdges(const TopoDS_Face& face) {
     std::size_t degenerateEdges = 0;
     for (TopExp_Explorer explorer(face, TopAbs_EDGE); explorer.More();
          explorer.Next()) {
@@ -146,23 +268,148 @@ TrimDomainClass classifyTrim(const TopoDS_Face& face,
             ++degenerateEdges;
         }
     }
+    return degenerateEdges;
+}
+
+bool wireSampleInsideOuter(const TopoDS_Wire& wire, const TopoDS_Face& face,
+                           const TopoDS_Wire& outer) {
+    if (wire.IsNull() || outer.IsNull() || wire.IsSame(outer)) return true;
+    Handle(Geom_Surface) exact = BRep_Tool::Surface(face);
+    if (exact.IsNull()) return false;
+    BRepBuilderAPI_MakeFace outerFace(exact, outer);
+    if (!outerFace.IsDone()) return false;
+    BRepTopAdaptor_FClass2d classifier(outerFace.Face(),
+                                       Precision::Confusion());
+    for (TopoDS_Iterator edgeIt(wire); edgeIt.More(); edgeIt.Next()) {
+        if (edgeIt.Value().ShapeType() != TopAbs_EDGE) continue;
+        const TopoDS_Edge edge = TopoDS::Edge(edgeIt.Value());
+        double first = 0.0;
+        double last = 0.0;
+        Handle(Geom2d_Curve) pcurve =
+            BRep_Tool::CurveOnSurface(edge, face, first, last);
+        if (pcurve.IsNull() || !(last > first)) continue;
+        const gp_Pnt2d sample = pcurve->Value(0.5 * (first + last));
+        // Require a strict interior sample so overlapping/ambiguous outer-like
+        // wires do not count as proven holes.
+        return classifier.Perform(sample) == TopAbs_IN;
+    }
+    return false;
+}
+
+bool allNonOuterWiresInsideOuter(const TopoDS_Face& face,
+                                 const TopoDS_Wire& outer) {
+    if (outer.IsNull()) return false;
+    for (TopExp_Explorer explorer(face, TopAbs_WIRE); explorer.More();
+         explorer.Next()) {
+        const TopoDS_Wire wire = TopoDS::Wire(explorer.Current());
+        if (wire.IsSame(outer)) continue;
+        if (!wireSampleInsideOuter(wire, face, outer)) return false;
+    }
+    return true;
+}
+
+bool nestingIsProven(const TopoDS_Face& face, const TopoDS_Wire& outer,
+                     std::size_t wires) {
+    if (outer.IsNull() || wires < 2) return false;
+    if (!allNonOuterWiresInsideOuter(face, outer)) return false;
+    Handle(Geom_Surface) exact = BRep_Tool::Surface(face);
+    if (exact.IsNull()) return false;
+    BRepBuilderAPI_MakeFace outerFace(exact, outer);
+    if (!outerFace.IsDone()) return false;
+    GProp_GProps faceProps;
+    GProp_GProps outerProps;
+    BRepGProp::SurfaceProperties(face, faceProps);
+    BRepGProp::SurfaceProperties(outerFace.Face(), outerProps);
+    const double faceArea = std::abs(faceProps.Mass());
+    const double outerArea = std::abs(outerProps.Mass());
+    if (!(faceArea > 0.0) || !(outerArea > 0.0)) return false;
+    // Proven holes must remove measurable area from the outer claim.
+    return faceArea + 1.0e-6 < outerArea;
+}
+
+TrimDomainClass classifyTrim(const TopoDS_Face& face,
+                             const BRepAdaptor_Surface& surface) {
+    const TopoDS_Wire outer = BRepTools::OuterWire(face);
+    const std::size_t wires = countWires(face);
+    if (wires == 0) return TrimDomainClass::InvalidOrUnresolved;
+
+    bool openOrGapped = false;
+    bool selfIntersecting = false;
+    for (TopExp_Explorer explorer(face, TopAbs_WIRE); explorer.More();
+         explorer.Next()) {
+        const TopoDS_Wire wire = TopoDS::Wire(explorer.Current());
+        if (wireHasOpenGap(wire, face)) openOrGapped = true;
+        if (wireSelfIntersects(wire, face)) selfIntersecting = true;
+    }
+    if (selfIntersecting) return TrimDomainClass::SelfIntersectingOrInvalid;
+    if (openOrGapped) return TrimDomainClass::OpenOrGappedLoop;
+
+    const std::size_t degenerateEdges = countDegenerateEdges(face);
     if (degenerateEdges >= 2) return TrimDomainClass::TouchesTwoSingularities;
     if (degenerateEdges == 1) return TrimDomainClass::TouchesOneSingularity;
-    if (wires == 0) return TrimDomainClass::InvalidOrUnresolved;
-    if (wires > 2) return TrimDomainClass::MultiplyPerforated;
-    if (wires == 2) return TrimDomainClass::Annulus;
 
-    const TopoDS_Wire outer = BRepTools::OuterWire(face);
+    if (surface.IsUPeriodic() || surface.IsVPeriodic()) {
+        double u0 = 0.0;
+        double u1 = 0.0;
+        double v0 = 0.0;
+        double v1 = 0.0;
+        BRepTools::UVBounds(face, u0, u1, v0, v1);
+        const double uSpan = u1 - u0;
+        const double vSpan = v1 - v0;
+        const double uPeriod =
+            surface.IsUPeriodic() ? surface.UPeriod() : 0.0;
+        const double vPeriod =
+            surface.IsVPeriodic() ? surface.VPeriod() : 0.0;
+        // Treat near-full periods as full. Tiny UV-bound shortfalls (common
+        // across OCCT 7.9/8.0 cylinder imports) must not demote a closed wall
+        // to a seam-crossing band and refuse the cylinder template.
+        const auto isMeaningfulBand = [](double span, double period) {
+            if (!(period > 0.0) || !(span >= 0.0)) return false;
+            const double gap = period - span;
+            const double threshold =
+                std::max(Precision::Confusion() * 10.0, period * 1.0e-4);
+            return gap > threshold;
+        };
+        const bool uBand =
+            surface.IsUPeriodic() && isMeaningfulBand(uSpan, uPeriod);
+        const bool vBand =
+            surface.IsVPeriodic() && isMeaningfulBand(vSpan, vPeriod);
+        if (uBand || vBand) {
+            return TrimDomainClass::PeriodicBandCrossingSeam;
+        }
+        return TrimDomainClass::FullPeriodicWithCapBoundaries;
+    }
+
+    if (wires == 2) {
+        if (outer.IsNull()) {
+            return TrimDomainClass::AmbiguousNestingOrOrientation;
+        }
+        return TrimDomainClass::Annulus;
+    }
+    if (wires > 2) {
+        // Multiply-perforated only when every non-outer wire is strictly inside
+        // the outer claim and the face area is strictly smaller than the outer
+        // disk. Otherwise the nesting/orientation is unproven.
+        if (!nestingIsProven(face, outer, wires)) {
+            return TrimDomainClass::AmbiguousNestingOrOrientation;
+        }
+        return TrimDomainClass::MultiplyPerforatedDisk;
+    }
+
     if (!outer.IsNull()) {
         std::size_t edges = 0;
         bool circular = false;
-        for (TopoDS_Iterator iterator(outer); iterator.More(); iterator.Next()) {
+        for (TopoDS_Iterator iterator(outer); iterator.More();
+             iterator.Next()) {
             if (iterator.Value().ShapeType() != TopAbs_EDGE) continue;
             ++edges;
             BRepAdaptor_Curve curve(TopoDS::Edge(iterator.Value()));
             circular = curve.GetType() == GeomAbs_Circle;
         }
         if (edges == 1 && circular) return TrimDomainClass::SimpleDisk;
+        if (planarOuterWireIsConcave(face, outer)) {
+            return TrimDomainClass::ConcaveSimpleRegion;
+        }
     }
     return TrimDomainClass::ConvexSimpleRegion;
 }
@@ -253,6 +500,39 @@ void decideSupport(ExactGeometryClassification& record, const FamilyInfo& family
     ++report.unsupportedSubjects;
 }
 
+bool facesAreCoplanarPartners(const TopoDS_Face& left, const TopoDS_Face& right) {
+    BRepAdaptor_Surface leftSurface(left, true);
+    BRepAdaptor_Surface rightSurface(right, true);
+    if (leftSurface.GetType() != GeomAbs_Plane ||
+        rightSurface.GetType() != GeomAbs_Plane) {
+        return false;
+    }
+    const gp_Pln leftPlane = leftSurface.Plane();
+    const gp_Pln rightPlane = rightSurface.Plane();
+    if (!leftPlane.Axis().Direction().IsParallel(rightPlane.Axis().Direction(),
+                                                 1.0e-9) &&
+        !leftPlane.Axis().Direction().IsOpposite(rightPlane.Axis().Direction(),
+                                                 1.0e-9)) {
+        return false;
+    }
+    return std::abs(leftPlane.Distance(rightPlane.Location())) <= 1.0e-7;
+}
+
+bool shareManifoldEdge(const TopoDS_Face& left, const TopoDS_Face& right,
+                       const EdgeFaceMap& edgeToFaces) {
+    for (int index = 1; index <= edgeToFaces.Extent(); ++index) {
+        const ShapeList& faces = edgeToFaces(index);
+        bool hasLeft = false;
+        bool hasRight = false;
+        for (ShapeList::Iterator it(faces); it.More(); it.Next()) {
+            if (it.Value().IsSame(left)) hasLeft = true;
+            if (it.Value().IsSame(right)) hasRight = true;
+        }
+        if (hasLeft && hasRight && faces.Extent() == 2) return true;
+    }
+    return false;
+}
+
 }  // namespace
 
 const ExactGeometryClassification* ReconnaissanceReport::find(
@@ -277,6 +557,46 @@ const char* geometrySupportStateName(GeometrySupportState state) noexcept {
             return "unrecognised_exact_geometry";
     }
     return "unrecognised_exact_geometry";
+}
+
+const char* trimDomainClassName(TrimDomainClass value) noexcept {
+    switch (value) {
+        case TrimDomainClass::SimpleDisk: return "simple_disk";
+        case TrimDomainClass::Annulus: return "annulus";
+        case TrimDomainClass::MultiplyPerforatedDisk:
+            return "multiply_perforated_disk";
+        case TrimDomainClass::ConcaveSimpleRegion:
+            return "concave_simple_region";
+        case TrimDomainClass::ConvexSimpleRegion:
+            return "convex_simple_region";
+        case TrimDomainClass::PeriodicBandCrossingSeam:
+            return "periodic_band_crossing_seam";
+        case TrimDomainClass::FullPeriodicWithCapBoundaries:
+            return "full_periodic_with_cap_boundaries";
+        case TrimDomainClass::TouchesOneSingularity:
+            return "touches_one_singularity";
+        case TrimDomainClass::TouchesTwoSingularities:
+            return "touches_two_singularities";
+        case TrimDomainClass::MultipleDisconnectedDomains:
+            return "multiple_disconnected_domains";
+        case TrimDomainClass::SelfIntersectingOrInvalid:
+            return "self_intersecting_or_invalid";
+        case TrimDomainClass::OpenOrGappedLoop: return "open_or_gapped_loop";
+        case TrimDomainClass::AmbiguousNestingOrOrientation:
+            return "ambiguous_nesting_or_orientation";
+        case TrimDomainClass::InvalidOrUnresolved:
+            return "invalid_or_unresolved";
+    }
+    return "invalid_or_unresolved";
+}
+
+ExactFamilyProbe probeCurveFamily(int geomAbsCurveType) noexcept {
+    return toProbe(curveFamily(static_cast<GeomAbs_CurveType>(geomAbsCurveType)));
+}
+
+ExactFamilyProbe probeSurfaceFamily(int geomAbsSurfaceType) noexcept {
+    return toProbe(
+        surfaceFamily(static_cast<GeomAbs_SurfaceType>(geomAbsSurfaceType)));
 }
 
 ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
@@ -363,14 +683,22 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                               adaptor.IsVPeriodic() ? adaptor.VPeriod() : 0.0),
             };
             record.trimDomain = classifyTrim(face, adaptor);
-            if (adaptor.IsUPeriodic()) record.conditionCodes.push_back("u_periodic");
-            if (adaptor.IsVPeriodic()) record.conditionCodes.push_back("v_periodic");
+            if (adaptor.IsUPeriodic()) {
+                record.conditionCodes.push_back("u_periodic");
+            }
+            if (adaptor.IsVPeriodic()) {
+                record.conditionCodes.push_back("v_periodic");
+            }
+            if (record.trimDomain ==
+                TrimDomainClass::MultipleDisconnectedDomains) {
+                record.conditionCodes.push_back(
+                    "reason.multidomain_decomposition_unproven");
+            }
             const bool evaluates = exactSurfaceEvaluates(
                 *imported.workingEvaluator, faceId, u0, u1, v0, v1);
-            // Planes are exactly projection-meshable without stored p-curves.
-            // Curved supported faces require every stored face-specific mapping.
             const bool representationReady =
-                family.code == "plane" || curvedFaceHasExactMappings(imported, faceId);
+                family.code == "plane" ||
+                curvedFaceHasExactMappings(imported, faceId);
             decideSupport(record, family, evaluates,
                           evaluates && representationReady, report);
         } catch (const Standard_Failure& error) {
@@ -386,6 +714,11 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
         report.records.push_back(std::move(record));
     }
 
+    EdgeFaceMap edgeToFaces;
+    TopExp::MapShapesAndAncestors(snapshot.model.shape, TopAbs_EDGE,
+                                  TopAbs_FACE, edgeToFaces);
+
+    std::map<StableId, std::size_t> regionIndexByFace;
     std::uint64_t regionOrdinal = 0;
     for (const ExactGeometryClassification& record : report.records) {
         if (record.taxonomy != GeometryTaxonomy::Surface) continue;
@@ -399,7 +732,114 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
             if (coedge.faceId == record.subjectId) edges.insert(coedge.edgeId);
         }
         region.boundaryEdges.assign(edges.begin(), edges.end());
+        regionIndexByFace.emplace(record.subjectId, report.regions.size());
         report.regions.push_back(std::move(region));
+    }
+
+    // Coplanar artificial splits: keep face subjects unique, but merge region
+    // accounts when two plane faces share exactly one manifold edge.
+    for (int leftIndex = 1; leftIndex <= snapshot.model.faces.Extent();
+         ++leftIndex) {
+        const StableId leftId{StableIdKind::Face,
+                              static_cast<std::uint64_t>(leftIndex)};
+        const TopoDS_Face leftFace =
+            TopoDS::Face(snapshot.model.faces(leftIndex));
+        for (int rightIndex = leftIndex + 1;
+             rightIndex <= snapshot.model.faces.Extent(); ++rightIndex) {
+            const StableId rightId{StableIdKind::Face,
+                                   static_cast<std::uint64_t>(rightIndex)};
+            const TopoDS_Face rightFace =
+                TopoDS::Face(snapshot.model.faces(rightIndex));
+            if (!facesAreCoplanarPartners(leftFace, rightFace)) continue;
+            if (!shareManifoldEdge(leftFace, rightFace, edgeToFaces)) continue;
+            const auto leftRegion = regionIndexByFace.find(leftId);
+            const auto rightRegion = regionIndexByFace.find(rightId);
+            if (leftRegion == regionIndexByFace.end() ||
+                rightRegion == regionIndexByFace.end()) {
+                continue;
+            }
+            if (leftRegion->second == rightRegion->second) continue;
+            LogicalRegion& keep = report.regions[leftRegion->second];
+            LogicalRegion& drop = report.regions[rightRegion->second];
+            keep.code = "region.plane.artificial_split_merged";
+            keep.conditionCodes.push_back(
+                "reason.artificial_split_merge_accounted");
+            keep.workingFaces.insert(keep.workingFaces.end(),
+                                     drop.workingFaces.begin(),
+                                     drop.workingFaces.end());
+            keep.sourceFaces.insert(keep.sourceFaces.end(),
+                                    drop.sourceFaces.begin(),
+                                    drop.sourceFaces.end());
+            keep.boundaryEdges.insert(keep.boundaryEdges.end(),
+                                      drop.boundaryEdges.begin(),
+                                      drop.boundaryEdges.end());
+            std::sort(keep.workingFaces.begin(), keep.workingFaces.end());
+            keep.workingFaces.erase(
+                std::unique(keep.workingFaces.begin(), keep.workingFaces.end()),
+                keep.workingFaces.end());
+            std::sort(keep.sourceFaces.begin(), keep.sourceFaces.end());
+            keep.sourceFaces.erase(
+                std::unique(keep.sourceFaces.begin(), keep.sourceFaces.end()),
+                keep.sourceFaces.end());
+            std::sort(keep.boundaryEdges.begin(), keep.boundaryEdges.end());
+            keep.boundaryEdges.erase(std::unique(keep.boundaryEdges.begin(),
+                                                 keep.boundaryEdges.end()),
+                                     keep.boundaryEdges.end());
+            for (const StableId& faceId : drop.workingFaces) {
+                regionIndexByFace[faceId] = leftRegion->second;
+            }
+            drop.workingFaces.clear();
+            drop.sourceFaces.clear();
+            drop.boundaryEdges.clear();
+            drop.code = "region.merged_away";
+            report.diagnostics.push_back(
+                {"reconnaissance.region.artificial_split_merged", leftId,
+                 "coplanar faces sharing a manifold edge accounted as one "
+                 "logical region"});
+        }
+    }
+    report.regions.erase(
+        std::remove_if(report.regions.begin(), report.regions.end(),
+                       [](const LogicalRegion& region) {
+                           return region.workingFaces.empty();
+                       }),
+        report.regions.end());
+
+    // Multidomain same-support planes that do not share an edge: name the
+    // disconnected domains instead of inventing a false single-face trim.
+    for (int leftIndex = 1; leftIndex <= snapshot.model.faces.Extent();
+         ++leftIndex) {
+        const StableId leftId{StableIdKind::Face,
+                              static_cast<std::uint64_t>(leftIndex)};
+        const TopoDS_Face leftFace =
+            TopoDS::Face(snapshot.model.faces(leftIndex));
+        for (int rightIndex = leftIndex + 1;
+             rightIndex <= snapshot.model.faces.Extent(); ++rightIndex) {
+            const StableId rightId{StableIdKind::Face,
+                                   static_cast<std::uint64_t>(rightIndex)};
+            const TopoDS_Face rightFace =
+                TopoDS::Face(snapshot.model.faces(rightIndex));
+            if (!facesAreCoplanarPartners(leftFace, rightFace)) continue;
+            if (shareManifoldEdge(leftFace, rightFace, edgeToFaces)) continue;
+            for (ExactGeometryClassification& record : report.records) {
+                if (record.subjectId != leftId && record.subjectId != rightId) {
+                    continue;
+                }
+                record.trimDomain =
+                    TrimDomainClass::MultipleDisconnectedDomains;
+                if (std::find(record.conditionCodes.begin(),
+                              record.conditionCodes.end(),
+                              "reason.multidomain_decomposition_unproven") ==
+                    record.conditionCodes.end()) {
+                    record.conditionCodes.push_back(
+                        "reason.multidomain_decomposition_unproven");
+                }
+            }
+            report.diagnostics.push_back(
+                {"reconnaissance.region.multidomain_deferred", leftId,
+                 "coplanar faces without a shared edge remain disconnected "
+                 "same-support domains"});
+        }
     }
 
     report.checkedSubjects = report.records.size();

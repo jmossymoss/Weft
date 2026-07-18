@@ -93,6 +93,7 @@ public:
         std::vector<ParameterizationFlagChange> parameterizationFlagChanges;
         std::vector<OrientationChange> orientationChanges;
         std::vector<ToleranceChange> toleranceChanges;
+        std::vector<ImportDiagnostic> namedRefusals;
         if (repairProfile == RepairProfile::Conservative) {
             secure_detail::ConservativeWorkingDerivation derivation =
                 secure_detail::deriveConservativeWorking(source);
@@ -104,6 +105,7 @@ public:
                 std::move(derivation.parameterizationFlagChanges);
             orientationChanges = std::move(derivation.orientationChanges);
             toleranceChanges = std::move(derivation.toleranceChanges);
+            namedRefusals = std::move(derivation.namedRefusals);
         } else {
             secure_detail::CompatibilityWorkingDerivation derivation =
                 secure_detail::deriveCompatibilityWorking(source);
@@ -111,6 +113,7 @@ public:
             workingHistory = std::move(derivation.history);
             exactShapeDerivation = std::move(derivation.exactShapes);
             operations = std::move(derivation.operations);
+            namedRefusals = std::move(derivation.namedRefusals);
         }
 
         Model working = weft::indexShape(workingShape);
@@ -120,7 +123,8 @@ public:
             std::move(operations),
             std::move(parameterizationFlagChanges),
             std::move(orientationChanges),
-            std::move(toleranceChanges));
+            std::move(toleranceChanges),
+            std::move(namedRefusals));
         imported.diagnostics.events.push_back({
             {StableIdKind::Diagnostic,
              static_cast<std::uint64_t>(imported.diagnostics.events.size() + 1)},

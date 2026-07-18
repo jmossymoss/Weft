@@ -132,12 +132,45 @@ public:
         const StableId root = visit(model_.shape, model_.shape, std::nullopt,
                                     std::nullopt, std::nullopt, {}, {});
         if (root.valid()) account_.topologyRoots.push_back(root);
+        ensureLeafInstanceTopologyRoots();
         std::sort(account_.uniqueEntityIds.begin(),
                   account_.uniqueEntityIds.end());
         return std::move(account_);
     }
 
 private:
+    static int topologyRootRank(StableIdKind kind) {
+        switch (kind) {
+            case StableIdKind::Solid: return 5;
+            case StableIdKind::Shell: return 4;
+            case StableIdKind::Face: return 3;
+            case StableIdKind::Wire: return 2;
+            case StableIdKind::Edge: return 1;
+            default: return 0;
+        }
+    }
+
+    // OCCT 7.9 XCAF exact-use bindings can miss the instance entry edge that
+    // normally seeds topologyRoots during visit(). Recover roots from any
+    // occurrence already tagged with the leaf instance.
+    void ensureLeafInstanceTopologyRoots() {
+        for (InstanceRecord& instance : account_.instances) {
+            if (instance.targetAssembly) continue;
+            if (!instance.topologyRoots.empty()) continue;
+            StableId best;
+            int bestRank = -1;
+            for (const TopologyOccurrence& occurrence : account_.occurrences) {
+                if (occurrence.instanceId != instance.id) continue;
+                const int rank = topologyRootRank(occurrence.id.kind);
+                if (rank > bestRank) {
+                    bestRank = rank;
+                    best = occurrence.id;
+                }
+            }
+            if (best.valid()) instance.topologyRoots.push_back(best);
+        }
+    }
+
     void buildAssemblyGraph() {
         const std::vector<AssemblyNode>& nodes = model_.assembly;
         if (nodes.empty()) return;

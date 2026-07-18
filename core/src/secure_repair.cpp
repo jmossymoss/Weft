@@ -19,6 +19,7 @@
 #include <Geom_Curve.hxx>
 #include <GeomLib_CheckCurveOnSurface.hxx>
 #include <Standard_Failure.hxx>
+#include <Standard_Version.hxx>
 #include <TopAbs.hxx>
 #include <TopAbs_Orientation.hxx>
 #include <TopExp.hxx>
@@ -332,6 +333,107 @@ struct ShellOrientationSolution {
     bool polarityFlipped = false;
 };
 
+enum class ShellOrientationRefusal {
+    None,
+    Open,
+    NonManifold,
+    NonOrientable,
+    Unsupported,
+};
+
+std::optional<ShellOrientationSolution> solveClosedShellOrientation(
+    const TopoDS_Shell& shell);
+
+ImportDiagnostic makeNamedRefusal(std::string code, std::string message) {
+    return {{}, std::move(code), DiagnosticSeverity::Error,
+            {{StableIdKind::Model, 1}}, std::move(message)};
+}
+
+void recordOrientationRefusal(ConservativeWorkingDerivation& derivation,
+                              ShellOrientationRefusal refusal) {
+    switch (refusal) {
+        case ShellOrientationRefusal::Open:
+            derivation.namedRefusals.push_back(makeNamedRefusal(
+                "import.repair.orientation_open_shell",
+                "face-adjacency orientation repair refuses open shells"));
+            break;
+        case ShellOrientationRefusal::NonManifold:
+            derivation.namedRefusals.push_back(makeNamedRefusal(
+                "import.repair.orientation_non_manifold",
+                "face-adjacency orientation repair refuses non-manifold "
+                "edge/face incidence"));
+            break;
+        case ShellOrientationRefusal::NonOrientable:
+            derivation.namedRefusals.push_back(makeNamedRefusal(
+                "import.repair.orientation_non_orientable",
+                "face-adjacency orientation repair refuses non-orientable "
+                "shell parity"));
+            break;
+        case ShellOrientationRefusal::Unsupported:
+            derivation.namedRefusals.push_back(makeNamedRefusal(
+                "import.repair.orientation_unsupported",
+                "face-adjacency orientation repair refuses unsupported shell "
+                "structure"));
+            break;
+        case ShellOrientationRefusal::None:
+            break;
+    }
+}
+
+ShellOrientationRefusal classifyShellOrientationRefusal(
+    const TopoDS_Shell& shell) {
+    if (shell.IsNull()) return ShellOrientationRefusal::Unsupported;
+    if (!shell.Closed()) return ShellOrientationRefusal::Open;
+
+    std::size_t faceCount = 0;
+    std::unordered_map<const void*, std::size_t> usesByEdge;
+    for (TopoDS_Iterator faceIt(shell, false, false); faceIt.More();
+         faceIt.Next()) {
+        if (faceIt.Value().ShapeType() != TopAbs_FACE) {
+            return ShellOrientationRefusal::Unsupported;
+        }
+        const TopoDS_Face face = TopoDS::Face(faceIt.Value());
+        if (face.Orientation() != TopAbs_FORWARD &&
+            face.Orientation() != TopAbs_REVERSED) {
+            return ShellOrientationRefusal::Unsupported;
+        }
+        ++faceCount;
+        for (TopoDS_Iterator wireIt(face, false, false); wireIt.More();
+             wireIt.Next()) {
+            if (wireIt.Value().ShapeType() != TopAbs_WIRE) continue;
+            for (TopoDS_Iterator edgeIt(wireIt.Value(), false, false);
+                 edgeIt.More(); edgeIt.Next()) {
+                if (edgeIt.Value().ShapeType() != TopAbs_EDGE) continue;
+                const TopoDS_Edge edge = TopoDS::Edge(edgeIt.Value());
+                if (BRep_Tool::Degenerated(edge)) continue;
+                if (edge.Orientation() != TopAbs_FORWARD &&
+                    edge.Orientation() != TopAbs_REVERSED) {
+                    return ShellOrientationRefusal::Unsupported;
+                }
+                ++usesByEdge[edge.TShape().get()];
+            }
+        }
+    }
+    if (faceCount < 2 || usesByEdge.empty()) {
+        return ShellOrientationRefusal::Unsupported;
+    }
+    bool sawOpen = false;
+    bool sawNonManifold = false;
+    for (const auto& [edgeKey, uses] : usesByEdge) {
+        (void)edgeKey;
+        if (uses < 2) sawOpen = true;
+        if (uses > 2) sawNonManifold = true;
+    }
+    if (sawNonManifold) return ShellOrientationRefusal::NonManifold;
+    if (sawOpen) return ShellOrientationRefusal::Open;
+
+    // Closed two-manifold but parity / polarity may still fail.
+    if (!solveClosedShellOrientation(shell)) {
+        return ShellOrientationRefusal::NonOrientable;
+    }
+    return ShellOrientationRefusal::None;
+}
+
 std::optional<ShellOrientationSolution> solveClosedShellOrientation(
     const TopoDS_Shell& shell) {
     if (shell.IsNull() || !shell.Closed()) return std::nullopt;
@@ -437,9 +539,21 @@ bool solidNeedsOppositePolarity(const TopoDS_Solid& solid) {
     const double mass = props.Mass();
     if (!std::isfinite(mass) || mass <= 0.0) return true;
 
-    BRepClass3d_SolidClassifier classifier(solid);
-    classifier.PerformInfinitePoint(1.0e-7);
-    return classifier.State() == TopAbs_IN;
+    // OCCT 7.9 has been observed to SIGSEGV inside PerformInfinitePoint on
+    // some imported face pcurves (Geom2dAdaptor_Curve::D1). Mass sign remains
+    // the hard gate above; skip the infinite-point probe before OCCT 8.
+#if OCC_VERSION_HEX < 0x080000
+    (void)solid;
+    return false;
+#else
+    try {
+        BRepClass3d_SolidClassifier classifier(solid);
+        classifier.PerformInfinitePoint(1.0e-7);
+        return classifier.State() == TopAbs_IN;
+    } catch (const Standard_Failure&) {
+        return false;
+    }
+#endif
 }
 
 TopoDS_Shell rebuildShell(const ShellOrientationSolution& solution) {
@@ -766,6 +880,83 @@ bool repairBoundedSewing(ConservativeWorkingDerivation& derivation,
         }
     }
 
+    ShapeMap sewedEdges;
+    TopExp::MapShapes(sewed, TopAbs_EDGE, sewedEdges);
+    ShapeMap sewedVertices;
+    TopExp::MapShapes(sewed, TopAbs_VERTEX, sewedVertices);
+
+    auto rebindEdgeAndVertices = [&](const TopoDS_Edge& sourceEdge,
+                                     const TopoDS_Shape& targetEdge) {
+        if (targetEdge.IsNull() || targetEdge.ShapeType() != TopAbs_EDGE) {
+            return;
+        }
+        sewHistory->AddModified(sourceEdge, targetEdge);
+        derivation.exactShapes.rebind(sourceEdge, targetEdge);
+        TopoDS_Vertex sourceV1;
+        TopoDS_Vertex sourceV2;
+        TopExp::Vertices(sourceEdge, sourceV1, sourceV2);
+        TopoDS_Vertex mappedV1;
+        TopoDS_Vertex mappedV2;
+        TopExp::Vertices(TopoDS::Edge(targetEdge), mappedV1, mappedV2);
+        auto rebindVertex = [&](const TopoDS_Vertex& sourceVertex,
+                                const TopoDS_Vertex& preferred,
+                                const TopoDS_Vertex& alternate) {
+            if (sourceVertex.IsNull()) return;
+            TopoDS_Vertex target = preferred;
+            if (target.IsNull() ||
+                (!alternate.IsNull() &&
+                 BRep_Tool::Pnt(sourceVertex).Distance(
+                     BRep_Tool::Pnt(preferred)) >
+                     BRep_Tool::Pnt(sourceVertex).Distance(
+                         BRep_Tool::Pnt(alternate)))) {
+                target = alternate;
+            }
+            if (target.IsNull()) return;
+            sewHistory->AddModified(sourceVertex, target);
+            derivation.exactShapes.rebind(sourceVertex, target);
+        };
+        rebindVertex(sourceV1, mappedV1, mappedV2);
+        rebindVertex(sourceV2, mappedV2, mappedV1);
+    };
+
+    // Contiguous couples name the free-boundary sections absorbed into each
+    // shared seam. Prefer this over ModifiedSubShape alone: absorbed mates are
+    // not always reported as modified subshapes, and ordinal StableIds shift.
+    for (int coupleIndex = 1; coupleIndex <= sewer.NbContigousEdges();
+         ++coupleIndex) {
+        const TopoDS_Edge shared = sewer.ContigousEdge(coupleIndex);
+        if (shared.IsNull() || !sewedEdges.Contains(shared)) continue;
+        const NCollection_List<TopoDS_Shape>& sections =
+            sewer.ContigousEdgeCouple(coupleIndex);
+        for (NCollection_List<TopoDS_Shape>::Iterator sectionIt(sections);
+             sectionIt.More(); sectionIt.Next()) {
+            TopoDS_Shape section = sectionIt.Value();
+            if (section.IsNull() || section.ShapeType() != TopAbs_EDGE) {
+                continue;
+            }
+            TopoDS_Edge boundary = TopoDS::Edge(section);
+            if (sewer.IsSectionBound(boundary)) {
+                boundary = sewer.SectionToBoundary(boundary);
+            }
+            for (int sourceIndex = 1; sourceIndex <= source.edges.Extent();
+                 ++sourceIndex) {
+                const TopoDS_Edge sourceEdge =
+                    TopoDS::Edge(source.edges(sourceIndex));
+                const TopoDS_Shape workingEdge =
+                    derivation.exactShapes.mapped(sourceEdge);
+                if (workingEdge.IsNull()) continue;
+                if (workingEdge.IsPartner(boundary) ||
+                    workingEdge.IsPartner(section) ||
+                    sourceEdge.IsPartner(boundary) ||
+                    sourceEdge.IsPartner(section) ||
+                    workingEdge.IsSame(boundary) ||
+                    workingEdge.IsSame(section)) {
+                    rebindEdgeAndVertices(sourceEdge, shared);
+                }
+            }
+        }
+    }
+
     for (int sourceIndex = 1; sourceIndex <= source.edges.Extent();
          ++sourceIndex) {
         const TopoDS_Edge sourceEdge = TopoDS::Edge(source.edges(sourceIndex));
@@ -774,73 +965,52 @@ bool repairBoundedSewing(ConservativeWorkingDerivation& derivation,
         if (workingEdge.IsNull() || workingEdge.ShapeType() != TopAbs_EDGE) {
             continue;
         }
+        if (sewedEdges.Contains(workingEdge)) {
+            rebindEdgeAndVertices(sourceEdge, workingEdge);
+            continue;
+        }
         TopoDS_Shape mapped = workingEdge;
         if (sewer.IsModifiedSubShape(workingEdge)) {
             mapped = sewer.ModifiedSubShape(workingEdge);
         }
-        if (mapped.IsNull() || mapped.ShapeType() != TopAbs_EDGE) continue;
-        ShapeMap sewedEdges;
-        TopExp::MapShapes(sewed, TopAbs_EDGE, sewedEdges);
-        if (!sewedEdges.Contains(mapped)) continue;
-        sewHistory->AddModified(sourceEdge, mapped);
-        derivation.exactShapes.rebind(sourceEdge, mapped);
-
-        TopoDS_Vertex sourceV1;
-        TopoDS_Vertex sourceV2;
-        TopExp::Vertices(sourceEdge, sourceV1, sourceV2);
-        TopoDS_Vertex mappedV1;
-        TopoDS_Vertex mappedV2;
-        TopExp::Vertices(TopoDS::Edge(mapped), mappedV1, mappedV2);
-        if (!sourceV1.IsNull() && !mappedV1.IsNull()) {
-            sewHistory->AddModified(sourceV1, mappedV1);
-            derivation.exactShapes.rebind(sourceV1, mappedV1);
-        }
-        if (!sourceV2.IsNull() && !mappedV2.IsNull()) {
-            sewHistory->AddModified(sourceV2, mappedV2);
-            derivation.exactShapes.rebind(sourceV2, mappedV2);
+        if (!mapped.IsNull() && mapped.ShapeType() == TopAbs_EDGE &&
+            sewedEdges.Contains(mapped)) {
+            rebindEdgeAndVertices(sourceEdge, mapped);
         }
     }
 
-    // Second pass: free edges absorbed into the unique shared edge.
+    // Any source vertex still outside the sewed body snaps to the nearest
+    // sewed vertex within the sew tolerance envelope.
     {
-        EdgeFaceMap sewedEdgeFaces;
-        TopExp::MapShapesAndAncestors(sewed, TopAbs_EDGE, TopAbs_FACE,
-                                      sewedEdgeFaces);
-        std::vector<TopoDS_Shape> sharedEdges;
-        for (int index = 1; index <= sewedEdgeFaces.Extent(); ++index) {
-            if (sewedEdgeFaces(index).Extent() == 2) {
-                sharedEdges.push_back(sewedEdgeFaces.FindKey(index));
+        ShapeMap sourceVertices;
+        TopExp::MapShapes(source.shape, TopAbs_VERTEX, sourceVertices);
+        for (int index = 1; index <= sourceVertices.Extent(); ++index) {
+            const TopoDS_Vertex sourceVertex =
+                TopoDS::Vertex(sourceVertices(index));
+            const TopoDS_Shape current =
+                derivation.exactShapes.mapped(sourceVertex);
+            if (!current.IsNull() && current.ShapeType() == TopAbs_VERTEX &&
+                sewedVertices.Contains(current)) {
+                continue;
             }
-        }
-        if (sharedEdges.size() == 1) {
-            ShapeMap sewedEdges;
-            TopExp::MapShapes(sewed, TopAbs_EDGE, sewedEdges);
-            for (int sourceIndex = 1; sourceIndex <= source.edges.Extent();
-                 ++sourceIndex) {
-                const TopoDS_Edge sourceEdge =
-                    TopoDS::Edge(source.edges(sourceIndex));
-                const TopoDS_Shape current =
-                    derivation.exactShapes.mapped(sourceEdge);
-                if (!current.IsNull() && sewedEdges.Contains(current)) {
-                    continue;
+            const gp_Pnt sourcePoint = BRep_Tool::Pnt(sourceVertex);
+            double best = std::numeric_limits<double>::infinity();
+            TopoDS_Vertex bestVertex;
+            for (int sewedIndex = 1; sewedIndex <= sewedVertices.Extent();
+                 ++sewedIndex) {
+                const TopoDS_Vertex candidate =
+                    TopoDS::Vertex(sewedVertices(sewedIndex));
+                const double distance =
+                    sourcePoint.Distance(BRep_Tool::Pnt(candidate));
+                if (distance < best) {
+                    best = distance;
+                    bestVertex = candidate;
                 }
-                sewHistory->AddModified(sourceEdge, sharedEdges.front());
-                derivation.exactShapes.rebind(sourceEdge, sharedEdges.front());
-                TopoDS_Vertex sourceV1;
-                TopoDS_Vertex sourceV2;
-                TopExp::Vertices(sourceEdge, sourceV1, sourceV2);
-                TopoDS_Vertex mappedV1;
-                TopoDS_Vertex mappedV2;
-                TopExp::Vertices(TopoDS::Edge(sharedEdges.front()), mappedV1,
-                                 mappedV2);
-                if (!sourceV1.IsNull() && !mappedV1.IsNull()) {
-                    sewHistory->AddModified(sourceV1, mappedV1);
-                    derivation.exactShapes.rebind(sourceV1, mappedV1);
-                }
-                if (!sourceV2.IsNull() && !mappedV2.IsNull()) {
-                    sewHistory->AddModified(sourceV2, mappedV2);
-                    derivation.exactShapes.rebind(sourceV2, mappedV2);
-                }
+            }
+            if (!bestVertex.IsNull() && std::isfinite(best) &&
+                best <= kSewToleranceMm * 10.0) {
+                sewHistory->AddModified(sourceVertex, bestVertex);
+                derivation.exactShapes.rebind(sourceVertex, bestVertex);
             }
         }
     }
@@ -899,8 +1069,28 @@ void repairRootSolidOrientations(ConservativeWorkingDerivation& derivation,
         if (workingShapeIsValid(workingSolid)) {
             continue;
         }
-        applyRootSolidOrientationRepair(derivation, source, working,
-                                        sourceSolid, workingSolid);
+        if (applyRootSolidOrientationRepair(derivation, source, working,
+                                            sourceSolid, workingSolid)) {
+            continue;
+        }
+        TopoDS_Shell workingShell;
+        int shellCount = 0;
+        for (TopoDS_Iterator it(workingSolid, false, false); it.More();
+             it.Next()) {
+            if (it.Value().ShapeType() != TopAbs_SHELL) {
+                shellCount = -1;
+                break;
+            }
+            workingShell = TopoDS::Shell(it.Value());
+            ++shellCount;
+        }
+        if (shellCount == 1 && !workingShell.IsNull()) {
+            recordOrientationRefusal(
+                derivation, classifyShellOrientationRefusal(workingShell));
+        } else {
+            recordOrientationRefusal(derivation,
+                                     ShellOrientationRefusal::Unsupported);
+        }
     }
 }
 
@@ -1041,9 +1231,15 @@ CompatibilityWorkingDerivation deriveCompatibilityWorking(
     for (int index = 1; index <= sourceShapes.Extent(); ++index) {
         const TopoDS_Shape& sourceShape = sourceShapes(index);
         const TopoDS_Shape copied = copier.ModifiedShape(sourceShape);
-        if (!copied.IsNull()) {
-            derivation.exactShapes.bind(sourceShape, copied);
+        if (copied.IsNull()) continue;
+        const TopoDS_Shape existing = derivation.exactShapes.mapped(sourceShape);
+        if (!existing.IsNull()) {
+            if (!existing.IsPartner(copied) && !existing.IsSame(copied)) {
+                ++derivation.multiWaySplitCount;
+            }
+            continue;
         }
+        derivation.exactShapes.bind(sourceShape, copied);
     }
 
     Handle(BRepTools_History) repairHistory;
@@ -1062,6 +1258,77 @@ CompatibilityWorkingDerivation deriveCompatibilityWorking(
     derivation.history = composeCopyRepairHistory(
         source.shape, copier, repairHistory);
 
+    ShapeMap healedFaces;
+    ShapeMap healedEdges;
+    ShapeMap healedVertices;
+    ShapeMap healedShells;
+    ShapeMap healedSolids;
+    TopExp::MapShapes(derivation.shape, TopAbs_FACE, healedFaces);
+    TopExp::MapShapes(derivation.shape, TopAbs_EDGE, healedEdges);
+    TopExp::MapShapes(derivation.shape, TopAbs_VERTEX, healedVertices);
+    TopExp::MapShapes(derivation.shape, TopAbs_SHELL, healedShells);
+    TopExp::MapShapes(derivation.shape, TopAbs_SOLID, healedSolids);
+
+    auto imageInResult = [&](const TopoDS_Shape& candidate) -> TopoDS_Shape {
+        if (candidate.IsNull()) return {};
+        switch (candidate.ShapeType()) {
+            case TopAbs_FACE:
+                if (healedFaces.Contains(candidate)) return candidate;
+                for (int i = 1; i <= healedFaces.Extent(); ++i) {
+                    if (healedFaces(i).IsPartner(candidate)) {
+                        return healedFaces(i);
+                    }
+                }
+                break;
+            case TopAbs_EDGE:
+                if (healedEdges.Contains(candidate)) return candidate;
+                for (int i = 1; i <= healedEdges.Extent(); ++i) {
+                    if (healedEdges(i).IsPartner(candidate)) {
+                        return healedEdges(i);
+                    }
+                }
+                break;
+            case TopAbs_VERTEX:
+                if (healedVertices.Contains(candidate)) return candidate;
+                for (int i = 1; i <= healedVertices.Extent(); ++i) {
+                    if (healedVertices(i).IsPartner(candidate)) {
+                        return healedVertices(i);
+                    }
+                }
+                break;
+            case TopAbs_SHELL:
+                if (healedShells.Contains(candidate)) return candidate;
+                for (int i = 1; i <= healedShells.Extent(); ++i) {
+                    if (healedShells(i).IsPartner(candidate)) {
+                        return healedShells(i);
+                    }
+                }
+                break;
+            case TopAbs_SOLID:
+                if (healedSolids.Contains(candidate)) return candidate;
+                for (int i = 1; i <= healedSolids.Extent(); ++i) {
+                    if (healedSolids(i).IsPartner(candidate)) {
+                        return healedSolids(i);
+                    }
+                }
+                break;
+            default:
+                if (derivation.shape.IsPartner(candidate) ||
+                    derivation.shape.IsSame(candidate)) {
+                    return derivation.shape;
+                }
+                break;
+        }
+        return {};
+    };
+
+    auto uniqueSameTypeInResult = [&](TopAbs_ShapeEnum type) -> TopoDS_Shape {
+        ShapeMap map;
+        TopExp::MapShapes(derivation.shape, type, map);
+        if (map.Extent() == 1) return map(1);
+        return {};
+    };
+
     ExactShapeDerivationMap healedShapes;
     for (int index = 1; index <= sourceShapes.Extent(); ++index) {
         const TopoDS_Shape& sourceShape = sourceShapes(index);
@@ -1078,7 +1345,27 @@ CompatibilityWorkingDerivation deriveCompatibilityWorking(
                 finalShape = modified.First();
                 mapped = true;
             } else if (modified.Size() > 1) {
-                continue;
+                // Prefer a unique partner-identical image; otherwise keep the
+                // first same-type result that still appears in the healed body.
+                TopoDS_Shape chosen;
+                bool ambiguous = false;
+                for (const TopoDS_Shape& candidate : modified) {
+                    const TopoDS_Shape inResult = imageInResult(candidate);
+                    if (inResult.IsNull()) continue;
+                    if (chosen.IsNull()) {
+                        chosen = inResult;
+                    } else if (!chosen.IsPartner(inResult)) {
+                        ambiguous = true;
+                        break;
+                    }
+                }
+                if (!ambiguous && !chosen.IsNull()) {
+                    finalShape = chosen;
+                    mapped = true;
+                } else {
+                    ++derivation.multiWaySplitCount;
+                    continue;
+                }
             }
             if (!mapped) {
                 const auto& generated = repairHistory->Generated(copied);
@@ -1086,14 +1373,133 @@ CompatibilityWorkingDerivation deriveCompatibilityWorking(
                     finalShape = generated.First();
                     mapped = true;
                 } else if (generated.Size() > 1) {
+                    ++derivation.multiWaySplitCount;
                     continue;
                 }
             }
         }
-        if (finalShape.IsNull()) continue;
-        healedShapes.bind(sourceShape, finalShape);
+
+        TopoDS_Shape inResult = imageInResult(finalShape);
+        if (inResult.IsNull() && sourceShape.ShapeType() == TopAbs_SOLID) {
+            // Sewing often demotes a solid to a single shell.
+            inResult = imageInResult(finalShape);
+            if (inResult.IsNull()) {
+                const TopoDS_Shape shell = uniqueSameTypeInResult(TopAbs_SHELL);
+                if (!shell.IsNull() && healedSolids.Extent() == 0) {
+                    inResult = shell;
+                }
+            }
+        }
+        if (inResult.IsNull() && sourceShape.ShapeType() == TopAbs_SHELL &&
+            finalShape.ShapeType() == TopAbs_SOLID) {
+            inResult = imageInResult(finalShape);
+        }
+        if (inResult.IsNull()) {
+            inResult = imageInResult(copied);
+        }
+        if (inResult.IsNull() &&
+            (derivation.shape.IsPartner(finalShape) ||
+             derivation.shape.IsSame(finalShape) ||
+             derivation.shape.IsPartner(copied))) {
+            inResult = derivation.shape;
+        }
+        if (inResult.IsNull()) continue;
+        const TopoDS_Shape existing = healedShapes.mapped(sourceShape);
+        if (!existing.IsNull() && !existing.IsPartner(inResult) &&
+            !existing.IsSame(inResult)) {
+            ++derivation.multiWaySplitCount;
+            continue;
+        }
+        healedShapes.rebind(sourceShape, inResult);
     }
+
+    // Wires are not a BRepTools_History family. Pair face-local wires after
+    // face images are known, matching the conservative sew rebind.
+    for (int faceIndex = 1; faceIndex <= source.faces.Extent(); ++faceIndex) {
+        const TopoDS_Face sourceFace = TopoDS::Face(source.faces(faceIndex));
+        const TopoDS_Shape mappedFace = healedShapes.mapped(sourceFace);
+        if (mappedFace.IsNull() || mappedFace.ShapeType() != TopAbs_FACE) {
+            continue;
+        }
+        std::vector<TopoDS_Shape> sourceWires;
+        std::vector<TopoDS_Shape> mappedWires;
+        for (TopoDS_Iterator it(sourceFace, false, false); it.More();
+             it.Next()) {
+            if (it.Value().ShapeType() == TopAbs_WIRE) {
+                sourceWires.push_back(it.Value());
+            }
+        }
+        for (TopoDS_Iterator it(mappedFace, false, false); it.More();
+             it.Next()) {
+            if (it.Value().ShapeType() == TopAbs_WIRE) {
+                mappedWires.push_back(it.Value());
+            }
+        }
+        if (sourceWires.size() != mappedWires.size()) continue;
+        for (std::size_t wireIndex = 0; wireIndex < sourceWires.size();
+             ++wireIndex) {
+            healedShapes.rebind(sourceWires[wireIndex], mappedWires[wireIndex]);
+        }
+    }
+
+    // Single-shell demotion/rebuild: claim the healed shell from the source
+    // shell (or sole solid) when history left it unbound.
+    if (healedShells.Extent() == 1) {
+        const TopoDS_Shape healedShell = healedShells(1);
+        ShapeMap sourceShells;
+        TopExp::MapShapes(source.shape, TopAbs_SHELL, sourceShells);
+        if (sourceShells.Extent() == 1) {
+            const TopoDS_Shape current =
+                healedShapes.mapped(sourceShells(1));
+            if (current.IsNull() || imageInResult(current).IsNull()) {
+                healedShapes.rebind(sourceShells(1), healedShell);
+            }
+        } else if (source.solids.Extent() == 1) {
+            const TopoDS_Shape current =
+                healedShapes.mapped(source.solids(1));
+            if (current.IsNull() || imageInResult(current).IsNull() ||
+                current.ShapeType() != TopAbs_SHELL) {
+                healedShapes.rebind(source.solids(1), healedShell);
+            }
+        }
+    }
+
+    // Vertex snap: any source vertex whose copy was absorbed still maps to the
+    // nearest healed vertex within a heal-scale envelope.
+    constexpr double kHealVertexTolMm = 1.0e-3;
+    for (int index = 1; index <= sourceShapes.Extent(); ++index) {
+        const TopoDS_Shape& sourceShape = sourceShapes(index);
+        if (sourceShape.ShapeType() != TopAbs_VERTEX) continue;
+        const TopoDS_Shape current = healedShapes.mapped(sourceShape);
+        if (!current.IsNull() && !imageInResult(current).IsNull()) continue;
+        const TopoDS_Vertex sourceVertex = TopoDS::Vertex(sourceShape);
+        const gp_Pnt sourcePoint = BRep_Tool::Pnt(sourceVertex);
+        double best = std::numeric_limits<double>::infinity();
+        TopoDS_Vertex bestVertex;
+        for (int healedIndex = 1; healedIndex <= healedVertices.Extent();
+             ++healedIndex) {
+            const TopoDS_Vertex candidate =
+                TopoDS::Vertex(healedVertices(healedIndex));
+            const double distance =
+                sourcePoint.Distance(BRep_Tool::Pnt(candidate));
+            if (distance < best) {
+                best = distance;
+                bestVertex = candidate;
+            }
+        }
+        if (!bestVertex.IsNull() && std::isfinite(best) &&
+            best <= kHealVertexTolMm) {
+            healedShapes.rebind(sourceShape, bestVertex);
+        }
+    }
+
     derivation.exactShapes = std::move(healedShapes);
+    if (derivation.multiWaySplitCount > 0) {
+        derivation.namedRefusals.push_back(makeNamedRefusal(
+            "import.heal.multi_way_split",
+            "compatibility heal produced a multi-way Modified/Generated image "
+            "without a unique partner correspondence"));
+    }
     derivation.operations.push_back({
         "repair.compatibility_pipeline", {}, {},
         "historical Weft healing pipeline applied to a geometry-deep working "

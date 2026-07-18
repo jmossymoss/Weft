@@ -3,6 +3,8 @@
 Evidence files record commands, exact revisions, outcomes, failures, and
 artifacts for milestone gates. Evidence is append-only in meaning: a later run
 may supersede a result but must not rewrite what an earlier run proved.
+Use `docs/governance/agent-execution-playbook.md` for sequencing. Evidence files
+prove completed work; they are not plans or handoff diaries.
 
 - `m0-legacy-baseline-2026-07-17.md` - pre-rewrite Release test baseline.
 - `m0-strict-build-2026-07-17.md` - MSVC warnings-as-errors and static-analysis build evidence.
@@ -37,12 +39,15 @@ may supersede a result but must not rewrite what an earlier run proved.
 - `m1-secure-iges-import-2026-07-17.md` - immutable-byte IGES secure import,
   processing-disabled transfer, and path-replacement proof.
 - `m1-compatibility-correspondence-2026-07-17.md` - valid Compatibility deep
-  copies with complete topology correspondence.
+  copies and heal-lane inverted-shell correspondence.
 - `m1-product-step-orientation-repair-2026-07-17.md` - STEP round-trip of the
   PAT-009 orientation pathology as a product-format repair witness.
-- `m1-bounded-sewing-2026-07-17.md` - face-preserving free-edge sew operation
-  with gap-fixture refusal; meshable sew correspondence still open.
+- `m1-bounded-sewing-2026-07-17.md` - meshable face-preserving free-edge sew
+  with gap-fixture refusal.
+- `m1-certificate-or-named-refusal-2026-07-17.md` - M1 gate sweep: meshable
+  certificate or named `import.*` Error for every reviewed working model.
 - `m2-reconnaissance-2026-07-17.md` - total face/edge classification and planar projection evidence.
+- `m2-total-reconnaissance-2026-07-17.md` - M2 gate close: schema trim taxonomy, merged coplanar regions, multidomain deferral, adversarial unknown-family probes, and oracle slices.
 - `m3-interval-solver-2026-07-17.md` - exact equality/minimum/parity count assignment evidence.
 - `m3-canonical-boundaries-2026-07-17.md` - atomic shared-edge samples, UV uses, and azimuth registration evidence.
 - `m3-canonical-endpoint-identity-2026-07-17.md` - exact topological vertex normalization and bounded curve/vertex evidence.

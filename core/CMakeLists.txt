@@ -67,6 +67,18 @@ target_include_directories(weft_core
 # target instead of making each CLI/app/test target rediscover it manually.
 target_compile_features(weft_core PUBLIC cxx_std_20)
 weft_enable_strict_warnings(weft_core)
+weft_enable_gcc_analyzer(weft_core)
+
+# GCC 15 -fanalyzer ICEs (cc1plus segfault) on selected OCCT-heavy TUs even at
+# -O1. Keep those files in the strict -Werror lane; skip only the analyzer pass.
+if(WEFT_STATIC_ANALYSIS AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  set_source_files_properties(
+    src/secure_topology.cpp
+    src/cylinder_template.cpp
+    src/model.cpp
+    src/planar_trim_assembly.cpp
+    PROPERTIES COMPILE_OPTIONS "-fno-analyzer")
+endif()
 
 # OCCT 7.8 merged TKSTEP/TKSTEPBase/TKSTEPAttr/TKSTEP209 into TKDESTEP.
 if(TARGET TKDESTEP)

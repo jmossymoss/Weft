@@ -1,11 +1,12 @@
 # Weft secure-core rewrite
 
 Status authority: `docs/governance/milestones.md`
+Execution order: `docs/governance/agent-execution-playbook.md`
 
 This plan replaces the production geometry core while keeping Weft as the
-product repository and preserving its artist-facing workflows. The scientific
-basis remains `MESHING_RESEARCH_PLAN.md`; `MVP_PLAN.md` remains the
-artist-facing acceptance bar.
+product repository and preserving its artist-facing workflows. Research
+references and the artist-facing acceptance measurements remain in
+`MESHING_RESEARCH_PLAN.md`.
 
 ## Non-negotiable architecture
 
@@ -102,3 +103,7 @@ predicate replacement foundation.
 Work lands in small, fixture-backed increments. Every gate requires a complete
 clean rerun and an adversarial self-review. Interrupted or partial verification
 is recorded as partial evidence and never promoted to a pass.
+
+Agents follow the execution playbook rather than creating additional roadmaps,
+handoff files, or investigation diaries. Durable decisions belong in ADRs;
+completed verification belongs in the evidence index.

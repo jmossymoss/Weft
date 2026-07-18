@@ -89,9 +89,14 @@ BRepSnapshot buildSnapshot(Model model) {
     auto addOccurrences = [&](const ShapeMap& shapes, StableIdKind kind) {
         for (int i = 1; i <= shapes.Extent(); ++i) {
             const StableId id = stableId(kind, i);
-            snapshot.occurrences.push_back(
-                {id, id, std::nullopt, {}, orientationOf(shapes(i).Orientation()),
-                 shapeTolerance(shapes(i)), !shapes(i).IsNull(), {}});
+            TopologyOccurrence occurrence{};
+            occurrence.id = id;
+            occurrence.underlyingId = id;
+            occurrence.orientation =
+                orientationOf(shapes(i).Orientation());
+            occurrence.tolerance = shapeTolerance(shapes(i));
+            occurrence.hasExactRepresentation = !shapes(i).IsNull();
+            snapshot.occurrences.push_back(std::move(occurrence));
         }
     };
     addOccurrences(snapshot.model.solids, StableIdKind::Solid);
@@ -738,6 +743,17 @@ std::size_t storedPcurveUseCount(const BRepSnapshot& snapshot,
 }
 
 template <typename Map>
+int findWorkingIndex(const Map& working, const TopoDS_Shape& shape) {
+    if (shape.IsNull()) return 0;
+    const int same = working.FindIndex(shape);
+    if (same > 0) return same;
+    for (int index = 1; index <= working.Extent(); ++index) {
+        if (working(index).IsPartner(shape)) return index;
+    }
+    return 0;
+}
+
+template <typename Map>
 void addCorrespondenceForMap(const Map& source, const Map& working,
                              StableIdKind kind,
                              const Handle(BRepTools_History)& history,
@@ -750,29 +766,47 @@ void addCorrespondenceForMap(const Map& source, const Map& working,
         const TopoDS_Shape& sourceShape = source(sourceIndex);
         CorrespondenceRecord record;
         record.sourceId = stableId(kind, sourceIndex);
-        const int identityIndex = working.FindIndex(sourceShape);
-        if (identityIndex > 0) {
+        const int identityIndex = findWorkingIndex(working, sourceShape);
+        if (identityIndex > 0 &&
+            working(identityIndex).IsSame(sourceShape)) {
             record.workingIds.push_back(stableId(kind, identityIndex));
             record.relation = CorrespondenceRelation::Identity;
         } else if (const TopoDS_Shape derived =
                        derivation.mapped(sourceShape);
-                   !derived.IsNull() && working.FindIndex(derived) > 0) {
-            record.workingIds.push_back(
-                stableId(kind, working.FindIndex(derived)));
-            record.relation = representationIdentity
-                ? CorrespondenceRelation::Identity
-                : CorrespondenceRelation::Modified;
-        } else if (!history.IsNull() && history->IsRemoved(sourceShape)) {
+                   !derived.IsNull()) {
+            // ExactShapeDerivationMap is TShape-keyed. Rebuild the located
+            // working image from the source placement so repeated assembly
+            // instances do not all collapse onto the first partner.
+            TopoDS_Shape located = sourceShape;
+            located.TShape(derived.TShape());
+            int derivedIndex = working.FindIndex(located);
+            if (derivedIndex <= 0) {
+                derivedIndex = findWorkingIndex(working, located);
+            }
+            if (derivedIndex <= 0) {
+                derivedIndex = findWorkingIndex(working, derived);
+            }
+            if (derivedIndex > 0) {
+                record.workingIds.push_back(stableId(kind, derivedIndex));
+                record.relation = representationIdentity
+                    ? CorrespondenceRelation::Identity
+                    : CorrespondenceRelation::Modified;
+            }
+        }
+        if (record.workingIds.empty() && !history.IsNull() &&
+            history->IsRemoved(sourceShape)) {
             record.relation = CorrespondenceRelation::Removed;
-        } else if (!history.IsNull()) {
+        } else if (record.workingIds.empty() && !history.IsNull()) {
             const auto& modified = history->Modified(sourceShape);
             for (const TopoDS_Shape& candidate : modified) {
-                const int index = working.FindIndex(candidate);
-                if (index > 0) record.workingIds.push_back(stableId(kind, index));
+                const int index = findWorkingIndex(working, candidate);
+                if (index > 0) {
+                    record.workingIds.push_back(stableId(kind, index));
+                }
             }
             const auto& generated = history->Generated(sourceShape);
             for (const TopoDS_Shape& candidate : generated) {
-                const int index = working.FindIndex(candidate);
+                const int index = findWorkingIndex(working, candidate);
                 if (index > 0) {
                     record.workingIds.push_back(stableId(kind, index));
                 }
@@ -789,7 +823,7 @@ void addCorrespondenceForMap(const Map& source, const Map& working,
                     ? CorrespondenceRelation::Split
                     : CorrespondenceRelation::Modified;
             }
-        } else {
+        } else if (record.workingIds.empty()) {
             record.relation = CorrespondenceRelation::Modified;
         }
         for (StableId workingId : record.workingIds) ++workingUse[workingId];
@@ -798,10 +832,24 @@ void addCorrespondenceForMap(const Map& source, const Map& working,
 
     for (int workingIndex = 1; workingIndex <= working.Extent(); ++workingIndex) {
         const StableId workingId = stableId(kind, workingIndex);
-        if (!workingUse.contains(workingId)) {
-            correspondence.records.push_back(
-                {{}, {workingId}, CorrespondenceRelation::Introduced});
+        if (workingUse.contains(workingId)) continue;
+        bool coveredByPartner = false;
+        for (const auto& [mappedId, uses] : workingUse) {
+            if (uses <= 0 || mappedId.kind != kind) continue;
+            if (mappedId.ordinal < 1 ||
+                mappedId.ordinal >
+                    static_cast<std::uint64_t>(working.Extent())) {
+                continue;
+            }
+            if (working(static_cast<int>(mappedId.ordinal))
+                    .IsPartner(working(workingIndex))) {
+                coveredByPartner = true;
+                break;
+            }
         }
+        if (coveredByPartner) continue;
+        correspondence.records.push_back(
+            {{}, {workingId}, CorrespondenceRelation::Introduced});
     }
 }
 
@@ -812,6 +860,40 @@ SourceWorkingMap buildCorrespondence(const Model& source, const Model& working,
                                      bool representationIdentity) {
     SourceWorkingMap correspondence;
     std::map<StableId, int> workingUse;
+
+    // Face-compound sewing (and similar root promotions) place the sewed shell
+    // into Model.solids even though the source had no solid entries. Claim that
+    // working body from the mapped source root before the solids Introduced pass.
+    if (source.solids.Extent() == 0 && working.solids.Extent() > 0 &&
+        !source.shape.IsNull()) {
+        const TopoDS_Shape derived = derivation.mapped(source.shape);
+        CorrespondenceRecord record;
+        record.sourceId = {StableIdKind::Model, 1};
+        for (int index = 1; index <= working.solids.Extent(); ++index) {
+            const TopoDS_Shape& body = working.solids(index);
+            if ((!derived.IsNull() &&
+                 (body.IsSame(derived) || body.IsPartner(derived))) ||
+                body.IsSame(working.shape) || body.IsPartner(working.shape)) {
+                record.workingIds.push_back(stableId(StableIdKind::Solid, index));
+            }
+        }
+        if (!record.workingIds.empty()) {
+            std::sort(record.workingIds.begin(), record.workingIds.end());
+            record.workingIds.erase(
+                std::unique(record.workingIds.begin(), record.workingIds.end()),
+                record.workingIds.end());
+            record.relation = representationIdentity
+                ? CorrespondenceRelation::Identity
+                : (record.workingIds.size() > 1
+                       ? CorrespondenceRelation::Split
+                       : CorrespondenceRelation::Modified);
+            for (StableId workingId : record.workingIds) {
+                ++workingUse[workingId];
+            }
+            correspondence.records.push_back(std::move(record));
+        }
+    }
+
     addCorrespondenceForMap(source.solids, working.solids,
                             StableIdKind::Solid, history,
                             derivation, representationIdentity, correspondence,
@@ -869,6 +951,10 @@ bool sameTopologyStructure(const TopologyOccurrence& source,
                !((source.id.kind == StableIdKind::Compound ||
                   source.id.kind == StableIdKind::Shell) &&
                  (working.id.kind == StableIdKind::Compound ||
+                  working.id.kind == StableIdKind::Shell)) &&
+               !((source.id.kind == StableIdKind::Solid ||
+                  source.id.kind == StableIdKind::Shell) &&
+                 (working.id.kind == StableIdKind::Solid ||
                   working.id.kind == StableIdKind::Shell))) {
         return false;
     }
@@ -973,15 +1059,14 @@ bool shapesCorrespond(const TopoDS_Shape& source, const TopoDS_Shape& working,
                       bool allowOrientationDelta) {
     if (source.IsSame(working)) return true;
     if (derivation.maps(source, working)) return true;
+    // Exact derivation already names the working TShape. Locations may differ
+    // after sewing merges free edges into a shared occurrence.
+    if (derivation.mapsPartner(source, working)) return true;
     if (historyMapsShape(history, source, working, allowOrientationDelta)) {
         return true;
     }
     if (!allowOrientationDelta) return false;
-    if (source.IsPartner(working) &&
-        source.Location().IsEqual(working.Location())) {
-        return true;
-    }
-    return derivation.mapsPartner(source, working) &&
+    return source.IsPartner(working) &&
         source.Location().IsEqual(working.Location());
 }
 
@@ -1044,6 +1129,10 @@ void buildTopologyCorrespondence(SourceWorkingMap& correspondence,
                     ((sourceOccurrence.id.kind == StableIdKind::Compound ||
                       sourceOccurrence.id.kind == StableIdKind::Shell) &&
                      (candidateId.kind == StableIdKind::Compound ||
+                      candidateId.kind == StableIdKind::Shell)) ||
+                    ((sourceOccurrence.id.kind == StableIdKind::Solid ||
+                      sourceOccurrence.id.kind == StableIdKind::Shell) &&
+                     (candidateId.kind == StableIdKind::Solid ||
                       candidateId.kind == StableIdKind::Shell));
                 if (!kindOk) continue;
                 const auto candidateShape =
@@ -1059,8 +1148,18 @@ void buildTopologyCorrespondence(SourceWorkingMap& correspondence,
                     continue;
                 }
                 if (unique != nullptr && uniqueId != candidateId) {
-                    ambiguous = true;
-                    break;
+                    const auto uniqueShape =
+                        working.exactShapes.find(uniqueId);
+                    // A sewn seam TShape appears once per incident face/wire.
+                    // Partner-identical candidates are the same absorbed edge,
+                    // not a conflicting match.
+                    if (uniqueShape == working.exactShapes.end() ||
+                        !uniqueShape->second.IsPartner(
+                            candidateShape->second)) {
+                        ambiguous = true;
+                        break;
+                    }
+                    continue;
                 }
                 unique = candidate;
                 uniqueId = candidateId;
@@ -1078,11 +1177,23 @@ void buildTopologyCorrespondence(SourceWorkingMap& correspondence,
         correspondence.topologyOccurrenceRecords.push_back(std::move(record));
     }
     for (const TopologyOccurrence& workingOccurrence : working.occurrences) {
-        if (!mappedWorking.contains(workingOccurrence.id)) {
-            correspondence.topologyOccurrenceRecords.push_back(
-                {{}, {workingOccurrence.id},
-                 CorrespondenceRelation::Introduced});
+        if (mappedWorking.contains(workingOccurrence.id)) continue;
+        const auto workingShape =
+            working.exactShapes.find(workingOccurrence.id);
+        bool coveredByPartner = false;
+        if (workingShape != working.exactShapes.end()) {
+            for (const StableId& mappedId : mappedWorking) {
+                const auto mappedShape = working.exactShapes.find(mappedId);
+                if (mappedShape != working.exactShapes.end() &&
+                    mappedShape->second.IsPartner(workingShape->second)) {
+                    coveredByPartner = true;
+                    break;
+                }
+            }
         }
+        if (coveredByPartner) continue;
+        correspondence.topologyOccurrenceRecords.push_back(
+            {{}, {workingOccurrence.id}, CorrespondenceRelation::Introduced});
     }
     correspondence.topologyComplete = sourceComplete && workingComplete &&
         sameAssemblyAccount(source, working, representationIdentity) &&
@@ -1155,7 +1266,8 @@ ImportedModel buildImportedModel(
     std::vector<RepairOperation> operations,
     std::vector<ParameterizationFlagChange> parameterizationFlagChanges,
     std::vector<OrientationChange> orientationChanges,
-    std::vector<ToleranceChange> certifiedToleranceChanges) {
+    std::vector<ToleranceChange> certifiedToleranceChanges,
+    std::vector<ImportDiagnostic> namedRefusals) {
     ImportedModel imported;
     const bool sourceValid = shapeIsValid(sourceModel.shape);
     const bool workingValid = shapeIsValid(workingModel.shape);
@@ -1227,6 +1339,13 @@ ImportedModel buildImportedModel(
     imported.repair.orientationChanges = std::move(orientationChanges);
     imported.repair.toleranceChanges = std::move(certifiedToleranceChanges);
 
+    const bool sewingCertified = std::any_of(
+        imported.repair.operations.begin(),
+        imported.repair.operations.end(),
+        [](const RepairOperation& operation) {
+            return operation.code == "repair.sewing_one_to_one";
+        });
+
     for (StableIdKind kind : {
              StableIdKind::Assembly, StableIdKind::Instance,
              StableIdKind::Compound, StableIdKind::CompSolid,
@@ -1261,6 +1380,11 @@ ImportedModel buildImportedModel(
             continue;
         }
         ++mappedChecked;
+        // Model-root claims exist for sew shell promotion; they are not
+        // geometric tolerance/representation subjects.
+        if (record.sourceId.kind == StableIdKind::Model) {
+            continue;
+        }
         if (record.workingIds.size() != 1) {
             ++toleranceSkipped;
             if (record.sourceId.kind == StableIdKind::Edge) {
@@ -1284,6 +1408,27 @@ ImportedModel buildImportedModel(
         ++toleranceChecked;
         const double before = shapeTolerance(*sourceShape);
         const double after = shapeTolerance(*workingShape);
+        bool edgeCurvesShared = true;
+        if (record.sourceId.kind == StableIdKind::Edge) {
+            try {
+                double sourceFirst = 0.0;
+                double sourceLast = 0.0;
+                double workingFirst = 0.0;
+                double workingLast = 0.0;
+                const Handle(Geom_Curve) sourceCurve = BRep_Tool::Curve(
+                    TopoDS::Edge(*sourceShape), sourceFirst, sourceLast);
+                const Handle(Geom_Curve) workingCurve = BRep_Tool::Curve(
+                    TopoDS::Edge(*workingShape), workingFirst, workingLast);
+                edgeCurvesShared = sourceCurve == workingCurve;
+            } catch (const Standard_Failure&) {
+                edgeCurvesShared = false;
+            }
+        }
+        const bool sewOwnedEdge =
+            sewingCertified &&
+            record.sourceId.kind == StableIdKind::Edge &&
+            (record.relation == CorrespondenceRelation::Merged ||
+             !edgeCurvesShared);
         if (before != after) {
             const bool certified = std::any_of(
                 imported.repair.toleranceChanges.begin(),
@@ -1294,7 +1439,7 @@ ImportedModel buildImportedModel(
                         change.before == before && change.after == after &&
                         change.expectedPcurveUses != 0;
                 });
-            if (!certified) {
+            if (!certified && !sewOwnedEdge) {
                 imported.repair.toleranceChanges.push_back(
                     {record.sourceId, workingId, before, after});
             }
@@ -1306,10 +1451,18 @@ ImportedModel buildImportedModel(
                 imported.source->snapshot, record.sourceId);
             const std::size_t workingUses = storedPcurveUseCount(
                 imported.working->snapshot, workingId);
-            if (sourceUses != workingUses) {
+            if (sourceUses != workingUses || sewOwnedEdge) {
                 imported.repair.representationChanges.push_back(
                     {record.sourceId, workingId, sourceUses, workingUses,
-                     false});
+                     sewOwnedEdge});
+                if (sewOwnedEdge) {
+                    imported.repair.operations.push_back(
+                        {"repair.representation_copy_on_write",
+                         {record.sourceId},
+                         {workingId},
+                         "bounded sewing replaced free-edge representation "
+                         "with the sewed seam"});
+                }
             }
         }
     }
@@ -1322,6 +1475,10 @@ ImportedModel buildImportedModel(
         for (const CorrespondenceRecord& record :
              imported.correspondence.records) {
             if (!record.sourceId.valid() || record.workingIds.size() != 1) {
+                continue;
+            }
+            if (record.sourceId.kind != StableIdKind::Edge &&
+                record.sourceId.kind != StableIdKind::Face) {
                 continue;
             }
             const StableId workingId = record.workingIds.front();
@@ -1646,11 +1803,24 @@ ImportedModel buildImportedModel(
 
     std::uint64_t diagnosticOrdinal = 0;
     auto diagnostic = [&](std::string code, DiagnosticSeverity severity,
-                          std::string message) {
+                          std::string message,
+                          std::vector<StableId> subjects = {}) {
+        if (subjects.empty()) {
+            subjects.push_back({StableIdKind::Model, 1});
+        }
         imported.diagnostics.events.push_back(
             {{StableIdKind::Diagnostic, ++diagnosticOrdinal}, std::move(code),
-             severity, {{StableIdKind::Model, 1}}, std::move(message)});
+             severity, std::move(subjects), std::move(message)});
     };
+    for (ImportDiagnostic& refusal : namedRefusals) {
+        if (refusal.id.ordinal == 0) {
+            refusal.id = {StableIdKind::Diagnostic, ++diagnosticOrdinal};
+        } else {
+            diagnosticOrdinal =
+                std::max(diagnosticOrdinal, refusal.id.ordinal);
+        }
+        imported.diagnostics.events.push_back(std::move(refusal));
+    }
     if (!sourceValid) {
         diagnostic("import.source.invalid", DiagnosticSeverity::Warning,
                    "the immutable source B-rep is invalid");
@@ -1711,6 +1881,45 @@ ImportedModel buildImportedModel(
     if (!imported.correspondence.complete) {
         diagnostic("import.correspondence.incomplete", DiagnosticSeverity::Error,
                    "source-to-working correspondence is incomplete");
+    }
+    // Compatibility heal that left correspondence incomplete must name the
+    // cause: multi-way history splits versus residual unbound subjects.
+    if (profile == RepairProfile::Compatibility &&
+        !imported.correspondence.complete) {
+        const bool historicalHeal = std::any_of(
+            imported.repair.operations.begin(),
+            imported.repair.operations.end(),
+            [](const RepairOperation& operation) {
+                return operation.code == "repair.compatibility_pipeline" &&
+                    operation.detail.find("historical") != std::string::npos;
+            });
+        const bool alreadyNamed = std::any_of(
+            imported.diagnostics.events.begin(),
+            imported.diagnostics.events.end(),
+            [](const ImportDiagnostic& event) {
+                return event.code == "import.heal.multi_way_split" ||
+                    event.code == "import.heal.correspondence_unbound";
+            });
+        if (historicalHeal && !alreadyNamed) {
+            const bool hasSplit = std::any_of(
+                imported.correspondence.records.begin(),
+                imported.correspondence.records.end(),
+                [](const CorrespondenceRecord& record) {
+                    return record.relation == CorrespondenceRelation::Split;
+                });
+            if (hasSplit) {
+                diagnostic(
+                    "import.heal.multi_way_split", DiagnosticSeverity::Error,
+                    "compatibility heal produced a multi-way Modified/Generated "
+                    "image without a unique partner correspondence");
+            } else {
+                diagnostic(
+                    "import.heal.correspondence_unbound",
+                    DiagnosticSeverity::Error,
+                    "compatibility heal left source subjects without a unique "
+                    "working image");
+            }
+        }
     }
     if (!imported.repair.meshable) {
         diagnostic("import.working.non_meshable", DiagnosticSeverity::Error,

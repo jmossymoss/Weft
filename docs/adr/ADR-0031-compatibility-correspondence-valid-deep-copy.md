@@ -1,4 +1,4 @@
-# ADR-0031: Compatibility correspondence for valid deep copies
+# ADR-0031: Compatibility correspondence (valid copy and heal lane)
 
 - Status: Accepted
 - Date: 2026-07-17
@@ -20,8 +20,16 @@ otherwise one-to-one accounts.
 - After `BRepBuilderAPI_Copy`, bind every unique source TShape to its copy.
 - When the deep copy is already `BRepCheck`-valid, retain that copy and skip
   sew/ShapeFix so occurrence ordinals stay one-to-one.
-- Invalid copies still run the historical heal pipeline; the derivation map
-  rebinds only through one-to-one Modified/Generated results.
+- Invalid copies run the historical heal pipeline. The derivation map then:
+  - rebinds through one-to-one Modified/Generated results;
+  - collapses partner-identical multi-Modified images;
+  - keeps images that still appear in the healed body;
+  - demotes a sole solid to the sole healed shell when sewing removes solids;
+  - pairs face-local wires after face images are known (wires are not a
+    `BRepTools_History` family);
+  - snaps unbound vertices to the nearest healed vertex within `1e-3` mm.
+- Topology matching allows Solid↔Shell and Compound↔Shell kind pairs when
+  cardinality-changing heal rewrites the body.
 - Topology assembly equality requires equal coedge p-curve representations
   only for representation-identity (Conservative identity) accounts.
   Compatibility Modified accounts compare coedge topology without demanding
@@ -34,8 +42,11 @@ otherwise one-to-one accounts.
 
 - valid Compatibility imports of simple solids complete topology and entity
   correspondence;
-- invalid Compatibility imports may still be correspondence-incomplete when
-  heal splits/removes shapes;
+- Compatibility heal of the reviewed inverted-shell fixture completes
+  correspondence and is meshable when the healed working shape is valid;
+- heal paths that split one source into multiple non-partner results emit
+  `import.heal.multi_way_split` (or `import.heal.correspondence_unbound` when
+  subjects remain unbound) and stay non-meshable;
 - Conservative identity still requires equal p-curve representation lists;
 - Compatibility remains distinct from Conservative topology isolation.
 
@@ -44,18 +55,22 @@ otherwise one-to-one accounts.
 - forcing sew on already-valid deep copies;
 - treating Compatibility deep-copy p-curve materialization as unexplained
   Conservative COW failures;
-- claiming complete correspondence through heal splits without history.
+- claiming complete correspondence through arbitrary multi-way splits without
+  a unique partner image.
 
 ## Verification
 
 `testCompatibilityIsAudited` on the generated cylinder and native box
 Compatibility imports assert complete topology correspondence and meshability
-when the deep copy is valid. See
+when the deep copy is valid. `testCompatibilityHealLaneCorrespondence` on
+`corrupt.orientation.inverted_shell_face.brep` asserts the historical heal
+detail, complete correspondence, and meshability. See
 `docs/evidence/m1-compatibility-correspondence-2026-07-17.md`.
 
 ## Consequences
 
-M1 Compatibility correspondence is closed for valid deep-copy imports. Heal
-paths that demote or split topology remain incomplete until one-to-one
-history covers those cases. Provable sewing and product STEP repair witnesses
-remain open.
+M1 Compatibility correspondence is closed for valid deep-copy imports and for
+the reviewed heal-lane fixture. Multi-way splits without a unique partner image
+fail closed with a named heal refusal. Provable conservative sewing is covered
+by ADR-0032. The M1 certificate-or-named-refusal gate is closed; see
+`docs/evidence/m1-certificate-or-named-refusal-2026-07-17.md`.

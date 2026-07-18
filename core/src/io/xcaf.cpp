@@ -563,9 +563,20 @@ void remapAssemblyExactUses(
     ImportMeta& meta,
     const secure_detail::ExactShapeDerivationMap& exactShapes) {
     for (AssemblyNode& node : meta.assembly) {
-        if (!node.exactUse.IsNull()) {
-            node.exactUse = exactShapes.mapped(node.exactUse);
+        if (node.exactUse.IsNull()) continue;
+        const TopoDS_Shape image = exactShapes.mapped(node.exactUse);
+        if (image.IsNull()) {
+            node.exactUse = TopoDS_Shape{};
+            continue;
         }
+        // ExactShapeDerivationMap is TShape-keyed and stores one working
+        // prototype per source TShape. Assembly leaf uses share that TShape
+        // across instances but carry distinct world locations; replacing the
+        // whole shape with the prototype drops instance placement and breaks
+        // exact-use IsSame matching during topology accounting (OCCT 7.9).
+        TopoDS_Shape rebound = node.exactUse;
+        rebound.TShape(image.TShape());
+        node.exactUse = rebound;
     }
 }
 
@@ -623,6 +634,7 @@ ImportedModel cafToImportedModel(const TopoDS_Shape& oneShape,
     std::vector<ParameterizationFlagChange> parameterizationFlagChanges;
     std::vector<OrientationChange> orientationChanges;
     std::vector<ToleranceChange> toleranceChanges;
+    std::vector<ImportDiagnostic> namedRefusals;
     if (profile == RepairProfile::Conservative) {
         secure_detail::ConservativeWorkingDerivation derivation =
             secure_detail::deriveConservativeWorking(source);
@@ -634,6 +646,7 @@ ImportedModel cafToImportedModel(const TopoDS_Shape& oneShape,
             std::move(derivation.parameterizationFlagChanges);
         orientationChanges = std::move(derivation.orientationChanges);
         toleranceChanges = std::move(derivation.toleranceChanges);
+        namedRefusals = std::move(derivation.namedRefusals);
         remapAssemblyExactUses(workingMeta, exactShapeDerivation);
     } else {
         secure_detail::CompatibilityWorkingDerivation derivation =
@@ -642,6 +655,7 @@ ImportedModel cafToImportedModel(const TopoDS_Shape& oneShape,
         workingHistory = std::move(derivation.history);
         exactShapeDerivation = std::move(derivation.exactShapes);
         operations = std::move(derivation.operations);
+        namedRefusals = std::move(derivation.namedRefusals);
         remapAssemblyExactUses(workingMeta, exactShapeDerivation);
     }
 
@@ -653,7 +667,8 @@ ImportedModel cafToImportedModel(const TopoDS_Shape& oneShape,
         workingHistory, exactShapeDerivation, std::move(operations),
         std::move(parameterizationFlagChanges),
         std::move(orientationChanges),
-        std::move(toleranceChanges));
+        std::move(toleranceChanges),
+        std::move(namedRefusals));
 }
 
 }  // namespace weft::io

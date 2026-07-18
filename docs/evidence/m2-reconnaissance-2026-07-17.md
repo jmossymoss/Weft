@@ -11,9 +11,7 @@ edge exactly once. Each record carries:
 - an explicit supported, deferred, invalid, or unrecognised state with a named
   strategy or reason.
 
-No `kernel_specific` family becomes supported. Initial logical regions remain
-one source-backed face each, with their complete edge boundary; safe merging is
-deferred rather than inferred geometrically.
+No `kernel_specific` family becomes supported.
 
 ## Fixtures
 
@@ -25,8 +23,7 @@ deferred rather than inferred geometrically.
 - the cylinder wall is supported only when all of its stored p-curve
   representations compose through exact evaluation.
 
-## Status boundary
+## Supersession
 
-This starts M2 but does not pass it. Shell/wire/vertex occurrence hierarchy,
-the full trim-domain taxonomy, artificial-split region merging, and explicit
-adversarial unknown-family fixtures remain open.
+This started M2. The closing gate proof is recorded in
+`m2-total-reconnaissance-2026-07-17.md`.

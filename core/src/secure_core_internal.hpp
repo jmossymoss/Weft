@@ -37,9 +37,10 @@ public:
         const auto found =
             workingBySourceTShape_.find(source.TShape().get());
         if (found == workingBySourceTShape_.end()) return {};
-        TopoDS_Shape result = source;
-        result.TShape(found->second.TShape());
-        return result;
+        // Return the stored working occurrence (TShape + location). Copying
+        // only the TShape onto the source wrapper drops sew/heal locations and
+        // breaks IsSame/Contains checks used by correspondence rebinds.
+        return found->second;
     }
 
     bool maps(const TopoDS_Shape& source,
@@ -70,6 +71,7 @@ struct ConservativeWorkingDerivation {
     std::vector<ParameterizationFlagChange> parameterizationFlagChanges;
     std::vector<OrientationChange> orientationChanges;
     std::vector<ToleranceChange> toleranceChanges;
+    std::vector<ImportDiagnostic> namedRefusals;
 };
 
 struct CompatibilityWorkingDerivation {
@@ -77,6 +79,8 @@ struct CompatibilityWorkingDerivation {
     Handle(BRepTools_History) history;
     ExactShapeDerivationMap exactShapes;
     std::vector<RepairOperation> operations;
+    std::vector<ImportDiagnostic> namedRefusals;
+    std::size_t multiWaySplitCount = 0;
 };
 
 ConservativeWorkingDerivation deriveConservativeWorking(
@@ -96,6 +100,7 @@ ImportedModel buildImportedModel(
     std::vector<RepairOperation> operations = {},
     std::vector<ParameterizationFlagChange> parameterizationFlagChanges = {},
     std::vector<OrientationChange> orientationChanges = {},
-    std::vector<ToleranceChange> toleranceChanges = {});
+    std::vector<ToleranceChange> toleranceChanges = {},
+    std::vector<ImportDiagnostic> namedRefusals = {});
 
 }  // namespace weft::secure_detail
