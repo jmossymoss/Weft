@@ -556,7 +556,7 @@ only with indexed evidence.
 
 ### WP-071 — CONE-B canonical boundaries
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-070
 - Goal: critical segmentation, periodic/singular (apex) lifting, and count
