@@ -925,6 +925,31 @@ std::filesystem::path findMp9Extract(const char* name) {
     return {};
 }
 
+void testEllipseHoleBody() {
+    TemporaryStep step("ellipse_hole");
+    weft::writeStep(weft::makeFixture("ellipse_hole"), step.path().string());
+    const weft::ImportedModel imported =
+        weft::importStepSecure(step.path().string());
+    CHECK(imported.repair.meshable);
+    bool sawEllipse = false;
+    const weft::ReconnaissanceReport recon = weft::reconnoitre(imported);
+    for (const weft::ExactGeometryClassification& record : recon.records) {
+        if (record.taxonomy == weft::GeometryTaxonomy::Curve &&
+            record.familyCode == "ellipse") {
+            sawEllipse = true;
+            CHECK(record.support ==
+                  weft::GeometrySupportState::SupportedAnalyticTemplate);
+        }
+    }
+    CHECK(sawEllipse);
+    const weft::SecureMeshingResult result =
+        weft::generateSecureMesh(imported, configuration());
+    CHECK(result);
+    CHECK(result.value && result.value->certified.triangles.size() > 0);
+    std::printf("WEFT_ELLIPSE_F tris=%zu\n",
+                result.value ? result.value->certified.triangles.size() : 0U);
+}
+
 void testMp9ExtractFaces() {
     // Plasticity MP9 face 10 (open cylinder band) and face 28 (5-edge freeform).
     for (const char* name :
@@ -1005,6 +1030,7 @@ int main() {
         testSecureCacheInvalidation();
         testNamedLodReporting();
         testPartialCylinder();
+        testEllipseHoleBody();
         testMp9ExtractFaces();
         testCutoutHoleBody();
         testCutoutPlateSlotBody();

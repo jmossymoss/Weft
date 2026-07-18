@@ -89,6 +89,13 @@ SegmentCountResult circularArcSegmentCount(
     double radius, double spanRadians, bool fullCircle,
     const SamplingConfiguration& configuration = {});
 
+// Conservative elliptical-arc demand: uses the major radius as a circle
+// bound (errs toward denser sampling on the sharper minor-axis region).
+SegmentCountResult ellipticalArcSegmentCount(
+    double majorRadius, double minorRadius, double spanRadians,
+    bool fullEllipse,
+    const SamplingConfiguration& configuration = {});
+
 constexpr std::uint32_t lineSegmentCount() noexcept { return 1; }
 
 }  // namespace weft

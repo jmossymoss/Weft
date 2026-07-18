@@ -218,7 +218,8 @@ CylinderWallResult buildFullCylinderWall(
             reconnaissance.find(boundary.edge);
         const bool ringCandidate = edgeClass &&
             edgeClass->taxonomy == GeometryTaxonomy::Curve &&
-            edgeClass->familyCode == "circle" &&
+            (edgeClass->familyCode == "circle" ||
+             edgeClass->familyCode == "ellipse") &&
             ((fullPeriodic && boundary.closed) ||
              (partialBand && !boundary.closed));
         Ring ring;
@@ -297,8 +298,11 @@ CylinderWallResult buildFullCylinderWall(
                     rings[1].boundary->edge});
         return result;
     }
+    // Closed full-period rims need a polygon (≥3). Open partial-band arcs
+    // need ≥3 samples (≥2 azimuth columns) for a non-degenerate wall.
+    const std::size_t minimumRimSamples = 3U;
     if (rings[0].samples.size() != rings[1].samples.size() ||
-        rings[0].samples.size() < 3) {
+        rings[0].samples.size() < minimumRimSamples) {
         setFailure(result, BoundaryCoverage, "cylinder.rim_count_mismatch",
                    "cylinder rims require the same non-trivial canonical sample count",
                    {workingFace, rings[0].boundary->edge,
@@ -508,25 +512,30 @@ CylinderWallResult buildFullCylinderWall(
         }
     }
 
-    // Partial one-band walls: side-rail samples often share canonical vertex
-    // identities with rim corners. Attach leftovers only onto an existing rim
-    // vertex with the same canonical index (exact shared endpoint).
-    if (partialBand && axialIntervals == 1 &&
-        consumed.size() != allFaceUses.size()) {
+    // Partial bands: side-rail / seam samples often share rim-corner
+    // identities, or land on the structured UV grid (MP9 split seams as
+    // bspline edges). Attach leftovers onto matching mesh vertices.
+    if (partialBand && consumed.size() != allFaceUses.size()) {
+        constexpr double kUvAttachEpsilon = 1e-6;
         for (const FaceSampleUse& leftover : allFaceUses) {
             if (consumed.contains(leftover.use)) continue;
-            bool attached = false;
             for (PlanarTrimVertex& vertex : mesh.vertices) {
                 if (vertex.canonicalVertexIndex ==
                     leftover.sample->canonicalVertexIndex) {
                     vertex.boundaryUses.push_back(boundaryUse(leftover));
                     consumed.insert(leftover.use);
-                    attached = true;
                     break;
                 }
-            }
-            if (!attached) {
-                // Leave unconsumed; the failure below names the gap.
+                double du =
+                    std::abs(vertex.uv[0] - leftover.use->liftedUv[0]);
+                if (du > period * 0.5) du = std::abs(du - period);
+                const double dv =
+                    std::abs(vertex.uv[1] - leftover.use->liftedUv[1]);
+                if (du <= kUvAttachEpsilon && dv <= kUvAttachEpsilon) {
+                    vertex.boundaryUses.push_back(boundaryUse(leftover));
+                    consumed.insert(leftover.use);
+                    break;
+                }
             }
         }
     }

@@ -1116,7 +1116,7 @@ only with indexed evidence.
 
 ### WP-171 — Ellipse curve boundaries
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 production corpus
 - Prerequisites: WP-170
 - Goal: exact ellipse classification, critical events, and interval demand.
@@ -1125,7 +1125,7 @@ only with indexed evidence.
 
 ### WP-172 — Ellipse certified consumers + proof
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 production corpus
 - Prerequisites: WP-171
 - Goal: ellipse edges on supported faces certify; fixtures and density proof.

@@ -19,6 +19,8 @@ namespace weft {
 //                two tangent-smooth joins, for support-loop testing)
 //   "hole"     - plate with a through-bore r=8 (two ring junctions and a
 //                bore wall, for hole detection and junction testing)
+//   "ellipse_hole" - plate with an elliptical through-cut (major=10,
+//                minor=5) for ellipse boundary / interval consumers
 //   "demo"     - compound of cylinder and box side by side
 //   "boss"     - box fused with a cylindrical boss (exercises trimmed
 //                planar faces, which must fall back to triangulation)

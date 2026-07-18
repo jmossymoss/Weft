@@ -153,3 +153,6 @@ prove completed work; they are not plans or handoff diaries.
 - `m3-bounded-coupled-counts-2026-07-18.md` - one bounded exact coupled component, exhaustive-oracle equivalence, planar template consumption, and named scope/complexity refusals.
 - `m1-m2-frozen-corpus-2026-07-17.md` - frozen 106-record catalogue, committed STEP outcomes, and 77-fixture import/accounting evidence.
 - `mp9-inventory-2026-07-18.md` - MP9 face/curve blocker inventory and meshable=0 root cause.
+- `m8-ellipse-b-boundaries-2026-07-18.md` - ellipse critical segmentation + interval demand.
+- `m8-ellipse-f-proof-2026-07-18.md` - ellipse_hole fixture end-to-end mesh proof.
+- `mp9-mesher-phase1-2026-07-18.md` - MP9 extract meshes + analytic UV without p-curve.

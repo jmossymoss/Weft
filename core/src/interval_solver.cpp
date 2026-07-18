@@ -837,4 +837,19 @@ SegmentCountResult circularArcSegmentCount(
     return result;
 }
 
+SegmentCountResult ellipticalArcSegmentCount(
+    double majorRadius, double minorRadius, double spanRadians,
+    bool fullEllipse, const SamplingConfiguration& configuration) {
+    if (!std::isfinite(majorRadius) || majorRadius <= 0.0 ||
+        !std::isfinite(minorRadius) || minorRadius <= 0.0) {
+        return countFailure(
+            "interval.invalid_problem",
+            "an elliptical span requires finite positive major and minor radii");
+    }
+    // Bound by the larger radius so chord/normal budgets stay conservative.
+    const double boundRadius = std::max(majorRadius, minorRadius);
+    return circularArcSegmentCount(boundRadius, spanRadians, fullEllipse,
+                                   configuration);
+}
+
 }  // namespace weft

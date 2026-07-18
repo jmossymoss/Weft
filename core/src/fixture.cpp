@@ -40,6 +40,7 @@
 #include <Geom_BSplineCurve.hxx>
 #include <Geom_BSplineSurface.hxx>
 #include <Geom_Curve.hxx>
+#include <Geom_Ellipse.hxx>
 
 #include <cmath>
 #include <stdexcept>
@@ -91,6 +92,36 @@ TopoDS_Shape makeFixture(const std::string& name) {
         gp_Ax2 axis(gp_Pnt(20.0, 20.0, -1.0), gp_Dir(0, 0, 1));
         TopoDS_Shape drill = BRepPrimAPI_MakeCylinder(axis, 8.0, 12.0).Shape();
         return BRepAlgoAPI_Cut(plate, drill).Shape();
+    }
+    if (name == "ellipse_hole") {
+        // Planar plate with an exact elliptical inner wire (major=10,
+        // minor=5), extruded to a solid. Avoid boolean cuts — they often
+        // approximate ellipses as bsplines and defeat WP-171 proofs.
+        const gp_Pln plane(gp_Ax3(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(0, 0, 1)));
+        const TopoDS_Edge o1 =
+            BRepBuilderAPI_MakeEdge(gp_Pnt(0, 0, 0), gp_Pnt(40, 0, 0)).Edge();
+        const TopoDS_Edge o2 =
+            BRepBuilderAPI_MakeEdge(gp_Pnt(40, 0, 0), gp_Pnt(40, 40, 0)).Edge();
+        const TopoDS_Edge o3 =
+            BRepBuilderAPI_MakeEdge(gp_Pnt(40, 40, 0), gp_Pnt(0, 40, 0)).Edge();
+        const TopoDS_Edge o4 =
+            BRepBuilderAPI_MakeEdge(gp_Pnt(0, 40, 0), gp_Pnt(0, 0, 0)).Edge();
+        BRepBuilderAPI_MakeWire outerMaker;
+        outerMaker.Add(o1);
+        outerMaker.Add(o2);
+        outerMaker.Add(o3);
+        outerMaker.Add(o4);
+        const TopoDS_Wire outer = outerMaker.Wire();
+        Handle(Geom_Ellipse) ellipse = new Geom_Ellipse(
+            gp_Ax2(gp_Pnt(20.0, 20.0, 0.0), gp_Dir(0, 0, 1)), 10.0, 5.0);
+        const TopoDS_Wire hole =
+            BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(ellipse).Edge())
+                .Wire();
+        BRepBuilderAPI_MakeFace faceMaker(plane, outer);
+        faceMaker.Add(hole);
+        // Return the planar face alone so STEP round-trip keeps the exact
+        // Geom_Ellipse edge and the body has no extrusion wall to defer.
+        return faceMaker.Face();
     }
     if (name == "plate_slot") {
         // Thin plate with a rectangular through-slot (all-plane cutout).
@@ -717,7 +748,7 @@ TopoDS_Shape makeFixture(const std::string& name) {
     throw std::runtime_error(
         "unknown fixture: " + name +
         " (expected cylinder|partial_cylinder|box|cone|sphere|torus|fillet|hole|"
-        "plate_slot|demo|boss|"
+        "ellipse_hole|plate_slot|demo|boss|"
         "hairline|canrev|slitdrill|microedge|filletslot|torture|ribbon|ribbonnotch|"
         "mapped_patch|freeform_patch)");
 }

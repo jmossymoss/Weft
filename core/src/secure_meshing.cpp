@@ -83,6 +83,7 @@ IntervalProblemResult buildIntervalProblem(
         if (record.taxonomy != GeometryTaxonomy::Curve) continue;
         const bool supportedCurve =
             record.familyCode == "line" || record.familyCode == "circle" ||
+            record.familyCode == "ellipse" ||
             record.familyCode == "bspline" || record.familyCode == "bezier" ||
             std::find(record.conditionCodes.begin(),
                       record.conditionCodes.end(),
@@ -185,6 +186,57 @@ IntervalProblemResult buildIntervalProblem(
                 return result;
             }
             count = *demanded.count;
+            // Partial cylinder bands need ≥2 rim intervals (3 samples) so
+            // the wall template can form at least two azimuth columns.
+            if (!fullCircle) {
+                count = std::max<std::uint32_t>(count, 2);
+            }
+        } else if (classification->familyCode == "ellipse") {
+            const EvaluationResult<ParameterDomain> domain =
+                imported.workingEvaluator->curveDomain(topology.id);
+            if (!domain || !domain.value->lower || !domain.value->upper) {
+                result.failure = SecureMeshingFailure{
+                    "secure_pipeline.ellipse_domain_invalid",
+                    "a supported elliptical edge has no finite exact domain",
+                    {topology.id}};
+                return result;
+            }
+            // Bound radius by the maximum first-derivative length sampled on
+            // the arc (conservative vs. the sharper minor-axis region).
+            double boundRadius = 0.0;
+            for (double fraction : {0.0, 0.25, 0.5, 0.75, 1.0}) {
+                const double parameter = *domain.value->lower +
+                    (*domain.value->upper - *domain.value->lower) * fraction;
+                const EvaluationResult<CurveEvaluation> evaluated =
+                    imported.workingEvaluator->evaluateCurve(topology.id,
+                                                              parameter);
+                if (evaluated) {
+                    boundRadius = std::max(
+                        boundRadius,
+                        vectorLength(evaluated.value->firstDerivative));
+                }
+            }
+            const bool fullEllipse = topology.lowerVertex &&
+                topology.upperVertex &&
+                *topology.lowerVertex == *topology.upperVertex;
+            const SegmentCountResult demanded = ellipticalArcSegmentCount(
+                boundRadius, boundRadius,
+                *domain.value->upper - *domain.value->lower, fullEllipse,
+                configuration.sampling);
+            if (!demanded) {
+                result.failure = SecureMeshingFailure{
+                    demanded.failure ? demanded.failure->code
+                                     : "secure_pipeline.ellipse_count_failed",
+                    demanded.failure
+                        ? demanded.failure->message
+                        : "an elliptical segment count could not be proven",
+                    {topology.id}};
+                return result;
+            }
+            count = *demanded.count;
+            if (!fullEllipse) {
+                count = std::max<std::uint32_t>(count, 2);
+            }
         } else if (classification->familyCode == "bspline" ||
                    classification->familyCode == "bezier") {
             // MAP/FREE UV-grid: align edge interval counts to the face UV
@@ -253,7 +305,7 @@ IntervalProblemResult buildIntervalProblem(
         } else {
             result.failure = SecureMeshingFailure{
                 "secure_pipeline.unsupported_curve_family",
-                "the secure automatic pipeline currently supports only line, circle, and bounded bspline/bezier edges",
+                "the secure automatic pipeline currently supports only line, circle, ellipse, and bounded bspline/bezier edges",
                 {topology.id}};
             return result;
         }
@@ -323,7 +375,10 @@ IntervalProblemResult buildIntervalProblem(
                 reconnaissance.find(coedge.edgeId);
             const EdgeTopologyRecord* topology =
                 edgeTopology(snapshot, coedge.edgeId);
-            if (!edge || !topology || edge->familyCode != "circle" ||
+            // Circle rims and planar-section ellipses (MP9 cylinder cuts).
+            if (!edge || !topology ||
+                (edge->familyCode != "circle" &&
+                 edge->familyCode != "ellipse") ||
                 !topology->lowerVertex || !topology->upperVertex) {
                 continue;
             }
@@ -473,6 +528,7 @@ SecureMeshingResult generateSecureMesh(
                 const bool supportedCurve =
                     record.familyCode == "line" ||
                     record.familyCode == "circle" ||
+                    record.familyCode == "ellipse" ||
                     record.familyCode == "bspline" ||
                     record.familyCode == "bezier" ||
                     std::find(record.conditionCodes.begin(),

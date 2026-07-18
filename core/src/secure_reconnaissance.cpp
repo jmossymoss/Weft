@@ -62,7 +62,7 @@ FamilyInfo curveFamily(GeomAbs_CurveType type) {
     switch (type) {
         case GeomAbs_Line: return {"line", true, true, true};
         case GeomAbs_Circle: return {"circle", true, true, true};
-        case GeomAbs_Ellipse: return {"ellipse", true, true, false};
+        case GeomAbs_Ellipse: return {"ellipse", true, true, true};
         case GeomAbs_Hyperbola: return {"hyperbola", true, true, false};
         case GeomAbs_Parabola: return {"parabola", true, true, false};
         case GeomAbs_BezierCurve: return {"bezier", false, true, false};

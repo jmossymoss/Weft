@@ -147,7 +147,8 @@ bool supportedSegmentationFamily(const ExactGeometryClassification& record,
                                  GeometryTaxonomy taxonomy) {
     if (record.taxonomy != taxonomy) return false;
     if (taxonomy == GeometryTaxonomy::Curve) {
-        if (record.familyCode == "line" || record.familyCode == "circle") {
+        if (record.familyCode == "line" || record.familyCode == "circle" ||
+            record.familyCode == "ellipse") {
             // Degenerate apex circles stay InvalidImportedGeometry but still
             // need the singular canonical station path.
             return record.support ==
@@ -374,17 +375,24 @@ CriticalSegmentationResult collectSupportedCriticalEvents(
         appendCriticalEvent(result.events, contact, lower, upper, closed, span);
     }
 
-    if (curveClassification.familyCode == "circle") {
-        appendCircleIntrinsicMonotonicEvents(lower, upper, closed, span,
-                                             endpointSeed, result.events);
-        if (!curveClassification.parameterDomains.empty() &&
-            curveClassification.parameterDomains.front().periodic && closed) {
-            CriticalParameterEvent seam = endpointSeed;
-            seam.kind = CriticalParameterEventKind::PeriodicSeam;
-            seam.detectionCode = "event.periodic_seam";
-            seam.curveParameter = lower;
-            appendCriticalEvent(result.events, seam, lower, upper, closed,
-                                span);
+    if (curveClassification.familyCode == "circle" ||
+        curveClassification.familyCode == "ellipse") {
+        // Open rim arcs (partial cylinder bands) with unequal angular spans
+        // must not inject asymmetric quarter-turn samples — rim equality
+        // only equates interval counts, so sample cardinality would diverge.
+        // Closed full-period circles/ellipses keep the quarter-turn lattice.
+        if (closed) {
+            appendCircleIntrinsicMonotonicEvents(lower, upper, closed, span,
+                                                 endpointSeed, result.events);
+            if (!curveClassification.parameterDomains.empty() &&
+                curveClassification.parameterDomains.front().periodic) {
+                CriticalParameterEvent seam = endpointSeed;
+                seam.kind = CriticalParameterEventKind::PeriodicSeam;
+                seam.detectionCode = "event.periodic_seam";
+                seam.curveParameter = lower;
+                appendCriticalEvent(result.events, seam, lower, upper, closed,
+                                    span);
+            }
         }
     }
 
@@ -562,15 +570,24 @@ CriticalSegmentationResult collectSupportedCriticalEvents(
                     }
                 }
             } else {
-                // MAP-B / FREE-B: non-line/circle p-curves on mapped/freeform
-                // UV-grid faces keep domain/contact events only.
+                // Non-line/circle p-curves keep domain/contact events only
+                // (no UV-period refinement). Allowed on mapped/freeform UV
+                // grids and on analytic surfaces whose STEP p-curves are
+                // often bspline/ellipse approximations (MP9).
                 const bool uvGridFace =
                     mapping.faceClassification &&
                     (hasCondition(*mapping.faceClassification,
                                   "mapped.four_sided_candidate") ||
                      hasCondition(*mapping.faceClassification,
                                   "freeform.uv_grid_candidate"));
-                if (!uvGridFace) {
+                const bool analyticFace =
+                    mapping.faceClassification &&
+                    (mapping.faceClassification->familyCode == "plane" ||
+                     mapping.faceClassification->familyCode == "cylinder" ||
+                     mapping.faceClassification->familyCode == "cone" ||
+                     mapping.faceClassification->familyCode == "sphere" ||
+                     mapping.faceClassification->familyCode == "torus");
+                if (!uvGridFace && !analyticFace) {
                     result.failure = CanonicalBoundaryFailure{
                         "boundary.critical_segmentation_unsupported",
                         "p-curve family is outside the supported critical-event set",
@@ -582,10 +599,11 @@ CriticalSegmentationResult collectSupportedCriticalEvents(
         }
 
         // Derived planar projection: lines need no further events; circles
-        // already received intrinsic quarter-turn events above. Mapped
+        // and ellipses already received intrinsic events above. Mapped
         // bspline/bezier edges likewise rely on domain/contact events only.
         if (curveClassification.familyCode != "line" &&
             curveClassification.familyCode != "circle" &&
+            curveClassification.familyCode != "ellipse" &&
             curveClassification.familyCode != "bspline" &&
             curveClassification.familyCode != "bezier") {
             result.failure = CanonicalBoundaryFailure{
@@ -1130,7 +1148,7 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                                          GeometryTaxonomy::Curve)) {
             return buildFailure(
                 report, "boundary.critical_segmentation_unsupported",
-                "critical segmentation supports only exact line and circle edges",
+                "critical segmentation supports only exact line, circle, and ellipse edges",
                 {edgeId});
         }
         for (const MappingState& mapping : mappings) {
