@@ -1151,26 +1151,51 @@ int cmdInventory(const std::vector<std::string>& args) {
                          .count()));
     std::fflush(stderr);
 
-    weft::SecureMeshingConfiguration configuration;
-    configuration.progressToStderr = true;
-    configuration.collectAllUnsupported = true;
-    const weft::SecureMeshingResult generated =
-        weft::generateSecureMesh(imported, configuration);
+    // Inventory needs one reconnaissance only. Deriving histograms and
+    // unsupported buckets straight from the report avoids the interval/mesh
+    // machinery and the previous double-recon.
+    std::fprintf(stderr, "WEFT_PROGRESS inventory.reconnaissance.begin\n");
+    std::fflush(stderr);
+    const weft::ReconnaissanceReport recon = weft::reconnoitre(imported);
     const auto t2 = std::chrono::steady_clock::now();
+    std::fprintf(stderr,
+                 "WEFT_PROGRESS inventory.reconnaissance.done ms=%lld\n",
+                 static_cast<long long>(
+                     std::chrono::duration_cast<std::chrono::milliseconds>(t2 -
+                                                                           t0)
+                         .count()));
+    std::fflush(stderr);
 
     std::map<std::string, std::size_t> faceFamilies;
     std::map<std::string, std::size_t> curveFamilies;
     std::map<std::string, std::size_t> supportStates;
     std::map<std::string, std::size_t> conditionCodes;
-    // Re-run recon for histograms (cheap vs import); generateSecureMesh already
-    // ran recon internally but does not expose the report.
-    const weft::ReconnaissanceReport recon = weft::reconnoitre(imported);
+    std::map<std::string, std::size_t> unsupportedFace;
+    std::map<std::string, std::size_t> unsupportedCurve;
+    std::size_t unsupportedTotal = 0;
     for (const weft::ExactGeometryClassification& record : recon.records) {
         if (record.taxonomy == weft::GeometryTaxonomy::Surface) {
             ++faceFamilies[record.familyCode];
             ++supportStates[weft::geometrySupportStateName(record.support)];
+            if (record.support !=
+                weft::GeometrySupportState::SupportedAnalyticTemplate) {
+                ++unsupportedFace[record.familyCode];
+                ++unsupportedTotal;
+            }
         } else if (record.taxonomy == weft::GeometryTaxonomy::Curve) {
             ++curveFamilies[record.familyCode];
+            const bool supportedCurve =
+                record.familyCode == "line" ||
+                record.familyCode == "circle" ||
+                record.familyCode == "bspline" ||
+                record.familyCode == "bezier" ||
+                std::find(record.conditionCodes.begin(),
+                          record.conditionCodes.end(),
+                          "degenerate") != record.conditionCodes.end();
+            if (!supportedCurve) {
+                ++unsupportedCurve[record.familyCode];
+                ++unsupportedTotal;
+            }
         }
         for (const std::string& code : record.conditionCodes) {
             if (code.rfind("cutout.", 0) == 0 ||
@@ -1188,8 +1213,8 @@ int cmdInventory(const std::vector<std::string>& args) {
                                                                            t0)
                         .count()),
                 recon.checkedSubjects);
-    std::printf("WEFT_INVENTORY meshable=%d\n",
-                imported.meshable() ? 1 : 0);
+    std::printf("WEFT_INVENTORY meshable=%d recon_complete=%d\n",
+                imported.meshable() ? 1 : 0, recon.complete ? 1 : 0);
     for (const auto& [family, count] : faceFamilies) {
         std::printf("WEFT_INVENTORY face_family %s count=%zu\n", family.c_str(),
                     count);
@@ -1206,29 +1231,22 @@ int cmdInventory(const std::vector<std::string>& args) {
         std::printf("WEFT_INVENTORY condition %s count=%zu\n", code.c_str(),
                     count);
     }
-    std::map<std::string, std::size_t> unsupportedBuckets;
-    for (const weft::SecureMeshingUnsupportedRecord& record :
-         generated.unsupportedRecords) {
-        ++unsupportedBuckets[record.code + "|" + record.familyCode];
+    for (const auto& [family, count] : unsupportedFace) {
+        std::printf("WEFT_INVENTORY unsupported_face_family %s count=%zu\n",
+                    family.c_str(), count);
     }
-    std::printf("WEFT_INVENTORY unsupported_total=%zu\n",
-                generated.unsupportedRecords.size());
-    for (const auto& [bucket, count] : unsupportedBuckets) {
-        std::printf("WEFT_INVENTORY unsupported_bucket %s count=%zu\n",
-                    bucket.c_str(), count);
+    for (const auto& [family, count] : unsupportedCurve) {
+        std::printf("WEFT_INVENTORY unsupported_curve_family %s count=%zu\n",
+                    family.c_str(), count);
     }
+    std::printf("WEFT_INVENTORY unsupported_total=%zu\n", unsupportedTotal);
     std::printf(
-        "WEFT_INVENTORY inventory_ms=%lld refusal=%s\n",
+        "WEFT_INVENTORY inventory_ms=%lld\n",
         static_cast<long long>(
             std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t0)
-                .count()),
-        generated.failure ? generated.failure->code.c_str() : "-");
-    // Inventory always exits 0 when aggregation completed (refusal expected).
-    return generated.failure &&
-                   generated.failure->code ==
-                       "secure_pipeline.inventory_unsupported"
-               ? 0
-               : 1;
+                .count()));
+    std::fflush(stdout);
+    return 0;
 }
 
 }  // namespace

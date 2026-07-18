@@ -1,6 +1,7 @@
 #include "secure_core_internal.hpp"
 
 #include "io/xcaf.hpp"
+#include "weft/occt_failure.hpp"
 
 #include <Adaptor3d_CurveOnSurface.hxx>
 #include <BRepAdaptor_Curve.hxx>
@@ -304,12 +305,19 @@ Handle(BRepTools_History) composeCopyRepairHistory(
     return composed;
 }
 
+bool workingShapeIsValidDisposable(const TopoDS_Shape& shape) {
+    // BRepCheck_Analyzer mutates Checked flags. Callers must only use this on
+    // a disposable working copy (never on the immutable source).
+    if (shape.IsNull()) return false;
+    return BRepCheck_Analyzer(shape, true).IsValid();
+}
+
 bool workingShapeIsValid(const TopoDS_Shape& shape) {
     // BRepCheck_Analyzer mutates Checked flags on the input shape. Probe a
     // disposable geometry-deep copy so identity digests stay stable.
     BRepBuilderAPI_Copy probe(shape, true, false);
     if (probe.Shape().IsNull()) return false;
-    return BRepCheck_Analyzer(probe.Shape(), true).IsValid();
+    return workingShapeIsValidDisposable(probe.Shape());
 }
 
 TopologyOrientation topologyOrientationOf(TopAbs_Orientation orientation) {
@@ -1258,8 +1266,15 @@ ConservativeWorkingDerivation deriveConservativeWorking(
 CompatibilityWorkingDerivation deriveCompatibilityWorking(
     const Model& source) {
     CompatibilityWorkingDerivation derivation;
+    importProgress("compatibility.copy.begin");
     BRepBuilderAPI_Copy copier(source.shape, true, false);
     const TopoDS_Shape copiedRoot = copier.Shape();
+    if (copiedRoot.IsNull()) {
+        throw SecureImportError(
+            "import.repair.compatibility_copy_failed",
+            "geometry-deep compatibility copy produced a null working shape");
+    }
+    importProgress("compatibility.copy.done");
 
     // Bind every unique source TShape through the deep copy first. Valid copies
     // keep this map and skip the historical sew/ShapeFix pass so StableId
@@ -1283,7 +1298,14 @@ CompatibilityWorkingDerivation deriveCompatibilityWorking(
     }
 
     Handle(BRepTools_History) repairHistory;
-    if (workingShapeIsValid(copiedRoot)) {
+    // The deep copy is already disposable — validate in place. A second
+    // geometry-deep copy here (via workingShapeIsValid) was OOM-crashing the
+    // app on large models such as MP9 when switching to compatibility.
+    importProgress("compatibility.validity.begin");
+    const bool copyValid = workingShapeIsValidDisposable(copiedRoot);
+    importProgress(copyValid ? "compatibility.validity.done valid=1"
+                             : "compatibility.validity.done valid=0");
+    if (copyValid) {
         derivation.shape = copiedRoot;
         derivation.history =
             composeCopyRepairHistory(source.shape, copier, repairHistory);
@@ -1294,7 +1316,37 @@ CompatibilityWorkingDerivation deriveCompatibilityWorking(
         return derivation;
     }
 
-    derivation.shape = healWithHistory(copiedRoot, repairHistory);
+    // Large invalid assemblies: sew/ShapeFix on a second full copy is an
+    // unbounded memory and crash risk (MP9). Refuse by name so the app can
+    // surface the failure instead of terminating. Opt in with WEFT_FULL_HEAL.
+    ShapeMap copiedFaces;
+    TopExp::MapShapes(copiedRoot, TopAbs_FACE, copiedFaces);
+    constexpr int kCompatibilityHealFaceBudget = 2000;
+    if (copiedFaces.Extent() > kCompatibilityHealFaceBudget &&
+        std::getenv("WEFT_FULL_HEAL") == nullptr) {
+        throw SecureImportError(
+            "import.repair.compatibility_heal_scale_refused",
+            "compatibility sew/ShapeFix heal is refused for models with more "
+            "than 2000 faces (got " +
+                std::to_string(copiedFaces.Extent()) +
+                "); keep the conservative profile or set WEFT_FULL_HEAL=1");
+    }
+
+    importProgress("compatibility.heal.begin");
+    try {
+        derivation.shape = healWithHistory(copiedRoot, repairHistory);
+    } catch (const Standard_Failure& error) {
+        throw SecureImportError(
+            "import.repair.compatibility_heal_failed",
+            std::string("compatibility sew/ShapeFix heal failed: ") +
+                occtFailureMessage(error));
+    } catch (const std::exception& error) {
+        throw SecureImportError(
+            "import.repair.compatibility_heal_failed",
+            std::string("compatibility sew/ShapeFix heal failed: ") +
+                error.what());
+    }
+    importProgress("compatibility.heal.done");
     derivation.history = composeCopyRepairHistory(
         source.shape, copier, repairHistory);
 
