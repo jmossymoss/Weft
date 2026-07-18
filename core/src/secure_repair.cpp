@@ -1112,8 +1112,21 @@ ConservativeWorkingDerivation deriveConservativeWorking(
             "topology identity copy changed the unique edge count");
     }
 
+    {
+        const std::string msg = "working.identity_copy.done edges=" +
+            std::to_string(source.edges.Extent());
+        importProgress(msg.c_str());
+    }
+
     BRep_Builder builder;
-    for (int edgeIndex = 1; edgeIndex <= source.edges.Extent(); ++edgeIndex) {
+    const int edgeCount = source.edges.Extent();
+    const int paramStride = std::max(1, edgeCount / 20);
+    for (int edgeIndex = 1; edgeIndex <= edgeCount; ++edgeIndex) {
+        if (edgeIndex % paramStride == 0) {
+            const std::string msg = "working.param_loop edge=" +
+                std::to_string(edgeIndex) + "/" + std::to_string(edgeCount);
+            importProgress(msg.c_str());
+        }
         const TopoDS_Edge sourceEdge =
             TopoDS::Edge(source.edges(edgeIndex));
         const TopoDS_Edge workingEdge =
@@ -1150,12 +1163,28 @@ ConservativeWorkingDerivation deriveConservativeWorking(
              proof->maximumDiscrepancy,
              proof->sourceTolerance});
     }
+    importProgress("working.param_loop.done");
 
-    if (!workingShapeIsValid(derivation.shape)) {
-        for (int edgeIndex = 1; edgeIndex <= source.edges.Extent();
-             ++edgeIndex) {
-            if (workingShapeIsValid(derivation.shape)) {
-                break;
+    importProgress("working.validity_check.begin");
+    const bool workingInitiallyValid = workingShapeIsValid(derivation.shape);
+    importProgress(workingInitiallyValid
+                       ? "working.validity_check.done valid=1"
+                       : "working.validity_check.done valid=0");
+    if (!workingInitiallyValid) {
+        // Tolerance-envelope fallback. The live working shape is invalid; raise
+        // only the edges whose stored curve-on-surface discrepancy exceeds the
+        // source tolerance, and re-check whole-shape validity ONLY after an
+        // applied raise (each raise is the only thing that can flip validity).
+        // Re-checking on every skipped edge previously deep-copied and
+        // BRepCheck'd the entire model per edge — O(edges x model) — which is
+        // the large-model (MP9) import stall.
+        const int toleranceStride = std::max(1, edgeCount / 20);
+        for (int edgeIndex = 1; edgeIndex <= edgeCount; ++edgeIndex) {
+            if (edgeIndex % toleranceStride == 0) {
+                const std::string msg = "working.tolerance_fallback edge=" +
+                    std::to_string(edgeIndex) + "/" +
+                    std::to_string(edgeCount);
+                importProgress(msg.c_str());
             }
             const TopoDS_Edge sourceEdge =
                 TopoDS::Edge(source.edges(edgeIndex));
@@ -1205,15 +1234,24 @@ ConservativeWorkingDerivation deriveConservativeWorking(
             derivation.toleranceChanges.push_back(
                 {edgeId, edgeId, before, after, proof->expectedPcurveUses,
                  proof->checkedPcurveUses, proof->maximumDiscrepancy});
+
+            // An applied raise just made the live shape valid (probe proved it
+            // and the live re-check above passed) — no further edges needed.
+            break;
         }
+        importProgress("working.tolerance_fallback.done");
     }
 
     // Re-index after tolerance mutations so sewing and orientation repairs
     // see current working faces/edges if the root shape stayed partner-identical.
     working = indexShape(derivation.shape);
+    importProgress("working.sewing.begin");
     repairBoundedSewing(derivation, source);
+    importProgress("working.sewing.done");
     working = indexShape(derivation.shape);
+    importProgress("working.orientation.begin");
     repairRootSolidOrientations(derivation, source, working);
+    importProgress("working.orientation.done");
     return derivation;
 }
 
