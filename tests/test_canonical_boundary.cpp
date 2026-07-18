@@ -624,13 +624,13 @@ void testCutoutPlateSlotBoundaries(const std::filesystem::path& path) {
 }
 
 void testMappedFourSidedBoundaries(const std::filesystem::path& path) {
-    weft::writeStep(weft::makeFixture("ribbon"), path.string());
+    weft::writeStep(weft::makeFixture("mapped_patch"), path.string());
     const weft::ImportedModel imported = weft::importStepSecure(path.string());
     const weft::ReconnaissanceReport reconnaissance =
         weft::reconnoitre(imported);
+    const weft::IntervalSolution intervals = intervalsFor(imported);
     const weft::CanonicalBoundaryBuildResult built =
-        weft::buildCanonicalBoundaries(imported, reconnaissance,
-                                       intervalsFor(imported));
+        weft::buildCanonicalBoundaries(imported, reconnaissance, intervals);
     CHECK(built);
     if (!built) {
         if (built.failure) {
@@ -643,9 +643,20 @@ void testMappedFourSidedBoundaries(const std::filesystem::path& path) {
     CHECK(built.value->validation.complete());
     CHECK(built.value->boundaries.size() ==
           imported.working->snapshot.edgeTopology.size());
-    std::printf("WEFT_MAP_B boundaries=%zu samples=%zu\n",
-                built.value->boundaries.size(),
-                built.value->validation.checkedSamples);
+    CHECK(built.value->boundaries.size() >= 4);
+    CHECK(built.value->validation.checkedSamples >= 16);
+    std::printf(
+        "WEFT_MAP_B fixture=mapped_patch boundaries=%zu samples=%zu\n",
+        built.value->boundaries.size(),
+        built.value->validation.checkedSamples);
+
+    weft::IntervalSolution empty;
+    const weft::CanonicalBoundaryBuildResult refused =
+        weft::buildCanonicalBoundaries(imported, reconnaissance, empty);
+    CHECK(!refused);
+    CHECK(refused.failure);
+    std::printf("WEFT_MAP_B fixture=mapped_patch adversary=%s\n",
+                refused.failure->code.c_str());
 }
 
 void testSpherePoleBoundaries(const std::filesystem::path& path) {

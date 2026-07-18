@@ -68,7 +68,6 @@ void testFreeformUvGridBody() {
 }
 
 void testRibbonMappedBody() {
-
     const std::filesystem::path path =
         weft::test::uniqueTempPath("weft_mapped_template", ".step");
     weft::writeStep(weft::makeFixture("mapped_patch"), path.string());
@@ -91,10 +90,49 @@ void testRibbonMappedBody() {
             return coverage.code.rfind("mapped.chord_bound.face_", 0) == 0 &&
                 coverage.complete();
         }));
+    CHECK(result.value->modeling.provenance ==
+              weft::ModelingProvenanceKind::Independent ||
+          result.value->modeling.provenance ==
+              weft::ModelingProvenanceKind::CertifiedFloorAlias);
+    if (result.value->modeling.provenance ==
+        weft::ModelingProvenanceKind::Independent) {
+        CHECK(!result.value->modeling.polygons.empty());
+        std::printf("WEFT_MAP_D modeling=Independent polys=%zu\n",
+                    result.value->modeling.polygons.size());
+    } else {
+        CHECK(result.value->modeling.aliasesCertified);
+        std::printf("WEFT_MAP_D modeling=CertifiedFloorAlias reason=%s\n",
+                    result.value->modeling.safeFloorReason
+                        ? result.value->modeling.safeFloorReason->c_str()
+                        : "-");
+    }
     std::printf("WEFT_MAP_C tris=%zu verts=%zu fingerprint=%s\n",
                 result.value->certified.triangles.size(),
                 result.value->certified.vertices.size(),
                 result.value->certified.topologyFingerprint.c_str());
+
+    weft::SecureMeshingConfiguration loose = configuration();
+    loose.sampling.chordTolerance = 4.0;
+    loose.sampling.minimumClosedCurveSegments = 8;
+    weft::SecureMeshingConfiguration dense = configuration();
+    dense.sampling.chordTolerance = 0.5;
+    dense.sampling.minimumClosedCurveSegments = 32;
+    const weft::SecureMeshingResult again =
+        weft::generateSecureMesh(imported, configuration());
+    CHECK(again);
+    CHECK(again.value->certified.topologyFingerprint ==
+          result.value->certified.topologyFingerprint);
+    const weft::SecureMeshingResult looseR =
+        weft::generateSecureMesh(imported, loose);
+    const weft::SecureMeshingResult denseR =
+        weft::generateSecureMesh(imported, dense);
+    CHECK(looseR && denseR);
+    std::printf(
+        "WEFT_MAP_F loose_tris=%zu dense_tris=%zu fingerprint=%s\n",
+        looseR.value->certified.triangles.size(),
+        denseR.value->certified.triangles.size(),
+        result.value->certified.topologyFingerprint.c_str());
+
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
 }

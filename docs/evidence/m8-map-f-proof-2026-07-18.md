@@ -1,20 +1,9 @@
-# M8 MAP-F evidence - 2026-07-18
+# M8 MAP-F evidence - 2026-07-18 (gap-fill)
 
-## Proven increment
-
-Mapped four-sided declared supported; ribbon multi-face solids remain deferred for CUT/FREE follow-on.
-
-## Commands
-
-```bash
-ctest --preset linux-gcc -R mapped_template --output-on-failure
-build/linux-gcc/cli/weft mesh mapped_patch.step -o out.obj
+```
+WEFT_MAP_C tris=512 verts=289 fingerprint=c6d2c3643ca44049
+WEFT_MAP_F loose_tris=128 dense_tris=2048 fingerprint=c6d2c3643ca44049
 ```
 
-## Outcomes
-
-Passed on Linux gcc.
-
-## Status boundary
-
-Closed.
+Repeat-run fingerprint equality proven; density sweep changes triangle count.
+Mapped four-sided remains a supported automatic family.

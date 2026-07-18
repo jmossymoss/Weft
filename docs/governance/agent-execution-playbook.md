@@ -868,7 +868,7 @@ only with indexed evidence.
 
 ### WP-121 — MAP-B canonical boundaries
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 expansion
 - Prerequisites: WP-120
 - Goal: four-rail critical segmentation and UV lifting for mapped patches.
@@ -886,7 +886,7 @@ only with indexed evidence.
 
 ### WP-123 — MAP-D modelling topology
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 expansion
 - Prerequisites: WP-122
 - Goal: modelling quads/n-gons with truthful provenance.
@@ -904,7 +904,7 @@ only with indexed evidence.
 
 ### WP-125 — MAP-F family proof
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 expansion
 - Prerequisites: WP-124
 - Goal: density/corpus/determinism; declare mapped four-sided supported.

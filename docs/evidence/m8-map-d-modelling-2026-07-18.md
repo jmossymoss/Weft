@@ -1,20 +1,5 @@
-# M8 MAP-D evidence - 2026-07-18
+# M8 MAP-D evidence - 2026-07-18 (gap-fill)
 
-## Proven increment
-
-Mapped results use Independent or floor-alias modelling via generateSecureMesh.
-
-## Commands
-
-```bash
-ctest --preset linux-gcc -R mapped_template --output-on-failure
-build/linux-gcc/cli/weft mesh mapped_patch.step -o out.obj
 ```
-
-## Outcomes
-
-Passed on Linux gcc.
-
-## Status boundary
-
-Closed.
+WEFT_MAP_D modeling=Independent polys=256
+```
