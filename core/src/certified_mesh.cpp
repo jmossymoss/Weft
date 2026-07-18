@@ -291,6 +291,106 @@ ModelingMesh makeCertifiedFloorModelingMesh(
     return modeling;
 }
 
+std::optional<ModelingMesh> tryBuildIndependentModelingMesh(
+    const CertifiedMesh& certified) {
+    if (certified.triangles.size() < 2 || certified.vertices.empty()) {
+        return std::nullopt;
+    }
+    ModelingMesh modeling;
+    modeling.vertices = certified.vertices;
+    modeling.provenance = ModelingProvenanceKind::Independent;
+    modeling.aliasesCertified = false;
+    std::vector<bool> consumed(certified.triangles.size(), false);
+    std::size_t paired = 0;
+    for (std::size_t i = 0; i < certified.triangles.size(); ++i) {
+        if (consumed[i]) continue;
+        const CertifiedTriangle& a = certified.triangles[i];
+        std::optional<std::size_t> partner;
+        for (std::size_t j = i + 1; j < certified.triangles.size(); ++j) {
+            if (consumed[j]) continue;
+            const CertifiedTriangle& b = certified.triangles[j];
+            if (a.workingFace != b.workingFace) continue;
+            std::size_t shared = 0;
+            for (std::uint32_t av : a.vertices) {
+                for (std::uint32_t bv : b.vertices) {
+                    if (av == bv) ++shared;
+                }
+            }
+            if (shared == 2) {
+                partner = j;
+                break;
+            }
+        }
+        if (!partner) continue;
+        const CertifiedTriangle& b = certified.triangles[*partner];
+        std::array<std::uint32_t, 4> quad{};
+        std::size_t wrote = 0;
+        // Walk a then insert the unique vertex from b opposite the shared edge.
+        for (std::uint32_t av : a.vertices) quad[wrote++] = av;
+        for (std::uint32_t bv : b.vertices) {
+            bool seen = false;
+            for (std::uint32_t av : a.vertices) {
+                if (av == bv) {
+                    seen = true;
+                    break;
+                }
+            }
+            if (!seen) {
+                // Insert opposite vertex between the shared-edge endpoints by
+                // replacing the diagonal: keep a0,a1,b_unique,a2 ordered later.
+                quad[wrote++] = bv;
+                break;
+            }
+        }
+        if (wrote != 4) continue;
+        // Order as a convex boundary: a0, a1, unique-from-b inserted after the
+        // shared edge's second endpoint. Reconstruct from shared edge.
+        std::uint32_t sharedVerts[2]{};
+        std::size_t sharedCount = 0;
+        for (std::uint32_t av : a.vertices) {
+            for (std::uint32_t bv : b.vertices) {
+                if (av == bv && sharedCount < 2) {
+                    sharedVerts[sharedCount++] = av;
+                }
+            }
+        }
+        if (sharedCount != 2) continue;
+        std::uint32_t onlyA = a.vertices[0];
+        for (std::uint32_t av : a.vertices) {
+            if (av != sharedVerts[0] && av != sharedVerts[1]) onlyA = av;
+        }
+        std::uint32_t onlyB = b.vertices[0];
+        for (std::uint32_t bv : b.vertices) {
+            if (bv != sharedVerts[0] && bv != sharedVerts[1]) onlyB = bv;
+        }
+        ModelingPolygon polygon;
+        polygon.workingFace = a.workingFace;
+        polygon.sourceFace = a.sourceFace;
+        polygon.vertices = {onlyA, sharedVerts[0], onlyB, sharedVerts[1]};
+        modeling.polygons.push_back(std::move(polygon));
+        consumed[i] = true;
+        consumed[*partner] = true;
+        ++paired;
+    }
+    if (paired == 0) return std::nullopt;
+    // Residual unpaired triangles remain as tris in the modelling mesh.
+    for (std::size_t i = 0; i < certified.triangles.size(); ++i) {
+        if (consumed[i]) continue;
+        const CertifiedTriangle& triangle = certified.triangles[i];
+        modeling.polygons.push_back(
+            {triangle.workingFace, triangle.sourceFace,
+             {triangle.vertices.begin(), triangle.vertices.end()}});
+    }
+    modeling.independentValidation.checks = {
+        {"modeling.independent.polygons", modeling.polygons.size(),
+         modeling.polygons.size(), 0, 0},
+        {"modeling.independent.paired_quads", paired, paired, 0, 0},
+        {"modeling.independent.floor_triangles", certified.triangles.size(),
+         certified.triangles.size(), 0, 0},
+    };
+    return modeling;
+}
+
 ModelingProvenanceResult validateModelingProvenance(
     const MeshingResult& result) {
     ModelingProvenanceResult out;

@@ -96,8 +96,24 @@ void checkSuccessfulResult(const weft::SecureMeshingResult& result) {
     CHECK(result.value && !result.value->certified.triangles.empty());
     CHECK(result.value &&
           result.value->certified.topologyFingerprint.size() == 16);
-    CHECK(result.value && result.value->modeling.aliasesCertified);
-    CHECK(result.value && result.value->modeling.safeFloorReason.has_value());
+    CHECK(result.value &&
+          (result.value->modeling.provenance ==
+               weft::ModelingProvenanceKind::CertifiedFloorAlias ||
+           result.value->modeling.provenance ==
+               weft::ModelingProvenanceKind::Independent));
+    if (result.value &&
+        result.value->modeling.provenance ==
+            weft::ModelingProvenanceKind::CertifiedFloorAlias) {
+        CHECK(result.value->modeling.aliasesCertified);
+        CHECK(result.value->modeling.safeFloorReason.has_value());
+    }
+    if (result.value &&
+        result.value->modeling.provenance ==
+            weft::ModelingProvenanceKind::Independent) {
+        CHECK(!result.value->modeling.aliasesCertified);
+        CHECK(result.value->modeling.independentValidation.complete());
+        CHECK(!result.value->modeling.polygons.empty());
+    }
     CHECK(hasCoverage(result.validation,
                       "repair.source_working_correspondence"));
     CHECK(hasCoverage(result.validation,
@@ -135,6 +151,9 @@ void checkSuccessfulResult(const weft::SecureMeshingResult& result) {
 void testPlanarBox() {
     const weft::SecureMeshingResult result = generateFixture("box");
     checkSuccessfulResult(result);
+    CHECK(result.value &&
+          result.value->modeling.provenance ==
+              weft::ModelingProvenanceKind::Independent);
     CHECK(result.value && result.value->certified.vertices.size() == 8);
     CHECK(result.value && result.value->certified.triangles.size() == 12);
 }

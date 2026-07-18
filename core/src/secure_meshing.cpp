@@ -626,6 +626,10 @@ SecureMeshingResult generateSecureMesh(
     MeshingResult meshed = makeCertifiedFloorMeshingResult(
         *assembled.value, result.validation, std::move(generation),
         "structured modeling topology is not yet proven for every face");
+    if (auto independent =
+            tryBuildIndependentModelingMesh(meshed.certified)) {
+        meshed.modeling = std::move(*independent);
+    }
     if (const auto consumption = certifySolvedIntervalConsumption(
             *intervals.solution, *boundaries.value, &meshed)) {
         result.failure = consumption;

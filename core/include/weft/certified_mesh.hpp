@@ -111,6 +111,12 @@ struct ModelingProvenanceResult {
 ModelingProvenanceResult validateModelingProvenance(
     const MeshingResult& result);
 
+// Builds independent modelling polygons (quads where triangle pairs share an
+// edge) above an unchanged certified triangle floor. Returns nullopt when no
+// independent polygons can be proven.
+std::optional<ModelingMesh> tryBuildIndependentModelingMesh(
+    const CertifiedMesh& certified);
+
 ModelingMesh makeCertifiedFloorModelingMesh(
     const CertifiedMesh& certified,
     std::optional<std::string> safeFloorReason = std::nullopt);
