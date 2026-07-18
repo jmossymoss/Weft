@@ -1026,6 +1026,13 @@ static weft::SecureMeshingConfiguration secureConfiguration(
         4096U, result.sampling.minimumClosedCurveSegments);
     result.cylinderAxialIntervals =
         static_cast<std::uint32_t>(defaults.axial);
+    if (settings.perFace.size() == 1) {
+        const int faceAxial = settings.perFace.begin()->second.axial;
+        if (faceAxial >= 1) {
+            result.cylinderAxialIntervals =
+                static_cast<std::uint32_t>(faceAxial);
+        }
+    }
     for (const auto& [edgeId, count] : settings.perEdge) {
         if (edgeId < 1 || count < 1) {
             throw std::runtime_error(

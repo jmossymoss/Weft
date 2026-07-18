@@ -460,7 +460,7 @@ only with indexed evidence.
 
 ### WP-041 — Apply one certified per-face recipe operation
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M7
 - Prerequisites: WP-032, WP-040
 - Goal: unblock the narrowest useful per-face recipe setting through a proven
@@ -474,7 +474,7 @@ only with indexed evidence.
   4. Certify requested, resolved, consumed, and resulting values.
   5. Prove save/reload and CLI/app replay digest equality.
 - Tests: `secure_recipe|secure_meshing` plus CLI/app replay.
-- Evidence: `docs/evidence/m7-certified-per-face-recipe-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m7-certified-per-face-recipe-2026-07-18.md`.
 - Exit gate: the operation has one complete certified consumer and
   deterministic replay; all other unsupported operations continue to refuse.
 

@@ -3,6 +3,7 @@
 #include "weft/recipe.hpp"
 #include "weft/secure_core.hpp"
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -94,10 +95,16 @@ RecipeV2MigrationResult captureRecipeV2(
 RecipeV2Resolution resolveRecipeV2(
     const ImportedModel& imported, const RecipeV2& recipe);
 
-// Current rollout gate: only representation-independent global radial/axial,
-// chord, and normal-angle controls can drive the certified floor. Resolved v2
-// data remains inspectable, but these issues block generation/export.
+// Current rollout gate: representation-independent global radial/axial,
+// chord, and normal-angle controls, plus one certified per-face cylinder
+// `axial` override (WP-041). Resolved v2 data remains inspectable, but these
+// issues block generation/export.
 std::vector<RecipeMigrationIssue> validateSecureRecipeApplication(
+    const RecipeV2Resolution& resolution);
+
+// When resolution carries exactly one axial-only per-face override for a
+// cylinder working face, returns that axial count. Otherwise nullopt.
+std::optional<std::uint32_t> certifiedPerFaceCylinderAxial(
     const RecipeV2Resolution& resolution);
 
 void saveRecipeV2(const RecipeV2& recipe, const std::string& path);

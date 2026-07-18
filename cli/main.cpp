@@ -781,6 +781,13 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
             4096U, configuration.sampling.minimumClosedCurveSegments);
         configuration.cylinderAxialIntervals =
             static_cast<std::uint32_t>(selected.defaults.axial);
+        if (selected.perFace.size() == 1) {
+            const int faceAxial = selected.perFace.begin()->second.axial;
+            if (faceAxial >= 1) {
+                configuration.cylinderAxialIntervals =
+                    static_cast<std::uint32_t>(faceAxial);
+            }
+        }
         for (const auto& [edgeId, count] : selected.perEdge) {
             if (edgeId < 1 || count < 1) {
                 throw std::runtime_error(

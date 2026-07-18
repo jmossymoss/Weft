@@ -606,9 +606,44 @@ std::vector<RecipeMigrationIssue> validateSecureRecipeApplication(
         return issues;
     }
     if (!resolution.settings.perFace.empty()) {
-        addIssue(issues, RecipeIssueSeverity::Conflict,
-                 "secure_recipe.application.face_settings_unimplemented",
-                 "per-face certified-template settings are not implemented");
+        // Narrow certified consumer (WP-041): exactly one per-face override
+        // that changes only `axial` is admitted for cylinder axial intervals.
+        bool allowedCylinderAxial = false;
+        if (resolution.settings.perFace.size() == 1) {
+            const FaceMeshSettings& face = resolution.settings.perFace.begin()->second;
+            const FaceMeshSettings baseline;
+            FaceMeshSettings axialOnly = baseline;
+            axialOnly.axial = face.axial;
+            allowedCylinderAxial = face.axial >= 1 &&
+                face.radial == axialOnly.radial &&
+                face.gridU == axialOnly.gridU &&
+                face.gridV == axialOnly.gridV &&
+                face.cap == axialOnly.cap &&
+                face.chordTolerance == axialOnly.chordTolerance &&
+                face.angleToleranceDeg == axialOnly.angleToleranceDeg &&
+                face.filletLoops == axialOnly.filletLoops &&
+                face.filletHold == axialOnly.filletHold &&
+                face.junctionRings == axialOnly.junctionRings &&
+                face.quadDominant == axialOnly.quadDominant &&
+                face.pureTriFloor == axialOnly.pureTriFloor &&
+                face.minimal == axialOnly.minimal &&
+                face.exclude == axialOnly.exclude &&
+                face.forceMesher == axialOnly.forceMesher &&
+                face.linkRims == axialOnly.linkRims &&
+                face.minSize == axialOnly.minSize &&
+                face.relativeDeviation == axialOnly.relativeDeviation &&
+                face.weldTolerance == axialOnly.weldTolerance &&
+                face.squareCollar == axialOnly.squareCollar &&
+                face.coonsRotate == axialOnly.coonsRotate &&
+                face.boundary == axialOnly.boundary &&
+                face.adaptive == axialOnly.adaptive &&
+                face.cellCap == axialOnly.cellCap;
+        }
+        if (!allowedCylinderAxial) {
+            addIssue(issues, RecipeIssueSeverity::Conflict,
+                     "secure_recipe.application.face_settings_unimplemented",
+                     "per-face certified-template settings are not implemented");
+        }
     }
     if (!resolution.operations.empty()) {
         addIssue(issues, RecipeIssueSeverity::Conflict,
@@ -662,6 +697,21 @@ std::vector<RecipeMigrationIssue> validateSecureRecipeApplication(
                  "legacy generation controls cannot drive the secure pipeline");
     }
     return issues;
+}
+
+std::optional<std::uint32_t> certifiedPerFaceCylinderAxial(
+    const RecipeV2Resolution& resolution) {
+    if (resolution.settings.perFace.size() != 1) return std::nullopt;
+    const int axial = resolution.settings.perFace.begin()->second.axial;
+    if (axial < 1) return std::nullopt;
+    for (const RecipeMigrationIssue& issue :
+         validateSecureRecipeApplication(resolution)) {
+        if (issue.code ==
+            "secure_recipe.application.face_settings_unimplemented") {
+            return std::nullopt;
+        }
+    }
+    return static_cast<std::uint32_t>(axial);
 }
 
 void saveRecipeV2(const RecipeV2& recipe, const std::string& path) {
