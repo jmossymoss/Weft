@@ -726,9 +726,8 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                         "mapped.non_four_sided_deferred");
                 }
                 // FREE-A: bspline/bezier with simple/annulus trim may use the
-                // UV-grid floor. Four-sided sheets may also carry MAP tags.
-                // Multi-sided n-gon UV-grid remains deferred until split-rail
-                // corner identity is proven across STEP round-trips.
+                // UV-grid floor (four-sided and n-sided). Wider/non-simple
+                // freeform stays deferred.
                 if (family.code == "bspline" || family.code == "bezier") {
                     const bool uvGridTrim =
                         record.trimDomain &&
@@ -740,10 +739,10 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                          *record.trimDomain ==
                              TrimDomainClass::ConcaveSimpleRegion ||
                          *record.trimDomain == TrimDomainClass::SimpleDisk);
-                    if (uvGridTrim && faceEdges.size() == 4) {
+                    if (uvGridTrim) {
                         record.conditionCodes.push_back(
                             "freeform.uv_grid_candidate");
-                    } else if (faceEdges.size() != 4) {
+                    } else {
                         record.conditionCodes.push_back(
                             "freeform.general_deferred");
                     }

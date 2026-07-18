@@ -675,17 +675,45 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
                     resolveBoundarySample(boundaries, boundaryUse);
                 CertifiedVertexUse certifiedUse{
                     face, faceMesh.sourceFace, boundaryUse};
-                if (!sample ||
-                    (hasBoundary &&
-                     sample->canonicalVertexIndex !=
-                         localVertex.canonicalVertexIndex) ||
-                    !resolvesFaceUse(*sample, certifiedUse)) {
+                if (!sample || !resolvesFaceUse(*sample, certifiedUse)) {
                     ++boundaryProvenance.failed;
                     setFailure(result, "certified.boundary_provenance_invalid",
                                "a face vertex does not resolve through its canonical sample and coedge UV use",
                                {face, boundaryUse.workingEdge,
                                 boundaryUse.coedge});
                     return result;
+                }
+                // Split rails may assign distinct canonical vertex IDs to one
+                // geometric corner after STEP. Accept when 3D positions match.
+                if (hasBoundary &&
+                    localVertex.canonicalVertexIndex !=
+                        InvalidCanonicalVertexIndex &&
+                    sample->canonicalVertexIndex !=
+                        localVertex.canonicalVertexIndex) {
+                    const CanonicalBoundarySample* owner = nullptr;
+                    for (const CanonicalBoundary& boundary :
+                         boundaries.boundaries) {
+                        for (const CanonicalBoundarySample& candidate :
+                             boundary.samples) {
+                            if (candidate.canonicalVertexIndex ==
+                                localVertex.canonicalVertexIndex) {
+                                owner = &candidate;
+                                break;
+                            }
+                        }
+                        if (owner) break;
+                    }
+                    if (!owner ||
+                        !exactPositionEqual(owner->position,
+                                            sample->position)) {
+                        ++boundaryProvenance.failed;
+                        setFailure(
+                            result, "certified.boundary_provenance_invalid",
+                            "split-rail corner samples disagree in 3D",
+                            {face, boundaryUse.workingEdge,
+                             boundaryUse.coedge});
+                        return result;
+                    }
                 }
                 if (resolvedPosition &&
                     !exactPositionEqual(*resolvedPosition, sample->position)) {

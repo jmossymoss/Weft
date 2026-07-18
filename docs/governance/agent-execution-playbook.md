@@ -18,7 +18,7 @@ The product route remains certified-only. OCCT triangle soup, welding, missing
 faces, silent healing, and unproven preview meshes are not export authority.
 The currently certified automatic families are planes (including holes),
 full/partial cylinders, apex cones, spheres, tori, analytic fillet/blend strips,
-four-sided mapped patches, circular through-hole and rectangular plate-slot cutouts, and freeform UV-grid patches.
+four-sided mapped patches, circular through-hole and rectangular plate-slot cutouts, and n-sided freeform UV-grid patches (five-edge freeform_patch).
 
 ## Token and documentation discipline
 

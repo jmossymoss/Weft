@@ -161,9 +161,69 @@ IntervalProblemResult buildIntervalProblem(
             count = *demanded.count;
         } else if (classification->familyCode == "bspline" ||
                    classification->familyCode == "bezier") {
-            // MAP-B/C: bounded uniform interval demand for freeform edges.
+            // MAP/FREE UV-grid: align edge interval counts to the face UV
+            // cell size so split rails (half-edges) land on grid stations.
+            // Uniform minClosedCurveSegments on every edge makes short rails
+            // sample at half-cell offsets and breaks seam matching.
             count = std::max<std::uint32_t>(
                 4, configuration.sampling.minimumClosedCurveSegments);
+            const std::uint32_t gridIntervals = std::max<std::uint32_t>(
+                8, configuration.sampling.minimumClosedCurveSegments);
+            for (const CoedgeRecord& coedge : snapshot.coedges) {
+                if (coedge.edgeId != topology.id) continue;
+                const ExactGeometryClassification* face =
+                    reconnaissance.find(coedge.faceId);
+                if (!face || face->taxonomy != GeometryTaxonomy::Surface) {
+                    continue;
+                }
+                const bool uvGridFace =
+                    std::find(face->conditionCodes.begin(),
+                              face->conditionCodes.end(),
+                              "mapped.four_sided_candidate") !=
+                        face->conditionCodes.end() ||
+                    std::find(face->conditionCodes.begin(),
+                              face->conditionCodes.end(),
+                              "freeform.uv_grid_candidate") !=
+                        face->conditionCodes.end();
+                if (!uvGridFace || face->parameterDomains.size() < 2 ||
+                    !face->parameterDomains[0].lower ||
+                    !face->parameterDomains[0].upper ||
+                    !face->parameterDomains[1].lower ||
+                    !face->parameterDomains[1].upper) {
+                    continue;
+                }
+                if (coedge.pcurveRepresentations.empty()) continue;
+                const EvaluationResult<ParameterDomain> domain =
+                    imported.workingEvaluator->curveDomain(topology.id);
+                if (!domain || !domain.value->lower || !domain.value->upper) {
+                    continue;
+                }
+                const PcurveRef& pref = coedge.pcurveRepresentations.front();
+                const auto uvLower =
+                    imported.workingEvaluator->evaluateCurveOnSurface(
+                        pref, *domain.value->lower);
+                const auto uvUpper =
+                    imported.workingEvaluator->evaluateCurveOnSurface(
+                        pref, *domain.value->upper);
+                if (!uvLower || !uvUpper) continue;
+                const double faceDu = *face->parameterDomains[0].upper -
+                    *face->parameterDomains[0].lower;
+                const double faceDv = *face->parameterDomains[1].upper -
+                    *face->parameterDomains[1].lower;
+                if (!(faceDu > 0.0) || !(faceDv > 0.0)) continue;
+                const double cellU = faceDu / static_cast<double>(gridIntervals);
+                const double cellV = faceDv / static_cast<double>(gridIntervals);
+                const double edgeDu =
+                    std::abs(uvUpper.value->uv[0] - uvLower.value->uv[0]);
+                const double edgeDv =
+                    std::abs(uvUpper.value->uv[1] - uvLower.value->uv[1]);
+                const double cells = std::round(edgeDu / cellU) +
+                    std::round(edgeDv / cellV);
+                if (cells >= 1.0) {
+                    count = static_cast<std::uint32_t>(cells);
+                }
+                break;
+            }
         } else {
             result.failure = SecureMeshingFailure{
                 "secure_pipeline.unsupported_curve_family",

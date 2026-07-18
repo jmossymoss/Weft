@@ -267,14 +267,31 @@ MappedPatchResult buildMappedFourSidedPatch(
                 if (!onBoundary) continue;
                 const std::uint32_t idx = indexOf(i, j);
                 const PlanarTrimVertex& station = mesh.vertices[idx];
-                // Keep matching injective for distinct sample IDs: do not park
-                // a new sample on a station already owned by a different
-                // canonical vertex (split freeform rails).
+                // Keep matching injective for distinct geometric corners:
+                // allow a second sample ID only when it shares this station's
+                // 3D position (split-rail endpoints after STEP).
                 if (station.canonicalVertexIndex !=
                         InvalidCanonicalVertexIndex &&
                     station.canonicalVertexIndex !=
                         candidate.sample->canonicalVertexIndex) {
-                    continue;
+                    bool sameCorner = false;
+                    for (const PlanarTrimBoundaryUse& existing :
+                         station.boundaryUses) {
+                        const CanonicalBoundary* boundary =
+                            boundaries.find(existing.workingEdge);
+                        if (!boundary ||
+                            existing.sample.ordinal >=
+                                boundary->samples.size()) {
+                            continue;
+                        }
+                        const CanonicalBoundarySample& owned =
+                            boundary->samples[existing.sample.ordinal];
+                        if (owned.position == candidate.sample->position) {
+                            sameCorner = true;
+                            break;
+                        }
+                    }
+                    if (!sameCorner) continue;
                 }
                 const PredicatePoint2& uv = station.uv;
                 const double du = candidate.use->liftedUv[0] - uv[0];

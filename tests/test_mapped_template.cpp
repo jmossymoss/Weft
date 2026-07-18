@@ -5,6 +5,11 @@
 
 #include "test_temp_path.hpp"
 
+#include <TopExp.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <TopoDS_Shape.hxx>
+
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -31,10 +36,21 @@ weft::SecureMeshingConfiguration configuration() {
     return settings;
 }
 
+int countFaceEdges(const TopoDS_Shape& shape) {
+    TopTools_IndexedMapOfShape edges;
+    TopExp::MapShapes(shape, TopAbs_EDGE, edges);
+    return edges.Extent();
+}
+
 void testFreeformUvGridBody() {
     const std::filesystem::path path =
         weft::test::uniqueTempPath("weft_freeform_template", ".step");
-    weft::writeStep(weft::makeFixture("freeform_patch"), path.string());
+    const TopoDS_Shape shape = weft::makeFixture("freeform_patch");
+    const int edgeCount = countFaceEdges(shape);
+    CHECK(edgeCount == 5);
+    std::printf("WEFT_FREE_A fixture=freeform_patch edge_count=%d\n",
+                edgeCount);
+    weft::writeStep(shape, path.string());
     const weft::ImportedModel imported = weft::importStepSecure(path.string());
     const weft::ReconnaissanceReport recon = weft::reconnoitre(imported);
     bool sawFree = false;
@@ -58,7 +74,7 @@ void testFreeformUvGridBody() {
         return;
     }
     CHECK(result.value && result.value->certified.triangles.size() >= 8);
-    // Distinct from mapped_patch fingerprint (different warp amplitude).
+    // Distinct from four-sided mapped_patch fingerprint.
     CHECK(result.value->certified.topologyFingerprint !=
           "c6d2c3643ca44049");
     if (result.value->modeling.provenance ==
@@ -98,7 +114,6 @@ void testFreeformUvGridBody() {
         denseR.value->certified.triangles.size(),
         result.value->certified.topologyFingerprint.c_str());
 
-    // Wider freeform still refuses by name.
     {
         const std::filesystem::path widePath =
             weft::test::uniqueTempPath("weft_freeform_wide", ".step");
