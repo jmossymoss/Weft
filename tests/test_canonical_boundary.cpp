@@ -13,12 +13,14 @@
 #include <TopoDS_Face.hxx>
 #include <gp_Pnt.hxx>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <vector>
 
 namespace {
@@ -529,6 +531,98 @@ void testUnsupportedCriticalSegmentation(
 }
 
 
+
+void testCutoutHoleBoundaries(const std::filesystem::path& path) {
+    weft::writeStep(weft::makeFixture("hole"), path.string());
+    const weft::ImportedModel imported = weft::importStepSecure(path.string());
+    const weft::ReconnaissanceReport reconnaissance =
+        weft::reconnoitre(imported);
+    const weft::CanonicalBoundaryBuildResult built =
+        weft::buildCanonicalBoundaries(imported, reconnaissance,
+                                       intervalsFor(imported));
+    CHECK(built);
+    if (!built) {
+        if (built.failure) {
+            std::printf("cutout hole boundary failure: %s: %s\n",
+                        built.failure->code.c_str(),
+                        built.failure->message.c_str());
+        }
+        return;
+    }
+    CHECK(built.value->validation.complete());
+    // Perforated planar faces must own outer + hole coedges (distinct wires).
+    int perforatedFaces = 0;
+    int multiWireFaces = 0;
+    for (const weft::ExactGeometryClassification& record :
+         reconnaissance.records) {
+        if (record.taxonomy != weft::GeometryTaxonomy::Surface) continue;
+        const bool perforated =
+            std::find(record.conditionCodes.begin(), record.conditionCodes.end(),
+                      "cutout.planar_perforated") != record.conditionCodes.end();
+        if (!perforated) continue;
+        ++perforatedFaces;
+        std::set<weft::StableId> wires;
+        for (const weft::CoedgeRecord& coedge :
+             imported.working->snapshot.coedges) {
+            if (coedge.faceId == record.subjectId) {
+                wires.insert(coedge.wireId);
+            }
+        }
+        if (wires.size() >= 2) ++multiWireFaces;
+    }
+    CHECK(perforatedFaces >= 1);
+    CHECK(multiWireFaces >= 1);
+    std::printf(
+        "WEFT_CUT_B fixture=hole boundaries=%zu samples=%zu "
+        "perforated_multi_wire=%d\n",
+        built.value->boundaries.size(), built.value->validation.checkedSamples,
+        multiWireFaces);
+
+    // Adversary: empty intervals refuse by name.
+    weft::IntervalSolution empty;
+    const weft::CanonicalBoundaryBuildResult refused =
+        weft::buildCanonicalBoundaries(imported, reconnaissance, empty);
+    CHECK(!refused);
+    CHECK(refused.failure);
+    std::printf("WEFT_CUT_B fixture=hole adversary=%s\n",
+                refused.failure->code.c_str());
+}
+
+void testCutoutPlateSlotBoundaries(const std::filesystem::path& path) {
+    weft::writeStep(weft::makeFixture("plate_slot"), path.string());
+    const weft::ImportedModel imported = weft::importStepSecure(path.string());
+    const weft::ReconnaissanceReport reconnaissance =
+        weft::reconnoitre(imported);
+    const weft::CanonicalBoundaryBuildResult built =
+        weft::buildCanonicalBoundaries(imported, reconnaissance,
+                                       intervalsFor(imported));
+    CHECK(built);
+    if (!built) {
+        if (built.failure) {
+            std::printf("plate_slot boundary failure: %s: %s\n",
+                        built.failure->code.c_str(),
+                        built.failure->message.c_str());
+        }
+        return;
+    }
+    CHECK(built.value->validation.complete());
+    CHECK(built.value->boundaries.size() ==
+          imported.working->snapshot.edgeTopology.size());
+    int slotted = 0;
+    for (const weft::ExactGeometryClassification& record :
+         reconnaissance.records) {
+        if (std::find(record.conditionCodes.begin(), record.conditionCodes.end(),
+                      "cutout.planar_slotted") != record.conditionCodes.end()) {
+            ++slotted;
+        }
+    }
+    CHECK(slotted >= 1);
+    std::printf(
+        "WEFT_CUT_B fixture=plate_slot boundaries=%zu samples=%zu slotted=%d\n",
+        built.value->boundaries.size(), built.value->validation.checkedSamples,
+        slotted);
+}
+
 void testMappedFourSidedBoundaries(const std::filesystem::path& path) {
     weft::writeStep(weft::makeFixture("ribbon"), path.string());
     const weft::ImportedModel imported = weft::importStepSecure(path.string());
@@ -695,6 +789,8 @@ int main() {
         testUnsupportedCriticalSegmentation(torusUnsupportedPath);
         testConeSingularBoundaries(conePath);
         testSpherePoleBoundaries(spherePath);
+        testCutoutHoleBoundaries(weft::test::uniqueTempPath("weft_cut_b_hole", ".step"));
+        testCutoutPlateSlotBoundaries(weft::test::uniqueTempPath("weft_cut_b_slot", ".step"));
         testMappedFourSidedBoundaries(mappedPath);
     } catch (const std::exception& error) {
         std::printf("FAIL canonical-boundary exception: %s\n", error.what());

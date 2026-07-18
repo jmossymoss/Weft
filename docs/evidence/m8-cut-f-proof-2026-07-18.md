@@ -1,20 +1,9 @@
-# M8 CUT-F evidence - 2026-07-18
+# M8 CUT-F evidence - 2026-07-18 (reopened)
 
-## Proven increment
-
-Circular through-hole cutout subclass supported; complex multi-bore/slot cut-graphs deferred.
-
-## Commands
-
-```bash
-ctest --preset linux-gcc -R 'secure_core|secure_meshing' --output-on-failure
-build/linux-gcc/cli/weft mesh hole.step -o hole.obj
+```
+fixture=hole loose_tris=280 dense_tris=280 fingerprint=efc0e9c351c0d80e (repeat equal)
+fixture=plate_slot fingerprint=ede049c46ce63f27 (repeat equal)
 ```
 
-## Outcomes
-
-Passed on Linux gcc/static-analysis.
-
-## Status boundary
-
-Closed.
+Supported automatic cutout subclass: circular through-hole + rectangular plate slot.
+Multi-bore / filleted-slot cut-graphs remain named deferred.

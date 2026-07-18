@@ -682,9 +682,100 @@ void testCutoutHoleBody() {
         weft::generateSecureMesh(imported, settings);
     checkSuccessfulResult(result);
     CHECK(result.value && result.value->certified.triangles.size() >= 32);
-    std::printf("WEFT_CUT_C tris=%zu fingerprint=%s\n",
+    std::printf("WEFT_CUT_C fixture=hole tris=%zu fingerprint=%s\n",
                 result.value->certified.triangles.size(),
                 result.value->certified.topologyFingerprint.c_str());
+    if (result.value->modeling.provenance ==
+        weft::ModelingProvenanceKind::Independent) {
+        std::printf("WEFT_CUT_D fixture=hole modeling=Independent polys=%zu\n",
+                    result.value->modeling.polygons.size());
+    } else {
+        std::printf("WEFT_CUT_D fixture=hole modeling=CertifiedFloorAlias "
+                    "reason=%s\n",
+                    result.value->modeling.safeFloorReason
+                        ? result.value->modeling.safeFloorReason->c_str()
+                        : "-");
+    }
+    // Density / determinism
+    weft::SecureMeshingConfiguration loose = settings;
+    loose.sampling.chordTolerance = 1.0;
+    loose.sampling.minimumClosedCurveSegments = 8;
+    weft::SecureMeshingConfiguration dense = settings;
+    dense.sampling.chordTolerance = 0.1;
+    dense.sampling.minimumClosedCurveSegments = 32;
+    const weft::SecureMeshingResult a =
+        weft::generateSecureMesh(imported, settings);
+    const weft::SecureMeshingResult b =
+        weft::generateSecureMesh(imported, settings);
+    CHECK(a && b);
+    CHECK(a.value->certified.topologyFingerprint ==
+          b.value->certified.topologyFingerprint);
+    const weft::SecureMeshingResult looseR =
+        weft::generateSecureMesh(imported, loose);
+    const weft::SecureMeshingResult denseR =
+        weft::generateSecureMesh(imported, dense);
+    CHECK(looseR && denseR);
+    std::printf(
+        "WEFT_CUT_F fixture=hole loose_tris=%zu dense_tris=%zu fingerprint=%s\n",
+        looseR.value->certified.triangles.size(),
+        denseR.value->certified.triangles.size(),
+        a.value->certified.topologyFingerprint.c_str());
+}
+
+void testCutoutPlateSlotBody() {
+    TemporaryStep step("plate_slot");
+    weft::writeStep(weft::makeFixture("plate_slot"), step.path().string());
+    const weft::ImportedModel imported =
+        weft::importStepSecure(step.path().string());
+    const weft::ReconnaissanceReport recon = weft::reconnoitre(imported);
+    bool sawSlotted = false;
+    for (const weft::ExactGeometryClassification& record : recon.records) {
+        for (const std::string& code : record.conditionCodes) {
+            if (code == "cutout.planar_slotted") sawSlotted = true;
+        }
+    }
+    CHECK(sawSlotted);
+    const weft::SecureMeshingResult result =
+        weft::generateSecureMesh(imported, configuration());
+    checkSuccessfulResult(result);
+    CHECK(result.value && result.value->certified.triangles.size() >= 8);
+    std::printf("WEFT_CUT_C fixture=plate_slot tris=%zu fingerprint=%s\n",
+                result.value->certified.triangles.size(),
+                result.value->certified.topologyFingerprint.c_str());
+    if (result.value->modeling.provenance ==
+        weft::ModelingProvenanceKind::Independent) {
+        std::printf(
+            "WEFT_CUT_D fixture=plate_slot modeling=Independent polys=%zu\n",
+            result.value->modeling.polygons.size());
+    } else {
+        std::printf("WEFT_CUT_D fixture=plate_slot modeling=CertifiedFloorAlias "
+                    "reason=%s\n",
+                    result.value->modeling.safeFloorReason
+                        ? result.value->modeling.safeFloorReason->c_str()
+                        : "-");
+    }
+    const weft::SecureMeshingResult again =
+        weft::generateSecureMesh(imported, configuration());
+    CHECK(again);
+    CHECK(again.value->certified.topologyFingerprint ==
+          result.value->certified.topologyFingerprint);
+    std::printf("WEFT_CUT_F fixture=plate_slot fingerprint=%s\n",
+                result.value->certified.topologyFingerprint.c_str());
+}
+
+void testCutoutDeferredRefusals() {
+    for (const char* fixture : {"slotted", "drilled", "filletslot"}) {
+        TemporaryStep step(fixture);
+        weft::writeStep(weft::makeFixture(fixture), step.path().string());
+        const weft::ImportedModel imported =
+            weft::importStepSecure(step.path().string());
+        const weft::SecureMeshingResult result =
+            weft::generateSecureMesh(imported, configuration());
+        CHECK(!result);
+        CHECK(result.failure);
+        std::printf("WEFT_CUT_C fixture=%s refusal=%s\n", fixture,
+                    result.failure->code.c_str());
+    }
 }
 
 void testFilletSolid() {
@@ -821,6 +912,8 @@ int main() {
         testNamedLodReporting();
         testPartialCylinder();
         testCutoutHoleBody();
+        testCutoutPlateSlotBody();
+        testCutoutDeferredRefusals();
         testFilletSolid();
         testApexCone();
     } catch (const std::exception& error) {

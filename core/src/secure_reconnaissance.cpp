@@ -753,6 +753,34 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                  *record.trimDomain ==
                      TrimDomainClass::MultiplyPerforatedDisk)) {
                 record.conditionCodes.push_back("cutout.planar_perforated");
+                int circleEdges = 0;
+                int lineEdges = 0;
+                std::set<StableId> faceEdgeIds;
+                for (const CoedgeRecord& coedge : snapshot.coedges) {
+                    if (coedge.faceId == faceId) {
+                        faceEdgeIds.insert(coedge.edgeId);
+                    }
+                }
+                for (const StableId& edgeId : faceEdgeIds) {
+                    const ExactGeometryClassification* edgeRec = nullptr;
+                    for (const ExactGeometryClassification& prior :
+                         report.records) {
+                        if (prior.subjectId == edgeId) {
+                            edgeRec = &prior;
+                            break;
+                        }
+                    }
+                    if (!edgeRec) continue;
+                    if (edgeRec->familyCode == "circle") {
+                        ++circleEdges;
+                    } else if (edgeRec->familyCode == "line") {
+                        ++lineEdges;
+                    }
+                }
+                // Rectangular/slot-like inner wires are all lines (no circles).
+                if (circleEdges == 0 && lineEdges >= 6) {
+                    record.conditionCodes.push_back("cutout.planar_slotted");
+                }
             }
             if (family.code == "cylinder" && record.trimDomain &&
                 (*record.trimDomain ==
@@ -984,6 +1012,65 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                                !record.strategyOrReasonCode.empty() &&
                                !record.sourceSubjects.empty();
                     });
+
+    // CUT-A post-pass: name unsupported cut graphs on cylinders that are not
+    // simple plate bores, and on fillet/blend faces that participate in slots.
+    {
+        int cylinderFaces = 0;
+        int complexPerforatedPlanes = 0;
+        for (ExactGeometryClassification& record : report.records) {
+            if (record.taxonomy != GeometryTaxonomy::Surface) continue;
+            if (record.familyCode == "cylinder") {
+                ++cylinderFaces;
+            }
+            if (record.familyCode == "plane" &&
+                std::find(record.conditionCodes.begin(),
+                          record.conditionCodes.end(),
+                          "cutout.planar_perforated") !=
+                    record.conditionCodes.end()) {
+                std::set<StableId> faceEdges;
+                for (const CoedgeRecord& coedge : snapshot.coedges) {
+                    if (coedge.faceId == record.subjectId) {
+                        faceEdges.insert(coedge.edgeId);
+                    }
+                }
+                // Filleted slots produce densely edged perforated planes.
+                if (faceEdges.size() >= 10) {
+                    ++complexPerforatedPlanes;
+                }
+            }
+        }
+        // Any model with 2+ cylinders is an unsupported multi-bore/slot
+        // cut-graph for the current narrow cutout floor (single plate bore /
+        // rectangular plate slot).
+        const bool multiBoreGraph = cylinderFaces >= 2;
+        const bool filletedSlotGraph =
+            multiBoreGraph && complexPerforatedPlanes >= 1;
+        for (ExactGeometryClassification& record : report.records) {
+            if (record.taxonomy != GeometryTaxonomy::Surface) continue;
+            if (multiBoreGraph && record.familyCode == "cylinder") {
+                if (std::find(record.conditionCodes.begin(),
+                              record.conditionCodes.end(),
+                              "cutout.multi_bore_cylinder_deferred") ==
+                    record.conditionCodes.end()) {
+                    record.conditionCodes.push_back(
+                        "cutout.multi_bore_cylinder_deferred");
+                }
+            }
+            if (filletedSlotGraph &&
+                (record.familyCode == "cylinder" ||
+                 record.familyCode == "plane")) {
+                if (std::find(record.conditionCodes.begin(),
+                              record.conditionCodes.end(),
+                              "cutout.filleted_slot_deferred") ==
+                    record.conditionCodes.end()) {
+                    record.conditionCodes.push_back(
+                        "cutout.filleted_slot_deferred");
+                }
+            }
+        }
+    }
+
     if (!report.complete) {
         report.diagnostics.push_back(
             {"reconnaissance.coverage.incomplete", {},

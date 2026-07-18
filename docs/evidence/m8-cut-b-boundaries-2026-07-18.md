@@ -1,20 +1,11 @@
-# M8 CUT-B evidence - 2026-07-18
+# M8 CUT-B evidence - 2026-07-18 (reopened)
 
-## Proven increment
+## WEFT_CUT_B
 
-Hole plate+bore boundaries already certify through existing plane/cylinder path.
-
-## Commands
-
-```bash
-ctest --preset linux-gcc -R 'secure_core|secure_meshing' --output-on-failure
-build/linux-gcc/cli/weft mesh hole.step -o hole.obj
+```
+fixture=hole boundaries=15 samples=73 perforated_multi_wire=2
+fixture=hole adversary=boundary.interval_count_missing
+fixture=plate_slot boundaries=24 samples=120 slotted=2
 ```
 
-## Outcomes
-
-Passed on Linux gcc/static-analysis.
-
-## Status boundary
-
-Closed.
+Outer + hole/slot wires accounted; empty-interval adversary refuses by name.

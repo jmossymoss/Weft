@@ -88,6 +88,14 @@ TopoDS_Shape makeFixture(const std::string& name) {
         TopoDS_Shape drill = BRepPrimAPI_MakeCylinder(axis, 8.0, 12.0).Shape();
         return BRepAlgoAPI_Cut(plate, drill).Shape();
     }
+    if (name == "plate_slot") {
+        // Thin plate with a rectangular through-slot (all-plane cutout).
+        TopoDS_Shape plate = BRepPrimAPI_MakeBox(50.0, 30.0, 6.0).Shape();
+        TopoDS_Shape slot =
+            BRepPrimAPI_MakeBox(gp_Pnt(15.0, 10.0, -1.0), 20.0, 10.0, 8.0)
+                .Shape();
+        return BRepAlgoAPI_Cut(plate, slot).Shape();
+    }
     if (name == "slotted") {
         // Barrel case from the flaregun: a tube with a capsule slot milled
         // through the wall. The outer cylinder stays closed in u but
@@ -666,7 +674,8 @@ TopoDS_Shape makeFixture(const std::string& name) {
     }
     throw std::runtime_error(
         "unknown fixture: " + name +
-        " (expected cylinder|partial_cylinder|box|cone|sphere|torus|fillet|hole|demo|boss|"
+        " (expected cylinder|partial_cylinder|box|cone|sphere|torus|fillet|hole|"
+        "plate_slot|demo|boss|"
         "hairline|canrev|slitdrill|microedge|filletslot|torture|ribbon|ribbonnotch|"
         "mapped_patch|freeform_patch)");
 }

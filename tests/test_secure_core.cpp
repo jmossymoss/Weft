@@ -1732,62 +1732,119 @@ void testUnknownExactFamilyInjection() {
 
 
 void testCutoutReconnaissance() {
-    const std::filesystem::path holePath =
-        weft::test::uniqueTempPath("weft_secure_core_hole", ".step");
-    weft::writeStep(weft::makeFixture("hole"), holePath.string());
-    const weft::ImportedModel hole = weft::importStepSecure(
-        holePath.string(), weft::RepairProfile::Conservative);
-    const weft::ReconnaissanceReport report = weft::reconnoitre(hole);
-    CHECK(report.complete);
-    int planarPerforated = 0;
-    int cylindricalBore = 0;
-    for (const weft::ExactGeometryClassification& record : report.records) {
-        if (record.taxonomy != weft::GeometryTaxonomy::Surface) continue;
-        const bool perforated =
-            std::find(record.conditionCodes.begin(), record.conditionCodes.end(),
-                      "cutout.planar_perforated") != record.conditionCodes.end();
-        const bool bore =
-            std::find(record.conditionCodes.begin(), record.conditionCodes.end(),
-                      "cutout.cylindrical_bore") != record.conditionCodes.end();
-        if (perforated) {
-            ++planarPerforated;
-            CHECK(record.familyCode == "plane");
-            CHECK(record.trimDomain.has_value());
-            CHECK(*record.trimDomain == weft::TrimDomainClass::Annulus ||
-                  *record.trimDomain ==
-                      weft::TrimDomainClass::MultiplyPerforatedDisk);
+    auto hasCode = [](const weft::ExactGeometryClassification& record,
+                      const char* code) {
+        return std::find(record.conditionCodes.begin(),
+                         record.conditionCodes.end(),
+                         code) != record.conditionCodes.end();
+    };
+    auto countCode = [&](const weft::ReconnaissanceReport& report,
+                         const char* code) {
+        int n = 0;
+        for (const weft::ExactGeometryClassification& record : report.records) {
+            if (record.taxonomy != weft::GeometryTaxonomy::Surface) continue;
+            if (hasCode(record, code)) ++n;
         }
-        if (bore) {
-            ++cylindricalBore;
-            CHECK(record.familyCode == "cylinder");
-        }
-        if (perforated || bore) {
-            std::printf("WEFT_CUT_A face family=%s trim=%s cutout=%s\n",
-                        record.familyCode.c_str(),
-                        record.trimDomain
-                            ? weft::trimDomainClassName(*record.trimDomain)
-                            : "-",
-                        perforated ? "planar_perforated" : "cylindrical_bore");
-        }
+        return n;
+    };
+    auto meshRefusal = [](const std::string& fixture) -> std::string {
+        const std::filesystem::path path =
+            weft::test::uniqueTempPath("weft_cut_a_" + fixture, ".step");
+        weft::writeStep(weft::makeFixture(fixture), path.string());
+        const weft::ImportedModel imported = weft::importStepSecure(
+            path.string(), weft::RepairProfile::Conservative);
+        weft::SecureMeshingConfiguration settings;
+        settings.sampling.chordTolerance = 0.25;
+        settings.sampling.normalAngleToleranceRadians = 0.35;
+        settings.sampling.minimumClosedCurveSegments = 16;
+        const weft::SecureMeshingResult meshed =
+            weft::generateSecureMesh(imported, settings);
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+        if (meshed) return "ok";
+        return meshed.failure ? meshed.failure->code : "unknown_refusal";
+    };
+
+    // hole: circular through-bore
+    {
+        const std::filesystem::path holePath =
+            weft::test::uniqueTempPath("weft_secure_core_hole", ".step");
+        weft::writeStep(weft::makeFixture("hole"), holePath.string());
+        const weft::ImportedModel hole = weft::importStepSecure(
+            holePath.string(), weft::RepairProfile::Conservative);
+        const weft::ReconnaissanceReport report = weft::reconnoitre(hole);
+        CHECK(report.complete);
+        const int perforated = countCode(report, "cutout.planar_perforated");
+        const int bore = countCode(report, "cutout.cylindrical_bore");
+        CHECK(perforated >= 1);
+        CHECK(bore >= 1);
+        std::printf(
+            "WEFT_CUT_A fixture=hole planar_perforated=%d cylindrical_bore=%d\n",
+            perforated, bore);
+        weft::SecureMeshingConfiguration settings;
+        settings.sampling.chordTolerance = 0.25;
+        settings.sampling.normalAngleToleranceRadians = 0.35;
+        settings.sampling.minimumClosedCurveSegments = 16;
+        const weft::SecureMeshingResult meshed =
+            weft::generateSecureMesh(hole, settings);
+        CHECK(meshed);
+        std::printf("WEFT_CUT_A fixture=hole mesh_ok tris=%zu\n",
+                    meshed.value->certified.triangles.size());
+        std::error_code ignored;
+        std::filesystem::remove(holePath, ignored);
     }
-    CHECK(planarPerforated >= 1);
-    CHECK(cylindricalBore >= 1);
-    std::printf("WEFT_CUT_A planar_perforated=%d cylindrical_bore=%d\n",
-                planarPerforated, cylindricalBore);
 
-    weft::SecureMeshingConfiguration settings;
-    settings.sampling.chordTolerance = 0.25;
-    settings.sampling.normalAngleToleranceRadians = 0.35;
-    settings.sampling.minimumClosedCurveSegments = 16;
-    const weft::SecureMeshingResult meshed =
-        weft::generateSecureMesh(hole, settings);
-    CHECK(meshed);
-    CHECK(meshed.value && !meshed.value->certified.triangles.empty());
-    std::printf("WEFT_CUT_A mesh_ok tris=%zu\n",
-                meshed.value->certified.triangles.size());
+    // plate_slot: rectangular through-slot (all planes)
+    {
+        const std::filesystem::path path =
+            weft::test::uniqueTempPath("weft_secure_core_plate_slot", ".step");
+        weft::writeStep(weft::makeFixture("plate_slot"), path.string());
+        const weft::ImportedModel imported = weft::importStepSecure(
+            path.string(), weft::RepairProfile::Conservative);
+        const weft::ReconnaissanceReport report = weft::reconnoitre(imported);
+        CHECK(report.complete);
+        const int perforated = countCode(report, "cutout.planar_perforated");
+        const int slotted = countCode(report, "cutout.planar_slotted");
+        CHECK(perforated >= 1);
+        CHECK(slotted >= 1);
+        std::printf(
+            "WEFT_CUT_A fixture=plate_slot planar_perforated=%d "
+            "planar_slotted=%d\n",
+            perforated, slotted);
+        weft::SecureMeshingConfiguration settings;
+        settings.sampling.chordTolerance = 0.25;
+        settings.sampling.normalAngleToleranceRadians = 0.35;
+        settings.sampling.minimumClosedCurveSegments = 8;
+        const weft::SecureMeshingResult meshed =
+            weft::generateSecureMesh(imported, settings);
+        CHECK(meshed);
+        std::printf("WEFT_CUT_A fixture=plate_slot mesh_ok tris=%zu\n",
+                    meshed.value->certified.triangles.size());
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+    }
 
-    std::error_code ignored;
-    std::filesystem::remove(holePath, ignored);
+    // Named unsupported cut graphs
+    for (const char* fixture : {"slotted", "drilled", "filletslot"}) {
+        const std::filesystem::path path =
+            weft::test::uniqueTempPath(std::string("weft_cut_a_") + fixture,
+                                      ".step");
+        weft::writeStep(weft::makeFixture(fixture), path.string());
+        const weft::ImportedModel imported = weft::importStepSecure(
+            path.string(), weft::RepairProfile::Conservative);
+        const weft::ReconnaissanceReport report = weft::reconnoitre(imported);
+        const int multi = countCode(report, "cutout.multi_bore_cylinder_deferred");
+        const int filleted = countCode(report, "cutout.filleted_slot_deferred");
+        CHECK(multi >= 1 || filleted >= 1);
+        const std::string refusal = meshRefusal(fixture);
+        CHECK(refusal != "ok");
+        std::printf(
+            "WEFT_CUT_A fixture=%s multi_bore_deferred=%d "
+            "filleted_slot_deferred=%d refusal=%s\n",
+            fixture, multi, filleted, refusal.c_str());
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+    }
 }
 
 void testMappedFourSidedReconnaissance() {
