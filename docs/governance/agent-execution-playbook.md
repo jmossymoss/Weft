@@ -18,7 +18,7 @@ The product route remains certified-only. OCCT triangle soup, welding, missing
 faces, silent healing, and unproven preview meshes are not export authority.
 The currently certified automatic families are planes (including holes),
 full/partial cylinders, apex cones, spheres, tori, analytic fillet/blend strips,
-four-sided mapped patches, and circular through-hole cutouts.
+four-sided mapped patches, circular through-hole cutouts, and freeform UV-grid patches.
 
 ## Token and documentation discipline
 
@@ -967,7 +967,7 @@ only with indexed evidence.
 
 ### WP-140 — FREE-A reconnaissance
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 expansion
 - Prerequisites: WP-135
 - Goal: taxonomy for general freeform beyond four-sided; name deferred classes.
@@ -976,7 +976,7 @@ only with indexed evidence.
 
 ### WP-141 — FREE-B canonical boundaries
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 expansion
 - Prerequisites: WP-140
 - Goal: bounded freeform edge sampling/critical events; refuse unbounded.
@@ -985,7 +985,7 @@ only with indexed evidence.
 
 ### WP-142 — FREE-C certified floor
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 expansion
 - Prerequisites: WP-141
 - Goal: one narrow certified freeform floor consumer (not a general mesher).
@@ -994,7 +994,7 @@ only with indexed evidence.
 
 ### WP-143 — FREE-D modelling topology
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 expansion
 - Prerequisites: WP-142
 - Goal: modelling provenance for the narrow freeform class.
@@ -1003,7 +1003,7 @@ only with indexed evidence.
 
 ### WP-144 — FREE-E product integration
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 expansion
 - Prerequisites: WP-143
 - Goal: CLI + desktop app for the narrow freeform class.
@@ -1012,7 +1012,7 @@ only with indexed evidence.
 
 ### WP-145 — FREE-F family proof
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 expansion
 - Prerequisites: WP-144
 - Goal: proof matrix; declare narrow freeform class supported.

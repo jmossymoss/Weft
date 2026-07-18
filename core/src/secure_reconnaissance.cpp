@@ -725,6 +725,27 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                     record.conditionCodes.push_back(
                         "mapped.non_four_sided_deferred");
                 }
+                // FREE-A: bspline/bezier faces with a simple/annulus trim may
+                // use the UV-grid floor (including four-sided sheets).
+                if (family.code == "bspline" || family.code == "bezier") {
+                    const bool uvGridTrim =
+                        record.trimDomain &&
+                        (*record.trimDomain == TrimDomainClass::Annulus ||
+                         *record.trimDomain ==
+                             TrimDomainClass::MultiplyPerforatedDisk ||
+                         *record.trimDomain ==
+                             TrimDomainClass::ConvexSimpleRegion ||
+                         *record.trimDomain ==
+                             TrimDomainClass::ConcaveSimpleRegion ||
+                         *record.trimDomain == TrimDomainClass::SimpleDisk);
+                    if (uvGridTrim) {
+                        record.conditionCodes.push_back(
+                            "freeform.uv_grid_candidate");
+                    } else {
+                        record.conditionCodes.push_back(
+                            "freeform.general_deferred");
+                    }
+                }
             }
             // CUT-A: planar faces with hole trim + cylindrical bore walls.
             if (family.code == "plane" && record.trimDomain &&
@@ -792,14 +813,22 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                           record.conditionCodes.end(),
                           "mapped.four_sided_candidate") !=
                 record.conditionCodes.end();
-            // MAP-C: four-sided mapped candidates are first-template ready when
+            const bool freeformUvGrid =
+                std::find(record.conditionCodes.begin(),
+                          record.conditionCodes.end(),
+                          "freeform.uv_grid_candidate") !=
+                record.conditionCodes.end();
+            // MAP-C / FREE-C: UV-grid candidates are first-template ready when
             // representations evaluate, even though FamilyInfo::firstTemplate
             // stays false for general bspline/extrusion.
-            if (mappedFourSided && evaluates && representationReady) {
+            if ((mappedFourSided || freeformUvGrid) && evaluates &&
+                representationReady) {
                 record.confidence = RecognitionConfidence::ProvenAnalytic;
                 record.support =
                     GeometrySupportState::SupportedAnalyticTemplate;
-                record.strategyOrReasonCode = "strategy.mapped_four_sided";
+                record.strategyOrReasonCode =
+                    mappedFourSided ? "strategy.mapped_four_sided"
+                                    : "strategy.freeform_uv_grid";
             } else {
                 decideSupport(record, family, evaluates,
                               evaluates && representationReady, report);

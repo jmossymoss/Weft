@@ -162,11 +162,12 @@ MappedPatchResult buildMappedFourSidedPatch(
         reconnaissance.find(workingFace);
     if (!classification ||
         classification->taxonomy != GeometryTaxonomy::Surface ||
-        !hasCondition(*classification, "mapped.four_sided_candidate") ||
+        !(hasCondition(*classification, "mapped.four_sided_candidate") ||
+          hasCondition(*classification, "freeform.uv_grid_candidate")) ||
         classification->support !=
             GeometrySupportState::SupportedAnalyticTemplate) {
         setFailure(result, Prerequisites, "mapped.face_unsupported",
-                   "only a supported four-sided mapped candidate may use this template",
+                   "only a supported mapped/freeform UV-grid candidate may use this template",
                    {workingFace});
         return result;
     }

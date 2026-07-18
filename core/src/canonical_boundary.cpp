@@ -167,11 +167,13 @@ bool supportedSegmentationFamily(const ExactGeometryClassification& record,
                    GeometrySupportState::SupportedAnalyticTemplate ||
             record.support == GeometrySupportState::DeferredResidualSurface;
     }
-    // MAP-B: four-sided mapped candidates may build boundaries while deferred.
+    // MAP-B / FREE-B: mapped/freeform UV-grid candidates may build boundaries
+    // while deferred.
     if ((record.familyCode == "bspline" || record.familyCode == "bezier" ||
          record.familyCode == "extrusion" ||
          record.familyCode == "revolution") &&
-        hasCondition(record, "mapped.four_sided_candidate")) {
+        (hasCondition(record, "mapped.four_sided_candidate") ||
+         hasCondition(record, "freeform.uv_grid_candidate"))) {
         return record.support ==
                    GeometrySupportState::SupportedAnalyticTemplate ||
             record.support == GeometrySupportState::DeferredResidualSurface;

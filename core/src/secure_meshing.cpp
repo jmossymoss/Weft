@@ -715,7 +715,11 @@ SecureMeshingResult generateSecureMesh(
             std::find(face.conditionCodes.begin(), face.conditionCodes.end(),
                       "mapped.four_sided_candidate") !=
             face.conditionCodes.end();
-        if (mappedFourSided) {
+        const bool freeformUvGrid =
+            std::find(face.conditionCodes.begin(), face.conditionCodes.end(),
+                      "freeform.uv_grid_candidate") !=
+            face.conditionCodes.end();
+        if (mappedFourSided || freeformUvGrid) {
             MappedPatchConfiguration mapped;
             mapped.maximumChordDeviation =
                 configuration.sampling.chordTolerance;
