@@ -648,9 +648,22 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
     const BRepSnapshot& snapshot = imported.working->snapshot;
     report.expectedSubjects = static_cast<std::size_t>(
         snapshot.model.faces.Extent() + snapshot.model.edges.Extent());
+    const int edgeCount = snapshot.model.edges.Extent();
+    const int faceCount = snapshot.model.faces.Extent();
+    const int edgeStride = std::max(1, edgeCount / 20);
+    const int faceStride = std::max(1, faceCount / 20);
+    {
+        const std::string msg = "classify.begin edges=" +
+            std::to_string(edgeCount) + " faces=" + std::to_string(faceCount);
+        reconProgress(msg.c_str());
+    }
 
-    for (int edgeIndex = 1; edgeIndex <= snapshot.model.edges.Extent();
-         ++edgeIndex) {
+    for (int edgeIndex = 1; edgeIndex <= edgeCount; ++edgeIndex) {
+        if (edgeIndex % edgeStride == 0) {
+            const std::string msg = "classify.edge " +
+                std::to_string(edgeIndex) + "/" + std::to_string(edgeCount);
+            reconProgress(msg.c_str());
+        }
         const StableId edgeId{StableIdKind::Edge,
                               static_cast<std::uint64_t>(edgeIndex)};
         const TopoDS_Edge edge = TopoDS::Edge(snapshot.model.edges(edgeIndex));
@@ -690,9 +703,14 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
         }
         report.records.push_back(std::move(record));
     }
+    reconProgress("classify.edges.done");
 
-    for (int faceIndex = 1; faceIndex <= snapshot.model.faces.Extent();
-         ++faceIndex) {
+    for (int faceIndex = 1; faceIndex <= faceCount; ++faceIndex) {
+        if (faceIndex % faceStride == 0) {
+            const std::string msg = "classify.face " +
+                std::to_string(faceIndex) + "/" + std::to_string(faceCount);
+            reconProgress(msg.c_str());
+        }
         const StableId faceId{StableIdKind::Face,
                               static_cast<std::uint64_t>(faceIndex)};
         const TopoDS_Face face = TopoDS::Face(snapshot.model.faces(faceIndex));
@@ -899,6 +917,7 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
         }
         report.records.push_back(std::move(record));
     }
+    reconProgress("classify.faces.done");
 
     EdgeFaceMap edgeToFaces;
     TopExp::MapShapesAndAncestors(snapshot.model.shape, TopAbs_EDGE,

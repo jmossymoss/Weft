@@ -28,6 +28,7 @@
 #include <stdexcept>
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <map>
@@ -53,10 +54,14 @@ void usage() {
         "      list B-rep faces (type, radius, neighbors) and edges\n"
         "      (convexity, dihedral angle)\n"
         "\n"
-        "  weft inventory <in.step> [--repair conservative|compatibility]\n"
-        "      secure import + reconnaissance histogram for large models\n"
-        "      (MP9); aggregates unsupported curve/surface families without\n"
-        "      producing a MeshingResult (ADR-0014 inventory dry-run)\n"
+        "  weft inventory <in.step> [options]\n"
+        "      secure import + reconnaissance gap report for large models\n"
+        "      (MP9). Prints family/support/strategy/trim blocker buckets and\n"
+        "      optionally probes per-face meshing refusals.\n"
+        "    --repair conservative|compatibility\n"
+        "    --gap-tsv FILE    write one row per face/unsupported curve\n"
+        "    --probe-limit N   mesh up to N sample faces per surface family\n"
+        "                      (default 0 = no probes); logs WEFT_PROBE lines\n"
         "\n"
         "  weft extract <in.step> --faces ID[,ID...] --rings N -o <out.step>\n"
         "      write selected source faces plus N adjacency rings as a small\n"
@@ -1110,8 +1115,14 @@ int cmdInventory(const std::vector<std::string>& args) {
     if (args.empty()) {
         throw std::runtime_error("inventory needs an input STEP path");
     }
+    // Unbuffered progress so PowerShell redirects show stages while running.
+    setvbuf(stderr, nullptr, _IONBF, 0);
+    setvbuf(stdout, nullptr, _IONBF, 0);
+
     std::string input = args[0];
     weft::RepairProfile repairProfile = weft::RepairProfile::Conservative;
+    std::string gapTsv;
+    int probeLimit = 0;
     for (size_t i = 1; i < args.size(); ++i) {
         if (args[i] == "--repair") {
             if (i + 1 >= args.size()) {
@@ -1126,6 +1137,19 @@ int cmdInventory(const std::vector<std::string>& args) {
                 throw std::runtime_error(
                     "--repair expects conservative|compatibility");
             }
+        } else if (args[i] == "--gap-tsv") {
+            if (i + 1 >= args.size()) {
+                throw std::runtime_error("--gap-tsv needs a path");
+            }
+            gapTsv = args[++i];
+        } else if (args[i] == "--probe-limit") {
+            if (i + 1 >= args.size()) {
+                throw std::runtime_error("--probe-limit needs an integer");
+            }
+            probeLimit = std::stoi(args[++i]);
+            if (probeLimit < 0) {
+                throw std::runtime_error("--probe-limit must be >= 0");
+            }
         } else {
             throw std::runtime_error("unknown inventory flag: " + args[i]);
         }
@@ -1133,9 +1157,6 @@ int cmdInventory(const std::vector<std::string>& args) {
 
     const auto t0 = std::chrono::steady_clock::now();
     std::fprintf(stderr, "WEFT_PROGRESS inventory.import.begin\n");
-    std::fflush(stderr);
-    // Force fine-grained import sub-stage progress for large-model diagnosis
-    // even if the caller did not set WEFT_IMPORT_PROGRESS.
 #ifdef _WIN32
     _putenv_s("WEFT_IMPORT_PROGRESS", "1");
 #else
@@ -1149,13 +1170,8 @@ int cmdInventory(const std::vector<std::string>& args) {
                      std::chrono::duration_cast<std::chrono::milliseconds>(t1 -
                                                                            t0)
                          .count()));
-    std::fflush(stderr);
 
-    // Inventory needs one reconnaissance only. Deriving histograms and
-    // unsupported buckets straight from the report avoids the interval/mesh
-    // machinery and the previous double-recon.
     std::fprintf(stderr, "WEFT_PROGRESS inventory.reconnaissance.begin\n");
-    std::fflush(stderr);
     const weft::ReconnaissanceReport recon = weft::reconnoitre(imported);
     const auto t2 = std::chrono::steady_clock::now();
     std::fprintf(stderr,
@@ -1164,23 +1180,66 @@ int cmdInventory(const std::vector<std::string>& args) {
                      std::chrono::duration_cast<std::chrono::milliseconds>(t2 -
                                                                            t0)
                          .count()));
-    std::fflush(stderr);
 
     std::map<std::string, std::size_t> faceFamilies;
     std::map<std::string, std::size_t> curveFamilies;
     std::map<std::string, std::size_t> supportStates;
     std::map<std::string, std::size_t> conditionCodes;
-    std::map<std::string, std::size_t> unsupportedFace;
-    std::map<std::string, std::size_t> unsupportedCurve;
+    std::map<std::string, std::size_t> faceBlockers;
+    std::map<std::string, std::size_t> curveBlockers;
+    std::map<std::string, std::vector<std::uint64_t>> probeIdsByFamily;
     std::size_t unsupportedTotal = 0;
+    std::size_t supportedFaces = 0;
+
+    std::ofstream gapStream;
+    if (!gapTsv.empty()) {
+        gapStream.open(gapTsv, std::ios::binary);
+        if (!gapStream) {
+            throw std::runtime_error("failed to open --gap-tsv path: " + gapTsv);
+        }
+        gapStream << "kind\tid\tfamily\tsupport\tstrategy\ttrim\tconditions\n";
+    }
+
+    auto joinConditions = [](const std::vector<std::string>& codes) {
+        std::string joined;
+        for (const std::string& code : codes) {
+            if (!joined.empty()) joined.push_back(';');
+            joined += code;
+        }
+        return joined;
+    };
+
     for (const weft::ExactGeometryClassification& record : recon.records) {
         if (record.taxonomy == weft::GeometryTaxonomy::Surface) {
             ++faceFamilies[record.familyCode];
             ++supportStates[weft::geometrySupportStateName(record.support)];
-            if (record.support !=
+            const std::string trim = record.trimDomain
+                ? weft::trimDomainClassName(*record.trimDomain)
+                : "-";
+            const std::string blocker = record.familyCode + "|" +
+                weft::geometrySupportStateName(record.support) + "|" +
+                (record.strategyOrReasonCode.empty()
+                     ? "-"
+                     : record.strategyOrReasonCode) +
+                "|" + trim;
+            ++faceBlockers[blocker];
+            if (record.support ==
                 weft::GeometrySupportState::SupportedAnalyticTemplate) {
-                ++unsupportedFace[record.familyCode];
+                ++supportedFaces;
+            } else {
                 ++unsupportedTotal;
+            }
+            auto& ids = probeIdsByFamily[record.familyCode];
+            if (static_cast<int>(ids.size()) < std::max(probeLimit, 3)) {
+                ids.push_back(record.subjectId.ordinal);
+            }
+            if (gapStream) {
+                gapStream << "face\t" << record.subjectId.ordinal << '\t'
+                          << record.familyCode << '\t'
+                          << weft::geometrySupportStateName(record.support)
+                          << '\t' << record.strategyOrReasonCode << '\t' << trim
+                          << '\t' << joinConditions(record.conditionCodes)
+                          << '\n';
             }
         } else if (record.taxonomy == weft::GeometryTaxonomy::Curve) {
             ++curveFamilies[record.familyCode];
@@ -1193,8 +1252,18 @@ int cmdInventory(const std::vector<std::string>& args) {
                           record.conditionCodes.end(),
                           "degenerate") != record.conditionCodes.end();
             if (!supportedCurve) {
-                ++unsupportedCurve[record.familyCode];
+                ++curveBlockers[record.familyCode + "|" +
+                                (record.strategyOrReasonCode.empty()
+                                     ? "-"
+                                     : record.strategyOrReasonCode)];
                 ++unsupportedTotal;
+                if (gapStream) {
+                    gapStream << "curve\t" << record.subjectId.ordinal << '\t'
+                              << record.familyCode << '\t'
+                              << weft::geometrySupportStateName(record.support)
+                              << '\t' << record.strategyOrReasonCode << "\t-\t"
+                              << joinConditions(record.conditionCodes) << '\n';
+                }
             }
         }
         for (const std::string& code : record.conditionCodes) {
@@ -1213,8 +1282,11 @@ int cmdInventory(const std::vector<std::string>& args) {
                                                                            t0)
                         .count()),
                 recon.checkedSubjects);
-    std::printf("WEFT_INVENTORY meshable=%d recon_complete=%d\n",
-                imported.meshable() ? 1 : 0, recon.complete ? 1 : 0);
+    std::printf(
+        "WEFT_INVENTORY meshable=%d recon_complete=%d supported_faces=%zu "
+        "unsupported_subjects=%zu\n",
+        imported.meshable() ? 1 : 0, recon.complete ? 1 : 0, supportedFaces,
+        unsupportedTotal);
     for (const auto& [family, count] : faceFamilies) {
         std::printf("WEFT_INVENTORY face_family %s count=%zu\n", family.c_str(),
                     count);
@@ -1231,13 +1303,13 @@ int cmdInventory(const std::vector<std::string>& args) {
         std::printf("WEFT_INVENTORY condition %s count=%zu\n", code.c_str(),
                     count);
     }
-    for (const auto& [family, count] : unsupportedFace) {
-        std::printf("WEFT_INVENTORY unsupported_face_family %s count=%zu\n",
-                    family.c_str(), count);
+    for (const auto& [blocker, count] : faceBlockers) {
+        std::printf("WEFT_INVENTORY face_blocker %s count=%zu\n",
+                    blocker.c_str(), count);
     }
-    for (const auto& [family, count] : unsupportedCurve) {
-        std::printf("WEFT_INVENTORY unsupported_curve_family %s count=%zu\n",
-                    family.c_str(), count);
+    for (const auto& [blocker, count] : curveBlockers) {
+        std::printf("WEFT_INVENTORY curve_blocker %s count=%zu\n",
+                    blocker.c_str(), count);
     }
     std::printf("WEFT_INVENTORY unsupported_total=%zu\n", unsupportedTotal);
     std::printf(
@@ -1245,7 +1317,115 @@ int cmdInventory(const std::vector<std::string>& args) {
         static_cast<long long>(
             std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t0)
                 .count()));
-    std::fflush(stdout);
+
+    // Body-level first refusal (same path the app uses after load).
+    {
+        std::fprintf(stderr, "WEFT_PROGRESS inventory.body_mesh_probe.begin\n");
+        weft::SecureMeshingConfiguration configuration;
+        configuration.progressToStderr = true;
+        configuration.sampling.chordTolerance = 0.1;
+        configuration.sampling.normalAngleToleranceRadians = 20.0 * 3.141592653589793 / 180.0;
+        configuration.sampling.minimumClosedCurveSegments = 16;
+        const weft::SecureMeshingResult body =
+            weft::generateSecureMesh(imported, configuration);
+        if (body) {
+            std::printf("WEFT_PROBE body result=ok tris=%zu fingerprint=%s\n",
+                        body.value->certified.triangles.size(),
+                        body.value->certified.topologyFingerprint.c_str());
+        } else {
+            std::printf(
+                "WEFT_PROBE body result=refuse code=%s message=%s\n",
+                body.failure ? body.failure->code.c_str() : "unknown",
+                body.failure ? body.failure->message.c_str() : "-");
+            if (body.failure) {
+                for (const weft::StableId& id : body.failure->subjects) {
+                    std::printf("WEFT_PROBE body subject kind=%d id=%llu\n",
+                                static_cast<int>(id.kind),
+                                static_cast<unsigned long long>(id.ordinal));
+                }
+            }
+        }
+        std::fprintf(stderr, "WEFT_PROGRESS inventory.body_mesh_probe.done\n");
+    }
+
+    if (probeLimit > 0 && imported.working) {
+        std::fprintf(stderr,
+                     "WEFT_PROGRESS inventory.face_probes.begin limit=%d\n",
+                     probeLimit);
+        weft::SecureMeshingConfiguration probeConfig;
+        probeConfig.sampling.chordTolerance = 0.1;
+        probeConfig.sampling.normalAngleToleranceRadians =
+            20.0 * 3.141592653589793 / 180.0;
+        probeConfig.sampling.minimumClosedCurveSegments = 16;
+        for (const auto& [family, ids] : probeIdsByFamily) {
+            const int n = std::min(probeLimit, static_cast<int>(ids.size()));
+            for (int i = 0; i < n; ++i) {
+                const std::uint64_t faceOrdinal = ids[static_cast<std::size_t>(i)];
+                if (faceOrdinal < 1 ||
+                    faceOrdinal >
+                        static_cast<std::uint64_t>(
+                            imported.working->snapshot.model.faces.Extent())) {
+                    continue;
+                }
+                const TopoDS_Shape faceShape =
+                    imported.working->snapshot.model.faces(
+                        static_cast<int>(faceOrdinal));
+                TopoDS_Compound compound;
+                BRep_Builder builder;
+                builder.MakeCompound(compound);
+                builder.Add(compound, faceShape);
+                const std::filesystem::path probeStep =
+                    std::filesystem::temp_directory_path() /
+                    ("weft_probe_face_" + std::to_string(faceOrdinal) +
+                     ".step");
+                try {
+                    weft::writeStep(compound, probeStep.string());
+                    const weft::ImportedModel probeImported =
+                        weft::importStepSecure(probeStep.string(),
+                                               repairProfile);
+                    const weft::SecureMeshingResult probed =
+                        weft::generateSecureMesh(probeImported, probeConfig);
+                    if (probed) {
+                        std::printf(
+                            "WEFT_PROBE face id=%llu family=%s result=ok "
+                            "tris=%zu\n",
+                            static_cast<unsigned long long>(faceOrdinal),
+                            family.c_str(),
+                            probed.value->certified.triangles.size());
+                    } else {
+                        std::printf(
+                            "WEFT_PROBE face id=%llu family=%s result=refuse "
+                            "code=%s message=%s\n",
+                            static_cast<unsigned long long>(faceOrdinal),
+                            family.c_str(),
+                            probed.failure ? probed.failure->code.c_str()
+                                           : "unknown",
+                            probed.failure ? probed.failure->message.c_str()
+                                           : "-");
+                    }
+                } catch (const std::exception& error) {
+                    std::printf(
+                        "WEFT_PROBE face id=%llu family=%s result=exception "
+                        "message=%s\n",
+                        static_cast<unsigned long long>(faceOrdinal),
+                        family.c_str(), error.what());
+                }
+                std::error_code ignored;
+                std::filesystem::remove(probeStep, ignored);
+            }
+        }
+        std::fprintf(stderr, "WEFT_PROGRESS inventory.face_probes.done\n");
+    }
+
+    if (!gapTsv.empty()) {
+        std::printf("WEFT_INVENTORY gap_tsv=%s\n", gapTsv.c_str());
+    }
+    std::printf(
+        "WEFT_INVENTORY total_ms=%lld\n",
+        static_cast<long long>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - t0)
+                .count()));
     return 0;
 }
 
