@@ -1857,8 +1857,22 @@ ImportedModel buildImportedModel(
                    "the immutable source B-rep is invalid");
     }
     if (!workingValid) {
-        diagnostic("import.working.invalid", DiagnosticSeverity::Error,
-                   "the derived working B-rep is invalid");
+        // Plasticity-scale STEP (MP9) often fails OCCT BRepCheck while remaining
+        // an identity, correspondence-complete transfer. Treat that as a warning
+        // when we later allow meshing; hard-error only when the working copy is
+        // invalid for other non-identity reasons.
+        const bool identityInvalidPair =
+            imported.repair.identity && !sourceValid &&
+            imported.correspondence.complete &&
+            imported.correspondence.topologyComplete;
+        diagnostic("import.working.invalid",
+                   identityInvalidPair ? DiagnosticSeverity::Warning
+                                       : DiagnosticSeverity::Error,
+                   identityInvalidPair
+                       ? "working B-rep fails BRepCheck but is an identity "
+                         "copy of an invalid source; meshing may proceed with "
+                         "per-face refusals"
+                       : "the derived working B-rep is invalid");
     }
     if (!repairAuditComplete) {
         diagnostic("import.repair.validation_incomplete",
@@ -1981,6 +1995,29 @@ ImportedModel buildImportedModel(
                     "working image");
             }
         }
+    }
+    // Identity pair of BRepCheck-invalid source/working: allow meshing entry
+    // when correspondence/topology completed and no hard Error remains (aside
+    // from the working.invalid warning above). Open/non-manifold orientation
+    // refusals and BR-013 SameParameter proof failures keep meshable=false.
+    const bool blockedByHardError = std::any_of(
+        imported.diagnostics.events.begin(), imported.diagnostics.events.end(),
+        [](const ImportDiagnostic& event) {
+            return event.severity == DiagnosticSeverity::Error;
+        });
+    if (!imported.repair.meshable && !blockedByHardError &&
+        imported.repair.identity && !sourceValid && !workingValid &&
+        imported.correspondence.complete &&
+        imported.correspondence.topologyComplete &&
+        sourceTopologyValidation.complete() &&
+        workingTopologyValidation.complete() && meshingViewComplete &&
+        repairAuditComplete) {
+        imported.repair.meshable = true;
+        diagnostic(
+            "import.working.invalid_identity_mesh_allowed",
+            DiagnosticSeverity::Warning,
+            "meshing allowed for identity-invalid source/working pair; "
+            "unsupported or defective faces will refuse individually");
     }
     if (!imported.repair.meshable) {
         diagnostic("import.working.non_meshable", DiagnosticSeverity::Error,

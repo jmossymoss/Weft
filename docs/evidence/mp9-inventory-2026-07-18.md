@@ -81,3 +81,13 @@ BSpline faces often carry `freeform.uv_grid_candidate` / `mapped.four_sided_cand
 ## Probes
 
 Single-face plane extracts mesh (`ok tris=2`). Cylinder/cone/sphere/torus/bspline face extracts refused `import_not_meshable` under the pre-softening gate.
+
+## Follow-up (same day)
+
+App certificate on conservative MP9 shows `source valid: no`, `working valid: no`,
+`identity: yes`, `meshable: no`. Compatibility no longer crashes; it refuses
+with `compatibility_scale_refused` (>2000 faces).
+
+Commit allowing `meshable=true` for identity-invalid pairs (with warning
+`import.working.invalid_identity_mesh_allowed`) so regenerate can enter the
+pipeline; unsupported faces still refuse individually.

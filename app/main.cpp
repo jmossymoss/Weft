@@ -1810,6 +1810,13 @@ static void finishLoadModel(App& app) {
                 (glfwGetTime() - app.loadStartTime) * 1000.0,
                 app.loadError.c_str());
         app.status = "load failed: " + app.loadError;
+        // Profile combo already flipped before reload; restore the profile of
+        // the still-resident document (or conservative) so UI matches certificate.
+        if (app.hasModel) {
+            app.repairProfile = app.secureImported.repair.profile;
+        } else {
+            app.repairProfile = weft::RepairProfile::Conservative;
+        }
         return;
     }
     const std::string path = app.loadPath;

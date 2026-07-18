@@ -1408,7 +1408,12 @@ void testM1CertificateOrNamedRefusalGate() {
         if (imported.repair.meshable) {
             CHECK(imported.repair.correspondenceComplete);
             CHECK(imported.correspondence.topologyComplete);
-            CHECK(imported.repair.workingValid);
+            // Identity-invalid Plasticity-scale transfers may be meshable with
+            // import.working.invalid_identity_mesh_allowed while workingValid
+            // remains false; hard-valid working is still required otherwise.
+            CHECK(imported.repair.workingValid ||
+                  hasDiagnostic(imported,
+                                "import.working.invalid_identity_mesh_allowed"));
             CHECK(std::all_of(
                 imported.repair.validationEvidence.begin(),
                 imported.repair.validationEvidence.end(),
