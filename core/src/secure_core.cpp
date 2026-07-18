@@ -1880,12 +1880,37 @@ ImportedModel buildImportedModel(
                 BRep_Tool::SameRange(edge)) {
                 continue;
             }
+            const StableId edgeId{StableIdKind::Edge,
+                                  static_cast<std::uint64_t>(edgeIndex)};
+            bool hasStoredPcurve = false;
+            for (const CoedgeRecord& coedge :
+                 imported.working->snapshot.coedges) {
+                if (coedge.edgeId == edgeId &&
+                    !coedge.pcurveRepresentations.empty()) {
+                    hasStoredPcurve = true;
+                    break;
+                }
+            }
+            // Edges with no stored p-curve cannot satisfy BR-013's proof. Do
+            // not mark the whole model non-meshable for that — face templates
+            // that need p-curves already refuse via representation readiness.
+            // Plasticity MP9-scale STEP often omits p-curves; blocking mesh on
+            // every such edge left meshable=0 and B-rep-only display.
+            if (!hasStoredPcurve) {
+                imported.diagnostics.events.push_back(
+                    {{StableIdKind::Diagnostic, ++diagnosticOrdinal},
+                     "import.repair.same_parameter_range_unproven_no_pcurve",
+                     DiagnosticSeverity::Warning,
+                     {edgeId},
+                     "edge has no stored p-curve use; SameParameter/SameRange "
+                     "left unset under conservative repair (BR-003)"});
+                continue;
+            }
             imported.diagnostics.events.push_back(
                 {{StableIdKind::Diagnostic, ++diagnosticOrdinal},
                  "import.repair.same_parameter_range_unproven",
                  DiagnosticSeverity::Error,
-                 {{StableIdKind::Edge,
-                   static_cast<std::uint64_t>(edgeIndex)}},
+                 {edgeId},
                  "existing edge parameter/range data did not satisfy the bounded conservative reconciliation proof"});
             imported.repair.meshable = false;
         }

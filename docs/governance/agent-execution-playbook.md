@@ -1106,7 +1106,7 @@ only with indexed evidence.
 
 ### WP-170 — MP9 inventory + progress logging
 
-- Status: `IN_PROGRESS`
+- Status: `DONE`
 - Milestone: M8 production corpus
 - Prerequisites: WP-152
 - Goal: progress logging, `weft inventory`, and exact MP9 unsupported

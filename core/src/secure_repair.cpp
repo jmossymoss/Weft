@@ -1243,12 +1243,54 @@ ConservativeWorkingDerivation deriveConservativeWorking(
                 {edgeId, edgeId, before, after, proof->expectedPcurveUses,
                  proof->checkedPcurveUses, proof->maximumDiscrepancy});
 
-            // An applied raise just made the live shape valid (probe proved it
-            // and the live re-check above passed) — no further edges needed.
-            break;
+            // Keep scanning remaining edges. MP9-scale models often need more
+            // than one envelope raise before SameParameter proofs can pass on
+            // other edges; stopping at the first raise left meshable=0.
+            if (workingShapeIsValid(derivation.shape)) {
+                // Shape is BRepCheck-valid; still continue flag reconciliation
+                // below after this loop.
+            }
         }
         importProgress("working.tolerance_fallback.done");
     }
+
+    // After tolerance updates, retry SameParameter/SameRange proofs on edges
+    // that still lack flags.
+    importProgress("working.param_retry.begin");
+    working = indexShape(derivation.shape);
+    for (int edgeIndex = 1; edgeIndex <= edgeCount; ++edgeIndex) {
+        const TopoDS_Edge sourceEdge =
+            TopoDS::Edge(source.edges(edgeIndex));
+        const TopoDS_Edge workingEdge =
+            TopoDS::Edge(working.edges(edgeIndex));
+        if (BRep_Tool::SameParameter(workingEdge) &&
+            BRep_Tool::SameRange(workingEdge)) {
+            continue;
+        }
+        if (!derivation.exactShapes.maps(sourceEdge, workingEdge)) continue;
+        const std::optional<CurveOnSurfaceProof> proof =
+            proveExistingParameterization(source, sourceEdge);
+        if (!proof) continue;
+        builder.SameRange(workingEdge, true);
+        builder.SameParameter(workingEdge, true);
+        if (BRep_Tool::SameRange(sourceEdge) ||
+            BRep_Tool::SameParameter(sourceEdge) ||
+            !BRep_Tool::SameRange(workingEdge) ||
+            !BRep_Tool::SameParameter(workingEdge)) {
+            throw std::logic_error(
+                "bounded parameterization retry violated source/working isolation");
+        }
+        const StableId edgeId{StableIdKind::Edge,
+                              static_cast<std::uint64_t>(edgeIndex)};
+        derivation.operations.push_back(
+            {"repair.same_parameter_range_flags", {edgeId}, {edgeId},
+             parameterizationProofDetail(*proof)});
+        derivation.parameterizationFlagChanges.push_back(
+            {edgeId, edgeId, false, false, true, true,
+             proof->expectedPcurveUses, proof->checkedPcurveUses,
+             proof->maximumDiscrepancy, proof->sourceTolerance});
+    }
+    importProgress("working.param_retry.done");
 
     // Re-index after tolerance mutations so sewing and orientation repairs
     // see current working faces/edges if the root shape stayed partner-identical.
