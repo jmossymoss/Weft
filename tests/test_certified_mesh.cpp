@@ -124,7 +124,7 @@ void verifyBoxMesh(const weft::CertifiedMeshAssemblyResult& result) {
     CHECK(result);
     CHECK(!result.failure);
     CHECK(result.validation.complete());
-    CHECK(result.validation.checks.size() == 9);
+    CHECK(result.validation.checks.size() == 10);
     if (!result.value) return;
     CHECK(result.value->vertices.size() == 20);
     CHECK(result.value->triangles.size() == 36);
@@ -160,6 +160,16 @@ void verifyBoxMesh(const weft::CertifiedMeshAssemblyResult& result) {
     CHECK(intersections && intersections->checked == intersections->expected);
     CHECK(intersections && intersections->failed == 0);
     CHECK(intersections && intersections->complete());
+    const weft::ValidationCoverage* euler =
+        coverage(result, "certified.incidence_euler");
+    CHECK(euler && euler->complete());
+    const weft::CertifiedIncidenceEulerResult accounted =
+        weft::validateCertifiedIncidenceEuler(*result.value, true);
+    CHECK(accounted);
+    CHECK(accounted.eulerCharacteristic == 2);
+    CHECK(accounted.boundaryEdges == 0);
+    CHECK(accounted.connectedComponents == 1);
+    CHECK(2 * accounted.meshEdges == 3 * accounted.meshTriangles);
 
     const weft::MeshingResult meshing =
         weft::makeCertifiedFloorMeshingResult(
@@ -294,6 +304,43 @@ weft::CertifiedMesh makeSyntheticMesh(
         mesh.triangles.push_back(std::move(triangle));
     }
     return mesh;
+}
+
+void testIncidenceEulerAdversaries() {
+    const weft::CertifiedMesh closed = makeSyntheticMesh(
+        {{0.0, 0.0, 0.0},
+         {1.0, 0.0, 0.0},
+         {0.0, 1.0, 0.0},
+         {0.0, 0.0, 1.0}},
+        {{{0, 1, 2}, {0, 2, 3}, {0, 3, 1}, {1, 3, 2}}});
+    const weft::CertifiedIncidenceEulerResult tetra =
+        weft::validateCertifiedIncidenceEuler(closed, true);
+    CHECK(tetra);
+    CHECK(tetra.eulerCharacteristic == 2);
+    CHECK(tetra.boundaryEdges == 0);
+
+    const weft::CertifiedMesh openDisk = makeSyntheticMesh(
+        {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}},
+        {{{0, 1, 2}}});
+    const weft::CertifiedIncidenceEulerResult open =
+        weft::validateCertifiedIncidenceEuler(openDisk, false);
+    CHECK(open);
+    CHECK(open.sourceTreatedAsOpen);
+    CHECK(open.boundaryEdges == 3);
+    CHECK(open.eulerCharacteristic == 1);
+
+    const weft::CertifiedIncidenceEulerResult closedOpenRefuse =
+        weft::validateCertifiedIncidenceEuler(openDisk, true);
+    CHECK(!closedOpenRefuse);
+    CHECK(closedOpenRefuse.failure &&
+          closedOpenRefuse.failure->code ==
+              "certified.incidence_boundary_unexpected");
+
+    const weft::CertifiedMesh empty;
+    const weft::CertifiedIncidenceEulerResult vacuous =
+        weft::validateCertifiedIncidenceEuler(empty, true);
+    CHECK(vacuous);
+    CHECK(vacuous.coverage.expected == 0);
 }
 
 void testTriangleIntersectionAdversaries() {
@@ -469,6 +516,7 @@ int main() {
             testPerforatedPlanarFaceProduct();
         }
         testTriangleIntersectionAdversaries();
+        testIncidenceEulerAdversaries();
     } catch (const std::exception& error) {
         std::printf("FAIL certified-mesh exception: %s\n", error.what());
         ++failures;

@@ -29,6 +29,7 @@ enum CheckIndex : std::size_t {
     EdgeIncidence,
     EdgeWinding,
     TriangleIntersection,
+    IncidenceEuler,
     Fingerprint,
 };
 
@@ -316,6 +317,7 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
         {"certified.edge_incidence", 0},
         {"certified.edge_winding", 0},
         {"certified.triangle_intersection", 0},
+        {"certified.incidence_euler", 0},
         {"certified.fingerprint", 1},
     };
     if (!imported.meshable() || !imported.working ||
@@ -813,6 +815,22 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
         return result;
     }
 
+    const CertifiedIncidenceEulerResult incidenceEuler =
+        validateCertifiedIncidenceEuler(mesh,
+                                        configuration.requireClosedManifold);
+    result.validation.checks[IncidenceEuler] = incidenceEuler.coverage;
+    if (incidenceEuler.failure) {
+        setFailure(result, incidenceEuler.failure->code,
+                   incidenceEuler.failure->message,
+                   incidenceEuler.failure->subjects);
+        return result;
+    }
+    if (!incidenceEuler.coverage.complete()) {
+        setFailure(result, "certified.incidence_euler_incomplete",
+                   "incidence/Euler coverage is incomplete", {});
+        return result;
+    }
+
     mesh.topologyFingerprint = fingerprintOf(mesh);
     ValidationCoverage& fingerprint = result.validation.checks[Fingerprint];
     ++fingerprint.checked;
@@ -840,6 +858,167 @@ CertifiedMeshAssemblyResult assembleCertifiedPlanarMesh(
     return assembleCertifiedBoundaryMesh(
         imported, boundaries, faceMeshes, expectedWorkingFaces,
         configuration);
+}
+
+CertifiedIncidenceEulerResult validateCertifiedIncidenceEuler(
+    const CertifiedMesh& mesh, bool requireClosedManifold) {
+    CertifiedIncidenceEulerResult result;
+    result.meshVertices = mesh.vertices.size();
+    result.meshTriangles = mesh.triangles.size();
+    if (result.meshTriangles == 0) {
+        result.coverage.expected = 0;
+        result.coverage.checked = 0;
+        result.sourceTreatedAsOpen = !requireClosedManifold;
+        return result;
+    }
+
+    std::map<Edge, std::size_t> edgeIncidence;
+    for (const CertifiedTriangle& triangle : mesh.triangles) {
+        for (std::size_t local = 0; local < 3; ++local) {
+            const std::uint32_t first = triangle.vertices[local];
+            const std::uint32_t second = triangle.vertices[(local + 1) % 3];
+            if (first >= mesh.vertices.size() ||
+                second >= mesh.vertices.size()) {
+                result.failure = CertifiedMeshAssemblyFailure{
+                    "certified.incidence_vertex_invalid",
+                    "incidence accounting saw an out-of-range triangle vertex",
+                    {triangle.workingFace}};
+                ++result.coverage.failed;
+                result.coverage.expected = 1;
+                result.coverage.checked = 1;
+                return result;
+            }
+            ++edgeIncidence[edge(first, second)];
+        }
+    }
+    result.meshEdges = edgeIncidence.size();
+    for (const auto& [key, uses] : edgeIncidence) {
+        (void)key;
+        if (uses == 1) ++result.boundaryEdges;
+    }
+    result.eulerCharacteristic = static_cast<int>(result.meshVertices) -
+        static_cast<int>(result.meshEdges) +
+        static_cast<int>(result.meshTriangles);
+
+    // Connected components over triangle adjacency (shared edges).
+    std::vector<std::vector<std::size_t>> adjacency(mesh.triangles.size());
+    std::map<Edge, std::vector<std::size_t>> edgeOwners;
+    for (std::size_t triangleIndex = 0; triangleIndex < mesh.triangles.size();
+         ++triangleIndex) {
+        const CertifiedTriangle& triangle = mesh.triangles[triangleIndex];
+        for (std::size_t local = 0; local < 3; ++local) {
+            edgeOwners[edge(triangle.vertices[local],
+                            triangle.vertices[(local + 1) % 3])]
+                .push_back(triangleIndex);
+        }
+    }
+    for (const auto& [key, owners] : edgeOwners) {
+        (void)key;
+        for (std::size_t i = 0; i < owners.size(); ++i) {
+            for (std::size_t j = i + 1; j < owners.size(); ++j) {
+                adjacency[owners[i]].push_back(owners[j]);
+                adjacency[owners[j]].push_back(owners[i]);
+            }
+        }
+    }
+    std::vector<bool> seen(mesh.triangles.size(), false);
+    for (std::size_t seed = 0; seed < mesh.triangles.size(); ++seed) {
+        if (seen[seed]) continue;
+        ++result.connectedComponents;
+        std::vector<std::size_t> stack{seed};
+        seen[seed] = true;
+        while (!stack.empty()) {
+            const std::size_t current = stack.back();
+            stack.pop_back();
+            for (std::size_t neighbor : adjacency[current]) {
+                if (seen[neighbor]) continue;
+                seen[neighbor] = true;
+                stack.push_back(neighbor);
+            }
+        }
+    }
+
+    result.sourceTreatedAsOpen =
+        !requireClosedManifold || result.boundaryEdges != 0;
+    if (requireClosedManifold) {
+        // Closed triangle meshes satisfy 2E = 3F. Genus is not assumed: a
+        // through-hole solid has χ=0, a sphere-topology solid has χ=2.
+        result.expectedEulerCharacteristic = result.eulerCharacteristic;
+        result.coverage.expected = 4;
+        result.coverage.checked = 0;
+        ++result.coverage.checked;
+        if (result.boundaryEdges != 0) {
+            ++result.coverage.failed;
+            result.failure = CertifiedMeshAssemblyFailure{
+                "certified.incidence_boundary_unexpected",
+                "a closed certified body has boundary edges",
+                {}};
+            return result;
+        }
+        ++result.coverage.checked;
+        bool incidenceOk = true;
+        for (const auto& [key, uses] : edgeIncidence) {
+            (void)key;
+            if (uses != 2) {
+                incidenceOk = false;
+                break;
+            }
+        }
+        if (!incidenceOk) {
+            ++result.coverage.failed;
+            result.failure = CertifiedMeshAssemblyFailure{
+                "certified.incidence_nonmanifold",
+                "certified incidence accounting found a non-manifold edge",
+                {}};
+            return result;
+        }
+        ++result.coverage.checked;
+        if (2 * result.meshEdges != 3 * result.meshTriangles) {
+            ++result.coverage.failed;
+            result.failure = CertifiedMeshAssemblyFailure{
+                "certified.incidence_triangle_identity",
+                "closed certified mesh does not satisfy 2E = 3F",
+                {}};
+            return result;
+        }
+        ++result.coverage.checked;
+        // Recorded Euler must be consistent with V-E+F and an integer genus
+        // for each component: χ = 2C - 2g with g >= 0 ⇒ χ <= 2C and even delta.
+        const int maxEuler =
+            static_cast<int>(2 * result.connectedComponents);
+        const int genusDelta = maxEuler - result.eulerCharacteristic;
+        if (result.eulerCharacteristic > maxEuler || genusDelta < 0 ||
+            (genusDelta % 2) != 0) {
+            ++result.coverage.failed;
+            result.failure = CertifiedMeshAssemblyFailure{
+                "certified.euler_unexpected",
+                "certified mesh Euler characteristic is not a valid closed orientable surface total",
+                {}};
+            return result;
+        }
+        return result;
+    }
+
+    // Open / source-defect class: account completeness without forcing χ=2.
+    result.expectedEulerCharacteristic = result.eulerCharacteristic;
+    result.coverage.expected = 2;
+    result.coverage.checked = 0;
+    ++result.coverage.checked;
+    if (result.meshVertices == 0 || result.meshEdges == 0) {
+        ++result.coverage.failed;
+        result.failure = CertifiedMeshAssemblyFailure{
+            "certified.incidence_vacuous",
+            "open-body incidence accounting cannot pass vacuously",
+            {}};
+        return result;
+    }
+    ++result.coverage.checked;
+    if (result.boundaryEdges == 0 && requireClosedManifold == false &&
+        result.meshTriangles > 0) {
+        // Open assembly of a still-closed mesh is allowed; record skip-free
+        // success with explicit open policy.
+    }
+    return result;
 }
 
 CertifiedTriangleIntersectionResult validateCertifiedTriangleIntersections(

@@ -145,4 +145,29 @@ CertifiedTriangleIntersectionResult validateCertifiedTriangleIntersections(
     std::shared_ptr<const GeometricPredicates> predicates =
         makeExactDyadicPredicates());
 
+// Compares certified-mesh incidence with the closed/open expectation implied by
+// assembly configuration and reports Euler characteristic coverage. Source-open
+// bodies may skip the closed χ=2 expectation without treating that as a meshing
+// defect.
+struct CertifiedIncidenceEulerResult {
+    ValidationCoverage coverage{"certified.incidence_euler"};
+    std::size_t meshVertices = 0;
+    std::size_t meshEdges = 0;
+    std::size_t meshTriangles = 0;
+    std::size_t boundaryEdges = 0;
+    std::size_t connectedComponents = 0;
+    int eulerCharacteristic = 0;
+    int expectedEulerCharacteristic = 0;
+    bool sourceTreatedAsOpen = false;
+    std::optional<CertifiedMeshAssemblyFailure> failure;
+
+    explicit operator bool() const noexcept {
+        return !failure.has_value() && coverage.complete();
+    }
+};
+
+CertifiedIncidenceEulerResult validateCertifiedIncidenceEuler(
+    const CertifiedMesh& mesh,
+    bool requireClosedManifold = true);
+
 }  // namespace weft

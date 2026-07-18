@@ -362,7 +362,7 @@ only with indexed evidence.
 
 ### WP-023 — Prove mismatched cylinder reference frames
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M6
 - Prerequisites: WP-022
 - Goal: register compatible cylinders whose source faces use different but
@@ -376,7 +376,7 @@ only with indexed evidence.
   3. Apply it to canonical samples without changing source identity.
   4. Reject reflection/twist/incompatibility by distinct named codes.
 - Tests: `secure_core|canonical_boundary|cylinder_template|secure_meshing`.
-- Evidence: `docs/evidence/m6-cylinder-frame-registration-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m6-cylinder-frame-registration-2026-07-18.md`.
 - Exit gate: compatible fixtures share registered columns; all incompatible
   fixtures fail before wall assembly.
 

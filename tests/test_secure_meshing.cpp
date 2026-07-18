@@ -190,11 +190,11 @@ struct M3GoldenDigest {
 // boundary / lift digests are unchanged from the WP-015 cross-platform set.
 constexpr M3GoldenDigest kM3GoldenDigests[] = {
     {"box", "4d4b56a97e4194a1", "bfc6fa72b8fb0801", "2d5083505e7bff41",
-     "856d8e9f6761d99f"},
+     "deb4ad546b988d48"},
     {"cylinder", "df476af694433848", "8928e6e02ad2fa92", "612aaa31fa6d5784",
-     "b8fde7d001f42e0b"},
+     "a6832c30cf9acd06"},
     {"hole", "559a67e76d02c618", "303cc08b7ef4e792", "c362170936b054d8",
-     "5b0c8b926ff13816"},
+     "d19345646a920e4f"},
 };
 
 void checkDeterminismDigest(const M3GoldenDigest& golden,
