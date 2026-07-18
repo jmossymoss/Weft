@@ -534,6 +534,117 @@ only with indexed evidence.
 - Evidence: `docs/evidence/m4-m8-certified-coverage-baseline-2026-07-18.md`.
 - Exit gate: corpus totals reconcile exactly and no failure is unclassified.
 
+### WP-070 — CONE-A reconnaissance
+
+- Status: `OPEN`
+- Milestone: M8
+- Prerequisites: WP-050
+- Goal: exact family/domain/trim classification for cone subjects and stable
+  named unsupported residual cases.
+- Primary files: `secure_reconnaissance`, cone fixtures, classification tests.
+- Steps:
+  1. Characterize the OCCT topology of `makeFixture("cone")` (faces, edges,
+     apex degeneracy, seam).
+  2. Prove every cone fixture face/edge is classified exactly once with stable
+     family/domain/trim records.
+  3. Keep meshing support deferred until CONE-C; document named deferral codes.
+  4. Keep non-cone residuals (sphere/torus/freeform) refusing by name.
+- Tests: reconnaissance / secure_core / secure_meshing classification coverage.
+- Evidence: `docs/evidence/m8-cone-a-reconnaissance-2026-07-18.md`.
+- Exit gate: every cone fixture subject is accounted exactly once; non-cone
+  residuals still refuse by stable name.
+
+### WP-071 — CONE-B canonical boundaries
+
+- Status: `OPEN`
+- Milestone: M8
+- Prerequisites: WP-070
+- Goal: critical segmentation, periodic/singular (apex) lifting, and count
+  constraints for cone edges/faces.
+- Primary files: `canonical_boundary`, interval integration, tests.
+- Steps:
+  1. Extend critical-parameter segmentation to cone-compatible curve/surface
+     pairs (circle on cone, generator on cone, apex singularity).
+  2. Define singular lift policy at the apex; refuse ambiguous lifts by name.
+  3. Integrate cone edges into analytic interval demands without welding.
+  4. Add adversaries for missing apex events, twisted seams, and unsupported
+     curve/face pairs.
+- Tests: `canonical_boundary|interval_solver|secure_meshing`.
+- Evidence: `docs/evidence/m8-cone-b-boundaries-2026-07-18.md`.
+- Exit gate: supported cone boundaries have bijective samples and UV uses;
+  apex/seam adversaries refuse by name before generation.
+
+### WP-072 — CONE-C certified floor
+
+- Status: `OPEN`
+- Milestone: M8
+- Prerequisites: WP-071
+- Goal: boundary-exact cone tessellation with chord/normal bounds, provenance,
+  and body intersection/incidence certificates.
+- Primary files: new `cone_template`, `secure_meshing`, `secure_reconnaissance`
+  support bit, certified-mesh assembly, tests.
+- Steps:
+  1. Implement a cone wall template sibling to the cylinder contract.
+  2. Promote cone to `SupportedAnalyticTemplate` only with a live consumer.
+  3. Route `familyCode == "cone"` through `generateSecureMesh`.
+  4. Certify isolated/capped cone fixtures with no weld; refuse malformed
+     bands by name.
+- Tests: `cone_template|certified_mesh|secure_meshing|canonical_boundary`.
+- Evidence: `docs/evidence/m8-cone-c-certified-floor-2026-07-18.md`.
+- Exit gate: the capped apex-cone fixture certifies end to end with complete
+  floor certificates.
+
+### WP-073 — CONE-D modelling topology
+
+- Status: `OPEN`
+- Milestone: M8
+- Prerequisites: WP-072
+- Goal: deterministic quads/n-gons above the cone floor with truthful
+  provenance (Independent or explicit floor alias).
+- Primary files: modelling mesh builder, provenance validation, tests.
+- Steps:
+  1. Pair cone wall strips into modelling quads when topology allows.
+  2. Keep truthful `CertifiedFloorAlias` when pairing cannot be proved.
+  3. Refuse tampered independent claims by name.
+- Tests: `certified_mesh|secure_meshing|cone_template`.
+- Evidence: `docs/evidence/m8-cone-d-modelling-2026-07-18.md`.
+- Exit gate: cone results carry a non-vacuous modelling provenance certificate.
+
+### WP-074 — CONE-E product integration
+
+- Status: `OPEN`
+- Milestone: M8
+- Prerequisites: WP-073
+- Goal: recipe/app/export/live-link/cache admit certified cone results only
+  through existing admission gates.
+- Primary files: CLI/app admission paths, export adapter, cache keys, tests.
+- Steps:
+  1. CLI `mesh` / convert for cone through `admitCertifiedMeshingResult`.
+  2. App headless screenshot for cone; confirm sphere still refuses.
+  3. Confirm secure cache invalidation still covers family/settings changes.
+- Tests: CLI/app smoke plus `secure_meshing|secure_recipe`.
+- Evidence: `docs/evidence/m8-cone-e-product-2026-07-18.md`.
+- Exit gate: product routes export certified cone meshes and still refuse
+  unsupported families by name.
+
+### WP-075 — CONE-F family proof
+
+- Status: `OPEN`
+- Milestone: M8
+- Prerequisites: WP-074
+- Goal: isolated, connected, adversarial, density-sweep, corpus impact, Linux
+  determinism, and indexed evidence; declare cone supported.
+- Primary files: cone/secure/corpus tests and evidence index.
+- Steps:
+  1. Run the full cone proof matrix and update corpus totals.
+  2. Lock Linux digests/fingerprints for cone.
+  3. Record family-complete evidence; leave M8 `IN_PROGRESS` for later
+     families.
+- Tests: full cone/secure/corpus regex on both Linux lanes.
+- Evidence: `docs/evidence/m8-cone-f-proof-2026-07-18.md`.
+- Exit gate: cone is recorded as a supported automatic family; sphere/torus
+  remain deferred.
+
 ## M8 family packet
 
 After M7 passes, repeat this packet for one family at a time. Choose the next
@@ -551,9 +662,9 @@ roadmap document.
 6. `FAMILY-F` proof: isolated, connected, adversarial, density-sweep, corpus,
    Windows/Linux determinism, and evidence.
 
-Initial priority after the coverage baseline: cone, sphere, torus, analytic
-fillet/blend connectors, then mapped/freeform regions. A family is not
-“supported” until all six steps pass.
+Initial priority after the coverage baseline: cone (WP-070…WP-075), sphere,
+torus, analytic fillet/blend connectors, then mapped/freeform regions. A
+family is not “supported” until all six steps pass.
 
 ## M9 release packet
 
