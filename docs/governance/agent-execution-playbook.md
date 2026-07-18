@@ -612,7 +612,7 @@ only with indexed evidence.
 
 ### WP-074 — CONE-E product integration
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-073
 - Goal: recipe/app/export/live-link/cache admit certified cone results only
