@@ -163,11 +163,6 @@ void testFullCylinderDeterminism() {
 
 void testConnectedThroughHole() {
     const weft::SecureMeshingResult result = generateFixture("hole");
-    if (result.failure) {
-        std::printf("through-hole refusal: %s: %s\n",
-                    result.failure->code.c_str(),
-                    result.failure->message.c_str());
-    }
     checkSuccessfulResult(result);
     CHECK(result.value && result.value->certified.vertices.size() > 100);
     CHECK(result.value && result.value->certified.triangles.size() > 200);

@@ -152,7 +152,7 @@ only with indexed evidence.
 
 ### WP-001 — Close the Linux GCC analysis gate
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M0
 - Prerequisites: none
 - Goal: produce a complete, reproducible Linux GCC strict and static-analysis

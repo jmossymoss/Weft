@@ -11,6 +11,9 @@ prove completed work; they are not plans or handoff diaries.
 - `m0-parallel-test-isolation-2026-07-17.md` - process-isolated temporary artifacts and concurrent strict/static test evidence.
 - `m0-windows-clean-legacy-removal-2026-07-17.md` - clean MSVC build/analyzer,
   retired source deletion, single-owner build graph, and secure CLI proof.
+- `m0-linux-gcc-analysis-2026-07-18.md` - Linux GCC strict and `-fanalyzer`
+  lanes, scoped analyzer exclusions, and OCCT 7.9 named-refusal corpus
+  reconciliation.
 - `m1-secure-import-2026-07-17.md` - processing-disabled source/working import contract evidence.
 - `m1-exact-occurrence-account-2026-07-17.md` - exact XDE
   definition/instance ownership, recursive B-rep occurrences, coedge uses,

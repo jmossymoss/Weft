@@ -109,7 +109,6 @@ int main() {
         const std::filesystem::path path = root / corpusCase.relativePath;
         CHECK(std::filesystem::is_regular_file(path));
         if (!std::filesystem::is_regular_file(path)) continue;
-        std::printf("secure corpus: %s\n", corpusCase.relativePath);
         if (corpusCase.shouldImport) {
             verifySuccess(path);
         } else {
