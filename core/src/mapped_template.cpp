@@ -252,6 +252,9 @@ MappedPatchResult buildMappedFourSidedPatch(
         }
     }
 
+    const double cell = (u1 - u0) / nu;
+    const double cellV = (v1 - v0) / nv;
+    const double matchBound = cell * cell + cellV * cellV;
     std::set<const CoedgeUvUse*> consumed;
     for (const FaceSampleUse& candidate : allFaceUses) {
         std::uint32_t bestIndex = 0;
@@ -262,19 +265,28 @@ MappedPatchResult buildMappedFourSidedPatch(
                 const bool onBoundary =
                     i == 0 || j == 0 || i + 1 == nuVerts || j + 1 == nvVerts;
                 if (!onBoundary) continue;
-                const PredicatePoint2& uv = mesh.vertices[indexOf(i, j)].uv;
+                const std::uint32_t idx = indexOf(i, j);
+                const PlanarTrimVertex& station = mesh.vertices[idx];
+                // Keep matching injective for distinct sample IDs: do not park
+                // a new sample on a station already owned by a different
+                // canonical vertex (split freeform rails).
+                if (station.canonicalVertexIndex !=
+                        InvalidCanonicalVertexIndex &&
+                    station.canonicalVertexIndex !=
+                        candidate.sample->canonicalVertexIndex) {
+                    continue;
+                }
+                const PredicatePoint2& uv = station.uv;
                 const double du = candidate.use->liftedUv[0] - uv[0];
                 const double dv = candidate.use->liftedUv[1] - uv[1];
                 const double score = du * du + dv * dv;
                 if (score < best) {
                     best = score;
-                    bestIndex = indexOf(i, j);
+                    bestIndex = idx;
                 }
             }
         }
-        const double cell = (u1 - u0) / nu;
-        const double cellV = (v1 - v0) / nv;
-        if (!(best <= cell * cell + cellV * cellV)) {
+        if (!(best <= matchBound)) {
             setFailure(result, BoundaryCoverage, "mapped.seam_sample_unmatched",
                        "a mapped boundary sample does not land on the UV grid border",
                        {workingFace, candidate.sample->workingEdge});
@@ -289,7 +301,7 @@ MappedPatchResult buildMappedFourSidedPatch(
             // provenance — shared rail vertices appear on multiple faces.
             vertex.cylinderInterior = std::nullopt;
         }
-        // Adjacent rails can land on one corner with distinct sample IDs.
+        // Adjacent rails can land on one corner with the same sample ID.
         // Keep the first canonical owner; still record every UV use so
         // interval consumption can account for all seam samples.
         vertex.boundaryUses.push_back(boundaryUse(candidate));

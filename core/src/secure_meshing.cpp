@@ -312,7 +312,7 @@ std::optional<SecureMeshingFailure> certifySolvedIntervalConsumption(
                 static_cast<int>(boundary->edge.ordinal));
             if (reported == mesh->generation.edgeDivisions.end() ||
                 reported->second != static_cast<int>(interval.count)) {
-                return SecureMeshingFailure{
+return SecureMeshingFailure{
                     "secure_pipeline.interval_consumption_mismatch",
                     "generation report count does not match the solved interval",
                     {interval.boundaryId, boundary->edge}};
@@ -326,7 +326,7 @@ std::optional<SecureMeshingFailure> certifySolvedIntervalConsumption(
                 }
             }
             if (consumedSamples.size() != boundary->samples.size()) {
-                return SecureMeshingFailure{
+return SecureMeshingFailure{
                     "secure_pipeline.interval_consumption_mismatch",
                     "certified mesh sample provenance does not consume every boundary sample",
                     {interval.boundaryId, boundary->edge}};

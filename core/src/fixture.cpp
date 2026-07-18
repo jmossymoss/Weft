@@ -3,7 +3,6 @@
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
-#include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepFilletAPI_MakeChamfer.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
@@ -242,9 +241,10 @@ TopoDS_Shape makeFixture(const std::string& name) {
         return BRepAlgoAPI_Fuse(base, boss).Shape();
     }
     if (name == "mapped_patch" || name == "freeform_patch") {
-        // Warped bspline face (open shell). mapped_patch uses the natural
-        // four-sided UV boundary; freeform_patch trims with a hexagonal
-        // outer wire so edge count != 4 (FREE-C UV-grid candidate).
+        // Open bspline sheets. freeform_patch uses a distinct warp so it is
+        // not an alias of mapped_patch. True n-sided freeform UV-grid remains
+        // deferred (STEP split-rail corner identity / injective border slots).
+        const double amplitude = (name == "freeform_patch") ? 1.25 : 0.5;
         NCollection_Array2<gp_Pnt> net(1, 4, 1, 4);
         for (int i = 0; i < 4; ++i) {
             for (int j = 0; j < 4; ++j) {
@@ -252,15 +252,12 @@ TopoDS_Shape makeFixture(const std::string& name) {
                 const double v = double(j) / 3.0;
                 net.SetValue(i + 1, j + 1,
                              gp_Pnt(30.0 * u, 20.0 * v,
-                                    0.5 * std::sin(M_PI * u) *
+                                    amplitude * std::sin(M_PI * u) *
                                         std::sin(M_PI * v)));
             }
         }
         Handle(Geom_BSplineSurface) surf =
             GeomAPI_PointsToBSplineSurface(net).Surface();
-        // Both mapped_patch and freeform_patch share this single-face open
-        // bspline sheet. FREE tagging is by family/trim codes, not edge count
-        // alone; the dedicated name keeps product/CLI smoke distinct.
         return BRepBuilderAPI_MakeFace(surf, 1e-6).Face();
     }
     if (name == "ribbon" || name == "ribbonnotch") {

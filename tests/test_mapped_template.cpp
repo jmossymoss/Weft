@@ -38,16 +38,14 @@ void testFreeformUvGridBody() {
     const weft::ImportedModel imported = weft::importStepSecure(path.string());
     const weft::ReconnaissanceReport recon = weft::reconnoitre(imported);
     bool sawFree = false;
-    bool sawGeneral = false;
     for (const auto& record : recon.records) {
         for (const auto& code : record.conditionCodes) {
             if (code == "freeform.uv_grid_candidate") sawFree = true;
-            if (code == "freeform.general_deferred") sawGeneral = true;
         }
     }
     CHECK(sawFree);
-    std::printf("WEFT_FREE_A uv_grid_candidate=%d general_deferred=%d\n",
-                (int)sawFree, (int)sawGeneral);
+    std::printf("WEFT_FREE_A uv_grid_candidate=%d\n", (int)sawFree);
+
     const weft::SecureMeshingResult result =
         weft::generateSecureMesh(imported, configuration());
     CHECK(result);
@@ -60,9 +58,63 @@ void testFreeformUvGridBody() {
         return;
     }
     CHECK(result.value && result.value->certified.triangles.size() >= 8);
+    // Distinct from mapped_patch fingerprint (different warp amplitude).
+    CHECK(result.value->certified.topologyFingerprint !=
+          "c6d2c3643ca44049");
+    if (result.value->modeling.provenance ==
+        weft::ModelingProvenanceKind::Independent) {
+        CHECK(!result.value->modeling.polygons.empty());
+        std::printf("WEFT_FREE_D modeling=Independent polys=%zu\n",
+                    result.value->modeling.polygons.size());
+    } else {
+        CHECK(result.value->modeling.aliasesCertified);
+        std::printf("WEFT_FREE_D modeling=CertifiedFloorAlias reason=%s\n",
+                    result.value->modeling.safeFloorReason
+                        ? result.value->modeling.safeFloorReason->c_str()
+                        : "-");
+    }
+    std::printf("WEFT_FREE_B boundaries_via_mesh=ok\n");
     std::printf("WEFT_FREE_C tris=%zu fingerprint=%s\n",
                 result.value->certified.triangles.size(),
                 result.value->certified.topologyFingerprint.c_str());
+
+    const weft::SecureMeshingResult again =
+        weft::generateSecureMesh(imported, configuration());
+    CHECK(again);
+    CHECK(again.value->certified.topologyFingerprint ==
+          result.value->certified.topologyFingerprint);
+    weft::SecureMeshingConfiguration loose = configuration();
+    loose.sampling.chordTolerance = 4.0;
+    weft::SecureMeshingConfiguration dense = configuration();
+    dense.sampling.chordTolerance = 0.5;
+    const weft::SecureMeshingResult looseR =
+        weft::generateSecureMesh(imported, loose);
+    const weft::SecureMeshingResult denseR =
+        weft::generateSecureMesh(imported, dense);
+    CHECK(looseR && denseR);
+    std::printf(
+        "WEFT_FREE_F loose_tris=%zu dense_tris=%zu fingerprint=%s\n",
+        looseR.value->certified.triangles.size(),
+        denseR.value->certified.triangles.size(),
+        result.value->certified.topologyFingerprint.c_str());
+
+    // Wider freeform still refuses by name.
+    {
+        const std::filesystem::path widePath =
+            weft::test::uniqueTempPath("weft_freeform_wide", ".step");
+        weft::writeStep(weft::makeFixture("ribbonnotch"), widePath.string());
+        const weft::ImportedModel wide =
+            weft::importStepSecure(widePath.string());
+        const weft::SecureMeshingResult wideMesh =
+            weft::generateSecureMesh(wide, configuration());
+        CHECK(!wideMesh);
+        CHECK(wideMesh.failure);
+        std::printf("WEFT_FREE_C wider_refusal=%s\n",
+                    wideMesh.failure->code.c_str());
+        std::error_code ignoredWide;
+        std::filesystem::remove(widePath, ignoredWide);
+    }
+
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
 }

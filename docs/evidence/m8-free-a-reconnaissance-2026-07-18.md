@@ -1,13 +1,10 @@
-# M8 FREE-A evidence - 2026-07-18
+# M8 FREE-A evidence - 2026-07-18 (reopened)
 
-## Proven increment
+Tagged `freeform.uv_grid_candidate` on four-sided simple-trim bspline sheets.
+Tagged `freeform.general_deferred` for non-four-sided bspline/bezier.
 
-Tagged freeform.uv_grid_candidate on bspline/bezier simple/annulus trims; freeform_patch WEFT_FREE_A uv_grid_candidate=1.
+```
+WEFT_FREE_A uv_grid_candidate=1
+```
 
-## Outcomes
-
-Passed on Linux gcc/static-analysis.
-
-## Status boundary
-
-Closed.
+N-sided UV-grid floor remains deferred (STEP split-rail corner identity).

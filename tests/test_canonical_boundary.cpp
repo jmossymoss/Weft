@@ -623,6 +623,24 @@ void testCutoutPlateSlotBoundaries(const std::filesystem::path& path) {
         slotted);
 }
 
+
+void testFreeformUvGridBoundaries(const std::filesystem::path& path) {
+    weft::writeStep(weft::makeFixture("freeform_patch"), path.string());
+    const weft::ImportedModel imported = weft::importStepSecure(path.string());
+    const weft::ReconnaissanceReport reconnaissance =
+        weft::reconnoitre(imported);
+    const weft::CanonicalBoundaryBuildResult built =
+        weft::buildCanonicalBoundaries(imported, reconnaissance,
+                                       intervalsFor(imported));
+    CHECK(built);
+    if (!built) return;
+    CHECK(built.value->validation.complete());
+    std::printf(
+        "WEFT_FREE_B fixture=freeform_patch boundaries=%zu samples=%zu\n",
+        built.value->boundaries.size(),
+        built.value->validation.checkedSamples);
+}
+
 void testMappedFourSidedBoundaries(const std::filesystem::path& path) {
     weft::writeStep(weft::makeFixture("mapped_patch"), path.string());
     const weft::ImportedModel imported = weft::importStepSecure(path.string());
@@ -802,6 +820,7 @@ int main() {
         testSpherePoleBoundaries(spherePath);
         testCutoutHoleBoundaries(weft::test::uniqueTempPath("weft_cut_b_hole", ".step"));
         testCutoutPlateSlotBoundaries(weft::test::uniqueTempPath("weft_cut_b_slot", ".step"));
+        testFreeformUvGridBoundaries(weft::test::uniqueTempPath("weft_free_b", ".step"));
         testMappedFourSidedBoundaries(mappedPath);
     } catch (const std::exception& error) {
         std::printf("FAIL canonical-boundary exception: %s\n", error.what());

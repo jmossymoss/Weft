@@ -1,13 +1,5 @@
-# M8 FREE-D evidence - 2026-07-18
+# M8 FREE-D evidence - 2026-07-18 (reopened)
 
-## Proven increment
-
-Freeform UV-grid results carry modelling provenance through generateSecureMesh.
-
-## Outcomes
-
-Passed on Linux gcc/static-analysis.
-
-## Status boundary
-
-Closed.
+```
+WEFT_FREE_D modeling=Independent polys=256
+```
