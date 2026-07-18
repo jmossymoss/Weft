@@ -16,8 +16,8 @@ Read these in order:
 
 The product route remains certified-only. OCCT triangle soup, welding, missing
 faces, silent healing, and unproven preview meshes are not export authority.
-The currently certified automatic families are planes (including holes) and
-full periodic cylinders.
+The currently certified automatic families are planes (including holes),
+full/partial cylinders, and apex cones.
 
 ## Token and documentation discipline
 
@@ -629,7 +629,7 @@ only with indexed evidence.
 
 ### WP-075 — CONE-F family proof
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-074
 - Goal: isolated, connected, adversarial, density-sweep, corpus impact, Linux
