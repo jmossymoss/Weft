@@ -17,7 +17,7 @@ Read these in order:
 The product route remains certified-only. OCCT triangle soup, welding, missing
 faces, silent healing, and unproven preview meshes are not export authority.
 The currently certified automatic families are planes (including holes),
-full/partial cylinders, apex cones, spheres, and tori.
+full/partial cylinders, apex cones, spheres, tori, and analytic fillet/blend strips.
 
 ## Token and documentation discipline
 
@@ -762,7 +762,7 @@ only with indexed evidence.
 
 ### WP-100 — FILLET-A reconnaissance
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-095
 - Goal: classify blend faces on fillet/bossfillet fixtures (cylinder vs torus
@@ -772,7 +772,7 @@ only with indexed evidence.
 
 ### WP-101 — FILLET-B canonical boundaries
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-100
 - Goal: boundaries for blend strips using cylinder/torus consumers.
@@ -781,7 +781,7 @@ only with indexed evidence.
 
 ### WP-102 — FILLET-C certified floor
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-101
 - Goal: certify `fillet` (and torus-band blend when in scope) through secure
@@ -791,7 +791,7 @@ only with indexed evidence.
 
 ### WP-103 — FILLET-D modelling topology
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-102
 - Goal: truthful modelling provenance on fillet solids.
@@ -800,7 +800,7 @@ only with indexed evidence.
 
 ### WP-104 — FILLET-E product integration
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-103
 - Goal: CLI/app admission for certified fillet solids.
@@ -809,7 +809,7 @@ only with indexed evidence.
 
 ### WP-105 — FILLET-F family proof
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-104
 - Goal: full proof matrix; declare analytic fillet/blend supported.
@@ -818,7 +818,7 @@ only with indexed evidence.
 
 ### WP-110 — Close M8 selected-release gate
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-105
 - Goal: prove the selected M8 release scope (plane/cylinder/cone/sphere/torus/

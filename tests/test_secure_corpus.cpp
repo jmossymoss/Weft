@@ -166,7 +166,7 @@ int main() {
     }
 
     const char* fixtures[] = {"box", "cylinder", "partial_cylinder", "hole",
-                              "cone", "sphere", "torus"};
+                              "cone", "sphere", "torus", "fillet"};
     constexpr std::size_t kFixtureExtra =
         sizeof(fixtures) / sizeof(fixtures[0]);
     for (const char* fixture : fixtures) {
