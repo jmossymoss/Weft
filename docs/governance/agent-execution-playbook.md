@@ -518,7 +518,7 @@ only with indexed evidence.
 
 ### WP-050 — Classify the frozen corpus against the certified pipeline
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M4/M8 readiness
 - Prerequisites: WP-043
 - Goal: establish the measured coverage baseline before adding another surface
@@ -531,7 +531,7 @@ only with indexed evidence.
   3. Assert every subject ends in certified output or one stable named refusal.
   4. Group gaps by user value and geometry family without changing status.
 - Tests: committed/generated corpus plus secure global sweep.
-- Evidence: `docs/evidence/m4-m8-certified-coverage-baseline-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m4-m8-certified-coverage-baseline-2026-07-18.md`.
 - Exit gate: corpus totals reconcile exactly and no failure is unclassified.
 
 ## M8 family packet

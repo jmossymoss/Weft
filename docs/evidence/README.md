@@ -98,6 +98,10 @@ prove completed work; they are not plans or handoff diaries.
 - `m7-certified-editing-overlays-2026-07-18.md` - named LOD/density effect
   reporting and refusal-gated editing/admission completing the M7 workflow
   gate on Linux strict/static-analysis lanes.
+- `m4-m8-certified-coverage-baseline-2026-07-18.md` - frozen committed STEP plus
+  built-in fixture classification into certified / named-refusal /
+  inspectable-only terminals with reconciled totals on Linux
+  strict/static-analysis lanes.
 - `m6-secure-orchestration-2026-07-17.md` - atomic plane/cylinder/through-hole secure pipeline and combined certificate evidence.
 - `m7-secure-cli-routing-2026-07-17.md` - lossless certified export adapter, secure CLI routing, report coverage, and named workflow refusals.
 - `m7-secure-app-live-link-2026-07-17.md` - secure app preview/export/hot-reload routing, visual proof, and deterministic atomic Blender link.
