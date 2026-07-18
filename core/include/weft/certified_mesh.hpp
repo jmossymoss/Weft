@@ -66,11 +66,21 @@ struct ModelingPolygon {
     std::vector<std::uint32_t> vertices;
 };
 
+enum class ModelingProvenanceKind {
+    Absent = 0,
+    CertifiedFloorAlias,
+    Independent,
+};
+
 struct ModelingMesh {
     std::vector<CertifiedVertex> vertices;
     std::vector<ModelingPolygon> polygons;
+    ModelingProvenanceKind provenance = ModelingProvenanceKind::Absent;
+    // Compatibility mirrors: true only for CertifiedFloorAlias.
     bool aliasesCertified = false;
     std::optional<std::string> safeFloorReason;
+    // Required and complete when provenance == Independent.
+    ValidationCertificate independentValidation;
 };
 
 struct MeshingResult {
@@ -79,6 +89,27 @@ struct MeshingResult {
     GenerationReport generation;
     ValidationCertificate validation;
 };
+
+struct ModelingProvenanceFailure {
+    std::string code;
+    std::string message;
+};
+
+struct ModelingProvenanceResult {
+    ValidationCoverage coverage{"modeling.provenance"};
+    ModelingProvenanceKind kind = ModelingProvenanceKind::Absent;
+    std::string selectedOutput;
+    std::optional<ModelingProvenanceFailure> failure;
+
+    explicit operator bool() const noexcept {
+        return !failure.has_value() && coverage.complete();
+    }
+};
+
+// Validates that modelling output truthfully declares absent / floor-alias /
+// independent provenance. Independent claims require a non-vacuous certificate.
+ModelingProvenanceResult validateModelingProvenance(
+    const MeshingResult& result);
 
 ModelingMesh makeCertifiedFloorModelingMesh(
     const CertifiedMesh& certified,

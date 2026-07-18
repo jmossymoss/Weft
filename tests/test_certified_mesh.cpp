@@ -306,6 +306,61 @@ weft::CertifiedMesh makeSyntheticMesh(
     return mesh;
 }
 
+void testModelingProvenance() {
+    TemporaryStep step;
+    const std::optional<PreparedBox> prepared = prepareBox(step.path());
+    CHECK(prepared.has_value());
+    if (!prepared) return;
+    const weft::CertifiedMeshAssemblyResult assembled =
+        weft::assembleCertifiedPlanarMesh(
+            prepared->imported, prepared->boundaries, prepared->faceMeshes,
+            prepared->faces);
+    CHECK(assembled);
+    if (!assembled.value) return;
+
+    const weft::MeshingResult alias = weft::makeCertifiedFloorMeshingResult(
+        *assembled.value, assembled.validation, {},
+        std::string("test floor alias"));
+    const weft::ModelingProvenanceResult aliasOk =
+        weft::validateModelingProvenance(alias);
+    CHECK(aliasOk);
+    CHECK(aliasOk.kind == weft::ModelingProvenanceKind::CertifiedFloorAlias);
+    CHECK(aliasOk.selectedOutput == "modeling.certified_floor_alias");
+
+    weft::MeshingResult unexplained = alias;
+    unexplained.modeling.provenance =
+        weft::ModelingProvenanceKind::CertifiedFloorAlias;
+    unexplained.modeling.safeFloorReason = std::nullopt;
+    unexplained.modeling.aliasesCertified = false;
+    const weft::ModelingProvenanceResult unexplainedRefuse =
+        weft::validateModelingProvenance(unexplained);
+    CHECK(!unexplainedRefuse);
+    CHECK(unexplainedRefuse.failure &&
+          unexplainedRefuse.failure->code ==
+              "modeling.provenance_alias_unexplained");
+
+    weft::MeshingResult independent = alias;
+    independent.modeling.provenance =
+        weft::ModelingProvenanceKind::Independent;
+    independent.modeling.aliasesCertified = false;
+    independent.modeling.safeFloorReason = std::nullopt;
+    independent.modeling.independentValidation = {};
+    const weft::ModelingProvenanceResult independentRefuse =
+        weft::validateModelingProvenance(independent);
+    CHECK(!independentRefuse);
+    CHECK(independentRefuse.failure &&
+          independentRefuse.failure->code ==
+              "modeling.provenance_independent_uncertified");
+
+    weft::MeshingResult absent = alias;
+    absent.modeling = {};
+    absent.modeling.provenance = weft::ModelingProvenanceKind::Absent;
+    const weft::ModelingProvenanceResult absentOk =
+        weft::validateModelingProvenance(absent);
+    CHECK(absentOk);
+    CHECK(absentOk.selectedOutput == "certified");
+}
+
 void testIncidenceEulerAdversaries() {
     const weft::CertifiedMesh closed = makeSyntheticMesh(
         {{0.0, 0.0, 0.0},
@@ -517,6 +572,7 @@ int main() {
         }
         testTriangleIntersectionAdversaries();
         testIncidenceEulerAdversaries();
+        testModelingProvenance();
     } catch (const std::exception& error) {
         std::printf("FAIL certified-mesh exception: %s\n", error.what());
         ++failures;

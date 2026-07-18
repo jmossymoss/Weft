@@ -631,12 +631,32 @@ SecureMeshingResult generateSecureMesh(
         result.failure = consumption;
         return result;
     }
+    const ModelingProvenanceResult modeling =
+        validateModelingProvenance(meshed);
+    appendCoverage(result.validation, modeling.coverage.code,
+                   modeling.coverage.expected, modeling.coverage.checked,
+                   modeling.coverage.skipped, modeling.coverage.failed);
+    appendCoverage(meshed.validation, modeling.coverage.code,
+                   modeling.coverage.expected, modeling.coverage.checked,
+                   modeling.coverage.skipped, modeling.coverage.failed);
+    if (!modeling) {
+        setFailure(result,
+                   modeling.failure ? modeling.failure->code
+                                    : "modeling.provenance_incomplete",
+                   modeling.failure
+                       ? modeling.failure->message
+                       : "modelling provenance validation failed");
+        return result;
+    }
     result.value = std::move(meshed);
     return result;
 }
 
 PolyMesh makeCertifiedPolyMeshAdapter(const MeshingResult& result) {
     PolyMesh adapter;
+    const ModelingProvenanceResult modeling =
+        validateModelingProvenance(result);
+    adapter.selectedOutput = modeling ? modeling.selectedOutput : "certified";
     adapter.vertices.reserve(result.certified.vertices.size());
     adapter.anchors.reserve(result.certified.vertices.size());
     adapter.constraints.reserve(result.certified.vertices.size());

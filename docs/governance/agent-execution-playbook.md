@@ -382,7 +382,7 @@ only with indexed evidence.
 
 ### WP-030 — Add incidence and Euler validation
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M5
 - Prerequisites: WP-020
 - Goal: compare source topology incidence with certified mesh incidence and
@@ -395,13 +395,13 @@ only with indexed evidence.
   4. Add closed, open, holed, multi-body, duplicated, missing-face, and vacuous
      evidence fixtures.
 - Tests: `secure_core|certified_mesh|secure_meshing`.
-- Evidence: `docs/evidence/m5-incidence-euler-validation-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m5-incidence-euler-validation-2026-07-18.md`.
 - Exit gate: every certified result has complete incidence accounting and zero
   unexplained topology delta.
 
 ### WP-031 — Certify modelling-mesh provenance
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M5/M6
 - Prerequisites: WP-030
 - Goal: stop treating an unexplained alias of the safety floor as independent
@@ -414,7 +414,7 @@ only with indexed evidence.
   3. Add vacuous, tampered, alias, and independent-output fixtures.
   4. Ensure exporters report which output they consume.
 - Tests: `certified_mesh|secure_meshing` plus CLI/export tests.
-- Evidence: `docs/evidence/m5-modelling-provenance-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m5-modelling-provenance-2026-07-18.md`.
 - Exit gate: no result can claim modelling topology without a non-vacuous
   certificate; a deliberate floor alias is explicit and truthful.
 

@@ -276,8 +276,12 @@ ModelingMesh makeCertifiedFloorModelingMesh(
     std::optional<std::string> safeFloorReason) {
     ModelingMesh modeling;
     modeling.vertices = certified.vertices;
+    modeling.provenance = ModelingProvenanceKind::CertifiedFloorAlias;
     modeling.aliasesCertified = true;
     modeling.safeFloorReason = std::move(safeFloorReason);
+    if (!modeling.safeFloorReason) {
+        modeling.safeFloorReason = "certified triangle floor alias";
+    }
     modeling.polygons.reserve(certified.triangles.size());
     for (const CertifiedTriangle& triangle : certified.triangles) {
         modeling.polygons.push_back(
@@ -285,6 +289,95 @@ ModelingMesh makeCertifiedFloorModelingMesh(
              {triangle.vertices.begin(), triangle.vertices.end()}});
     }
     return modeling;
+}
+
+ModelingProvenanceResult validateModelingProvenance(
+    const MeshingResult& result) {
+    ModelingProvenanceResult out;
+    out.kind = result.modeling.provenance;
+    out.coverage.expected = 3;
+    out.coverage.checked = 0;
+
+    ++out.coverage.checked;
+    const bool aliasFlag = result.modeling.aliasesCertified;
+    if (result.modeling.provenance == ModelingProvenanceKind::Absent) {
+        if (aliasFlag || result.modeling.safeFloorReason ||
+            !result.modeling.polygons.empty() ||
+            result.modeling.independentValidation.complete()) {
+            ++out.coverage.failed;
+            out.failure = ModelingProvenanceFailure{
+                "modeling.provenance_absent_conflict",
+                "modelling provenance is Absent but modelling payload is present"};
+            return out;
+        }
+        out.selectedOutput = "certified";
+        ++out.coverage.checked;
+        ++out.coverage.checked;
+        return out;
+    }
+
+    if (result.modeling.provenance ==
+        ModelingProvenanceKind::CertifiedFloorAlias) {
+        ++out.coverage.checked;
+        if (!aliasFlag || !result.modeling.safeFloorReason ||
+            result.modeling.safeFloorReason->empty()) {
+            ++out.coverage.failed;
+            out.failure = ModelingProvenanceFailure{
+                "modeling.provenance_alias_unexplained",
+                "floor-alias modelling requires aliasesCertified and a reason"};
+            return out;
+        }
+        ++out.coverage.checked;
+        if (result.modeling.polygons.size() !=
+                result.certified.triangles.size() ||
+            result.modeling.vertices.size() !=
+                result.certified.vertices.size()) {
+            ++out.coverage.failed;
+            out.failure = ModelingProvenanceFailure{
+                "modeling.provenance_alias_mismatch",
+                "floor-alias modelling must mirror certified triangles/vertices"};
+            return out;
+        }
+        for (std::size_t index = 0; index < result.modeling.polygons.size();
+             ++index) {
+            const ModelingPolygon& polygon = result.modeling.polygons[index];
+            const CertifiedTriangle& triangle =
+                result.certified.triangles[index];
+            if (polygon.vertices.size() != 3 ||
+                polygon.vertices[0] != triangle.vertices[0] ||
+                polygon.vertices[1] != triangle.vertices[1] ||
+                polygon.vertices[2] != triangle.vertices[2]) {
+                ++out.coverage.failed;
+                out.failure = ModelingProvenanceFailure{
+                    "modeling.provenance_alias_mismatch",
+                    "floor-alias modelling polygon does not match a certified triangle"};
+                return out;
+            }
+        }
+        out.selectedOutput = "modeling.certified_floor_alias";
+        return out;
+    }
+
+    // Independent
+    ++out.coverage.checked;
+    if (aliasFlag) {
+        ++out.coverage.failed;
+        out.failure = ModelingProvenanceFailure{
+            "modeling.provenance_independent_conflict",
+            "independent modelling cannot also claim a certified floor alias"};
+        return out;
+    }
+    ++out.coverage.checked;
+    if (result.modeling.polygons.empty() ||
+        !result.modeling.independentValidation.complete()) {
+        ++out.coverage.failed;
+        out.failure = ModelingProvenanceFailure{
+            "modeling.provenance_independent_uncertified",
+            "independent modelling requires polygons and a non-vacuous certificate"};
+        return out;
+    }
+    out.selectedOutput = "modeling.independent";
+    return out;
 }
 
 MeshingResult makeCertifiedFloorMeshingResult(
