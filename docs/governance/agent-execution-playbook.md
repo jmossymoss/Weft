@@ -596,7 +596,7 @@ only with indexed evidence.
 
 ### WP-073 — CONE-D modelling topology
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-072
 - Goal: deterministic quads/n-gons above the cone floor with truthful

@@ -110,6 +110,9 @@ prove completed work; they are not plans or handoff diaries.
   adversaries on Linux strict/static-analysis lanes.
 - `m8-cone-c-certified-floor-2026-07-18.md` - apex-cone wall template, secure
   pipeline routing, and CLI OBJ export on Linux strict/static-analysis lanes.
+- `m8-cone-d-modelling-2026-07-18.md` - independent modelling polygons and
+  tampered-provenance refusal for apex-cone results on Linux
+  strict/static-analysis lanes.
 - `m6-secure-orchestration-2026-07-17.md` - atomic plane/cylinder/through-hole secure pipeline and combined certificate evidence.
 - `m7-secure-cli-routing-2026-07-17.md` - lossless certified export adapter, secure CLI routing, report coverage, and named workflow refusals.
 - `m7-secure-app-live-link-2026-07-17.md` - secure app preview/export/hot-reload routing, visual proof, and deterministic atomic Blender link.
