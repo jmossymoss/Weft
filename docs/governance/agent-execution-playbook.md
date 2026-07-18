@@ -17,7 +17,8 @@ Read these in order:
 The product route remains certified-only. OCCT triangle soup, welding, missing
 faces, silent healing, and unproven preview meshes are not export authority.
 The currently certified automatic families are planes (including holes),
-full/partial cylinders, apex cones, spheres, tori, and analytic fillet/blend strips.
+full/partial cylinders, apex cones, spheres, tori, analytic fillet/blend strips,
+and four-sided mapped patches.
 
 ## Token and documentation discipline
 
@@ -876,7 +877,7 @@ only with indexed evidence.
 
 ### WP-122 — MAP-C certified floor
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 expansion
 - Prerequisites: WP-121
 - Goal: secure mapped/Coons floor through `generateSecureMesh`.
@@ -885,7 +886,7 @@ only with indexed evidence.
 
 ### WP-123 — MAP-D modelling topology
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 expansion
 - Prerequisites: WP-122
 - Goal: modelling quads/n-gons with truthful provenance.
@@ -894,7 +895,7 @@ only with indexed evidence.
 
 ### WP-124 — MAP-E product integration
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 expansion
 - Prerequisites: WP-123
 - Goal: CLI + desktop app admission for mapped results.
@@ -903,7 +904,7 @@ only with indexed evidence.
 
 ### WP-125 — MAP-F family proof
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 expansion
 - Prerequisites: WP-124
 - Goal: density/corpus/determinism; declare mapped four-sided supported.

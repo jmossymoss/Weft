@@ -77,6 +77,12 @@ weft_enable_strict_warnings(weft_torus_template_tests)
 add_test(NAME torus_template COMMAND weft_torus_template_tests)
 weft_deploy_occt_dlls(weft_torus_template_tests)
 
+add_executable(weft_mapped_template_tests test_mapped_template.cpp)
+target_link_libraries(weft_mapped_template_tests PRIVATE weft_core)
+weft_enable_strict_warnings(weft_mapped_template_tests)
+add_test(NAME mapped_template COMMAND weft_mapped_template_tests)
+weft_deploy_occt_dlls(weft_mapped_template_tests)
+
 add_executable(weft_secure_meshing_tests test_secure_meshing.cpp)
 target_link_libraries(weft_secure_meshing_tests PRIVATE weft_core)
 weft_enable_strict_warnings(weft_secure_meshing_tests)

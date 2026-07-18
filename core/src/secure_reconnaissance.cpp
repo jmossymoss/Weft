@@ -731,8 +731,23 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
             const bool representationReady =
                 family.code == "plane" ||
                 curvedFaceHasExactMappings(imported, faceId);
-            decideSupport(record, family, evaluates,
-                          evaluates && representationReady, report);
+            const bool mappedFourSided =
+                std::find(record.conditionCodes.begin(),
+                          record.conditionCodes.end(),
+                          "mapped.four_sided_candidate") !=
+                record.conditionCodes.end();
+            // MAP-C: four-sided mapped candidates are first-template ready when
+            // representations evaluate, even though FamilyInfo::firstTemplate
+            // stays false for general bspline/extrusion.
+            if (mappedFourSided && evaluates && representationReady) {
+                record.confidence = RecognitionConfidence::ProvenAnalytic;
+                record.support =
+                    GeometrySupportState::SupportedAnalyticTemplate;
+                record.strategyOrReasonCode = "strategy.mapped_four_sided";
+            } else {
+                decideSupport(record, family, evaluates,
+                              evaluates && representationReady, report);
+            }
         } catch (const Standard_Failure& error) {
             record.familyCode = "kernel_specific";
             record.concreteType = "Geom_Surface";

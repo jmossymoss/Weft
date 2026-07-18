@@ -232,6 +232,23 @@ TopoDS_Shape makeFixture(const std::string& name) {
         TopoDS_Shape boss = BRepPrimAPI_MakeCylinder(axis, 8.0, 15.0).Shape();
         return BRepAlgoAPI_Fuse(base, boss).Shape();
     }
+    if (name == "mapped_patch") {
+        // Minimal four-sided warped bspline face for MAP-C (open shell).
+        NCollection_Array2<gp_Pnt> net(1, 4, 1, 4);
+        for (int i = 0; i < 4; ++i) {
+            for (int j = 0; j < 4; ++j) {
+                const double u = double(i) / 3.0;
+                const double v = double(j) / 3.0;
+                net.SetValue(i + 1, j + 1,
+                             gp_Pnt(30.0 * u, 20.0 * v,
+                                    0.5 * std::sin(M_PI * u) *
+                                        std::sin(M_PI * v)));
+            }
+        }
+        Handle(Geom_BSplineSurface) surf =
+            GeomAPI_PointsToBSplineSurface(net).Surface();
+        return BRepBuilderAPI_MakeFace(surf, 1e-6).Face();
+    }
     if (name == "ribbon" || name == "ribbonnotch") {
         // The flaregun grip/trigger-guard class: a long, thin, BENT strip
         // whose surface is freeform (not a plane or a cylinder wrap) and
@@ -644,7 +661,8 @@ TopoDS_Shape makeFixture(const std::string& name) {
     throw std::runtime_error(
         "unknown fixture: " + name +
         " (expected cylinder|partial_cylinder|box|cone|sphere|torus|fillet|hole|demo|boss|"
-        "hairline|canrev|slitdrill|microedge|filletslot|torture)");
+        "hairline|canrev|slitdrill|microedge|filletslot|torture|ribbon|ribbonnotch|"
+        "mapped_patch)");
 }
 
 }  // namespace weft

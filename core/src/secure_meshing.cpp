@@ -3,6 +3,7 @@
 #include "weft/cone_template.hpp"
 #include "weft/planar_trim_assembly.hpp"
 #include "weft/sphere_template.hpp"
+#include "weft/mapped_template.hpp"
 #include "weft/torus_template.hpp"
 
 #include <algorithm>
@@ -710,8 +711,45 @@ SecureMeshingResult generateSecureMesh(
             faceMeshes.push_back(*wall.value);
             continue;
         }
+        const bool mappedFourSided =
+            std::find(face.conditionCodes.begin(), face.conditionCodes.end(),
+                      "mapped.four_sided_candidate") !=
+            face.conditionCodes.end();
+        if (mappedFourSided) {
+            MappedPatchConfiguration mapped;
+            mapped.maximumChordDeviation =
+                configuration.sampling.chordTolerance;
+            mapped.maximumNormalDeviationRadians =
+                configuration.sampling.normalAngleToleranceRadians;
+            mapped.uIntervals = std::max<std::uint32_t>(
+                8, configuration.sampling.minimumClosedCurveSegments);
+            mapped.vIntervals = mapped.uIntervals;
+            const MappedPatchResult patch = buildMappedFourSidedPatch(
+                imported, reconnaissance, *boundaries.value, face.subjectId,
+                mapped);
+            for (const MappedPatchValidationEvidence& evidence :
+                 patch.validation) {
+                appendCoverage(result.validation,
+                               faceCode(evidence.code, face.subjectId),
+                               evidence.expected, evidence.checked,
+                               evidence.skipped, evidence.failed);
+            }
+            if (!patch) {
+                setFailure(result,
+                           patch.failure ? patch.failure->code
+                                         : "secure_pipeline.mapped_failed",
+                           patch.failure
+                               ? patch.failure->message
+                               : "certified mapped patch construction failed",
+                           patch.failure ? patch.failure->subjects
+                                         : std::vector<StableId>{});
+                return result;
+            }
+            faceMeshes.push_back(*patch.value);
+            continue;
+        }
         setFailure(result, "secure_pipeline.unsupported_surface_family",
-                   "the secure automatic pipeline currently supports only plane, cylinder, apex-cone, sphere, and torus faces",
+                   "the secure automatic pipeline currently supports only plane, cylinder, apex-cone, sphere, torus, and four-sided mapped faces",
                    {face.subjectId});
         return result;
     }
@@ -721,10 +759,16 @@ SecureMeshingResult generateSecureMesh(
         return result;
     }
 
+    CertifiedMeshAssemblyConfiguration assemblyConfig = configuration.assembly;
+    // Single-face mapped patches are open shells; do not demand closed
+    // manifold incidence for that narrow MAP-C product class.
+    if (imported.working && imported.working->snapshot.model.faceCount() == 1) {
+        assemblyConfig.requireClosedManifold = false;
+    }
     const CertifiedMeshAssemblyResult assembled =
         assembleCertifiedBoundaryMesh(
             imported, *boundaries.value, faceMeshes, expectedFaces,
-            configuration.assembly);
+            assemblyConfig);
     result.validation.checks.insert(
         result.validation.checks.end(), assembled.validation.checks.begin(),
         assembled.validation.checks.end());
