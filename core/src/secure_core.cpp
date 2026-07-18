@@ -10,6 +10,7 @@
 #include <BRepTools_WireExplorer.hxx>
 #include <BRep_Tool.hxx>
 #include <ElSLib.hxx>
+#include <GeomAPI_ProjectPointOnSurf.hxx>
 #include <GeomAbs_SurfaceType.hxx>
 #include <Geom2d_Curve.hxx>
 #include <Geom_Curve.hxx>
@@ -415,11 +416,26 @@ public:
             case GeomAbs_Torus:
                 ElSLib::Parameters(adaptor.Torus(), point, u, v);
                 break;
-            default:
-                return evaluationFailure<PlanarProjectionEvaluation>(
-                    "geometry.surface_projection_unsupported",
-                    "surface projection supports only plane, cylinder, cone, sphere, and torus",
-                    faceId);
+            default: {
+                // Extrusion / offset / bspline: orthogonal projection onto
+                // the exact surface (MP9 mapped four-sided without p-curves).
+                const Handle(Geom_Surface) geom = adaptor.Surface().Surface();
+                if (geom.IsNull()) {
+                    return evaluationFailure<PlanarProjectionEvaluation>(
+                        "geometry.surface_projection_unsupported",
+                        "surface has no exact Geom_Surface for projection",
+                        faceId);
+                }
+                GeomAPI_ProjectPointOnSurf projector(point, geom);
+                if (!projector.IsDone() || projector.NbPoints() < 1) {
+                    return evaluationFailure<PlanarProjectionEvaluation>(
+                        "geometry.surface_projection_no_solution",
+                        "orthogonal surface projection found no foot point",
+                        faceId);
+                }
+                projector.LowerDistanceParameters(u, v);
+                break;
+            }
             }
             const auto surface = evaluateSurface(faceId, {u, v});
             if (!surface) {

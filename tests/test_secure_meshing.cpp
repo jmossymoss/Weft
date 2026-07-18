@@ -951,9 +951,10 @@ void testEllipseHoleBody() {
 }
 
 void testMp9ExtractFaces() {
-    // Plasticity MP9 face 10 (open cylinder band) and face 28 (5-edge freeform).
-    for (const char* name :
-         {"cylinder_band.step", "freeform_pent.step"}) {
+    // Plasticity MP9 face 10 (open cylinder band), face 28 (5-edge freeform),
+    // and face 250 (four-sided offset patch).
+    for (const char* name : {"cylinder_band.step", "freeform_pent.step",
+                             "offset_quad.step"}) {
         const std::filesystem::path path = findMp9Extract(name);
         CHECK(!path.empty());
         if (path.empty()) continue;
@@ -968,6 +969,35 @@ void testMp9ExtractFaces() {
         std::printf("WEFT_MP9_EXTRACT %s tris=%zu\n", name,
                     result.value ? result.value->certified.triangles.size()
                                  : 0U);
+    }
+
+    // WP-173: 6-edge freeform is named-deferred, not silently supported.
+    {
+        const std::filesystem::path path =
+            findMp9Extract("freeform_hex.step");
+        CHECK(!path.empty());
+        if (!path.empty()) {
+            const weft::ImportedModel imported =
+                weft::importStepSecure(path.string());
+            const weft::ReconnaissanceReport recon =
+                weft::reconnoitre(imported);
+            bool sawHighEdge = false;
+            for (const weft::ExactGeometryClassification& record :
+                 recon.records) {
+                if (record.taxonomy != weft::GeometryTaxonomy::Surface) {
+                    continue;
+                }
+                for (const std::string& code : record.conditionCodes) {
+                    if (code == "freeform.high_edge_count_deferred") {
+                        sawHighEdge = true;
+                    }
+                }
+                CHECK(record.support ==
+                      weft::GeometrySupportState::DeferredResidualSurface);
+            }
+            CHECK(sawHighEdge);
+            std::printf("WEFT_FREE_HIGH_EDGE deferred=1\n");
+        }
     }
 }
 

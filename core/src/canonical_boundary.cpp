@@ -183,7 +183,7 @@ bool supportedSegmentationFamily(const ExactGeometryClassification& record,
     // while deferred.
     if ((record.familyCode == "bspline" || record.familyCode == "bezier" ||
          record.familyCode == "extrusion" ||
-         record.familyCode == "revolution") &&
+         record.familyCode == "revolution" || record.familyCode == "offset") &&
         (hasCondition(record, "mapped.four_sided_candidate") ||
          hasCondition(record, "freeform.uv_grid_candidate"))) {
         return record.support ==
@@ -1117,10 +1117,15 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                          GeometrySupportState::SupportedAnalyticTemplate ||
                      face->support ==
                          GeometrySupportState::DeferredResidualSurface);
-                if (!analyticDerivable) {
+                const bool mappedOrFreeformDerivable =
+                    (hasCondition(*face, "mapped.four_sided_candidate") ||
+                     hasCondition(*face, "freeform.uv_grid_candidate")) &&
+                    (face->support ==
+                     GeometrySupportState::SupportedAnalyticTemplate);
+                if (!analyticDerivable && !mappedOrFreeformDerivable) {
                     return buildFailure(
                         report, "boundary.pcurve_missing",
-                        "only proven analytic surfaces may derive UV without a stored p-curve",
+                        "only proven analytic or mapped/freeform UV-grid surfaces may derive UV without a stored p-curve",
                         {edgeId, coedge.id, coedge.faceId});
                 }
                 mappings.push_back(

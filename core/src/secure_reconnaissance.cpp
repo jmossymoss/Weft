@@ -760,17 +760,42 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                 }
                 const bool mappedFamily =
                     family.code == "bspline" || family.code == "bezier" ||
-                    family.code == "extrusion" || family.code == "revolution";
+                    family.code == "extrusion" || family.code == "revolution" ||
+                    family.code == "offset";
                 if (mappedFamily && faceEdges.size() == 4) {
-                    record.conditionCodes.push_back(
-                        "mapped.four_sided_candidate");
+                    // WP-174: periodic extrusion/offset bands are not Coons
+                    // patches — UV rectangles self-intersect in 3D.
+                    const bool periodicBand =
+                        record.trimDomain &&
+                        (*record.trimDomain ==
+                             TrimDomainClass::FullPeriodicWithCapBoundaries ||
+                         *record.trimDomain ==
+                             TrimDomainClass::PeriodicBandCrossingSeam);
+                    if (periodicBand && (family.code == "extrusion" ||
+                                         family.code == "offset")) {
+                        record.conditionCodes.push_back(
+                            family.code == "offset"
+                                ? "offset.periodic_band_deferred"
+                                : "extrusion.periodic_band_deferred");
+                    } else {
+                        record.conditionCodes.push_back(
+                            "mapped.four_sided_candidate");
+                    }
                 } else if (mappedFamily && faceEdges.size() != 4) {
                     record.conditionCodes.push_back(
                         "mapped.non_four_sided_deferred");
+                    if (family.code == "offset" ||
+                        family.code == "extrusion") {
+                        record.conditionCodes.push_back(
+                            family.code == "offset"
+                                ? "offset.non_four_sided_deferred"
+                                : "extrusion.non_four_sided_deferred");
+                    }
                 }
-                // FREE-A: bspline/bezier with simple/annulus trim may use the
-                // UV-grid floor (four-sided and n-sided). Wider/non-simple
-                // freeform stays deferred.
+                // FREE-A / WP-173: rectangular UV-grid floor is proven for
+                // ≤5 outer edges (MP9 f28 pent + four-sided patches). Six or
+                // more edges land off the structured border
+                // (seam_sample_unmatched / UV-degenerate). Name that subclass.
                 if (family.code == "bspline" || family.code == "bezier") {
                     const bool uvGridTrim =
                         record.trimDomain &&
@@ -782,9 +807,12 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                          *record.trimDomain ==
                              TrimDomainClass::ConcaveSimpleRegion ||
                          *record.trimDomain == TrimDomainClass::SimpleDisk);
-                    if (uvGridTrim) {
+                    if (uvGridTrim && faceEdges.size() <= 5) {
                         record.conditionCodes.push_back(
                             "freeform.uv_grid_candidate");
+                    } else if (uvGridTrim && faceEdges.size() > 5) {
+                        record.conditionCodes.push_back(
+                            "freeform.high_edge_count_deferred");
                     } else {
                         record.conditionCodes.push_back(
                             "freeform.general_deferred");
@@ -877,15 +905,13 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
             }
             const bool evaluates = exactSurfaceEvaluates(
                 *imported.workingEvaluator, faceId, u0, u1, v0, v1);
-            // Analytic cylinders/cones/spheres/tori may derive UV via ElSLib
-            // when STEP omitted p-curves (common on Plasticity MP9).
+            // Analytic families may derive UV via ElSLib; mapped/freeform
+            // candidates may use GeomAPI projection when STEP omitted
+            // p-curves (MP9 extrusion/offset/bspline patches).
             const bool analyticUvDerivable =
                 family.code == "plane" || family.code == "cylinder" ||
                 family.code == "cone" || family.code == "sphere" ||
                 family.code == "torus";
-            const bool representationReady =
-                analyticUvDerivable ||
-                curvedFaceHasExactMappings(imported, faceId);
             const bool mappedFourSided =
                 std::find(record.conditionCodes.begin(),
                           record.conditionCodes.end(),
@@ -896,6 +922,9 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                           record.conditionCodes.end(),
                           "freeform.uv_grid_candidate") !=
                 record.conditionCodes.end();
+            const bool representationReady =
+                analyticUvDerivable || mappedFourSided || freeformUvGrid ||
+                curvedFaceHasExactMappings(imported, faceId);
             // MAP-C / FREE-C: UV-grid candidates are first-template ready when
             // representations evaluate, even though FamilyInfo::firstTemplate
             // stays false for general bspline/extrusion.

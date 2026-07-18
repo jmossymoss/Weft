@@ -156,3 +156,5 @@ prove completed work; they are not plans or handoff diaries.
 - `m8-ellipse-b-boundaries-2026-07-18.md` - ellipse critical segmentation + interval demand.
 - `m8-ellipse-f-proof-2026-07-18.md` - ellipse_hole fixture end-to-end mesh proof.
 - `mp9-mesher-phase1-2026-07-18.md` - MP9 extract meshes + analytic UV without p-curve.
+- `mp9-freeform-expansion-2026-07-18.md` - freeform ≤5-edge UV-grid vs high-edge deferral.
+- `mp9-extrusion-offset-2026-07-18.md` - extrusion/offset certify or named refuse.

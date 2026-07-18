@@ -1275,7 +1275,9 @@ int cmdInventory(const std::vector<std::string>& args) {
         for (const std::string& code : record.conditionCodes) {
             if (code.rfind("cutout.", 0) == 0 ||
                 code.rfind("mapped.", 0) == 0 ||
-                code.rfind("freeform.", 0) == 0) {
+                code.rfind("freeform.", 0) == 0 ||
+                code.rfind("extrusion.", 0) == 0 ||
+                code.rfind("offset.", 0) == 0) {
                 ++conditionCodes[code];
             }
         }

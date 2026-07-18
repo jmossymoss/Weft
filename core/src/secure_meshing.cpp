@@ -937,6 +937,15 @@ SecureMeshingResult generateSecureMesh(
             mapped.uIntervals = std::max<std::uint32_t>(
                 8, configuration.sampling.minimumClosedCurveSegments);
             mapped.vIntervals = mapped.uIntervals;
+            // WP-174: non-periodic extrusion/offset patches need denser UV
+            // so facet normals stay within the LOD budget.
+            if (face.familyCode == "extrusion" ||
+                face.familyCode == "offset") {
+                mapped.uIntervals = std::max<std::uint32_t>(
+                    mapped.uIntervals, 32);
+                mapped.vIntervals = std::max<std::uint32_t>(
+                    mapped.vIntervals, 32);
+            }
             const MappedPatchResult patch = buildMappedFourSidedPatch(
                 imported, reconnaissance, *boundaries.value, face.subjectId,
                 mapped);

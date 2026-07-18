@@ -1134,7 +1134,7 @@ only with indexed evidence.
 
 ### WP-173 — MP9 freeform subclass expansion
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 production corpus
 - Prerequisites: WP-172
 - Goal: expand freeform/bspline UV-grid subclasses required by MP9 inventory.
@@ -1143,7 +1143,7 @@ only with indexed evidence.
 
 ### WP-174 — Extrusion and offset surface policy
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 production corpus
 - Prerequisites: WP-173
 - Goal: certify or named-refuse extrusion/offset surfaces present in MP9.
