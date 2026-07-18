@@ -73,6 +73,52 @@ void testApexConeBody() {
     std::filesystem::remove(path, ignored);
 }
 
+void testConeDensitySweepAndDeterminism() {
+    const std::filesystem::path path =
+        weft::test::uniqueTempPath("weft_cone_template_density", ".step");
+    weft::writeStep(weft::makeFixture("cone"), path.string());
+    const weft::ImportedModel imported = weft::importStepSecure(path.string());
+
+    weft::SecureMeshingConfiguration loose = configuration();
+    loose.sampling.chordTolerance = 0.5;
+    loose.sampling.minimumClosedCurveSegments = 8;
+    weft::SecureMeshingConfiguration dense = configuration();
+    dense.sampling.chordTolerance = 0.05;
+    dense.sampling.minimumClosedCurveSegments = 16;
+
+    const weft::SecureMeshingResult first =
+        weft::generateSecureMesh(imported, loose);
+    const weft::SecureMeshingResult second =
+        weft::generateSecureMesh(imported, loose);
+    const weft::SecureMeshingResult denser =
+        weft::generateSecureMesh(imported, dense);
+    CHECK(first);
+    CHECK(second);
+    CHECK(denser);
+    CHECK(first.value && second.value &&
+          first.value->certified.topologyFingerprint ==
+              second.value->certified.topologyFingerprint);
+    CHECK(first.value && denser.value &&
+          first.value->certified.topologyFingerprint !=
+              denser.value->certified.topologyFingerprint);
+    CHECK(denser.value && first.value &&
+          denser.value->certified.triangles.size() >
+              first.value->certified.triangles.size());
+    std::printf(
+        "WEFT_CONE_F density loose_tris=%zu dense_tris=%zu fingerprint=%s\n",
+        first.value->certified.triangles.size(),
+        denser.value->certified.triangles.size(),
+        first.value->certified.topologyFingerprint.c_str());
+    // Locked Linux golden for the default test configuration().
+    const weft::SecureMeshingResult baseline =
+        weft::generateSecureMesh(imported, configuration());
+    CHECK(baseline.value &&
+          baseline.value->certified.topologyFingerprint ==
+              "4206cd65287f33d3");
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 void testConeChordRefusal() {
     const std::filesystem::path path =
         weft::test::uniqueTempPath("weft_cone_template_chord", ".step");
@@ -104,6 +150,7 @@ void testConeChordRefusal() {
 int main() {
     try {
         testApexConeBody();
+        testConeDensitySweepAndDeterminism();
         testConeChordRefusal();
     } catch (const std::exception& error) {
         std::printf("FAIL cone-template exception: %s\n", error.what());
