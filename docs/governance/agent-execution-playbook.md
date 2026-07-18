@@ -1051,7 +1051,7 @@ only with indexed evidence.
 
 ### WP-160 — M9 dependency and BR-006 audit
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M9
 - Prerequisites: WP-152
 - Goal: audit dependencies; close or explicitly schedule BR-006 for
@@ -1061,7 +1061,7 @@ only with indexed evidence.
 
 ### WP-161 — M9 clean rebuilds
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M9
 - Prerequisites: WP-160
 - Goal: clean empty-dir Linux and Windows builds.
@@ -1070,7 +1070,7 @@ only with indexed evidence.
 
 ### WP-162 — M9 full product gates
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M9
 - Prerequisites: WP-161
 - Goal: strict/static/corpus/CLI/app/export gates on release candidates.
@@ -1079,7 +1079,7 @@ only with indexed evidence.
 
 ### WP-163 — M9 package contents
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M9
 - Prerequisites: WP-162
 - Goal: package contents + deterministic digests.
@@ -1088,7 +1088,7 @@ only with indexed evidence.
 
 ### WP-164 — M9 Plasticity-to-Blender acceptance
 
-- Status: `OPEN`
+- Status: `BLOCKED`
 - Milestone: M9
 - Prerequisites: WP-163
 - Goal: artist-facing inter-app acceptance (only after app-ready).
