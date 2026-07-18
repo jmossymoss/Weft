@@ -15,6 +15,7 @@
 #include "weft/recipe.hpp"
 #include "weft/secure_meshing.hpp"
 #include "weft/secure_recipe.hpp"
+#include "weft/secure_reconnaissance.hpp"
 #include "weft/validate.hpp"
 
 #include <BRep_Builder.hxx>
@@ -51,6 +52,11 @@ void usage() {
         "  weft inspect <in.step>\n"
         "      list B-rep faces (type, radius, neighbors) and edges\n"
         "      (convexity, dihedral angle)\n"
+        "\n"
+        "  weft inventory <in.step> [--repair conservative|compatibility]\n"
+        "      secure import + reconnaissance histogram for large models\n"
+        "      (MP9); aggregates unsupported curve/surface families without\n"
+        "      producing a MeshingResult (ADR-0014 inventory dry-run)\n"
         "\n"
         "  weft extract <in.step> --faces ID[,ID...] --rings N -o <out.step>\n"
         "      write selected source faces plus N adjacency rings as a small\n"
@@ -107,6 +113,10 @@ void usage() {
         "                      (they pair into quads by default)\n"
         "                      where quality allows (default: pure tris)\n"
         "    --chord T         fallback triangulation tolerance (default 0.1)\n"
+        "    --progress        stderr stage/face progress (WEFT_PROGRESS ...)\n"
+        "    --inventory-refusals\n"
+        "                      aggregate unsupported curve/surface families\n"
+        "                      from reconnaissance and refuse (no mesh)\n"
         "    --weld MM         global weld tolerance in mm (default 1e-6);\n"
         "                      raise to close seams on sloppy CAD / off-curve\n"
         "                      fallback borders (per-face: --face ID:weld=MM)\n"
@@ -356,6 +366,8 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
     bool noNormals = false;
     bool recipeLoaded = false;
     bool ignoredMigrationControl = false;
+    bool progress = false;
+    bool inventoryRefusals = false;
     weft::RepairProfile repairProfile = weft::RepairProfile::Conservative;
     std::vector<double> lods;
     weft::ObjExportOptions objOpts;
@@ -376,6 +388,8 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
             return args[++i];
         };
         if (a == "-o" || a == "--output") output = next();
+        else if (a == "--progress") progress = true;
+        else if (a == "--inventory-refusals") inventoryRefusals = true;
         else if (a == "--radial") {
             const int value = std::stoi(next());
             applyAndRecord([value](weft::Recipe& target) {
@@ -781,6 +795,8 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
             4096U, configuration.sampling.minimumClosedCurveSegments);
         configuration.cylinderAxialIntervals =
             static_cast<std::uint32_t>(selected.defaults.axial);
+        configuration.progressToStderr = progress;
+        configuration.collectAllUnsupported = inventoryRefusals;
         if (selected.perFace.size() == 1) {
             const int faceAxial = selected.perFace.begin()->second.axial;
             if (faceAxial >= 1) {
@@ -802,6 +818,25 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
         weft::SecureMeshingResult generated =
             weft::generateSecureMesh(secureImported, configuration);
         if (!generated) {
+            if (inventoryRefusals && !generated.unsupportedRecords.empty()) {
+                std::map<std::string, std::size_t> byCode;
+                std::map<std::string, std::size_t> byFamily;
+                for (const weft::SecureMeshingUnsupportedRecord& record :
+                     generated.unsupportedRecords) {
+                    ++byCode[record.code + "|" + record.familyCode];
+                    ++byFamily[record.familyCode];
+                }
+                std::printf("WEFT_INVENTORY unsupported_total=%zu\n",
+                            generated.unsupportedRecords.size());
+                for (const auto& [key, count] : byCode) {
+                    std::printf("WEFT_INVENTORY unsupported_bucket %s count=%zu\n",
+                                key.c_str(), count);
+                }
+                for (const auto& [family, count] : byFamily) {
+                    std::printf("WEFT_INVENTORY unsupported_family %s count=%zu\n",
+                                family.c_str(), count);
+                }
+            }
             const std::string code = generated.failure
                 ? generated.failure->code
                 : "secure_pipeline.unknown_refusal";
@@ -1071,6 +1106,124 @@ int cmdSweep(const std::vector<std::string>& args) {
     return failures == 0 ? 0 : 1;
 }
 
+int cmdInventory(const std::vector<std::string>& args) {
+    if (args.empty()) {
+        throw std::runtime_error("inventory needs an input STEP path");
+    }
+    std::string input = args[0];
+    weft::RepairProfile repairProfile = weft::RepairProfile::Conservative;
+    for (size_t i = 1; i < args.size(); ++i) {
+        if (args[i] == "--repair") {
+            if (i + 1 >= args.size()) {
+                throw std::runtime_error("--repair needs a value");
+            }
+            const std::string value = args[++i];
+            if (value == "conservative") {
+                repairProfile = weft::RepairProfile::Conservative;
+            } else if (value == "compatibility") {
+                repairProfile = weft::RepairProfile::Compatibility;
+            } else {
+                throw std::runtime_error(
+                    "--repair expects conservative|compatibility");
+            }
+        } else {
+            throw std::runtime_error("unknown inventory flag: " + args[i]);
+        }
+    }
+
+    const auto t0 = std::chrono::steady_clock::now();
+    std::fprintf(stderr, "WEFT_PROGRESS inventory.import.begin\n");
+    std::fflush(stderr);
+    const weft::ImportedModel imported =
+        weft::importStepSecure(input, repairProfile);
+    const auto t1 = std::chrono::steady_clock::now();
+    std::fprintf(stderr, "WEFT_PROGRESS inventory.import.done ms=%lld\n",
+                 static_cast<long long>(
+                     std::chrono::duration_cast<std::chrono::milliseconds>(t1 -
+                                                                           t0)
+                         .count()));
+    std::fflush(stderr);
+
+    weft::SecureMeshingConfiguration configuration;
+    configuration.progressToStderr = true;
+    configuration.collectAllUnsupported = true;
+    const weft::SecureMeshingResult generated =
+        weft::generateSecureMesh(imported, configuration);
+    const auto t2 = std::chrono::steady_clock::now();
+
+    std::map<std::string, std::size_t> faceFamilies;
+    std::map<std::string, std::size_t> curveFamilies;
+    std::map<std::string, std::size_t> supportStates;
+    std::map<std::string, std::size_t> conditionCodes;
+    // Re-run recon for histograms (cheap vs import); generateSecureMesh already
+    // ran recon internally but does not expose the report.
+    const weft::ReconnaissanceReport recon = weft::reconnoitre(imported);
+    for (const weft::ExactGeometryClassification& record : recon.records) {
+        if (record.taxonomy == weft::GeometryTaxonomy::Surface) {
+            ++faceFamilies[record.familyCode];
+            ++supportStates[weft::geometrySupportStateName(record.support)];
+        } else if (record.taxonomy == weft::GeometryTaxonomy::Curve) {
+            ++curveFamilies[record.familyCode];
+        }
+        for (const std::string& code : record.conditionCodes) {
+            if (code.rfind("cutout.", 0) == 0 ||
+                code.rfind("mapped.", 0) == 0 ||
+                code.rfind("freeform.", 0) == 0) {
+                ++conditionCodes[code];
+            }
+        }
+    }
+
+    std::printf("WEFT_INVENTORY file=%s\n", input.c_str());
+    std::printf("WEFT_INVENTORY import_ms=%lld recon_subjects=%zu\n",
+                static_cast<long long>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(t1 -
+                                                                           t0)
+                        .count()),
+                recon.checkedSubjects);
+    std::printf("WEFT_INVENTORY meshable=%d\n",
+                imported.meshable() ? 1 : 0);
+    for (const auto& [family, count] : faceFamilies) {
+        std::printf("WEFT_INVENTORY face_family %s count=%zu\n", family.c_str(),
+                    count);
+    }
+    for (const auto& [family, count] : curveFamilies) {
+        std::printf("WEFT_INVENTORY curve_family %s count=%zu\n", family.c_str(),
+                    count);
+    }
+    for (const auto& [state, count] : supportStates) {
+        std::printf("WEFT_INVENTORY support %s count=%zu\n", state.c_str(),
+                    count);
+    }
+    for (const auto& [code, count] : conditionCodes) {
+        std::printf("WEFT_INVENTORY condition %s count=%zu\n", code.c_str(),
+                    count);
+    }
+    std::map<std::string, std::size_t> unsupportedBuckets;
+    for (const weft::SecureMeshingUnsupportedRecord& record :
+         generated.unsupportedRecords) {
+        ++unsupportedBuckets[record.code + "|" + record.familyCode];
+    }
+    std::printf("WEFT_INVENTORY unsupported_total=%zu\n",
+                generated.unsupportedRecords.size());
+    for (const auto& [bucket, count] : unsupportedBuckets) {
+        std::printf("WEFT_INVENTORY unsupported_bucket %s count=%zu\n",
+                    bucket.c_str(), count);
+    }
+    std::printf(
+        "WEFT_INVENTORY inventory_ms=%lld refusal=%s\n",
+        static_cast<long long>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t0)
+                .count()),
+        generated.failure ? generated.failure->code.c_str() : "-");
+    // Inventory always exits 0 when aggregation completed (refusal expected).
+    return generated.failure &&
+                   generated.failure->code ==
+                       "secure_pipeline.inventory_unsupported"
+               ? 0
+               : 1;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1080,6 +1233,7 @@ int main(int argc, char** argv) {
     try {
         if (cmd == "fixture") return cmdFixture(args);
         if (cmd == "inspect") return cmdInspect(args);
+        if (cmd == "inventory") return cmdInventory(args);
         if (cmd == "extract") return cmdExtract(args);
         if (cmd == "convert") return cmdConvert(args);
         if (cmd == "mesh") return cmdMesh(args);

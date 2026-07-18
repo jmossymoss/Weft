@@ -34,6 +34,18 @@ struct SecureMeshingConfiguration {
     std::vector<EdgeIntervalChainSum> edgeChainSums;
     // Optional even-parity requirements for adversarial/parity fixtures.
     std::set<StableId> requireEvenEdgeIntervals;
+    // Line-buffered stderr progress for large models (MP9 inventory / gates).
+    bool progressToStderr = false;
+    // Inventory-only: continue past unsupported faces/curves to aggregate
+    // refusal codes. Still returns failure and never a MeshingResult.
+    bool collectAllUnsupported = false;
+};
+
+struct SecureMeshingUnsupportedRecord {
+    std::string code;
+    std::string message;
+    std::vector<StableId> subjects;
+    std::string familyCode;
 };
 
 struct SecureMeshingFailure {
@@ -46,6 +58,8 @@ struct SecureMeshingResult {
     std::optional<MeshingResult> value;
     ValidationCertificate validation;
     std::optional<SecureMeshingFailure> failure;
+    // Populated when configuration.collectAllUnsupported is true.
+    std::vector<SecureMeshingUnsupportedRecord> unsupportedRecords;
 
     explicit operator bool() const noexcept { return value.has_value(); }
 };

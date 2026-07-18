@@ -1104,6 +1104,79 @@ only with indexed evidence.
 - Evidence: `docs/evidence/m9-gate-closure-2026-07-18.md`.
 - Exit gate: M9 ledger row is `PASSED`.
 
+### WP-170 — MP9 inventory + progress logging
+
+- Status: `IN_PROGRESS`
+- Milestone: M8 production corpus
+- Prerequisites: WP-152
+- Goal: progress logging, `weft inventory`, and exact MP9 unsupported
+  aggregation without producing a MeshingResult.
+- Evidence: `docs/evidence/mp9-inventory-2026-07-18.md`.
+- Exit gate: MP9 face/curve/support histograms and unsupported buckets filed.
+
+### WP-171 — Ellipse curve boundaries
+
+- Status: `OPEN`
+- Milestone: M8 production corpus
+- Prerequisites: WP-170
+- Goal: exact ellipse classification, critical events, and interval demand.
+- Evidence: `docs/evidence/m8-ellipse-b-boundaries-2026-07-18.md`.
+- Exit gate: ellipse edges build canonical boundaries or refuse by name.
+
+### WP-172 — Ellipse certified consumers + proof
+
+- Status: `OPEN`
+- Milestone: M8 production corpus
+- Prerequisites: WP-171
+- Goal: ellipse edges on supported faces certify; fixtures and density proof.
+- Evidence: `docs/evidence/m8-ellipse-f-proof-2026-07-18.md`.
+- Exit gate: ellipse no longer blocks MP9 solely as unsupported_curve_family.
+
+### WP-173 — MP9 freeform subclass expansion
+
+- Status: `OPEN`
+- Milestone: M8 production corpus
+- Prerequisites: WP-172
+- Goal: expand freeform/bspline UV-grid subclasses required by MP9 inventory.
+- Evidence: `docs/evidence/mp9-freeform-expansion-2026-07-18.md`.
+- Exit gate: top freeform residual buckets reduced with named leftovers.
+
+### WP-174 — Extrusion and offset surface policy
+
+- Status: `OPEN`
+- Milestone: M8 production corpus
+- Prerequisites: WP-173
+- Goal: certify or named-refuse extrusion/offset surfaces present in MP9.
+- Evidence: `docs/evidence/mp9-extrusion-offset-2026-07-18.md`.
+- Exit gate: no silent extrusion/offset path; certify or stable refusal.
+
+### WP-175 — MP9 analytic residuals
+
+- Status: `OPEN`
+- Milestone: M8 production corpus
+- Prerequisites: WP-174
+- Goal: partial sphere/torus/cone and high-frequency cut-graphs from MP9.
+- Evidence: `docs/evidence/mp9-analytic-residuals-2026-07-18.md`.
+- Exit gate: residual analytic refusals are rare and named.
+
+### WP-176 — MP9 scale and performance
+
+- Status: `OPEN`
+- Milestone: M8 production corpus
+- Prerequisites: WP-175
+- Goal: bounded import/recon/mesh times and progress for ~4k-face MP9.
+- Evidence: `docs/evidence/mp9-scale-perf-2026-07-18.md`.
+- Exit gate: documented wall times; no pathological memory growth.
+
+### WP-177 — MP9 full-body CLI/app gate
+
+- Status: `OPEN`
+- Milestone: M8 production corpus
+- Prerequisites: WP-176
+- Goal: `weft mesh MP9.stp` succeeds with complete certificate; app screenshot.
+- Evidence: `docs/evidence/mp9-full-mesh-gate-2026-07-18.md`.
+- Exit gate: whole MP9 body certifies under ADR-0014.
+
 ## M8 family packet
 
 After M7 passes, repeat this packet for one family at a time. Choose the next

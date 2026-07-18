@@ -29,6 +29,13 @@ void setFailure(SecureMeshingResult& result, std::string code,
     }
 }
 
+void secureProgress(const SecureMeshingConfiguration& configuration,
+                    const char* message) {
+    if (!configuration.progressToStderr || message == nullptr) return;
+    std::fprintf(stderr, "WEFT_PROGRESS %s\n", message);
+    std::fflush(stderr);
+}
+
 void appendCoverage(ValidationCertificate& certificate, std::string code,
                     std::size_t expected, std::size_t checked,
                     std::size_t skipped, std::size_t failed) {
@@ -420,7 +427,13 @@ SecureMeshingResult generateSecureMesh(
                        evidence.checked, evidence.skipped, evidence.failed);
     }
 
+    secureProgress(configuration, "reconnaissance.begin");
     const ReconnaissanceReport reconnaissance = reconnoitre(imported);
+    {
+        const std::string msg = "reconnaissance.done subjects=" +
+            std::to_string(reconnaissance.checkedSubjects);
+        secureProgress(configuration, msg.c_str());
+    }
     appendCoverage(result.validation, "secure_pipeline.reconnaissance",
                    reconnaissance.expectedSubjects,
                    reconnaissance.checkedSubjects, 0,
@@ -431,10 +444,58 @@ SecureMeshingResult generateSecureMesh(
         return result;
     }
 
+    // Inventory dry-run: aggregate unsupported curve/surface families from
+    // reconnaissance without attempting a full mesh certificate.
+    if (configuration.collectAllUnsupported) {
+        secureProgress(configuration, "inventory.aggregate_unsupported.begin");
+        for (const ExactGeometryClassification& record :
+             reconnaissance.records) {
+            if (record.taxonomy == GeometryTaxonomy::Curve) {
+                const bool supportedCurve =
+                    record.familyCode == "line" ||
+                    record.familyCode == "circle" ||
+                    record.familyCode == "bspline" ||
+                    record.familyCode == "bezier" ||
+                    std::find(record.conditionCodes.begin(),
+                              record.conditionCodes.end(),
+                              "degenerate") != record.conditionCodes.end();
+                if (!supportedCurve) {
+                    result.unsupportedRecords.push_back(
+                        {std::string("secure_pipeline.unsupported_curve_family"),
+                         "curve family has no certified automatic consumer",
+                         {record.subjectId}, record.familyCode});
+                }
+            } else if (record.taxonomy == GeometryTaxonomy::Surface) {
+                if (record.support !=
+                    GeometrySupportState::SupportedAnalyticTemplate) {
+                    result.unsupportedRecords.push_back(
+                        {std::string(
+                             "secure_pipeline.unsupported_surface_family"),
+                         "surface has no certified automatic floor",
+                         {record.subjectId}, record.familyCode});
+                }
+            }
+        }
+        setFailure(result, "secure_pipeline.inventory_unsupported",
+                   "collectAllUnsupported aggregated unsupported subjects; "
+                   "no MeshingResult is produced");
+        {
+            const std::string msg =
+                "inventory.aggregate_unsupported.done count=" +
+                std::to_string(result.unsupportedRecords.size());
+            secureProgress(configuration, msg.c_str());
+        }
+        return result;
+    }
+
+    secureProgress(configuration, "intervals.begin");
     const IntervalProblemResult intervalProblem = buildIntervalProblem(
         imported, reconnaissance, configuration);
     if (!intervalProblem.value) {
         result.failure = intervalProblem.failure;
+        const std::string msg = "intervals.failed " +
+            (result.failure ? result.failure->code : std::string("-"));
+        secureProgress(configuration, msg.c_str());
         return result;
     }
     const IntervalSolveResult intervals = solveIntervals(
@@ -559,8 +620,21 @@ SecureMeshingResult generateSecureMesh(
     const auto cdt = makeExactLawsonReferencePlanarCdtBackend();
     std::vector<PlanarCdtMesh> faceMeshes;
     std::vector<StableId> expectedFaces;
+    std::size_t faceOrdinal = 0;
+    std::size_t faceTotal = 0;
+    for (const ExactGeometryClassification& face : reconnaissance.records) {
+        if (face.taxonomy == GeometryTaxonomy::Surface) ++faceTotal;
+    }
     for (const ExactGeometryClassification& face : reconnaissance.records) {
         if (face.taxonomy != GeometryTaxonomy::Surface) continue;
+        ++faceOrdinal;
+        if (configuration.progressToStderr) {
+            const std::string msg = "face " + std::to_string(faceOrdinal) +
+                "/" + std::to_string(faceTotal) + " id=" +
+                std::to_string(face.subjectId.ordinal) +
+                " family=" + face.familyCode;
+            secureProgress(configuration, msg.c_str());
+        }
         expectedFaces.push_back(face.subjectId);
         if (face.support !=
             GeometrySupportState::SupportedAnalyticTemplate) {
