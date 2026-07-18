@@ -868,7 +868,7 @@ only with indexed evidence.
 
 ### WP-121 — MAP-B canonical boundaries
 
-- Status: `DONE`
+- Status: `OPEN`
 - Milestone: M8 expansion
 - Prerequisites: WP-120
 - Goal: four-rail critical segmentation and UV lifting for mapped patches.
@@ -886,7 +886,7 @@ only with indexed evidence.
 
 ### WP-123 — MAP-D modelling topology
 
-- Status: `DONE`
+- Status: `OPEN`
 - Milestone: M8 expansion
 - Prerequisites: WP-122
 - Goal: modelling quads/n-gons with truthful provenance.
@@ -904,7 +904,7 @@ only with indexed evidence.
 
 ### WP-125 — MAP-F family proof
 
-- Status: `DONE`
+- Status: `OPEN`
 - Milestone: M8 expansion
 - Prerequisites: WP-124
 - Goal: density/corpus/determinism; declare mapped four-sided supported.
@@ -913,7 +913,7 @@ only with indexed evidence.
 
 ### WP-130 — CUT-A reconnaissance
 
-- Status: `DONE`
+- Status: `OPEN`
 - Milestone: M8 expansion
 - Prerequisites: WP-125
 - Goal: classify plate cutouts/holes/slots; name unsupported cut graphs.
@@ -922,7 +922,7 @@ only with indexed evidence.
 
 ### WP-131 — CUT-B canonical boundaries
 
-- Status: `DONE`
+- Status: `OPEN`
 - Milestone: M8 expansion
 - Prerequisites: WP-130
 - Goal: outer + hole wire boundaries with separated source-defect accounting.
@@ -931,7 +931,7 @@ only with indexed evidence.
 
 ### WP-132 — CUT-C certified floor
 
-- Status: `DONE`
+- Status: `OPEN`
 - Milestone: M8 expansion
 - Prerequisites: WP-131
 - Goal: certify plate+hole / plate+slot floors through secure meshing.
@@ -940,7 +940,7 @@ only with indexed evidence.
 
 ### WP-133 — CUT-D modelling topology
 
-- Status: `DONE`
+- Status: `OPEN`
 - Milestone: M8 expansion
 - Prerequisites: WP-132
 - Goal: modelling collar/quads with truthful provenance.
@@ -949,7 +949,7 @@ only with indexed evidence.
 
 ### WP-134 — CUT-E product integration
 
-- Status: `DONE`
+- Status: `OPEN`
 - Milestone: M8 expansion
 - Prerequisites: WP-133
 - Goal: CLI + desktop app for cutout solids.
@@ -958,7 +958,7 @@ only with indexed evidence.
 
 ### WP-135 — CUT-F family proof
 
-- Status: `DONE`
+- Status: `OPEN`
 - Milestone: M8 expansion
 - Prerequisites: WP-134
 - Goal: proof matrix; declare cutout family supported.
@@ -967,7 +967,7 @@ only with indexed evidence.
 
 ### WP-140 — FREE-A reconnaissance
 
-- Status: `DONE`
+- Status: `OPEN`
 - Milestone: M8 expansion
 - Prerequisites: WP-135
 - Goal: taxonomy for general freeform beyond four-sided; name deferred classes.
@@ -976,7 +976,7 @@ only with indexed evidence.
 
 ### WP-141 — FREE-B canonical boundaries
 
-- Status: `DONE`
+- Status: `OPEN`
 - Milestone: M8 expansion
 - Prerequisites: WP-140
 - Goal: bounded freeform edge sampling/critical events; refuse unbounded.
@@ -985,7 +985,7 @@ only with indexed evidence.
 
 ### WP-142 — FREE-C certified floor
 
-- Status: `DONE`
+- Status: `OPEN`
 - Milestone: M8 expansion
 - Prerequisites: WP-141
 - Goal: one narrow certified freeform floor consumer (not a general mesher).
@@ -994,7 +994,7 @@ only with indexed evidence.
 
 ### WP-143 — FREE-D modelling topology
 
-- Status: `DONE`
+- Status: `OPEN`
 - Milestone: M8 expansion
 - Prerequisites: WP-142
 - Goal: modelling provenance for the narrow freeform class.
@@ -1003,7 +1003,7 @@ only with indexed evidence.
 
 ### WP-144 — FREE-E product integration
 
-- Status: `DONE`
+- Status: `OPEN`
 - Milestone: M8 expansion
 - Prerequisites: WP-143
 - Goal: CLI + desktop app for the narrow freeform class.
@@ -1012,7 +1012,7 @@ only with indexed evidence.
 
 ### WP-145 — FREE-F family proof
 
-- Status: `DONE`
+- Status: `OPEN`
 - Milestone: M8 expansion
 - Prerequisites: WP-144
 - Goal: proof matrix; declare narrow freeform class supported.
@@ -1031,7 +1031,7 @@ only with indexed evidence.
 
 ### WP-151 — App editing and overlays on new families
 
-- Status: `DONE`
+- Status: `OPEN`
 - Milestone: App readiness
 - Prerequisites: WP-150
 - Goal: supported recipe edits/overlays/hot-reload remain truthful on MAP/CUT/
@@ -1041,7 +1041,7 @@ only with indexed evidence.
 
 ### WP-152 — Running-app gate
 
-- Status: `DONE`
+- Status: `OPEN`
 - Milestone: App readiness
 - Prerequisites: WP-151
 - Goal: binary “app ready” checklist (cold start, fixture sweep, density,
@@ -1061,7 +1061,7 @@ only with indexed evidence.
 
 ### WP-161 — M9 clean rebuilds
 
-- Status: `DONE`
+- Status: `BLOCKED`
 - Milestone: M9
 - Prerequisites: WP-160
 - Goal: clean empty-dir Linux and Windows builds.

@@ -141,6 +141,7 @@ prove completed work; they are not plans or handoff diaries.
   `m8-app-gate-2026-07-18.md` - running-app hardening before M9.
 - `m9-dependency-br006-2026-07-18.md` through `m9-gate-closure-2026-07-18.md` -
   M9 distribution progress (Linux package; Plasticity↔Blender blocked).
+- `packet-audit-2026-07-18.md` - reopen under-scoped CUT/FREE/MAP-D-F/APP-151.
 - `m6-secure-orchestration-2026-07-17.md` - atomic plane/cylinder/through-hole secure pipeline and combined certificate evidence.
 - `m7-secure-cli-routing-2026-07-17.md` - lossless certified export adapter, secure CLI routing, report coverage, and named workflow refusals.
 - `m7-secure-app-live-link-2026-07-17.md` - secure app preview/export/hot-reload routing, visual proof, and deterministic atomic Blender link.
