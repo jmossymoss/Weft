@@ -2020,11 +2020,17 @@ ImportedModel buildImportedModel(
     // meshingViewComplete/repairAuditComplete was still blocking. For large
     // identity-invalid transfers, only hard Errors other than topology/meshing
     // view incompleteness that are orientation/heal refusals should block.
+    // MP9 inventory (190722): meshable=0 with identity=1 and
+    // import.repair.orientation_unsupported×30. Those mark individual free
+    // solids that PAT-009 cannot repair; they must not block meshing entry for
+    // the rest of a large identity-invalid assembly. Still block open /
+    // non-manifold orientation refusals, heal failures, and SP proof Errors.
     const bool blockedByOrientationOrHeal = std::any_of(
         imported.diagnostics.events.begin(), imported.diagnostics.events.end(),
         [](const ImportDiagnostic& event) {
             if (event.severity != DiagnosticSeverity::Error) return false;
-            return event.code.rfind("import.repair.orientation_", 0) == 0 ||
+            return event.code == "import.repair.orientation_open_shell" ||
+                event.code == "import.repair.orientation_non_manifold" ||
                 event.code.rfind("import.heal.", 0) == 0 ||
                 event.code == "import.repair.same_parameter_range_unproven" ||
                 event.code == "import.correspondence.incomplete" ||
