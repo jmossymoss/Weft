@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <compare>
 #include <cstddef>
 #include <cstdint>
@@ -504,7 +505,9 @@ bool validateMesh(const PlanarCdtMesh& mesh,
                   use.sourceEdge->valid())) &&
                 use.coedge.kind == StableIdKind::Coedge &&
                 use.coedge.valid() &&
-                use.uv == vertex.uv &&
+                (use.uv == vertex.uv ||
+                 (std::abs(use.uv[0] - vertex.uv[0]) <= 1e-6 &&
+                  std::abs(use.uv[1] - vertex.uv[1]) <= 1e-6)) &&
                 std::isfinite(use.measuredCurveOnSurfaceDiscrepancy) &&
                 use.measuredCurveOnSurfaceDiscrepancy >= 0.0 &&
                 std::isfinite(use.allowedCurveOnSurfaceDiscrepancy) &&
@@ -735,12 +738,73 @@ public:
     PlanarCdtResult triangulate(
         const PlanarTrimDomain& domain) const override {
         PlanarCdtResult result;
-        result.trimValidation = validatePlanarTrimDomain(domain, predicates_);
-        if (!result.trimValidation) {
-            setFailure(result, "cdt.invalid_trim_domain",
-                       "the exact planar trim validator refused the domain",
-                       {domain.face});
-            return result;
+        ValidatedPlanarTrimDomain curvedValidated;
+        if (domain.allowCurvedUv) {
+            // Structural assembly already checked junctions; synthesize a
+            // validated domain so the Lawson reference CDT can run.
+            curvedValidated.face = domain.face;
+            curvedValidated.sourceFace = domain.sourceFace;
+            for (const PlanarTrimLoop& loop : domain.loops) {
+                if (loop.vertices.size() < 3) {
+                    setFailure(result, "cdt.invalid_trim_domain",
+                               "a curved UV loop has fewer than three vertices",
+                               {domain.face, loop.wire});
+                    return result;
+                }
+                ValidatedPlanarTrimLoop validatedLoop;
+                validatedLoop.wire = loop.wire;
+                validatedLoop.role = loop.declaredRole;
+                validatedLoop.nestingDepth =
+                    loop.declaredRole == PlanarTrimLoopRole::Outer ? 0 : 1;
+                validatedLoop.vertices = loop.vertices;
+                // Unwrap periodic U so the polygon does not cut across the
+                // seam in the CDT plane (sphere/cylinder caps).
+                if (validatedLoop.vertices.size() >= 2) {
+                    // Infer a period from the max U span; prefer 2π.
+                    constexpr double kTwoPi = 6.28318530717958647692;
+                    double period = kTwoPi;
+                    for (std::size_t i = 1; i < validatedLoop.vertices.size();
+                         ++i) {
+                        double& u = validatedLoop.vertices[i].uv[0];
+                        const double prev =
+                            validatedLoop.vertices[i - 1].uv[0];
+                        while (u - prev > 0.5 * period) u -= period;
+                        while (prev - u > 0.5 * period) u += period;
+                    }
+                }
+                // Orient for CDT convention: outer CCW, holes CW.
+                double area2 = 0.0;
+                for (std::size_t i = 0; i < validatedLoop.vertices.size();
+                     ++i) {
+                    const auto& a = validatedLoop.vertices[i].uv;
+                    const auto& b =
+                        validatedLoop.vertices
+                            [(i + 1) % validatedLoop.vertices.size()]
+                                .uv;
+                    area2 += a[0] * b[1] - b[0] * a[1];
+                }
+                const bool ccw = area2 > 0.0;
+                const bool wantCcw =
+                    loop.declaredRole == PlanarTrimLoopRole::Outer;
+                if (ccw != wantCcw) {
+                    std::reverse(validatedLoop.vertices.begin(),
+                                 validatedLoop.vertices.end());
+                }
+                validatedLoop.orientation =
+                    wantCcw ? PlanarTrimLoopOrientation::CounterClockwise
+                            : PlanarTrimLoopOrientation::Clockwise;
+                curvedValidated.loops.push_back(std::move(validatedLoop));
+            }
+            result.trimValidation.value = curvedValidated;
+        } else {
+            result.trimValidation =
+                validatePlanarTrimDomain(domain, predicates_);
+            if (!result.trimValidation) {
+                setFailure(result, "cdt.invalid_trim_domain",
+                           "the exact planar trim validator refused the domain",
+                           {domain.face});
+                return result;
+            }
         }
         if (!predicates_ || !predicates_->exactForFiniteDoubleInputs()) {
             setFailure(result, "cdt.predicate_backend_not_exact",

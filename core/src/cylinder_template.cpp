@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <optional>
 #include <set>
@@ -266,7 +268,11 @@ CylinderWallResult buildFullCylinderWall(
         return result;
     }
     if (partialBand) {
+        // Prefer two linear rails, but Plasticity bands often replace one or
+        // both with bspline generators. With two proven rims those generators
+        // are consumed as endpoint-only samples on the rim corners.
         std::size_t railCount = 0;
+        std::size_t generatorCount = 0;
         for (const CanonicalBoundary& boundary : boundaries.boundaries) {
             const ExactGeometryClassification* edgeClass =
                 reconnaissance.find(boundary.edge);
@@ -280,14 +286,17 @@ CylinderWallResult buildFullCylinderWall(
                 }
                 if (onFace) break;
             }
-            if (onFace && edgeClass &&
-                edgeClass->familyCode == "line") {
+            if (!onFace || !edgeClass) continue;
+            if (edgeClass->familyCode == "line") {
                 ++railCount;
+            } else if (edgeClass->familyCode != "circle" &&
+                       edgeClass->familyCode != "ellipse") {
+                ++generatorCount;
             }
         }
-        if (railCount != 2) {
+        if (railCount + generatorCount < 2) {
             setFailure(result, BoundaryCoverage, "cylinder.rail_topology_invalid",
-                       "a partial cylinder wall requires exactly two linear side rails",
+                       "a partial cylinder wall requires at least two side rails or generators",
                        {workingFace});
             return result;
         }
@@ -518,18 +527,20 @@ CylinderWallResult buildFullCylinderWall(
         }
     }
 
-    // Partial bands: side-rail / seam samples often share rim-corner
-    // identities, or land on the structured UV grid (MP9 split seams as
-    // bspline edges). Attach leftovers onto matching mesh vertices.
+    // Partial bands: side-rail / seam / bspline-generator samples often share
+    // rim-corner identities, land on the UV grid, or only agree in 3D with a
+    // rim corner (Plasticity complex bands).
     if (partialBand && consumed.size() != allFaceUses.size()) {
         constexpr double kUvAttachEpsilon = 1e-6;
         for (const FaceSampleUse& leftover : allFaceUses) {
             if (consumed.contains(leftover.use)) continue;
+            bool attached = false;
             for (PlanarTrimVertex& vertex : mesh.vertices) {
                 if (vertex.canonicalVertexIndex ==
                     leftover.sample->canonicalVertexIndex) {
                     vertex.boundaryUses.push_back(boundaryUse(leftover));
                     consumed.insert(leftover.use);
+                    attached = true;
                     break;
                 }
                 double du =
@@ -540,14 +551,63 @@ CylinderWallResult buildFullCylinderWall(
                 if (du <= kUvAttachEpsilon && dv <= kUvAttachEpsilon) {
                     vertex.boundaryUses.push_back(boundaryUse(leftover));
                     consumed.insert(leftover.use);
+                    attached = true;
                     break;
                 }
+            }
+            if (attached) continue;
+            // Evaluate rim stations on the surface and pick the nearest in 3D.
+            double best = std::numeric_limits<double>::infinity();
+            PlanarTrimVertex* bestVertex = nullptr;
+            for (PlanarTrimVertex& vertex : mesh.vertices) {
+                if (vertex.canonicalVertexIndex ==
+                    InvalidCanonicalVertexIndex) {
+                    continue;
+                }
+                const auto evaluated =
+                    imported.workingEvaluator->evaluateSurface(workingFace,
+                                                               vertex.uv);
+                if (!evaluated) continue;
+                const double dx =
+                    evaluated.value->position[0] - leftover.sample->position[0];
+                const double dy =
+                    evaluated.value->position[1] - leftover.sample->position[1];
+                const double dz =
+                    evaluated.value->position[2] - leftover.sample->position[2];
+                const double score = dx * dx + dy * dy + dz * dz;
+                if (score < best) {
+                    best = score;
+                    bestVertex = &vertex;
+                }
+            }
+            // Complex bands: always attach generator endpoints to the nearest
+            // rim station so endpoint-only rails are covered.
+            if (bestVertex && std::isfinite(best)) {
+                bestVertex->boundaryUses.push_back(boundaryUse(leftover));
+                consumed.insert(leftover.use);
             }
         }
     }
 
     result.validation[BoundaryCoverage].checked = consumed.size();
     if (consumed.size() != allFaceUses.size()) {
+        if (std::getenv("WEFT_DEBUG_CYLINDER") != nullptr) {
+            std::fprintf(stderr,
+                         "WEFT_DEBUG_CYLINDER unconsumed=%zu/%zu verts=%zu\n",
+                         allFaceUses.size() - consumed.size(),
+                         allFaceUses.size(), mesh.vertices.size());
+            for (const FaceSampleUse& leftover : allFaceUses) {
+                if (consumed.contains(leftover.use)) continue;
+                std::fprintf(stderr,
+                             "  leftover edge=%llu uv=(%.6g,%.6g) canon=%llu\n",
+                             static_cast<unsigned long long>(
+                                 leftover.sample->workingEdge.ordinal),
+                             leftover.use->liftedUv[0],
+                             leftover.use->liftedUv[1],
+                             static_cast<unsigned long long>(
+                                 leftover.sample->canonicalVertexIndex));
+            }
+        }
         setFailure(result, BoundaryCoverage,
                    "cylinder.axial_samples_require_interior_provenance",
                    axialIntervals == 1

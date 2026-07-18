@@ -955,7 +955,8 @@ void testMp9ExtractFaces() {
     // and face 250 (four-sided offset patch).
     for (const char* name :
          {"cylinder_band.step", "freeform_pent.step", "offset_quad.step",
-          "cone_frustum.step"}) {
+          "cone_frustum.step", "cylinder_complex.step",
+          "freeform_hex.step"}) {
         const std::filesystem::path path = findMp9Extract(name);
         CHECK(!path.empty());
         if (path.empty()) continue;
@@ -972,7 +973,7 @@ void testMp9ExtractFaces() {
                                  : 0U);
     }
 
-    // WP-173: 6-edge freeform is named-deferred, not silently supported.
+    // 6-edge freeform uses UV-trim CDT (not rectangular grid).
     {
         const std::filesystem::path path =
             findMp9Extract("freeform_hex.step");
@@ -982,22 +983,26 @@ void testMp9ExtractFaces() {
                 weft::importStepSecure(path.string());
             const weft::ReconnaissanceReport recon =
                 weft::reconnoitre(imported);
-            bool sawHighEdge = false;
+            bool sawUvTrim = false;
             for (const weft::ExactGeometryClassification& record :
                  recon.records) {
                 if (record.taxonomy != weft::GeometryTaxonomy::Surface) {
                     continue;
                 }
                 for (const std::string& code : record.conditionCodes) {
-                    if (code == "freeform.high_edge_count_deferred") {
-                        sawHighEdge = true;
+                    if (code == "freeform.uv_trim_candidate") {
+                        sawUvTrim = true;
                     }
                 }
                 CHECK(record.support ==
-                      weft::GeometrySupportState::DeferredResidualSurface);
+                      weft::GeometrySupportState::SupportedAnalyticTemplate);
             }
-            CHECK(sawHighEdge);
-            std::printf("WEFT_FREE_HIGH_EDGE deferred=1\n");
+            CHECK(sawUvTrim);
+            const weft::SecureMeshingResult meshed =
+                weft::generateSecureMesh(imported, configuration());
+            std::printf("WEFT_FREE_UV_TRIM ok=%d tris=%zu\n", meshed ? 1 : 0,
+                        meshed.value ? meshed.value->certified.triangles.size()
+                                     : 0U);
         }
     }
 }

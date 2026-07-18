@@ -137,7 +137,9 @@ double discrepancyCap(const CanonicalBoundaryConfiguration& configuration,
                       const ExactGeometryClassification* face) {
     // Plasticity freeform STEP extracts can carry larger B-rep tolerances
     // than the default 1e-3 analytic cap; keep a bounded subclass raise.
-    if (face && hasCondition(*face, "freeform.uv_grid_candidate")) {
+    if (face &&
+        (hasCondition(*face, "freeform.uv_grid_candidate") ||
+         hasCondition(*face, "freeform.uv_trim_candidate"))) {
         return std::max(configuration.maximumDiscrepancyTolerance, 1e-1);
     }
     return configuration.maximumDiscrepancyTolerance;
@@ -185,7 +187,8 @@ bool supportedSegmentationFamily(const ExactGeometryClassification& record,
          record.familyCode == "extrusion" ||
          record.familyCode == "revolution" || record.familyCode == "offset") &&
         (hasCondition(record, "mapped.four_sided_candidate") ||
-         hasCondition(record, "freeform.uv_grid_candidate"))) {
+         hasCondition(record, "freeform.uv_grid_candidate") ||
+         hasCondition(record, "freeform.uv_trim_candidate"))) {
         return record.support ==
                    GeometrySupportState::SupportedAnalyticTemplate ||
             record.support == GeometrySupportState::DeferredResidualSurface;
@@ -579,7 +582,9 @@ CriticalSegmentationResult collectSupportedCriticalEvents(
                     (hasCondition(*mapping.faceClassification,
                                   "mapped.four_sided_candidate") ||
                      hasCondition(*mapping.faceClassification,
-                                  "freeform.uv_grid_candidate"));
+                                  "freeform.uv_grid_candidate") ||
+                     hasCondition(*mapping.faceClassification,
+                                  "freeform.uv_trim_candidate"));
                 const bool analyticFace =
                     mapping.faceClassification &&
                     (mapping.faceClassification->familyCode == "plane" ||
@@ -1119,7 +1124,8 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                          GeometrySupportState::DeferredResidualSurface);
                 const bool mappedOrFreeformDerivable =
                     (hasCondition(*face, "mapped.four_sided_candidate") ||
-                     hasCondition(*face, "freeform.uv_grid_candidate")) &&
+                     hasCondition(*face, "freeform.uv_grid_candidate") ||
+                     hasCondition(*face, "freeform.uv_trim_candidate")) &&
                     (face->support ==
                      GeometrySupportState::SupportedAnalyticTemplate);
                 if (!analyticDerivable && !mappedOrFreeformDerivable) {
@@ -1399,11 +1405,17 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                         if (ambiguousIntegerPeriod(
                                 requested,
                                 configuration.periodicLiftAmbiguityTolerance)) {
-                            return buildFailure(
-                                report, "boundary.periodic_lift_ambiguous",
-                                "periodic UV lift is not uniquely determined",
-                                {edgeId, mapping.coedge->id,
-                                 mapping.coedge->faceId});
+                            // Sphere UV-trim caps often have seam samples near
+                            // half-period; pick the nearest integer lift.
+                            if (!(mapping.faceClassification &&
+                                  hasCondition(*mapping.faceClassification,
+                                               "sphere.uv_trim_candidate"))) {
+                                return buildFailure(
+                                    report, "boundary.periodic_lift_ambiguous",
+                                    "periodic UV lift is not uniquely determined",
+                                    {edgeId, mapping.coedge->id,
+                                     mapping.coedge->faceId});
+                            }
                         }
                         lift = static_cast<std::int64_t>(std::llround(requested));
                     }

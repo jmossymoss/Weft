@@ -1,6 +1,7 @@
 #include "weft/secure_meshing.hpp"
 
 #include "weft/cone_template.hpp"
+#include "weft/planar_cdt.hpp"
 #include "weft/planar_trim_assembly.hpp"
 #include "weft/sphere_template.hpp"
 #include "weft/mapped_template.hpp"
@@ -286,19 +287,32 @@ IntervalProblemResult buildIntervalProblem(
             }
         } else if (classification->familyCode == "bspline" ||
                    classification->familyCode == "bezier") {
-            bool sphereCapMeridian = false;
+            // Endpoint-only samples on revolved-band generators / spherical
+            // meridians avoid split-rail conflicts with the rim lattice.
+            bool endpointOnlyGenerator = false;
             for (const CoedgeRecord& coedge : snapshot.coedges) {
                 if (coedge.edgeId != topology.id) continue;
                 const ExactGeometryClassification* face =
                     reconnaissance.find(coedge.faceId);
-                if (face && face->familyCode == "sphere" && face->trimDomain &&
+                if (!face) continue;
+                const bool sphereCap = face->familyCode == "sphere" &&
+                    face->trimDomain &&
                     *face->trimDomain ==
-                        TrimDomainClass::TouchesOneSingularity) {
-                    sphereCapMeridian = true;
+                        TrimDomainClass::TouchesOneSingularity;
+                const bool revolvedBand =
+                    (face->familyCode == "cylinder" ||
+                     face->familyCode == "cone") &&
+                    face->trimDomain &&
+                    (*face->trimDomain ==
+                         TrimDomainClass::FullPeriodicWithCapBoundaries ||
+                     *face->trimDomain ==
+                         TrimDomainClass::PeriodicBandCrossingSeam);
+                if (sphereCap || revolvedBand) {
+                    endpointOnlyGenerator = true;
                     break;
                 }
             }
-            if (sphereCapMeridian) {
+            if (endpointOnlyGenerator) {
                 count = 1;
                 problem.variables.push_back(
                     {{StableIdKind::Boundary, topology.id.ordinal},
@@ -898,6 +912,74 @@ SecureMeshingResult generateSecureMesh(
             continue;
         }
         if (face.familyCode == "cylinder") {
+            std::size_t faceEdgeCount = 0;
+            {
+                std::set<StableId> uniqueEdges;
+                for (const CoedgeRecord& coedge :
+                     imported.working->snapshot.coedges) {
+                    if (coedge.faceId == face.subjectId) {
+                        uniqueEdges.insert(coedge.edgeId);
+                    }
+                }
+                faceEdgeCount = uniqueEdges.size();
+            }
+            // Complex bands (>4 edges): UV-trim CDT preserves generator
+            // samples that do not land on the structured rim lattice.
+            if (faceEdgeCount > 4) {
+                const PlanarTrimAssemblyResult trim =
+                    assemblePlanarTrimDomain(imported, reconnaissance,
+                                             *boundaries.value,
+                                             face.subjectId);
+                for (const PlanarTrimAssemblyEvidence& evidence :
+                     trim.evidence) {
+                    appendCoverage(result.validation,
+                                   faceCode(evidence.code, face.subjectId),
+                                   evidence.expected, evidence.checked,
+                                   evidence.skipped, evidence.failed);
+                }
+                if (!trim) {
+                    setFailure(result,
+                               trim.failure ? trim.failure->code
+                                            : "secure_pipeline.uv_trim_failed",
+                               trim.failure
+                                   ? trim.failure->message
+                                   : "UV trim assembly failed for complex cylinder",
+                               trim.failure ? trim.failure->subjects
+                                            : std::vector<StableId>{});
+                    return result;
+                }
+                const PlanarCdtResult triangulated =
+                    cdt->triangulate(*trim.value);
+                for (const TrimValidationEvidence& evidence :
+                     triangulated.trimValidation.evidence) {
+                    appendCoverage(result.validation,
+                                   faceCode(evidence.code, face.subjectId),
+                                   evidence.expected, evidence.checked,
+                                   evidence.skipped, evidence.failed);
+                }
+                for (const PlanarCdtValidationEvidence& evidence :
+                     triangulated.validation) {
+                    appendCoverage(result.validation,
+                                   faceCode(evidence.code, face.subjectId),
+                                   evidence.expected, evidence.checked,
+                                   evidence.skipped, evidence.failed);
+                }
+                if (!triangulated) {
+                    setFailure(result,
+                               triangulated.failure
+                                   ? triangulated.failure->code
+                                   : "secure_pipeline.uv_cdt_failed",
+                               triangulated.failure
+                                   ? triangulated.failure->message
+                                   : "UV CDT failed for complex cylinder",
+                               triangulated.failure
+                                   ? triangulated.failure->subjects
+                                   : std::vector<StableId>{});
+                    return result;
+                }
+                faceMeshes.push_back(*triangulated.value);
+                continue;
+            }
             CylinderWallConfiguration cylinder;
             cylinder.maximumChordDeviation =
                 configuration.sampling.chordTolerance;
@@ -1041,6 +1123,66 @@ SecureMeshingResult generateSecureMesh(
             // Guard parallel-circle sagitta near the equator.
             sphere.azimuthIntervals =
                 std::max<std::uint32_t>(sphere.azimuthIntervals, 16);
+            const bool sphereUvTrim =
+                std::find(face.conditionCodes.begin(),
+                          face.conditionCodes.end(),
+                          "sphere.uv_trim_candidate") !=
+                face.conditionCodes.end();
+            if (sphereUvTrim) {
+                const PlanarTrimAssemblyResult trim =
+                    assemblePlanarTrimDomain(imported, reconnaissance,
+                                             *boundaries.value,
+                                             face.subjectId);
+                for (const PlanarTrimAssemblyEvidence& evidence :
+                     trim.evidence) {
+                    appendCoverage(result.validation,
+                                   faceCode(evidence.code, face.subjectId),
+                                   evidence.expected, evidence.checked,
+                                   evidence.skipped, evidence.failed);
+                }
+                if (!trim) {
+                    setFailure(result,
+                               trim.failure ? trim.failure->code
+                                            : "secure_pipeline.uv_trim_failed",
+                               trim.failure
+                                   ? trim.failure->message
+                                   : "UV trim assembly failed for sphere cap",
+                               trim.failure ? trim.failure->subjects
+                                            : std::vector<StableId>{});
+                    return result;
+                }
+                const PlanarCdtResult triangulated =
+                    cdt->triangulate(*trim.value);
+                for (const TrimValidationEvidence& evidence :
+                     triangulated.trimValidation.evidence) {
+                    appendCoverage(result.validation,
+                                   faceCode(evidence.code, face.subjectId),
+                                   evidence.expected, evidence.checked,
+                                   evidence.skipped, evidence.failed);
+                }
+                for (const PlanarCdtValidationEvidence& evidence :
+                     triangulated.validation) {
+                    appendCoverage(result.validation,
+                                   faceCode(evidence.code, face.subjectId),
+                                   evidence.expected, evidence.checked,
+                                   evidence.skipped, evidence.failed);
+                }
+                if (!triangulated) {
+                    setFailure(result,
+                               triangulated.failure
+                                   ? triangulated.failure->code
+                                   : "secure_pipeline.uv_cdt_failed",
+                               triangulated.failure
+                                   ? triangulated.failure->message
+                                   : "UV CDT failed for sphere cap",
+                               triangulated.failure
+                                   ? triangulated.failure->subjects
+                                   : std::vector<StableId>{});
+                    return result;
+                }
+                faceMeshes.push_back(*triangulated.value);
+                continue;
+            }
             SphereWallResult wall;
             if (face.trimDomain &&
                 *face.trimDomain ==
@@ -1117,6 +1259,62 @@ SecureMeshingResult generateSecureMesh(
             std::find(face.conditionCodes.begin(), face.conditionCodes.end(),
                       "freeform.uv_grid_candidate") !=
             face.conditionCodes.end();
+        const bool freeformUvTrim =
+            std::find(face.conditionCodes.begin(), face.conditionCodes.end(),
+                      "freeform.uv_trim_candidate") !=
+            face.conditionCodes.end();
+        if (freeformUvTrim) {
+            const PlanarTrimAssemblyResult trim = assemblePlanarTrimDomain(
+                imported, reconnaissance, *boundaries.value, face.subjectId);
+            for (const PlanarTrimAssemblyEvidence& evidence : trim.evidence) {
+                appendCoverage(result.validation,
+                               faceCode(evidence.code, face.subjectId),
+                               evidence.expected, evidence.checked,
+                               evidence.skipped, evidence.failed);
+            }
+            if (!trim) {
+                setFailure(result,
+                           trim.failure ? trim.failure->code
+                                        : "secure_pipeline.uv_trim_failed",
+                           trim.failure
+                               ? trim.failure->message
+                               : "UV trim assembly failed for freeform n-gon",
+                           trim.failure ? trim.failure->subjects
+                                        : std::vector<StableId>{});
+                return result;
+            }
+            const PlanarCdtResult triangulated =
+                cdt->triangulate(*trim.value);
+            for (const TrimValidationEvidence& evidence :
+                 triangulated.trimValidation.evidence) {
+                appendCoverage(result.validation,
+                               faceCode(evidence.code, face.subjectId),
+                               evidence.expected, evidence.checked,
+                               evidence.skipped, evidence.failed);
+            }
+            for (const PlanarCdtValidationEvidence& evidence :
+                 triangulated.validation) {
+                appendCoverage(result.validation,
+                               faceCode(evidence.code, face.subjectId),
+                               evidence.expected, evidence.checked,
+                               evidence.skipped, evidence.failed);
+            }
+            if (!triangulated) {
+                setFailure(result,
+                           triangulated.failure
+                               ? triangulated.failure->code
+                               : "secure_pipeline.uv_cdt_failed",
+                           triangulated.failure
+                               ? triangulated.failure->message
+                               : "UV CDT failed for freeform n-gon",
+                           triangulated.failure
+                               ? triangulated.failure->subjects
+                               : std::vector<StableId>{});
+                return result;
+            }
+            faceMeshes.push_back(*triangulated.value);
+            continue;
+        }
         if (mappedFourSided || freeformUvGrid) {
             MappedPatchConfiguration mapped;
             mapped.maximumChordDeviation =

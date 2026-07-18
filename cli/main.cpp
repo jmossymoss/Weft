@@ -1281,7 +1281,8 @@ int cmdInventory(const std::vector<std::string>& args) {
                 code.rfind("cone.", 0) == 0 ||
                 code.rfind("sphere.", 0) == 0 ||
                 code.rfind("cylinder.", 0) == 0 ||
-                code.rfind("torus.", 0) == 0) {
+                code.rfind("torus.", 0) == 0 ||
+                code.find("uv_trim") != std::string::npos) {
                 ++conditionCodes[code];
             }
         }

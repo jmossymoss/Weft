@@ -811,8 +811,9 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                         record.conditionCodes.push_back(
                             "freeform.uv_grid_candidate");
                     } else if (uvGridTrim && faceEdges.size() > 5) {
+                        // N-gon UV-trim CDT consumer (not rectangular grid).
                         record.conditionCodes.push_back(
-                            "freeform.high_edge_count_deferred");
+                            "freeform.uv_trim_candidate");
                     } else {
                         record.conditionCodes.push_back(
                             "freeform.general_deferred");
@@ -922,20 +923,27 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                           record.conditionCodes.end(),
                           "freeform.uv_grid_candidate") !=
                 record.conditionCodes.end();
+            const bool freeformUvTrim =
+                std::find(record.conditionCodes.begin(),
+                          record.conditionCodes.end(),
+                          "freeform.uv_trim_candidate") !=
+                record.conditionCodes.end();
             const bool representationReady =
                 analyticUvDerivable || mappedFourSided || freeformUvGrid ||
+                freeformUvTrim ||
                 curvedFaceHasExactMappings(imported, faceId);
-            // MAP-C / FREE-C: UV-grid candidates are first-template ready when
-            // representations evaluate, even though FamilyInfo::firstTemplate
-            // stays false for general bspline/extrusion.
-            if ((mappedFourSided || freeformUvGrid) && evaluates &&
-                representationReady) {
+            // MAP-C / FREE-C: UV-grid and UV-trim candidates are first-template
+            // ready when representations evaluate.
+            if ((mappedFourSided || freeformUvGrid || freeformUvTrim) &&
+                evaluates && representationReady) {
                 record.confidence = RecognitionConfidence::ProvenAnalytic;
                 record.support =
                     GeometrySupportState::SupportedAnalyticTemplate;
                 record.strategyOrReasonCode =
                     mappedFourSided ? "strategy.mapped_four_sided"
-                                    : "strategy.freeform_uv_grid";
+                                    : (freeformUvTrim
+                                           ? "strategy.freeform_uv_trim"
+                                           : "strategy.freeform_uv_grid");
             } else {
                 decideSupport(record, family, evaluates,
                               evaluates && representationReady, report);
@@ -996,6 +1004,8 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                             }
                         }
                         if (uniqueEdges.size() > 2) {
+                            // UV-trim CDT still fails on many Plasticity
+                            // sphere seams; keep a named residual.
                             demote("sphere.complex_cap_deferred");
                         }
                     } else if (!fullSphere) {
@@ -1007,12 +1017,31 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                         TrimDomainClass::PeriodicBandCrossingSeam;
                     if (partialBand) {
                         std::set<StableId> uniqueEdges;
+                        int circleRims = 0;
                         for (const CoedgeRecord& coedge : snapshot.coedges) {
-                            if (coedge.faceId == faceId) {
-                                uniqueEdges.insert(coedge.edgeId);
+                            if (coedge.faceId != faceId) continue;
+                            uniqueEdges.insert(coedge.edgeId);
+                        }
+                        for (const StableId& edgeId : uniqueEdges) {
+                            const ExactGeometryClassification* edgeRec =
+                                nullptr;
+                            for (const ExactGeometryClassification& prior :
+                                 report.records) {
+                                if (prior.subjectId == edgeId) {
+                                    edgeRec = &prior;
+                                    break;
+                                }
+                            }
+                            if (edgeRec &&
+                                (edgeRec->familyCode == "circle" ||
+                                 edgeRec->familyCode == "ellipse")) {
+                                ++circleRims;
                             }
                         }
-                        if (uniqueEdges.size() > 4) {
+                        // Complex rails (bspline generators) are OK when the
+                        // two circular/elliptical rims are present; otherwise
+                        // keep the named deferral.
+                        if (uniqueEdges.size() > 4 && circleRims < 2) {
                             demote("cylinder.complex_boundary_deferred");
                         }
                     }

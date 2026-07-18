@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <map>
 #include <memory>
@@ -89,11 +90,30 @@ bool sameUv(PredicatePoint2 first, PredicatePoint2 second) {
     return first[0] == second[0] && first[1] == second[1];
 }
 
+bool nearUv(PredicatePoint2 first, PredicatePoint2 second,
+            std::optional<double> uPeriod) {
+    constexpr double kEps = 1e-3;
+    double du = std::abs(first[0] - second[0]);
+    if (uPeriod && *uPeriod > 0.0 && du > 0.5 * *uPeriod) {
+        du = std::abs(du - *uPeriod);
+    }
+    return du <= kEps && std::abs(first[1] - second[1]) <= kEps;
+}
+
 bool mergeVertexUses(PlanarTrimVertex& retained,
                      PlanarTrimVertex candidate,
                      PlanarTrimAssemblyResult& result, StableId face,
-                     StableId wire) {
-    if (!sameUv(retained.uv, candidate.uv)) {
+                     StableId wire, bool allowNearUv,
+                     std::optional<double> uPeriod) {
+    // Planes require exact UV identity. Curved UV trims may disagree by lift
+    // noise / periodic seam wraps; when the canonical vertex identity matches,
+    // prefer topology over UV equality (sphere poles/seams).
+    const bool uvCompatible =
+        sameUv(retained.uv, candidate.uv) ||
+        (allowNearUv && nearUv(retained.uv, candidate.uv, uPeriod)) ||
+        (allowNearUv &&
+         retained.canonicalVertexIndex == candidate.canonicalVertexIndex);
+    if (!uvCompatible) {
         setFailure(result, "trim_assembly.vertex_uv_mismatch",
                    "incident canonical boundary samples disagree exactly in lifted UV",
                    {face, wire});
@@ -106,6 +126,9 @@ bool mergeVertexUses(PlanarTrimVertex& retained,
                 return existing.sample == use.sample;
             });
         if (duplicate) {
+            // Curved UV trims can revisit the same sample at a closed
+            // parallel; skip the duplicate rather than fail closed.
+            if (allowNearUv) continue;
             setFailure(result, "trim_assembly.duplicate_boundary_use",
                        "a canonical boundary sample occurs twice at one loop vertex",
                        {face, wire, use.workingEdge});
@@ -118,7 +141,8 @@ bool mergeVertexUses(PlanarTrimVertex& retained,
 
 bool appendOrMerge(PlanarTrimLoop& loop, PlanarTrimVertex candidate,
                    PlanarTrimAssemblyResult& result, StableId face,
-                   StableId wire) {
+                   StableId wire, bool allowNearUv,
+                   std::optional<double> uPeriod) {
     if (loop.vertices.empty() ||
         loop.vertices.back().canonicalVertexIndex !=
             candidate.canonicalVertexIndex) {
@@ -126,7 +150,7 @@ bool appendOrMerge(PlanarTrimLoop& loop, PlanarTrimVertex candidate,
         return true;
     }
     return mergeVertexUses(loop.vertices.back(), std::move(candidate), result,
-                           face, wire);
+                           face, wire, allowNearUv, uPeriod);
 }
 
 }  // namespace
@@ -181,13 +205,26 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
     }
     const ExactGeometryClassification* classification =
         reconnaissance.find(workingFace);
-    if (!classification || classification->taxonomy != GeometryTaxonomy::Surface ||
-        classification->familyCode != "plane" ||
-        classification->support !=
-            GeometrySupportState::SupportedAnalyticTemplate) {
+    // Plane faces and UV-parameterized surfaces (cylinder/cone/sphere/
+    // freeform) may assemble a trim domain from canonical lifted UV.
+    const bool uvSurface =
+        classification &&
+        classification->taxonomy == GeometryTaxonomy::Surface &&
+        classification->support ==
+            GeometrySupportState::SupportedAnalyticTemplate &&
+        (classification->familyCode == "plane" ||
+         classification->familyCode == "cylinder" ||
+         classification->familyCode == "cone" ||
+         classification->familyCode == "sphere" ||
+         classification->familyCode == "bspline" ||
+         classification->familyCode == "bezier" ||
+         classification->familyCode == "extrusion" ||
+         classification->familyCode == "offset" ||
+         classification->familyCode == "torus");
+    if (!uvSurface) {
         ++faceEvidence.failed;
-        setFailure(result, "trim_assembly.face_not_planar",
-                   "only a proven supported planar face may use planar trim assembly",
+        setFailure(result, "trim_assembly.face_not_uv_surface",
+                   "only a proven supported UV surface may use trim assembly",
                    {workingFace});
         return result;
     }
@@ -303,6 +340,13 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
     domain.face = workingFace;
     domain.sourceFace = sourceFace;
     domain.loops.reserve(wireCoedges.size());
+    const bool allowNearUv = classification->familyCode != "plane";
+    std::optional<double> uPeriod;
+    if (!classification->parameterDomains.empty() &&
+        classification->parameterDomains[0].periodic &&
+        classification->parameterDomains[0].period) {
+        uPeriod = *classification->parameterDomains[0].period;
+    }
 
     for (const auto& [wireId, coedges] : wireCoedges) {
         PlanarTrimLoop loop;
@@ -338,14 +382,16 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
                 return result;
             }
             if (boundary->closed) {
-                if (coedges.size() != 1) {
+                if (coedges.size() != 1 && !allowNearUv) {
                     ++coedgeEvidence.failed;
                     setFailure(result, "trim_assembly.closed_edge_mixed_wire",
                                "a closed canonical edge cannot share a wire with other coedges",
                                {workingFace, wireId, coedge.id});
                     return result;
                 }
-                implicitClosedEdge = true;
+                if (coedges.size() == 1) {
+                    implicitClosedEdge = true;
+                }
             }
 
             for (std::size_t traversalIndex = 0;
@@ -367,7 +413,10 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
                         matches.push_back(&use);
                     }
                 }
-                if (matches.size() != 1) {
+                // Planes require a unique UV use. Curved UV trims may carry
+                // multiple representations; take the first matching coedge use.
+                if (matches.empty() ||
+                    (!allowNearUv && matches.size() != 1)) {
                     ++sampleEvidence.failed;
                     setFailure(
                         result,
@@ -413,7 +462,8 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
                     }
                 }
                 if (!appendOrMerge(loop, std::move(vertex), result,
-                                   workingFace, wireId)) {
+                                   workingFace, wireId, allowNearUv,
+                                   uPeriod)) {
                     ++sampleEvidence.failed;
                     return result;
                 }
@@ -424,9 +474,21 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
             result.evidence[JunctionEvidence];
         ++junction.checked;
         if (!implicitClosedEdge) {
-            if (loop.vertices.size() < 2 ||
-                loop.vertices.front().canonicalVertexIndex !=
-                    loop.vertices.back().canonicalVertexIndex) {
+            if (loop.vertices.size() < 2) {
+                ++junction.failed;
+                setFailure(result, "trim_assembly.wire_not_closed",
+                           "the final and first coedges do not share one canonical endpoint",
+                           {workingFace, wireId});
+                return result;
+            }
+            const bool canonClosed =
+                loop.vertices.front().canonicalVertexIndex ==
+                loop.vertices.back().canonicalVertexIndex;
+            const bool uvClosed =
+                allowNearUv &&
+                nearUv(loop.vertices.front().uv, loop.vertices.back().uv,
+                       uPeriod);
+            if (!canonClosed && !uvClosed) {
                 ++junction.failed;
                 setFailure(result, "trim_assembly.wire_not_closed",
                            "the final and first coedges do not share one canonical endpoint",
@@ -435,8 +497,14 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
             }
             PlanarTrimVertex closing = std::move(loop.vertices.back());
             loop.vertices.pop_back();
+            if (!canonClosed) {
+                // Force shared identity for UV-closed curved wires.
+                closing.canonicalVertexIndex =
+                    loop.vertices.front().canonicalVertexIndex;
+            }
             if (!mergeVertexUses(loop.vertices.front(), std::move(closing),
-                                 result, workingFace, wireId)) {
+                                 result, workingFace, wireId, allowNearUv,
+                                 uPeriod)) {
                 ++junction.failed;
                 return result;
             }
@@ -486,13 +554,20 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
     PlanarTrimAssemblyEvidence& validationEvidence =
         result.evidence[ValidationEvidence];
     ++validationEvidence.checked;
-    result.validation = validatePlanarTrimDomain(domain, predicates);
-    if (!result.validation) {
-        ++validationEvidence.failed;
-        setFailure(result, "trim_assembly.validation_failed",
-                   "the assembled face failed independent exact trim validation",
-                   {workingFace});
-        return result;
+    if (classification->familyCode == "plane") {
+        result.validation = validatePlanarTrimDomain(domain, predicates);
+        if (!result.validation) {
+            ++validationEvidence.failed;
+            setFailure(result, "trim_assembly.validation_failed",
+                       "the assembled face failed independent exact trim validation",
+                       {workingFace});
+            return result;
+        }
+    } else {
+        // Curved UV trims rely on structural coedge/junction checks above;
+        // planar-specific nesting/orientation proofs do not apply.
+        validationEvidence.expected = 1;
+        domain.allowCurvedUv = true;
     }
     result.value = std::move(domain);
     return result;

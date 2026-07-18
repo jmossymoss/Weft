@@ -72,6 +72,9 @@ struct PlanarTrimDomain {
     StableId face;
     std::optional<StableId> sourceFace;
     std::vector<PlanarTrimLoop> loops;
+    // When true, CDT skips planar nesting/orientation proofs and triangulates
+    // the assembled UV loops directly (cylinder/freeform/sphere UV trims).
+    bool allowCurvedUv = false;
 };
 
 struct TrimValidationEvidence {
