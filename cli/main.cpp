@@ -1284,7 +1284,11 @@ int cmdInventory(const std::vector<std::string>& args) {
                 recon.checkedSubjects);
     std::size_t sameParamErrors = 0;
     std::size_t sameParamWarnings = 0;
+    std::map<std::string, std::size_t> errorDiagnostics;
     for (const weft::ImportDiagnostic& event : imported.diagnostics.events) {
+        if (event.severity == weft::DiagnosticSeverity::Error) {
+            ++errorDiagnostics[event.code];
+        }
         if (event.code == "import.repair.same_parameter_range_unproven" ||
             event.code == "import.repair.same_parameter_range_unproven_no_pcurve") {
             if (event.severity == weft::DiagnosticSeverity::Error) {
@@ -1296,13 +1300,19 @@ int cmdInventory(const std::vector<std::string>& args) {
     }
     std::printf(
         "WEFT_INVENTORY meshable=%d source_valid=%d working_valid=%d "
-        "identity=%d recon_complete=%d supported_faces=%zu "
-        "unsupported_subjects=%zu same_parameter_errors=%zu "
-        "same_parameter_warnings=%zu\n",
+        "identity=%d correspondence=%d topology_correspondence=%d "
+        "recon_complete=%d supported_faces=%zu unsupported_subjects=%zu "
+        "same_parameter_errors=%zu same_parameter_warnings=%zu\n",
         imported.meshable() ? 1 : 0, imported.repair.sourceValid ? 1 : 0,
         imported.repair.workingValid ? 1 : 0, imported.repair.identity ? 1 : 0,
+        imported.repair.correspondenceComplete ? 1 : 0,
+        imported.correspondence.topologyComplete ? 1 : 0,
         recon.complete ? 1 : 0, supportedFaces, unsupportedTotal,
         sameParamErrors, sameParamWarnings);
+    for (const auto& [code, count] : errorDiagnostics) {
+        std::printf("WEFT_INVENTORY import_error %s count=%zu\n", code.c_str(),
+                    count);
+    }
     for (const auto& [family, count] : faceFamilies) {
         std::printf("WEFT_INVENTORY face_family %s count=%zu\n", family.c_str(),
                     count);

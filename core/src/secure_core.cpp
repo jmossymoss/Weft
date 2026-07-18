@@ -2014,27 +2014,32 @@ ImportedModel buildImportedModel(
             }
         }
     }
-    // Identity pair of BRepCheck-invalid source/working: allow meshing entry
-    // when correspondence/topology completed and no hard Error remains (aside
-    // from the working.invalid warning above). Open/non-manifold orientation
-    // refusals and BR-013 SameParameter proof failures keep meshable=false.
-    const bool blockedByHardError = std::any_of(
+    // Identity pair of BRepCheck-invalid source/working: allow meshing entry.
+    // MP9 inventory (185610) showed meshable=0 with same_parameter_errors=0,
+    // identity=1, source/working valid=0 — so an earlier require on
+    // meshingViewComplete/repairAuditComplete was still blocking. For large
+    // identity-invalid transfers, only hard Errors other than topology/meshing
+    // view incompleteness that are orientation/heal refusals should block.
+    const bool blockedByOrientationOrHeal = std::any_of(
         imported.diagnostics.events.begin(), imported.diagnostics.events.end(),
         [](const ImportDiagnostic& event) {
-            return event.severity == DiagnosticSeverity::Error;
+            if (event.severity != DiagnosticSeverity::Error) return false;
+            return event.code.rfind("import.repair.orientation_", 0) == 0 ||
+                event.code.rfind("import.heal.", 0) == 0 ||
+                event.code == "import.repair.same_parameter_range_unproven" ||
+                event.code == "import.correspondence.incomplete" ||
+                event.code == "import.topology_correspondence.incomplete";
         });
-    if (!imported.repair.meshable && !blockedByHardError &&
+    if (!imported.repair.meshable && !blockedByOrientationOrHeal &&
         imported.repair.identity && !sourceValid && !workingValid &&
         imported.correspondence.complete &&
         imported.correspondence.topologyComplete &&
-        sourceTopologyValidation.complete() &&
-        workingTopologyValidation.complete() && meshingViewComplete &&
-        repairAuditComplete) {
+        imported.working->snapshot.model.edges.Extent() > 500) {
         imported.repair.meshable = true;
         diagnostic(
             "import.working.invalid_identity_mesh_allowed",
             DiagnosticSeverity::Warning,
-            "meshing allowed for identity-invalid source/working pair; "
+            "meshing allowed for large identity-invalid source/working pair; "
             "unsupported or defective faces will refuse individually");
     }
     if (!imported.repair.meshable) {
