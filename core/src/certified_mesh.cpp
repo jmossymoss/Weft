@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <limits>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <tuple>
@@ -27,8 +28,54 @@ enum CheckIndex : std::size_t {
     TriangleGeometry,
     EdgeIncidence,
     EdgeWinding,
+    TriangleIntersection,
     Fingerprint,
 };
+
+struct Aabb {
+    std::array<double, 3> min{};
+    std::array<double, 3> max{};
+};
+
+Aabb triangleAabb(const CertifiedMesh& mesh,
+                  const CertifiedTriangle& triangle) {
+    Aabb box;
+    box.min = mesh.vertices[triangle.vertices[0]].position;
+    box.max = box.min;
+    for (std::size_t corner = 1; corner < 3; ++corner) {
+        const auto& position =
+            mesh.vertices[triangle.vertices[corner]].position;
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            box.min[axis] = std::min(box.min[axis], position[axis]);
+            box.max[axis] = std::max(box.max[axis], position[axis]);
+        }
+    }
+    return box;
+}
+
+bool aabbOverlap(const Aabb& left, const Aabb& right) {
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+        if (left.max[axis] < right.min[axis] ||
+            right.max[axis] < left.min[axis]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::size_t sharedVertexCount(const CertifiedTriangle& left,
+                              const CertifiedTriangle& right) {
+    std::size_t count = 0;
+    for (std::uint32_t leftVertex : left.vertices) {
+        for (std::uint32_t rightVertex : right.vertices) {
+            if (leftVertex == rightVertex) {
+                ++count;
+                break;
+            }
+        }
+    }
+    return count;
+}
 
 struct Edge {
     std::uint32_t lower = 0;
@@ -268,6 +315,7 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
         {"certified.triangle_geometry", 0},
         {"certified.edge_incidence", 0},
         {"certified.edge_winding", 0},
+        {"certified.triangle_intersection", 0},
         {"certified.fingerprint", 1},
     };
     if (!imported.meshable() || !imported.working ||
@@ -612,6 +660,21 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
     }
     if (incidence.failed != 0 || winding.failed != 0) return result;
 
+    const CertifiedTriangleIntersectionResult intersections =
+        validateCertifiedTriangleIntersections(mesh);
+    result.validation.checks[TriangleIntersection] = intersections.coverage;
+    if (intersections.failure) {
+        setFailure(result, intersections.failure->code,
+                   intersections.failure->message,
+                   intersections.failure->subjects);
+        return result;
+    }
+    if (!intersections.coverage.complete()) {
+        setFailure(result, "certified.triangle_intersection_incomplete",
+                   "triangle intersection coverage is incomplete", {});
+        return result;
+    }
+
     mesh.topologyFingerprint = fingerprintOf(mesh);
     ValidationCoverage& fingerprint = result.validation.checks[Fingerprint];
     ++fingerprint.checked;
@@ -639,6 +702,129 @@ CertifiedMeshAssemblyResult assembleCertifiedPlanarMesh(
     return assembleCertifiedBoundaryMesh(
         imported, boundaries, faceMeshes, expectedWorkingFaces,
         configuration);
+}
+
+CertifiedTriangleIntersectionResult validateCertifiedTriangleIntersections(
+    const CertifiedMesh& mesh,
+    std::shared_ptr<const GeometricPredicates> predicates) {
+    CertifiedTriangleIntersectionResult result;
+    if (!predicates) {
+        result.failure = CertifiedMeshAssemblyFailure{
+            "certified.triangle_intersection_predicates_missing",
+            "triangle intersection validation requires exact predicates",
+            {}};
+        ++result.coverage.failed;
+        return result;
+    }
+    const std::size_t triangleCount = mesh.triangles.size();
+    if (triangleCount < 2) {
+        // Vacuous domain: fewer than two triangles cannot intersect.
+        result.coverage.expected = 0;
+        result.coverage.checked = 0;
+        return result;
+    }
+    result.coverage.expected =
+        triangleCount * (triangleCount - 1) / 2;
+
+    std::vector<Aabb> boxes(triangleCount);
+    for (std::size_t index = 0; index < triangleCount; ++index) {
+        const CertifiedTriangle& triangle = mesh.triangles[index];
+        for (std::uint32_t vertex : triangle.vertices) {
+            if (vertex >= mesh.vertices.size()) {
+                result.failure = CertifiedMeshAssemblyFailure{
+                    "certified.triangle_vertex_invalid",
+                    "triangle intersection saw an out-of-range vertex index",
+                    {triangle.workingFace}};
+                ++result.coverage.failed;
+                return result;
+            }
+        }
+        boxes[index] = triangleAabb(mesh, triangle);
+    }
+
+    for (std::size_t i = 0; i < triangleCount; ++i) {
+        for (std::size_t j = i + 1; j < triangleCount; ++j) {
+            ++result.coverage.checked;
+            const CertifiedTriangle& left = mesh.triangles[i];
+            const CertifiedTriangle& right = mesh.triangles[j];
+            const std::size_t shared = sharedVertexCount(left, right);
+            if (shared >= 3) {
+                ++result.coverage.failed;
+                result.failure = CertifiedMeshAssemblyFailure{
+                    "certified.triangle_duplicate",
+                    "two certified triangles reuse the same three vertices",
+                    {left.workingFace, right.workingFace}};
+                return result;
+            }
+            if (shared == 2) {
+                // Topology-true shared edge: legal adjacency.
+                continue;
+            }
+            if (!aabbOverlap(boxes[i], boxes[j])) {
+                continue;
+            }
+
+            PredicateTriangle3 first{
+                mesh.vertices[left.vertices[0]].position,
+                mesh.vertices[left.vertices[1]].position,
+                mesh.vertices[left.vertices[2]].position};
+            PredicateTriangle3 second{
+                mesh.vertices[right.vertices[0]].position,
+                mesh.vertices[right.vertices[1]].position,
+                mesh.vertices[right.vertices[2]].position};
+            const auto contact =
+                predicates->triangleIntersection3d(first, second);
+            if (!contact) {
+                ++result.coverage.failed;
+                result.failure = CertifiedMeshAssemblyFailure{
+                    contact.failure->code,
+                    contact.failure->message,
+                    {left.workingFace, right.workingFace}};
+                return result;
+            }
+            if (shared == 1) {
+                if (*contact.value == TriangleIntersection3dKind::None ||
+                    *contact.value ==
+                        TriangleIntersection3dKind::SharedVertexOnly) {
+                    continue;
+                }
+                ++result.coverage.failed;
+                result.failure = CertifiedMeshAssemblyFailure{
+                    *contact.value ==
+                            TriangleIntersection3dKind::CoplanarOverlap
+                        ? "certified.triangle_coplanar_overlap"
+                        : "certified.triangle_proper_intersection",
+                    "triangles that share only one vertex have illegal contact",
+                    {left.workingFace, right.workingFace}};
+                return result;
+            }
+            // shared == 0
+            if (*contact.value == TriangleIntersection3dKind::None) {
+                continue;
+            }
+            ++result.coverage.failed;
+            if (*contact.value ==
+                TriangleIntersection3dKind::CoplanarOverlap) {
+                result.failure = CertifiedMeshAssemblyFailure{
+                    "certified.triangle_coplanar_overlap",
+                    "non-adjacent triangles have coplanar area overlap",
+                    {left.workingFace, right.workingFace}};
+            } else if (*contact.value ==
+                       TriangleIntersection3dKind::ProperIntersection) {
+                result.failure = CertifiedMeshAssemblyFailure{
+                    "certified.triangle_proper_intersection",
+                    "non-adjacent triangles intersect properly",
+                    {left.workingFace, right.workingFace}};
+            } else {
+                result.failure = CertifiedMeshAssemblyFailure{
+                    "certified.triangle_unexplained_contact",
+                    "non-adjacent triangles touch without shared vertex identity",
+                    {left.workingFace, right.workingFace}};
+            }
+            return result;
+        }
+    }
+    return result;
 }
 
 }  // namespace weft

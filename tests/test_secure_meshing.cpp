@@ -185,14 +185,16 @@ struct M3GoldenDigest {
     const char* report;
 };
 
-// Proven bit-identical on Windows MSVC and Linux GCC 15.2 / OCCT 7.9.2.
+// Proven bit-identical on Linux GCC / OCCT 7.6 (this lane). Report digests
+// include certified.triangle_intersection coverage from WP-020; count /
+// boundary / lift digests are unchanged from the WP-015 cross-platform set.
 constexpr M3GoldenDigest kM3GoldenDigests[] = {
     {"box", "4d4b56a97e4194a1", "bfc6fa72b8fb0801", "2d5083505e7bff41",
-     "1271fe5128c8b97e"},
+     "856d8e9f6761d99f"},
     {"cylinder", "df476af694433848", "8928e6e02ad2fa92", "612aaa31fa6d5784",
-     "bf093b9b1ccb2bd0"},
+     "b8fde7d001f42e0b"},
     {"hole", "559a67e76d02c618", "303cc08b7ef4e792", "c362170936b054d8",
-     "fcd7679c64a6bca5"},
+     "5b0c8b926ff13816"},
 };
 
 void checkDeterminismDigest(const M3GoldenDigest& golden,

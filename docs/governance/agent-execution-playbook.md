@@ -298,7 +298,7 @@ only with indexed evidence.
 
 ### WP-020 — Reject body triangle intersections
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M4/M5
 - Prerequisites: WP-015
 - Goal: independently detect non-adjacent 3D triangle intersections before a
@@ -313,7 +313,7 @@ only with indexed evidence.
      and vacuous-validator fixtures.
   5. Integrate the result into `MeshingResult` and export admission.
 - Tests: `certified_mesh|secure_meshing`.
-- Evidence: `docs/evidence/m4-m5-triangle-intersections-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m4-m5-triangle-intersections-2026-07-18.md`.
 - Exit gate: all illegal intersections refuse by name; legal adjacency passes;
   expected/checked/skipped/failed counts are non-vacuous.
 

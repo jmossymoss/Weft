@@ -6,6 +6,8 @@
 #include "test_temp_path.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -122,7 +124,7 @@ void verifyBoxMesh(const weft::CertifiedMeshAssemblyResult& result) {
     CHECK(result);
     CHECK(!result.failure);
     CHECK(result.validation.complete());
-    CHECK(result.validation.checks.size() == 8);
+    CHECK(result.validation.checks.size() == 9);
     if (!result.value) return;
     CHECK(result.value->vertices.size() == 20);
     CHECK(result.value->triangles.size() == 36);
@@ -148,10 +150,16 @@ void verifyBoxMesh(const weft::CertifiedMeshAssemblyResult& result) {
         coverage(result, "certified.edge_incidence");
     const weft::ValidationCoverage* winding =
         coverage(result, "certified.edge_winding");
+    const weft::ValidationCoverage* intersections =
+        coverage(result, "certified.triangle_intersection");
     CHECK(incidence && incidence->expected == 54);
     CHECK(incidence && incidence->checked == 54);
     CHECK(winding && winding->expected == 54);
     CHECK(winding && winding->checked == 54);
+    CHECK(intersections && intersections->expected == 36 * 35 / 2);
+    CHECK(intersections && intersections->checked == intersections->expected);
+    CHECK(intersections && intersections->failed == 0);
+    CHECK(intersections && intersections->complete());
 
     const weft::MeshingResult meshing =
         weft::makeCertifiedFloorMeshingResult(
@@ -267,6 +275,108 @@ void testTamperedTriangleRefuses(const PreparedBox& prepared) {
               "certified.triangle_orientation_invalid");
 }
 
+weft::CertifiedMesh makeSyntheticMesh(
+    std::vector<std::array<double, 3>> positions,
+    std::vector<std::array<std::uint32_t, 3>> triangles) {
+    weft::CertifiedMesh mesh;
+    mesh.vertices.reserve(positions.size());
+    for (std::size_t index = 0; index < positions.size(); ++index) {
+        weft::CertifiedVertex vertex;
+        vertex.canonicalVertexIndex = static_cast<std::uint64_t>(index);
+        vertex.position = positions[index];
+        mesh.vertices.push_back(std::move(vertex));
+    }
+    mesh.triangles.reserve(triangles.size());
+    for (const auto& corners : triangles) {
+        weft::CertifiedTriangle triangle;
+        triangle.workingFace = {weft::StableIdKind::Face, 1};
+        triangle.vertices = corners;
+        mesh.triangles.push_back(std::move(triangle));
+    }
+    return mesh;
+}
+
+void testTriangleIntersectionAdversaries() {
+    const weft::CertifiedMesh legalAdjacent = makeSyntheticMesh(
+        {{0.0, 0.0, 0.0},
+         {1.0, 0.0, 0.0},
+         {0.0, 1.0, 0.0},
+         {1.0, 1.0, 0.0}},
+        {{{0, 1, 2}, {1, 3, 2}}});
+    const weft::CertifiedTriangleIntersectionResult adjacent =
+        weft::validateCertifiedTriangleIntersections(legalAdjacent);
+    CHECK(adjacent);
+    CHECK(adjacent.coverage.expected == 1);
+    CHECK(adjacent.coverage.checked == 1);
+    CHECK(adjacent.coverage.failed == 0);
+
+    const weft::CertifiedMesh legalVertex = makeSyntheticMesh(
+        {{0.0, 0.0, 0.0},
+         {1.0, 0.0, 0.0},
+         {0.0, 1.0, 0.0},
+         {-1.0, 0.0, 1.0},
+         {-1.0, 1.0, 0.0}},
+        {{{0, 1, 2}, {0, 3, 4}}});
+    CHECK(weft::validateCertifiedTriangleIntersections(legalVertex));
+
+    const weft::CertifiedMesh nearContact = makeSyntheticMesh(
+        {{0.0, 0.0, 0.0},
+         {1.0, 0.0, 0.0},
+         {0.0, 1.0, 0.0},
+         {0.0, 0.0, 1e-9},
+         {1.0, 0.0, 1e-9},
+         {0.0, 1.0, 1e-9}},
+        {{{0, 1, 2}, {3, 4, 5}}});
+    CHECK(weft::validateCertifiedTriangleIntersections(nearContact));
+
+    const weft::CertifiedMesh stabbing = makeSyntheticMesh(
+        {{0.0, 0.0, 0.0},
+         {2.0, 0.0, 0.0},
+         {0.0, 2.0, 0.0},
+         {0.5, 0.5, -1.0},
+         {0.5, 0.5, 1.0},
+         {1.5, -0.5, 0.0}},
+        {{{0, 1, 2}, {3, 4, 5}}});
+    const weft::CertifiedTriangleIntersectionResult proper =
+        weft::validateCertifiedTriangleIntersections(stabbing);
+    CHECK(!proper);
+    CHECK(proper.failure &&
+          proper.failure->code == "certified.triangle_proper_intersection");
+    CHECK(proper.coverage.failed == 1);
+
+    const weft::CertifiedMesh overlapping = makeSyntheticMesh(
+        {{0.0, 0.0, 0.0},
+         {2.0, 0.0, 0.0},
+         {0.0, 2.0, 0.0},
+         {0.5, 0.5, 0.0},
+         {1.5, 0.5, 0.0},
+         {0.5, 1.5, 0.0}},
+        {{{0, 1, 2}, {3, 4, 5}}});
+    const weft::CertifiedTriangleIntersectionResult coplanar =
+        weft::validateCertifiedTriangleIntersections(overlapping);
+    CHECK(!coplanar);
+    CHECK(coplanar.failure &&
+          coplanar.failure->code == "certified.triangle_coplanar_overlap");
+
+    const weft::CertifiedMesh duplicate = makeSyntheticMesh(
+        {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}},
+        {{{0, 1, 2}, {0, 2, 1}}});
+    const weft::CertifiedTriangleIntersectionResult dup =
+        weft::validateCertifiedTriangleIntersections(duplicate);
+    CHECK(!dup);
+    CHECK(dup.failure &&
+          dup.failure->code == "certified.triangle_duplicate");
+
+    const weft::CertifiedMesh single = makeSyntheticMesh(
+        {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}},
+        {{{0, 1, 2}}});
+    const weft::CertifiedTriangleIntersectionResult vacuous =
+        weft::validateCertifiedTriangleIntersections(single);
+    CHECK(vacuous);
+    CHECK(vacuous.coverage.expected == 0);
+    CHECK(vacuous.coverage.checked == 0);
+}
+
 void testPerforatedPlanarFaceProduct() {
     TemporaryStep step("weft_certified_mesh_hole_face");
     weft::writeStep(weft::makeFixture("hole"), step.path().string());
@@ -358,6 +468,7 @@ int main() {
             testTamperedTriangleRefuses(*prepared);
             testPerforatedPlanarFaceProduct();
         }
+        testTriangleIntersectionAdversaries();
     } catch (const std::exception& error) {
         std::printf("FAIL certified-mesh exception: %s\n", error.what());
         ++failures;

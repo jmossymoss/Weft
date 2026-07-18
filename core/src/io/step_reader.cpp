@@ -371,8 +371,14 @@ public:
         if (input.bad()) return false;
         std::istringstream source(
             m_sourceBytes, std::ios::in | std::ios::binary);
+#if OCC_VERSION_HEX >= 0x070800
         const bool ok =
             m_reader.ReadStream(path.c_str(), source) == IFSelect_RetDone;
+#else
+        // OCCT 7.6 exposes stream parse on the base STEP reader only.
+        const bool ok = m_reader.ChangeReader().ReadStream(
+                            path.c_str(), source) == IFSelect_RetDone;
+#endif
         if (std::getenv("WEFT_PROFILE_IMPORT")) {
             std::fprintf(stderr, "import profile: %-24s %8lld ms\n", "STEP parse",
                          static_cast<long long>(
@@ -424,7 +430,9 @@ public:
 
         // The transfer result below is evidence, not a convenience shape.
         // Freeze both the XDE reader and its base STEP reader to an empty
-        // processing policy and verify OCCT retained that request.
+        // processing policy and verify OCCT retained that request when the
+        // installed OCCT exposes OperationsFlags (7.8+).
+#if OCC_VERSION_HEX >= 0x070800
         const ShapeProcess::OperationsFlags noShapeProcessing;
         m_reader.SetShapeProcessFlags(noShapeProcessing);
         m_reader.ChangeReader().SetShapeProcessFlags(noShapeProcessing);
@@ -436,6 +444,7 @@ public:
                 "import.processing.not_disabled",
                 "OCCT did not retain the processing-disabled STEP policy: " + m_path);
         }
+#endif
 
         const int requestedRootCount = m_reader.NbRootsForTransfer();
         if (requestedRootCount <= 0) {

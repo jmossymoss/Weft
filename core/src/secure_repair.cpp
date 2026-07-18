@@ -189,7 +189,9 @@ std::optional<CurveOnSurfaceProof> measureStoredCurveOnSurface(
                         curveOnSurface = new Adaptor3d_CurveOnSurface(
                             pcurveAdaptor, surfaceAdaptor);
                     GeomLib_CheckCurveOnSurface check(curveAdaptor);
+#if OCC_VERSION_HEX >= 0x070800
                     check.SetParallel(false);
+#endif
                     check.Perform(curveOnSurface);
                     if (!check.IsDone() ||
                         !std::isfinite(check.MaxDistance()) ||

@@ -65,6 +65,9 @@ prove completed work; they are not plans or handoff diaries.
 - `m4-certified-planar-box-2026-07-17.md` - no-weld global canonical assembly, closed-box incidence, provenance, and MeshingResult evidence.
 - `m4-planar-hole-cdt-2026-07-17.md` - exact visibility bridges, constrained planar holes, and real perforated-face certification evidence.
 - `m4-m6-certified-cylinder-2026-07-17.md` - registered periodic wall, analytic curved error checks, and closed capped-cylinder certification evidence.
+- `m4-m5-triangle-intersections-2026-07-18.md` - exact 3D triangle intersection
+  predicates, non-vacuous body coverage, topology-legal contacts, and named
+  refusal adversaries on Linux strict/static-analysis lanes.
 - `m6-secure-orchestration-2026-07-17.md` - atomic plane/cylinder/through-hole secure pipeline and combined certificate evidence.
 - `m7-secure-cli-routing-2026-07-17.md` - lossless certified export adapter, secure CLI routing, report coverage, and named workflow refusals.
 - `m7-secure-app-live-link-2026-07-17.md` - secure app preview/export/hot-reload routing, visual proof, and deterministic atomic Blender link.

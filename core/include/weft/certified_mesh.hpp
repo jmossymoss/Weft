@@ -1,11 +1,13 @@
 #pragma once
 
+#include "weft/geometric_predicates.hpp"
 #include "weft/meshers.hpp"
 #include "weft/planar_cdt.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -124,5 +126,22 @@ CertifiedMeshAssemblyResult assembleCertifiedPlanarMesh(
     std::span<const PlanarCdtMesh> faceMeshes,
     std::span<const StableId> expectedWorkingFaces,
     const CertifiedMeshAssemblyConfiguration& configuration = {});
+
+// Independent body-level triangle intersection certificate. Legal contacts are
+// those explained by shared canonical vertex indices; all other geometric
+// contacts refuse by name. Coverage expected equals the unordered pair count.
+struct CertifiedTriangleIntersectionResult {
+    ValidationCoverage coverage{"certified.triangle_intersection"};
+    std::optional<CertifiedMeshAssemblyFailure> failure;
+
+    explicit operator bool() const noexcept {
+        return !failure.has_value() && coverage.complete();
+    }
+};
+
+CertifiedTriangleIntersectionResult validateCertifiedTriangleIntersections(
+    const CertifiedMesh& mesh,
+    std::shared_ptr<const GeometricPredicates> predicates =
+        makeExactDyadicPredicates());
 
 }  // namespace weft
