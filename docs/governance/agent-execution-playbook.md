@@ -221,7 +221,7 @@ only with indexed evidence.
 
 ### WP-012 — Segment critical parameter intervals
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M3
 - Prerequisites: WP-011
 - Goal: split trim/boundary evaluation at all supported monotonic, periodic,
@@ -236,13 +236,13 @@ only with indexed evidence.
   5. Return a named unsupported-critical-segmentation refusal for other
      families until their solver exists.
 - Tests: `canonical_boundary|planar_trim_validation|secure_meshing`.
-- Evidence: `docs/evidence/m3-critical-segmentation-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m3-critical-segmentation-2026-07-18.md`.
 - Exit gate: supported critical events have complete non-vacuous coverage;
   unsupported events cannot reach CDT/template generation.
 
 ### WP-013 — Consume independent chain sums in a template
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M3
 - Prerequisites: WP-012
 - Goal: make one certified planar/cylinder template consume the existing exact
@@ -255,13 +255,13 @@ only with indexed evidence.
   3. Certify requested, solved, and consumed counts.
   4. Add minimum, parity, conflict, replay, and tampered-consumption tests.
 - Tests: `interval_solver|secure_meshing|secure_recipe`.
-- Evidence: `docs/evidence/m3-template-chain-sum-consumer-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m3-template-chain-sum-consumer-2026-07-18.md`.
 - Exit gate: the template cannot generate unless every solved interval is
   consumed exactly, and deterministic recipe replay reproduces the digest.
 
 ### WP-014 — Solve one bounded coupled count class
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M3
 - Prerequisites: WP-013
 - Goal: unblock the narrowest coupled/aliased sum system required by current
@@ -280,7 +280,7 @@ only with indexed evidence.
 
 ### WP-015 — Prove cross-platform M3 determinism
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M3
 - Prerequisites: WP-014
 - Goal: match count, boundary, lift, and report digests across Windows and

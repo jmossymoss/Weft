@@ -72,6 +72,27 @@ struct PeriodicUvClosureWitness {
     std::int64_t periodsCrossed = 0;
 };
 
+enum class CriticalParameterEventKind {
+    DomainEndpoint,
+    ContactCritical,
+    PeriodicSeam,
+    MonotonicExtremum,
+    Singular,
+};
+
+struct CriticalParameterEvent {
+    CriticalParameterEventKind kind = CriticalParameterEventKind::DomainEndpoint;
+    StableId edge;
+    std::optional<StableId> coedge;
+    std::optional<StableId> face;
+    std::optional<StableId> sourceEdge;
+    std::optional<StableId> sourceFace;
+    std::optional<std::size_t> axis;
+    double curveParameter = 0.0;
+    std::uint32_t sampleOrdinal = 0;
+    std::string detectionCode;
+};
+
 struct CanonicalBoundary {
     StableId edge;
     StableId boundaryId;
@@ -79,6 +100,7 @@ struct CanonicalBoundary {
     std::uint32_t intervalCount = 0;
     std::vector<CanonicalBoundarySample> samples;
     std::vector<PeriodicUvClosureWitness> periodicClosures;
+    std::vector<CriticalParameterEvent> criticalEvents;
 };
 
 struct CanonicalBoundaryConfiguration {
@@ -99,6 +121,8 @@ struct CanonicalBoundaryReport {
     std::size_t checkedVertexCurveChecks = 0;
     std::size_t expectedPeriodicClosures = 0;
     std::size_t checkedPeriodicClosures = 0;
+    std::size_t expectedCriticalEvents = 0;
+    std::size_t checkedCriticalEvents = 0;
     std::size_t failed = 0;
 
     bool complete() const noexcept {
@@ -107,6 +131,8 @@ struct CanonicalBoundaryReport {
             checkedUvUses == expectedUvUses &&
             checkedVertexCurveChecks == expectedVertexCurveChecks &&
             checkedPeriodicClosures == expectedPeriodicClosures &&
+            expectedCriticalEvents != 0 &&
+            checkedCriticalEvents == expectedCriticalEvents &&
             failed == 0;
     }
 };

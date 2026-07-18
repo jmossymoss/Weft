@@ -42,6 +42,17 @@ mapping, evaluation, or bounded tolerance returns a stable named refusal and no
 partial boundary set. Degenerate singular edges remain explicitly unsupported.
 Closed coedges on periodic surface axes require an unambiguous covering-space
 return witness (`periodsCrossed`, endpoint lifts, and closing lifted UV).
+Supported line/circle edges on plane/cylinder faces record deterministic
+critical parameter events (domain endpoints, contact vertices, periodic seams,
+and circle quarter-turn monotone splits) and merge them into the edge-owned
+sample sequence with non-vacuous expected/checked coverage. Other families and
+singular trim domains refuse with `boundary.critical_segmentation_unsupported`
+before meshing templates run.
+
+After discrepancy certificates accept raw OCCT evaluations, sample positions and
+UV lifts clear the lowest three IEEE-754 mantissa bits. That removes sub-8-ULP
+Windows/Linux libm drift from exact dyadic CDT inputs and mesh fingerprints
+without relaxing certified envelopes.
 
 ## Invariants
 
@@ -74,5 +85,6 @@ alignment while refusing reflection and non-uniform input on either ring.
 ## Consequences
 
 Face CDT and templates must consume canonical sample IDs and vertex indices.
-Critical-interval adaptive sampling and degenerate singularities remain later
-M3 increments.
+Cross-platform count/boundary/lift/report digests for the box, capped cylinder,
+and through-hole fixtures are locked as M3 evidence. Degenerate singular edges
+remain later work.

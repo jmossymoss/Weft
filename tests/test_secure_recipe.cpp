@@ -1,5 +1,6 @@
 #include "weft/fixture.hpp"
 #include "weft/model.hpp"
+#include "weft/secure_meshing.hpp"
 #include "weft/secure_recipe.hpp"
 
 #include "test_temp_path.hpp"
@@ -343,6 +344,66 @@ void testV1RefusalsAndMalformedFile(
     CHECK(weft::validateSecureRecipeApplication(edgeResolution).empty());
 }
 
+weft::SecureMeshingConfiguration recipeMeshingConfiguration(
+    const weft::RecipeV2Resolution& resolved) {
+    weft::SecureMeshingConfiguration configuration;
+    configuration.sampling.chordTolerance = 0.05;
+    configuration.sampling.normalAngleToleranceRadians = 0.1;
+    configuration.sampling.minimumClosedCurveSegments = 16;
+    configuration.sampling.maximumSegmentCount = 4096;
+    for (const auto& [edgeId, count] : resolved.settings.perEdge) {
+        if (edgeId < 1 || count < 1) continue;
+        configuration.exactEdgeIntervalCounts.emplace(
+            weft::StableId{weft::StableIdKind::Edge,
+                           static_cast<std::uint64_t>(edgeId)},
+            static_cast<std::uint32_t>(count));
+    }
+    return configuration;
+}
+
+void testRecipeChainSumTemplateReplay(
+    const weft::ImportedModel& imported,
+    const std::filesystem::path& recipePath) {
+    weft::Recipe edgeOnly;
+    edgeOnly.settings.perEdge[1] = 2;
+    edgeOnly.settings.perEdge[2] = 3;
+    const weft::RecipeV2MigrationResult migrated =
+        weft::migrateRecipeV1(imported, edgeOnly);
+    CHECK(migrated.complete());
+    weft::saveRecipeV2(migrated.recipe, recipePath.string());
+    const weft::RecipeV2 loaded = weft::loadRecipeV2(recipePath.string());
+    const weft::RecipeV2Resolution resolved =
+        weft::resolveRecipeV2(imported, loaded);
+    CHECK(resolved.complete());
+    CHECK(weft::validateSecureRecipeApplication(resolved).empty());
+    CHECK(resolved.settings.perEdge.at(1) == 2);
+    CHECK(resolved.settings.perEdge.at(2) == 3);
+
+    weft::SecureMeshingConfiguration configuration =
+        recipeMeshingConfiguration(resolved);
+    configuration.edgeChainSums.push_back(
+        {{{weft::StableIdKind::Edge, 1}, {weft::StableIdKind::Edge, 2}},
+         {{weft::StableIdKind::Edge, 3}}});
+    const weft::SecureMeshingResult first =
+        weft::generateSecureMesh(imported, configuration);
+    const weft::SecureMeshingResult second =
+        weft::generateSecureMesh(imported, configuration);
+    CHECK(first);
+    CHECK(second);
+    CHECK(first.validation.complete());
+    CHECK(second.validation.complete());
+    CHECK(std::any_of(
+        first.validation.checks.begin(), first.validation.checks.end(),
+        [](const weft::ValidationCoverage& coverage) {
+            return coverage.code == "secure_pipeline.chain_sum_consumed" &&
+                coverage.complete() && coverage.expected != 0;
+        }));
+    CHECK(first.value && first.value->generation.edgeDivisions.at(3) == 5);
+    CHECK(first.value && second.value &&
+          first.value->certified.topologyFingerprint ==
+              second.value->certified.topologyFingerprint);
+}
+
 }  // namespace
 
 int main() {
@@ -355,6 +416,7 @@ int main() {
         testChangedSourceAndConflictRoutes(imported);
         testWorkingRecipeCapture(imported);
         testV1RefusalsAndMalformedFile(imported, files.malformed());
+        testRecipeChainSumTemplateReplay(imported, files.recipe());
     } catch (const std::exception& error) {
         std::printf("FAIL secure-recipe exception: %s\n", error.what());
         ++failures;

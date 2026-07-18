@@ -74,11 +74,11 @@ struct SegmentCountResult {
     explicit operator bool() const noexcept { return count.has_value(); }
 };
 
-// Exact over equality/minimum/even-parity/fixed-count constraints and
-// independent chain-sum equalities. Every feasible count is bounded by the
-// configured cap and the smallest L1-optimal common total wins ties. Coupled
-// or aliased sum systems outside the guarded exact allocation model refuse by
-// stable code rather than being approximated.
+// Exact over equality/minimum/even-parity/fixed-count constraints, independent
+// chain sums, and one bounded connected coupled-sum component. Every feasible
+// count is capped. Coupled search minimizes global L1 cost and breaks ties by
+// the stable class order; additional components, coefficient multiplicity, and
+// over-budget systems refuse by stable code rather than being approximated.
 IntervalSolveResult solveIntervals(
     const IntervalProblem& problem,
     const SamplingConfiguration& configuration = {});

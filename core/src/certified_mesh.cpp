@@ -7,12 +7,11 @@
 #include <compare>
 #include <cstddef>
 #include <cstdint>
-#include <iomanip>
+#include <cstdio>
 #include <limits>
 #include <map>
 #include <optional>
 #include <set>
-#include <sstream>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -182,9 +181,11 @@ public:
     }
 
     std::string finish() const {
-        std::ostringstream stream;
-        stream << std::hex << std::setfill('0') << std::setw(16) << state_;
-        return stream.str();
+        // Locale-independent lowercase hex so Windows/Linux digests match.
+        char buffer[17]{};
+        std::snprintf(buffer, sizeof(buffer), "%016llx",
+                      static_cast<unsigned long long>(state_));
+        return buffer;
     }
 
 private:

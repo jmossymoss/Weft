@@ -17,9 +17,10 @@ turn a deterministic meshing request into an unbounded search.
 
 - Equality classes are reduced before a sum is solved. Classes occurring once
   on each side cancel algebraically.
-- Each remaining sum side is a disjoint set of equality classes with net
-  coefficient one. Multiple sums may be solved together only when their class
-  sets are independent.
+- Each remaining sum side is a set of equality classes with net coefficient
+  one. Independent sums use the convex allocation solver. One connected
+  component whose sums share classes may instead use bounded exhaustive
+  assignment.
 - Every class retains its certified minimum, parity, configured cap, and exact
   recipe constraint. Its objective is the sum of absolute deviations of all
   equality-class members from their desired counts.
@@ -35,9 +36,14 @@ turn a deterministic meshing request into an unbounded search.
 - State storage is capped at 2,000,000 total states per side and mixed-parity
   combination at 4,000,000 transitions. Exceeding either budget refuses as
   `interval.sum_complexity_exceeded` before the large allocation/search.
-- Net coefficients larger than one and classes shared by multiple non-trivial
-  sums refuse as `interval.sum_aliasing_unsupported` and
-  `interval.coupled_sum_unsupported`. Infeasible bounded systems refuse as
+- A coupled component is capped at eight equality classes, eight equations,
+  and 1,000,000 candidate assignments. Global L1 cost is minimized, and the
+  first assignment in stable ascending class/count order wins an objective
+  tie. A second coupled component refuses as
+  `interval.coupled_sum_unsupported`; excess classes, equations, candidate
+  product, or product overflow refuse as `interval.sum_complexity_exceeded`.
+- Net coefficients larger than one remain refused as
+  `interval.sum_aliasing_unsupported`. Infeasible bounded systems refuse as
   `interval.sum_infeasible`.
 
 This record supersedes ADR-0003's temporary decision to reject every sum. The
@@ -50,8 +56,8 @@ decisions remain in force.
   self-check;
 - no minimum, parity, exact count, equality, or cap is weakened to make a sum
   feasible;
-- unsupported algebraic coupling and exhausted complexity budgets fail by
-  stable code;
+- unsupported multiplicity, additional coupled components, and exhausted
+  complexity budgets fail by stable code;
 - no canonical boundary is built until all participating counts solve;
 - ordered input produces ordered, repeatable output independently of traversal
   order.
@@ -67,13 +73,15 @@ decisions remain in force.
 
 ## Verification
 
-The solver is checked against an independent exhaustive enumerator on 100
+The independent solver is checked against an exhaustive enumerator on 100
 deterministically generated sum problems containing minimum, parity, and fixed-
-count combinations. The oracle compares feasibility, global L1 optimum, and
-the smaller optimal common total; repeated solves must return identical ordered
-counts. Explicit witnesses cover chain-to-single reconciliation, mixed parity,
-fixed totals, equality-class cancellation, multiple independent sums,
-infeasibility, aliasing, coupling, invalid empty sides, and complexity refusal.
+count combinations. A separate 100-case coupled battery compares feasibility,
+global L1 optimum, stable ordered tie-breaking, and repeated output. Explicit
+witnesses cover chain-to-single reconciliation, mixed parity, fixed totals,
+equality-class cancellation, multiple independent sums, a coupled chain,
+equality aliases inside a coupled component, infeasibility, multiplicity
+aliasing, a second coupled component, assignment-product overflow, invalid
+empty sides, and both independent and coupled complexity refusal.
 
 The pre-existing 200-case equality/minimum/parity exhaustive battery remains
 green. Complete strict and MSVC static-analysis builds pass, and all 14
@@ -82,6 +90,8 @@ secure/corpus tests pass in both lanes.
 ## Consequences
 
 Template work can now express exact independent boundary-chain reconciliation
-without resampling. The first template consumer, coupled sum graphs, and net
-class multiplicities remain gated follow-up work. Those cases cannot be
-approximated through this solver.
+and one bounded connected coupled component without resampling. A planar box
+consumes a two-equation coupled chain through shared canonical boundaries and
+replays deterministically. Additional coupled components, over-budget graphs,
+and net class multiplicities remain gated and cannot be approximated through
+this solver.

@@ -55,6 +55,8 @@ prove completed work; they are not plans or handoff diaries.
 - `m3-canonical-boundaries-2026-07-17.md` - atomic shared-edge samples, UV uses, and azimuth registration evidence.
 - `m3-periodic-closure-2026-07-18.md` - closed coedge periodic UV lift/closure witnesses and ambiguous-lift refusals.
 - `m3-repeated-wire-occurrences-2026-07-18.md` - topology-backed meshing wire/coedge identity and ShapeMap face alias-collapse refusal.
+- `m3-cross-platform-determinism-2026-07-18.md` - box/cylinder/hole count-boundary-lift-report digests matched on Windows and Linux.
+- `m3-critical-segmentation-2026-07-18.md` - line/circle/plane/cylinder critical parameter events, non-vacuous coverage, and unsupported-family refusal before CDT/templates.
 - `m3-canonical-endpoint-identity-2026-07-17.md` - exact topological vertex normalization and bounded curve/vertex evidence.
 - `m3-exact-predicates-2026-07-17.md` - exact dyadic orientation, incircle, and segment-relation evidence.
 - `m3-planar-trim-validation-2026-07-17.md` - exact pre-CDT loop, intersection, containment, orientation, and coverage evidence.
@@ -70,4 +72,6 @@ prove completed work; they are not plans or handoff diaries.
 - `m7-secure-recipe-v2-2026-07-17.md` - source-referenced v2 persistence, v1 migration, correspondence-aware app capture, deterministic replay, and named application conflicts.
 - `m3-m7-certified-edge-counts-2026-07-17.md` - exact per-edge recipe constraints, equality propagation, shared canonical samples, deterministic CLI replay, and active app controls.
 - `m3-exact-chain-sums-2026-07-17.md` - bounded exact independent chain sums, exhaustive-oracle properties, and named coupling/complexity refusals.
+- `m3-template-chain-sum-consumer-2026-07-18.md` - planar template consumption of independent chain sums with non-vacuous requested/solved/consumed coverage and named adversaries.
+- `m3-bounded-coupled-counts-2026-07-18.md` - one bounded exact coupled component, exhaustive-oracle equivalence, planar template consumption, and named scope/complexity refusals.
 - `m1-m2-frozen-corpus-2026-07-17.md` - frozen 106-record catalogue, committed STEP outcomes, and 77-fixture import/accounting evidence.

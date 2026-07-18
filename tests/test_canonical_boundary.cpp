@@ -84,6 +84,9 @@ void verifyCanonicalModel(const std::string& fixtureName,
     CHECK(set.validation.checkedVertexCurveChecks != 0);
     CHECK(set.validation.expectedPeriodicClosures ==
           set.validation.checkedPeriodicClosures);
+    CHECK(set.validation.expectedCriticalEvents != 0);
+    CHECK(set.validation.expectedCriticalEvents ==
+          set.validation.checkedCriticalEvents);
 
     bool sawPlanarProjection = false;
     bool sawStoredPcurve = false;
@@ -135,6 +138,18 @@ void verifyCanonicalModel(const std::string& fixtureName,
             sawFullPeriodCrossing =
                 sawFullPeriodCrossing ||
                 closure.periodsCrossed == 1 || closure.periodsCrossed == -1;
+        }
+        CHECK(!boundary->criticalEvents.empty());
+        for (const weft::CriticalParameterEvent& event :
+             boundary->criticalEvents) {
+            CHECK(event.edge == topology.id);
+            CHECK(event.sampleOrdinal < boundary->samples.size());
+            CHECK(std::isfinite(event.curveParameter));
+            CHECK(!event.detectionCode.empty());
+            CHECK(std::abs(boundary->samples[event.sampleOrdinal]
+                               .curveParameter -
+                           event.curveParameter) <
+                  1e-9 * std::max(1.0, std::abs(event.curveParameter)));
         }
         for (std::size_t index = 0; index < boundary->samples.size(); ++index) {
             const weft::CanonicalBoundarySample& sample =
@@ -403,12 +418,32 @@ void testCylinderPeriodicClosureDeterminism(
           second.validation.expectedPeriodicClosures);
     CHECK(first.validation.checkedPeriodicClosures ==
           second.validation.checkedPeriodicClosures);
+    CHECK(first.validation.expectedCriticalEvents ==
+          second.validation.expectedCriticalEvents);
+    CHECK(first.validation.checkedCriticalEvents ==
+          second.validation.checkedCriticalEvents);
     CHECK(first.value->boundaries.size() == second.value->boundaries.size());
     for (std::size_t index = 0; index < first.value->boundaries.size();
          ++index) {
         const weft::CanonicalBoundary& a = first.value->boundaries[index];
         const weft::CanonicalBoundary& b = second.value->boundaries[index];
         CHECK(a.periodicClosures.size() == b.periodicClosures.size());
+        CHECK(a.criticalEvents.size() == b.criticalEvents.size());
+        for (std::size_t eventIndex = 0; eventIndex < a.criticalEvents.size();
+             ++eventIndex) {
+            const weft::CriticalParameterEvent& left =
+                a.criticalEvents[eventIndex];
+            const weft::CriticalParameterEvent& right =
+                b.criticalEvents[eventIndex];
+            CHECK(left.kind == right.kind);
+            CHECK(left.edge == right.edge);
+            CHECK(left.coedge == right.coedge);
+            CHECK(left.face == right.face);
+            CHECK(left.axis == right.axis);
+            CHECK(left.sampleOrdinal == right.sampleOrdinal);
+            CHECK(left.detectionCode == right.detectionCode);
+            CHECK(left.curveParameter == right.curveParameter);
+        }
         for (std::size_t closureIndex = 0;
              closureIndex < a.periodicClosures.size(); ++closureIndex) {
             const weft::PeriodicUvClosureWitness& left =
@@ -430,6 +465,21 @@ void testCylinderPeriodicClosureDeterminism(
     }
 }
 
+void testUnsupportedCriticalSegmentation(
+    const std::filesystem::path& path) {
+    weft::writeStep(weft::makeFixture("sphere"), path.string());
+    const weft::ImportedModel imported = weft::importStepSecure(path.string());
+    const weft::ReconnaissanceReport reconnaissance =
+        weft::reconnoitre(imported);
+    const weft::CanonicalBoundaryBuildResult built =
+        weft::buildCanonicalBoundaries(imported, reconnaissance,
+                                       intervalsFor(imported));
+    CHECK(!built);
+    CHECK(built.failure &&
+          built.failure->code ==
+              "boundary.critical_segmentation_unsupported");
+}
+
 }  // namespace
 
 int main() {
@@ -442,6 +492,8 @@ int main() {
     const std::filesystem::path cylinderDeterminismPath =
         weft::test::uniqueTempPath(
             "weft_canonical_boundary_cylinder_determinism", ".step");
+    const std::filesystem::path spherePath = weft::test::uniqueTempPath(
+        "weft_canonical_boundary_sphere", ".step");
     try {
         verifyCanonicalModel("box", boxPath, true, false);
         verifyCanonicalModel("cylinder", cylinderPath, true, true);
@@ -449,6 +501,7 @@ int main() {
         testPartialPeriodicCurveIsOpen(partialArcPath);
         testPeriodicUvClosureAdversaries();
         testCylinderPeriodicClosureDeterminism(cylinderDeterminismPath);
+        testUnsupportedCriticalSegmentation(spherePath);
     } catch (const std::exception& error) {
         std::printf("FAIL canonical-boundary exception: %s\n", error.what());
         ++failures;
@@ -458,6 +511,7 @@ int main() {
     std::filesystem::remove(cylinderPath, ignored);
     std::filesystem::remove(partialArcPath, ignored);
     std::filesystem::remove(cylinderDeterminismPath, ignored);
+    std::filesystem::remove(spherePath, ignored);
 
     if (failures == 0) {
         std::printf("canonical boundary checks passed\n");

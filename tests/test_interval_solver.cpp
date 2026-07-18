@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
+#include <limits>
 #include <numeric>
 #include <vector>
 
@@ -125,6 +126,7 @@ struct ExhaustiveSumReference {
     bool feasible = false;
     double objective = 0.0;
     std::uint64_t commonTotal = 0;
+    std::vector<std::uint32_t> counts;
 };
 
 bool equivalentObjective(double left, double right) {
@@ -193,12 +195,19 @@ ExhaustiveSumReference exhaustiveSumReference(
                 static_cast<double>(assignment[item]) -
                 problem.variables[item].desired);
         }
+        const bool tied = result.feasible &&
+            equivalentObjective(objective, result.objective);
+        const bool tieBreaksEarlier =
+            tied &&
+            (problem.sums.size() == 1U
+                 ? firstTotal < result.commonTotal
+                 : assignment < result.counts);
         if (!result.feasible || betterObjective(objective, result.objective) ||
-            (equivalentObjective(objective, result.objective) &&
-             firstTotal < result.commonTotal)) {
+            tieBreaksEarlier) {
             result.feasible = true;
             result.objective = objective;
             result.commonTotal = firstTotal;
+            result.counts = assignment;
         }
     };
     visit(visit, 0U);
@@ -412,10 +421,13 @@ void testExactSumConstraints() {
     coupled.sums.push_back(sumEquality({1}, {3}));
     const auto coupledResult =
         weft::solveIntervals(coupled, configuration);
-    CHECK(!coupledResult);
-    CHECK(coupledResult.failure &&
-          coupledResult.failure->code ==
-              "interval.coupled_sum_unsupported");
+    CHECK(coupledResult);
+    CHECK(coupledResult &&
+          coupledResult.solution->find(boundary(1)) == 2);
+    CHECK(coupledResult &&
+          coupledResult.solution->find(boundary(2)) == 2);
+    CHECK(coupledResult &&
+          coupledResult.solution->find(boundary(3)) == 2);
 
     weft::IntervalProblem invalid;
     invalid.variables = {variable(1, 2.0), variable(2, 2.0)};
@@ -439,6 +451,99 @@ void testExactSumConstraints() {
     CHECK(complexityResult.failure &&
           complexityResult.failure->code ==
               "interval.sum_complexity_exceeded");
+}
+
+void testBoundedCoupledSumConstraints() {
+    weft::SamplingConfiguration configuration;
+    configuration.minimumClosedCurveSegments = 3;
+    configuration.maximumSegmentCount = 8;
+
+    weft::IntervalProblem coupled;
+    coupled.variables = {variable(1, 2.0), variable(2, 3.0),
+                         variable(3, 7.0), variable(4, 4.0)};
+    coupled.sums.push_back(sumEquality({1, 2}, {3}));
+    coupled.sums.push_back(sumEquality({3}, {4}));
+    const auto solved = weft::solveIntervals(coupled, configuration);
+    CHECK(solved);
+    CHECK(solved && solved.solution->find(boundary(1)) == 2);
+    CHECK(solved && solved.solution->find(boundary(2)) == 3);
+    CHECK(solved && solved.solution->find(boundary(3)) == 5);
+    CHECK(solved && solved.solution->find(boundary(4)) == 5);
+
+    weft::IntervalProblem infeasible = coupled;
+    infeasible.variables[0].exact = 1;
+    infeasible.variables[1].exact = 1;
+    infeasible.variables[2].exact = 3;
+    infeasible.variables[3].exact = 3;
+    const auto infeasibleResult =
+        weft::solveIntervals(infeasible, configuration);
+    CHECK(!infeasibleResult);
+    CHECK(infeasibleResult.failure &&
+          infeasibleResult.failure->code == "interval.sum_infeasible");
+
+    weft::IntervalProblem equalityAliased;
+    equalityAliased.variables = {
+        variable(1, 2.0), variable(2, 8.0), variable(3, 3.0),
+        variable(4, 5.0), variable(5, 5.0)};
+    equalityAliased.variables[0].exact = 2;
+    equalityAliased.variables[2].exact = 3;
+    equalityAliased.equalities.push_back(equality({1, 2}));
+    equalityAliased.sums.push_back(sumEquality({1, 3}, {4}));
+    equalityAliased.sums.push_back(sumEquality({2, 3}, {5}));
+    const auto equalityAliasResult =
+        weft::solveIntervals(equalityAliased, configuration);
+    CHECK(equalityAliasResult);
+    CHECK(equalityAliasResult &&
+          equalityAliasResult.solution->find(boundary(1)) == 2);
+    CHECK(equalityAliasResult &&
+          equalityAliasResult.solution->find(boundary(2)) == 2);
+    CHECK(equalityAliasResult &&
+          equalityAliasResult.solution->find(boundary(4)) == 5);
+    CHECK(equalityAliasResult &&
+          equalityAliasResult.solution->find(boundary(5)) == 5);
+
+    weft::IntervalProblem twoComponents;
+    for (std::uint64_t ordinal = 1; ordinal <= 6; ++ordinal) {
+        twoComponents.variables.push_back(variable(ordinal, 2.0));
+    }
+    twoComponents.sums.push_back(sumEquality({1}, {2}));
+    twoComponents.sums.push_back(sumEquality({1}, {3}));
+    twoComponents.sums.push_back(sumEquality({4}, {5}));
+    twoComponents.sums.push_back(sumEquality({4}, {6}));
+    const auto unsupported =
+        weft::solveIntervals(twoComponents, configuration);
+    CHECK(!unsupported);
+    CHECK(unsupported.failure &&
+          unsupported.failure->code ==
+              "interval.coupled_sum_unsupported");
+
+    weft::IntervalProblem tooManyClasses;
+    for (std::uint64_t ordinal = 1; ordinal <= 10; ++ordinal) {
+        tooManyClasses.variables.push_back(variable(ordinal, 2.0));
+        if (ordinal > 1) {
+            tooManyClasses.sums.push_back(sumEquality({1}, {ordinal}));
+        }
+    }
+    const auto classBudget =
+        weft::solveIntervals(tooManyClasses, configuration);
+    CHECK(!classBudget);
+    CHECK(classBudget.failure &&
+          classBudget.failure->code ==
+              "interval.sum_complexity_exceeded");
+
+    weft::IntervalProblem assignmentOverflow;
+    assignmentOverflow.variables = {
+        variable(1, 2.0), variable(2, 2.0), variable(3, 2.0)};
+    assignmentOverflow.sums.push_back(sumEquality({1}, {2}));
+    assignmentOverflow.sums.push_back(sumEquality({1}, {3}));
+    weft::SamplingConfiguration maximumDomain = configuration;
+    maximumDomain.maximumSegmentCount =
+        std::numeric_limits<std::uint32_t>::max();
+    const auto overflow =
+        weft::solveIntervals(assignmentOverflow, maximumDomain);
+    CHECK(!overflow);
+    CHECK(overflow.failure &&
+          overflow.failure->code == "interval.sum_complexity_exceeded");
 }
 
 void testPropertyBattery() {
@@ -530,14 +635,67 @@ void testSumPropertyBattery() {
     }
 }
 
+void testCoupledSumPropertyBattery() {
+    DeterministicLcg random(0xC0A71ED5A11C0DEULL);
+    weft::SamplingConfiguration configuration;
+    configuration.minimumClosedCurveSegments = 3;
+    configuration.maximumSegmentCount = 5;
+    for (std::uint32_t iteration = 0; iteration < 100; ++iteration) {
+        weft::IntervalProblem problem;
+        for (std::uint32_t index = 0; index < 4; ++index) {
+            problem.variables.push_back(variable(
+                index + 1U,
+                static_cast<double>(random.below(61)) / 10.0,
+                1 + random.below(2), random.below(4) == 0));
+            weft::IntervalVariable& generated = problem.variables.back();
+            if (random.below(8) == 0) {
+                std::uint32_t start = generated.minimum;
+                const std::uint32_t step =
+                    generated.requireEven ? 2U : 1U;
+                if (generated.requireEven && start % 2U != 0U) ++start;
+                const std::uint32_t choices = (5U - start) / step + 1U;
+                generated.exact = start + step * random.below(choices);
+            }
+        }
+        problem.sums.push_back(sumEquality({1, 2}, {3}));
+        problem.sums.push_back(sumEquality({3}, {4}));
+
+        const ExhaustiveSumReference reference =
+            exhaustiveSumReference(problem, 5U);
+        const auto first = weft::solveIntervals(problem, configuration);
+        const auto repeated =
+            weft::solveIntervals(problem, configuration);
+        CHECK(static_cast<bool>(first) == reference.feasible);
+        CHECK(static_cast<bool>(first) == static_cast<bool>(repeated));
+        if (!first || !repeated) {
+            CHECK(first.failure &&
+                  first.failure->code == "interval.sum_infeasible");
+            continue;
+        }
+        CHECK(first.solution->counts == repeated.solution->counts);
+        CHECK(std::abs(solutionObjective(problem, *first.solution) -
+                       reference.objective) < 1e-12);
+        CHECK(first.solution->counts.size() == reference.counts.size());
+        for (std::size_t index = 0;
+             index < first.solution->counts.size() &&
+             index < reference.counts.size();
+             ++index) {
+            CHECK(first.solution->counts[index].count ==
+                  reference.counts[index]);
+        }
+    }
+}
+
 }  // namespace
 
 int main() {
     testAnalyticCounts();
     testExactClassesAndFailures();
     testExactSumConstraints();
+    testBoundedCoupledSumConstraints();
     testPropertyBattery();
     testSumPropertyBattery();
+    testCoupledSumPropertyBattery();
     if (failures == 0) {
         std::printf("interval solver checks passed\n");
         return EXIT_SUCCESS;

@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 
@@ -101,6 +102,8 @@ void checkSuccessfulResult(const weft::SecureMeshingResult& result) {
                       "repair.source_working_correspondence"));
     CHECK(hasCoverage(result.validation,
                       "secure_pipeline.vertex_curve_identity"));
+    CHECK(hasCoverage(result.validation,
+                      "secure_pipeline.critical_parameter_events"));
     CHECK(hasCoverage(result.validation, "certified.edge_incidence"));
     for (const weft::ValidationCoverage& coverage :
          result.validation.checks) {
@@ -172,6 +175,68 @@ void testConnectedThroughHole() {
     checkSuccessfulResult(result);
     CHECK(result.value && result.value->certified.vertices.size() > 100);
     CHECK(result.value && result.value->certified.triangles.size() > 200);
+}
+
+struct M3GoldenDigest {
+    const char* fixture;
+    const char* counts;
+    const char* boundary;
+    const char* lifts;
+    const char* report;
+};
+
+// Proven bit-identical on Windows MSVC and Linux GCC 15.2 / OCCT 7.9.2.
+constexpr M3GoldenDigest kM3GoldenDigests[] = {
+    {"box", "4d4b56a97e4194a1", "bfc6fa72b8fb0801", "2d5083505e7bff41",
+     "1271fe5128c8b97e"},
+    {"cylinder", "df476af694433848", "8928e6e02ad2fa92", "612aaa31fa6d5784",
+     "bf093b9b1ccb2bd0"},
+    {"hole", "559a67e76d02c618", "303cc08b7ef4e792", "c362170936b054d8",
+     "fcd7679c64a6bca5"},
+};
+
+void checkDeterminismDigest(const M3GoldenDigest& golden,
+                            const weft::M3DeterminismDigest& first,
+                            const weft::M3DeterminismDigest& second) {
+    CHECK(first.counts.size() == 16);
+    CHECK(first.boundary.size() == 16);
+    CHECK(first.lifts.size() == 16);
+    CHECK(first.report.size() == 16);
+    CHECK(first.counts == second.counts);
+    CHECK(first.boundary == second.boundary);
+    CHECK(first.lifts == second.lifts);
+    CHECK(first.report == second.report);
+    CHECK(first.counts == golden.counts);
+    CHECK(first.boundary == golden.boundary);
+    CHECK(first.lifts == golden.lifts);
+    CHECK(first.report == golden.report);
+    std::printf(
+        "WEFT_M3_DIGEST fixture=%s counts=%s boundary=%s lifts=%s report=%s\n",
+        golden.fixture, first.counts.c_str(), first.boundary.c_str(),
+        first.lifts.c_str(), first.report.c_str());
+}
+
+void testCrossPlatformM3Determinism() {
+    for (const M3GoldenDigest& golden : kM3GoldenDigests) {
+        TemporaryStep step(golden.fixture);
+        const weft::ImportedModel imported =
+            weft::importStepSecure(step.path().string());
+        const weft::SecureMeshingConfiguration settings = configuration();
+        const weft::SecureMeshingResult first =
+            weft::generateSecureMesh(imported, settings);
+        const weft::SecureMeshingResult second =
+            weft::generateSecureMesh(imported, settings);
+        checkSuccessfulResult(first);
+        checkSuccessfulResult(second);
+        const weft::M3DeterminismDigest firstDigest =
+            weft::digestM3Determinism(first);
+        const weft::M3DeterminismDigest secondDigest =
+            weft::digestM3Determinism(second);
+        checkDeterminismDigest(golden, firstDigest, secondDigest);
+        CHECK(first.value && second.value &&
+              first.value->certified.topologyFingerprint ==
+                  second.value->certified.topologyFingerprint);
+    }
 }
 
 void testExactEdgeIntervals() {
@@ -288,7 +353,13 @@ void testUnsupportedAndConfigurationRefusals() {
     const weft::SecureMeshingResult sphere = generateFixture("sphere");
     CHECK(!sphere);
     CHECK(sphere.failure);
-    CHECK(sphere.failure && !sphere.failure->code.empty());
+    CHECK(sphere.failure &&
+          (sphere.failure->code ==
+               "boundary.critical_segmentation_unsupported" ||
+           sphere.failure->code ==
+               "secure_pipeline.unsupported_surface_family" ||
+           sphere.failure->code ==
+               "secure_pipeline.unsupported_curve_family"));
 
     weft::SecureMeshingConfiguration invalid = configuration();
     invalid.sampling.chordTolerance = -1.0;
@@ -308,6 +379,170 @@ void testUnsupportedAndConfigurationRefusals() {
               "cylinder.axial_samples_require_interior_provenance");
 }
 
+void testTemplateChainSumConsumer() {
+    TemporaryStep boxStep("box");
+    const weft::ImportedModel box =
+        weft::importStepSecure(boxStep.path().string());
+    const weft::StableId edgeA{weft::StableIdKind::Edge, 1};
+    const weft::StableId edgeB{weft::StableIdKind::Edge, 2};
+    const weft::StableId edgeC{weft::StableIdKind::Edge, 3};
+    const weft::StableId edgeD{weft::StableIdKind::Edge, 4};
+
+    weft::SecureMeshingConfiguration baseline = configuration();
+    baseline.exactEdgeIntervalCounts[edgeA] = 2;
+    baseline.exactEdgeIntervalCounts[edgeB] = 3;
+    const weft::SecureMeshingResult withoutSum =
+        weft::generateSecureMesh(box, baseline);
+    checkSuccessfulResult(withoutSum);
+    CHECK(withoutSum.value &&
+          withoutSum.value->generation.edgeDivisions.at(3) == 1);
+
+    weft::SecureMeshingConfiguration withSum = baseline;
+    withSum.edgeChainSums.push_back({{edgeA, edgeB}, {edgeC}});
+    const weft::SecureMeshingResult first =
+        weft::generateSecureMesh(box, withSum);
+    const weft::SecureMeshingResult replay =
+        weft::generateSecureMesh(box, withSum);
+    checkSuccessfulResult(first);
+    checkSuccessfulResult(replay);
+    CHECK(hasCoverage(first.validation,
+                      "secure_pipeline.chain_sum_requested"));
+    CHECK(hasCoverage(first.validation, "secure_pipeline.chain_sum_solved"));
+    CHECK(hasCoverage(first.validation,
+                      "secure_pipeline.chain_sum_consumed"));
+    CHECK(first.value && first.value->generation.edgeDivisions.at(1) == 2);
+    CHECK(first.value && first.value->generation.edgeDivisions.at(2) == 3);
+    CHECK(first.value && first.value->generation.edgeDivisions.at(3) == 5);
+    CHECK(sampleFacesForEdge(first, edgeC).size() == 6);
+    CHECK(first.value && replay.value &&
+          first.value->certified.topologyFingerprint ==
+              replay.value->certified.topologyFingerprint);
+
+    weft::SecureMeshingConfiguration coupled = withSum;
+    coupled.sampling.maximumSegmentCount = 64;
+    coupled.edgeChainSums.push_back({{edgeC}, {edgeD}});
+    const weft::SecureMeshingResult coupledResult =
+        weft::generateSecureMesh(box, coupled);
+    const weft::SecureMeshingResult coupledReplay =
+        weft::generateSecureMesh(box, coupled);
+    checkSuccessfulResult(coupledResult);
+    checkSuccessfulResult(coupledReplay);
+    CHECK(coupledResult.value &&
+          coupledResult.value->generation.edgeDivisions.at(3) == 5);
+    CHECK(coupledResult.value &&
+          coupledResult.value->generation.edgeDivisions.at(4) == 5);
+    CHECK(coupledResult.value && coupledReplay.value &&
+          coupledResult.value->certified.topologyFingerprint ==
+              coupledReplay.value->certified.topologyFingerprint);
+
+    weft::SecureMeshingConfiguration conflict = withSum;
+    conflict.exactEdgeIntervalCounts[edgeC] = 4;
+    const weft::SecureMeshingResult conflicting =
+        weft::generateSecureMesh(box, conflict);
+    CHECK(!conflicting);
+    CHECK(conflicting.failure &&
+          conflicting.failure->code == "interval.sum_infeasible");
+
+    weft::SecureMeshingConfiguration parity = withSum;
+    parity.requireEvenEdgeIntervals.insert(edgeC);
+    parity.exactEdgeIntervalCounts[edgeC] = 5;
+    const weft::SecureMeshingResult parityConflict =
+        weft::generateSecureMesh(box, parity);
+    CHECK(!parityConflict);
+    CHECK(parityConflict.failure &&
+          parityConflict.failure->code == "interval.exact_parity_conflict");
+
+    TemporaryStep cylinderStep("cylinder");
+    const weft::ImportedModel cylinder =
+        weft::importStepSecure(cylinderStep.path().string());
+    const weft::ReconnaissanceReport reconnaissance =
+        weft::reconnoitre(cylinder);
+    std::vector<weft::StableId> circleEdges;
+    for (const weft::ExactGeometryClassification& record :
+         reconnaissance.records) {
+        if (record.taxonomy == weft::GeometryTaxonomy::Curve &&
+            record.familyCode == "circle") {
+            circleEdges.push_back(record.subjectId);
+        }
+    }
+    CHECK(circleEdges.size() == 2);
+    if (circleEdges.size() == 2) {
+        weft::SecureMeshingConfiguration belowMinimum = configuration();
+        belowMinimum.exactEdgeIntervalCounts[circleEdges[0]] = 8;
+        belowMinimum.edgeChainSums.push_back(
+            {{circleEdges[0]}, {circleEdges[1]}});
+        const weft::SecureMeshingResult minimumRefusal =
+            weft::generateSecureMesh(cylinder, belowMinimum);
+        CHECK(!minimumRefusal);
+        CHECK(minimumRefusal.failure &&
+              minimumRefusal.failure->code ==
+                  "interval.exact_below_minimum");
+    }
+
+    weft::SecureMeshingConfiguration invalidSum = configuration();
+    invalidSum.edgeChainSums.push_back(
+        {{{weft::StableIdKind::Edge, 999999}}, {edgeA}});
+    const weft::SecureMeshingResult invalid =
+        weft::generateSecureMesh(box, invalidSum);
+    CHECK(!invalid);
+    CHECK(invalid.failure &&
+          invalid.failure->code == "secure_pipeline.chain_sum_invalid");
+
+    const weft::ReconnaissanceReport boxRecon = weft::reconnoitre(box);
+    weft::IntervalProblem problem;
+    for (const weft::EdgeTopologyRecord& topology :
+         box.working->snapshot.edgeTopology) {
+        std::uint32_t count = 1;
+        std::optional<std::uint32_t> exact;
+        if (topology.id == edgeA) {
+            count = 2;
+            exact = 2;
+        } else if (topology.id == edgeB) {
+            count = 3;
+            exact = 3;
+        }
+        problem.variables.push_back(
+            {{weft::StableIdKind::Boundary, topology.id.ordinal},
+             static_cast<double>(count), count, false, exact});
+    }
+    problem.sums.push_back(
+        {{{weft::StableIdKind::Boundary, 1},
+          {weft::StableIdKind::Boundary, 2}},
+         {{weft::StableIdKind::Boundary, 3}}});
+    const weft::IntervalSolveResult solved =
+        weft::solveIntervals(problem, withSum.sampling);
+    CHECK(solved);
+    const weft::CanonicalBoundaryBuildResult boundaries =
+        weft::buildCanonicalBoundaries(box, boxRecon, *solved.solution);
+    CHECK(boundaries);
+    if (solved && boundaries) {
+        weft::CanonicalBoundarySet tampered = *boundaries.value;
+        CHECK(!tampered.boundaries.empty());
+        if (!tampered.boundaries.empty()) {
+            tampered.boundaries.front().intervalCount += 1;
+            const auto refused = weft::certifySolvedIntervalConsumption(
+                *solved.solution, tampered);
+            CHECK(refused.has_value());
+            CHECK(refused &&
+                  refused->code ==
+                      "secure_pipeline.interval_consumption_mismatch");
+        }
+        if (first.value) {
+            weft::MeshingResult meshTamper = *first.value;
+            const auto edgeKey = static_cast<int>(edgeC.ordinal);
+            CHECK(meshTamper.generation.edgeDivisions.contains(edgeKey));
+            meshTamper.generation.edgeDivisions[edgeKey] =
+                meshTamper.generation.edgeDivisions[edgeKey] + 1;
+            const auto refused = weft::certifySolvedIntervalConsumption(
+                *solved.solution, *boundaries.value, &meshTamper);
+            CHECK(refused.has_value());
+            CHECK(refused &&
+                  refused->code ==
+                      "secure_pipeline.interval_consumption_mismatch");
+        }
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -315,8 +550,10 @@ int main() {
         testPlanarBox();
         testFullCylinderDeterminism();
         testConnectedThroughHole();
+        testCrossPlatformM3Determinism();
         testExactEdgeIntervals();
         testUnsupportedAndConfigurationRefusals();
+        testTemplateChainSumConsumer();
     } catch (const std::exception& error) {
         std::printf("FAIL secure-meshing exception: %s\n", error.what());
         ++failures;

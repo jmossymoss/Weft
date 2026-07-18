@@ -1,12 +1,45 @@
 #include "weft/canonical_boundary.hpp"
 
+#include <BRep_Tool.hxx>
+#include <Geom2d_Circle.hxx>
+#include <Geom2d_Curve.hxx>
+#include <Geom2d_Line.hxx>
+#include <Geom2d_TrimmedCurve.hxx>
+#include <Geom_Curve.hxx>
+#include <Geom_TrimmedCurve.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Edge.hxx>
+#include <TopoDS_Face.hxx>
+
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <cmath>
+#include <cstdint>
+#include <functional>
 #include <limits>
+#include <span>
 #include <utility>
 
 namespace weft {
 namespace {
+
+constexpr double kCriticalParamEpsilon = 1e-12;
+constexpr double kTwoPi = 6.283185307179586476925286766559;
+
+// Collapse sub-8-ULP platform libm/OCCT drift so exact dyadic CDT inputs and
+// mesh fingerprints match across Windows and Linux. Applied only after
+// discrepancy certificates have already accepted the raw evaluations.
+void stabilizeCoordinate(double& value) {
+    if (!std::isfinite(value)) return;
+    auto bits = std::bit_cast<std::uint64_t>(value);
+    bits &= ~std::uint64_t{0x7};
+    value = std::bit_cast<double>(bits);
+}
+
+void stabilizeCoordinates(std::span<double> values) {
+    for (double& value : values) stabilizeCoordinate(value);
+}
 
 CanonicalBoundaryBuildResult buildFailure(
     CanonicalBoundaryReport report, std::string code, std::string message,
@@ -79,6 +112,417 @@ bool validConfiguration(const CanonicalBoundaryConfiguration& configuration) {
         std::isfinite(configuration.periodicLiftAmbiguityTolerance) &&
         configuration.periodicLiftAmbiguityTolerance >= 0.0 &&
         configuration.periodicLiftAmbiguityTolerance < 0.5;
+}
+
+bool almostEqualParameter(double a, double b, double span) {
+    const double scale = std::max(1.0, std::abs(span));
+    return std::abs(a - b) <= kCriticalParamEpsilon * scale;
+}
+
+double normalizeClosedParameter(double parameter, double lower, double upper,
+                                bool closed, double span) {
+    if (closed && almostEqualParameter(parameter, upper, span)) {
+        return lower;
+    }
+    return parameter;
+}
+
+bool supportedSegmentationFamily(const ExactGeometryClassification& record,
+                                 GeometryTaxonomy taxonomy) {
+    if (record.taxonomy != taxonomy ||
+        record.support != GeometrySupportState::SupportedAnalyticTemplate) {
+        return false;
+    }
+    if (taxonomy == GeometryTaxonomy::Curve) {
+        return record.familyCode == "line" || record.familyCode == "circle";
+    }
+    return record.familyCode == "plane" || record.familyCode == "cylinder";
+}
+
+int criticalEventKindOrder(CriticalParameterEventKind kind) {
+    switch (kind) {
+        case CriticalParameterEventKind::DomainEndpoint:
+            return 0;
+        case CriticalParameterEventKind::ContactCritical:
+            return 1;
+        case CriticalParameterEventKind::PeriodicSeam:
+            return 2;
+        case CriticalParameterEventKind::MonotonicExtremum:
+            return 3;
+        case CriticalParameterEventKind::Singular:
+            return 4;
+    }
+    return 100;
+}
+
+bool criticalEventLess(const CriticalParameterEvent& a,
+                       const CriticalParameterEvent& b) {
+    if (a.curveParameter != b.curveParameter) {
+        return a.curveParameter < b.curveParameter;
+    }
+    const int kindA = criticalEventKindOrder(a.kind);
+    const int kindB = criticalEventKindOrder(b.kind);
+    if (kindA != kindB) return kindA < kindB;
+    if (a.face != b.face) return a.face < b.face;
+    if (a.coedge != b.coedge) return a.coedge < b.coedge;
+    if (a.axis != b.axis) return a.axis < b.axis;
+    return a.detectionCode < b.detectionCode;
+}
+
+bool criticalEventSameKey(const CriticalParameterEvent& a,
+                          const CriticalParameterEvent& b) {
+    return a.kind == b.kind && a.edge == b.edge && a.coedge == b.coedge &&
+        a.face == b.face && a.axis == b.axis &&
+        a.detectionCode == b.detectionCode &&
+        almostEqualParameter(a.curveParameter, b.curveParameter, 1.0);
+}
+
+void appendCriticalEvent(std::vector<CriticalParameterEvent>& events,
+                         CriticalParameterEvent event, double lower,
+                         double upper, bool closed, double span) {
+    event.curveParameter = normalizeClosedParameter(
+        event.curveParameter, lower, upper, closed, span);
+    if (event.curveParameter < lower - kCriticalParamEpsilon * std::max(1.0, span) ||
+        event.curveParameter > upper + kCriticalParamEpsilon * std::max(1.0, span)) {
+        return;
+    }
+    if (closed && almostEqualParameter(event.curveParameter, upper, span)) {
+        event.curveParameter = lower;
+    }
+    for (const CriticalParameterEvent& existing : events) {
+        if (criticalEventSameKey(existing, event)) return;
+    }
+    events.push_back(std::move(event));
+}
+
+Handle(Geom_Curve) basisCurve3d(const Handle(Geom_Curve)& curve) {
+    if (curve.IsNull()) return curve;
+    if (Handle(Geom_TrimmedCurve) trimmed = Handle(Geom_TrimmedCurve)::DownCast(curve)) {
+        return basisCurve3d(trimmed->BasisCurve());
+    }
+    return curve;
+}
+
+Handle(Geom2d_Curve) basisCurve2d(const Handle(Geom2d_Curve)& curve) {
+    if (curve.IsNull()) return curve;
+    if (Handle(Geom2d_TrimmedCurve) trimmed =
+            Handle(Geom2d_TrimmedCurve)::DownCast(curve)) {
+        return basisCurve2d(trimmed->BasisCurve());
+    }
+    return curve;
+}
+
+void appendPeriodicTargets(double startCoord, double endCoord, double period,
+                           double lower, double upper,
+                           const std::function<double(double)>& parameterAtCoord,
+                           CriticalParameterEvent seed,
+                           std::vector<CriticalParameterEvent>& events,
+                           bool closed, double span) {
+    if (!(period > 0.0) || !std::isfinite(period)) return;
+    const double cMin = std::min(startCoord, endCoord);
+    const double cMax = std::max(startCoord, endCoord);
+    const double scale = std::max({1.0, std::abs(cMin), std::abs(cMax), period});
+    const long long first =
+        static_cast<long long>(std::llround(std::floor(cMin / period))) - 1;
+    const long long last =
+        static_cast<long long>(std::llround(std::ceil(cMax / period))) + 1;
+    for (long long index = first; index <= last; ++index) {
+        const double target = static_cast<double>(index) * period;
+        if (target < cMin - kCriticalParamEpsilon * scale ||
+            target > cMax + kCriticalParamEpsilon * scale) {
+            continue;
+        }
+        CriticalParameterEvent event = seed;
+        event.kind = CriticalParameterEventKind::PeriodicSeam;
+        event.detectionCode = "event.periodic_seam";
+        event.curveParameter = parameterAtCoord(target);
+        appendCriticalEvent(events, std::move(event), lower, upper, closed,
+                            span);
+    }
+}
+
+void appendCircleIntrinsicMonotonicEvents(
+    double lower, double upper, bool closed, double span,
+    CriticalParameterEvent seed,
+    std::vector<CriticalParameterEvent>& events) {
+    // Quarter-turn lattice relative to the trimmed edge domain. When
+    // intervalCount is a multiple of four on a full-period circle these
+    // coincide with the uniform samples and do not change ring cardinality.
+    constexpr double step = kTwoPi * 0.25;
+    const long long count =
+        static_cast<long long>(std::llround(std::floor(span / step))) + 2;
+    for (long long k = 0; k <= count; ++k) {
+        CriticalParameterEvent event = seed;
+        event.kind = CriticalParameterEventKind::MonotonicExtremum;
+        event.detectionCode = "event.monotonic_extremum";
+        event.curveParameter = lower + static_cast<double>(k) * step;
+        appendCriticalEvent(events, std::move(event), lower, upper, closed,
+                            span);
+    }
+}
+
+struct CriticalSegmentationResult {
+    std::vector<CriticalParameterEvent> events;
+    std::optional<CanonicalBoundaryFailure> failure;
+};
+
+CriticalSegmentationResult collectSupportedCriticalEvents(
+    const ImportedModel& imported,
+    const ExactGeometryClassification& curveClassification,
+    const EdgeTopologyRecord& topology,
+    const std::vector<MappingState>& mappings,
+    const std::optional<StableId>& sourceEdge, double lower, double upper,
+    bool closed, double span) {
+    CriticalSegmentationResult result;
+    const StableId edgeId = topology.id;
+
+    CriticalParameterEvent endpointSeed;
+    endpointSeed.edge = edgeId;
+    endpointSeed.sourceEdge = sourceEdge;
+    endpointSeed.kind = CriticalParameterEventKind::DomainEndpoint;
+    endpointSeed.detectionCode = "event.domain_endpoint";
+    endpointSeed.curveParameter = lower;
+    appendCriticalEvent(result.events, endpointSeed, lower, upper, closed,
+                        span);
+    if (!closed) {
+        endpointSeed.curveParameter = upper;
+        appendCriticalEvent(result.events, endpointSeed, lower, upper, closed,
+                            span);
+    }
+
+    if (topology.lowerVertex) {
+        CriticalParameterEvent contact = endpointSeed;
+        contact.kind = CriticalParameterEventKind::ContactCritical;
+        contact.detectionCode = "event.contact_vertex";
+        contact.curveParameter = lower;
+        appendCriticalEvent(result.events, contact, lower, upper, closed, span);
+    }
+    if (!closed && topology.upperVertex) {
+        CriticalParameterEvent contact = endpointSeed;
+        contact.kind = CriticalParameterEventKind::ContactCritical;
+        contact.detectionCode = "event.contact_vertex";
+        contact.curveParameter = upper;
+        appendCriticalEvent(result.events, contact, lower, upper, closed, span);
+    }
+
+    if (curveClassification.familyCode == "circle") {
+        appendCircleIntrinsicMonotonicEvents(lower, upper, closed, span,
+                                             endpointSeed, result.events);
+        if (!curveClassification.parameterDomains.empty() &&
+            curveClassification.parameterDomains.front().periodic && closed) {
+            CriticalParameterEvent seam = endpointSeed;
+            seam.kind = CriticalParameterEventKind::PeriodicSeam;
+            seam.detectionCode = "event.periodic_seam";
+            seam.curveParameter = lower;
+            appendCriticalEvent(result.events, seam, lower, upper, closed,
+                                span);
+        }
+    }
+
+    const auto edgeShapeIt =
+        imported.working->snapshot.topology.exactShapes.find(edgeId);
+    if (edgeShapeIt == imported.working->snapshot.topology.exactShapes.end()) {
+        result.failure = CanonicalBoundaryFailure{
+            "boundary.critical_segmentation_unsupported",
+            "working edge has no exact shape for critical segmentation",
+            {edgeId}};
+        return result;
+    }
+    const TopoDS_Edge edge = TopoDS::Edge(edgeShapeIt->second);
+
+    for (const MappingState& mapping : mappings) {
+        if (mapping.faceClassification->trimDomain ==
+                TrimDomainClass::TouchesOneSingularity ||
+            mapping.faceClassification->trimDomain ==
+                TrimDomainClass::TouchesTwoSingularities) {
+            result.failure = CanonicalBoundaryFailure{
+                "boundary.critical_segmentation_unsupported",
+                "singular trim domains require a dedicated critical-event solver",
+                {edgeId, mapping.coedge->id, mapping.coedge->faceId}};
+            return result;
+        }
+
+        CriticalParameterEvent seed;
+        seed.edge = edgeId;
+        seed.coedge = mapping.coedge->id;
+        seed.face = mapping.coedge->faceId;
+        seed.sourceEdge = sourceEdge;
+        seed.sourceFace =
+            sourceForWorking(imported, mapping.coedge->faceId);
+
+        if (mapping.kind == BoundaryUvMappingKind::StoredPcurve &&
+            mapping.representation) {
+            const auto faceShapeIt =
+                imported.working->snapshot.topology.exactShapes.find(
+                    mapping.coedge->faceId);
+            if (faceShapeIt ==
+                imported.working->snapshot.topology.exactShapes.end()) {
+                result.failure = CanonicalBoundaryFailure{
+                    "boundary.critical_segmentation_unsupported",
+                    "owning face has no exact shape for critical segmentation",
+                    {edgeId, mapping.coedge->faceId}};
+                return result;
+            }
+            TopoDS_Edge oriented = edge;
+            if (mapping.representation->representationIndex == 1) {
+                oriented.Reverse();
+            }
+            const TopoDS_Face face = TopoDS::Face(faceShapeIt->second);
+            double first = 0.0;
+            double last = 0.0;
+            bool stored = false;
+            Handle(Geom2d_Curve) pcurve = BRep_Tool::CurveOnSurface(
+                oriented, face, first, last, &stored);
+            if (pcurve.IsNull() || !stored) {
+                // Domain/contact/curve events remain; UV-period refinement is
+                // skipped when the stored representation cannot be fetched.
+                continue;
+            }
+            Handle(Geom2d_Curve) basis = basisCurve2d(pcurve);
+            if (Handle(Geom2d_Line) line = Handle(Geom2d_Line)::DownCast(basis)) {
+                const gp_Pnt2d start = line->Value(lower);
+                const gp_Pnt2d end = line->Value(upper);
+                for (std::size_t axis = 0; axis < mapping.periods.size();
+                     ++axis) {
+                    if (!mapping.periods[axis]) continue;
+                    seed.axis = axis;
+                    if (closed &&
+                        almostEqualParameter(span, *mapping.periods[axis],
+                                             span)) {
+                        CriticalParameterEvent seam = seed;
+                        seam.kind = CriticalParameterEventKind::PeriodicSeam;
+                        seam.detectionCode = "event.periodic_seam";
+                        seam.curveParameter = lower;
+                        appendCriticalEvent(result.events, std::move(seam),
+                                            lower, upper, closed, span);
+                        continue;
+                    }
+                    const double startCoord =
+                        axis == 0 ? start.X() : start.Y();
+                    const double endCoord = axis == 0 ? end.X() : end.Y();
+                    const gp_Dir2d direction = line->Direction();
+                    const double slope =
+                        axis == 0 ? direction.X() : direction.Y();
+                    appendPeriodicTargets(
+                        startCoord, endCoord, *mapping.periods[axis], lower,
+                        upper,
+                        [&](double target) {
+                            if (std::abs(slope) <= kCriticalParamEpsilon) {
+                                return lower;
+                            }
+                            const gp_Pnt2d location = line->Location();
+                            const double origin =
+                                axis == 0 ? location.X() : location.Y();
+                            return (target - origin) / slope;
+                        },
+                        seed, result.events, closed, span);
+                }
+            } else if (Handle(Geom2d_Circle) circle =
+                           Handle(Geom2d_Circle)::DownCast(basis)) {
+                for (std::size_t axis = 0; axis < mapping.periods.size();
+                     ++axis) {
+                    if (!mapping.periods[axis]) continue;
+                    seed.axis = axis;
+                    if (closed && almostEqualParameter(span, kTwoPi, span)) {
+                        CriticalParameterEvent seam = seed;
+                        seam.kind = CriticalParameterEventKind::PeriodicSeam;
+                        seam.detectionCode = "event.periodic_seam";
+                        seam.curveParameter = lower;
+                        appendCriticalEvent(result.events, std::move(seam),
+                                            lower, upper, closed, span);
+                        continue;
+                    }
+                    const gp_Pnt2d start = circle->Value(lower);
+                    const gp_Pnt2d end = circle->Value(upper);
+                    const double startCoord =
+                        axis == 0 ? start.X() : start.Y();
+                    const double endCoord = axis == 0 ? end.X() : end.Y();
+                    for (double coord : {startCoord, endCoord}) {
+                        const double periods = coord / *mapping.periods[axis];
+                        if (!std::isfinite(periods)) continue;
+                        const double nearest = std::round(periods);
+                        if (std::abs(periods - nearest) >
+                            kCriticalParamEpsilon) {
+                            continue;
+                        }
+                        CriticalParameterEvent seam = seed;
+                        seam.kind = CriticalParameterEventKind::PeriodicSeam;
+                        seam.detectionCode = "event.periodic_seam";
+                        seam.curveParameter =
+                            almostEqualParameter(coord, startCoord, span)
+                                ? lower
+                                : upper;
+                        appendCriticalEvent(result.events, std::move(seam),
+                                            lower, upper, closed, span);
+                    }
+                }
+            } else {
+                result.failure = CanonicalBoundaryFailure{
+                    "boundary.critical_segmentation_unsupported",
+                    "p-curve family is outside the supported critical-event set",
+                    {edgeId, mapping.coedge->id, mapping.coedge->faceId}};
+                return result;
+            }
+            continue;
+        }
+
+        // Derived planar projection: lines need no further events; circles
+        // already received intrinsic quarter-turn events above.
+        if (curveClassification.familyCode != "line" &&
+            curveClassification.familyCode != "circle") {
+            result.failure = CanonicalBoundaryFailure{
+                "boundary.critical_segmentation_unsupported",
+                "3D curve family is outside the supported critical-event set",
+                {edgeId, mapping.coedge->faceId}};
+            return result;
+        }
+    }
+
+    std::sort(result.events.begin(), result.events.end(), criticalEventLess);
+    return result;
+}
+
+std::vector<double> mergeCriticalParameters(
+    double lower, double upper, bool closed, double span,
+    std::uint32_t intervalCount,
+    const std::vector<CriticalParameterEvent>& events) {
+    std::vector<double> parameters;
+    parameters.reserve(static_cast<std::size_t>(intervalCount) + 1U +
+                       events.size());
+    const std::size_t uniformCount = closed
+        ? static_cast<std::size_t>(intervalCount)
+        : static_cast<std::size_t>(intervalCount) + 1U;
+    for (std::size_t sampleIndex = 0; sampleIndex < uniformCount;
+         ++sampleIndex) {
+        const double parameter =
+            !closed && sampleIndex + 1U == uniformCount
+            ? upper
+            : lower + span * static_cast<double>(sampleIndex) /
+                          static_cast<double>(intervalCount);
+        parameters.push_back(
+            normalizeClosedParameter(parameter, lower, upper, closed, span));
+    }
+    for (const CriticalParameterEvent& event : events) {
+        parameters.push_back(normalizeClosedParameter(
+            event.curveParameter, lower, upper, closed, span));
+    }
+    std::sort(parameters.begin(), parameters.end());
+    parameters.erase(
+        std::unique(parameters.begin(), parameters.end(),
+                    [span](double a, double b) {
+                        return almostEqualParameter(a, b, span);
+                    }),
+        parameters.end());
+    if (closed) {
+        parameters.erase(
+            std::remove_if(parameters.begin(), parameters.end(),
+                           [&](double parameter) {
+                               return almostEqualParameter(parameter, upper,
+                                                           span);
+                           }),
+            parameters.end());
+    }
+    return parameters;
 }
 
 bool ambiguousIntegerPeriod(double requestedPeriods,
@@ -299,11 +743,55 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                                 {edgeId});
         }
 
-        const std::size_t sampleCount = closed
-            ? static_cast<std::size_t>(*count)
-            : static_cast<std::size_t>(*count) + 1U;
+        const ExactGeometryClassification* curveClassification =
+            reconnaissance.find(edgeId);
+        if (!curveClassification ||
+            !supportedSegmentationFamily(*curveClassification,
+                                         GeometryTaxonomy::Curve)) {
+            return buildFailure(
+                report, "boundary.critical_segmentation_unsupported",
+                "critical segmentation supports only exact line and circle edges",
+                {edgeId});
+        }
+        for (const MappingState& mapping : mappings) {
+            if (!supportedSegmentationFamily(*mapping.faceClassification,
+                                             GeometryTaxonomy::Surface)) {
+                return buildFailure(
+                    report, "boundary.critical_segmentation_unsupported",
+                    "critical segmentation supports only exact plane and cylinder faces",
+                    {edgeId, mapping.coedge->id, mapping.coedge->faceId});
+            }
+        }
+
+        CriticalSegmentationResult critical =
+            collectSupportedCriticalEvents(
+                imported, *curveClassification, topology, mappings, sourceEdge,
+                lower, upper, closed, span);
+        if (critical.failure) {
+            return buildFailure(report, critical.failure->code,
+                                critical.failure->message,
+                                critical.failure->subjects);
+        }
+        if (critical.events.empty()) {
+            return buildFailure(
+                report, "boundary.critical_segmentation_unsupported",
+                "supported critical segmentation produced no events",
+                {edgeId});
+        }
+
+        const std::vector<double> parameters = mergeCriticalParameters(
+            lower, upper, closed, span, *count, critical.events);
+        if (parameters.empty()) {
+            return buildFailure(
+                report, "boundary.critical_segmentation_unsupported",
+                "critical segmentation produced an empty sample parameter set",
+                {edgeId});
+        }
+
+        const std::size_t sampleCount = parameters.size();
         report.expectedSamples += sampleCount;
         report.expectedUvUses += sampleCount * mappings.size();
+        report.expectedCriticalEvents += critical.events.size();
 
         CanonicalBoundary boundary;
         boundary.edge = edgeId;
@@ -311,16 +799,13 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
         boundary.closed = closed;
         boundary.intervalCount = *count;
         boundary.samples.reserve(sampleCount);
+        boundary.criticalEvents = std::move(critical.events);
 
         const double sourceEdgeTolerance =
             occurrenceTolerance(imported.source->snapshot, *sourceEdge);
         for (std::size_t sampleIndex = 0; sampleIndex < sampleCount;
              ++sampleIndex) {
-            const double parameter =
-                !closed && sampleIndex + 1U == sampleCount
-                ? upper
-                : lower + span * static_cast<double>(sampleIndex) /
-                              static_cast<double>(*count);
+            const double parameter = parameters[sampleIndex];
             const auto curve =
                 imported.workingEvaluator->evaluateCurve(edgeId, parameter);
             if (!curve) {
@@ -338,10 +823,11 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
             sample.curveParameter = parameter;
             sample.position = curve.value->position;
             std::optional<StableId> endpointVertex;
-            if (sampleIndex == 0 && topology.lowerVertex) {
+            if (almostEqualParameter(parameter, lower, span) &&
+                topology.lowerVertex) {
                 endpointVertex = topology.lowerVertex;
                 sample.canonicalVertexIndex = topology.lowerVertex->ordinal - 1U;
-            } else if (!closed && sampleIndex + 1U == sampleCount &&
+            } else if (!closed && almostEqualParameter(parameter, upper, span) &&
                        topology.upperVertex) {
                 endpointVertex = topology.upperVertex;
                 sample.canonicalVertexIndex = topology.upperVertex->ordinal - 1U;
@@ -509,9 +995,45 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                 sample.faceUses.push_back(std::move(use));
                 ++report.checkedUvUses;
             }
+            stabilizeCoordinates(sample.position);
+            for (CoedgeUvUse& use : sample.faceUses) {
+                stabilizeCoordinates(use.uv);
+                stabilizeCoordinates(use.liftedUv);
+            }
             boundary.samples.push_back(std::move(sample));
             ++report.checkedSamples;
         }
+
+        for (CriticalParameterEvent& event : boundary.criticalEvents) {
+            const auto found = std::find_if(
+                boundary.samples.begin(), boundary.samples.end(),
+                [&](const CanonicalBoundarySample& sample) {
+                    return almostEqualParameter(
+                        sample.curveParameter, event.curveParameter, span);
+                });
+            if (found == boundary.samples.end()) {
+                return buildFailure(
+                    report, "boundary.critical_event_missing",
+                    "a required critical parameter event has no sample",
+                    {edgeId});
+            }
+            event.sampleOrdinal = found->id.ordinal;
+            ++report.checkedCriticalEvents;
+        }
+        for (std::size_t left = 0; left < boundary.criticalEvents.size();
+             ++left) {
+            for (std::size_t right = left + 1;
+                 right < boundary.criticalEvents.size(); ++right) {
+                if (criticalEventSameKey(boundary.criticalEvents[left],
+                                         boundary.criticalEvents[right])) {
+                    return buildFailure(
+                        report, "boundary.critical_event_duplicate",
+                        "critical parameter events must not be double-counted",
+                        {edgeId});
+                }
+            }
+        }
+
         if (closed) {
             for (const MappingState& mapping : mappings) {
                 for (std::size_t axis = 0; axis < mapping.periods.size();
@@ -620,43 +1142,59 @@ AzimuthRegistrationResult azimuthRegistration(
                           dot(radialPoint, reference));
     };
 
-    constexpr double twoPi = 6.283185307179586476925286766559;
-    const double step = twoPi / static_cast<double>(count);
-    const double signA = wrapAngle(azimuth(ringA[1], centreA)) >= 0.0
-        ? 1.0
-        : -1.0;
-    const double phaseB = azimuth(ringB.front(), centreB);
+    std::vector<double> anglesA(count);
+    std::vector<double> anglesB(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        anglesA[index] = azimuth(ringA[index], centreA);
+        anglesB[index] = azimuth(ringB[index], centreB);
+    }
+    const double signA =
+        wrapAngle(anglesA[1] - anglesA[0]) >= 0.0 ? 1.0 : -1.0;
     const double signB =
-        wrapAngle(azimuth(ringB[1], centreB) - phaseB) >= 0.0
-        ? 1.0
-        : -1.0;
+        wrapAngle(anglesB[1] - anglesB[0]) >= 0.0 ? 1.0 : -1.0;
     if (signA != signB) {
         return registrationFailure(
             "ring winding differs; reflection is not a supported registration");
     }
 
-    const long long offset =
-        static_cast<long long>(std::llround(phaseB / (signA * step)));
-    const long long modulo = static_cast<long long>(count);
-    std::vector<std::uint32_t> permutation(count);
+    double minimumStep = kTwoPi;
     for (std::size_t index = 0; index < count; ++index) {
-        long long registered =
-            (static_cast<long long>(index) - offset) % modulo;
-        if (registered < 0) registered += modulo;
-        permutation[index] = static_cast<std::uint32_t>(registered);
+        const double step = std::abs(wrapAngle(
+            anglesA[(index + 1U) % count] - anglesA[index]));
+        if (std::isfinite(step) && step > 0.0) {
+            minimumStep = std::min(minimumStep, step);
+        }
+    }
+    if (!(minimumStep > 0.0) || !std::isfinite(minimumStep)) {
+        return registrationFailure(
+            "ring azimuth steps are not finite and positive");
+    }
+    const double tolerance = minimumStep / 4.0;
+
+    double bestError = std::numeric_limits<double>::infinity();
+    std::size_t bestOffset = 0;
+    for (std::size_t offset = 0; offset < count; ++offset) {
+        double maxError = 0.0;
+        for (std::size_t index = 0; index < count; ++index) {
+            const std::size_t indexB = (index + offset) % count;
+            maxError = std::max(
+                maxError,
+                std::abs(wrapAngle(anglesA[index] - anglesB[indexB])));
+        }
+        if (maxError < bestError) {
+            bestError = maxError;
+            bestOffset = offset;
+        }
+    }
+    if (!(bestError <= tolerance)) {
+        return registrationFailure(
+            "rings are not registrable by a cyclic rotation");
     }
 
-    const double tolerance = step / 4.0;
+    std::vector<std::uint32_t> permutation(count);
     for (std::size_t index = 0; index < count; ++index) {
-        const double expected = signA * static_cast<double>(index) * step;
-        const double actualA = azimuth(ringA[index], centreA);
-        const double actual =
-            azimuth(ringB[permutation[index]], centreB);
-        if (std::abs(wrapAngle(actualA - expected)) > tolerance ||
-            std::abs(wrapAngle(actual - expected)) > tolerance) {
-            return registrationFailure(
-                "rings are not registrable by a cyclic rotation");
-        }
+        permutation[index] =
+            static_cast<std::uint32_t>((index + bestOffset) % count);
     }
     AzimuthRegistrationResult result;
     result.permutation = std::move(permutation);

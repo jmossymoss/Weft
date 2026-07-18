@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <map>
 #include <numeric>
@@ -142,6 +143,9 @@ struct SideAllocationResult {
 
 constexpr std::uint64_t kMaximumSumStates = 2'000'000;
 constexpr std::uint64_t kMaximumMixedTransitions = 4'000'000;
+constexpr std::size_t kMaximumCoupledClasses = 8;
+constexpr std::size_t kMaximumCoupledEquations = 8;
+constexpr std::uint64_t kMaximumCoupledAssignments = 1'000'000;
 constexpr double kObjectiveTieTolerance = 1e-12;
 
 bool equivalentObjective(double left, double right) noexcept {
@@ -426,7 +430,7 @@ IntervalSolveResult solveIntervals(const IntervalProblem& problem,
     }
 
     std::vector<SumPlan> sumPlans;
-    std::vector<std::optional<std::size_t>> sumOwner(domains.size());
+    std::vector<std::vector<std::size_t>> sumOwners(domains.size());
     for (const IntervalSum& sum : problem.sums) {
         if (sum.lhs.empty() || sum.rhs.empty()) {
             return solveFailure("interval.invalid_problem",
@@ -484,28 +488,82 @@ IntervalSolveResult solveIntervals(const IntervalProblem& problem,
         }
         const std::size_t planIndex = sumPlans.size();
         for (std::size_t classIndex : plan.lhsClasses) {
-            if (sumOwner[classIndex]) {
-                return solveFailure(
-                    "interval.coupled_sum_unsupported",
-                    "a boundary class participates in multiple non-trivial sums",
-                    plan.subjects);
-            }
-            sumOwner[classIndex] = planIndex;
+            sumOwners[classIndex].push_back(planIndex);
         }
         for (std::size_t classIndex : plan.rhsClasses) {
-            if (sumOwner[classIndex]) {
-                return solveFailure(
-                    "interval.coupled_sum_unsupported",
-                    "a boundary class participates in multiple non-trivial sums",
-                    plan.subjects);
-            }
-            sumOwner[classIndex] = planIndex;
+            sumOwners[classIndex].push_back(planIndex);
         }
         sumPlans.push_back(std::move(plan));
     }
 
+    std::vector<bool> coupledPlans(sumPlans.size(), false);
+    for (const std::vector<std::size_t>& owners : sumOwners) {
+        if (owners.size() < 2U) continue;
+        for (std::size_t owner : owners) coupledPlans[owner] = true;
+    }
+    bool expanded = true;
+    while (expanded) {
+        expanded = false;
+        for (const std::vector<std::size_t>& owners : sumOwners) {
+            if (!std::any_of(owners.begin(), owners.end(),
+                             [&](std::size_t owner) {
+                                 return coupledPlans[owner];
+                             })) {
+                continue;
+            }
+            for (std::size_t owner : owners) {
+                if (!coupledPlans[owner]) {
+                    coupledPlans[owner] = true;
+                    expanded = true;
+                }
+            }
+        }
+    }
+
+    std::size_t coupledComponents = 0;
+    std::vector<bool> visitedPlans(sumPlans.size(), false);
+    for (std::size_t seed = 0; seed < sumPlans.size(); ++seed) {
+        if (!coupledPlans[seed] || visitedPlans[seed]) continue;
+        ++coupledComponents;
+        std::vector<std::size_t> pending{seed};
+        visitedPlans[seed] = true;
+        while (!pending.empty()) {
+            const std::size_t planIndex = pending.back();
+            pending.pop_back();
+            const SumPlan& plan = sumPlans[planIndex];
+            const auto visitOwners = [&](std::size_t classIndex) {
+                for (std::size_t owner : sumOwners[classIndex]) {
+                    if (coupledPlans[owner] && !visitedPlans[owner]) {
+                        visitedPlans[owner] = true;
+                        pending.push_back(owner);
+                    }
+                }
+            };
+            for (std::size_t classIndex : plan.lhsClasses) {
+                visitOwners(classIndex);
+            }
+            for (std::size_t classIndex : plan.rhsClasses) {
+                visitOwners(classIndex);
+            }
+        }
+    }
+    if (coupledComponents > 1U) {
+        return solveFailure(
+            "interval.coupled_sum_unsupported",
+            "only one connected coupled sum component is supported");
+    }
+
     std::vector<std::uint32_t> classCounts(domains.size(), 0U);
-    for (const SumPlan& plan : sumPlans) {
+    std::vector<bool> classInSum(domains.size(), false);
+    for (std::size_t planIndex = 0; planIndex < sumPlans.size(); ++planIndex) {
+        const SumPlan& plan = sumPlans[planIndex];
+        for (std::size_t classIndex : plan.lhsClasses) {
+            classInSum[classIndex] = true;
+        }
+        for (std::size_t classIndex : plan.rhsClasses) {
+            classInSum[classIndex] = true;
+        }
+        if (coupledPlans[planIndex]) continue;
         const SideAllocationResult lhs = buildSideAllocation(
             problem, domains, plan.lhsClasses, plan.subjects);
         if (!lhs.value) {
@@ -561,9 +619,112 @@ IntervalSolveResult solveIntervals(const IntervalProblem& problem,
                             plan.rhsClasses, classCounts);
     }
 
+    if (coupledComponents == 1U) {
+        std::vector<std::size_t> planIndices;
+        std::vector<std::size_t> classIndices;
+        std::vector<StableId> subjects;
+        for (std::size_t planIndex = 0; planIndex < sumPlans.size();
+             ++planIndex) {
+            if (!coupledPlans[planIndex]) continue;
+            planIndices.push_back(planIndex);
+            const SumPlan& plan = sumPlans[planIndex];
+            classIndices.insert(classIndices.end(), plan.lhsClasses.begin(),
+                                plan.lhsClasses.end());
+            classIndices.insert(classIndices.end(), plan.rhsClasses.begin(),
+                                plan.rhsClasses.end());
+            subjects.insert(subjects.end(), plan.subjects.begin(),
+                            plan.subjects.end());
+        }
+        std::sort(classIndices.begin(), classIndices.end());
+        classIndices.erase(
+            std::unique(classIndices.begin(), classIndices.end()),
+            classIndices.end());
+        std::sort(subjects.begin(), subjects.end());
+        subjects.erase(std::unique(subjects.begin(), subjects.end()),
+                       subjects.end());
+        if (classIndices.size() > kMaximumCoupledClasses ||
+            planIndices.size() > kMaximumCoupledEquations) {
+            return solveFailure(
+                "interval.sum_complexity_exceeded",
+                "a coupled sum component exceeds its finite class or equation budget",
+                subjects);
+        }
+
+        std::uint64_t assignmentCount = 1;
+        for (std::size_t classIndex : classIndices) {
+            const IntervalClassDomain& domain = domains[classIndex];
+            const std::uint64_t cardinality =
+                static_cast<std::uint64_t>(
+                    (domain.maximum - domain.start) / domain.step) +
+                1U;
+            if (cardinality > kMaximumCoupledAssignments ||
+                assignmentCount >
+                    kMaximumCoupledAssignments / cardinality) {
+                return solveFailure(
+                    "interval.sum_complexity_exceeded",
+                    "a coupled sum component exceeds its bounded exact assignment budget",
+                    subjects);
+            }
+            assignmentCount *= cardinality;
+        }
+
+        bool found = false;
+        double bestObjective = 0.0;
+        std::vector<std::uint32_t> bestCounts;
+        const auto visit = [&](const auto& self, std::size_t offset,
+                               double objective) -> void {
+            if (offset != classIndices.size()) {
+                const std::size_t classIndex = classIndices[offset];
+                const IntervalClassDomain& domain = domains[classIndex];
+                for (std::uint32_t candidate = domain.start;;) {
+                    classCounts[classIndex] = candidate;
+                    self(self, offset + 1U,
+                         objective +
+                             classObjective(problem, domain, candidate));
+                    if (candidate == domain.maximum ||
+                        candidate > domain.maximum - domain.step) {
+                        break;
+                    }
+                    candidate += domain.step;
+                }
+                return;
+            }
+            for (std::size_t planIndex : planIndices) {
+                const SumPlan& plan = sumPlans[planIndex];
+                std::uint64_t lhs = 0;
+                std::uint64_t rhs = 0;
+                for (std::size_t classIndex : plan.lhsClasses) {
+                    lhs += classCounts[classIndex];
+                }
+                for (std::size_t classIndex : plan.rhsClasses) {
+                    rhs += classCounts[classIndex];
+                }
+                if (lhs != rhs) return;
+            }
+            if (!found || betterObjective(objective, bestObjective)) {
+                found = true;
+                bestObjective = objective;
+                bestCounts.clear();
+                for (std::size_t classIndex : classIndices) {
+                    bestCounts.push_back(classCounts[classIndex]);
+                }
+            }
+        };
+        visit(visit, 0U, 0.0);
+        if (!found) {
+            return solveFailure(
+                "interval.sum_infeasible",
+                "no bounded integer assignment satisfies a coupled sum component",
+                subjects);
+        }
+        for (std::size_t offset = 0; offset < classIndices.size(); ++offset) {
+            classCounts[classIndices[offset]] = bestCounts[offset];
+        }
+    }
+
     for (std::size_t classIndex = 0; classIndex < domains.size();
          ++classIndex) {
-        if (sumOwner[classIndex]) continue;
+        if (classInSum[classIndex]) continue;
         const IntervalClassDomain& domain = domains[classIndex];
         double bestObjective = 0.0;
         std::uint32_t bestCount = 0;
