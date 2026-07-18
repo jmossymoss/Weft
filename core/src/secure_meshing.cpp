@@ -1,5 +1,6 @@
 #include "weft/secure_meshing.hpp"
 
+#include "weft/cone_template.hpp"
 #include "weft/planar_trim_assembly.hpp"
 
 #include <algorithm>
@@ -108,7 +109,14 @@ IntervalProblemResult buildIntervalProblem(
             return result;
         }
         std::uint32_t count = 0;
-        if (classification->familyCode == "line") {
+        if (topology.degenerate ||
+            std::find(classification->conditionCodes.begin(),
+                      classification->conditionCodes.end(),
+                      "degenerate") != classification->conditionCodes.end()) {
+            // Apex/pole singular edges: one canonical station, no sagitta
+            // count. Unsupported surface families still refuse later.
+            count = 1;
+        } else if (classification->familyCode == "line") {
             count = cylinderAxialEdges.contains(topology.id)
                 ? configuration.cylinderAxialIntervals
                 : lineSegmentCount();
@@ -579,8 +587,35 @@ SecureMeshingResult generateSecureMesh(
             faceMeshes.push_back(*wall.value);
             continue;
         }
+        if (face.familyCode == "cone") {
+            ConeWallConfiguration cone;
+            cone.maximumChordDeviation = configuration.sampling.chordTolerance;
+            cone.maximumNormalDeviationRadians =
+                configuration.sampling.normalAngleToleranceRadians;
+            const ConeWallResult wall = buildApexConeWall(
+                imported, reconnaissance, *boundaries.value, face.subjectId,
+                cone);
+            for (const ConeWallValidationEvidence& evidence : wall.validation) {
+                appendCoverage(result.validation,
+                               faceCode(evidence.code, face.subjectId),
+                               evidence.expected, evidence.checked,
+                               evidence.skipped, evidence.failed);
+            }
+            if (!wall) {
+                setFailure(result,
+                           wall.failure ? wall.failure->code
+                                        : "secure_pipeline.cone_failed",
+                           wall.failure ? wall.failure->message
+                                        : "certified cone construction failed",
+                           wall.failure ? wall.failure->subjects
+                                        : std::vector<StableId>{});
+                return result;
+            }
+            faceMeshes.push_back(*wall.value);
+            continue;
+        }
         setFailure(result, "secure_pipeline.unsupported_surface_family",
-                   "the secure automatic pipeline currently supports only plane and full-cylinder faces",
+                   "the secure automatic pipeline currently supports only plane, cylinder, and apex-cone faces",
                    {face.subjectId});
         return result;
     }

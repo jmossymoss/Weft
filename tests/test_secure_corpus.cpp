@@ -166,7 +166,9 @@ int main() {
     }
 
     const char* fixtures[] = {"box", "cylinder", "partial_cylinder", "hole",
-                              "sphere"};
+                              "cone", "sphere"};
+    constexpr std::size_t kFixtureExtra =
+        sizeof(fixtures) / sizeof(fixtures[0]);
     for (const char* fixture : fixtures) {
         const std::filesystem::path path = weft::test::uniqueTempPath(
             std::string("weft_coverage_") + fixture, ".step");
@@ -174,8 +176,16 @@ int main() {
         const weft::ImportedModel imported =
             weft::importStepSecure(path.string());
         ++importSuccess;
-        const weft::SecureMeshingResult meshed =
-            weft::generateSecureMesh(imported);
+        weft::SecureMeshingResult meshed;
+        if (std::string(fixture) == "cone") {
+            weft::SecureMeshingConfiguration settings;
+            settings.sampling.chordTolerance = 0.25;
+            settings.sampling.normalAngleToleranceRadians = 0.35;
+            settings.sampling.minimumClosedCurveSegments = 8;
+            meshed = weft::generateSecureMesh(imported, settings);
+        } else {
+            meshed = weft::generateSecureMesh(imported);
+        }
         if (meshed && meshed.value && meshed.value->validation.complete()) {
             ++meshCertified;
             std::printf(
@@ -201,10 +211,10 @@ int main() {
     std::printf(
         "COVERAGE_TOTALS import_success=%zu import_refusal=%zu "
         "mesh_certified=%zu mesh_named_refusal=%zu mesh_inspectable_only=%zu "
-        "case_total=%zu fixture_extra=5\n",
+        "case_total=%zu fixture_extra=%zu\n",
         importSuccess, importRefusal, meshCertified, meshNamedRefusal,
-        meshInspectableOnly, caseCount);
-    CHECK(importRefusal + (importSuccess - 5) == caseCount);
+        meshInspectableOnly, caseCount, kFixtureExtra);
+    CHECK(importRefusal + (importSuccess - kFixtureExtra) == caseCount);
     CHECK(meshCertified + meshNamedRefusal + meshInspectableOnly ==
           importSuccess);
 

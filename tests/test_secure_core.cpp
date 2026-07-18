@@ -2,6 +2,7 @@
 #include "weft/io/system.hpp"
 #include "weft/model.hpp"
 #include "weft/secure_core.hpp"
+#include "weft/secure_meshing.hpp"
 #include "weft/secure_reconnaissance.hpp"
 
 #include "../core/src/secure_core_internal.hpp"
@@ -16,6 +17,7 @@
 #include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepTools.hxx>
+#include <Standard_Version.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <GC_MakeCircle.hxx>
@@ -799,9 +801,11 @@ void testMultipleFreeRootOccurrences() {
 
     STEPCAFControl_Writer writer;
     writer.SetNameMode(true);
+#if OCC_VERSION_HEX >= 0x070800
     const ShapeProcess::OperationsFlags noShapeProcessing;
     writer.SetShapeProcessFlags(noShapeProcessing);
     writer.ChangeWriter().SetShapeProcessFlags(noShapeProcessing);
+#endif
     const bool transferred = writer.Transfer(document, STEPControl_AsIs);
     CHECK(transferred);
     if (!transferred) return;
@@ -1174,17 +1178,39 @@ void testProductStepOrientationRepairWitness() {
         stepPath.string(), weft::RepairProfile::Conservative);
     CHECK(repaired.source != nullptr);
     CHECK(repaired.working != nullptr);
-    CHECK(!repaired.repair.sourceValid);
     CHECK(repaired.repair.workingValid);
     CHECK(repaired.repair.correspondenceComplete);
-    CHECK(!repaired.repair.identity);
     CHECK(repaired.repair.meshable);
+    // OCCT 7.6 STEP round-trips of this inverted-shell witness can normalize
+    // orientation before import, so the repair lane never sees a bad source.
+    // On 7.8+ the witness still requires face-adjacency orientation repair.
+#if OCC_VERSION_HEX >= 0x070800
+    CHECK(!repaired.repair.sourceValid);
+    CHECK(!repaired.repair.identity);
     CHECK(!repaired.repair.orientationChanges.empty());
     CHECK(std::any_of(
         repaired.repair.operations.begin(), repaired.repair.operations.end(),
         [](const weft::RepairOperation& operation) {
             return operation.code == "repair.orientation_face_adjacency";
         }));
+#else
+    if (repaired.repair.sourceValid && repaired.repair.identity) {
+        std::printf(
+            "WEFT_NOTE product STEP orientation witness normalized on OCCT "
+            "%s; repair assertions deferred to 7.8+\n",
+            OCC_VERSION_STRING);
+    } else {
+        CHECK(!repaired.repair.sourceValid);
+        CHECK(!repaired.repair.identity);
+        CHECK(!repaired.repair.orientationChanges.empty());
+        CHECK(std::any_of(
+            repaired.repair.operations.begin(),
+            repaired.repair.operations.end(),
+            [](const weft::RepairOperation& operation) {
+                return operation.code == "repair.orientation_face_adjacency";
+            }));
+    }
+#endif
     std::error_code ignored;
     std::filesystem::remove(stepPath, ignored);
 }
@@ -1679,6 +1705,171 @@ void testUnknownExactFamilyInjection() {
     CHECK(plane.familyCode == "plane");
     CHECK(plane.support ==
           weft::GeometrySupportState::SupportedAnalyticTemplate);
+
+    // Cone is a first-template analytic family after CONE-C; sphere/torus stay
+    // deferred residuals until their own packets.
+    const weft::ExactFamilyProbe cone =
+        weft::probeSurfaceFamily(static_cast<int>(GeomAbs_Cone));
+    CHECK(cone.familyCode == "cone");
+    CHECK(cone.support ==
+          weft::GeometrySupportState::SupportedAnalyticTemplate);
+    CHECK(cone.confidence == weft::RecognitionConfidence::ProvenAnalytic);
+    CHECK(cone.strategyOrReasonCode == "strategy.cone");
+
+    const weft::ExactFamilyProbe sphere =
+        weft::probeSurfaceFamily(static_cast<int>(GeomAbs_Sphere));
+    CHECK(sphere.familyCode == "sphere");
+    CHECK(sphere.support ==
+          weft::GeometrySupportState::DeferredResidualSurface);
+
+    const weft::ExactFamilyProbe torus =
+        weft::probeSurfaceFamily(static_cast<int>(GeomAbs_Torus));
+    CHECK(torus.familyCode == "torus");
+    CHECK(torus.support ==
+          weft::GeometrySupportState::DeferredResidualSurface);
+}
+
+void testConeReconnaissanceDeferred() {
+    const std::filesystem::path conePath =
+        weft::test::uniqueTempPath("weft_secure_core_cone", ".step");
+    weft::writeStep(weft::makeFixture("cone"), conePath.string());
+    const weft::ImportedModel cone = weft::importStepSecure(
+        conePath.string(), weft::RepairProfile::Conservative);
+    const weft::ReconnaissanceReport report = weft::reconnoitre(cone);
+    CHECK(report.complete);
+    CHECK(report.expectedSubjects == report.checkedSubjects);
+    CHECK(report.records.size() ==
+          static_cast<std::size_t>(cone.working->snapshot.model.faceCount() +
+                                   cone.working->snapshot.model.edgeCount()));
+    CHECK(cone.working->snapshot.model.faceCount() == 2);
+    CHECK(cone.working->snapshot.model.edgeCount() == 3);
+
+    std::set<weft::StableId> classifiedSubjects;
+    int planes = 0;
+    int cones = 0;
+    int circles = 0;
+    int lines = 0;
+    int deferredSurfaces = 0;
+    for (const weft::ExactGeometryClassification& record : report.records) {
+        CHECK(record.subjectId.valid());
+        CHECK(classifiedSubjects.insert(record.subjectId).second);
+        CHECK(record.sourceSubjects.size() == 1);
+        CHECK(!record.familyCode.empty());
+        CHECK(record.familyCode != "kernel_specific");
+        if (record.taxonomy == weft::GeometryTaxonomy::Curve) {
+            CHECK(record.familyCode == "line" ||
+                  record.familyCode == "circle");
+            if (record.familyCode == "circle") ++circles;
+            if (record.familyCode == "line") ++lines;
+            std::printf(
+                "WEFT_CONE_A curve family=%s support=%s reason=%s cond=",
+                record.familyCode.c_str(),
+                weft::geometrySupportStateName(record.support),
+                record.strategyOrReasonCode.c_str());
+            for (const std::string& code : record.conditionCodes) {
+                std::printf("%s,", code.c_str());
+            }
+            std::printf("\n");
+            const bool degenerate =
+                std::find(record.conditionCodes.begin(),
+                          record.conditionCodes.end(),
+                          "degenerate") != record.conditionCodes.end();
+            if (degenerate) {
+                CHECK(
+                    record.support ==
+                        weft::GeometrySupportState::SupportedAnalyticTemplate ||
+                    record.support ==
+                        weft::GeometrySupportState::InvalidImportedGeometry ||
+                    record.support ==
+                        weft::GeometrySupportState::DeferredResidualSurface);
+            } else {
+                CHECK(record.support ==
+                      weft::GeometrySupportState::SupportedAnalyticTemplate);
+            }
+            continue;
+        }
+        if (record.familyCode == "plane") {
+            ++planes;
+            CHECK(record.support ==
+                  weft::GeometrySupportState::SupportedAnalyticTemplate);
+            CHECK(record.strategyOrReasonCode == "strategy.surface.plane");
+        }
+        if (record.familyCode == "cone") {
+            ++cones;
+            CHECK(record.support ==
+                  weft::GeometrySupportState::SupportedAnalyticTemplate);
+            CHECK(record.strategyOrReasonCode == "strategy.surface.cone");
+            CHECK(record.confidence ==
+                  weft::RecognitionConfidence::ProvenAnalytic);
+            CHECK(record.trimDomain.has_value());
+            CHECK(*record.trimDomain ==
+                      weft::TrimDomainClass::TouchesOneSingularity ||
+                  *record.trimDomain ==
+                      weft::TrimDomainClass::FullPeriodicWithCapBoundaries ||
+                  *record.trimDomain ==
+                      weft::TrimDomainClass::PeriodicBandCrossingSeam);
+            CHECK(!record.parameterDomains.empty());
+            std::printf(
+                "WEFT_CONE_A face family=cone trim=%s domains=%zu "
+                "conditions=",
+                weft::trimDomainClassName(*record.trimDomain),
+                record.parameterDomains.size());
+            for (const std::string& code : record.conditionCodes) {
+                std::printf("%s,", code.c_str());
+            }
+            std::printf("\n");
+        }
+    }
+    CHECK(planes == 1);
+    CHECK(cones == 1);
+    CHECK(circles >= 1);
+    CHECK(lines >= 1);
+    CHECK(deferredSurfaces == 0);
+
+    // CONE-C: apex-cone fixture certifies end to end.
+    weft::SecureMeshingConfiguration settings;
+    settings.sampling.chordTolerance = 0.25;
+    settings.sampling.normalAngleToleranceRadians = 0.35;
+    settings.sampling.minimumClosedCurveSegments = 8;
+    settings.cylinderAxialIntervals = 1;
+    const weft::SecureMeshingResult meshed =
+        weft::generateSecureMesh(cone, settings);
+    CHECK(meshed);
+    CHECK(!meshed.failure);
+    CHECK(meshed.value && !meshed.value->certified.triangles.empty());
+    std::printf("WEFT_CONE_A mesh_ok tris=%zu verts=%zu\n",
+                meshed.value ? meshed.value->certified.triangles.size() : 0,
+                meshed.value ? meshed.value->certified.vertices.size() : 0);
+
+    // Sphere residual control: still deferred / named refusal.
+    const std::filesystem::path spherePath =
+        weft::test::uniqueTempPath("weft_secure_core_sphere", ".step");
+    weft::writeStep(weft::makeFixture("sphere"), spherePath.string());
+    const weft::ImportedModel sphere = weft::importStepSecure(
+        spherePath.string(), weft::RepairProfile::Conservative);
+    const weft::ReconnaissanceReport sphereReport = weft::reconnoitre(sphere);
+    CHECK(sphereReport.complete);
+    bool sawDeferredSphere = false;
+    for (const weft::ExactGeometryClassification& record :
+         sphereReport.records) {
+        if (record.taxonomy == weft::GeometryTaxonomy::Surface &&
+            record.familyCode == "sphere") {
+            CHECK(record.support ==
+                  weft::GeometrySupportState::DeferredResidualSurface);
+            sawDeferredSphere = true;
+        }
+    }
+    CHECK(sawDeferredSphere);
+    const weft::SecureMeshingResult sphereMesh =
+        weft::generateSecureMesh(sphere, settings);
+    CHECK(!sphereMesh);
+    CHECK(sphereMesh.failure);
+    std::printf("WEFT_CONE_A sphere_refusal=%s\n",
+                sphereMesh.failure ? sphereMesh.failure->code.c_str() : "-");
+
+    std::error_code ignored;
+    std::filesystem::remove(conePath, ignored);
+    std::filesystem::remove(spherePath, ignored);
 }
 
 void testOracleTrimTaxonomySlice() {
@@ -1999,6 +2190,7 @@ int main() {
         testRepeatedWireOccurrences();
         testTotalReconnaissance(path);
         testUnknownExactFamilyInjection();
+        testConeReconnaissanceDeferred();
         testOracleTrimTaxonomySlice();
         testProceduralTrimTaxonomyBattery();
         testCoplanarArtificialSplitRegionMerge();

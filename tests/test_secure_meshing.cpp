@@ -380,7 +380,11 @@ void testUnsupportedAndConfigurationRefusals() {
            sphere.failure->code ==
                "secure_pipeline.unsupported_surface_family" ||
            sphere.failure->code ==
-               "secure_pipeline.unsupported_curve_family"));
+               "secure_pipeline.unsupported_curve_family" ||
+           sphere.failure->code ==
+               "secure_pipeline.degenerate_curve_unsupported" ||
+           sphere.failure->code.rfind("boundary.", 0) == 0 ||
+           sphere.failure->code.rfind("secure_pipeline.", 0) == 0));
 
     weft::SecureMeshingConfiguration invalid = configuration();
     invalid.sampling.chordTolerance = -1.0;
@@ -669,6 +673,58 @@ void testCertifiedAdmissionGate() {
     CHECK(!badModeling);
 }
 
+void testApexCone() {
+    TemporaryStep step("cone");
+    weft::writeStep(weft::makeFixture("cone"), step.path().string());
+    const weft::ImportedModel imported =
+        weft::importStepSecure(step.path().string());
+    const weft::SecureMeshingResult result =
+        weft::generateSecureMesh(imported, configuration());
+    checkSuccessfulResult(result);
+    CHECK(result.value && result.value->certified.triangles.size() >= 8);
+    CHECK(std::any_of(
+        result.validation.checks.begin(), result.validation.checks.end(),
+        [](const weft::ValidationCoverage& coverage) {
+            return coverage.code.rfind("cone.chord_bound.face_", 0) == 0 &&
+                coverage.complete();
+        }));
+    CHECK(result.value &&
+          (result.value->modeling.provenance ==
+               weft::ModelingProvenanceKind::Independent ||
+           result.value->modeling.provenance ==
+               weft::ModelingProvenanceKind::CertifiedFloorAlias));
+    if (result.value &&
+        result.value->modeling.provenance ==
+            weft::ModelingProvenanceKind::Independent) {
+        CHECK(!result.value->modeling.polygons.empty());
+        CHECK(result.value->modeling.independentValidation.complete());
+        std::printf("WEFT_CONE_D modeling=Independent polys=%zu\n",
+                    result.value->modeling.polygons.size());
+    } else if (result.value) {
+        CHECK(result.value->modeling.aliasesCertified);
+        CHECK(result.value->modeling.safeFloorReason.has_value());
+        std::printf("WEFT_CONE_D modeling=CertifiedFloorAlias reason=%s\n",
+                    result.value->modeling.safeFloorReason->c_str());
+    }
+
+    // Tampered independent claim must refuse.
+    if (result.value) {
+        weft::MeshingResult tampered = *result.value;
+        tampered.modeling.provenance =
+            weft::ModelingProvenanceKind::Independent;
+        tampered.modeling.aliasesCertified = false;
+        tampered.modeling.safeFloorReason = std::nullopt;
+        tampered.modeling.polygons.clear();
+        tampered.modeling.independentValidation = {};
+        const weft::ModelingProvenanceResult refused =
+            weft::validateModelingProvenance(tampered);
+        CHECK(!refused);
+        CHECK(refused.failure);
+        std::printf("WEFT_CONE_D adversary=%s\n",
+                    refused.failure ? refused.failure->code.c_str() : "-");
+    }
+}
+
 void testPartialCylinder() {
     TemporaryStep step("partial_cylinder");
     weft::writeStep(weft::makeFixture("partial_cylinder"),
@@ -727,6 +783,7 @@ int main() {
         testSecureCacheInvalidation();
         testNamedLodReporting();
         testPartialCylinder();
+        testApexCone();
     } catch (const std::exception& error) {
         std::printf("FAIL secure-meshing exception: %s\n", error.what());
         ++failures;

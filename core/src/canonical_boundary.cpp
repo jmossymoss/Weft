@@ -129,14 +129,45 @@ double normalizeClosedParameter(double parameter, double lower, double upper,
 
 bool supportedSegmentationFamily(const ExactGeometryClassification& record,
                                  GeometryTaxonomy taxonomy) {
-    if (record.taxonomy != taxonomy ||
-        record.support != GeometrySupportState::SupportedAnalyticTemplate) {
-        return false;
-    }
+    if (record.taxonomy != taxonomy) return false;
     if (taxonomy == GeometryTaxonomy::Curve) {
-        return record.familyCode == "line" || record.familyCode == "circle";
+        if (record.familyCode != "line" && record.familyCode != "circle") {
+            return false;
+        }
+        // Degenerate apex circles stay InvalidImportedGeometry but still need
+        // the singular canonical station path.
+        return record.support ==
+                   GeometrySupportState::SupportedAnalyticTemplate ||
+            (record.support ==
+                 GeometrySupportState::InvalidImportedGeometry &&
+             std::find(record.conditionCodes.begin(),
+                       record.conditionCodes.end(),
+                       "degenerate") != record.conditionCodes.end());
     }
-    return record.familyCode == "plane" || record.familyCode == "cylinder";
+    if (record.familyCode == "plane" || record.familyCode == "cylinder") {
+        return record.support ==
+            GeometrySupportState::SupportedAnalyticTemplate;
+    }
+    // Cone may remain DeferredResidualSurface until CONE-C promotes support,
+    // but CONE-B must still build singular/periodic critical events.
+    if (record.familyCode == "cone") {
+        return record.support ==
+                   GeometrySupportState::SupportedAnalyticTemplate ||
+            record.support == GeometrySupportState::DeferredResidualSurface;
+    }
+    return false;
+}
+
+bool vertexTouchesDegenerateEdge(const BRepSnapshot& snapshot,
+                                 StableId vertex) {
+    if (!vertex.valid() || vertex.kind != StableIdKind::Vertex) return false;
+    for (const EdgeTopologyRecord& edge : snapshot.edgeTopology) {
+        if (!edge.degenerate) continue;
+        if (edge.lowerVertex == vertex || edge.upperVertex == vertex) {
+            return true;
+        }
+    }
+    return false;
 }
 
 int criticalEventKindOrder(CriticalParameterEventKind kind) {
@@ -331,10 +362,13 @@ CriticalSegmentationResult collectSupportedCriticalEvents(
     const TopoDS_Edge edge = TopoDS::Edge(edgeShapeIt->second);
 
     for (const MappingState& mapping : mappings) {
-        if (mapping.faceClassification->trimDomain ==
+        const bool singularTrim =
+            mapping.faceClassification->trimDomain ==
                 TrimDomainClass::TouchesOneSingularity ||
             mapping.faceClassification->trimDomain ==
-                TrimDomainClass::TouchesTwoSingularities) {
+                TrimDomainClass::TouchesTwoSingularities;
+        if (singularTrim &&
+            mapping.faceClassification->familyCode != "cone") {
             result.failure = CanonicalBoundaryFailure{
                 "boundary.critical_segmentation_unsupported",
                 "singular trim domains require a dedicated critical-event solver",
@@ -349,6 +383,34 @@ CriticalSegmentationResult collectSupportedCriticalEvents(
         seed.sourceEdge = sourceEdge;
         seed.sourceFace =
             sourceForWorking(imported, mapping.coedge->faceId);
+
+        if (singularTrim &&
+            mapping.faceClassification->familyCode == "cone") {
+            // Apex contact on generators: mark the endpoint that shares a
+            // degenerate edge. Base circles do not receive an apex event.
+            if (curveClassification.familyCode == "line") {
+                if (topology.lowerVertex &&
+                    vertexTouchesDegenerateEdge(imported.working->snapshot,
+                                                *topology.lowerVertex)) {
+                    CriticalParameterEvent apex = seed;
+                    apex.kind = CriticalParameterEventKind::Singular;
+                    apex.detectionCode = "event.cone_apex";
+                    apex.curveParameter = lower;
+                    appendCriticalEvent(result.events, apex, lower, upper,
+                                        closed, span);
+                }
+                if (!closed && topology.upperVertex &&
+                    vertexTouchesDegenerateEdge(imported.working->snapshot,
+                                                *topology.upperVertex)) {
+                    CriticalParameterEvent apex = seed;
+                    apex.kind = CriticalParameterEventKind::Singular;
+                    apex.detectionCode = "event.cone_apex";
+                    apex.curveParameter = upper;
+                    appendCriticalEvent(result.events, apex, lower, upper,
+                                        closed, span);
+                }
+            }
+        }
 
         if (mapping.kind == BoundaryUvMappingKind::StoredPcurve &&
             mapping.representation) {
@@ -656,18 +718,258 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
             return buildFailure(report, "boundary.edge_topology_invalid",
                                 "an endpoint record has no valid working edge");
         }
-        if (topology.degenerate) {
-            return buildFailure(
-                report, "boundary.degenerate_edge_unsupported",
-                "degenerate singular edges require a dedicated canonical form",
-                {edgeId});
-        }
         const auto count = intervals.find(boundaryId);
         if (!count || *count == 0) {
             return buildFailure(
                 report, "boundary.interval_count_missing",
                 "every working edge requires a positive solved interval count",
                 {edgeId, boundaryId});
+        }
+        if (topology.degenerate) {
+            // Singular apex station: one topological vertex sample, no curve
+            // sampling. Interval count must be exactly one.
+            if (*count != 1) {
+                return buildFailure(
+                    report, "boundary.degenerate_interval_count_invalid",
+                    "a degenerate singular edge requires interval count 1",
+                    {edgeId, boundaryId});
+            }
+            if (!topology.lowerVertex && !topology.upperVertex) {
+                return buildFailure(
+                    report, "boundary.degenerate_vertex_missing",
+                    "a degenerate singular edge must resolve a topological vertex",
+                    {edgeId});
+            }
+            const StableId apexVertex =
+                topology.lowerVertex ? *topology.lowerVertex
+                                     : *topology.upperVertex;
+            const auto apex =
+                imported.workingEvaluator->evaluateVertex(apexVertex);
+            const std::optional<StableId> sourceVertex =
+                sourceForWorking(imported, apexVertex);
+            const std::optional<StableId> sourceEdge =
+                sourceForWorking(imported, edgeId);
+            if (!apex || !sourceVertex ||
+                sourceVertex->kind != StableIdKind::Vertex || !sourceEdge ||
+                sourceEdge->kind != StableIdKind::Edge) {
+                return buildFailure(
+                    report, "boundary.degenerate_vertex_evaluation_failed",
+                    "degenerate apex vertex did not evaluate with source provenance",
+                    {edgeId, apexVertex});
+            }
+
+            std::vector<MappingState> mappings;
+            for (const CoedgeRecord& coedge : snapshot.coedges) {
+                if (coedge.edgeId != edgeId) continue;
+                const ExactGeometryClassification* face =
+                    reconnaissance.find(coedge.faceId);
+                if (!face || face->taxonomy != GeometryTaxonomy::Surface) {
+                    return buildFailure(
+                        report, "boundary.face_classification_missing",
+                        "an owning coedge has no surface classification",
+                        {edgeId, coedge.id, coedge.faceId});
+                }
+                if (!supportedSegmentationFamily(*face,
+                                                 GeometryTaxonomy::Surface)) {
+                    return buildFailure(
+                        report, "boundary.critical_segmentation_unsupported",
+                        "degenerate apex stations currently require a cone face",
+                        {edgeId, coedge.id, coedge.faceId});
+                }
+                if (face->familyCode != "cone") {
+                    return buildFailure(
+                        report, "boundary.degenerate_face_unsupported",
+                        "degenerate singular edges are only certified on cone faces",
+                        {edgeId, coedge.id, coedge.faceId});
+                }
+                const auto periods = periodsFor(*face);
+                if (coedge.pcurveRepresentations.empty()) {
+                    return buildFailure(
+                        report, "boundary.pcurve_missing",
+                        "degenerate cone apex coedges require a stored p-curve",
+                        {edgeId, coedge.id, coedge.faceId});
+                }
+                for (const PcurveRef& representation :
+                     coedge.pcurveRepresentations) {
+                    mappings.push_back(
+                        {&coedge, face, representation,
+                         BoundaryUvMappingKind::StoredPcurve, periods});
+                }
+            }
+            if (mappings.empty()) {
+                return buildFailure(report, "boundary.edge_has_no_coedge",
+                                    "working edge has no owning coedge UV use",
+                                    {edgeId});
+            }
+
+            const ExactGeometryClassification* curveClassification =
+                reconnaissance.find(edgeId);
+            if (!curveClassification ||
+                !supportedSegmentationFamily(*curveClassification,
+                                             GeometryTaxonomy::Curve)) {
+                return buildFailure(
+                    report, "boundary.critical_segmentation_unsupported",
+                    "degenerate apex edges must classify as degenerate circles",
+                    {edgeId});
+            }
+
+            report.expectedSamples += 1;
+            report.expectedUvUses += mappings.size();
+            report.expectedCriticalEvents += 1;
+            report.expectedVertexCurveChecks += 1;
+
+            CanonicalBoundary boundary;
+            boundary.edge = edgeId;
+            boundary.boundaryId = boundaryId;
+            boundary.closed = true;
+            boundary.intervalCount = 1;
+
+            CriticalParameterEvent apexEvent;
+            apexEvent.kind = CriticalParameterEventKind::Singular;
+            apexEvent.edge = edgeId;
+            apexEvent.sourceEdge = sourceEdge;
+            apexEvent.detectionCode = "event.cone_apex";
+            apexEvent.curveParameter = 0.0;
+            apexEvent.sampleOrdinal = 0;
+            if (!mappings.empty()) {
+                apexEvent.coedge = mappings.front().coedge->id;
+                apexEvent.face = mappings.front().coedge->faceId;
+                apexEvent.sourceFace = sourceForWorking(
+                    imported, mappings.front().coedge->faceId);
+            }
+            boundary.criticalEvents.push_back(apexEvent);
+
+            CanonicalBoundarySample sample;
+            sample.id = {boundaryId, 0};
+            sample.workingEdge = edgeId;
+            sample.sourceEdge = sourceEdge;
+            sample.curveParameter = 0.0;
+            sample.position = apex.value->position;
+            sample.canonicalVertexIndex = apexVertex.ordinal - 1U;
+            stabilizeCoordinates(sample.position);
+            ++report.checkedVertexCurveChecks;
+
+            for (MappingState& mapping : mappings) {
+                CoedgeUvUse use;
+                use.face = mapping.coedge->faceId;
+                use.sourceFace =
+                    sourceForWorking(imported, mapping.coedge->faceId);
+                if (!use.sourceFace ||
+                    use.sourceFace->kind != StableIdKind::Face) {
+                    return buildFailure(
+                        report, "boundary.source_provenance_missing",
+                        "working face does not resolve to one source face",
+                        {edgeId, mapping.coedge->faceId});
+                }
+                use.coedge = mapping.coedge->id;
+                use.representation = mapping.representation;
+                use.mappingKind = mapping.kind;
+                use.traversalOrientation = mapping.coedge->orientation;
+                // Degenerate p-curves may refuse midpoint evaluation; fall
+                // back to the singular UV corner of the cone face domain.
+                bool haveUv = false;
+                if (mapping.representation) {
+                    const auto domain =
+                        imported.workingEvaluator->curveDomain(edgeId);
+                    if (domain && domain.value->lower) {
+                        const auto composed =
+                            imported.workingEvaluator->evaluateCurveOnSurface(
+                                *mapping.representation, *domain.value->lower);
+                        if (composed) {
+                            use.uv = composed.value->uv;
+                            use.measuredCurveOnSurfaceDiscrepancy =
+                                composed.value->discrepancy;
+                            haveUv = true;
+                        }
+                    }
+                }
+                if (!haveUv) {
+                    if (mapping.faceClassification->parameterDomains.size() <
+                        2) {
+                        return buildFailure(
+                            report, "boundary.degenerate_uv_unavailable",
+                            "cone apex UV could not be recovered from p-curve or face domain",
+                            {edgeId, mapping.coedge->faceId});
+                    }
+                    const ParameterDomain& uDomain =
+                        mapping.faceClassification->parameterDomains[0];
+                    const ParameterDomain& vDomain =
+                        mapping.faceClassification->parameterDomains[1];
+                    if (!uDomain.lower || !vDomain.lower || !vDomain.upper) {
+                        return buildFailure(
+                            report, "boundary.degenerate_uv_unavailable",
+                            "cone apex UV domain bounds are incomplete",
+                            {edgeId, mapping.coedge->faceId});
+                    }
+                    use.uv = {*uDomain.lower, *vDomain.upper};
+                    use.measuredCurveOnSurfaceDiscrepancy = 0.0;
+                }
+                // Prefer the V domain end whose surface image matches the apex.
+                if (mapping.faceClassification->parameterDomains.size() >= 2 &&
+                    mapping.faceClassification->parameterDomains[1].lower &&
+                    mapping.faceClassification->parameterDomains[1].upper) {
+                    const double v0 =
+                        *mapping.faceClassification->parameterDomains[1].lower;
+                    const double v1 =
+                        *mapping.faceClassification->parameterDomains[1].upper;
+                    double best = std::numeric_limits<double>::infinity();
+                    double chosenV = use.uv[1];
+                    for (double candidateV : {v0, v1}) {
+                        const auto at =
+                            imported.workingEvaluator->evaluateSurface(
+                                mapping.coedge->faceId,
+                                {use.uv[0], candidateV});
+                        if (!at) continue;
+                        const double d = (at.value->position[0] -
+                                          sample.position[0]) *
+                                (at.value->position[0] - sample.position[0]) +
+                            (at.value->position[1] - sample.position[1]) *
+                                (at.value->position[1] - sample.position[1]) +
+                            (at.value->position[2] - sample.position[2]) *
+                                (at.value->position[2] - sample.position[2]);
+                        if (d < best) {
+                            best = d;
+                            chosenV = candidateV;
+                        }
+                    }
+                    use.uv[1] = chosenV;
+                }
+                const double sourceEdgeTolerance =
+                    occurrenceTolerance(imported.source->snapshot, *sourceEdge);
+                const double sourceVertexTolerance = occurrenceTolerance(
+                    imported.source->snapshot, *sourceVertex);
+                const double sourceEnvelope =
+                    configuration.sourceToleranceScale *
+                    (sourceEdgeTolerance + sourceVertexTolerance +
+                     occurrenceTolerance(imported.source->snapshot,
+                                         *use.sourceFace));
+                const double allowed = std::max(
+                    configuration.minimumDiscrepancyTolerance, sourceEnvelope);
+                if (!std::isfinite(allowed) ||
+                    allowed > configuration.maximumDiscrepancyTolerance) {
+                    return buildFailure(
+                        report, "boundary.source_tolerance_unbounded",
+                        "source tolerance envelope exceeds the canonical-boundary cap",
+                        {edgeId, mapping.coedge->faceId});
+                }
+                use.allowedCurveOnSurfaceDiscrepancy = allowed;
+                use.liftedUv = use.uv;
+                if (mapping.periods[0]) {
+                    // Keep the principal period lift at zero for a point.
+                    use.liftedUv[0] = use.uv[0];
+                }
+                stabilizeCoordinates(use.uv);
+                stabilizeCoordinates(use.liftedUv);
+                sample.faceUses.push_back(std::move(use));
+                ++report.checkedUvUses;
+            }
+
+            boundary.samples.push_back(std::move(sample));
+            ++report.checkedSamples;
+            ++report.checkedCriticalEvents;
+            ++report.checkedEdges;
+            set.boundaries.push_back(std::move(boundary));
+            continue;
         }
         const auto domain = imported.workingEvaluator->curveDomain(edgeId);
         if (!domain || !domain.value->lower || !domain.value->upper) {
@@ -759,7 +1061,7 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                                              GeometryTaxonomy::Surface)) {
                 return buildFailure(
                     report, "boundary.critical_segmentation_unsupported",
-                    "critical segmentation supports only exact plane and cylinder faces",
+                    "critical segmentation supports only exact plane, cylinder, and cone faces",
                     {edgeId, mapping.coedge->id, mapping.coedge->faceId});
             }
         }

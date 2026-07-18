@@ -40,11 +40,13 @@ weft::IntervalSolution intervalsFor(const weft::ImportedModel& imported,
     const std::size_t count = imported.working->snapshot.edgeTopology.size();
     for (std::size_t index = 0; index < count; ++index) {
         if (omitLast && index + 1 == count) break;
-        const weft::StableId edge =
-            imported.working->snapshot.edgeTopology[index].id;
+        const weft::EdgeTopologyRecord& topology =
+            imported.working->snapshot.edgeTopology[index];
+        const weft::StableId edge = topology.id;
+        const std::uint32_t demand = topology.degenerate ? 1U : 4U;
         problem.variables.push_back(
-            {{weft::StableIdKind::Boundary, edge.ordinal}, 4.0, 1, false,
-             std::nullopt});
+            {{weft::StableIdKind::Boundary, edge.ordinal},
+             static_cast<double>(demand), demand, false, std::nullopt});
     }
     const weft::IntervalSolveResult solved = weft::solveIntervals(problem);
     CHECK(solved);
@@ -524,6 +526,83 @@ void testUnsupportedCriticalSegmentation(
               "boundary.critical_segmentation_unsupported");
 }
 
+void testConeSingularBoundaries(const std::filesystem::path& path) {
+    weft::writeStep(weft::makeFixture("cone"), path.string());
+    const weft::ImportedModel imported = weft::importStepSecure(path.string());
+    const weft::ReconnaissanceReport reconnaissance =
+        weft::reconnoitre(imported);
+    const weft::IntervalSolution intervals = intervalsFor(imported);
+    const weft::CanonicalBoundaryBuildResult built =
+        weft::buildCanonicalBoundaries(imported, reconnaissance, intervals);
+    CHECK(built);
+    if (!built) {
+        if (built.failure) {
+            std::printf("cone canonical failure: %s: %s\n",
+                        built.failure->code.c_str(),
+                        built.failure->message.c_str());
+        }
+        return;
+    }
+    CHECK(built.value->validation.complete());
+    CHECK(built.value->boundaries.size() ==
+          imported.working->snapshot.edgeTopology.size());
+
+    bool sawApexStation = false;
+    bool sawGeneratorApexEvent = false;
+    for (const weft::EdgeTopologyRecord& topology :
+         imported.working->snapshot.edgeTopology) {
+        const weft::CanonicalBoundary* boundary =
+            built.value->find(topology.id);
+        CHECK(boundary != nullptr);
+        if (!boundary) continue;
+        if (topology.degenerate) {
+            CHECK(boundary->intervalCount == 1);
+            CHECK(boundary->samples.size() == 1);
+            CHECK(!boundary->criticalEvents.empty());
+            CHECK(boundary->criticalEvents.front().kind ==
+                  weft::CriticalParameterEventKind::Singular);
+            CHECK(boundary->criticalEvents.front().detectionCode ==
+                  "event.cone_apex");
+            sawApexStation = true;
+            std::printf(
+                "WEFT_CONE_B degenerate_apex samples=1 uv_uses=%zu\n",
+                boundary->samples.front().faceUses.size());
+        }
+        for (const weft::CriticalParameterEvent& event :
+             boundary->criticalEvents) {
+            if (event.detectionCode == "event.cone_apex" &&
+                event.kind == weft::CriticalParameterEventKind::Singular &&
+                !topology.degenerate) {
+                sawGeneratorApexEvent = true;
+            }
+        }
+    }
+    CHECK(sawApexStation);
+    CHECK(sawGeneratorApexEvent);
+
+    // Adversary: demand more than one interval on the degenerate apex.
+    weft::IntervalSolution bad = intervals;
+    for (weft::SolvedInterval& solved : bad.counts) {
+        for (const weft::EdgeTopologyRecord& topology :
+             imported.working->snapshot.edgeTopology) {
+            if (!topology.degenerate) continue;
+            const weft::StableId boundaryId{weft::StableIdKind::Boundary,
+                                            topology.id.ordinal};
+            if (solved.boundaryId == boundaryId) {
+                solved.count = 4;
+            }
+        }
+    }
+    const weft::CanonicalBoundaryBuildResult refused =
+        weft::buildCanonicalBoundaries(imported, reconnaissance, bad);
+    CHECK(!refused);
+    CHECK(refused.failure &&
+          refused.failure->code ==
+              "boundary.degenerate_interval_count_invalid");
+    std::printf("WEFT_CONE_B adversary=%s\n",
+                refused.failure ? refused.failure->code.c_str() : "-");
+}
+
 }  // namespace
 
 int main() {
@@ -538,6 +617,8 @@ int main() {
             "weft_canonical_boundary_cylinder_determinism", ".step");
     const std::filesystem::path spherePath = weft::test::uniqueTempPath(
         "weft_canonical_boundary_sphere", ".step");
+    const std::filesystem::path conePath = weft::test::uniqueTempPath(
+        "weft_canonical_boundary_cone", ".step");
     try {
         verifyCanonicalModel("box", boxPath, true, false);
         verifyCanonicalModel("cylinder", cylinderPath, true, true);
@@ -546,6 +627,7 @@ int main() {
         testPeriodicUvClosureAdversaries();
         testCylinderPeriodicClosureDeterminism(cylinderDeterminismPath);
         testUnsupportedCriticalSegmentation(spherePath);
+        testConeSingularBoundaries(conePath);
     } catch (const std::exception& error) {
         std::printf("FAIL canonical-boundary exception: %s\n", error.what());
         ++failures;
@@ -556,6 +638,7 @@ int main() {
     std::filesystem::remove(partialArcPath, ignored);
     std::filesystem::remove(cylinderDeterminismPath, ignored);
     std::filesystem::remove(spherePath, ignored);
+    std::filesystem::remove(conePath, ignored);
 
     if (failures == 0) {
         std::printf("canonical boundary checks passed\n");

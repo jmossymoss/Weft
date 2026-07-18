@@ -102,6 +102,21 @@ prove completed work; they are not plans or handoff diaries.
   built-in fixture classification into certified / named-refusal /
   inspectable-only terminals with reconciled totals on Linux
   strict/static-analysis lanes.
+- `m8-cone-a-reconnaissance-2026-07-18.md` - cone fixture exact classification,
+  deferred residual support, and named pre-template mesh refusal on Linux
+  strict/static-analysis lanes.
+- `m8-cone-b-boundaries-2026-07-18.md` - cone singular apex stations, critical
+  segmentation on `touches_one_singularity`, and named degenerate-count
+  adversaries on Linux strict/static-analysis lanes.
+- `m8-cone-c-certified-floor-2026-07-18.md` - apex-cone wall template, secure
+  pipeline routing, and CLI OBJ export on Linux strict/static-analysis lanes.
+- `m8-cone-d-modelling-2026-07-18.md` - independent modelling polygons and
+  tampered-provenance refusal for apex-cone results on Linux
+  strict/static-analysis lanes.
+- `m8-cone-e-product-2026-07-18.md` - CLI OBJ and app screenshot admission for
+  cone with sphere refusal regression on Linux.
+- `m8-cone-f-proof-2026-07-18.md` - apex-cone density sweep, corpus impact,
+  Linux fingerprint golden, and family-complete proof; M8 remains in progress.
 - `m6-secure-orchestration-2026-07-17.md` - atomic plane/cylinder/through-hole secure pipeline and combined certificate evidence.
 - `m7-secure-cli-routing-2026-07-17.md` - lossless certified export adapter, secure CLI routing, report coverage, and named workflow refusals.
 - `m7-secure-app-live-link-2026-07-17.md` - secure app preview/export/hot-reload routing, visual proof, and deterministic atomic Blender link.
