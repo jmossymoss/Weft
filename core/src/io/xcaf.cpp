@@ -614,17 +614,20 @@ ImportedModel cafToImportedModel(const TopoDS_Shape& oneShape,
                                  const Handle(TDocStd_Document)& doc,
                                  SourceMetadata metadata,
                                  RepairProfile profile) {
+    weft::secure_detail::importProgress("caf.begin");
     XCaf xc(doc);
     ImportMeta captured;
     captureMeta(xc, xc.topLevelFreeShapes(), captured);
     captured.lengthUnitMm = readLengthUnit(doc);
     metadata.lengthUnitMm = captured.lengthUnitMm;
+    weft::secure_detail::importProgress("caf.meta_captured");
 
     // Build source evidence directly from the processing-disabled transfer.
     // An empty history deliberately means every source entity is an identity.
     Handle(BRepTools_History) sourceHistory = new BRepTools_History();
     Model source = weft::indexShape(oneShape);
     applyCapturedMeta(source, oneShape, captured, *sourceHistory);
+    weft::secure_detail::importProgress("source_indexed");
 
     TopoDS_Shape workingShape;
     Handle(BRepTools_History) workingHistory;
@@ -635,6 +638,7 @@ ImportedModel cafToImportedModel(const TopoDS_Shape& oneShape,
     std::vector<OrientationChange> orientationChanges;
     std::vector<ToleranceChange> toleranceChanges;
     std::vector<ImportDiagnostic> namedRefusals;
+    weft::secure_detail::importProgress("working_derivation.begin");
     if (profile == RepairProfile::Conservative) {
         secure_detail::ConservativeWorkingDerivation derivation =
             secure_detail::deriveConservativeWorking(source);
@@ -659,16 +663,20 @@ ImportedModel cafToImportedModel(const TopoDS_Shape& oneShape,
         remapAssemblyExactUses(workingMeta, exactShapeDerivation);
     }
 
+    weft::secure_detail::importProgress("working_derivation.done");
     Model working = weft::indexShape(workingShape);
     applyCapturedMeta(working, oneShape, std::move(workingMeta),
                       *workingHistory);
-    return secure_detail::buildImportedModel(
+    weft::secure_detail::importProgress("working_indexed");
+    ImportedModel imported = secure_detail::buildImportedModel(
         std::move(source), std::move(working), std::move(metadata), profile,
         workingHistory, exactShapeDerivation, std::move(operations),
         std::move(parameterizationFlagChanges),
         std::move(orientationChanges),
         std::move(toleranceChanges),
         std::move(namedRefusals));
+    weft::secure_detail::importProgress("build_imported_model.done");
+    return imported;
 }
 
 }  // namespace weft::io

@@ -1134,6 +1134,13 @@ int cmdInventory(const std::vector<std::string>& args) {
     const auto t0 = std::chrono::steady_clock::now();
     std::fprintf(stderr, "WEFT_PROGRESS inventory.import.begin\n");
     std::fflush(stderr);
+    // Force fine-grained import sub-stage progress for large-model diagnosis
+    // even if the caller did not set WEFT_IMPORT_PROGRESS.
+#ifdef _WIN32
+    _putenv_s("WEFT_IMPORT_PROGRESS", "1");
+#else
+    setenv("WEFT_IMPORT_PROGRESS", "1", 1);
+#endif
     const weft::ImportedModel imported =
         weft::importStepSecure(input, repairProfile);
     const auto t1 = std::chrono::steady_clock::now();

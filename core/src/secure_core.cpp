@@ -31,7 +31,10 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -1204,6 +1207,25 @@ const char* repairProfileName(RepairProfile profile) noexcept {
     return "conservative";
 }
 
+namespace secure_detail {
+
+void importProgress(const char* stage) {
+    static const bool enabled = [] {
+        const char* value = std::getenv("WEFT_IMPORT_PROGRESS");
+        return value != nullptr && value[0] != '\0' && value[0] != '0';
+    }();
+    if (!enabled || stage == nullptr) return;
+    static const auto start = std::chrono::steady_clock::now();
+    const auto now = std::chrono::steady_clock::now();
+    const long long ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(now - start)
+            .count();
+    std::fprintf(stderr, "WEFT_PROGRESS import.%s ms=%lld\n", stage, ms);
+    std::fflush(stderr);
+}
+
+}  // namespace secure_detail
+
 bool ImportDiagnostics::hasErrors() const noexcept {
     return std::any_of(events.begin(), events.end(), [](const ImportDiagnostic& event) {
         return event.severity == DiagnosticSeverity::Error ||
@@ -1252,18 +1274,23 @@ ImportedModel buildImportedModel(
     std::vector<ToleranceChange> certifiedToleranceChanges,
     std::vector<ImportDiagnostic> namedRefusals) {
     ImportedModel imported;
+    importProgress("build.shape_validity.begin");
     const bool sourceValid = shapeIsValid(sourceModel.shape);
     const bool workingValid = shapeIsValid(workingModel.shape);
     const std::string sourceShapeDigest = exactShapeDigest(sourceModel.shape);
     const std::string workingShapeDigest = exactShapeDigest(workingModel.shape);
+    importProgress("build.correspondence.begin");
     imported.correspondence =
         buildCorrespondence(sourceModel, workingModel, history,
                             exactShapeDerivation,
                             !sourceShapeDigest.empty() &&
                                 sourceShapeDigest == workingShapeDigest);
+    importProgress("build.correspondence.done");
 
     BRepSnapshot sourceSnapshot = buildSnapshot(std::move(sourceModel));
+    importProgress("build.source_snapshot.done");
     BRepSnapshot workingSnapshot = buildSnapshot(std::move(workingModel));
+    importProgress("build.working_snapshot.done");
     const TopologyAccountValidation sourceTopologyValidation =
         validateTopologyAccount(sourceSnapshot.topology);
     const TopologyAccountValidation workingTopologyValidation =
@@ -1272,6 +1299,7 @@ ImportedModel buildImportedModel(
         validateMeshingCompatibilityView(sourceSnapshot);
     const TopologyAccountValidation workingMeshingViewValidation =
         validateMeshingCompatibilityView(workingSnapshot);
+    importProgress("build.topology_validation.done");
     buildTopologyCorrespondence(
         imported.correspondence, sourceSnapshot.topology,
         workingSnapshot.topology, history, exactShapeDerivation,
@@ -1279,12 +1307,14 @@ ImportedModel buildImportedModel(
             sourceShapeDigest == workingShapeDigest,
         sourceTopologyValidation.complete(),
         workingTopologyValidation.complete());
+    importProgress("build.topology_correspondence.done");
     imported.sourceEvaluator =
         std::make_shared<OcctGeometryEvaluator>(
             evaluatorSnapshot(sourceSnapshot));
     imported.workingEvaluator =
         std::make_shared<OcctGeometryEvaluator>(
             evaluatorSnapshot(workingSnapshot));
+    importProgress("build.evaluators.done");
 
     auto source = std::make_shared<SourceBRep>();
     source->metadata = std::move(metadata);

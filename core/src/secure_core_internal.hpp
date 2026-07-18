@@ -93,6 +93,11 @@ TopologyAccount buildTopologyAccount(const Model& model);
 SourceMetadata readSourceMetadata(const std::string& path,
                                   std::string_view sourceBytes);
 
+// Env-gated (WEFT_IMPORT_PROGRESS=1) stderr stage timing for large-model
+// import diagnostics. Prints "WEFT_PROGRESS import.<stage> ms=<since first
+// call>" line-buffered. No-op when the variable is unset.
+void importProgress(const char* stage);
+
 ImportedModel buildImportedModel(
     Model source, Model working, SourceMetadata metadata,
     RepairProfile profile, const Handle(BRepTools_History)& history,
