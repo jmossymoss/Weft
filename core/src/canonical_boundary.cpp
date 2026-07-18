@@ -901,10 +901,58 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                             "cone apex UV domain bounds are incomplete",
                             {edgeId, mapping.coedge->faceId});
                     }
-                    // Apex of BRepPrimAPI_MakeCone lies at the upper V bound.
                     use.uv = {*uDomain.lower, *vDomain.upper};
                     use.measuredCurveOnSurfaceDiscrepancy = 0.0;
                 }
+                // Prefer the V domain end whose surface image matches the apex.
+                if (mapping.faceClassification->parameterDomains.size() >= 2 &&
+                    mapping.faceClassification->parameterDomains[1].lower &&
+                    mapping.faceClassification->parameterDomains[1].upper) {
+                    const double v0 =
+                        *mapping.faceClassification->parameterDomains[1].lower;
+                    const double v1 =
+                        *mapping.faceClassification->parameterDomains[1].upper;
+                    double best = std::numeric_limits<double>::infinity();
+                    double chosenV = use.uv[1];
+                    for (double candidateV : {v0, v1}) {
+                        const auto at =
+                            imported.workingEvaluator->evaluateSurface(
+                                mapping.coedge->faceId,
+                                {use.uv[0], candidateV});
+                        if (!at) continue;
+                        const double d = (at.value->position[0] -
+                                          sample.position[0]) *
+                                (at.value->position[0] - sample.position[0]) +
+                            (at.value->position[1] - sample.position[1]) *
+                                (at.value->position[1] - sample.position[1]) +
+                            (at.value->position[2] - sample.position[2]) *
+                                (at.value->position[2] - sample.position[2]);
+                        if (d < best) {
+                            best = d;
+                            chosenV = candidateV;
+                        }
+                    }
+                    use.uv[1] = chosenV;
+                }
+                const double sourceEdgeTolerance =
+                    occurrenceTolerance(imported.source->snapshot, *sourceEdge);
+                const double sourceVertexTolerance = occurrenceTolerance(
+                    imported.source->snapshot, *sourceVertex);
+                const double sourceEnvelope =
+                    configuration.sourceToleranceScale *
+                    (sourceEdgeTolerance + sourceVertexTolerance +
+                     occurrenceTolerance(imported.source->snapshot,
+                                         *use.sourceFace));
+                const double allowed = std::max(
+                    configuration.minimumDiscrepancyTolerance, sourceEnvelope);
+                if (!std::isfinite(allowed) ||
+                    allowed > configuration.maximumDiscrepancyTolerance) {
+                    return buildFailure(
+                        report, "boundary.source_tolerance_unbounded",
+                        "source tolerance envelope exceeds the canonical-boundary cap",
+                        {edgeId, mapping.coedge->faceId});
+                }
+                use.allowedCurveOnSurfaceDiscrepancy = allowed;
                 use.liftedUv = use.uv;
                 if (mapping.periods[0]) {
                     // Keep the principal period lift at zero for a point.

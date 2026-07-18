@@ -576,7 +576,7 @@ only with indexed evidence.
 
 ### WP-072 — CONE-C certified floor
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-071
 - Goal: boundary-exact cone tessellation with chord/normal bounds, provenance,

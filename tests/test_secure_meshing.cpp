@@ -673,6 +673,23 @@ void testCertifiedAdmissionGate() {
     CHECK(!badModeling);
 }
 
+void testApexCone() {
+    TemporaryStep step("cone");
+    weft::writeStep(weft::makeFixture("cone"), step.path().string());
+    const weft::ImportedModel imported =
+        weft::importStepSecure(step.path().string());
+    const weft::SecureMeshingResult result =
+        weft::generateSecureMesh(imported, configuration());
+    checkSuccessfulResult(result);
+    CHECK(result.value && result.value->certified.triangles.size() >= 8);
+    CHECK(std::any_of(
+        result.validation.checks.begin(), result.validation.checks.end(),
+        [](const weft::ValidationCoverage& coverage) {
+            return coverage.code.rfind("cone.chord_bound.face_", 0) == 0 &&
+                coverage.complete();
+        }));
+}
+
 void testPartialCylinder() {
     TemporaryStep step("partial_cylinder");
     weft::writeStep(weft::makeFixture("partial_cylinder"),
@@ -731,6 +748,7 @@ int main() {
         testSecureCacheInvalidation();
         testNamedLodReporting();
         testPartialCylinder();
+        testApexCone();
     } catch (const std::exception& error) {
         std::printf("FAIL secure-meshing exception: %s\n", error.what());
         ++failures;

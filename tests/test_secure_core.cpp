@@ -1706,14 +1706,15 @@ void testUnknownExactFamilyInjection() {
     CHECK(plane.support ==
           weft::GeometrySupportState::SupportedAnalyticTemplate);
 
-    // M8 analytic residuals: classified, not yet first-template supported.
+    // Cone is a first-template analytic family after CONE-C; sphere/torus stay
+    // deferred residuals until their own packets.
     const weft::ExactFamilyProbe cone =
         weft::probeSurfaceFamily(static_cast<int>(GeomAbs_Cone));
     CHECK(cone.familyCode == "cone");
     CHECK(cone.support ==
-          weft::GeometrySupportState::DeferredResidualSurface);
+          weft::GeometrySupportState::SupportedAnalyticTemplate);
     CHECK(cone.confidence == weft::RecognitionConfidence::ProvenAnalytic);
-    CHECK(cone.strategyOrReasonCode == "reason.deferred_residual_surface");
+    CHECK(cone.strategyOrReasonCode == "strategy.cone");
 
     const weft::ExactFamilyProbe sphere =
         weft::probeSurfaceFamily(static_cast<int>(GeomAbs_Sphere));
@@ -1795,11 +1796,9 @@ void testConeReconnaissanceDeferred() {
         }
         if (record.familyCode == "cone") {
             ++cones;
-            ++deferredSurfaces;
             CHECK(record.support ==
-                  weft::GeometrySupportState::DeferredResidualSurface);
-            CHECK(record.strategyOrReasonCode ==
-                  "reason.deferred_residual_surface");
+                  weft::GeometrySupportState::SupportedAnalyticTemplate);
+            CHECK(record.strategyOrReasonCode == "strategy.surface.cone");
             CHECK(record.confidence ==
                   weft::RecognitionConfidence::ProvenAnalytic);
             CHECK(record.trimDomain.has_value());
@@ -1825,10 +1824,9 @@ void testConeReconnaissanceDeferred() {
     CHECK(cones == 1);
     CHECK(circles >= 1);
     CHECK(lines >= 1);
-    CHECK(deferredSurfaces == 1);
-    CHECK(report.unsupportedSubjects >= 1);
+    CHECK(deferredSurfaces == 0);
 
-    // Meshing must remain deferred until CONE-C; refusal is named.
+    // CONE-C: apex-cone fixture certifies end to end.
     weft::SecureMeshingConfiguration settings;
     settings.sampling.chordTolerance = 0.25;
     settings.sampling.normalAngleToleranceRadians = 0.35;
@@ -1836,17 +1834,12 @@ void testConeReconnaissanceDeferred() {
     settings.cylinderAxialIntervals = 1;
     const weft::SecureMeshingResult meshed =
         weft::generateSecureMesh(cone, settings);
-    CHECK(!meshed);
-    CHECK(meshed.failure);
-    // Apex-cone solids may refuse at circle-domain, surface-family, or
-    // boundary stages before a template exists; all must be stable names.
-    CHECK(meshed.failure->code == "secure_pipeline.unsupported_surface_family" ||
-          meshed.failure->code == "secure_pipeline.unsupported_curve_family" ||
-          meshed.failure->code == "secure_pipeline.circle_domain_invalid" ||
-          meshed.failure->code.rfind("boundary.", 0) == 0 ||
-          meshed.failure->code.rfind("secure_pipeline.", 0) == 0);
-    std::printf("WEFT_CONE_A mesh_refusal=%s\n",
-                meshed.failure ? meshed.failure->code.c_str() : "-");
+    CHECK(meshed);
+    CHECK(!meshed.failure);
+    CHECK(meshed.value && !meshed.value->certified.triangles.empty());
+    std::printf("WEFT_CONE_A mesh_ok tris=%zu verts=%zu\n",
+                meshed.value ? meshed.value->certified.triangles.size() : 0,
+                meshed.value ? meshed.value->certified.vertices.size() : 0);
 
     // Sphere residual control: still deferred / named refusal.
     const std::filesystem::path spherePath =

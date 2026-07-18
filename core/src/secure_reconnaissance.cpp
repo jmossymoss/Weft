@@ -72,7 +72,7 @@ FamilyInfo surfaceFamily(GeomAbs_SurfaceType type) {
     switch (type) {
         case GeomAbs_Plane: return {"plane", true, true, true};
         case GeomAbs_Cylinder: return {"cylinder", true, true, true};
-        case GeomAbs_Cone: return {"cone", true, true, false};
+        case GeomAbs_Cone: return {"cone", true, true, true};
         case GeomAbs_Sphere: return {"sphere", true, true, false};
         case GeomAbs_Torus: return {"torus", true, true, false};
         case GeomAbs_BezierSurface: return {"bezier", false, true, false};
@@ -437,6 +437,13 @@ bool exactSurfaceEvaluates(const GeometryEvaluator& evaluator, StableId face,
         evaluator.evaluateSurface(face, {(u0 + u1) * 0.5, (v0 + v1) * 0.5}));
 }
 
+bool edgeIsDegenerate(const BRepSnapshot& snapshot, StableId edgeId) {
+    for (const EdgeTopologyRecord& topology : snapshot.edgeTopology) {
+        if (topology.id == edgeId) return topology.degenerate;
+    }
+    return false;
+}
+
 bool curvedFaceHasExactMappings(const ImportedModel& imported, StableId faceId) {
     if (!imported.working || !imported.workingEvaluator) return false;
     bool sawCoedge = false;
@@ -444,6 +451,11 @@ bool curvedFaceHasExactMappings(const ImportedModel& imported, StableId faceId) 
         if (coedge.faceId != faceId) continue;
         sawCoedge = true;
         if (coedge.pcurveRepresentations.empty()) return false;
+        // Apex/pole singular edges may lack a finite curve domain; CONE-B
+        // builds their UV stations separately. Do not block template readiness.
+        if (edgeIsDegenerate(imported.working->snapshot, coedge.edgeId)) {
+            continue;
+        }
         const auto domain = imported.workingEvaluator->curveDomain(coedge.edgeId);
         if (!domain || !domain.value->lower || !domain.value->upper) return false;
         const double parameter =
