@@ -69,6 +69,15 @@ TopoDS_Shape makeFixture(const std::string& name) {
     if (name == "sphere") {
         return BRepPrimAPI_MakeSphere(10.0).Shape();
     }
+    if (name == "sphere_cap") {
+        // Upper hemisphere: cut the lower half-space from a full sphere so
+        // the curved face is a single-pole cap (+ planar disk).
+        const TopoDS_Shape ball = BRepPrimAPI_MakeSphere(10.0).Shape();
+        const TopoDS_Shape cutter =
+            BRepPrimAPI_MakeBox(gp_Pnt(-20.0, -20.0, -20.0), 40.0, 40.0, 20.0)
+                .Shape();
+        return BRepAlgoAPI_Cut(ball, cutter).Shape();
+    }
     if (name == "torus") {
         return BRepPrimAPI_MakeTorus(10.0, 3.0).Shape();
     }
@@ -753,7 +762,7 @@ TopoDS_Shape makeFixture(const std::string& name) {
     throw std::runtime_error(
         "unknown fixture: " + name +
         " (expected cylinder|partial_cylinder|box|cone|truncated_cone|sphere|"
-        "torus|fillet|hole|ellipse_hole|plate_slot|demo|boss|"
+        "sphere_cap|torus|fillet|hole|ellipse_hole|plate_slot|demo|boss|"
         "hairline|canrev|slitdrill|microedge|filletslot|torture|ribbon|ribbonnotch|"
         "mapped_patch|freeform_patch)");
 }

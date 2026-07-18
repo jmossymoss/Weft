@@ -15,6 +15,7 @@ namespace weft {
 //   "cone"     - solid cone to an apex (r=10, h=20)
 //   "truncated_cone" - solid frustum (r1=10, r2=4, h=20)
 //   "sphere"   - solid sphere (r=10)
+//   "sphere_cap" - spherical segment to the equator (single-pole cap)
 //   "torus"    - solid torus (R=10, r=3)
 //   "fillet"   - box with one long edge blended r=4 (a fillet strip with
 //                two tangent-smooth joins, for support-loop testing)

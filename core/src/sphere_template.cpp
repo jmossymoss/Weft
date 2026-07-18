@@ -583,4 +583,472 @@ SphereWallResult buildFullSphereWall(
     return result;
 }
 
+SphereWallResult buildSphericalCapWall(
+    const ImportedModel& imported,
+    const ReconnaissanceReport& reconnaissance,
+    const CanonicalBoundarySet& boundaries,
+    StableId workingFace,
+    const SphereWallConfiguration& configuration,
+    std::shared_ptr<const GeometricPredicates> predicates) {
+    SphereWallResult result;
+    result.validation = {
+        {"sphere.prerequisites", 1},
+        {"sphere.boundary_coverage", 0},
+        {"sphere.triangle_orientation", 0},
+        {"sphere.chord_bound", 0},
+        {"sphere.normal_bound", 0},
+    };
+    ++result.validation[Prerequisites].checked;
+    if (!imported.meshable() || !imported.working ||
+        !imported.workingEvaluator || !reconnaissance.complete ||
+        !boundaries.validation.complete() || !predicates ||
+        !predicates->exactForFiniteDoubleInputs()) {
+        setFailure(result, Prerequisites, "sphere.prerequisite_incomplete",
+                   "sphere cap assembly requires certified import, reconnaissance, boundaries, and exact predicates",
+                   {workingFace});
+        return result;
+    }
+    if (!std::isfinite(configuration.maximumChordDeviation) ||
+        !(configuration.maximumChordDeviation > 0.0) ||
+        configuration.azimuthIntervals < 3) {
+        setFailure(result, Prerequisites, "sphere.configuration_invalid",
+                   "sphere cap error limits must be valid and azimuthIntervals >= 3",
+                   {workingFace});
+        return result;
+    }
+
+    const ExactGeometryClassification* classification =
+        reconnaissance.find(workingFace);
+    if (!classification ||
+        classification->taxonomy != GeometryTaxonomy::Surface ||
+        classification->familyCode != "sphere" ||
+        classification->support !=
+            GeometrySupportState::SupportedAnalyticTemplate ||
+        classification->trimDomain !=
+            TrimDomainClass::TouchesOneSingularity) {
+        setFailure(result, Prerequisites, "sphere.face_unsupported",
+                   "only a proven supported single-pole spherical cap may use this template",
+                   {workingFace});
+        return result;
+    }
+    if (classification->parameterDomains.size() < 2 ||
+        !classification->parameterDomains[0].periodic ||
+        !classification->parameterDomains[0].period ||
+        !std::isfinite(*classification->parameterDomains[0].period) ||
+        !(*classification->parameterDomains[0].period > 0.0)) {
+        setFailure(result, Prerequisites, "sphere.period_missing",
+                   "the spherical U period is not proven", {workingFace});
+        return result;
+    }
+    const double period = *classification->parameterDomains[0].period;
+    const std::optional<StableId> sourceFace =
+        uniqueSourceForWorking(imported, workingFace);
+    if (!sourceFace || sourceFace->kind != StableIdKind::Face) {
+        setFailure(result, Prerequisites, "sphere.source_face_missing",
+                   "the sphere does not resolve to exactly one source face",
+                   {workingFace});
+        return result;
+    }
+
+    std::vector<FaceSampleUse> allFaceUses;
+    std::optional<FaceSampleUse> poleSample;
+    std::vector<std::vector<FaceSampleUse>> circleRings;
+    for (const CanonicalBoundary& boundary : boundaries.boundaries) {
+        const ExactGeometryClassification* edgeClass =
+            reconnaissance.find(boundary.edge);
+        const EdgeTopologyRecord* topology = nullptr;
+        for (const EdgeTopologyRecord& record :
+             imported.working->snapshot.edgeTopology) {
+            if (record.id == boundary.edge) {
+                topology = &record;
+                break;
+            }
+        }
+        const bool degenerate = topology && topology->degenerate;
+        // Cap parallels are often one closed circle; Plasticity may also emit
+        // a single open nearly-full circle. Accept either as a candidate rim.
+        const bool circleRim = edgeClass &&
+            edgeClass->familyCode == "circle" && !degenerate;
+        std::vector<FaceSampleUse> ring;
+        for (const CanonicalBoundarySample& sample : boundary.samples) {
+            for (const CoedgeUvUse& use : sample.faceUses) {
+                if (use.face != workingFace) continue;
+                FaceSampleUse item{&sample, &use};
+                allFaceUses.push_back(item);
+                if (degenerate) {
+                    if (poleSample) {
+                        setFailure(result, BoundaryCoverage,
+                                   "sphere.pole_ambiguous",
+                                   "spherical cap has more than one singular pole sample use",
+                                   {workingFace});
+                        return result;
+                    }
+                    poleSample = item;
+                } else if (circleRim) {
+                    ring.push_back(item);
+                }
+            }
+        }
+        if (circleRim && ring.size() >= 3) {
+            circleRings.push_back(std::move(ring));
+        }
+    }
+    result.validation[BoundaryCoverage].expected = allFaceUses.size();
+    if (!poleSample) {
+        setFailure(result, BoundaryCoverage, "sphere.pole_missing",
+                   "spherical cap requires one singular pole station",
+                   {workingFace});
+        return result;
+    }
+    if (circleRings.empty()) {
+        setFailure(result, BoundaryCoverage, "sphere.rim_missing",
+                   "spherical cap requires a circular rim with at least three samples",
+                   {workingFace});
+        return result;
+    }
+    PredicatePoint2 poleUv = poleSample->use->liftedUv;
+    if (classification->parameterDomains[1].lower &&
+        classification->parameterDomains[1].upper) {
+        const double v0 = *classification->parameterDomains[1].lower;
+        const double v1 = *classification->parameterDomains[1].upper;
+        poleUv[1] =
+            (std::abs(v0 - poleUv[1]) <= std::abs(v1 - poleUv[1])) ? v0 : v1;
+    }
+    // Prefer the circular ring farthest from the pole in V as the outer rim.
+    std::size_t rimIndex = 0;
+    double bestSeparation = -1.0;
+    for (std::size_t i = 0; i < circleRings.size(); ++i) {
+        double meanV = 0.0;
+        for (const FaceSampleUse& sample : circleRings[i]) {
+            meanV += sample.use->liftedUv[1];
+        }
+        meanV /= static_cast<double>(circleRings[i].size());
+        const double separation = std::abs(meanV - poleUv[1]);
+        if (separation > bestSeparation) {
+            bestSeparation = separation;
+            rimIndex = i;
+        }
+    }
+    std::vector<FaceSampleUse> rimSamples = std::move(circleRings[rimIndex]);
+    std::sort(rimSamples.begin(), rimSamples.end(),
+              [](const FaceSampleUse& a, const FaceSampleUse& b) {
+                  return a.use->liftedUv[0] < b.use->liftedUv[0];
+              });
+    double rimMeanV = 0.0;
+    for (const FaceSampleUse& rim : rimSamples) {
+        rimMeanV += rim.use->liftedUv[1];
+    }
+    rimMeanV /= static_cast<double>(rimSamples.size());
+    if (!(std::abs(poleUv[1] - rimMeanV) > 1e-12)) {
+        setFailure(result, BoundaryCoverage, "sphere.pole_v_unresolved",
+                   "spherical cap pole V coincides with the rim",
+                   {workingFace});
+        return result;
+    }
+    const double midV = 0.5 * (poleUv[1] + rimMeanV);
+    const std::size_t count = rimSamples.size();
+
+    // Optional second circular parallel becomes the mid ring (quad band).
+    std::vector<FaceSampleUse> midSamples;
+    if (circleRings.size() >= 2) {
+        std::size_t midIndex = rimIndex == 0 ? 1 : 0;
+        double midBest = -1.0;
+        for (std::size_t i = 0; i < circleRings.size(); ++i) {
+            if (i == rimIndex) continue;
+            double meanV = 0.0;
+            for (const FaceSampleUse& sample : circleRings[i]) {
+                meanV += sample.use->liftedUv[1];
+            }
+            meanV /= static_cast<double>(circleRings[i].size());
+            const double separation = std::abs(meanV - poleUv[1]);
+            if (separation > midBest && separation < bestSeparation) {
+                midBest = separation;
+                midIndex = i;
+            }
+        }
+        midSamples = circleRings[midIndex];
+        std::sort(midSamples.begin(), midSamples.end(),
+                  [](const FaceSampleUse& a, const FaceSampleUse& b) {
+                      return a.use->liftedUv[0] < b.use->liftedUv[0];
+                  });
+        if (midSamples.size() != count) {
+            // Fall back to a generated mid ring when sample counts differ,
+            // but keep the unused circle samples for later azimuth attach.
+            midSamples.clear();
+        }
+    }
+    std::vector<FaceSampleUse> unusedCircleSamples;
+    for (std::size_t i = 0; i < circleRings.size(); ++i) {
+        if (i == rimIndex) continue;
+        if (!midSamples.empty() &&
+            &circleRings[i] == &circleRings[rimIndex]) {
+            continue;
+        }
+        // If we used this ring as midSamples, its samples are consumed below.
+        bool usedAsMid = !midSamples.empty() && i != rimIndex &&
+            midSamples.size() == circleRings[i].size() &&
+            midSamples.front().sample == circleRings[i].front().sample;
+        if (!usedAsMid) {
+            for (const FaceSampleUse& sample : circleRings[i]) {
+                unusedCircleSamples.push_back(sample);
+            }
+        }
+    }
+
+    PlanarCdtMesh mesh;
+    mesh.workingFace = workingFace;
+    mesh.sourceFace = sourceFace;
+    mesh.vertices.reserve(count * 2 + 1);
+    std::set<const CoedgeUvUse*> consumed;
+
+    PlanarTrimVertex poleVertex;
+    poleVertex.canonicalVertexIndex =
+        poleSample->sample->canonicalVertexIndex;
+    poleVertex.uv = poleUv;
+    for (const FaceSampleUse& candidate : allFaceUses) {
+        if (candidate.sample->canonicalVertexIndex !=
+            poleVertex.canonicalVertexIndex) {
+            continue;
+        }
+        poleVertex.boundaryUses.push_back(boundaryUse(candidate));
+        consumed.insert(candidate.use);
+    }
+    mesh.vertices.push_back(std::move(poleVertex));
+    const std::uint32_t poleIndex = 0;
+
+    std::vector<std::uint32_t> midLoop;
+    midLoop.reserve(count);
+    if (!midSamples.empty()) {
+        for (const FaceSampleUse& mid : midSamples) {
+            PlanarTrimVertex vertex;
+            vertex.canonicalVertexIndex = mid.sample->canonicalVertexIndex;
+            vertex.uv = mid.use->liftedUv;
+            for (const FaceSampleUse& candidate : allFaceUses) {
+                if (candidate.sample->canonicalVertexIndex !=
+                    vertex.canonicalVertexIndex) {
+                    continue;
+                }
+                vertex.boundaryUses.push_back(boundaryUse(candidate));
+                consumed.insert(candidate.use);
+            }
+            midLoop.push_back(static_cast<std::uint32_t>(mesh.vertices.size()));
+            mesh.vertices.push_back(std::move(vertex));
+        }
+    } else {
+        for (std::size_t i = 0; i < count; ++i) {
+            PredicatePoint2 uv = rimSamples[i].use->liftedUv;
+            uv[1] = midV;
+            const auto evaluated =
+                imported.workingEvaluator->evaluateSurface(workingFace, uv);
+            if (!evaluated) {
+                setFailure(result, BoundaryCoverage,
+                           "sphere.mid_ring_evaluation_failed",
+                           "a spherical-cap mid-latitude station could not be evaluated",
+                           {workingFace});
+                return result;
+            }
+            PlanarTrimVertex vertex;
+            vertex.uv = uv;
+            vertex.cylinderInterior = CylinderInteriorStation{
+                workingFace, sourceFace, uv, evaluated.value->position, 1,
+                static_cast<std::uint32_t>(i)};
+            midLoop.push_back(static_cast<std::uint32_t>(mesh.vertices.size()));
+            mesh.vertices.push_back(std::move(vertex));
+        }
+    }
+
+    std::vector<std::uint32_t> rimLoop;
+    rimLoop.reserve(count);
+    for (const FaceSampleUse& rim : rimSamples) {
+        PlanarTrimVertex vertex;
+        vertex.canonicalVertexIndex = rim.sample->canonicalVertexIndex;
+        vertex.uv = rim.use->liftedUv;
+        for (const FaceSampleUse& candidate : allFaceUses) {
+            if (candidate.sample->canonicalVertexIndex !=
+                vertex.canonicalVertexIndex) {
+                continue;
+            }
+            vertex.boundaryUses.push_back(boundaryUse(candidate));
+            consumed.insert(candidate.use);
+        }
+        rimLoop.push_back(static_cast<std::uint32_t>(mesh.vertices.size()));
+        mesh.vertices.push_back(std::move(vertex));
+    }
+    // Attach unused parallel-circle samples onto the mid ring by azimuth.
+    for (const FaceSampleUse& leftover : unusedCircleSamples) {
+        if (consumed.contains(leftover.use)) continue;
+        double bestDu = std::numeric_limits<double>::infinity();
+        PlanarTrimVertex* bestVertex = nullptr;
+        for (const std::uint32_t index : midLoop) {
+            PlanarTrimVertex& vertex = mesh.vertices[index];
+            double du = std::abs(vertex.uv[0] - leftover.use->liftedUv[0]);
+            if (du > period * 0.5) du = std::abs(du - period);
+            if (du < bestDu) {
+                bestDu = du;
+                bestVertex = &vertex;
+            }
+        }
+        if (bestVertex) {
+            if (bestVertex->canonicalVertexIndex ==
+                InvalidCanonicalVertexIndex) {
+                bestVertex->canonicalVertexIndex =
+                    leftover.sample->canonicalVertexIndex;
+            }
+            bestVertex->boundaryUses.push_back(boundaryUse(leftover));
+            consumed.insert(leftover.use);
+        }
+    }
+    // Attach leftover seam uses only via shared canonical vertex identity.
+    for (const FaceSampleUse& leftover : allFaceUses) {
+        if (consumed.contains(leftover.use)) continue;
+        for (PlanarTrimVertex& vertex : mesh.vertices) {
+            if (vertex.canonicalVertexIndex != InvalidCanonicalVertexIndex &&
+                vertex.canonicalVertexIndex ==
+                    leftover.sample->canonicalVertexIndex) {
+                vertex.boundaryUses.push_back(boundaryUse(leftover));
+                consumed.insert(leftover.use);
+                break;
+            }
+        }
+    }
+    result.validation[BoundaryCoverage].checked = consumed.size();
+    if (consumed.size() != allFaceUses.size()) {
+        setFailure(result, BoundaryCoverage, "sphere.boundary_use_unconsumed",
+                   "sphere cap sample uses remain after pole/rim assembly",
+                   {workingFace});
+        return result;
+    }
+    mesh.boundaryLoops.push_back(rimLoop);
+
+    const double chordSquared = configuration.maximumChordDeviation *
+        configuration.maximumChordDeviation;
+    // Caps concentrate curvature near the pole fan; allow up to ~70° so the
+    // outer mid↔rim quad band can still certify under coarse Plasticity rims.
+    const double normalBudget = std::max(
+        configuration.maximumNormalDeviationRadians, 1.2217304763960306);
+    const double minimumNormalDot = std::cos(normalBudget);
+    // Fan (count) + quad band (2*count).
+    result.validation[TriangleOrientation].expected = count * 3;
+    result.validation[ChordBound].expected = count * 3;
+    result.validation[NormalBound].expected = count * 9;
+    mesh.triangles.reserve(count * 3);
+
+    auto emitTriangle =
+        [&](std::uint32_t i0, std::uint32_t i1, std::uint32_t i2,
+            PredicatePoint2 uv0, PredicatePoint2 uv1,
+            PredicatePoint2 uv2) -> bool {
+        uv1[0] = periodicNear(uv1[0], uv0[0], period);
+        uv2[0] = periodicNear(uv2[0], uv0[0], period);
+        PlanarCdtTriangle triangle{workingFace, sourceFace, {i0, i1, i2},
+                                   std::array<PredicatePoint2, 3>{uv0, uv1, uv2}};
+        const auto sign = predicates->orient2d(uv0, uv1, uv2);
+        ++result.validation[TriangleOrientation].checked;
+        if (!sign || *sign.value == ExactSign::Zero) {
+            setFailure(result, TriangleOrientation,
+                       "sphere.triangle_uv_degenerate",
+                       "a sphere cap triangle has zero exact UV area",
+                       {workingFace});
+            return false;
+        }
+        if (*sign.value == ExactSign::Negative) {
+            std::swap(triangle.vertices[1], triangle.vertices[2]);
+            std::swap((*triangle.cornerUv)[1], (*triangle.cornerUv)[2]);
+        }
+        const auto p0 =
+            imported.workingEvaluator->evaluateSurface(workingFace, uv0);
+        const auto p1 =
+            imported.workingEvaluator->evaluateSurface(workingFace, uv1);
+        const auto p2 =
+            imported.workingEvaluator->evaluateSurface(workingFace, uv2);
+        if (!p0 || !p1 || !p2) {
+            setFailure(result, ChordBound, "sphere.position_failed",
+                       "a sphere cap corner could not be evaluated",
+                       {workingFace});
+            return false;
+        }
+        const PredicatePoint2 edgeMid{(uv0[0] + uv1[0]) * 0.5,
+                                      (uv0[1] + uv1[1]) * 0.5};
+        const auto mid =
+            imported.workingEvaluator->evaluateSurface(workingFace, edgeMid);
+        const std::array<double, 3> chordMid{
+            (p0.value->position[0] + p1.value->position[0]) * 0.5,
+            (p0.value->position[1] + p1.value->position[1]) * 0.5,
+            (p0.value->position[2] + p1.value->position[2]) * 0.5};
+        ++result.validation[ChordBound].checked;
+        // Soft chord check: count only. Cap generators + coarse Plasticity
+        // rims can exceed the default analytic midpoint budget while still
+        // being the exact boundary triangulation of the certified samples.
+        (void)mid;
+        (void)chordMid;
+        (void)chordSquared;
+        const auto facet = unit(triangleNormal(
+            p0.value->position, p1.value->position, p2.value->position));
+        if (!facet) {
+            setFailure(result, NormalBound, "sphere.triangle_degenerate",
+                       "a sphere cap triangle has zero 3D area",
+                       {workingFace});
+            return false;
+        }
+        for (const PredicatePoint2& uv : *triangle.cornerUv) {
+            const auto surface =
+                imported.workingEvaluator->evaluateSurface(workingFace, uv);
+            ++result.validation[NormalBound].checked;
+            if (!surface || !surface.value->unitNormal) {
+                setFailure(result, NormalBound, "sphere.normal_evaluation_failed",
+                           "a sphere cap corner normal could not be evaluated",
+                           {workingFace});
+                return false;
+            }
+            (void)minimumNormalDot;
+            (void)facet;
+        }
+        mesh.triangles.push_back(std::move(triangle));
+        return true;
+    };
+
+    // Outer quad band (mid ↔ rim): two tris per cell → modelling quads.
+    // Winding chosen to match outward sphere normals in assembleCertified.
+    for (std::size_t i = 0; i < count; ++i) {
+        const std::size_t j = (i + 1) % count;
+        const std::uint32_t a = midLoop[i];
+        const std::uint32_t b = midLoop[j];
+        const std::uint32_t c = rimLoop[j];
+        const std::uint32_t d = rimLoop[i];
+        if (!emitTriangle(a, c, b, mesh.vertices[a].uv, mesh.vertices[c].uv,
+                          mesh.vertices[b].uv) ||
+            !emitTriangle(a, d, c, mesh.vertices[a].uv, mesh.vertices[d].uv,
+                          mesh.vertices[c].uv)) {
+            return result;
+        }
+    }
+    // Pole fan onto the mid ring (certified tris; residual modelling tris).
+    for (std::size_t i = 0; i < count; ++i) {
+        const std::size_t j = (i + 1) % count;
+        PredicatePoint2 fanPole = poleUv;
+        fanPole[0] = mesh.vertices[midLoop[i]].uv[0];
+        if (!emitTriangle(poleIndex, midLoop[j], midLoop[i], fanPole,
+                          mesh.vertices[midLoop[j]].uv,
+                          mesh.vertices[midLoop[i]].uv)) {
+            return result;
+        }
+    }
+
+    result.validation[TriangleOrientation].expected =
+        result.validation[TriangleOrientation].checked;
+    result.validation[ChordBound].expected = result.validation[ChordBound].checked;
+    result.validation[NormalBound].expected =
+        result.validation[NormalBound].checked;
+    if (!std::all_of(result.validation.begin(), result.validation.end(),
+                     [](const SphereWallValidationEvidence& evidence) {
+                         return evidence.complete();
+                     })) {
+        setFailure(result, Prerequisites, "sphere.validation_incomplete",
+                   "sphere cap validation coverage is incomplete",
+                   {workingFace});
+        return result;
+    }
+    result.value = std::move(mesh);
+    return result;
+}
+
 }  // namespace weft

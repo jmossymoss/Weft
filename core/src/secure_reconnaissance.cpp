@@ -978,10 +978,29 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                             demote("cone.complex_boundary_deferred");
                         }
                     }
-                } else if (family.code == "sphere" &&
-                           record.trimDomain !=
-                               TrimDomainClass::TouchesTwoSingularities) {
-                    demote("sphere.partial_deferred");
+                } else if (family.code == "sphere") {
+                    // Full sphere (two poles) is consumed. Single-pole caps
+                    // with only pole+rim edges use buildSphericalCapWall;
+                    // Plasticity caps with meridians/extra edges stay named.
+                    const bool fullSphere =
+                        record.trimDomain ==
+                        TrimDomainClass::TouchesTwoSingularities;
+                    const bool sphericalCap =
+                        record.trimDomain ==
+                        TrimDomainClass::TouchesOneSingularity;
+                    if (sphericalCap) {
+                        std::set<StableId> uniqueEdges;
+                        for (const CoedgeRecord& coedge : snapshot.coedges) {
+                            if (coedge.faceId == faceId) {
+                                uniqueEdges.insert(coedge.edgeId);
+                            }
+                        }
+                        if (uniqueEdges.size() > 2) {
+                            demote("sphere.complex_cap_deferred");
+                        }
+                    } else if (!fullSphere) {
+                        demote("sphere.partial_deferred");
+                    }
                 } else if (family.code == "cylinder") {
                     const bool partialBand =
                         record.trimDomain ==

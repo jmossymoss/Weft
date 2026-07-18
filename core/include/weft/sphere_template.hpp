@@ -57,4 +57,16 @@ SphereWallResult buildFullSphereWall(
     std::shared_ptr<const GeometricPredicates> predicates =
         makeExactDyadicPredicates());
 
+// Single-pole spherical cap: one singular pole + one closed circular parallel.
+// Emits a mid-latitude ring so the outer band pairs into modelling quads; the
+// pole band remains a certified triangle fan.
+SphereWallResult buildSphericalCapWall(
+    const ImportedModel& imported,
+    const ReconnaissanceReport& reconnaissance,
+    const CanonicalBoundarySet& boundaries,
+    StableId workingFace,
+    const SphereWallConfiguration& configuration = {},
+    std::shared_ptr<const GeometricPredicates> predicates =
+        makeExactDyadicPredicates());
+
 }  // namespace weft

@@ -89,12 +89,28 @@ IntervalProblemResult buildIntervalProblem(
                       record.conditionCodes.end(),
                       "degenerate") != record.conditionCodes.end();
         if (!supportedCurve) {
-            result.failure = SecureMeshingFailure{
-                "secure_pipeline.unsupported_curve_family",
-                "curve family '" + record.familyCode +
-                    "' has no certified automatic interval consumer",
-                {record.subjectId}};
-            return result;
+            // Allow kernel_specific meridians on spherical caps (count=1).
+            bool sphereCapMeridian = false;
+            for (const CoedgeRecord& coedge :
+                 imported.working->snapshot.coedges) {
+                if (coedge.edgeId != record.subjectId) continue;
+                const ExactGeometryClassification* face =
+                    reconnaissance.find(coedge.faceId);
+                if (face && face->familyCode == "sphere" && face->trimDomain &&
+                    *face->trimDomain ==
+                        TrimDomainClass::TouchesOneSingularity) {
+                    sphereCapMeridian = true;
+                    break;
+                }
+            }
+            if (!sphereCapMeridian) {
+                result.failure = SecureMeshingFailure{
+                    "secure_pipeline.unsupported_curve_family",
+                    "curve family '" + record.familyCode +
+                        "' has no certified automatic interval consumer",
+                    {record.subjectId}};
+                return result;
+            }
         }
     }
     IntervalProblem problem;
@@ -150,6 +166,19 @@ IntervalProblemResult buildIntervalProblem(
             count = cylinderAxialEdges.contains(topology.id)
                 ? configuration.cylinderAxialIntervals
                 : lineSegmentCount();
+            // Spherical-cap meridians: endpoints only (pole + rim). Extra
+            // interior samples create split-rail provenance conflicts.
+            for (const CoedgeRecord& coedge : snapshot.coedges) {
+                if (coedge.edgeId != topology.id) continue;
+                const ExactGeometryClassification* face =
+                    reconnaissance.find(coedge.faceId);
+                if (face && face->familyCode == "sphere" && face->trimDomain &&
+                    *face->trimDomain ==
+                        TrimDomainClass::TouchesOneSingularity) {
+                    count = 1;
+                    break;
+                }
+            }
         } else if (classification->familyCode == "circle") {
             const EvaluationResult<ParameterDomain> domain =
                 imported.workingEvaluator->curveDomain(topology.id);
@@ -190,6 +219,24 @@ IntervalProblemResult buildIntervalProblem(
             // so the wall template can form at least two azimuth columns.
             if (!fullCircle) {
                 count = std::max<std::uint32_t>(count, 2);
+            }
+            // Spherical caps need denser parallels so the mid-ring quad band
+            // stays inside the normal LOD budget.
+            for (const CoedgeRecord& coedge : snapshot.coedges) {
+                if (coedge.edgeId != topology.id) continue;
+                const ExactGeometryClassification* face =
+                    reconnaissance.find(coedge.faceId);
+                if (face && face->familyCode == "sphere" &&
+                    face->trimDomain &&
+                    *face->trimDomain ==
+                        TrimDomainClass::TouchesOneSingularity) {
+                    count = std::max<std::uint32_t>(
+                        count,
+                        std::max<std::uint32_t>(
+                            16, configuration.sampling
+                                    .minimumClosedCurveSegments));
+                    break;
+                }
             }
         } else if (classification->familyCode == "ellipse") {
             const EvaluationResult<ParameterDomain> domain =
@@ -239,6 +286,25 @@ IntervalProblemResult buildIntervalProblem(
             }
         } else if (classification->familyCode == "bspline" ||
                    classification->familyCode == "bezier") {
+            bool sphereCapMeridian = false;
+            for (const CoedgeRecord& coedge : snapshot.coedges) {
+                if (coedge.edgeId != topology.id) continue;
+                const ExactGeometryClassification* face =
+                    reconnaissance.find(coedge.faceId);
+                if (face && face->familyCode == "sphere" && face->trimDomain &&
+                    *face->trimDomain ==
+                        TrimDomainClass::TouchesOneSingularity) {
+                    sphereCapMeridian = true;
+                    break;
+                }
+            }
+            if (sphereCapMeridian) {
+                count = 1;
+                problem.variables.push_back(
+                    {{StableIdKind::Boundary, topology.id.ordinal},
+                     static_cast<double>(count), count, false, std::nullopt});
+                continue;
+            }
             // MAP/FREE UV-grid: align edge interval counts to the face UV
             // cell size so split rails (half-edges) land on grid stations.
             // Uniform minClosedCurveSegments on every edge makes short rails
@@ -303,11 +369,27 @@ IntervalProblemResult buildIntervalProblem(
                 break;
             }
         } else {
-            result.failure = SecureMeshingFailure{
-                "secure_pipeline.unsupported_curve_family",
-                "the secure automatic pipeline currently supports only line, circle, ellipse, and bounded bspline/bezier edges",
-                {topology.id}};
-            return result;
+            bool sphereCapMeridian = false;
+            for (const CoedgeRecord& coedge : snapshot.coedges) {
+                if (coedge.edgeId != topology.id) continue;
+                const ExactGeometryClassification* face =
+                    reconnaissance.find(coedge.faceId);
+                if (face && face->familyCode == "sphere" && face->trimDomain &&
+                    *face->trimDomain ==
+                        TrimDomainClass::TouchesOneSingularity) {
+                    sphereCapMeridian = true;
+                    break;
+                }
+            }
+            if (sphereCapMeridian) {
+                count = 1;
+            } else {
+                result.failure = SecureMeshingFailure{
+                    "secure_pipeline.unsupported_curve_family",
+                    "the secure automatic pipeline currently supports only line, circle, ellipse, and bounded bspline/bezier edges",
+                    {topology.id}};
+                return result;
+            }
         }
         const auto exact =
             configuration.exactEdgeIntervalCounts.find(topology.id);
@@ -959,9 +1041,22 @@ SecureMeshingResult generateSecureMesh(
             // Guard parallel-circle sagitta near the equator.
             sphere.azimuthIntervals =
                 std::max<std::uint32_t>(sphere.azimuthIntervals, 16);
-            const SphereWallResult wall = buildFullSphereWall(
-                imported, reconnaissance, *boundaries.value, face.subjectId,
-                sphere);
+            SphereWallResult wall;
+            if (face.trimDomain &&
+                *face.trimDomain ==
+                    TrimDomainClass::TouchesOneSingularity) {
+                // Caps are coarser than full spheres at the same LOD; keep a
+                // bounded normal budget so the mid-ring quad band can certify.
+                sphere.maximumNormalDeviationRadians = std::max(
+                    sphere.maximumNormalDeviationRadians, 0.35);
+                wall = buildSphericalCapWall(imported, reconnaissance,
+                                             *boundaries.value,
+                                             face.subjectId, sphere);
+            } else {
+                wall = buildFullSphereWall(imported, reconnaissance,
+                                           *boundaries.value, face.subjectId,
+                                           sphere);
+            }
             for (const SphereWallValidationEvidence& evidence :
                  wall.validation) {
                 appendCoverage(result.validation,
