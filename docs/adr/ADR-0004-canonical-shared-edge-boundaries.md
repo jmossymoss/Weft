@@ -40,6 +40,8 @@ envelope and an absolute safety cap.
 Construction is atomic. Any missing count, endpoint, coedge, provenance,
 mapping, evaluation, or bounded tolerance returns a stable named refusal and no
 partial boundary set. Degenerate singular edges remain explicitly unsupported.
+Closed coedges on periodic surface axes require an unambiguous covering-space
+return witness (`periodsCrossed`, endpoint lifts, and closing lifted UV).
 
 ## Invariants
 
@@ -63,12 +65,14 @@ partial boundary set. Degenerate singular edges remain explicitly unsupported.
 `weft_canonical_boundary_tests` proves atomic box and cylinder construction,
 shared endpoint indices, source/working provenance, stored and derived planar UV
 uses, non-vacuous coverage, and named missing-count refusal. An adversarial
-quarter-circle fixture proves that a trimmed periodic curve remains open. The
-ported azimuth registration proves identity and cyclic phase alignment while
-refusing reflection and non-uniform input on either ring.
+quarter-circle fixture proves that a trimmed periodic curve remains open. Closed
+cylinder coedges prove periodic UV closure witnesses for forward and reversed
+uses, while synthetic seeds refuse ambiguous half-period wraps and inconsistent
+recorded lifts. The ported azimuth registration proves identity and cyclic phase
+alignment while refusing reflection and non-uniform input on either ring.
 
 ## Consequences
 
 Face CDT and templates must consume canonical sample IDs and vertex indices.
-Critical-interval adaptive sampling, degenerate singularities, and complete
-periodic-loop closure validation remain later M3 increments.
+Critical-interval adaptive sampling and degenerate singularities remain later
+M3 increments.

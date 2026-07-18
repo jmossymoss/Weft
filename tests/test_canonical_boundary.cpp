@@ -82,9 +82,14 @@ void verifyCanonicalModel(const std::string& fixtureName,
     CHECK(set.validation.expectedVertexCurveChecks ==
           set.validation.checkedVertexCurveChecks);
     CHECK(set.validation.checkedVertexCurveChecks != 0);
+    CHECK(set.validation.expectedPeriodicClosures ==
+          set.validation.checkedPeriodicClosures);
 
     bool sawPlanarProjection = false;
     bool sawStoredPcurve = false;
+    bool sawForwardPeriodicClosure = false;
+    bool sawReversedPeriodicClosure = false;
+    bool sawFullPeriodCrossing = false;
     std::map<std::uint64_t, std::array<double, 3>> canonicalPositions;
     for (const weft::EdgeTopologyRecord& topology :
          imported.working->snapshot.edgeTopology) {
@@ -102,6 +107,34 @@ void verifyCanonicalModel(const std::string& fixtureName,
         if (!boundary->closed && topology.upperVertex) {
             CHECK(boundary->samples.back().canonicalVertexIndex ==
                   topology.upperVertex->ordinal - 1U);
+        }
+        if (!boundary->closed) {
+            CHECK(boundary->periodicClosures.empty());
+        }
+        for (const weft::PeriodicUvClosureWitness& closure :
+             boundary->periodicClosures) {
+            CHECK(closure.edge == topology.id);
+            CHECK(closure.sourceEdge.has_value());
+            CHECK(closure.sourceFace.has_value());
+            CHECK(std::isfinite(closure.period) && closure.period > 0.0);
+            CHECK(std::isfinite(closure.firstUv));
+            CHECK(std::isfinite(closure.lastUv));
+            CHECK(std::isfinite(closure.firstLiftedUv));
+            CHECK(std::isfinite(closure.lastLiftedUv));
+            CHECK(std::isfinite(closure.closingLiftedUv));
+            CHECK(std::abs(closure.closingLiftedUv -
+                           (closure.firstLiftedUv +
+                            static_cast<double>(closure.periodsCrossed) *
+                                closure.period)) < 1e-9 * closure.period);
+            sawForwardPeriodicClosure = sawForwardPeriodicClosure ||
+                closure.traversalOrientation ==
+                    weft::TopologyOrientation::Forward;
+            sawReversedPeriodicClosure = sawReversedPeriodicClosure ||
+                closure.traversalOrientation ==
+                    weft::TopologyOrientation::Reversed;
+            sawFullPeriodCrossing =
+                sawFullPeriodCrossing ||
+                closure.periodsCrossed == 1 || closure.periodsCrossed == -1;
         }
         for (std::size_t index = 0; index < boundary->samples.size(); ++index) {
             const weft::CanonicalBoundarySample& sample =
@@ -141,6 +174,14 @@ void verifyCanonicalModel(const std::string& fixtureName,
     }
     CHECK(!expectPlanarProjection || sawPlanarProjection);
     CHECK(!expectStoredPcurve || sawStoredPcurve);
+    if (expectStoredPcurve) {
+        CHECK(set.validation.expectedPeriodicClosures != 0);
+        CHECK(sawFullPeriodCrossing);
+        CHECK(sawForwardPeriodicClosure);
+        CHECK(sawReversedPeriodicClosure);
+    } else {
+        CHECK(set.validation.expectedPeriodicClosures == 0);
+    }
 
     const weft::CanonicalBoundaryBuildResult missing =
         weft::buildCanonicalBoundaries(imported, reconnaissance,
@@ -246,8 +287,147 @@ void testPartialPeriodicCurveIsOpen(const std::filesystem::path& path) {
     if (!boundary) return;
     CHECK(!boundary->closed);
     CHECK(boundary->samples.size() == 5);
+    CHECK(boundary->periodicClosures.empty());
     CHECK(boundary->samples.front().canonicalVertexIndex !=
           boundary->samples.back().canonicalVertexIndex);
+}
+
+weft::PeriodicUvClosureWitness baseClosureSeed() {
+    weft::PeriodicUvClosureWitness seed;
+    seed.edge = {weft::StableIdKind::Edge, 1};
+    seed.coedge = {weft::StableIdKind::Coedge, 1};
+    seed.face = {weft::StableIdKind::Face, 1};
+    seed.sourceEdge = seed.edge;
+    seed.sourceFace = seed.face;
+    seed.traversalOrientation = weft::TopologyOrientation::Forward;
+    seed.axis = 0;
+    seed.period = 6.283185307179586476925286766559;
+    seed.firstUv = 0.0;
+    seed.lastUv = 0.75 * seed.period;
+    seed.firstLiftedUv = 0.0;
+    seed.lastLiftedUv = seed.lastUv;
+    seed.selectedFirstLift = 0;
+    seed.selectedLastLift = 0;
+    return seed;
+}
+
+void testPeriodicUvClosureAdversaries() {
+    const auto good = weft::provePeriodicUvClosure(baseClosureSeed());
+    CHECK(good);
+    if (good) {
+        CHECK(good.value->periodsCrossed == 1);
+        CHECK(std::abs(good.value->closingLiftedUv - good.value->period) <
+              1e-12);
+    }
+
+    auto ambiguous = baseClosureSeed();
+    ambiguous.period = 2.0;
+    ambiguous.firstUv = 0.0;
+    ambiguous.firstLiftedUv = 0.0;
+    ambiguous.lastUv = 1.0;
+    ambiguous.lastLiftedUv = 1.0;
+    ambiguous.selectedFirstLift = 0;
+    ambiguous.selectedLastLift = 0;
+    const auto ambiguousResult = weft::provePeriodicUvClosure(ambiguous);
+    CHECK(!ambiguousResult);
+    CHECK(ambiguousResult.failure &&
+          (ambiguousResult.failure->code ==
+               "boundary.periodic_closure_ambiguous" ||
+           ambiguousResult.failure->code ==
+               "boundary.periodic_closure_discontinuous"));
+
+    auto wrongRecordedLift = baseClosureSeed();
+    wrongRecordedLift.selectedLastLift = 7;
+    const auto wrongLiftResult =
+        weft::provePeriodicUvClosure(wrongRecordedLift);
+    CHECK(!wrongLiftResult);
+    CHECK(wrongLiftResult.failure &&
+          wrongLiftResult.failure->code ==
+              "boundary.periodic_lift_inconsistent");
+
+    auto mismatchedEndpoint = baseClosureSeed();
+    mismatchedEndpoint.selectedFirstLift = 1;
+    const auto mismatchedResult =
+        weft::provePeriodicUvClosure(mismatchedEndpoint);
+    CHECK(!mismatchedResult);
+    CHECK(mismatchedResult.failure &&
+          mismatchedResult.failure->code ==
+              "boundary.periodic_lift_inconsistent");
+
+    auto nearFullStillClosed = baseClosureSeed();
+    nearFullStillClosed.lastLiftedUv =
+        nearFullStillClosed.period - 1e-3 * nearFullStillClosed.period;
+    nearFullStillClosed.lastUv = nearFullStillClosed.lastLiftedUv;
+    const auto nearFullResult =
+        weft::provePeriodicUvClosure(nearFullStillClosed);
+    CHECK(nearFullResult);
+    if (nearFullResult) {
+        CHECK(nearFullResult.value->periodsCrossed == 1);
+    }
+
+    // A half-period covering gap lands on the branch cut and must refuse
+    // rather than guess a wrap (seam-crossing ambiguity).
+    auto seamCrossingAmbiguous = baseClosureSeed();
+    seamCrossingAmbiguous.period = 2.0;
+    seamCrossingAmbiguous.firstUv = 0.25;
+    seamCrossingAmbiguous.firstLiftedUv = 0.25;
+    seamCrossingAmbiguous.lastUv = 1.25;
+    seamCrossingAmbiguous.lastLiftedUv = 1.25;
+    seamCrossingAmbiguous.selectedFirstLift = 0;
+    seamCrossingAmbiguous.selectedLastLift = 0;
+    const auto seamResult =
+        weft::provePeriodicUvClosure(seamCrossingAmbiguous);
+    CHECK(!seamResult);
+    CHECK(seamResult.failure &&
+          (seamResult.failure->code ==
+               "boundary.periodic_closure_ambiguous" ||
+           seamResult.failure->code ==
+               "boundary.periodic_closure_discontinuous"));
+}
+
+void testCylinderPeriodicClosureDeterminism(
+    const std::filesystem::path& path) {
+    weft::writeStep(weft::makeFixture("cylinder"), path.string());
+    const weft::ImportedModel imported = weft::importStepSecure(path.string());
+    const weft::ReconnaissanceReport reconnaissance =
+        weft::reconnoitre(imported);
+    const weft::IntervalSolution intervals = intervalsFor(imported);
+    const weft::CanonicalBoundaryBuildResult first =
+        weft::buildCanonicalBoundaries(imported, reconnaissance, intervals);
+    const weft::CanonicalBoundaryBuildResult second =
+        weft::buildCanonicalBoundaries(imported, reconnaissance, intervals);
+    CHECK(first);
+    CHECK(second);
+    if (!first || !second) return;
+    CHECK(first.validation.expectedPeriodicClosures ==
+          second.validation.expectedPeriodicClosures);
+    CHECK(first.validation.checkedPeriodicClosures ==
+          second.validation.checkedPeriodicClosures);
+    CHECK(first.value->boundaries.size() == second.value->boundaries.size());
+    for (std::size_t index = 0; index < first.value->boundaries.size();
+         ++index) {
+        const weft::CanonicalBoundary& a = first.value->boundaries[index];
+        const weft::CanonicalBoundary& b = second.value->boundaries[index];
+        CHECK(a.periodicClosures.size() == b.periodicClosures.size());
+        for (std::size_t closureIndex = 0;
+             closureIndex < a.periodicClosures.size(); ++closureIndex) {
+            const weft::PeriodicUvClosureWitness& left =
+                a.periodicClosures[closureIndex];
+            const weft::PeriodicUvClosureWitness& right =
+                b.periodicClosures[closureIndex];
+            CHECK(left.edge == right.edge);
+            CHECK(left.coedge == right.coedge);
+            CHECK(left.face == right.face);
+            CHECK(left.axis == right.axis);
+            CHECK(left.periodsCrossed == right.periodsCrossed);
+            CHECK(left.selectedFirstLift == right.selectedFirstLift);
+            CHECK(left.selectedLastLift == right.selectedLastLift);
+            CHECK(left.traversalOrientation == right.traversalOrientation);
+            CHECK(left.firstLiftedUv == right.firstLiftedUv);
+            CHECK(left.lastLiftedUv == right.lastLiftedUv);
+            CHECK(left.closingLiftedUv == right.closingLiftedUv);
+        }
+    }
 }
 
 }  // namespace
@@ -259,11 +439,16 @@ int main() {
         "weft_canonical_boundary_cylinder", ".step");
     const std::filesystem::path partialArcPath = weft::test::uniqueTempPath(
         "weft_canonical_boundary_partial_arc", ".step");
+    const std::filesystem::path cylinderDeterminismPath =
+        weft::test::uniqueTempPath(
+            "weft_canonical_boundary_cylinder_determinism", ".step");
     try {
         verifyCanonicalModel("box", boxPath, true, false);
         verifyCanonicalModel("cylinder", cylinderPath, true, true);
         testAzimuthRegistration();
         testPartialPeriodicCurveIsOpen(partialArcPath);
+        testPeriodicUvClosureAdversaries();
+        testCylinderPeriodicClosureDeterminism(cylinderDeterminismPath);
     } catch (const std::exception& error) {
         std::printf("FAIL canonical-boundary exception: %s\n", error.what());
         ++failures;
@@ -272,6 +457,7 @@ int main() {
     std::filesystem::remove(boxPath, ignored);
     std::filesystem::remove(cylinderPath, ignored);
     std::filesystem::remove(partialArcPath, ignored);
+    std::filesystem::remove(cylinderDeterminismPath, ignored);
 
     if (failures == 0) {
         std::printf("canonical boundary checks passed\n");

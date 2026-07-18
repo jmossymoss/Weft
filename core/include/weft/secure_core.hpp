@@ -221,6 +221,12 @@ struct BRepSnapshot {
     TopologyAccount topology;
 };
 
+// Proves the temporary ShapeMap meshing view can host every face-owned
+// topology coedge without collapsing distinct face occurrences. Wire uses in
+// that view are keyed by topology wire occurrence identity.
+TopologyAccountValidation validateMeshingCompatibilityView(
+    const BRepSnapshot& snapshot);
+
 struct SourceBRep {
     SourceMetadata metadata;
     BRepSnapshot snapshot;

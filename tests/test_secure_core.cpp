@@ -53,6 +53,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -1858,6 +1859,122 @@ void testM2OracleFamilyAndCylinderTrim(const std::filesystem::path& cylinderPath
     }
 }
 
+void testRepeatedWireOccurrences() {
+    const auto hasFailure =
+        [](const weft::TopologyAccountValidation& validation,
+           std::string_view code) {
+            return std::find(validation.failureCodes.begin(),
+                             validation.failureCodes.end(),
+                             code) != validation.failureCodes.end();
+        };
+    const auto occurrenceCount =
+        [](const weft::TopologyAccount& topology, weft::StableIdKind kind) {
+            return static_cast<std::size_t>(std::count_if(
+                topology.occurrences.begin(), topology.occurrences.end(),
+                [kind](const weft::TopologyOccurrence& occurrence) {
+                    return occurrence.id.kind == kind;
+                }));
+        };
+
+    const weft::ImportedModel box = importTempBRep(
+        BRepPrimAPI_MakeBox(1.0, 1.0, 1.0).Shape(), "weft_wp011_box");
+    CHECK(box.source != nullptr);
+    CHECK(box.working != nullptr);
+    CHECK(box.repair.meshable);
+    if (!box.source || !box.working) return;
+
+    const weft::BRepSnapshot& boxSnapshot = box.source->snapshot;
+    const weft::TopologyAccountValidation boxView =
+        weft::validateMeshingCompatibilityView(boxSnapshot);
+    CHECK(boxView.complete());
+    CHECK(boxSnapshot.coedges.size() == boxSnapshot.topology.coedges.size());
+    CHECK(boxSnapshot.coedges.size() == 24);
+    CHECK(occurrenceCount(boxSnapshot.topology, weft::StableIdKind::Wire) == 6);
+
+    std::set<weft::StableId> wireIds;
+    std::map<weft::StableId, std::vector<weft::TopologyOrientation>>
+        orientationsByEdge;
+    for (const weft::CoedgeRecord& coedge : boxSnapshot.coedges) {
+        CHECK(coedge.wireId.kind == weft::StableIdKind::Wire);
+        CHECK(boxSnapshot.topology.exactShapes.contains(coedge.wireId));
+        wireIds.insert(coedge.wireId);
+        orientationsByEdge[coedge.edgeId].push_back(coedge.orientation);
+    }
+    CHECK(wireIds.size() == 6);
+    CHECK(orientationsByEdge.size() == 12);
+    std::size_t oppositeSharedEdges = 0;
+    for (const auto& [edgeId, orientations] : orientationsByEdge) {
+        (void)edgeId;
+        CHECK(orientations.size() == 2);
+        if (orientations.size() == 2 &&
+            orientations[0] != orientations[1]) {
+            ++oppositeSharedEdges;
+        }
+    }
+    CHECK(oppositeSharedEdges > 0);
+
+    BRep_Builder builder;
+    TopoDS_Compound distinctCompound;
+    builder.MakeCompound(distinctCompound);
+    builder.Add(distinctCompound, BRepPrimAPI_MakeBox(1.0, 1.0, 1.0).Shape());
+    builder.Add(distinctCompound,
+                BRepPrimAPI_MakeBox(gp_Pnt(4.0, 0.0, 0.0), 1.0, 1.0, 1.0)
+                    .Shape());
+    const weft::ImportedModel distinct =
+        importTempBRep(distinctCompound, "weft_wp011_distinct_boxes");
+    CHECK(distinct.source != nullptr);
+    if (!distinct.source) return;
+    CHECK(weft::validateTopologyAccount(distinct.source->snapshot.topology)
+              .complete());
+    CHECK(weft::validateMeshingCompatibilityView(distinct.source->snapshot)
+              .complete());
+    CHECK(occurrenceCount(distinct.source->snapshot.topology,
+                          weft::StableIdKind::Solid) == 2);
+    CHECK(occurrenceCount(distinct.source->snapshot.topology,
+                          weft::StableIdKind::Face) == 12);
+    CHECK(occurrenceCount(distinct.source->snapshot.topology,
+                          weft::StableIdKind::Wire) == 12);
+    CHECK(distinct.source->snapshot.coedges.size() == 48);
+    CHECK(distinct.repair.meshable);
+
+    const TopoDS_Shape repeatedSolid =
+        BRepPrimAPI_MakeBox(1.0, 1.0, 1.0).Shape();
+    TopoDS_Compound aliasedCompound;
+    builder.MakeCompound(aliasedCompound);
+    builder.Add(aliasedCompound, repeatedSolid);
+    builder.Add(aliasedCompound, repeatedSolid);
+    const weft::ImportedModel aliased =
+        importTempBRep(aliasedCompound, "weft_wp011_aliased_boxes");
+    CHECK(aliased.source != nullptr);
+    if (!aliased.source) return;
+    CHECK(weft::validateTopologyAccount(aliased.source->snapshot.topology)
+              .complete());
+    CHECK(occurrenceCount(aliased.source->snapshot.topology,
+                          weft::StableIdKind::Solid) == 2);
+    CHECK(occurrenceCount(aliased.source->snapshot.topology,
+                          weft::StableIdKind::Face) == 12);
+    CHECK(aliased.source->snapshot.model.faces.Extent() == 6);
+    const weft::TopologyAccountValidation aliasedView =
+        weft::validateMeshingCompatibilityView(aliased.source->snapshot);
+    CHECK(!aliasedView.complete());
+    CHECK(hasFailure(aliasedView,
+                     "topology.meshing_view.face_alias_collapse"));
+    CHECK(!aliased.repair.meshable);
+    CHECK(hasDiagnostic(aliased,
+                        "topology.meshing_view.face_alias_collapse"));
+
+    weft::BRepSnapshot missingUse = boxSnapshot;
+    CHECK(!missingUse.coedges.empty());
+    if (!missingUse.coedges.empty()) {
+        missingUse.coedges.pop_back();
+        const weft::TopologyAccountValidation missingView =
+            weft::validateMeshingCompatibilityView(missingUse);
+        CHECK(!missingView.complete());
+        CHECK(hasFailure(missingView,
+                         "topology.meshing_view.coedge_count_mismatch"));
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -1879,6 +1996,7 @@ int main() {
         testCompatibilityHealNamedRefusalWhenIncomplete();
         testM1CertificateOrNamedRefusalGate();
         testFaceAdjacencyOrientationRepair();
+        testRepeatedWireOccurrences();
         testTotalReconnaissance(path);
         testUnknownExactFamilyInjection();
         testOracleTrimTaxonomySlice();

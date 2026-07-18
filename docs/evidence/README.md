@@ -53,6 +53,8 @@ prove completed work; they are not plans or handoff diaries.
 - `m2-total-reconnaissance-2026-07-17.md` - M2 gate close: schema trim taxonomy, merged coplanar regions, multidomain deferral, adversarial unknown-family probes, and oracle slices.
 - `m3-interval-solver-2026-07-17.md` - exact equality/minimum/parity count assignment evidence.
 - `m3-canonical-boundaries-2026-07-17.md` - atomic shared-edge samples, UV uses, and azimuth registration evidence.
+- `m3-periodic-closure-2026-07-18.md` - closed coedge periodic UV lift/closure witnesses and ambiguous-lift refusals.
+- `m3-repeated-wire-occurrences-2026-07-18.md` - topology-backed meshing wire/coedge identity and ShapeMap face alias-collapse refusal.
 - `m3-canonical-endpoint-identity-2026-07-17.md` - exact topological vertex normalization and bounded curve/vertex evidence.
 - `m3-exact-predicates-2026-07-17.md` - exact dyadic orientation, incircle, and segment-relation evidence.
 - `m3-planar-trim-validation-2026-07-17.md` - exact pre-CDT loop, intersection, containment, orientation, and coverage evidence.

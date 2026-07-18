@@ -178,7 +178,7 @@ only with indexed evidence.
 
 ### WP-010 — Prove periodic closure and UV lifting
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M3
 - Prerequisites: WP-001
 - Goal: prove full-period closure and reject inconsistent seam lifts.
@@ -200,7 +200,7 @@ only with indexed evidence.
 
 ### WP-011 — Account repeated wire occurrences
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M3
 - Prerequisites: WP-010
 - Goal: preserve distinct coedge uses when a wire or edge occurs repeatedly.

@@ -88,7 +88,8 @@ The target passes MSVC warnings-as-errors and `/analyze` builds and tests.
 ## Consequences
 
 The planar reference floor now consumes actual secure B-rep topology rather
-than hand-authored polygon tests. General periodic/singular faces, repeated wire
-occurrences, hole-capable CDT recovery, and corpus-wide face assembly remain
-open. Exact endpoint disagreement is intentionally a repair/import issue, not an
-assembly convenience.
+than hand-authored polygon tests. Outer wires resolve through topology face
+occurrences so repeated wire uses stay distinct; ShapeMap face alias collapse
+refuses by name. General periodic/singular faces, hole-capable CDT recovery, and
+corpus-wide face assembly remain open. Exact endpoint disagreement is
+intentionally a repair/import issue, not an assembly convenience.

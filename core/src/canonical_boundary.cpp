@@ -75,7 +75,30 @@ bool validConfiguration(const CanonicalBoundaryConfiguration& configuration) {
         configuration.maximumDiscrepancyTolerance >=
             configuration.minimumDiscrepancyTolerance &&
         std::isfinite(configuration.sourceToleranceScale) &&
-        configuration.sourceToleranceScale >= 1.0;
+        configuration.sourceToleranceScale >= 1.0 &&
+        std::isfinite(configuration.periodicLiftAmbiguityTolerance) &&
+        configuration.periodicLiftAmbiguityTolerance >= 0.0 &&
+        configuration.periodicLiftAmbiguityTolerance < 0.5;
+}
+
+bool ambiguousIntegerPeriod(double requestedPeriods,
+                            double ambiguityTolerance) {
+    if (!std::isfinite(requestedPeriods)) return true;
+    const double nearest = std::round(requestedPeriods);
+    return std::abs(requestedPeriods - nearest) >=
+        0.5 - ambiguityTolerance;
+}
+
+const CoedgeUvUse* findUse(const CanonicalBoundarySample& sample,
+                           StableId coedge,
+                           const std::optional<PcurveRef>& representation,
+                           BoundaryUvMappingKind kind) {
+    for (const CoedgeUvUse& use : sample.faceUses) {
+        if (use.coedge != coedge || use.mappingKind != kind) continue;
+        if (use.representation != representation) continue;
+        return &use;
+    }
+    return nullptr;
 }
 
 struct Vector3 {
@@ -440,9 +463,10 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                 for (std::size_t axis = 0; axis < use.uv.size(); ++axis) {
                     std::int64_t lift = 0;
                     if (mapping.periods[axis] && mapping.hasPrevious) {
+                        const double period = *mapping.periods[axis];
                         const double requested =
                             (mapping.previousLifted[axis] - use.uv[axis]) /
-                            *mapping.periods[axis];
+                            period;
                         if (!std::isfinite(requested) ||
                             std::abs(requested) >
                                 static_cast<double>(
@@ -453,12 +477,32 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                                 "periodic UV lift cannot be represented",
                                 {edgeId, mapping.coedge->faceId});
                         }
+                        if (ambiguousIntegerPeriod(
+                                requested,
+                                configuration.periodicLiftAmbiguityTolerance)) {
+                            return buildFailure(
+                                report, "boundary.periodic_lift_ambiguous",
+                                "periodic UV lift is not uniquely determined",
+                                {edgeId, mapping.coedge->id,
+                                 mapping.coedge->faceId});
+                        }
                         lift = static_cast<std::int64_t>(std::llround(requested));
                     }
                     use.periodicLift[axis] = lift;
                     use.liftedUv[axis] = use.uv[axis] +
                         static_cast<double>(lift) *
                             mapping.periods[axis].value_or(0.0);
+                    if (mapping.periods[axis] && mapping.hasPrevious) {
+                        const double step = std::abs(
+                            use.liftedUv[axis] - mapping.previousLifted[axis]);
+                        if (!(step < 0.5 * *mapping.periods[axis])) {
+                            return buildFailure(
+                                report, "boundary.periodic_lift_discontinuous",
+                                "periodic UV lift jumps by half a period or more",
+                                {edgeId, mapping.coedge->id,
+                                 mapping.coedge->faceId});
+                        }
+                    }
                     mapping.previousLifted[axis] = use.liftedUv[axis];
                 }
                 mapping.hasPrevious = true;
@@ -467,6 +511,61 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
             }
             boundary.samples.push_back(std::move(sample));
             ++report.checkedSamples;
+        }
+        if (closed) {
+            for (const MappingState& mapping : mappings) {
+                for (std::size_t axis = 0; axis < mapping.periods.size();
+                     ++axis) {
+                    if (!mapping.periods[axis]) continue;
+                    ++report.expectedPeriodicClosures;
+                    const CoedgeUvUse* firstUse = findUse(
+                        boundary.samples.front(), mapping.coedge->id,
+                        mapping.representation, mapping.kind);
+                    const CoedgeUvUse* lastUse = findUse(
+                        boundary.samples.back(), mapping.coedge->id,
+                        mapping.representation, mapping.kind);
+                    if (!firstUse || !lastUse) {
+                        return buildFailure(
+                            report, "boundary.periodic_closure_use_missing",
+                            "closed periodic coedge is missing endpoint UV uses",
+                            {edgeId, mapping.coedge->id,
+                             mapping.coedge->faceId});
+                    }
+                    PeriodicUvClosureWitness seed;
+                    seed.edge = edgeId;
+                    seed.coedge = mapping.coedge->id;
+                    seed.face = mapping.coedge->faceId;
+                    seed.sourceEdge = sourceEdge;
+                    seed.sourceFace = firstUse->sourceFace;
+                    seed.traversalOrientation = mapping.coedge->orientation;
+                    seed.axis = axis;
+                    seed.period = *mapping.periods[axis];
+                    seed.firstUv = firstUse->uv[axis];
+                    seed.lastUv = lastUse->uv[axis];
+                    seed.firstLiftedUv = firstUse->liftedUv[axis];
+                    seed.lastLiftedUv = lastUse->liftedUv[axis];
+                    seed.selectedFirstLift = firstUse->periodicLift[axis];
+                    seed.selectedLastLift = lastUse->periodicLift[axis];
+                    const PeriodicUvClosureResult closure =
+                        provePeriodicUvClosure(
+                            std::move(seed),
+                            configuration.periodicLiftAmbiguityTolerance);
+                    if (!closure) {
+                        return buildFailure(
+                            report,
+                            closure.failure
+                                ? closure.failure->code
+                                : "boundary.periodic_closure_failed",
+                            closure.failure
+                                ? closure.failure->message
+                                : "periodic UV closure could not be proved",
+                            closure.failure ? closure.failure->subjects
+                                            : std::vector<StableId>{edgeId});
+                    }
+                    boundary.periodicClosures.push_back(*closure.value);
+                    ++report.checkedPeriodicClosures;
+                }
+            }
         }
         set.boundaries.push_back(std::move(boundary));
         ++report.checkedEdges;
@@ -561,6 +660,100 @@ AzimuthRegistrationResult azimuthRegistration(
     }
     AzimuthRegistrationResult result;
     result.permutation = std::move(permutation);
+    return result;
+}
+
+PeriodicUvClosureResult provePeriodicUvClosure(
+    PeriodicUvClosureWitness seed, double ambiguityTolerance) {
+    PeriodicUvClosureResult result;
+    const auto fail = [&](std::string code, std::string message) {
+        result.failure = CanonicalBoundaryFailure{
+            std::move(code), std::move(message),
+            {seed.edge, seed.coedge, seed.face}};
+        return result;
+    };
+    if (!(ambiguityTolerance >= 0.0) || !(ambiguityTolerance < 0.5) ||
+        !std::isfinite(ambiguityTolerance)) {
+        return fail("boundary.periodic_closure_invalid_tolerance",
+                    "periodic closure ambiguity tolerance is invalid");
+    }
+    if (!std::isfinite(seed.period) || !(seed.period > 0.0) ||
+        !std::isfinite(seed.firstUv) || !std::isfinite(seed.lastUv) ||
+        !std::isfinite(seed.firstLiftedUv) ||
+        !std::isfinite(seed.lastLiftedUv)) {
+        return fail("boundary.periodic_closure_invalid_domain",
+                    "periodic closure inputs are not finite positive-period UV values");
+    }
+
+    const double firstLiftAmount =
+        (seed.firstLiftedUv - seed.firstUv) / seed.period;
+    if (!std::isfinite(firstLiftAmount) ||
+        ambiguousIntegerPeriod(firstLiftAmount, ambiguityTolerance) ||
+        std::abs(firstLiftAmount - std::round(firstLiftAmount)) >
+            ambiguityTolerance) {
+        return fail("boundary.periodic_lift_inconsistent",
+                    "first sample lifted UV is not an integer period from raw UV");
+    }
+    const auto firstLift =
+        static_cast<std::int64_t>(std::llround(firstLiftAmount));
+    if (seed.selectedFirstLift != firstLift) {
+        return fail("boundary.periodic_lift_inconsistent",
+                    "recorded first periodic lift does not match lifted UV");
+    }
+
+    const double lastLiftAmount =
+        (seed.lastLiftedUv - seed.lastUv) / seed.period;
+    if (!std::isfinite(lastLiftAmount) ||
+        std::abs(lastLiftAmount - std::round(lastLiftAmount)) >
+            ambiguityTolerance) {
+        return fail("boundary.periodic_lift_inconsistent",
+                    "last sample lifted UV is not an integer period from raw UV");
+    }
+    const auto lastLift =
+        static_cast<std::int64_t>(std::llround(lastLiftAmount));
+    if (seed.selectedLastLift != lastLift) {
+        return fail("boundary.periodic_lift_inconsistent",
+                    "recorded last periodic lift does not match lifted UV");
+    }
+
+    const double requestedClosingPeriods =
+        (seed.lastLiftedUv - seed.firstUv) / seed.period;
+    if (!std::isfinite(requestedClosingPeriods) ||
+        std::abs(requestedClosingPeriods) >
+            static_cast<double>(std::numeric_limits<std::int64_t>::max() / 2)) {
+        return fail("boundary.periodic_closure_overflow",
+                    "periodic UV closure lift cannot be represented");
+    }
+    if (ambiguousIntegerPeriod(requestedClosingPeriods, ambiguityTolerance)) {
+        return fail("boundary.periodic_closure_ambiguous",
+                    "periodic UV closure lift is not uniquely determined");
+    }
+    const auto closingPeriods =
+        static_cast<std::int64_t>(std::llround(requestedClosingPeriods));
+    const double closingLifted =
+        seed.firstUv + static_cast<double>(closingPeriods) * seed.period;
+    const double closingDelta = closingLifted - seed.lastLiftedUv;
+    if (!std::isfinite(closingDelta) ||
+        !(std::abs(closingDelta) < 0.5 * seed.period)) {
+        return fail("boundary.periodic_closure_discontinuous",
+                    "closed periodic UV does not return through a continuous covering-space step");
+    }
+
+    // Reject a tampered wrong integer wrap that stays continuous only because
+    // an extra full period was added to the last sample: the closing image of
+    // the first UV must equal the first lifted UV plus the loop winding.
+    const std::int64_t periodsCrossed = closingPeriods - firstLift;
+    const double reconstitutedFirst =
+        seed.firstLiftedUv + static_cast<double>(periodsCrossed) * seed.period;
+    if (std::abs(reconstitutedFirst - closingLifted) >
+        ambiguityTolerance * seed.period) {
+        return fail("boundary.periodic_closure_inconsistent",
+                    "periodic closure winding does not match endpoint lifts");
+    }
+
+    seed.closingLiftedUv = closingLifted;
+    seed.periodsCrossed = periodsCrossed;
+    result.value = std::move(seed);
     return result;
 }
 

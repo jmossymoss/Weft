@@ -144,64 +144,41 @@ BRepSnapshot buildSnapshot(Model model) {
         snapshot.edgeTopology.push_back(std::move(record));
     }
 
-    std::uint64_t coedgeOrdinal = 0;
-    for (int faceIndex = 1; faceIndex <= snapshot.model.faces.Extent(); ++faceIndex) {
-        const TopoDS_Face face = TopoDS::Face(snapshot.model.faces(faceIndex));
-        for (TopExp_Explorer wireExplorer(face, TopAbs_WIRE);
-             wireExplorer.More(); wireExplorer.Next()) {
-            const TopoDS_Wire wire = TopoDS::Wire(wireExplorer.Current());
-            const int wireIndex = snapshot.wires.FindIndex(wire);
-            std::uint32_t ordinalInWire = 0;
-            for (BRepTools_WireExplorer edgeExplorer(wire, face);
-                 edgeExplorer.More(); edgeExplorer.Next(), ++ordinalInWire) {
-                const TopoDS_Edge edge = edgeExplorer.Current();
-                const int edgeIndex = snapshot.model.edges.FindIndex(edge);
-                CoedgeRecord coedge;
-                coedge.id = {StableIdKind::Coedge, ++coedgeOrdinal};
-                coedge.edgeId = stableId(StableIdKind::Edge, edgeIndex);
-                coedge.wireId = stableId(StableIdKind::Wire, wireIndex);
-                coedge.faceId = stableId(StableIdKind::Face, faceIndex);
-                coedge.ordinalInWire = ordinalInWire;
-                coedge.orientation = orientationOf(edge.Orientation());
-                const bool seam = BRep_Tool::IsClosed(edge, face);
-                const auto appendStoredPcurve =
-                    [&](TopoDS_Edge orientedEdge,
-                        std::uint32_t representationIndex) {
-                        double first = 0.0;
-                        double last = 0.0;
-                        bool stored = false;
-                        Handle(Geom2d_Curve) pcurve = BRep_Tool::CurveOnSurface(
-                            orientedEdge, face, first, last, &stored);
-                        if (!pcurve.IsNull() && stored) {
-                            coedge.pcurveRepresentations.push_back(
-                                {coedge.id, coedge.faceId,
-                                 representationIndex});
-                            return true;
-                        }
-                        return false;
-                    };
-                const bool firstStored = appendStoredPcurve(edge, 0);
-                bool secondStored = true;
-                if (seam) {
-                    TopoDS_Edge reversed = edge;
-                    reversed.Reverse();
-                    secondStored = appendStoredPcurve(reversed, 1);
-                }
-                if (!firstStored || !secondStored) {
-                    coedge.conditionCodes.push_back(
-                        seam ? "pcurve.incomplete_seam" : "pcurve.missing");
-                }
-                if (!BRep_Tool::SameParameter(edge)) {
-                    coedge.conditionCodes.push_back("pcurve.not_same_parameter");
-                }
-                if (!BRep_Tool::SameRange(edge)) {
-                    coedge.conditionCodes.push_back("pcurve.not_same_range");
-                }
-                snapshot.coedges.push_back(std::move(coedge));
-            }
-        }
-    }
     snapshot.topology = secure_detail::buildTopologyAccount(snapshot.model);
+
+    // Meshing coedges are projected from the authoritative occurrence account so
+    // repeated IsSame wire uses keep distinct wire identities. Face and edge
+    // IDs remain ShapeMap indices for the geometry evaluator.
+    std::uint64_t coedgeOrdinal = 0;
+    for (const TopologyCoedgeRecord& topologyCoedge : snapshot.topology.coedges) {
+        if (!topologyCoedge.faceId) continue;
+        const auto faceShape =
+            snapshot.topology.exactShapes.find(*topologyCoedge.faceId);
+        const auto edgeShape =
+            snapshot.topology.exactShapes.find(topologyCoedge.edgeId);
+        if (faceShape == snapshot.topology.exactShapes.end() ||
+            edgeShape == snapshot.topology.exactShapes.end()) {
+            continue;
+        }
+        const int faceIndex = snapshot.model.faces.FindIndex(faceShape->second);
+        const int edgeIndex = snapshot.model.edges.FindIndex(edgeShape->second);
+        if (faceIndex <= 0 || edgeIndex <= 0) continue;
+
+        CoedgeRecord coedge;
+        coedge.id = {StableIdKind::Coedge, ++coedgeOrdinal};
+        coedge.edgeId = stableId(StableIdKind::Edge, edgeIndex);
+        coedge.wireId = topologyCoedge.wireId;
+        coedge.faceId = stableId(StableIdKind::Face, faceIndex);
+        coedge.ordinalInWire = topologyCoedge.ordinalInWire;
+        coedge.orientation = topologyCoedge.orientation;
+        coedge.conditionCodes = topologyCoedge.conditionCodes;
+        for (const PcurveRef& representation :
+             topologyCoedge.pcurveRepresentations) {
+            coedge.pcurveRepresentations.push_back(
+                {coedge.id, coedge.faceId, representation.representationIndex});
+        }
+        snapshot.coedges.push_back(std::move(coedge));
+    }
     return snapshot;
 }
 
@@ -716,9 +693,15 @@ const TopoDS_Shape* shapeForId(const BRepSnapshot& snapshot, StableId id) {
         ordinal <= snapshot.model.faces.Extent()) {
         return &snapshot.model.faces(ordinal);
     }
-    if (id.kind == StableIdKind::Wire &&
-        ordinal <= snapshot.wires.Extent()) {
-        return &snapshot.wires(ordinal);
+    if (id.kind == StableIdKind::Wire) {
+        const auto exact = snapshot.topology.exactShapes.find(id);
+        if (exact != snapshot.topology.exactShapes.end()) {
+            return &exact->second;
+        }
+        if (ordinal <= snapshot.wires.Extent()) {
+            return &snapshot.wires(ordinal);
+        }
+        return nullptr;
     }
     if (id.kind == StableIdKind::Edge &&
         ordinal <= snapshot.model.edges.Extent()) {
@@ -1285,6 +1268,10 @@ ImportedModel buildImportedModel(
         validateTopologyAccount(sourceSnapshot.topology);
     const TopologyAccountValidation workingTopologyValidation =
         validateTopologyAccount(workingSnapshot.topology);
+    const TopologyAccountValidation sourceMeshingViewValidation =
+        validateMeshingCompatibilityView(sourceSnapshot);
+    const TopologyAccountValidation workingMeshingViewValidation =
+        validateMeshingCompatibilityView(workingSnapshot);
     buildTopologyCorrespondence(
         imported.correspondence, sourceSnapshot.topology,
         workingSnapshot.topology, history, exactShapeDerivation,
@@ -1332,7 +1319,21 @@ ImportedModel buildImportedModel(
                     });
     imported.repair.meshable = workingValid && imported.correspondence.complete &&
         sourceTopologyValidation.complete() &&
-        workingTopologyValidation.complete();
+        workingTopologyValidation.complete() &&
+        sourceMeshingViewValidation.complete() &&
+        workingMeshingViewValidation.complete();
+    const bool meshingViewComplete = sourceMeshingViewValidation.complete() &&
+        workingMeshingViewValidation.complete();
+    const std::string meshingViewRefusalCode = [&]() -> std::string {
+        const TopologyAccountValidation& failedView =
+            !workingMeshingViewValidation.complete()
+            ? workingMeshingViewValidation
+            : sourceMeshingViewValidation;
+        if (failedView.failureCodes.empty()) {
+            return "import.topology.meshing_view_incomplete";
+        }
+        return failedView.failureCodes.front();
+    }();
     imported.repair.operations = std::move(operations);
     imported.repair.parameterizationFlagChanges =
         std::move(parameterizationFlagChanges);
@@ -1833,6 +1834,11 @@ ImportedModel buildImportedModel(
         diagnostic("import.repair.validation_incomplete",
                    DiagnosticSeverity::Error,
                    "the repair certificate has incomplete validation evidence");
+    }
+    if (!meshingViewComplete) {
+        diagnostic(meshingViewRefusalCode, DiagnosticSeverity::Error,
+                   "meshing compatibility view collapses or omits distinct "
+                   "topology face/wire/coedge uses");
     }
     if (profile == RepairProfile::Conservative) {
         for (int edgeIndex = 1;

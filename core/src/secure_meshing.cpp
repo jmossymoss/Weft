@@ -276,6 +276,11 @@ SecureMeshingResult generateSecureMesh(
         boundaries.validation.expectedVertexCurveChecks,
         boundaries.validation.checkedVertexCurveChecks, 0,
         boundaries.validation.failed);
+    appendCoverage(
+        result.validation, "secure_pipeline.periodic_uv_closure",
+        boundaries.validation.expectedPeriodicClosures,
+        boundaries.validation.checkedPeriodicClosures, 0,
+        boundaries.validation.failed);
     if (!boundaries) {
         setFailure(result,
                    boundaries.failure

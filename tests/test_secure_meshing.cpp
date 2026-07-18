@@ -159,6 +159,12 @@ void testFullCylinderDeterminism() {
             return coverage.code.rfind("cylinder.chord_bound.face_", 0) == 0 &&
                 coverage.complete();
         }));
+    CHECK(std::any_of(
+        first.validation.checks.begin(), first.validation.checks.end(),
+        [](const weft::ValidationCoverage& coverage) {
+            return coverage.code == "secure_pipeline.periodic_uv_closure" &&
+                coverage.expected != 0 && coverage.complete();
+        }));
 }
 
 void testConnectedThroughHole() {

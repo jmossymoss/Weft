@@ -2,8 +2,6 @@
 
 #include <BRepTools.hxx>
 #include <Standard_Failure.hxx>
-#include <TopAbs_ShapeEnum.hxx>
-#include <TopExp.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Wire.hxx>
@@ -244,12 +242,50 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
         const TopoDS_Face face = TopoDS::Face(
             snapshot.model.faces(static_cast<int>(workingFace.ordinal)));
         const TopoDS_Wire outer = BRepTools::OuterWire(face);
-        ShapeMap wires;
-        TopExp::MapShapes(snapshot.model.shape, TopAbs_WIRE, wires);
-        const int outerIndex = outer.IsNull() ? 0 : wires.FindIndex(outer);
-        if (outerIndex > 0) {
-            outerWireId = {StableIdKind::Wire,
-                           static_cast<std::uint64_t>(outerIndex)};
+        std::vector<StableId> faceOccurrences;
+        for (const TopologyOccurrence& occurrence :
+             snapshot.topology.occurrences) {
+            if (occurrence.id.kind != StableIdKind::Face) continue;
+            const auto shape =
+                snapshot.topology.exactShapes.find(occurrence.id);
+            if (shape == snapshot.topology.exactShapes.end()) continue;
+            if (snapshot.model.faces.FindIndex(shape->second) ==
+                static_cast<int>(workingFace.ordinal)) {
+                faceOccurrences.push_back(occurrence.id);
+            }
+        }
+        if (faceOccurrences.size() != 1) {
+            ++faceEvidence.failed;
+            setFailure(
+                result,
+                faceOccurrences.size() > 1
+                    ? "trim_assembly.face_alias_collapse"
+                    : "trim_assembly.face_occurrence_missing",
+                faceOccurrences.size() > 1
+                    ? "multiple topology face occurrences collapse onto one "
+                      "meshing face id"
+                    : "the meshing face has no topology face occurrence",
+                {workingFace});
+            return result;
+        }
+        const auto faceOccurrence = std::find_if(
+            snapshot.topology.occurrences.begin(),
+            snapshot.topology.occurrences.end(),
+            [&](const TopologyOccurrence& occurrence) {
+                return occurrence.id == faceOccurrences.front();
+            });
+        if (faceOccurrence != snapshot.topology.occurrences.end() &&
+            !outer.IsNull()) {
+            for (StableId child : faceOccurrence->childIds) {
+                if (child.kind != StableIdKind::Wire) continue;
+                const auto wireShape =
+                    snapshot.topology.exactShapes.find(child);
+                if (wireShape != snapshot.topology.exactShapes.end() &&
+                    wireShape->second.IsSame(outer)) {
+                    outerWireId = child;
+                    break;
+                }
+            }
         }
     } catch (const Standard_Failure&) {
         outerWireId = {};
@@ -257,7 +293,8 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
     if (!outerWireId.valid() || !wireCoedges.contains(outerWireId)) {
         ++faceEvidence.failed;
         setFailure(result, "trim_assembly.outer_wire_unresolved",
-                   "OCCT topology did not resolve one outer wire for the face",
+                   "topology did not resolve one outer wire occurrence for the "
+                   "face",
                    {workingFace});
         return result;
     }

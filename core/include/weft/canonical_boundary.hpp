@@ -53,18 +53,39 @@ struct CanonicalBoundarySample {
     std::vector<CoedgeUvUse> faceUses;
 };
 
+struct PeriodicUvClosureWitness {
+    StableId edge;
+    StableId coedge;
+    StableId face;
+    std::optional<StableId> sourceEdge;
+    std::optional<StableId> sourceFace;
+    TopologyOrientation traversalOrientation = TopologyOrientation::Forward;
+    std::size_t axis = 0;
+    double period = 0.0;
+    double firstUv = 0.0;
+    double lastUv = 0.0;
+    double firstLiftedUv = 0.0;
+    double lastLiftedUv = 0.0;
+    double closingLiftedUv = 0.0;
+    std::int64_t selectedFirstLift = 0;
+    std::int64_t selectedLastLift = 0;
+    std::int64_t periodsCrossed = 0;
+};
+
 struct CanonicalBoundary {
     StableId edge;
     StableId boundaryId;
     bool closed = false;
     std::uint32_t intervalCount = 0;
     std::vector<CanonicalBoundarySample> samples;
+    std::vector<PeriodicUvClosureWitness> periodicClosures;
 };
 
 struct CanonicalBoundaryConfiguration {
     double minimumDiscrepancyTolerance = 1e-9;
     double maximumDiscrepancyTolerance = 1e-3;
     double sourceToleranceScale = 2.0;
+    double periodicLiftAmbiguityTolerance = 1e-6;
 };
 
 struct CanonicalBoundaryReport {
@@ -76,6 +97,8 @@ struct CanonicalBoundaryReport {
     std::size_t checkedUvUses = 0;
     std::size_t expectedVertexCurveChecks = 0;
     std::size_t checkedVertexCurveChecks = 0;
+    std::size_t expectedPeriodicClosures = 0;
+    std::size_t checkedPeriodicClosures = 0;
     std::size_t failed = 0;
 
     bool complete() const noexcept {
@@ -83,6 +106,7 @@ struct CanonicalBoundaryReport {
             checkedSamples == expectedSamples &&
             checkedUvUses == expectedUvUses &&
             checkedVertexCurveChecks == expectedVertexCurveChecks &&
+            checkedPeriodicClosures == expectedPeriodicClosures &&
             failed == 0;
     }
 };
@@ -129,5 +153,19 @@ struct AzimuthRegistrationResult {
 AzimuthRegistrationResult azimuthRegistration(
     const std::vector<std::array<double, 3>>& ringA,
     const std::vector<std::array<double, 3>>& ringB);
+
+struct PeriodicUvClosureResult {
+    std::optional<PeriodicUvClosureWitness> value;
+    std::optional<CanonicalBoundaryFailure> failure;
+
+    explicit operator bool() const noexcept { return value.has_value(); }
+};
+
+// Proves that a closed coedge UV sequence returns to the first sample through
+// an unambiguous integer-period covering-space step. Used by canonical
+// boundary construction and by adversarial tamper checks.
+PeriodicUvClosureResult provePeriodicUvClosure(
+    PeriodicUvClosureWitness seed,
+    double ambiguityTolerance = 1e-6);
 
 }  // namespace weft

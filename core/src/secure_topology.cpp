@@ -994,6 +994,139 @@ TopologyAccountValidation validateTopologyAccount(
     return validation;
 }
 
+TopologyAccountValidation validateMeshingCompatibilityView(
+    const BRepSnapshot& snapshot) {
+    TopologyAccountValidation validation;
+    validation.checks = {
+        {"topology.meshing_view.faces", 0},
+        {"topology.meshing_view.wires", 0},
+        {"topology.meshing_view.coedges", 0},
+    };
+    TopologyAccountCheck& faceCheck = validation.checks[0];
+    TopologyAccountCheck& wireCheck = validation.checks[1];
+    TopologyAccountCheck& coedgeCheck = validation.checks[2];
+
+    const TopologyAccount& account = snapshot.topology;
+    if (!account.constructionFailureCodes.empty() ||
+        account.occurrences.empty()) {
+        appendFailure(validation, faceCheck,
+                      "topology.meshing_view.account_incomplete");
+        std::sort(validation.failureCodes.begin(),
+                  validation.failureCodes.end());
+        return validation;
+    }
+
+    std::map<StableId, const TopologyOccurrence*> occurrences;
+    for (const TopologyOccurrence& occurrence : account.occurrences) {
+        occurrences.emplace(occurrence.id, &occurrence);
+    }
+
+    std::map<int, std::vector<StableId>> facesByShapeMap;
+    for (const TopologyOccurrence& occurrence : account.occurrences) {
+        if (occurrence.id.kind != StableIdKind::Face) continue;
+        ++faceCheck.expected;
+        ++faceCheck.checked;
+        const auto shape = account.exactShapes.find(occurrence.id);
+        if (shape == account.exactShapes.end()) {
+            appendFailure(validation, faceCheck,
+                          "topology.meshing_view.face_shape_missing");
+            continue;
+        }
+        const int index = snapshot.model.faces.FindIndex(shape->second);
+        if (index <= 0) {
+            appendFailure(validation, faceCheck,
+                          "topology.meshing_view.face_unmapped");
+            continue;
+        }
+        facesByShapeMap[index].push_back(occurrence.id);
+    }
+    for (int index = 1; index <= snapshot.model.faces.Extent(); ++index) {
+        ++faceCheck.expected;
+        ++faceCheck.checked;
+        const auto found = facesByShapeMap.find(index);
+        if (found == facesByShapeMap.end() || found->second.empty()) {
+            appendFailure(validation, faceCheck,
+                          "topology.meshing_view.face_coverage_gap");
+            continue;
+        }
+        if (found->second.size() != 1) {
+            appendFailure(validation, faceCheck,
+                          "topology.meshing_view.face_alias_collapse");
+        }
+    }
+
+    std::set<StableId> faceOwnedWires;
+    std::size_t faceOwnedTopologyCoedges = 0;
+    for (const TopologyCoedgeRecord& coedge : account.coedges) {
+        if (!coedge.faceId) continue;
+        ++faceOwnedTopologyCoedges;
+        faceOwnedWires.insert(coedge.wireId);
+    }
+
+    for (StableId wireId : faceOwnedWires) {
+        ++wireCheck.expected;
+        ++wireCheck.checked;
+        const auto occurrence = occurrences.find(wireId);
+        const auto shape = account.exactShapes.find(wireId);
+        if (occurrence == occurrences.end() ||
+            occurrence->second->id.kind != StableIdKind::Wire ||
+            shape == account.exactShapes.end()) {
+            appendFailure(validation, wireCheck,
+                          "topology.meshing_view.wire_invalid");
+            continue;
+        }
+        const bool used = std::any_of(
+            snapshot.coedges.begin(), snapshot.coedges.end(),
+            [wireId](const CoedgeRecord& coedge) {
+                return coedge.wireId == wireId;
+            });
+        if (!used) {
+            appendFailure(validation, wireCheck,
+                          "topology.meshing_view.wire_use_missing");
+        }
+    }
+
+    coedgeCheck.expected = faceOwnedTopologyCoedges;
+    if (snapshot.coedges.size() != faceOwnedTopologyCoedges) {
+        appendFailure(validation, coedgeCheck,
+                      "topology.meshing_view.coedge_count_mismatch");
+    }
+
+    std::set<StableId> meshingCoedgeIds;
+    std::set<StableId> meshingWireIds;
+    for (const CoedgeRecord& coedge : snapshot.coedges) {
+        ++coedgeCheck.checked;
+        const bool uniqueId = meshingCoedgeIds.insert(coedge.id).second;
+        meshingWireIds.insert(coedge.wireId);
+        bool valid = uniqueId && coedge.id.kind == StableIdKind::Coedge &&
+            coedge.edgeId.kind == StableIdKind::Edge &&
+            coedge.wireId.kind == StableIdKind::Wire &&
+            coedge.faceId.kind == StableIdKind::Face &&
+            coedge.faceId.ordinal > 0 &&
+            static_cast<int>(coedge.faceId.ordinal) <=
+                snapshot.model.faces.Extent() &&
+            coedge.edgeId.ordinal > 0 &&
+            static_cast<int>(coedge.edgeId.ordinal) <=
+                snapshot.model.edges.Extent();
+        const auto wireOccurrence = occurrences.find(coedge.wireId);
+        valid = valid && wireOccurrence != occurrences.end() &&
+            wireOccurrence->second->id.kind == StableIdKind::Wire &&
+            faceOwnedWires.contains(coedge.wireId);
+        if (!valid) {
+            appendFailure(validation, coedgeCheck,
+                          "topology.meshing_view.coedge_record_invalid");
+        }
+    }
+    if (meshingWireIds != faceOwnedWires) {
+        appendFailure(validation, coedgeCheck,
+                      "topology.meshing_view.coedge_wire_gap");
+    }
+
+    std::sort(validation.failureCodes.begin(),
+              validation.failureCodes.end());
+    return validation;
+}
+
 namespace secure_detail {
 
 TopologyAccount buildTopologyAccount(const Model& model) {
