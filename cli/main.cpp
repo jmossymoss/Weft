@@ -1251,6 +1251,7 @@ int cmdInventory(const std::vector<std::string>& args) {
             const bool supportedCurve =
                 record.familyCode == "line" ||
                 record.familyCode == "circle" ||
+                record.familyCode == "ellipse" ||
                 record.familyCode == "bspline" ||
                 record.familyCode == "bezier" ||
                 std::find(record.conditionCodes.begin(),
