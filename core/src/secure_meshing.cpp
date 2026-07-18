@@ -623,6 +623,21 @@ SecureMeshingResult generateSecureMesh(
                 static_cast<int>(interval.count));
         }
     }
+    generation.namedLodEffects["cylinderAxialIntervals"] =
+        std::to_string(configuration.cylinderAxialIntervals) +
+        " axial intervals on cylinder walls";
+    generation.namedLodEffects["chordTolerance"] =
+        std::to_string(configuration.sampling.chordTolerance) +
+        " model-unit chord budget";
+    generation.namedLodEffects["normalAngleToleranceRadians"] =
+        std::to_string(configuration.sampling.normalAngleToleranceRadians) +
+        " facet normal turn budget";
+    generation.namedLodEffects["minimumClosedCurveSegments"] =
+        std::to_string(configuration.sampling.minimumClosedCurveSegments) +
+        " minimum closed-curve segments";
+    generation.namedLodEffects["exactEdgeOverrides"] =
+        std::to_string(configuration.exactEdgeIntervalCounts.size()) +
+        " exact per-edge interval constraints";
     MeshingResult meshed = makeCertifiedFloorMeshingResult(
         *assembled.value, result.validation, std::move(generation),
         "structured modeling topology is not yet proven for every face");
@@ -652,6 +667,8 @@ SecureMeshingResult generateSecureMesh(
                        : "modelling provenance validation failed");
         return result;
     }
+    meshed.generation.namedLodEffects["selectedOutput"] =
+        modeling.selectedOutput;
     result.value = std::move(meshed);
     return result;
 }

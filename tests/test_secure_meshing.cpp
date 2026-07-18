@@ -575,6 +575,19 @@ void testTemplateChainSumConsumer() {
     }
 }
 
+void testNamedLodReporting() {
+    const weft::SecureMeshingResult result = generateFixture("cylinder");
+    checkSuccessfulResult(result);
+    CHECK(result.value);
+    if (!result.value) return;
+    const auto& effects = result.value->generation.namedLodEffects;
+    CHECK(effects.contains("cylinderAxialIntervals"));
+    CHECK(effects.contains("chordTolerance"));
+    CHECK(effects.contains("selectedOutput"));
+    CHECK(effects.at("selectedOutput").find("modeling.") == 0 ||
+          effects.at("selectedOutput") == "certified");
+}
+
 void testSecureCacheInvalidation() {
     const weft::SecureMeshingResult ok = generateFixture("box");
     checkSuccessfulResult(ok);
@@ -712,6 +725,7 @@ int main() {
         testTemplateChainSumConsumer();
         testCertifiedAdmissionGate();
         testSecureCacheInvalidation();
+        testNamedLodReporting();
         testPartialCylinder();
     } catch (const std::exception& error) {
         std::printf("FAIL secure-meshing exception: %s\n", error.what());

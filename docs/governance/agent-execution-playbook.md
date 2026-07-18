@@ -499,7 +499,7 @@ only with indexed evidence.
 
 ### WP-043 — Complete editing, overlays, and LOD reporting
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M7
 - Prerequisites: WP-042
 - Goal: complete the remaining M7 workflow gate without allowing UI state to
@@ -513,7 +513,7 @@ only with indexed evidence.
   4. Reject unsupported manual operations before mutating authoritative state.
   5. Prove hot reload and Blender link preserve the same report/digest.
 - Tests: app/CLI/live-link integration and full strict lane.
-- Evidence: `docs/evidence/m7-certified-editing-overlays-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m7-certified-editing-overlays-2026-07-18.md`.
 - Exit gate: the full M7 ledger gate passes and M7 can be marked `PASSED`.
 
 ### WP-050 — Classify the frozen corpus against the certified pipeline

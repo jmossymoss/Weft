@@ -265,6 +265,10 @@ struct GenerationReport {
     // semantically), so UIs should present loops/along, not raw u/v.
     // Absent for faces without across semantics.
     std::map<int, int> faceAcross;
+    // Named LOD/density controls and their effects for secure reports
+    // (WP-043). Keys are stable control names; values are human/machine
+    // readable effect summaries.
+    std::map<std::string, std::string> namedLodEffects;
 };
 
 // Per-face mesh reuse across generate() calls: pass the same cache and
