@@ -518,6 +518,43 @@ SecureMeshingResult generateSecureMesh(
         return result;
     }
 
+    // ADR-0014: one unsupported face → no MeshingResult. Fail before
+    // interval/boundary work so residuals stay named (WP-175).
+    if (!configuration.collectAllUnsupported) {
+        for (const ExactGeometryClassification& record :
+             reconnaissance.records) {
+            if (record.taxonomy != GeometryTaxonomy::Surface) continue;
+            if (record.support ==
+                GeometrySupportState::SupportedAnalyticTemplate) {
+                continue;
+            }
+            std::string detail = "surface family '" + record.familyCode +
+                "' has no certified automatic floor";
+            const char* preferred = nullptr;
+            for (const std::string& code : record.conditionCodes) {
+                if (code.find("_deferred") == std::string::npos) continue;
+                if (code.rfind("freeform.high_edge", 0) == 0 ||
+                    code.rfind("cone.non_apex", 0) == 0 ||
+                    code.rfind("sphere.partial", 0) == 0 ||
+                    code.rfind("cylinder.complex", 0) == 0 ||
+                    code.rfind("extrusion.", 0) == 0 ||
+                    code.rfind("offset.", 0) == 0) {
+                    preferred = code.c_str();
+                    break;
+                }
+                if (preferred == nullptr) preferred = code.c_str();
+            }
+            if (preferred != nullptr) {
+                detail += " (";
+                detail += preferred;
+                detail += ")";
+            }
+            setFailure(result, "secure_pipeline.unsupported_surface_family",
+                       detail, {record.subjectId});
+            return result;
+        }
+    }
+
     // Inventory dry-run: aggregate unsupported curve/surface families from
     // reconnaissance without attempting a full mesh certificate.
     if (configuration.collectAllUnsupported) {

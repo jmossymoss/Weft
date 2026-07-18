@@ -1277,7 +1277,11 @@ int cmdInventory(const std::vector<std::string>& args) {
                 code.rfind("mapped.", 0) == 0 ||
                 code.rfind("freeform.", 0) == 0 ||
                 code.rfind("extrusion.", 0) == 0 ||
-                code.rfind("offset.", 0) == 0) {
+                code.rfind("offset.", 0) == 0 ||
+                code.rfind("cone.", 0) == 0 ||
+                code.rfind("sphere.", 0) == 0 ||
+                code.rfind("cylinder.", 0) == 0 ||
+                code.rfind("torus.", 0) == 0) {
                 ++conditionCodes[code];
             }
         }

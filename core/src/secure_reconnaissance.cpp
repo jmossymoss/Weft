@@ -940,6 +940,44 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                 decideSupport(record, family, evaluates,
                               evaluates && representationReady, report);
             }
+            // WP-175: demote analytic subclasses the certified templates do
+            // not consume, so ADR-0014 fails with a named residual instead of
+            // a late template refusal after expensive boundary work.
+            if (record.support ==
+                GeometrySupportState::SupportedAnalyticTemplate) {
+                const auto demote = [&](const char* condition) {
+                    record.support =
+                        GeometrySupportState::DeferredResidualSurface;
+                    record.strategyOrReasonCode =
+                        "reason.deferred_residual_surface";
+                    record.conditionCodes.push_back(condition);
+                    ++report.unsupportedSubjects;
+                };
+                if (family.code == "cone" &&
+                    record.trimDomain !=
+                        TrimDomainClass::TouchesOneSingularity) {
+                    demote("cone.non_apex_deferred");
+                } else if (family.code == "sphere" &&
+                           record.trimDomain !=
+                               TrimDomainClass::TouchesTwoSingularities) {
+                    demote("sphere.partial_deferred");
+                } else if (family.code == "cylinder") {
+                    const bool partialBand =
+                        record.trimDomain ==
+                        TrimDomainClass::PeriodicBandCrossingSeam;
+                    if (partialBand) {
+                        std::set<StableId> uniqueEdges;
+                        for (const CoedgeRecord& coedge : snapshot.coedges) {
+                            if (coedge.faceId == faceId) {
+                                uniqueEdges.insert(coedge.edgeId);
+                            }
+                        }
+                        if (uniqueEdges.size() > 4) {
+                            demote("cylinder.complex_boundary_deferred");
+                        }
+                    }
+                }
+            }
         } catch (const Standard_Failure& error) {
             record.familyCode = "kernel_specific";
             record.concreteType = "Geom_Surface";

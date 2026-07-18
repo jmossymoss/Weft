@@ -1152,7 +1152,7 @@ only with indexed evidence.
 
 ### WP-175 — MP9 analytic residuals
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 production corpus
 - Prerequisites: WP-174
 - Goal: partial sphere/torus/cone and high-frequency cut-graphs from MP9.
