@@ -129,6 +129,8 @@ prove completed work; they are not plans or handoff diaries.
 - `m6-gate-closure-2026-07-18.md` - M6 planar/cylinder template gate closure.
 - `m8-map-a-reconnaissance-2026-07-18.md` - four-sided mapped/Coons candidate
   tagging on ribbon/ribbonnotch fixtures.
+- `m8-map-b-boundaries-2026-07-18.md` - bounded bspline/bezier edge sampling
+  and four-rail ribbon boundaries for mapped candidates.
 - `m6-secure-orchestration-2026-07-17.md` - atomic plane/cylinder/through-hole secure pipeline and combined certificate evidence.
 - `m7-secure-cli-routing-2026-07-17.md` - lossless certified export adapter, secure CLI routing, report coverage, and named workflow refusals.
 - `m7-secure-app-live-link-2026-07-17.md` - secure app preview/export/hot-reload routing, visual proof, and deterministic atomic Blender link.

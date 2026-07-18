@@ -528,6 +528,32 @@ void testUnsupportedCriticalSegmentation(
     (void)path;
 }
 
+
+void testMappedFourSidedBoundaries(const std::filesystem::path& path) {
+    weft::writeStep(weft::makeFixture("ribbon"), path.string());
+    const weft::ImportedModel imported = weft::importStepSecure(path.string());
+    const weft::ReconnaissanceReport reconnaissance =
+        weft::reconnoitre(imported);
+    const weft::CanonicalBoundaryBuildResult built =
+        weft::buildCanonicalBoundaries(imported, reconnaissance,
+                                       intervalsFor(imported));
+    CHECK(built);
+    if (!built) {
+        if (built.failure) {
+            std::printf("mapped boundary failure: %s: %s\n",
+                        built.failure->code.c_str(),
+                        built.failure->message.c_str());
+        }
+        return;
+    }
+    CHECK(built.value->validation.complete());
+    CHECK(built.value->boundaries.size() ==
+          imported.working->snapshot.edgeTopology.size());
+    std::printf("WEFT_MAP_B boundaries=%zu samples=%zu\n",
+                built.value->boundaries.size(),
+                built.value->validation.checkedSamples);
+}
+
 void testSpherePoleBoundaries(const std::filesystem::path& path) {
     weft::writeStep(weft::makeFixture("sphere"), path.string());
     const weft::ImportedModel imported = weft::importStepSecure(path.string());
@@ -657,6 +683,8 @@ int main() {
         "weft_canonical_boundary_cone", ".step");
     const std::filesystem::path spherePath = weft::test::uniqueTempPath(
         "weft_canonical_boundary_sphere", ".step");
+    const std::filesystem::path mappedPath = weft::test::uniqueTempPath(
+        "weft_canonical_boundary_mapped", ".step");
     try {
         verifyCanonicalModel("box", boxPath, true, false);
         verifyCanonicalModel("cylinder", cylinderPath, true, true);
@@ -667,6 +695,7 @@ int main() {
         testUnsupportedCriticalSegmentation(torusUnsupportedPath);
         testConeSingularBoundaries(conePath);
         testSpherePoleBoundaries(spherePath);
+        testMappedFourSidedBoundaries(mappedPath);
     } catch (const std::exception& error) {
         std::printf("FAIL canonical-boundary exception: %s\n", error.what());
         ++failures;
@@ -679,6 +708,7 @@ int main() {
     std::filesystem::remove(torusUnsupportedPath, ignored);
     std::filesystem::remove(conePath, ignored);
     std::filesystem::remove(spherePath, ignored);
+    std::filesystem::remove(mappedPath, ignored);
 
     if (failures == 0) {
         std::printf("canonical boundary checks passed\n");

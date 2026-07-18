@@ -867,7 +867,7 @@ only with indexed evidence.
 
 ### WP-121 — MAP-B canonical boundaries
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 expansion
 - Prerequisites: WP-120
 - Goal: four-rail critical segmentation and UV lifting for mapped patches.

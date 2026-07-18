@@ -158,10 +158,15 @@ IntervalProblemResult buildIntervalProblem(
                 return result;
             }
             count = *demanded.count;
+        } else if (classification->familyCode == "bspline" ||
+                   classification->familyCode == "bezier") {
+            // MAP-B/C: bounded uniform interval demand for freeform edges.
+            count = std::max<std::uint32_t>(
+                4, configuration.sampling.minimumClosedCurveSegments);
         } else {
             result.failure = SecureMeshingFailure{
                 "secure_pipeline.unsupported_curve_family",
-                "the secure automatic pipeline currently supports only line and circle edges",
+                "the secure automatic pipeline currently supports only line, circle, and bounded bspline/bezier edges",
                 {topology.id}};
             return result;
         }

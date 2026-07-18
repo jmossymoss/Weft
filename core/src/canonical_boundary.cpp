@@ -127,22 +127,32 @@ double normalizeClosedParameter(double parameter, double lower, double upper,
     return parameter;
 }
 
+bool hasCondition(const ExactGeometryClassification& record,
+                  const char* code) {
+    return std::find(record.conditionCodes.begin(), record.conditionCodes.end(),
+                     code) != record.conditionCodes.end();
+}
+
 bool supportedSegmentationFamily(const ExactGeometryClassification& record,
                                  GeometryTaxonomy taxonomy) {
     if (record.taxonomy != taxonomy) return false;
     if (taxonomy == GeometryTaxonomy::Curve) {
-        if (record.familyCode != "line" && record.familyCode != "circle") {
-            return false;
+        if (record.familyCode == "line" || record.familyCode == "circle") {
+            // Degenerate apex circles stay InvalidImportedGeometry but still
+            // need the singular canonical station path.
+            return record.support ==
+                       GeometrySupportState::SupportedAnalyticTemplate ||
+                (record.support ==
+                     GeometrySupportState::InvalidImportedGeometry &&
+                 hasCondition(record, "degenerate"));
         }
-        // Degenerate apex circles stay InvalidImportedGeometry but still need
-        // the singular canonical station path.
-        return record.support ==
-                   GeometrySupportState::SupportedAnalyticTemplate ||
-            (record.support ==
-                 GeometrySupportState::InvalidImportedGeometry &&
-             std::find(record.conditionCodes.begin(),
-                       record.conditionCodes.end(),
-                       "degenerate") != record.conditionCodes.end());
+        // MAP-B: bounded bspline/bezier edge sampling for mapped patches.
+        if (record.familyCode == "bspline" || record.familyCode == "bezier") {
+            return record.support ==
+                       GeometrySupportState::SupportedAnalyticTemplate ||
+                record.support == GeometrySupportState::DeferredResidualSurface;
+        }
+        return false;
     }
     if (record.familyCode == "plane" || record.familyCode == "cylinder") {
         return record.support ==
@@ -153,6 +163,15 @@ bool supportedSegmentationFamily(const ExactGeometryClassification& record,
     // singular/periodic critical events.
     if (record.familyCode == "cone" || record.familyCode == "sphere" ||
         record.familyCode == "torus") {
+        return record.support ==
+                   GeometrySupportState::SupportedAnalyticTemplate ||
+            record.support == GeometrySupportState::DeferredResidualSurface;
+    }
+    // MAP-B: four-sided mapped candidates may build boundaries while deferred.
+    if ((record.familyCode == "bspline" || record.familyCode == "bezier" ||
+         record.familyCode == "extrusion" ||
+         record.familyCode == "revolution") &&
+        hasCondition(record, "mapped.four_sided_candidate")) {
         return record.support ==
                    GeometrySupportState::SupportedAnalyticTemplate ||
             record.support == GeometrySupportState::DeferredResidualSurface;
@@ -530,19 +549,30 @@ CriticalSegmentationResult collectSupportedCriticalEvents(
                     }
                 }
             } else {
-                result.failure = CanonicalBoundaryFailure{
-                    "boundary.critical_segmentation_unsupported",
-                    "p-curve family is outside the supported critical-event set",
-                    {edgeId, mapping.coedge->id, mapping.coedge->faceId}};
-                return result;
+                // MAP-B: non-line/circle p-curves on mapped faces keep
+                // domain/contact events only (no UV-period refinement yet).
+                const bool mappedFace =
+                    mapping.faceClassification &&
+                    hasCondition(*mapping.faceClassification,
+                                 "mapped.four_sided_candidate");
+                if (!mappedFace) {
+                    result.failure = CanonicalBoundaryFailure{
+                        "boundary.critical_segmentation_unsupported",
+                        "p-curve family is outside the supported critical-event set",
+                        {edgeId, mapping.coedge->id, mapping.coedge->faceId}};
+                    return result;
+                }
             }
             continue;
         }
 
         // Derived planar projection: lines need no further events; circles
-        // already received intrinsic quarter-turn events above.
+        // already received intrinsic quarter-turn events above. Mapped
+        // bspline/bezier edges likewise rely on domain/contact events only.
         if (curveClassification.familyCode != "line" &&
-            curveClassification.familyCode != "circle") {
+            curveClassification.familyCode != "circle" &&
+            curveClassification.familyCode != "bspline" &&
+            curveClassification.familyCode != "bezier") {
             result.failure = CanonicalBoundaryFailure{
                 "boundary.critical_segmentation_unsupported",
                 "3D curve family is outside the supported critical-event set",
