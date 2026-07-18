@@ -1161,7 +1161,7 @@ only with indexed evidence.
 
 ### WP-176 — MP9 scale and performance
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8 production corpus
 - Prerequisites: WP-175
 - Goal: bounded import/recon/mesh times and progress for ~4k-face MP9.
