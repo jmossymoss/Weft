@@ -339,7 +339,7 @@ only with indexed evidence.
 
 ### WP-022 — Mesh and certify partial cylinders
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M4/M6
 - Prerequisites: WP-010, WP-013, WP-021
 - Goal: produce boundary-exact certified walls for open and seam-crossing
@@ -356,7 +356,7 @@ only with indexed evidence.
   6. Validate closure where caps exist, intersections, chord/normal bounds,
      and deterministic digests.
 - Tests: `cylinder_template|interval_solver|secure_meshing|certified_mesh`.
-- Evidence: `docs/evidence/m4-m6-partial-cylinder-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m4-m6-partial-cylinder-2026-07-18.md`.
 - Exit gate: the M6 partial-cylinder fixture family passes end to end with no
   weld; malformed bands refuse before generation by stable code.
 

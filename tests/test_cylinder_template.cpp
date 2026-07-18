@@ -262,7 +262,7 @@ void testNamedRefusals(const std::filesystem::path& path,
     CHECK(!reflectedRefusal);
     CHECK(reflectedRefusal.failure &&
           reflectedRefusal.failure->code ==
-              "boundary.azimuth_registration_failed");
+              "boundary.azimuth_reflection");
 
     const auto mismatched = prepare(path, 32, 64, 1);
     CHECK(mismatched.has_value());

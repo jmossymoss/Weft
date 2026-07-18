@@ -588,10 +588,11 @@ double wrapAngle(double angle) {
     return std::atan2(std::sin(angle), std::cos(angle));
 }
 
-AzimuthRegistrationResult registrationFailure(std::string message) {
+AzimuthRegistrationResult registrationFailure(std::string code,
+                                              std::string message) {
     AzimuthRegistrationResult result;
     result.failure = CanonicalBoundaryFailure{
-        "boundary.azimuth_registration_failed", std::move(message), {}};
+        std::move(code), std::move(message), {}};
     return result;
 }
 
@@ -1112,6 +1113,7 @@ AzimuthRegistrationResult azimuthRegistration(
     const std::size_t count = ringA.size();
     if (count < 3 || ringB.size() != count) {
         return registrationFailure(
+            "boundary.azimuth_incompatible",
             "rings must have the same non-trivial sample count");
     }
     const Vector3 centreA = centroid(ringA);
@@ -1120,6 +1122,7 @@ AzimuthRegistrationResult azimuthRegistration(
     const double axisLength = norm(axis);
     if (!std::isfinite(axisLength) || !(axisLength > 0.0)) {
         return registrationFailure(
+            "boundary.azimuth_incompatible",
             "ring centres coincide, so no cylinder axis exists");
     }
     axis = {axis.x / axisLength, axis.y / axisLength, axis.z / axisLength};
@@ -1130,6 +1133,7 @@ AzimuthRegistrationResult azimuthRegistration(
     const double referenceLength = norm(reference);
     if (!std::isfinite(referenceLength) || !(referenceLength > 0.0)) {
         return registrationFailure(
+            "boundary.azimuth_incompatible",
             "a ring sample lies on the axis, so no azimuth frame exists");
     }
     reference = {reference.x / referenceLength, reference.y / referenceLength,
@@ -1154,6 +1158,7 @@ AzimuthRegistrationResult azimuthRegistration(
         wrapAngle(anglesB[1] - anglesB[0]) >= 0.0 ? 1.0 : -1.0;
     if (signA != signB) {
         return registrationFailure(
+            "boundary.azimuth_reflection",
             "ring winding differs; reflection is not a supported registration");
     }
 
@@ -1167,6 +1172,7 @@ AzimuthRegistrationResult azimuthRegistration(
     }
     if (!(minimumStep > 0.0) || !std::isfinite(minimumStep)) {
         return registrationFailure(
+            "boundary.azimuth_incompatible",
             "ring azimuth steps are not finite and positive");
     }
     const double tolerance = minimumStep / 4.0;
@@ -1188,7 +1194,8 @@ AzimuthRegistrationResult azimuthRegistration(
     }
     if (!(bestError <= tolerance)) {
         return registrationFailure(
-            "rings are not registrable by a cyclic rotation");
+            "boundary.azimuth_twist",
+            "rings are twisted or otherwise not registrable by a cyclic rotation");
     }
 
     std::vector<std::uint32_t> permutation(count);
