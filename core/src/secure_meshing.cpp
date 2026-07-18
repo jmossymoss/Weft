@@ -3,6 +3,7 @@
 #include "weft/cone_template.hpp"
 #include "weft/planar_trim_assembly.hpp"
 #include "weft/sphere_template.hpp"
+#include "weft/mapped_template.hpp"
 #include "weft/torus_template.hpp"
 
 #include <algorithm>
@@ -158,10 +159,75 @@ IntervalProblemResult buildIntervalProblem(
                 return result;
             }
             count = *demanded.count;
+        } else if (classification->familyCode == "bspline" ||
+                   classification->familyCode == "bezier") {
+            // MAP/FREE UV-grid: align edge interval counts to the face UV
+            // cell size so split rails (half-edges) land on grid stations.
+            // Uniform minClosedCurveSegments on every edge makes short rails
+            // sample at half-cell offsets and breaks seam matching.
+            count = std::max<std::uint32_t>(
+                4, configuration.sampling.minimumClosedCurveSegments);
+            const std::uint32_t gridIntervals = std::max<std::uint32_t>(
+                8, configuration.sampling.minimumClosedCurveSegments);
+            for (const CoedgeRecord& coedge : snapshot.coedges) {
+                if (coedge.edgeId != topology.id) continue;
+                const ExactGeometryClassification* face =
+                    reconnaissance.find(coedge.faceId);
+                if (!face || face->taxonomy != GeometryTaxonomy::Surface) {
+                    continue;
+                }
+                const bool uvGridFace =
+                    std::find(face->conditionCodes.begin(),
+                              face->conditionCodes.end(),
+                              "mapped.four_sided_candidate") !=
+                        face->conditionCodes.end() ||
+                    std::find(face->conditionCodes.begin(),
+                              face->conditionCodes.end(),
+                              "freeform.uv_grid_candidate") !=
+                        face->conditionCodes.end();
+                if (!uvGridFace || face->parameterDomains.size() < 2 ||
+                    !face->parameterDomains[0].lower ||
+                    !face->parameterDomains[0].upper ||
+                    !face->parameterDomains[1].lower ||
+                    !face->parameterDomains[1].upper) {
+                    continue;
+                }
+                if (coedge.pcurveRepresentations.empty()) continue;
+                const EvaluationResult<ParameterDomain> domain =
+                    imported.workingEvaluator->curveDomain(topology.id);
+                if (!domain || !domain.value->lower || !domain.value->upper) {
+                    continue;
+                }
+                const PcurveRef& pref = coedge.pcurveRepresentations.front();
+                const auto uvLower =
+                    imported.workingEvaluator->evaluateCurveOnSurface(
+                        pref, *domain.value->lower);
+                const auto uvUpper =
+                    imported.workingEvaluator->evaluateCurveOnSurface(
+                        pref, *domain.value->upper);
+                if (!uvLower || !uvUpper) continue;
+                const double faceDu = *face->parameterDomains[0].upper -
+                    *face->parameterDomains[0].lower;
+                const double faceDv = *face->parameterDomains[1].upper -
+                    *face->parameterDomains[1].lower;
+                if (!(faceDu > 0.0) || !(faceDv > 0.0)) continue;
+                const double cellU = faceDu / static_cast<double>(gridIntervals);
+                const double cellV = faceDv / static_cast<double>(gridIntervals);
+                const double edgeDu =
+                    std::abs(uvUpper.value->uv[0] - uvLower.value->uv[0]);
+                const double edgeDv =
+                    std::abs(uvUpper.value->uv[1] - uvLower.value->uv[1]);
+                const double cells = std::round(edgeDu / cellU) +
+                    std::round(edgeDv / cellV);
+                if (cells >= 1.0) {
+                    count = static_cast<std::uint32_t>(cells);
+                }
+                break;
+            }
         } else {
             result.failure = SecureMeshingFailure{
                 "secure_pipeline.unsupported_curve_family",
-                "the secure automatic pipeline currently supports only line and circle edges",
+                "the secure automatic pipeline currently supports only line, circle, and bounded bspline/bezier edges",
                 {topology.id}};
             return result;
         }
@@ -306,7 +372,7 @@ std::optional<SecureMeshingFailure> certifySolvedIntervalConsumption(
                 static_cast<int>(boundary->edge.ordinal));
             if (reported == mesh->generation.edgeDivisions.end() ||
                 reported->second != static_cast<int>(interval.count)) {
-                return SecureMeshingFailure{
+return SecureMeshingFailure{
                     "secure_pipeline.interval_consumption_mismatch",
                     "generation report count does not match the solved interval",
                     {interval.boundaryId, boundary->edge}};
@@ -320,7 +386,7 @@ std::optional<SecureMeshingFailure> certifySolvedIntervalConsumption(
                 }
             }
             if (consumedSamples.size() != boundary->samples.size()) {
-                return SecureMeshingFailure{
+return SecureMeshingFailure{
                     "secure_pipeline.interval_consumption_mismatch",
                     "certified mesh sample provenance does not consume every boundary sample",
                     {interval.boundaryId, boundary->edge}};
@@ -705,8 +771,49 @@ SecureMeshingResult generateSecureMesh(
             faceMeshes.push_back(*wall.value);
             continue;
         }
+        const bool mappedFourSided =
+            std::find(face.conditionCodes.begin(), face.conditionCodes.end(),
+                      "mapped.four_sided_candidate") !=
+            face.conditionCodes.end();
+        const bool freeformUvGrid =
+            std::find(face.conditionCodes.begin(), face.conditionCodes.end(),
+                      "freeform.uv_grid_candidate") !=
+            face.conditionCodes.end();
+        if (mappedFourSided || freeformUvGrid) {
+            MappedPatchConfiguration mapped;
+            mapped.maximumChordDeviation =
+                configuration.sampling.chordTolerance;
+            mapped.maximumNormalDeviationRadians =
+                configuration.sampling.normalAngleToleranceRadians;
+            mapped.uIntervals = std::max<std::uint32_t>(
+                8, configuration.sampling.minimumClosedCurveSegments);
+            mapped.vIntervals = mapped.uIntervals;
+            const MappedPatchResult patch = buildMappedFourSidedPatch(
+                imported, reconnaissance, *boundaries.value, face.subjectId,
+                mapped);
+            for (const MappedPatchValidationEvidence& evidence :
+                 patch.validation) {
+                appendCoverage(result.validation,
+                               faceCode(evidence.code, face.subjectId),
+                               evidence.expected, evidence.checked,
+                               evidence.skipped, evidence.failed);
+            }
+            if (!patch) {
+                setFailure(result,
+                           patch.failure ? patch.failure->code
+                                         : "secure_pipeline.mapped_failed",
+                           patch.failure
+                               ? patch.failure->message
+                               : "certified mapped patch construction failed",
+                           patch.failure ? patch.failure->subjects
+                                         : std::vector<StableId>{});
+                return result;
+            }
+            faceMeshes.push_back(*patch.value);
+            continue;
+        }
         setFailure(result, "secure_pipeline.unsupported_surface_family",
-                   "the secure automatic pipeline currently supports only plane, cylinder, apex-cone, sphere, and torus faces",
+                   "the secure automatic pipeline currently supports only plane, cylinder, apex-cone, sphere, torus, and four-sided mapped faces",
                    {face.subjectId});
         return result;
     }
@@ -716,10 +823,16 @@ SecureMeshingResult generateSecureMesh(
         return result;
     }
 
+    CertifiedMeshAssemblyConfiguration assemblyConfig = configuration.assembly;
+    // Single-face mapped patches are open shells; do not demand closed
+    // manifold incidence for that narrow MAP-C product class.
+    if (imported.working && imported.working->snapshot.model.faceCount() == 1) {
+        assemblyConfig.requireClosedManifold = false;
+    }
     const CertifiedMeshAssemblyResult assembled =
         assembleCertifiedBoundaryMesh(
             imported, *boundaries.value, faceMeshes, expectedFaces,
-            configuration.assembly);
+            assemblyConfig);
     result.validation.checks.insert(
         result.validation.checks.end(), assembled.validation.checks.begin(),
         assembled.validation.checks.end());

@@ -115,11 +115,33 @@ prove completed work; they are not plans or handoff diaries.
   strict/static-analysis lanes.
 - `m8-cone-e-product-2026-07-18.md` - CLI OBJ and app screenshot admission for
   cone with sphere refusal regression on Linux.
-- `m8-cone-f-proof-2026-07-18.md`
-- `m8-sphere-a-reconnaissance-2026-07-18.md` through `m8-sphere-f-proof-2026-07-18.md` - sphere family packet
-- `m8-torus-a-reconnaissance-2026-07-18.md` through `m8-torus-f-proof-2026-07-18.md` - torus dual-periodic family packet
-- `m8-fillet-a-reconnaissance-2026-07-18.md` through `m8-fillet-f-proof-2026-07-18.md` and `m8-gate-closure-2026-07-18.md` - analytic fillet packet and M8 gate (poles, latitude/longitude floor, product, density golden). - apex-cone density sweep, corpus impact,
-  Linux fingerprint golden, and family-complete proof; M8 remains in progress.
+- `m8-cone-f-proof-2026-07-18.md` - apex-cone density sweep, corpus impact, and
+  family-complete proof (fingerprint hex is OCCT-version evidence).
+- `m8-sphere-a-reconnaissance-2026-07-18.md` through
+  `m8-sphere-f-proof-2026-07-18.md` - sphere family packet.
+- `m8-torus-a-reconnaissance-2026-07-18.md` through
+  `m8-torus-f-proof-2026-07-18.md` - torus dual-periodic family packet.
+- `m8-fillet-a-reconnaissance-2026-07-18.md` through
+  `m8-fillet-f-proof-2026-07-18.md` and `m8-gate-closure-2026-07-18.md` -
+  analytic fillet packet and M8 selected-scope gate.
+- `m4-gate-closure-2026-07-18.md` - M4 tessellation floor gate closure.
+- `m5-gate-closure-2026-07-18.md` - M5 non-vacuous validation gate closure.
+- `m6-gate-closure-2026-07-18.md` - M6 planar/cylinder template gate closure.
+- `m8-map-a-reconnaissance-2026-07-18.md` - four-sided mapped/Coons candidate
+  tagging on ribbon/ribbonnotch fixtures.
+- `m8-map-b-boundaries-2026-07-18.md` - bounded bspline/bezier edge sampling
+  and four-rail ribbon boundaries for mapped candidates.
+- `m8-map-c-certified-floor-2026-07-18.md` through `m8-map-f-proof-2026-07-18.md` -
+  mapped four-sided UV-grid floor, product, and family proof.
+- `m8-cut-a-reconnaissance-2026-07-18.md` through `m8-cut-f-proof-2026-07-18.md` -
+  circular through-hole cutout subclass (hole fixture).
+- `m8-free-a-reconnaissance-2026-07-18.md` through `m8-free-f-proof-2026-07-18.md` -
+  freeform UV-grid patch subclass.
+- `m8-app-family-matrix-2026-07-18.md`, `m8-app-editing-overlays-2026-07-18.md`,
+  `m8-app-gate-2026-07-18.md` - running-app hardening before M9.
+- `m9-dependency-br006-2026-07-18.md` through `m9-gate-closure-2026-07-18.md` -
+  M9 distribution progress (Linux package; Plasticity↔Blender blocked).
+- `packet-audit-2026-07-18.md` - reopen under-scoped CUT/FREE/MAP-D-F/APP-151.
 - `m6-secure-orchestration-2026-07-17.md` - atomic plane/cylinder/through-hole secure pipeline and combined certificate evidence.
 - `m7-secure-cli-routing-2026-07-17.md` - lossless certified export adapter, secure CLI routing, report coverage, and named workflow refusals.
 - `m7-secure-app-live-link-2026-07-17.md` - secure app preview/export/hot-reload routing, visual proof, and deterministic atomic Blender link.

@@ -7,7 +7,7 @@
 | BR-003 | P-curve synthesis in conservative repair | New representation data is not source evidence | Explicit compatibility profile, ADR, discrepancy proof, and source-to-working mapping | OPEN |
 | BR-004 | Face-local edge sampling | Equal coordinates/counts do not prove shared identity or phase | Immutable canonical boundary with per-coedge UV mappings and registration witnesses | OPEN |
 | BR-005 | Authoritative weld/fallback triangulation | Post-hoc repair can conceal gaps, missing faces, and unrelated topology | Boundary-exact CDT floor assembled by shared indices and validated before export | OPEN |
-| BR-006 | CGAL-backed distribution | Prototype policy permits GPL/commercial packages only for local research | Commercial license or permissive replacement plus license audit | OPEN |
+| BR-006 | CGAL-backed distribution | Prototype policy permits GPL/commercial packages only for local research | Commercial license or permissive replacement plus license audit | SCHEDULED — no CGAL in current tree; keep distribution CGAL-free (see m9-dependency-br006) |
 | BR-007 | Unreviewed twisted-cylinder fixture import | The current fixture work in `D:/weftocct` is uncommitted user work | Independent review and committed evidence before copying | OPEN |
 | BR-008 | Non-rigid STEP transform without a typed account | XDE may drop scale/reflection unless retention or baking is independently proven | Retained-affine or baked-geometry account with composition and parity validation | ENFORCED |
 | BR-009 | Fail-open or tolerance-only trim validation | A triangulator cannot repair ambiguous crossings, contacts, nesting, or missing provenance without changing meaning | Exact full-pair loop/domain evidence with non-vacuous coverage before CDT | ENFORCED |

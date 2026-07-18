@@ -706,13 +706,162 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                 record.conditionCodes.push_back(
                     "reason.multidomain_decomposition_unproven");
             }
+            // MAP-A: tag four-sided non-plane analytic/typed faces as Coons
+            // candidates. Support stays deferred until MAP-C has a consumer.
+            {
+                std::set<StableId> faceEdges;
+                for (const CoedgeRecord& coedge : snapshot.coedges) {
+                    if (coedge.faceId == faceId) {
+                        faceEdges.insert(coedge.edgeId);
+                    }
+                }
+                const bool mappedFamily =
+                    family.code == "bspline" || family.code == "bezier" ||
+                    family.code == "extrusion" || family.code == "revolution";
+                if (mappedFamily && faceEdges.size() == 4) {
+                    record.conditionCodes.push_back(
+                        "mapped.four_sided_candidate");
+                } else if (mappedFamily && faceEdges.size() != 4) {
+                    record.conditionCodes.push_back(
+                        "mapped.non_four_sided_deferred");
+                }
+                // FREE-A: bspline/bezier with simple/annulus trim may use the
+                // UV-grid floor (four-sided and n-sided). Wider/non-simple
+                // freeform stays deferred.
+                if (family.code == "bspline" || family.code == "bezier") {
+                    const bool uvGridTrim =
+                        record.trimDomain &&
+                        (*record.trimDomain == TrimDomainClass::Annulus ||
+                         *record.trimDomain ==
+                             TrimDomainClass::MultiplyPerforatedDisk ||
+                         *record.trimDomain ==
+                             TrimDomainClass::ConvexSimpleRegion ||
+                         *record.trimDomain ==
+                             TrimDomainClass::ConcaveSimpleRegion ||
+                         *record.trimDomain == TrimDomainClass::SimpleDisk);
+                    if (uvGridTrim) {
+                        record.conditionCodes.push_back(
+                            "freeform.uv_grid_candidate");
+                    } else {
+                        record.conditionCodes.push_back(
+                            "freeform.general_deferred");
+                    }
+                }
+            }
+            // CUT-A: planar faces with hole trim + cylindrical bore walls.
+            if (family.code == "plane" && record.trimDomain &&
+                (*record.trimDomain == TrimDomainClass::Annulus ||
+                 *record.trimDomain ==
+                     TrimDomainClass::MultiplyPerforatedDisk)) {
+                record.conditionCodes.push_back("cutout.planar_perforated");
+                int circleEdges = 0;
+                int lineEdges = 0;
+                std::set<StableId> faceEdgeIds;
+                for (const CoedgeRecord& coedge : snapshot.coedges) {
+                    if (coedge.faceId == faceId) {
+                        faceEdgeIds.insert(coedge.edgeId);
+                    }
+                }
+                for (const StableId& edgeId : faceEdgeIds) {
+                    const ExactGeometryClassification* edgeRec = nullptr;
+                    for (const ExactGeometryClassification& prior :
+                         report.records) {
+                        if (prior.subjectId == edgeId) {
+                            edgeRec = &prior;
+                            break;
+                        }
+                    }
+                    if (!edgeRec) continue;
+                    if (edgeRec->familyCode == "circle") {
+                        ++circleEdges;
+                    } else if (edgeRec->familyCode == "line") {
+                        ++lineEdges;
+                    }
+                }
+                // Rectangular/slot-like inner wires are all lines (no circles).
+                if (circleEdges == 0 && lineEdges >= 6) {
+                    record.conditionCodes.push_back("cutout.planar_slotted");
+                }
+            }
+            if (family.code == "cylinder" && record.trimDomain &&
+                (*record.trimDomain ==
+                     TrimDomainClass::FullPeriodicWithCapBoundaries ||
+                 *record.trimDomain ==
+                     TrimDomainClass::PeriodicBandCrossingSeam)) {
+                // A cylinder adjacent only to perforated planes is a bore.
+                bool touchesPerforatedPlane = false;
+                for (const CoedgeRecord& coedge : snapshot.coedges) {
+                    if (coedge.faceId != faceId) continue;
+                    for (const CoedgeRecord& other : snapshot.coedges) {
+                        if (other.edgeId != coedge.edgeId ||
+                            other.faceId == faceId) {
+                            continue;
+                        }
+                        const ExactGeometryClassification* neighbor = nullptr;
+                        for (const ExactGeometryClassification& prior :
+                             report.records) {
+                            if (prior.subjectId == other.faceId) {
+                                neighbor = &prior;
+                                break;
+                            }
+                        }
+                        // Neighbor may not be classified yet (faces are in
+                        // ascending index order). Fall back to edge count:
+                        // through-hole bores typically share circular edges
+                        // with planar faces that have >4 boundary edges.
+                        std::set<StableId> neighborEdges;
+                        for (const CoedgeRecord& nc : snapshot.coedges) {
+                            if (nc.faceId == other.faceId) {
+                                neighborEdges.insert(nc.edgeId);
+                            }
+                        }
+                        if (neighborEdges.size() >= 5) {
+                            touchesPerforatedPlane = true;
+                        }
+                        if (neighbor &&
+                            std::find(neighbor->conditionCodes.begin(),
+                                      neighbor->conditionCodes.end(),
+                                      "cutout.planar_perforated") !=
+                                neighbor->conditionCodes.end()) {
+                            touchesPerforatedPlane = true;
+                        }
+                    }
+                }
+                if (touchesPerforatedPlane) {
+                    record.conditionCodes.push_back(
+                        "cutout.cylindrical_bore");
+                }
+            }
             const bool evaluates = exactSurfaceEvaluates(
                 *imported.workingEvaluator, faceId, u0, u1, v0, v1);
             const bool representationReady =
                 family.code == "plane" ||
                 curvedFaceHasExactMappings(imported, faceId);
-            decideSupport(record, family, evaluates,
-                          evaluates && representationReady, report);
+            const bool mappedFourSided =
+                std::find(record.conditionCodes.begin(),
+                          record.conditionCodes.end(),
+                          "mapped.four_sided_candidate") !=
+                record.conditionCodes.end();
+            const bool freeformUvGrid =
+                std::find(record.conditionCodes.begin(),
+                          record.conditionCodes.end(),
+                          "freeform.uv_grid_candidate") !=
+                record.conditionCodes.end();
+            // MAP-C / FREE-C: UV-grid candidates are first-template ready when
+            // representations evaluate, even though FamilyInfo::firstTemplate
+            // stays false for general bspline/extrusion.
+            if ((mappedFourSided || freeformUvGrid) && evaluates &&
+                representationReady) {
+                record.confidence = RecognitionConfidence::ProvenAnalytic;
+                record.support =
+                    GeometrySupportState::SupportedAnalyticTemplate;
+                record.strategyOrReasonCode =
+                    mappedFourSided ? "strategy.mapped_four_sided"
+                                    : "strategy.freeform_uv_grid";
+            } else {
+                decideSupport(record, family, evaluates,
+                              evaluates && representationReady, report);
+            }
         } catch (const Standard_Failure& error) {
             record.familyCode = "kernel_specific";
             record.concreteType = "Geom_Surface";
@@ -864,6 +1013,65 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                                !record.strategyOrReasonCode.empty() &&
                                !record.sourceSubjects.empty();
                     });
+
+    // CUT-A post-pass: name unsupported cut graphs on cylinders that are not
+    // simple plate bores, and on fillet/blend faces that participate in slots.
+    {
+        int cylinderFaces = 0;
+        int complexPerforatedPlanes = 0;
+        for (ExactGeometryClassification& record : report.records) {
+            if (record.taxonomy != GeometryTaxonomy::Surface) continue;
+            if (record.familyCode == "cylinder") {
+                ++cylinderFaces;
+            }
+            if (record.familyCode == "plane" &&
+                std::find(record.conditionCodes.begin(),
+                          record.conditionCodes.end(),
+                          "cutout.planar_perforated") !=
+                    record.conditionCodes.end()) {
+                std::set<StableId> faceEdges;
+                for (const CoedgeRecord& coedge : snapshot.coedges) {
+                    if (coedge.faceId == record.subjectId) {
+                        faceEdges.insert(coedge.edgeId);
+                    }
+                }
+                // Filleted slots produce densely edged perforated planes.
+                if (faceEdges.size() >= 10) {
+                    ++complexPerforatedPlanes;
+                }
+            }
+        }
+        // Any model with 2+ cylinders is an unsupported multi-bore/slot
+        // cut-graph for the current narrow cutout floor (single plate bore /
+        // rectangular plate slot).
+        const bool multiBoreGraph = cylinderFaces >= 2;
+        const bool filletedSlotGraph =
+            multiBoreGraph && complexPerforatedPlanes >= 1;
+        for (ExactGeometryClassification& record : report.records) {
+            if (record.taxonomy != GeometryTaxonomy::Surface) continue;
+            if (multiBoreGraph && record.familyCode == "cylinder") {
+                if (std::find(record.conditionCodes.begin(),
+                              record.conditionCodes.end(),
+                              "cutout.multi_bore_cylinder_deferred") ==
+                    record.conditionCodes.end()) {
+                    record.conditionCodes.push_back(
+                        "cutout.multi_bore_cylinder_deferred");
+                }
+            }
+            if (filletedSlotGraph &&
+                (record.familyCode == "cylinder" ||
+                 record.familyCode == "plane")) {
+                if (std::find(record.conditionCodes.begin(),
+                              record.conditionCodes.end(),
+                              "cutout.filleted_slot_deferred") ==
+                    record.conditionCodes.end()) {
+                    record.conditionCodes.push_back(
+                        "cutout.filleted_slot_deferred");
+                }
+            }
+        }
+    }
+
     if (!report.complete) {
         report.diagnostics.push_back(
             {"reconnaissance.coverage.incomplete", {},

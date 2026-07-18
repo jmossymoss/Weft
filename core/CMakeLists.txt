@@ -19,6 +19,7 @@ add_library(weft_core
   src/cone_template.cpp
   src/sphere_template.cpp
   src/torus_template.cpp
+  src/mapped_template.cpp
   src/secure_meshing.cpp
   src/secure_recipe.cpp
   src/certified_mesh.cpp
@@ -82,6 +83,7 @@ if(WEFT_STATIC_ANALYSIS AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     src/cone_template.cpp
     src/sphere_template.cpp
     src/torus_template.cpp
+    src/mapped_template.cpp
     src/model.cpp
     src/planar_trim_assembly.cpp
     PROPERTIES COMPILE_OPTIONS "-fno-analyzer")

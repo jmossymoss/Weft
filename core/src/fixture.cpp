@@ -4,6 +4,10 @@
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepLib.hxx>
+#include <Geom2d_Line.hxx>
+#include <Geom2d_TrimmedCurve.hxx>
+#include <ShapeFix_Shape.hxx>
 #include <BRepFilletAPI_MakeChamfer.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
@@ -26,6 +30,7 @@
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
+#include <TopoDS_Wire.hxx>
 #include <gp_Ax1.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Trsf.hxx>
@@ -86,6 +91,14 @@ TopoDS_Shape makeFixture(const std::string& name) {
         gp_Ax2 axis(gp_Pnt(20.0, 20.0, -1.0), gp_Dir(0, 0, 1));
         TopoDS_Shape drill = BRepPrimAPI_MakeCylinder(axis, 8.0, 12.0).Shape();
         return BRepAlgoAPI_Cut(plate, drill).Shape();
+    }
+    if (name == "plate_slot") {
+        // Thin plate with a rectangular through-slot (all-plane cutout).
+        TopoDS_Shape plate = BRepPrimAPI_MakeBox(50.0, 30.0, 6.0).Shape();
+        TopoDS_Shape slot =
+            BRepPrimAPI_MakeBox(gp_Pnt(15.0, 10.0, -1.0), 20.0, 10.0, 8.0)
+                .Shape();
+        return BRepAlgoAPI_Cut(plate, slot).Shape();
     }
     if (name == "slotted") {
         // Barrel case from the flaregun: a tube with a capsule slot milled
@@ -231,6 +244,66 @@ TopoDS_Shape makeFixture(const std::string& name) {
         gp_Ax2 axis(gp_Pnt(20.0, 20.0, 10.0), gp_Dir(0, 0, 1));
         TopoDS_Shape boss = BRepPrimAPI_MakeCylinder(axis, 8.0, 15.0).Shape();
         return BRepAlgoAPI_Fuse(base, boss).Shape();
+    }
+    if (name == "mapped_patch" || name == "freeform_patch") {
+        // Open bspline sheets. mapped_patch is four-sided; freeform_patch is
+        // five-sided (one UV-border edge split at mid-U) so FREE is beyond
+        // four-sided while samples stay on the UV-grid border.
+        const double amplitude = (name == "freeform_patch") ? 1.25 : 0.5;
+        NCollection_Array2<gp_Pnt> net(1, 4, 1, 4);
+        for (int i = 0; i < 4; ++i) {
+            for (int j = 0; j < 4; ++j) {
+                const double u = double(i) / 3.0;
+                const double v = double(j) / 3.0;
+                net.SetValue(i + 1, j + 1,
+                             gp_Pnt(30.0 * u, 20.0 * v,
+                                    amplitude * std::sin(M_PI * u) *
+                                        std::sin(M_PI * v)));
+            }
+        }
+        Handle(Geom_BSplineSurface) surf =
+            GeomAPI_PointsToBSplineSurface(net).Surface();
+        if (name == "mapped_patch") {
+            return BRepBuilderAPI_MakeFace(surf, 1e-6).Face();
+        }
+        double uMin = 0.0, uMax = 0.0, vMin = 0.0, vMax = 0.0;
+        surf->Bounds(uMin, uMax, vMin, vMax);
+        const double uMid = 0.5 * (uMin + uMax);
+        const gp_Pnt2d pts[5] = {
+            gp_Pnt2d(uMin, vMin), gp_Pnt2d(uMid, vMin), gp_Pnt2d(uMax, vMin),
+            gp_Pnt2d(uMax, vMax), gp_Pnt2d(uMin, vMax),
+        };
+        BRepBuilderAPI_MakeWire wire;
+        for (int k = 0; k < 5; ++k) {
+            const gp_Pnt2d& a = pts[k];
+            const gp_Pnt2d& b = pts[(k + 1) % 5];
+            const gp_Vec2d vec(a, b);
+            const double len = vec.Magnitude();
+            if (len <= 1e-12) {
+                throw std::runtime_error("freeform_patch degenerate UV edge");
+            }
+            Handle(Geom2d_Line) line2d = new Geom2d_Line(a, gp_Dir2d(vec));
+            Handle(Geom2d_TrimmedCurve) trimmed =
+                new Geom2d_TrimmedCurve(line2d, 0.0, len);
+            BRepBuilderAPI_MakeEdge makeEdge(trimmed, surf);
+            if (!makeEdge.IsDone()) {
+                throw std::runtime_error("freeform_patch UV edge failed");
+            }
+            TopoDS_Edge edge = makeEdge.Edge();
+            BRepLib::BuildCurves3d(edge);
+            wire.Add(edge);
+        }
+        if (!wire.IsDone()) {
+            throw std::runtime_error("freeform_patch UV wire failed");
+        }
+        BRepBuilderAPI_MakeFace face(surf, wire.Wire());
+        if (!face.IsDone()) {
+            throw std::runtime_error("freeform_patch face from UV wire failed");
+        }
+        ShapeFix_Shape fix(face.Face());
+        fix.SetPrecision(1e-7);
+        fix.Perform();
+        return fix.Shape();
     }
     if (name == "ribbon" || name == "ribbonnotch") {
         // The flaregun grip/trigger-guard class: a long, thin, BENT strip
@@ -643,8 +716,10 @@ TopoDS_Shape makeFixture(const std::string& name) {
     }
     throw std::runtime_error(
         "unknown fixture: " + name +
-        " (expected cylinder|partial_cylinder|box|cone|sphere|torus|fillet|hole|demo|boss|"
-        "hairline|canrev|slitdrill|microedge|filletslot|torture)");
+        " (expected cylinder|partial_cylinder|box|cone|sphere|torus|fillet|hole|"
+        "plate_slot|demo|boss|"
+        "hairline|canrev|slitdrill|microedge|filletslot|torture|ribbon|ribbonnotch|"
+        "mapped_patch|freeform_patch)");
 }
 
 }  // namespace weft

@@ -17,7 +17,8 @@ Read these in order:
 The product route remains certified-only. OCCT triangle soup, welding, missing
 faces, silent healing, and unproven preview meshes are not export authority.
 The currently certified automatic families are planes (including holes),
-full/partial cylinders, apex cones, spheres, tori, and analytic fillet/blend strips.
+full/partial cylinders, apex cones, spheres, tori, analytic fillet/blend strips,
+four-sided mapped patches, circular through-hole and rectangular plate-slot cutouts, and n-sided freeform UV-grid patches (five-edge freeform_patch).
 
 ## Token and documentation discipline
 
@@ -826,6 +827,283 @@ only with indexed evidence.
 - Evidence: `docs/evidence/m8-gate-closure-2026-07-18.md`.
 - Exit gate: M8 ledger row is `PASSED`; mapped/freeform remain OUT_OF_SCOPE.
 
+### WP-115 — Close M4 tessellation floor gate
+
+- Status: `DONE`
+- Milestone: M4
+- Prerequisites: WP-110
+- Goal: prove the M4 ledger gate for supported automatic families and mark M4
+  `PASSED`.
+- Evidence: `docs/evidence/m4-gate-closure-2026-07-18.md`.
+- Exit gate: M4 ledger row is `PASSED` with complete gate evidence.
+
+### WP-116 — Close M5 non-vacuous validation gate
+
+- Status: `DONE`
+- Milestone: M5
+- Prerequisites: WP-115
+- Goal: prove required validators are non-vacuous and adversaries refuse by
+  name; mark M5 `PASSED`.
+- Evidence: `docs/evidence/m5-gate-closure-2026-07-18.md`.
+- Exit gate: M5 ledger row is `PASSED` with complete gate evidence.
+
+### WP-117 — Close M6 planar and cylinder templates gate
+
+- Status: `DONE`
+- Milestone: M6
+- Prerequisites: WP-116
+- Goal: prove the M6 fixture family end to end; mark M6 `PASSED`.
+- Evidence: `docs/evidence/m6-gate-closure-2026-07-18.md`.
+- Exit gate: M6 ledger row is `PASSED` with complete gate evidence.
+
+### WP-120 — MAP-A reconnaissance
+
+- Status: `DONE`
+- Milestone: M8 expansion
+- Prerequisites: WP-117
+- Goal: classify four-sided mapped/Coons candidates and name unsupported
+  multi-sided freeform.
+- Evidence: `docs/evidence/m8-map-a-reconnaissance-2026-07-18.md`.
+- Exit gate: every subject accounted; Coons candidates named.
+
+### WP-121 — MAP-B canonical boundaries
+
+- Status: `DONE`
+- Milestone: M8 expansion
+- Prerequisites: WP-120
+- Goal: four-rail critical segmentation and UV lifting for mapped patches.
+- Evidence: `docs/evidence/m8-map-b-boundaries-2026-07-18.md`.
+- Exit gate: bijective samples on four rails; adversaries refuse by name.
+
+### WP-122 — MAP-C certified floor
+
+- Status: `DONE`
+- Milestone: M8 expansion
+- Prerequisites: WP-121
+- Goal: secure mapped/Coons floor through `generateSecureMesh`.
+- Evidence: `docs/evidence/m8-map-c-certified-floor-2026-07-18.md`.
+- Exit gate: isolated mapped fixture certifies with no weld.
+
+### WP-123 — MAP-D modelling topology
+
+- Status: `DONE`
+- Milestone: M8 expansion
+- Prerequisites: WP-122
+- Goal: modelling quads/n-gons with truthful provenance.
+- Evidence: `docs/evidence/m8-map-d-modelling-2026-07-18.md`.
+- Exit gate: non-vacuous modelling provenance on mapped results.
+
+### WP-124 — MAP-E product integration
+
+- Status: `DONE`
+- Milestone: M8 expansion
+- Prerequisites: WP-123
+- Goal: CLI + desktop app admission for mapped results.
+- Evidence: `docs/evidence/m8-map-e-product-2026-07-18.md`.
+- Exit gate: CLI mesh and app screenshot succeed for mapped fixture.
+
+### WP-125 — MAP-F family proof
+
+- Status: `DONE`
+- Milestone: M8 expansion
+- Prerequisites: WP-124
+- Goal: density/corpus/determinism; declare mapped four-sided supported.
+- Evidence: `docs/evidence/m8-map-f-proof-2026-07-18.md`.
+- Exit gate: mapped four-sided is a supported automatic family.
+
+### WP-130 — CUT-A reconnaissance
+
+- Status: `DONE`
+- Milestone: M8 expansion
+- Prerequisites: WP-125
+- Goal: classify plate cutouts/holes/slots; name unsupported cut graphs.
+- Evidence: `docs/evidence/m8-cut-a-reconnaissance-2026-07-18.md`.
+- Exit gate: cut subjects accounted; unsupported refuse by name.
+
+### WP-131 — CUT-B canonical boundaries
+
+- Status: `DONE`
+- Milestone: M8 expansion
+- Prerequisites: WP-130
+- Goal: outer + hole wire boundaries with separated source-defect accounting.
+- Evidence: `docs/evidence/m8-cut-b-boundaries-2026-07-18.md`.
+- Exit gate: cut-loop boundaries complete or refuse by name.
+
+### WP-132 — CUT-C certified floor
+
+- Status: `DONE`
+- Milestone: M8 expansion
+- Prerequisites: WP-131
+- Goal: certify plate+hole / plate+slot floors through secure meshing.
+- Evidence: `docs/evidence/m8-cut-c-certified-floor-2026-07-18.md`.
+- Exit gate: narrow cutout fixtures certify end to end.
+
+### WP-133 — CUT-D modelling topology
+
+- Status: `DONE`
+- Milestone: M8 expansion
+- Prerequisites: WP-132
+- Goal: modelling collar/quads with truthful provenance.
+- Evidence: `docs/evidence/m8-cut-d-modelling-2026-07-18.md`.
+- Exit gate: non-vacuous modelling provenance on cutout results.
+
+### WP-134 — CUT-E product integration
+
+- Status: `DONE`
+- Milestone: M8 expansion
+- Prerequisites: WP-133
+- Goal: CLI + desktop app for cutout solids.
+- Evidence: `docs/evidence/m8-cut-e-product-2026-07-18.md`.
+- Exit gate: CLI mesh and app screenshot succeed for cutout fixtures.
+
+### WP-135 — CUT-F family proof
+
+- Status: `DONE`
+- Milestone: M8 expansion
+- Prerequisites: WP-134
+- Goal: proof matrix; declare cutout family supported.
+- Evidence: `docs/evidence/m8-cut-f-proof-2026-07-18.md`.
+- Exit gate: cutout/cut-graph subclass is a supported automatic family.
+
+### WP-140 — FREE-A reconnaissance
+
+- Status: `DONE`
+- Milestone: M8 expansion
+- Prerequisites: WP-135
+- Goal: taxonomy for general freeform beyond four-sided; name deferred classes.
+- Evidence: `docs/evidence/m8-free-a-reconnaissance-2026-07-18.md`.
+- Exit gate: freeform subjects accounted; unsupported refuse by name.
+
+### WP-141 — FREE-B canonical boundaries
+
+- Status: `DONE`
+- Milestone: M8 expansion
+- Prerequisites: WP-140
+- Goal: bounded freeform edge sampling/critical events; refuse unbounded.
+- Evidence: `docs/evidence/m8-free-b-boundaries-2026-07-18.md`.
+- Exit gate: supported subclass boundaries complete or refuse by name.
+
+### WP-142 — FREE-C certified floor
+
+- Status: `DONE`
+- Milestone: M8 expansion
+- Prerequisites: WP-141
+- Goal: one narrow certified freeform floor consumer (not a general mesher).
+- Evidence: `docs/evidence/m8-free-c-certified-floor-2026-07-18.md`.
+- Exit gate: narrow freeform fixture certifies; wider freeform still refuses.
+
+### WP-143 — FREE-D modelling topology
+
+- Status: `DONE`
+- Milestone: M8 expansion
+- Prerequisites: WP-142
+- Goal: modelling provenance for the narrow freeform class.
+- Evidence: `docs/evidence/m8-free-d-modelling-2026-07-18.md`.
+- Exit gate: non-vacuous modelling provenance.
+
+### WP-144 — FREE-E product integration
+
+- Status: `DONE`
+- Milestone: M8 expansion
+- Prerequisites: WP-143
+- Goal: CLI + desktop app for the narrow freeform class.
+- Evidence: `docs/evidence/m8-free-e-product-2026-07-18.md`.
+- Exit gate: CLI mesh and app screenshot succeed.
+
+### WP-145 — FREE-F family proof
+
+- Status: `DONE`
+- Milestone: M8 expansion
+- Prerequisites: WP-144
+- Goal: proof matrix; declare narrow freeform class supported.
+- Evidence: `docs/evidence/m8-free-f-proof-2026-07-18.md`.
+- Exit gate: narrow freeform class supported; wider freeform remains refused.
+
+### WP-150 — App family matrix
+
+- Status: `DONE`
+- Milestone: App readiness
+- Prerequisites: WP-145
+- Goal: desktop `weft_app` exercises every supported family (import → regenerate
+  → viewport/refusal → export).
+- Evidence: `docs/evidence/m8-app-family-matrix-2026-07-18.md`.
+- Exit gate: screenshot/export matrix covers all supported families.
+
+### WP-151 — App editing and overlays on new families
+
+- Status: `DONE`
+- Milestone: App readiness
+- Prerequisites: WP-150
+- Goal: supported recipe edits/overlays/hot-reload remain truthful on MAP/CUT/
+  FREE results; unsupported ops refuse by name.
+- Evidence: `docs/evidence/m8-app-editing-overlays-2026-07-18.md`.
+- Exit gate: editing/overlay/hot-reload gates pass without stale admission.
+
+### WP-152 — Running-app gate
+
+- Status: `DONE`
+- Milestone: App readiness
+- Prerequisites: WP-151
+- Goal: binary “app ready” checklist (cold start, fixture sweep, density,
+  export, refusal UX) before any distribution work.
+- Evidence: `docs/evidence/m8-app-gate-2026-07-18.md`.
+- Exit gate: app-ready evidence filed; WP-160+ may start.
+
+### WP-160 — M9 dependency and BR-006 audit
+
+- Status: `DONE`
+- Milestone: M9
+- Prerequisites: WP-152
+- Goal: audit dependencies; close or explicitly schedule BR-006 for
+  distributable predicate/CDT/intersection.
+- Evidence: `docs/evidence/m9-dependency-br006-2026-07-18.md`.
+- Exit gate: license/dependency inventory complete with named next actions.
+
+### WP-161 — M9 clean rebuilds
+
+- Status: `BLOCKED`
+- Milestone: M9
+- Prerequisites: WP-160
+- Goal: clean empty-dir Linux and Windows builds.
+- Evidence: `docs/evidence/m9-clean-rebuilds-2026-07-18.md`.
+- Exit gate: both platforms build from empty directories.
+
+### WP-162 — M9 full product gates
+
+- Status: `DONE`
+- Milestone: M9
+- Prerequisites: WP-161
+- Goal: strict/static/corpus/CLI/app/export gates on release candidates.
+- Evidence: `docs/evidence/m9-product-gates-2026-07-18.md`.
+- Exit gate: all listed gates green or BLOCKED with exact missing proof.
+
+### WP-163 — M9 package contents
+
+- Status: `DONE`
+- Milestone: M9
+- Prerequisites: WP-162
+- Goal: package contents + deterministic digests.
+- Evidence: `docs/evidence/m9-package-contents-2026-07-18.md`.
+- Exit gate: package inventory and digests recorded.
+
+### WP-164 — M9 Plasticity-to-Blender acceptance
+
+- Status: `BLOCKED`
+- Milestone: M9
+- Prerequisites: WP-163
+- Goal: artist-facing inter-app acceptance (only after app-ready).
+- Evidence: `docs/evidence/m9-plasticity-blender-2026-07-18.md`.
+- Exit gate: acceptance set recorded with visual verdicts.
+
+### WP-165 — Close M9 release gate
+
+- Status: `OPEN`
+- Milestone: M9
+- Prerequisites: WP-164
+- Goal: release evidence; mark M9 `PASSED`.
+- Evidence: `docs/evidence/m9-gate-closure-2026-07-18.md`.
+- Exit gate: M9 ledger row is `PASSED`.
+
 ## M8 family packet
 
 After M7 passes, repeat this packet for one family at a time. Choose the next
@@ -839,23 +1117,23 @@ roadmap document.
 3. `FAMILY-C` certified floor: boundary-exact tessellation, error bounds,
    intersection and provenance validation.
 4. `FAMILY-D` modelling topology: deterministic polygons/quads above the floor.
-5. `FAMILY-E` product integration: recipe/app/export/live-link and cache.
+5. `FAMILY-E` product integration: recipe/app/export (desktop app primary).
 6. `FAMILY-F` proof: isolated, connected, adversarial, density-sweep, corpus,
    Windows/Linux determinism, and evidence.
 
-Selected M8 release scope: plane/cylinder/cone (done), sphere (WP-080…085),
-torus (WP-090…095), analytic fillet/blend (WP-100…105), then WP-110 gate.
-Mapped/freeform remain post-M8 named refusals. A family is not “supported”
-until all six steps pass.
+Selected M8 analytic scope is closed (WP-070…110). Post-scope expansion:
+mapped (WP-120…125), cut-graph (WP-130…135), freeform (WP-140…145), then
+running-app hardening (WP-150…152). A family is not “supported” until all six
+steps pass.
 
 ## M9 release packet
 
-M9 starts only after the selected M8 release families pass:
+M9 starts only after WP-152 (running-app gate) is `DONE`. Distribution and
+inter-app acceptance are last:
 
-1. Audit every dependency and close BR-006 with a distributable predicate/CDT/
-   intersection implementation or an appropriate license.
-2. Reproduce clean Windows and Linux builds from empty build directories.
-3. Run strict, static-analysis, corpus, CLI, app, export, and Blender-link gates.
-4. Verify deterministic reports/topology digests and package contents.
-5. Perform the artist-facing Plasticity-to-Blender acceptance set.
-6. Record one release evidence file and mark M9 only when every gate passes.
+1. WP-160 dependency / BR-006 audit
+2. WP-161 clean empty-dir Linux + Windows builds
+3. WP-162 strict/static/corpus/CLI/app/export gates
+4. WP-163 package contents + digests
+5. WP-164 Plasticity→Blender artist acceptance
+6. WP-165 release evidence; mark M9 `PASSED`
