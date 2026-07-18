@@ -575,6 +575,40 @@ void testTemplateChainSumConsumer() {
     }
 }
 
+void testCertifiedAdmissionGate() {
+    const weft::SecureMeshingResult ok = generateFixture("box");
+    checkSuccessfulResult(ok);
+    CHECK(ok.value);
+    if (!ok.value) return;
+    const weft::CertifiedAdmissionResult admitted =
+        weft::admitCertifiedMeshingResult(*ok.value);
+    CHECK(admitted);
+    CHECK(admitted.selectedOutput.has_value());
+
+    weft::MeshingResult tampered = *ok.value;
+    tampered.validation.checks.clear();
+    const weft::CertifiedAdmissionResult incomplete =
+        weft::admitCertifiedMeshingResult(tampered);
+    CHECK(!incomplete);
+    CHECK(incomplete.failure &&
+          incomplete.failure->code == "admission.certificate_incomplete");
+
+    const weft::CertifiedAdmissionResult stale =
+        weft::admitCertifiedMeshingResult(*ok.value, 2, 1);
+    CHECK(!stale);
+    CHECK(stale.failure &&
+          stale.failure->code == "admission.stale_generation");
+
+    weft::MeshingResult unexplained = *ok.value;
+    unexplained.modeling.provenance =
+        weft::ModelingProvenanceKind::CertifiedFloorAlias;
+    unexplained.modeling.aliasesCertified = false;
+    unexplained.modeling.safeFloorReason = std::nullopt;
+    const weft::CertifiedAdmissionResult badModeling =
+        weft::admitCertifiedMeshingResult(unexplained);
+    CHECK(!badModeling);
+}
+
 void testPartialCylinder() {
     TemporaryStep step("partial_cylinder");
     weft::writeStep(weft::makeFixture("partial_cylinder"),
@@ -629,6 +663,7 @@ int main() {
         testExactEdgeIntervals();
         testUnsupportedAndConfigurationRefusals();
         testTemplateChainSumConsumer();
+        testCertifiedAdmissionGate();
         testPartialCylinder();
     } catch (const std::exception& error) {
         std::printf("FAIL secure-meshing exception: %s\n", error.what());

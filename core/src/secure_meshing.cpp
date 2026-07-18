@@ -656,8 +656,55 @@ SecureMeshingResult generateSecureMesh(
     return result;
 }
 
+CertifiedAdmissionResult admitCertifiedMeshingResult(
+    const MeshingResult& result,
+    std::optional<std::uint64_t> expectedGenerationEpoch,
+    std::optional<std::uint64_t> actualGenerationEpoch) {
+    CertifiedAdmissionResult out;
+    if (!result.validation.complete()) {
+        out.failure = CertifiedAdmissionFailure{
+            "admission.certificate_incomplete",
+            "MeshingResult validation certificate is incomplete"};
+        return out;
+    }
+    if (result.certified.triangles.empty() ||
+        result.certified.topologyFingerprint.empty()) {
+        out.failure = CertifiedAdmissionFailure{
+            "admission.certified_mesh_empty",
+            "MeshingResult has no certified mesh to admit"};
+        return out;
+    }
+    if (expectedGenerationEpoch && actualGenerationEpoch &&
+        *expectedGenerationEpoch != *actualGenerationEpoch) {
+        out.failure = CertifiedAdmissionFailure{
+            "admission.stale_generation",
+            "MeshingResult generation epoch does not match the request"};
+        return out;
+    }
+    const ModelingProvenanceResult modeling =
+        validateModelingProvenance(result);
+    if (!modeling) {
+        out.failure = CertifiedAdmissionFailure{
+            modeling.failure ? modeling.failure->code
+                             : "admission.modeling_provenance_invalid",
+            modeling.failure
+                ? modeling.failure->message
+                : "modelling provenance is invalid for admission"};
+        return out;
+    }
+    out.selectedOutput = modeling.selectedOutput;
+    return out;
+}
+
 PolyMesh makeCertifiedPolyMeshAdapter(const MeshingResult& result) {
     PolyMesh adapter;
+    const CertifiedAdmissionResult admitted =
+        admitCertifiedMeshingResult(result);
+    if (!admitted) {
+        // Fail closed: return an empty adapter rather than an uncertified mesh.
+        adapter.selectedOutput = admitted.failure->code;
+        return adapter;
+    }
     const ModelingProvenanceResult modeling =
         validateModelingProvenance(result);
     adapter.selectedOutput = modeling ? modeling.selectedOutput : "certified";

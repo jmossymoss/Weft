@@ -5,6 +5,7 @@
 #include "weft/cylinder_template.hpp"
 #include "weft/interval_solver.hpp"
 
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <set>
@@ -81,5 +82,24 @@ std::optional<SecureMeshingFailure> certifySolvedIntervalConsumption(
 // Workflow/export adapter. Certified triangles and their face-corner UVs are
 // copied verbatim; no weld, topology edit, or downstream triangulation occurs.
 PolyMesh makeCertifiedPolyMeshAdapter(const MeshingResult& result);
+
+struct CertifiedAdmissionFailure {
+    std::string code;
+    std::string message;
+};
+
+struct CertifiedAdmissionResult {
+    std::optional<std::string> selectedOutput;
+    std::optional<CertifiedAdmissionFailure> failure;
+
+    explicit operator bool() const noexcept { return !failure.has_value(); }
+};
+
+// Central admission gate for display/export/live-link consumers. Requires a
+// complete MeshingResult certificate and truthful modelling provenance.
+CertifiedAdmissionResult admitCertifiedMeshingResult(
+    const MeshingResult& result,
+    std::optional<std::uint64_t> expectedGenerationEpoch = std::nullopt,
+    std::optional<std::uint64_t> actualGenerationEpoch = std::nullopt);
 
 }  // namespace weft

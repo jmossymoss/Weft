@@ -83,6 +83,12 @@ prove completed work; they are not plans or handoff diaries.
 - `m5-modelling-provenance-2026-07-18.md` - explicit Absent/FloorAlias/Independent
   modelling provenance with adapter selected-output reporting on Linux
   strict/static-analysis lanes.
+- `m6-independent-modelling-topology-2026-07-18.md` - independent modelling
+  quads paired from certified triangle strips with non-vacuous independent
+  certificates on Linux strict/static-analysis lanes.
+- `m7-admission-path-audit-2026-07-18.md` - centralized MeshingResult admission
+  for CLI/app regenerate/export routes with incomplete/stale/provenance
+  refusals on Linux strict/static-analysis lanes.
 - `m6-secure-orchestration-2026-07-17.md` - atomic plane/cylinder/through-hole secure pipeline and combined certificate evidence.
 - `m7-secure-cli-routing-2026-07-17.md` - lossless certified export adapter, secure CLI routing, report coverage, and named workflow refusals.
 - `m7-secure-app-live-link-2026-07-17.md` - secure app preview/export/hot-reload routing, visual proof, and deterministic atomic Blender link.

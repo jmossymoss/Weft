@@ -420,7 +420,7 @@ only with indexed evidence.
 
 ### WP-032 — Generate first independent modelling polygons
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M6
 - Prerequisites: WP-022, WP-023, WP-031
 - Goal: produce independently certified quads/n-gons for the planar and
@@ -435,13 +435,13 @@ only with indexed evidence.
   4. Add box, capped/full/partial cylinder, through-hole, density sweep, and
      tampered-ancestry fixtures.
 - Tests: all template, certified-mesh, secure-meshing, and export tests.
-- Evidence: `docs/evidence/m6-independent-modelling-topology-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m6-independent-modelling-topology-2026-07-18.md`.
 - Exit gate: the complete M6 fixture family has independent, modelable
   polygons and an unchanged certified floor.
 
 ### WP-040 — Audit all app and export admission paths
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M7
 - Prerequisites: WP-031
 - Goal: require a valid `MeshingResult` certificate at every regeneration,
@@ -454,7 +454,7 @@ only with indexed evidence.
   3. Add missing/tampered/stale-generation/refusal integration tests.
   4. Confirm no legacy or direct OCCT triangulation route remains reachable.
 - Tests: full Windows strict lane plus app/CLI smoke commands.
-- Evidence: `docs/evidence/m7-admission-path-audit-YYYY-MM-DD.md`.
+- Evidence: `docs/evidence/m7-admission-path-audit-2026-07-18.md`.
 - Exit gate: every product route is enumerated and refuses uncertified or stale
   results before use.
 
