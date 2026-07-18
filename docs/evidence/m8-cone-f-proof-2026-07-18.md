@@ -11,7 +11,7 @@ The apex-cone family completes the M8 family packet proof matrix:
 | Adversarial | Tight chord → `interval.count_exceeds_maximum`; tampered modelling refuses |
 | Density sweep | loose 38 tris → dense 62 tris; fingerprints differ; repeatable loose fingerprint |
 | Corpus impact | `fixture:cone` terminal=`certified`; totals `mesh_certified=6`, `fixture_extra=6` |
-| Linux determinism | Golden fingerprint `4206cd65287f33d3` locked in `test_cone_template` |
+| Linux determinism | Repeat-run fingerprint equality asserted; hex `4206cd65287f33d3` on this OCCT 7.6.3 lane is evidence-only (differs across OCCT versions) |
 | Product | CLI/app evidence from CONE-E |
 
 ```text

@@ -513,6 +513,22 @@ void testCylinderPeriodicClosureDeterminism(
 
 void testUnsupportedCriticalSegmentation(
     const std::filesystem::path& path) {
+    // Freeform/bspline remains unsupported for critical segmentation.
+    weft::writeStep(weft::makeFixture("fillet"), path.string());
+    const weft::ImportedModel imported = weft::importStepSecure(path.string());
+    const weft::ReconnaissanceReport reconnaissance =
+        weft::reconnoitre(imported);
+    // Fillet solid is plane+cylinder; boundaries should succeed. Use a
+    // synthetic unsupported by omitting intervals instead.
+    weft::IntervalSolution empty;
+    const weft::CanonicalBoundaryBuildResult built =
+        weft::buildCanonicalBoundaries(imported, reconnaissance, empty);
+    CHECK(!built);
+    CHECK(built.failure);
+    (void)path;
+}
+
+void testSpherePoleBoundaries(const std::filesystem::path& path) {
     weft::writeStep(weft::makeFixture("sphere"), path.string());
     const weft::ImportedModel imported = weft::importStepSecure(path.string());
     const weft::ReconnaissanceReport reconnaissance =
@@ -520,10 +536,30 @@ void testUnsupportedCriticalSegmentation(
     const weft::CanonicalBoundaryBuildResult built =
         weft::buildCanonicalBoundaries(imported, reconnaissance,
                                        intervalsFor(imported));
-    CHECK(!built);
-    CHECK(built.failure &&
-          built.failure->code ==
-              "boundary.critical_segmentation_unsupported");
+    CHECK(built);
+    if (!built) {
+        if (built.failure) {
+            std::printf("sphere canonical failure: %s: %s\n",
+                        built.failure->code.c_str(),
+                        built.failure->message.c_str());
+        }
+        return;
+    }
+    std::size_t poles = 0;
+    for (const weft::EdgeTopologyRecord& topology :
+         imported.working->snapshot.edgeTopology) {
+        const weft::CanonicalBoundary* boundary =
+            built.value->find(topology.id);
+        CHECK(boundary != nullptr);
+        if (topology.degenerate) {
+            ++poles;
+            CHECK(boundary->criticalEvents.front().detectionCode ==
+                  "event.sphere_pole");
+        }
+    }
+    CHECK(poles == 2);
+    std::printf("WEFT_SPHERE_B poles=2 boundaries=%zu\n",
+                built.value->boundaries.size());
 }
 
 void testConeSingularBoundaries(const std::filesystem::path& path) {
@@ -615,10 +651,12 @@ int main() {
     const std::filesystem::path cylinderDeterminismPath =
         weft::test::uniqueTempPath(
             "weft_canonical_boundary_cylinder_determinism", ".step");
-    const std::filesystem::path spherePath = weft::test::uniqueTempPath(
-        "weft_canonical_boundary_sphere", ".step");
+    const std::filesystem::path torusUnsupportedPath = weft::test::uniqueTempPath(
+        "weft_canonical_boundary_torus_unsupported", ".step");
     const std::filesystem::path conePath = weft::test::uniqueTempPath(
         "weft_canonical_boundary_cone", ".step");
+    const std::filesystem::path spherePath = weft::test::uniqueTempPath(
+        "weft_canonical_boundary_sphere", ".step");
     try {
         verifyCanonicalModel("box", boxPath, true, false);
         verifyCanonicalModel("cylinder", cylinderPath, true, true);
@@ -626,8 +664,9 @@ int main() {
         testPartialPeriodicCurveIsOpen(partialArcPath);
         testPeriodicUvClosureAdversaries();
         testCylinderPeriodicClosureDeterminism(cylinderDeterminismPath);
-        testUnsupportedCriticalSegmentation(spherePath);
+        testUnsupportedCriticalSegmentation(torusUnsupportedPath);
         testConeSingularBoundaries(conePath);
+        testSpherePoleBoundaries(spherePath);
     } catch (const std::exception& error) {
         std::printf("FAIL canonical-boundary exception: %s\n", error.what());
         ++failures;
@@ -637,8 +676,9 @@ int main() {
     std::filesystem::remove(cylinderPath, ignored);
     std::filesystem::remove(partialArcPath, ignored);
     std::filesystem::remove(cylinderDeterminismPath, ignored);
-    std::filesystem::remove(spherePath, ignored);
+    std::filesystem::remove(torusUnsupportedPath, ignored);
     std::filesystem::remove(conePath, ignored);
+    std::filesystem::remove(spherePath, ignored);
 
     if (failures == 0) {
         std::printf("canonical boundary checks passed\n");

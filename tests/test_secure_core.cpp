@@ -1720,13 +1720,13 @@ void testUnknownExactFamilyInjection() {
         weft::probeSurfaceFamily(static_cast<int>(GeomAbs_Sphere));
     CHECK(sphere.familyCode == "sphere");
     CHECK(sphere.support ==
-          weft::GeometrySupportState::DeferredResidualSurface);
+          weft::GeometrySupportState::SupportedAnalyticTemplate);
 
     const weft::ExactFamilyProbe torus =
         weft::probeSurfaceFamily(static_cast<int>(GeomAbs_Torus));
     CHECK(torus.familyCode == "torus");
     CHECK(torus.support ==
-          weft::GeometrySupportState::DeferredResidualSurface);
+          weft::GeometrySupportState::SupportedAnalyticTemplate);
 }
 
 void testConeReconnaissanceDeferred() {
@@ -1841,35 +1841,8 @@ void testConeReconnaissanceDeferred() {
                 meshed.value ? meshed.value->certified.triangles.size() : 0,
                 meshed.value ? meshed.value->certified.vertices.size() : 0);
 
-    // Sphere residual control: still deferred / named refusal.
-    const std::filesystem::path spherePath =
-        weft::test::uniqueTempPath("weft_secure_core_sphere", ".step");
-    weft::writeStep(weft::makeFixture("sphere"), spherePath.string());
-    const weft::ImportedModel sphere = weft::importStepSecure(
-        spherePath.string(), weft::RepairProfile::Conservative);
-    const weft::ReconnaissanceReport sphereReport = weft::reconnoitre(sphere);
-    CHECK(sphereReport.complete);
-    bool sawDeferredSphere = false;
-    for (const weft::ExactGeometryClassification& record :
-         sphereReport.records) {
-        if (record.taxonomy == weft::GeometryTaxonomy::Surface &&
-            record.familyCode == "sphere") {
-            CHECK(record.support ==
-                  weft::GeometrySupportState::DeferredResidualSurface);
-            sawDeferredSphere = true;
-        }
-    }
-    CHECK(sawDeferredSphere);
-    const weft::SecureMeshingResult sphereMesh =
-        weft::generateSecureMesh(sphere, settings);
-    CHECK(!sphereMesh);
-    CHECK(sphereMesh.failure);
-    std::printf("WEFT_CONE_A sphere_refusal=%s\n",
-                sphereMesh.failure ? sphereMesh.failure->code.c_str() : "-");
-
     std::error_code ignored;
     std::filesystem::remove(conePath, ignored);
-    std::filesystem::remove(spherePath, ignored);
 }
 
 void testOracleTrimTaxonomySlice() {

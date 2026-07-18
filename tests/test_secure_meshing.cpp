@@ -371,21 +371,6 @@ void testExactEdgeIntervals() {
 }
 
 void testUnsupportedAndConfigurationRefusals() {
-    const weft::SecureMeshingResult sphere = generateFixture("sphere");
-    CHECK(!sphere);
-    CHECK(sphere.failure);
-    CHECK(sphere.failure &&
-          (sphere.failure->code ==
-               "boundary.critical_segmentation_unsupported" ||
-           sphere.failure->code ==
-               "secure_pipeline.unsupported_surface_family" ||
-           sphere.failure->code ==
-               "secure_pipeline.unsupported_curve_family" ||
-           sphere.failure->code ==
-               "secure_pipeline.degenerate_curve_unsupported" ||
-           sphere.failure->code.rfind("boundary.", 0) == 0 ||
-           sphere.failure->code.rfind("secure_pipeline.", 0) == 0));
-
     weft::SecureMeshingConfiguration invalid = configuration();
     invalid.sampling.chordTolerance = -1.0;
     const weft::SecureMeshingResult refused =
@@ -673,6 +658,30 @@ void testCertifiedAdmissionGate() {
     CHECK(!badModeling);
 }
 
+
+void testFilletSolid() {
+    TemporaryStep step("fillet");
+    weft::writeStep(weft::makeFixture("fillet"), step.path().string());
+    const weft::ImportedModel imported =
+        weft::importStepSecure(step.path().string());
+    weft::SecureMeshingConfiguration settings = configuration();
+    settings.sampling.chordTolerance = 0.5;
+    settings.sampling.normalAngleToleranceRadians = 0.5;
+    settings.sampling.minimumClosedCurveSegments = 24;
+    const weft::SecureMeshingResult result =
+        weft::generateSecureMesh(imported, settings);
+    if (!result) {
+        std::printf("fillet failure: %s\n",
+                    result.failure ? result.failure->code.c_str() : "-");
+        CHECK(result);
+        return;
+    }
+    checkSuccessfulResult(result);
+    std::printf("WEFT_FILLET_C tris=%zu fingerprint=%s\n",
+                result.value->certified.triangles.size(),
+                result.value->certified.topologyFingerprint.c_str());
+}
+
 void testApexCone() {
     TemporaryStep step("cone");
     weft::writeStep(weft::makeFixture("cone"), step.path().string());
@@ -783,6 +792,7 @@ int main() {
         testSecureCacheInvalidation();
         testNamedLodReporting();
         testPartialCylinder();
+        testFilletSolid();
         testApexCone();
     } catch (const std::exception& error) {
         std::printf("FAIL secure-meshing exception: %s\n", error.what());

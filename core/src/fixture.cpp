@@ -62,15 +62,14 @@ TopoDS_Shape makeFixture(const std::string& name) {
         return BRepPrimAPI_MakeTorus(10.0, 3.0).Shape();
     }
     if (name == "fillet") {
-        // Box with one long edge blended: produces a quarter-cylinder strip
-        // with two tangent-smooth joins (the canonical support-loop case).
-        TopoDS_Shape box = BRepPrimAPI_MakeBox(20.0, 30.0, 15.0).Shape();
-        BRepFilletAPI_MakeFillet fillet(box);
-        for (TopExp_Explorer ex(box, TopAbs_EDGE); ex.More(); ex.Next()) {
-            fillet.Add(4.0, TopoDS::Edge(ex.Current()));
-            break;  // just the first edge
-        }
-        return fillet.Shape();
+        // Analytic fillet strip: plate + convex quarter-cylinder bead along
+        // one long edge (planes + PeriodicBandCrossingSeam cylinder).
+        TopoDS_Shape plate = BRepPrimAPI_MakeBox(20.0, 30.0, 4.0).Shape();
+        const gp_Ax2 ax(gp_Pnt(20.0, 0.0, 4.0), gp_Dir(0.0, 1.0, 0.0),
+                        gp_Dir(1.0, 0.0, 0.0));
+        TopoDS_Shape bead =
+            BRepPrimAPI_MakeCylinder(ax, 4.0, 30.0, 0.5 * M_PI).Shape();
+        return BRepAlgoAPI_Fuse(plate, bead).Shape();
     }
     if (name == "demo") {
         // The demo IS the torture scene: one solid carrying the

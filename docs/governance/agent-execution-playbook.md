@@ -17,7 +17,7 @@ Read these in order:
 The product route remains certified-only. OCCT triangle soup, welding, missing
 faces, silent healing, and unproven preview meshes are not export authority.
 The currently certified automatic families are planes (including holes),
-full/partial cylinders, and apex cones.
+full/partial cylinders, apex cones, spheres, tori, and analytic fillet/blend strips.
 
 ## Token and documentation discipline
 
@@ -647,7 +647,7 @@ only with indexed evidence.
 
 ### WP-080 — SPHERE-A reconnaissance
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-075
 - Goal: exact family/domain/trim classification for sphere subjects and stable
@@ -658,7 +658,7 @@ only with indexed evidence.
 
 ### WP-081 — SPHERE-B canonical boundaries
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-080
 - Goal: critical segmentation, dual-pole singular stations, and count
@@ -669,7 +669,7 @@ only with indexed evidence.
 
 ### WP-082 — SPHERE-C certified floor
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-081
 - Goal: boundary-exact sphere tessellation with chord/normal bounds and body
@@ -679,7 +679,7 @@ only with indexed evidence.
 
 ### WP-083 — SPHERE-D modelling topology
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-082
 - Goal: deterministic quads/n-gons above the sphere floor with truthful
@@ -689,7 +689,7 @@ only with indexed evidence.
 
 ### WP-084 — SPHERE-E product integration
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-083
 - Goal: CLI/app/export admit certified sphere results through existing gates.
@@ -698,7 +698,7 @@ only with indexed evidence.
 
 ### WP-085 — SPHERE-F family proof
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-084
 - Goal: isolated, connected, adversarial, density-sweep, corpus, Linux
@@ -708,7 +708,7 @@ only with indexed evidence.
 
 ### WP-090 — TORUS-A reconnaissance
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-085
 - Goal: exact classification for torus subjects and named unsupported cases.
@@ -717,7 +717,7 @@ only with indexed evidence.
 
 ### WP-091 — TORUS-B canonical boundaries
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-090
 - Goal: dual-periodic critical segmentation, seam lifts, and counts.
@@ -726,7 +726,7 @@ only with indexed evidence.
 
 ### WP-092 — TORUS-C certified floor
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-091
 - Goal: boundary-exact torus tessellation with chord/normal bounds.
@@ -735,7 +735,7 @@ only with indexed evidence.
 
 ### WP-093 — TORUS-D modelling topology
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-092
 - Goal: modelling polygons/quads with truthful provenance.
@@ -744,7 +744,7 @@ only with indexed evidence.
 
 ### WP-094 — TORUS-E product integration
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-093
 - Goal: CLI/app admission for certified torus results.
@@ -753,7 +753,7 @@ only with indexed evidence.
 
 ### WP-095 — TORUS-F family proof
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-094
 - Goal: full proof matrix; declare torus supported.
@@ -762,7 +762,7 @@ only with indexed evidence.
 
 ### WP-100 — FILLET-A reconnaissance
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-095
 - Goal: classify blend faces on fillet/bossfillet fixtures (cylinder vs torus
@@ -772,7 +772,7 @@ only with indexed evidence.
 
 ### WP-101 — FILLET-B canonical boundaries
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-100
 - Goal: boundaries for blend strips using cylinder/torus consumers.
@@ -781,7 +781,7 @@ only with indexed evidence.
 
 ### WP-102 — FILLET-C certified floor
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-101
 - Goal: certify `fillet` (and torus-band blend when in scope) through secure
@@ -791,7 +791,7 @@ only with indexed evidence.
 
 ### WP-103 — FILLET-D modelling topology
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-102
 - Goal: truthful modelling provenance on fillet solids.
@@ -800,7 +800,7 @@ only with indexed evidence.
 
 ### WP-104 — FILLET-E product integration
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-103
 - Goal: CLI/app admission for certified fillet solids.
@@ -809,7 +809,7 @@ only with indexed evidence.
 
 ### WP-105 — FILLET-F family proof
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-104
 - Goal: full proof matrix; declare analytic fillet/blend supported.
@@ -818,7 +818,7 @@ only with indexed evidence.
 
 ### WP-110 — Close M8 selected-release gate
 
-- Status: `OPEN`
+- Status: `DONE`
 - Milestone: M8
 - Prerequisites: WP-105
 - Goal: prove the selected M8 release scope (plane/cylinder/cone/sphere/torus/

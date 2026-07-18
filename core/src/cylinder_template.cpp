@@ -508,6 +508,29 @@ CylinderWallResult buildFullCylinderWall(
         }
     }
 
+    // Partial one-band walls: side-rail samples often share canonical vertex
+    // identities with rim corners. Attach leftovers only onto an existing rim
+    // vertex with the same canonical index (exact shared endpoint).
+    if (partialBand && axialIntervals == 1 &&
+        consumed.size() != allFaceUses.size()) {
+        for (const FaceSampleUse& leftover : allFaceUses) {
+            if (consumed.contains(leftover.use)) continue;
+            bool attached = false;
+            for (PlanarTrimVertex& vertex : mesh.vertices) {
+                if (vertex.canonicalVertexIndex ==
+                    leftover.sample->canonicalVertexIndex) {
+                    vertex.boundaryUses.push_back(boundaryUse(leftover));
+                    consumed.insert(leftover.use);
+                    attached = true;
+                    break;
+                }
+            }
+            if (!attached) {
+                // Leave unconsumed; the failure below names the gap.
+            }
+        }
+    }
+
     result.validation[BoundaryCoverage].checked = consumed.size();
     if (consumed.size() != allFaceUses.size()) {
         setFailure(result, BoundaryCoverage,

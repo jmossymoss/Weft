@@ -148,14 +148,20 @@ bool supportedSegmentationFamily(const ExactGeometryClassification& record,
         return record.support ==
             GeometrySupportState::SupportedAnalyticTemplate;
     }
-    // Cone may remain DeferredResidualSurface until CONE-C promotes support,
-    // but CONE-B must still build singular/periodic critical events.
-    if (record.familyCode == "cone") {
+    // Analytic singular/periodic families may remain DeferredResidualSurface
+    // until their FAMILY-C consumer promotes support, but FAMILY-B still needs
+    // singular/periodic critical events.
+    if (record.familyCode == "cone" || record.familyCode == "sphere" ||
+        record.familyCode == "torus") {
         return record.support ==
                    GeometrySupportState::SupportedAnalyticTemplate ||
             record.support == GeometrySupportState::DeferredResidualSurface;
     }
     return false;
+}
+
+bool isSingularAnalyticFace(const ExactGeometryClassification& face) {
+    return face.familyCode == "cone" || face.familyCode == "sphere";
 }
 
 bool vertexTouchesDegenerateEdge(const BRepSnapshot& snapshot,
@@ -368,7 +374,7 @@ CriticalSegmentationResult collectSupportedCriticalEvents(
             mapping.faceClassification->trimDomain ==
                 TrimDomainClass::TouchesTwoSingularities;
         if (singularTrim &&
-            mapping.faceClassification->familyCode != "cone") {
+            !isSingularAnalyticFace(*mapping.faceClassification)) {
             result.failure = CanonicalBoundaryFailure{
                 "boundary.critical_segmentation_unsupported",
                 "singular trim domains require a dedicated critical-event solver",
@@ -385,28 +391,33 @@ CriticalSegmentationResult collectSupportedCriticalEvents(
             sourceForWorking(imported, mapping.coedge->faceId);
 
         if (singularTrim &&
-            mapping.faceClassification->familyCode == "cone") {
-            // Apex contact on generators: mark the endpoint that shares a
-            // degenerate edge. Base circles do not receive an apex event.
-            if (curveClassification.familyCode == "line") {
+            isSingularAnalyticFace(*mapping.faceClassification)) {
+            const char* singularCode =
+                mapping.faceClassification->familyCode == "sphere"
+                ? "event.sphere_pole"
+                : "event.cone_apex";
+            // Pole/apex contact on generators or meridians: mark endpoints that
+            // share a degenerate edge.
+            if (curveClassification.familyCode == "line" ||
+                curveClassification.familyCode == "circle") {
                 if (topology.lowerVertex &&
                     vertexTouchesDegenerateEdge(imported.working->snapshot,
                                                 *topology.lowerVertex)) {
-                    CriticalParameterEvent apex = seed;
-                    apex.kind = CriticalParameterEventKind::Singular;
-                    apex.detectionCode = "event.cone_apex";
-                    apex.curveParameter = lower;
-                    appendCriticalEvent(result.events, apex, lower, upper,
+                    CriticalParameterEvent singular = seed;
+                    singular.kind = CriticalParameterEventKind::Singular;
+                    singular.detectionCode = singularCode;
+                    singular.curveParameter = lower;
+                    appendCriticalEvent(result.events, singular, lower, upper,
                                         closed, span);
                 }
                 if (!closed && topology.upperVertex &&
                     vertexTouchesDegenerateEdge(imported.working->snapshot,
                                                 *topology.upperVertex)) {
-                    CriticalParameterEvent apex = seed;
-                    apex.kind = CriticalParameterEventKind::Singular;
-                    apex.detectionCode = "event.cone_apex";
-                    apex.curveParameter = upper;
-                    appendCriticalEvent(result.events, apex, lower, upper,
+                    CriticalParameterEvent singular = seed;
+                    singular.kind = CriticalParameterEventKind::Singular;
+                    singular.detectionCode = singularCode;
+                    singular.curveParameter = upper;
+                    appendCriticalEvent(result.events, singular, lower, upper,
                                         closed, span);
                 }
             }
@@ -773,13 +784,13 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                                                  GeometryTaxonomy::Surface)) {
                     return buildFailure(
                         report, "boundary.critical_segmentation_unsupported",
-                        "degenerate apex stations currently require a cone face",
+                        "degenerate singular stations require a cone or sphere face",
                         {edgeId, coedge.id, coedge.faceId});
                 }
-                if (face->familyCode != "cone") {
+                if (!isSingularAnalyticFace(*face)) {
                     return buildFailure(
                         report, "boundary.degenerate_face_unsupported",
-                        "degenerate singular edges are only certified on cone faces",
+                        "degenerate singular edges are only certified on cone or sphere faces",
                         {edgeId, coedge.id, coedge.faceId});
                 }
                 const auto periods = periodsFor(*face);
@@ -804,12 +815,21 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
 
             const ExactGeometryClassification* curveClassification =
                 reconnaissance.find(edgeId);
-            if (!curveClassification ||
-                !supportedSegmentationFamily(*curveClassification,
-                                             GeometryTaxonomy::Curve)) {
+            const bool degenerateCurveOk =
+                curveClassification &&
+                (supportedSegmentationFamily(*curveClassification,
+                                             GeometryTaxonomy::Curve) ||
+                 (std::find(curveClassification->conditionCodes.begin(),
+                            curveClassification->conditionCodes.end(),
+                            "degenerate") !=
+                      curveClassification->conditionCodes.end() &&
+                  (curveClassification->familyCode == "circle" ||
+                   curveClassification->familyCode == "line" ||
+                   curveClassification->familyCode == "kernel_specific")));
+            if (!degenerateCurveOk) {
                 return buildFailure(
                     report, "boundary.critical_segmentation_unsupported",
-                    "degenerate apex edges must classify as degenerate circles",
+                    "degenerate singular edges require a classified curve family",
                     {edgeId});
             }
 
@@ -828,7 +848,10 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
             apexEvent.kind = CriticalParameterEventKind::Singular;
             apexEvent.edge = edgeId;
             apexEvent.sourceEdge = sourceEdge;
-            apexEvent.detectionCode = "event.cone_apex";
+            apexEvent.detectionCode =
+                mappings.front().faceClassification->familyCode == "sphere"
+                ? "event.sphere_pole"
+                : "event.cone_apex";
             apexEvent.curveParameter = 0.0;
             apexEvent.sampleOrdinal = 0;
             if (!mappings.empty()) {
