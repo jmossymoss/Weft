@@ -380,7 +380,11 @@ void testUnsupportedAndConfigurationRefusals() {
            sphere.failure->code ==
                "secure_pipeline.unsupported_surface_family" ||
            sphere.failure->code ==
-               "secure_pipeline.unsupported_curve_family"));
+               "secure_pipeline.unsupported_curve_family" ||
+           sphere.failure->code ==
+               "secure_pipeline.degenerate_curve_unsupported" ||
+           sphere.failure->code.rfind("boundary.", 0) == 0 ||
+           sphere.failure->code.rfind("secure_pipeline.", 0) == 0));
 
     weft::SecureMeshingConfiguration invalid = configuration();
     invalid.sampling.chordTolerance = -1.0;

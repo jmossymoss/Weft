@@ -108,7 +108,14 @@ IntervalProblemResult buildIntervalProblem(
             return result;
         }
         std::uint32_t count = 0;
-        if (classification->familyCode == "line") {
+        if (topology.degenerate ||
+            std::find(classification->conditionCodes.begin(),
+                      classification->conditionCodes.end(),
+                      "degenerate") != classification->conditionCodes.end()) {
+            // Apex/pole singular edges: one canonical station, no sagitta
+            // count. Unsupported surface families still refuse later.
+            count = 1;
+        } else if (classification->familyCode == "line") {
             count = cylinderAxialEdges.contains(topology.id)
                 ? configuration.cylinderAxialIntervals
                 : lineSegmentCount();
