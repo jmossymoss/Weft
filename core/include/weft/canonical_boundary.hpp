@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -108,6 +109,10 @@ struct CanonicalBoundaryConfiguration {
     double maximumDiscrepancyTolerance = 1e-3;
     double sourceToleranceScale = 2.0;
     double periodicLiftAmbiguityTolerance = 1e-6;
+    // Industrial preview: skip expensive soft discrepancy proofs and report
+    // edge progress (done/total working edges).
+    bool previewFast = false;
+    std::function<void(int /*done*/, int /*total*/)> progress;
 };
 
 struct CanonicalBoundaryReport {

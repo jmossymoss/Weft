@@ -250,7 +250,7 @@ IntervalProblemResult buildIntervalProblem(
                 // they also bound a cylinder, or CDT hole bridges fail.
                 if (planeOwner) {
                     count = std::max<std::uint32_t>(
-                        16U, configuration.revolutionRadialSegments);
+                        24U, configuration.revolutionRadialSegments);
                 } else if (revolutionOwner || sphereCapOwner) {
                     count = configuration.revolutionRadialSegments;
                 } else {
@@ -717,10 +717,10 @@ SecureMeshingResult generateSecureMesh(
     SecureMeshingResult result;
     SecureMeshingConfiguration configuration = configurationIn;
     if (configuration.omitDeferredResiduals &&
-        configuration.revolutionRadialSegments > 8) {
-        // Preview density: UI radial may remain 32; active revolution sampling
-        // is capped so global counts approach ~70–90k polygons.
-        configuration.revolutionRadialSegments = 8;
+        configuration.revolutionRadialSegments > 12) {
+        // Preview density: UI radial may remain 32; keep active revolution
+        // sampling >=12 so plane-hole CDT bridges stay solvable.
+        configuration.revolutionRadialSegments = 12;
     }
     if (!imported.meshable() || !imported.working ||
         !imported.workingEvaluator) {
@@ -924,9 +924,20 @@ SecureMeshingResult generateSecureMesh(
     if (configuration.faceProgress) {
         configuration.faceProgress(1, 0, std::max(1, surfaceTotal));
     }
+    CanonicalBoundaryConfiguration boundaryConfig;
+    if (configuration.omitDeferredResiduals) {
+        boundaryConfig.previewFast = true;
+        boundaryConfig.maximumDiscrepancyTolerance = std::max(
+            boundaryConfig.maximumDiscrepancyTolerance, 1.0);
+        if (configuration.faceProgress) {
+            boundaryConfig.progress = [&](int done, int total) {
+                configuration.faceProgress(1, done, std::max(1, total));
+            };
+        }
+    }
     const CanonicalBoundaryBuildResult boundaries =
         buildCanonicalBoundaries(imported, reconnaissance,
-                                 *intervals.solution);
+                                 *intervals.solution, boundaryConfig);
     secureProgress(configuration, "boundaries.done");
     if (configuration.faceProgress) {
         configuration.faceProgress(2, 0, std::max(1, surfaceTotal));
@@ -1197,6 +1208,20 @@ SecureMeshingResult generateSecureMesh(
                                evidence.skipped, evidence.failed);
             }
             if (!triangulated) {
+                // Industrial preview: retry as curved UV-fan, else omit the
+                // face instead of zeroing the whole body mesh.
+                if (configuration.omitDeferredResiduals && trim.value) {
+                    PlanarTrimDomain retryDomain = *trim.value;
+                    retryDomain.allowCurvedUv = true;
+                    const PlanarCdtResult retry =
+                        cdt->triangulate(retryDomain);
+                    if (retry) {
+                        faceMeshes.push_back(*retry.value);
+                        continue;
+                    }
+                    expectedFaces.pop_back();
+                    continue;
+                }
                 setFailure(
                     result,
                     triangulated.failure

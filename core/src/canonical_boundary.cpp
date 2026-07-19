@@ -798,6 +798,11 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
         if (!coedge.edgeId.valid()) continue;
         coedgesByEdge[coedge.edgeId].push_back(&coedge);
     }
+    std::map<StableId, std::array<double, 3>> vertexPositionCache;
+    const int boundaryEdgeTotal =
+        static_cast<int>(snapshot.edgeTopology.size());
+    int boundaryEdgeOrdinal = 0;
+    const int boundaryEdgeStride = std::max(1, boundaryEdgeTotal / 20);
     const std::uint64_t topologicalVertexCount = static_cast<std::uint64_t>(
         std::count_if(snapshot.occurrences.begin(), snapshot.occurrences.end(),
                       [](const TopologyOccurrence& occurrence) {
@@ -806,6 +811,13 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
     std::uint64_t nextInteriorVertex = topologicalVertexCount;
 
     for (const EdgeTopologyRecord& topology : snapshot.edgeTopology) {
+        ++boundaryEdgeOrdinal;
+        if (configuration.progress &&
+            (boundaryEdgeOrdinal % boundaryEdgeStride == 0 ||
+             boundaryEdgeOrdinal == boundaryEdgeTotal)) {
+            configuration.progress(boundaryEdgeOrdinal,
+                                   std::max(1, boundaryEdgeTotal));
+        }
         const StableId edgeId = topology.id;
         const StableId boundaryId{StableIdKind::Boundary, edgeId.ordinal};
         if (!edgeId.valid() || edgeId.kind != StableIdKind::Edge) {
@@ -1287,8 +1299,24 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
             }
             double sourceVertexTolerance = 0.0;
             if (endpointVertex) {
-                const auto vertex =
-                    imported.workingEvaluator->evaluateVertex(*endpointVertex);
+                EvaluationResult<VertexEvaluation> vertex;
+                if (configuration.previewFast) {
+                    if (const auto cached =
+                            vertexPositionCache.find(*endpointVertex);
+                        cached != vertexPositionCache.end()) {
+                        VertexEvaluation eval;
+                        eval.position = cached->second;
+                        vertex.value = eval;
+                    }
+                }
+                if (!vertex) {
+                    vertex = imported.workingEvaluator->evaluateVertex(
+                        *endpointVertex);
+                    if (configuration.previewFast && vertex && vertex.value) {
+                        vertexPositionCache.emplace(*endpointVertex,
+                                                    vertex.value->position);
+                    }
+                }
                 const std::optional<StableId> sourceVertex =
                     sourceForWorking(imported, *endpointVertex);
                 if (!vertex || !sourceVertex ||
@@ -1345,7 +1373,8 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                         "an exact B-rep vertex lies outside its source edge tolerance envelope",
                         {edgeId, *endpointVertex, *sourceVertex});
                 }
-                if (endpointDiscrepancy > endpointAllowed &&
+                if (!configuration.previewFast &&
+                    endpointDiscrepancy > endpointAllowed &&
                     endpointDiscrepancy > maxAllowed) {
                     // Keep fail-closed only for extreme outliers.
                     if (endpointDiscrepancy > std::max(maxAllowed, 10.0)) {
@@ -1435,18 +1464,23 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                          mapping.coedge->faceId});
                 }
                 if (use.measuredCurveOnSurfaceDiscrepancy > cappedAllowed) {
-                    // Industrial STEP: raise the allowed envelope up to a
-                    // hard cap rather than refusing the whole body.
-                    const double hardCap = std::max(maxAllowed, 10.0);
-                    if (use.measuredCurveOnSurfaceDiscrepancy > hardCap) {
-                        return buildFailure(
-                            report, "boundary.curve_on_surface_discrepancy",
-                            "curve-on-surface discrepancy exceeds the bounded source envelope",
-                            {edgeId, mapping.coedge->id,
-                             mapping.coedge->faceId});
+                    if (configuration.previewFast) {
+                        use.allowedCurveOnSurfaceDiscrepancy =
+                            use.measuredCurveOnSurfaceDiscrepancy;
+                    } else {
+                        // Industrial STEP: raise the allowed envelope up to a
+                        // hard cap rather than refusing the whole body.
+                        const double hardCap = std::max(maxAllowed, 10.0);
+                        if (use.measuredCurveOnSurfaceDiscrepancy > hardCap) {
+                            return buildFailure(
+                                report, "boundary.curve_on_surface_discrepancy",
+                                "curve-on-surface discrepancy exceeds the bounded source envelope",
+                                {edgeId, mapping.coedge->id,
+                                 mapping.coedge->faceId});
+                        }
+                        use.allowedCurveOnSurfaceDiscrepancy =
+                            use.measuredCurveOnSurfaceDiscrepancy;
                     }
-                    use.allowedCurveOnSurfaceDiscrepancy =
-                        use.measuredCurveOnSurfaceDiscrepancy;
                 }
 
                 for (std::size_t axis = 0; axis < use.uv.size(); ++axis) {
