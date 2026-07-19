@@ -796,8 +796,10 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
         configuration.sampling.normalAngleToleranceRadians =
             selected.defaults.angleToleranceDeg *
             0.01745329251994329576923690768489;
+        const int previewRadialCap =
+            selected.defaults.radial > 24 ? 16 : selected.defaults.radial;
         configuration.revolutionRadialSegments =
-            static_cast<std::uint32_t>(std::max(3, selected.defaults.radial));
+            static_cast<std::uint32_t>(std::max(3, previewRadialCap));
         configuration.sampling.minimumClosedCurveSegments =
             std::max<std::uint32_t>(
                 3U, std::min<std::uint32_t>(

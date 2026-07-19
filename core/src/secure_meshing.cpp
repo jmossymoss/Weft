@@ -535,6 +535,14 @@ IntervalProblemResult buildIntervalProblem(
             const double scale = (budget * 0.85) / projectedTris;
             for (IntervalVariable& variable : problem.variables) {
                 if (variable.exact) continue;
+                const StableId edgeId{StableIdKind::Edge,
+                                      variable.boundaryId.ordinal};
+                const ExactGeometryClassification* edge =
+                    reconnaissance.find(edgeId);
+                if (edge && (edge->familyCode == "circle" ||
+                             edge->familyCode == "ellipse")) {
+                    continue;  // keep revolution radial budget
+                }
                 double next = variable.desired * scale;
                 if (variable.requireEven) {
                     next = 2.0 * std::ceil(next * 0.5);
