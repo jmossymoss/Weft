@@ -8,6 +8,7 @@
 #include "weft/torus_template.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <bit>
 #include <cmath>
 #include <cstddef>
@@ -33,7 +34,16 @@ void setFailure(SecureMeshingResult& result, std::string code,
 void secureProgress(const SecureMeshingConfiguration& configuration,
                     const char* message) {
     if (!configuration.progressToStderr || message == nullptr) return;
-    std::fprintf(stderr, "WEFT_PROGRESS %s\n", message);
+    static const auto start = std::chrono::steady_clock::now();
+    static long long lastMs = 0;
+    const auto now = std::chrono::steady_clock::now();
+    const long long ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(now - start)
+            .count();
+    const long long delta = ms - lastMs;
+    lastMs = ms;
+    std::fprintf(stderr, "WEFT_PROGRESS %s ms=%lld delta_ms=%lld\n", message,
+                 ms, delta);
     std::fflush(stderr);
 }
 
