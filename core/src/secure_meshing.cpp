@@ -1069,6 +1069,8 @@ SecureMeshingResult generateSecureMesh(
                     code == "cylinder.rim_uv_missing" ||
                     code == "cylinder.rim_uv_ambiguous" ||
                     code == "cylinder.rims_unresolved" ||
+                    code == "cylinder.face_unsupported" ||
+                    code == "cylinder.partial_band_unsupported" ||
                     code.rfind("cylinder.rail", 0) == 0;
                 if (allowUvFallback && meshCylinderByUvTrim()) {
                     continue;
