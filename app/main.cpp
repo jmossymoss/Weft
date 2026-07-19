@@ -5375,6 +5375,11 @@ static void drawUi(App& app) {
             ImGui::TextColored({1.0f, 0.45f, 0.3f, 1.0f},
                                "%d open edge(s), %d non-manifold",
                                app.openEdgeCount, app.multiEdgeCount);
+            if (app.model.solids.Extent() > 1) {
+                ImGui::TextDisabled(
+                    "multi-solid assembly: counts mix free borders / "
+                    "coincident skins (per-solid manifold TBD)");
+            }
             ImGui::SameLine();
             ImGui::Checkbox("show##problems", &app.showProblems);
         }
