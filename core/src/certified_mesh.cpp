@@ -431,10 +431,23 @@ std::optional<ModelingMesh> tryBuildIndependentModelingMesh(
         for (std::uint32_t bv : b.vertices) {
             if (bv != sharedVerts[0] && bv != sharedVerts[1]) onlyB = bv;
         }
+        // Order CCW from triangle a: onlyA -> sharedAlongA -> ... 
+        std::uint32_t sharedAlong = sharedVerts[0];
+        std::uint32_t sharedAgainst = sharedVerts[1];
+        for (std::size_t e = 0; e < 3; ++e) {
+            const std::uint32_t s0 = a.vertices[e];
+            const std::uint32_t s1 = a.vertices[(e + 1) % 3];
+            if ((s0 == sharedVerts[0] && s1 == sharedVerts[1]) ||
+                (s0 == sharedVerts[1] && s1 == sharedVerts[0])) {
+                sharedAlong = s0;
+                sharedAgainst = s1;
+                break;
+            }
+        }
         ModelingPolygon polygon;
         polygon.workingFace = a.workingFace;
         polygon.sourceFace = a.sourceFace;
-        polygon.vertices = {onlyA, sharedVerts[0], onlyB, sharedVerts[1]};
+        polygon.vertices = {onlyA, sharedAlong, onlyB, sharedAgainst};
         modeling.polygons.push_back(std::move(polygon));
         consumed[candidate.a] = true;
         consumed[candidate.b] = true;
