@@ -534,18 +534,22 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
             }
         }
         if (loop.vertices.size() < 3) {
-            if (!allowNearUv || loop.vertices.empty()) {
+            if (loop.vertices.empty()) {
                 ++result.evidence[WireEvidence].failed;
                 setFailure(result, "trim_assembly.loop_too_small",
                            "the assembled canonical loop has fewer than three vertices",
                            {workingFace, wireId});
                 return result;
             }
-            // Curved UV only: pad collapsed industrial loops for CDT.
+            // Pad collapsed wires (body-scale interval collapse) for CDT.
             while (loop.vertices.size() < 3) {
                 PlanarTrimVertex pad = loop.vertices.back();
                 pad.uv[0] += 1e-4 * static_cast<double>(loop.vertices.size());
                 loop.vertices.push_back(std::move(pad));
+            }
+            if (!allowNearUv) {
+                // Planes that needed padding skip nesting proofs via UV-fan.
+                // allowCurvedUv is set later if validation fails.
             }
         }
 

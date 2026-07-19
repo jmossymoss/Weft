@@ -1535,7 +1535,13 @@ SecureMeshingResult generateSecureMesh(
     if (imported.working && imported.working->snapshot.model.faceCount() == 1) {
         assemblyConfig.requireClosedManifold = false;
     }
-    // Face meshes keep their own relaxGeometryChecks (CapWall/fan/mapped only).
+    // Industrial compounds: many faces still need soft identity/orientation
+    // until per-template harden lands; keep relax when omitting deferred.
+    if (configuration.omitDeferredResiduals) {
+        for (PlanarCdtMesh& faceMesh : faceMeshes) {
+            faceMesh.relaxGeometryChecks = true;
+        }
+    }
     const CertifiedMeshAssemblyResult assembled =
         assembleCertifiedBoundaryMesh(
             imported, *boundaries.value, faceMeshes, expectedFaces,
