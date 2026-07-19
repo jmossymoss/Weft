@@ -163,3 +163,5 @@ prove completed work; they are not plans or handoff diaries.
 - `mp9-cone-frustum-consumer-2026-07-18.md` - truncated-cone revolved-band consumer + quads.
 - `mp9-sphere-cap-consumer-2026-07-18.md` - spherical-cap consumer + complex_cap demote.
 - `mp9-uv-trim-consumers-2026-07-18.md` - UV-trim CDT for complex cylinders + freeform n-gons.
+- `mp9-sphere-cap-seam-fix-2026-07-18.md` - Plasticity sphere-cap CapWall / seam fix.
+- `mp9-full-mesh-gate-2026-07-18.md` - MP9 full-body mesh gate (408342 tris).

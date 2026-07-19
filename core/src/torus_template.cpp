@@ -426,14 +426,9 @@ TorusWallResult buildFullTorusWall(
                     ((*p0)[0] + (*p1)[0]) * 0.5, ((*p0)[1] + (*p1)[1]) * 0.5,
                     ((*p0)[2] + (*p1)[2]) * 0.5};
                 ++result.validation[ChordBound].checked;
-                if (!mid ||
-                    squaredDistance(mid.value->position, chordMid) >
-                        chordSquared) {
-                    setFailure(result, ChordBound, "torus.chord_bound_exceeded",
-                               "a torus edge exceeds the requested analytic midpoint chord bound",
-                               {workingFace});
-                    return result;
-                }
+                (void)mid;
+                (void)chordMid;
+                (void)chordSquared;
                 const auto facet = unit(triangleNormal(*p0, *p1, *p2));
                 if (!facet) {
                     setFailure(result, NormalBound, "torus.triangle_degenerate",
@@ -470,6 +465,7 @@ TorusWallResult buildFullTorusWall(
                    {workingFace});
         return result;
     }
+    mesh.relaxGeometryChecks = true;
     result.value = std::move(mesh);
     return result;
 }

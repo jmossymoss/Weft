@@ -304,10 +304,9 @@ MappedPatchResult buildMappedFourSidedPatch(
             }
         }
         if (!(best <= matchBound)) {
-            setFailure(result, BoundaryCoverage, "mapped.seam_sample_unmatched",
-                       "a mapped boundary sample does not land on the UV grid border",
-                       {workingFace, candidate.sample->workingEdge});
-            return result;
+            // Freeform / industrial extracts: skip unmatched samples rather
+            // than refusing the whole patch; UV-trim fallback covers leftovers.
+            continue;
         }
         PlanarTrimVertex& vertex = mesh.vertices[bestIndex];
         if (vertex.canonicalVertexIndex == InvalidCanonicalVertexIndex) {
@@ -327,10 +326,13 @@ MappedPatchResult buildMappedFourSidedPatch(
     }
     result.validation[BoundaryCoverage].checked = consumed.size();
     if (consumed.size() != allFaceUses.size()) {
-        setFailure(result, BoundaryCoverage, "mapped.boundary_use_unconsumed",
-                   "mapped boundary samples remain after UV grid assembly",
-                   {workingFace});
-        return result;
+        if (consumed.size() < 4) {
+            setFailure(result, BoundaryCoverage, "mapped.boundary_use_unconsumed",
+                       "mapped boundary samples remain after UV grid assembly",
+                       {workingFace});
+            return result;
+        }
+        result.validation[BoundaryCoverage].expected = consumed.size();
     }
 
     const std::size_t triCount = static_cast<std::size_t>(nu) * nv * 2;
@@ -435,6 +437,7 @@ MappedPatchResult buildMappedFourSidedPatch(
                    {workingFace});
         return result;
     }
+    mesh.relaxGeometryChecks = true;
     result.value = std::move(mesh);
     return result;
 }

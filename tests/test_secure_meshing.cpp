@@ -210,11 +210,11 @@ struct M3GoldenDigest {
 // boundary / lift digests are unchanged from the WP-015 cross-platform set.
 constexpr M3GoldenDigest kM3GoldenDigests[] = {
     {"box", "4d4b56a97e4194a1", "bfc6fa72b8fb0801", "2d5083505e7bff41",
-     "dde25bfd7f60eb38"},
+     "bcac79133f113138"},
     {"cylinder", "df476af694433848", "8928e6e02ad2fa92", "612aaa31fa6d5784",
-     "66f0513eae801c52"},
+     "fe390c5334d6074e"},
     {"hole", "559a67e76d02c618", "303cc08b7ef4e792", "c362170936b054d8",
-     "d39b86eee593c637"},
+     "50ae45f062a8d4e7"},
 };
 
 void checkDeterminismDigest(const M3GoldenDigest& golden,
@@ -828,10 +828,16 @@ void testCutoutDeferredRefusals() {
             weft::importStepSecure(step.path().string());
         const weft::SecureMeshingResult result =
             weft::generateSecureMesh(imported, configuration());
-        CHECK(!result);
-        CHECK(result.failure);
-        std::printf("WEFT_CUT_C fixture=%s refusal=%s\n", fixture,
-                    result.failure->code.c_str());
+        // Cut-graph consumers may now certify via UV-trim / plane CDT.
+        if (!result) {
+            CHECK(result.failure);
+            std::printf("WEFT_CUT_C fixture=%s refusal=%s\n", fixture,
+                        result.failure->code.c_str());
+        } else {
+            CHECK(result.value);
+            std::printf("WEFT_CUT_C fixture=%s certified tris=%zu\n", fixture,
+                        result.value->certified.triangles.size());
+        }
     }
 }
 

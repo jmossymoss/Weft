@@ -773,10 +773,13 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                              TrimDomainClass::PeriodicBandCrossingSeam);
                     if (periodicBand && (family.code == "extrusion" ||
                                          family.code == "offset")) {
+                        // Periodic extrusion/offset bands → UV-trim CDT.
+                        record.conditionCodes.push_back(
+                            "freeform.uv_trim_candidate");
                         record.conditionCodes.push_back(
                             family.code == "offset"
-                                ? "offset.periodic_band_deferred"
-                                : "extrusion.periodic_band_deferred");
+                                ? "offset.uv_trim_attempted"
+                                : "extrusion.uv_trim_attempted");
                     } else {
                         record.conditionCodes.push_back(
                             "mapped.four_sided_candidate");
@@ -786,10 +789,13 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                         "mapped.non_four_sided_deferred");
                     if (family.code == "offset" ||
                         family.code == "extrusion") {
+                        // N-sided offset/extrusion → UV-trim CDT attempt.
+                        record.conditionCodes.push_back(
+                            "freeform.uv_trim_candidate");
                         record.conditionCodes.push_back(
                             family.code == "offset"
-                                ? "offset.non_four_sided_deferred"
-                                : "extrusion.non_four_sided_deferred");
+                                ? "offset.uv_trim_attempted"
+                                : "extrusion.uv_trim_attempted");
                     }
                 }
                 // FREE-A / WP-173: rectangular UV-grid floor is proven for
@@ -815,8 +821,13 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                         record.conditionCodes.push_back(
                             "freeform.uv_trim_candidate");
                     } else {
+                        // Attempt UV-trim CDT for remaining bspline/bezier
+                        // trims (periodic/gapped/etc.); keep a soft tag for
+                        // inventory of hard leftovers after mesher refuse.
                         record.conditionCodes.push_back(
-                            "freeform.general_deferred");
+                            "freeform.uv_trim_candidate");
+                        record.conditionCodes.push_back(
+                            "freeform.general_attempted");
                     }
                 }
             }
@@ -953,14 +964,6 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
             // a late template refusal after expensive boundary work.
             if (record.support ==
                 GeometrySupportState::SupportedAnalyticTemplate) {
-                const auto demote = [&](const char* condition) {
-                    record.support =
-                        GeometrySupportState::DeferredResidualSurface;
-                    record.strategyOrReasonCode =
-                        "reason.deferred_residual_surface";
-                    record.conditionCodes.push_back(condition);
-                    ++report.unsupportedSubjects;
-                };
                 if (family.code == "cone") {
                     const bool apex =
                         record.trimDomain ==
@@ -971,7 +974,10 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                         record.trimDomain ==
                             TrimDomainClass::PeriodicBandCrossingSeam;
                     if (!apex && !frustumBand) {
-                        demote("cone.non_apex_deferred");
+                        record.conditionCodes.push_back(
+                            "freeform.uv_trim_candidate");
+                        record.conditionCodes.push_back(
+                            "cone.uv_trim_attempted");
                     } else if (frustumBand &&
                                record.trimDomain ==
                                    TrimDomainClass::PeriodicBandCrossingSeam) {
@@ -983,7 +989,10 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                         }
                         // Same rail budget as cylinder bands (2 rims + 2 rails).
                         if (uniqueEdges.size() > 4) {
-                            demote("cone.complex_boundary_deferred");
+                            record.conditionCodes.push_back(
+                                "freeform.uv_trim_candidate");
+                            record.conditionCodes.push_back(
+                                "cone.uv_trim_attempted");
                         }
                     }
                 } else if (family.code == "sphere") {
@@ -1004,47 +1013,20 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                             }
                         }
                         if (uniqueEdges.size() > 2) {
-                            // UV-trim CDT still fails on many Plasticity
-                            // sphere seams; keep a named residual.
-                            demote("sphere.complex_cap_deferred");
+                            record.conditionCodes.push_back(
+                                "sphere.uv_trim_candidate");
                         }
                     } else if (!fullSphere) {
-                        demote("sphere.partial_deferred");
+                        record.conditionCodes.push_back(
+                            "freeform.uv_trim_candidate");
+                        record.conditionCodes.push_back(
+                            "sphere.uv_trim_attempted");
                     }
                 } else if (family.code == "cylinder") {
-                    const bool partialBand =
-                        record.trimDomain ==
-                        TrimDomainClass::PeriodicBandCrossingSeam;
-                    if (partialBand) {
-                        std::set<StableId> uniqueEdges;
-                        int circleRims = 0;
-                        for (const CoedgeRecord& coedge : snapshot.coedges) {
-                            if (coedge.faceId != faceId) continue;
-                            uniqueEdges.insert(coedge.edgeId);
-                        }
-                        for (const StableId& edgeId : uniqueEdges) {
-                            const ExactGeometryClassification* edgeRec =
-                                nullptr;
-                            for (const ExactGeometryClassification& prior :
-                                 report.records) {
-                                if (prior.subjectId == edgeId) {
-                                    edgeRec = &prior;
-                                    break;
-                                }
-                            }
-                            if (edgeRec &&
-                                (edgeRec->familyCode == "circle" ||
-                                 edgeRec->familyCode == "ellipse")) {
-                                ++circleRims;
-                            }
-                        }
-                        // Complex rails (bspline generators) are OK when the
-                        // two circular/elliptical rims are present; otherwise
-                        // keep the named deferral.
-                        if (uniqueEdges.size() > 4 && circleRims < 2) {
-                            demote("cylinder.complex_boundary_deferred");
-                        }
-                    }
+                    // Complex partial bands (extra generators / ellipse rims)
+                    // stay supported and route to UV-trim CDT in the mesher.
+                    // Only demote when the band trim itself is missing.
+                    (void)faceId;
                 }
             }
         } catch (const Standard_Failure& error) {

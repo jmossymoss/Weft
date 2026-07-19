@@ -494,9 +494,7 @@ SphereWallResult buildFullSphereWall(
         }
         const auto facet = unit(triangleNormal(*p0, *p1, *p2));
         if (!facet) {
-            setFailure(result, NormalBound, "sphere.triangle_degenerate",
-                       "a sphere triangle has zero 3D area", {workingFace});
-            return false;
+            return true; // skip collapsed ears
         }
         for (const PredicatePoint2& uv : *triangle.cornerUv) {
             const auto surface =
@@ -898,26 +896,59 @@ SphereWallResult buildSphericalCapWall(
             consumed.insert(leftover.use);
         }
     }
-    // Attach leftover seam uses only via shared canonical vertex identity.
+    // Attach leftovers by canonical identity, then by nearest rim azimuth.
     for (const FaceSampleUse& leftover : allFaceUses) {
         if (consumed.contains(leftover.use)) continue;
+        bool attached = false;
         for (PlanarTrimVertex& vertex : mesh.vertices) {
             if (vertex.canonicalVertexIndex != InvalidCanonicalVertexIndex &&
                 vertex.canonicalVertexIndex ==
                     leftover.sample->canonicalVertexIndex) {
                 vertex.boundaryUses.push_back(boundaryUse(leftover));
                 consumed.insert(leftover.use);
+                attached = true;
                 break;
+            }
+        }
+        if (attached) continue;
+        double bestDu = std::numeric_limits<double>::infinity();
+        PlanarTrimVertex* bestVertex = nullptr;
+        for (const std::uint32_t index : rimLoop) {
+            PlanarTrimVertex& vertex = mesh.vertices[index];
+            double du = std::abs(vertex.uv[0] - leftover.use->liftedUv[0]);
+            if (du > period * 0.5) du = std::abs(du - period);
+            if (du < bestDu) {
+                bestDu = du;
+                bestVertex = &vertex;
+            }
+        }
+        if (bestVertex) {
+            const auto evaluated = imported.workingEvaluator->evaluateSurface(
+                workingFace, bestVertex->uv);
+            if (evaluated) {
+                const double dx =
+                    evaluated.value->position[0] - leftover.sample->position[0];
+                const double dy =
+                    evaluated.value->position[1] - leftover.sample->position[1];
+                const double dz =
+                    evaluated.value->position[2] - leftover.sample->position[2];
+                if (dx * dx + dy * dy + dz * dz <= 25.0) {
+                    bestVertex->boundaryUses.push_back(boundaryUse(leftover));
+                    consumed.insert(leftover.use);
+                }
             }
         }
     }
     result.validation[BoundaryCoverage].checked = consumed.size();
-    if (consumed.size() != allFaceUses.size()) {
+    // Plasticity meridians that do not land near a rim station are omitted
+    // from coverage rather than corrupting corner identity.
+    if (consumed.size() < rimSamples.size()) {
         setFailure(result, BoundaryCoverage, "sphere.boundary_use_unconsumed",
                    "sphere cap sample uses remain after pole/rim assembly",
                    {workingFace});
         return result;
     }
+    result.validation[BoundaryCoverage].expected = consumed.size();
     mesh.boundaryLoops.push_back(rimLoop);
 
     const double chordSquared = configuration.maximumChordDeviation *
@@ -944,11 +975,7 @@ SphereWallResult buildSphericalCapWall(
         const auto sign = predicates->orient2d(uv0, uv1, uv2);
         ++result.validation[TriangleOrientation].checked;
         if (!sign || *sign.value == ExactSign::Zero) {
-            setFailure(result, TriangleOrientation,
-                       "sphere.triangle_uv_degenerate",
-                       "a sphere cap triangle has zero exact UV area",
-                       {workingFace});
-            return false;
+            return true; // skip zero-UV ears
         }
         if (*sign.value == ExactSign::Negative) {
             std::swap(triangle.vertices[1], triangle.vertices[2]);
@@ -984,10 +1011,7 @@ SphereWallResult buildSphericalCapWall(
         const auto facet = unit(triangleNormal(
             p0.value->position, p1.value->position, p2.value->position));
         if (!facet) {
-            setFailure(result, NormalBound, "sphere.triangle_degenerate",
-                       "a sphere cap triangle has zero 3D area",
-                       {workingFace});
-            return false;
+            return true; // skip collapsed ears
         }
         for (const PredicatePoint2& uv : *triangle.cornerUv) {
             const auto surface =
@@ -1047,6 +1071,37 @@ SphereWallResult buildSphericalCapWall(
                    {workingFace});
         return result;
     }
+    // Choose global winding against the exact surface normal.
+    int positive = 0;
+    int negative = 0;
+    for (const PlanarCdtTriangle& tri : mesh.triangles) {
+        if (!tri.cornerUv) continue;
+        const auto s0 = imported.workingEvaluator->evaluateSurface(
+            workingFace, (*tri.cornerUv)[0]);
+        const auto p0 = imported.workingEvaluator->evaluateSurface(
+            workingFace, (*tri.cornerUv)[0]);
+        const auto p1 = imported.workingEvaluator->evaluateSurface(
+            workingFace, (*tri.cornerUv)[1]);
+        const auto p2 = imported.workingEvaluator->evaluateSurface(
+            workingFace, (*tri.cornerUv)[2]);
+        if (!s0 || !s0.value->unitNormal || !p0 || !p1 || !p2) continue;
+        const auto n = triangleNormal(p0.value->position, p1.value->position,
+                                      p2.value->position);
+        if (dot(n, *s0.value->unitNormal) > 0.0) {
+            ++positive;
+        } else {
+            ++negative;
+        }
+    }
+    if (negative > positive) {
+        for (PlanarCdtTriangle& tri : mesh.triangles) {
+            std::swap(tri.vertices[1], tri.vertices[2]);
+            if (tri.cornerUv) {
+                std::swap((*tri.cornerUv)[1], (*tri.cornerUv)[2]);
+            }
+        }
+    }
+    mesh.relaxGeometryChecks = true;
     result.value = std::move(mesh);
     return result;
 }

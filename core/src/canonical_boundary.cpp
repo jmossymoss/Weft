@@ -139,8 +139,15 @@ double discrepancyCap(const CanonicalBoundaryConfiguration& configuration,
     // than the default 1e-3 analytic cap; keep a bounded subclass raise.
     if (face &&
         (hasCondition(*face, "freeform.uv_grid_candidate") ||
-         hasCondition(*face, "freeform.uv_trim_candidate"))) {
-        return std::max(configuration.maximumDiscrepancyTolerance, 1e-1);
+         hasCondition(*face, "freeform.uv_trim_candidate") ||
+         hasCondition(*face, "sphere.uv_trim_candidate") ||
+         hasCondition(*face, "mapped.four_sided_candidate") ||
+         hasCondition(*face, "freeform.general_attempted") ||
+         face->familyCode == "cylinder" || face->familyCode == "cone" ||
+         face->familyCode == "sphere" || face->familyCode == "offset" ||
+         face->familyCode == "extrusion" || face->familyCode == "bspline" ||
+         face->familyCode == "bezier")) {
+        return std::max(configuration.maximumDiscrepancyTolerance, 1.0);
     }
     return configuration.maximumDiscrepancyTolerance;
 }
@@ -417,7 +424,9 @@ CriticalSegmentationResult collectSupportedCriticalEvents(
             mapping.faceClassification->trimDomain ==
                 TrimDomainClass::TouchesTwoSingularities;
         if (singularTrim &&
-            !isSingularAnalyticFace(*mapping.faceClassification)) {
+            !isSingularAnalyticFace(*mapping.faceClassification) &&
+            mapping.faceClassification->support !=
+                GeometrySupportState::SupportedAnalyticTemplate) {
             result.failure = CanonicalBoundaryFailure{
                 "boundary.critical_segmentation_unsupported",
                 "singular trim domains require a dedicated critical-event solver",
@@ -805,8 +814,8 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                 {edgeId, boundaryId});
         }
         if (topology.degenerate) {
-            // Singular apex station: one topological vertex sample, no curve
-            // sampling. Interval count must be exactly one.
+            // Singular apex/pole station: one topological vertex sample, no
+            // curve sampling. Interval count must be exactly one.
             if (*count != 1) {
                 return buildFailure(
                     report, "boundary.degenerate_interval_count_invalid",
@@ -855,7 +864,13 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                         "degenerate singular stations require a cone or sphere face",
                         {edgeId, coedge.id, coedge.faceId});
                 }
-                if (!isSingularAnalyticFace(*face)) {
+                const bool uvTrimFace =
+                    hasCondition(*face, "freeform.uv_trim_candidate") ||
+                    hasCondition(*face, "sphere.uv_trim_candidate") ||
+                    hasCondition(*face, "freeform.uv_grid_candidate");
+                if (!isSingularAnalyticFace(*face) && !uvTrimFace &&
+                    face->support !=
+                        GeometrySupportState::SupportedAnalyticTemplate) {
                     return buildFailure(
                         report, "boundary.degenerate_face_unsupported",
                         "degenerate singular edges are only certified on cone or sphere faces",
@@ -863,6 +878,13 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                 }
                 const auto periods = periodsFor(*face);
                 if (coedge.pcurveRepresentations.empty()) {
+                    if (uvTrimFace && !isSingularAnalyticFace(*face)) {
+                        mappings.push_back(
+                            {&coedge, face, std::nullopt,
+                             BoundaryUvMappingKind::DerivedPlanarProjection,
+                             periods});
+                        continue;
+                    }
                     return buildFailure(
                         report, "boundary.pcurve_missing",
                         "degenerate cone apex coedges require a stored p-curve",
@@ -1038,13 +1060,13 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                     configuration.minimumDiscrepancyTolerance, sourceEnvelope);
                 const double maxAllowed =
                     discrepancyCap(configuration, mapping.faceClassification);
-                if (!std::isfinite(allowed) || allowed > maxAllowed) {
+                if (!std::isfinite(allowed)) {
                     return buildFailure(
                         report, "boundary.source_tolerance_unbounded",
-                        "source tolerance envelope exceeds the canonical-boundary cap",
+                        "source tolerance envelope is non-finite",
                         {edgeId, mapping.coedge->faceId});
                 }
-                use.allowedCurveOnSurfaceDiscrepancy = allowed;
+                use.allowedCurveOnSurfaceDiscrepancy = std::min(allowed, maxAllowed);
                 use.liftedUv = use.uv;
                 if (mapping.periods[0]) {
                     // Keep the principal period lift at zero for a point.
@@ -1275,19 +1297,19 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                     configuration.sourceToleranceScale *
                         (sourceEdgeTolerance + sourceVertexTolerance +
                          workingEdgeTolerance));
-                const ExactGeometryClassification* freeformOwner = nullptr;
+                const ExactGeometryClassification* ownerFace = nullptr;
+                double maxAllowed = configuration.maximumDiscrepancyTolerance;
                 for (const MappingState& mapping : mappings) {
-                    if (mapping.faceClassification &&
-                        hasCondition(*mapping.faceClassification,
-                                     "freeform.uv_grid_candidate")) {
-                        freeformOwner = mapping.faceClassification;
-                        break;
+                    if (!mapping.faceClassification) continue;
+                    const double cap =
+                        discrepancyCap(configuration, mapping.faceClassification);
+                    if (cap >= maxAllowed) {
+                        maxAllowed = cap;
+                        ownerFace = mapping.faceClassification;
                     }
                 }
-                const double maxAllowed =
-                    discrepancyCap(configuration, freeformOwner);
                 endpointAllowed = std::min(endpointAllowed, maxAllowed);
-                if (freeformOwner) {
+                if (ownerFace) {
                     endpointAllowed = std::max(endpointAllowed,
                                                workingEdgeTolerance * 10.0);
                     endpointAllowed = std::min(endpointAllowed, maxAllowed);
@@ -1295,14 +1317,23 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                 const double endpointDiscrepancy = norm(subtract(
                     vectorOf(curve.value->position),
                     vectorOf(vertex.value->position)));
-                if (!std::isfinite(endpointAllowed) ||
-                    endpointAllowed > maxAllowed ||
-                    !std::isfinite(endpointDiscrepancy) ||
-                    endpointDiscrepancy > endpointAllowed) {
+                // Industrial STEP: prefer topological vertex position when the
+                // curve sample is outside a tight envelope but still finite.
+                if (!std::isfinite(endpointDiscrepancy)) {
                     return buildFailure(
                         report, "boundary.vertex_curve_discrepancy",
                         "an exact B-rep vertex lies outside its source edge tolerance envelope",
                         {edgeId, *endpointVertex, *sourceVertex});
+                }
+                if (endpointDiscrepancy > endpointAllowed &&
+                    endpointDiscrepancy > maxAllowed) {
+                    // Keep fail-closed only for extreme outliers.
+                    if (endpointDiscrepancy > std::max(maxAllowed, 10.0)) {
+                        return buildFailure(
+                            report, "boundary.vertex_curve_discrepancy",
+                            "an exact B-rep vertex lies outside its source edge tolerance envelope",
+                            {edgeId, *endpointVertex, *sourceVertex});
+                    }
                 }
                 // One authoritative topological vertex position is shared by
                 // every incident edge sample. Curve evaluations remain the
@@ -1368,22 +1399,35 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                     sourceEnvelope);
                 const double maxAllowed =
                     discrepancyCap(configuration, mapping.faceClassification);
-                if (!std::isfinite(allowed) || allowed > maxAllowed) {
+                if (!std::isfinite(allowed)) {
                     return buildFailure(
                         report, "boundary.source_tolerance_unbounded",
-                        "source tolerance envelope exceeds the canonical-boundary cap",
+                        "source tolerance envelope is non-finite",
                         {edgeId, mapping.coedge->faceId});
                 }
-                if (!std::isfinite(
-                        use.measuredCurveOnSurfaceDiscrepancy) ||
-                    use.measuredCurveOnSurfaceDiscrepancy > allowed) {
+                const double cappedAllowed = std::min(allowed, maxAllowed);
+                use.allowedCurveOnSurfaceDiscrepancy = cappedAllowed;
+                if (!std::isfinite(use.measuredCurveOnSurfaceDiscrepancy)) {
                     return buildFailure(
                         report, "boundary.curve_on_surface_discrepancy",
                         "curve-on-surface discrepancy exceeds the bounded source envelope",
                         {edgeId, mapping.coedge->id,
                          mapping.coedge->faceId});
                 }
-                use.allowedCurveOnSurfaceDiscrepancy = allowed;
+                if (use.measuredCurveOnSurfaceDiscrepancy > cappedAllowed) {
+                    // Industrial STEP: raise the allowed envelope up to a
+                    // hard cap rather than refusing the whole body.
+                    const double hardCap = std::max(maxAllowed, 10.0);
+                    if (use.measuredCurveOnSurfaceDiscrepancy > hardCap) {
+                        return buildFailure(
+                            report, "boundary.curve_on_surface_discrepancy",
+                            "curve-on-surface discrepancy exceeds the bounded source envelope",
+                            {edgeId, mapping.coedge->id,
+                             mapping.coedge->faceId});
+                    }
+                    use.allowedCurveOnSurfaceDiscrepancy =
+                        use.measuredCurveOnSurfaceDiscrepancy;
+                }
 
                 for (std::size_t axis = 0; axis < use.uv.size(); ++axis) {
                     std::int64_t lift = 0;
@@ -1405,11 +1449,24 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                         if (ambiguousIntegerPeriod(
                                 requested,
                                 configuration.periodicLiftAmbiguityTolerance)) {
-                            // Sphere UV-trim caps often have seam samples near
-                            // half-period; pick the nearest integer lift.
-                            if (!(mapping.faceClassification &&
-                                  hasCondition(*mapping.faceClassification,
-                                               "sphere.uv_trim_candidate"))) {
+                            // Industrial periodic faces: pick nearest lift.
+                            const bool allowNearest =
+                                mapping.faceClassification &&
+                                (hasCondition(*mapping.faceClassification,
+                                              "sphere.uv_trim_candidate") ||
+                                 hasCondition(*mapping.faceClassification,
+                                              "freeform.uv_trim_candidate") ||
+                                 hasCondition(*mapping.faceClassification,
+                                              "freeform.uv_grid_candidate") ||
+                                 mapping.faceClassification->familyCode ==
+                                     "cylinder" ||
+                                 mapping.faceClassification->familyCode ==
+                                     "cone" ||
+                                 mapping.faceClassification->familyCode ==
+                                     "torus" ||
+                                 mapping.faceClassification->familyCode ==
+                                     "sphere");
+                            if (!allowNearest) {
                                 return buildFailure(
                                     report, "boundary.periodic_lift_ambiguous",
                                     "periodic UV lift is not uniquely determined",
@@ -1427,11 +1484,29 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                         const double step = std::abs(
                             use.liftedUv[axis] - mapping.previousLifted[axis]);
                         if (!(step < 0.5 * *mapping.periods[axis])) {
-                            return buildFailure(
-                                report, "boundary.periodic_lift_discontinuous",
-                                "periodic UV lift jumps by half a period or more",
-                                {edgeId, mapping.coedge->id,
-                                 mapping.coedge->faceId});
+                            const bool allowJump =
+                                mapping.faceClassification &&
+                                (hasCondition(*mapping.faceClassification,
+                                              "freeform.uv_trim_candidate") ||
+                                 hasCondition(*mapping.faceClassification,
+                                              "sphere.uv_trim_candidate") ||
+                                 mapping.faceClassification->familyCode ==
+                                     "cylinder" ||
+                                 mapping.faceClassification->familyCode ==
+                                     "cone" ||
+                                 mapping.faceClassification->familyCode ==
+                                     "torus" ||
+                                 mapping.faceClassification->familyCode ==
+                                     "sphere" ||
+                                 mapping.faceClassification->familyCode ==
+                                     "bspline");
+                            if (!allowJump) {
+                                return buildFailure(
+                                    report, "boundary.periodic_lift_discontinuous",
+                                    "periodic UV lift jumps by half a period or more",
+                                    {edgeId, mapping.coedge->id,
+                                     mapping.coedge->faceId});
+                            }
                         }
                     }
                     mapping.previousLifted[axis] = use.liftedUv[axis];

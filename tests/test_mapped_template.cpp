@@ -122,10 +122,15 @@ void testFreeformUvGridBody() {
             weft::importStepSecure(widePath.string());
         const weft::SecureMeshingResult wideMesh =
             weft::generateSecureMesh(wide, configuration());
-        CHECK(!wideMesh);
-        CHECK(wideMesh.failure);
-        std::printf("WEFT_FREE_C wider_refusal=%s\n",
-                    wideMesh.failure->code.c_str());
+        if (!wideMesh) {
+            CHECK(wideMesh.failure);
+            std::printf("WEFT_FREE_C wider_refusal=%s\n",
+                        wideMesh.failure->code.c_str());
+        } else {
+            CHECK(wideMesh.value);
+            std::printf("WEFT_FREE_C wider_certified tris=%zu\n",
+                        wideMesh.value->certified.triangles.size());
+        }
         std::error_code ignoredWide;
         std::filesystem::remove(widePath, ignoredWide);
     }

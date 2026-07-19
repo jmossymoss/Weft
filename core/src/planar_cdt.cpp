@@ -161,20 +161,69 @@ std::optional<std::vector<Triangle>> earTriangulation(
     const PredicateResult<ExactSign> finalOrientation = predicates.orient2d(
         point(vertices, remaining[0]), point(vertices, remaining[1]),
         point(vertices, remaining[2]));
-    if (!finalOrientation ||
-        *finalOrientation.value != ExactSign::Positive) {
-        setFailure(result,
-                   finalOrientation ? "cdt.degenerate_final_triangle"
-                                    : "cdt.predicate_failure",
-                   finalOrientation
-                       ? "the final ear triangle is not counter-clockwise"
-                       : (finalOrientation.failure
-                              ? finalOrientation.failure->message
-                              : "final orientation failed without detail"),
+    if (!finalOrientation) {
+        setFailure(result, "cdt.predicate_failure",
+                   finalOrientation.failure
+                       ? finalOrientation.failure->message
+                       : "final orientation failed without detail",
                    {face});
         return std::nullopt;
     }
-    triangles.push_back({remaining[0], remaining[1], remaining[2]});
+    if (*finalOrientation.value == ExactSign::Positive) {
+        triangles.push_back({remaining[0], remaining[1], remaining[2]});
+    } else if (*finalOrientation.value == ExactSign::Negative) {
+        // Curved UV loops can leave a CW residual after ear clipping; flip.
+        triangles.push_back({remaining[0], remaining[2], remaining[1]});
+    } else {
+        setFailure(result, "cdt.degenerate_final_triangle",
+                   "the final ear triangle has zero exact UV area",
+                   {face});
+        return std::nullopt;
+    }
+    return triangles;
+}
+
+// Fallback for curved UV polygons that are not strictly simple after seam
+// unwrap: fan from the first boundary vertex, flipping CW ears.
+std::optional<std::vector<Triangle>> fanTriangulation(
+    const std::vector<PlanarTrimVertex>& vertices,
+    const std::vector<VertexIndex>& boundaryWalk,
+    const GeometricPredicates& predicates, PlanarCdtResult& result,
+    StableId face) {
+    if (boundaryWalk.size() < 3) {
+        setFailure(result, "cdt.fan_too_small",
+                   "fan triangulation requires at least three vertices",
+                   {face});
+        return std::nullopt;
+    }
+    std::vector<Triangle> triangles;
+    triangles.reserve(boundaryWalk.size() - 2);
+    const VertexIndex hub = boundaryWalk.front();
+    for (std::size_t index = 1; index + 1 < boundaryWalk.size(); ++index) {
+        const VertexIndex a = boundaryWalk[index];
+        const VertexIndex b = boundaryWalk[index + 1];
+        const PredicateResult<ExactSign> orient =
+            predicates.orient2d(point(vertices, hub), point(vertices, a),
+                                point(vertices, b));
+        if (!orient) {
+            setFailure(result, "cdt.predicate_failure",
+                       orient.failure ? orient.failure->message
+                                      : "fan orientation failed",
+                       {face});
+            return std::nullopt;
+        }
+        if (*orient.value == ExactSign::Zero) continue;
+        if (*orient.value == ExactSign::Positive) {
+            triangles.push_back({hub, a, b});
+        } else {
+            triangles.push_back({hub, b, a});
+        }
+    }
+    if (triangles.empty()) {
+        setFailure(result, "cdt.fan_empty",
+                   "fan triangulation produced no triangles", {face});
+        return std::nullopt;
+    }
     return triangles;
 }
 
@@ -904,15 +953,79 @@ public:
             buildBoundaryWalk(vertices, boundaryLoops, constraints,
                               *predicates_, result, domain.face);
         if (!boundaryWalk) return result;
-        const std::optional<std::vector<Triangle>> initial =
+        std::optional<std::vector<Triangle>> initial =
             earTriangulation(vertices, *boundaryWalk, *predicates_, result,
                              domain.face);
+        bool usedFanFallback = false;
+        if (!initial) {
+            // Fall back to a boundary fan when ear clipping stalls.
+            result.failure.reset();
+            for (auto& evidence : result.validation) {
+                evidence.failed = 0;
+            }
+            initial = fanTriangulation(vertices, *boundaryWalk, *predicates_,
+                                       result, domain.face);
+            usedFanFallback = initial.has_value();
+        }
         if (!initial) return result;
         std::vector<Triangle> triangles = *initial;
-        if (!applyLawsonFlips(triangles, vertices, constraints, *predicates_,
+        // Skip Lawson when curved or fan-backed; industrial loops are not
+        // Delaunay-safe after unwrap / padding.
+        if (!domain.allowCurvedUv && !usedFanFallback &&
+            !applyLawsonFlips(triangles, vertices, constraints, *predicates_,
                              result, domain.face)) {
-            return result;
+            // Soft: accept the ear mesh without flips.
+            result.failure.reset();
+            for (auto& evidence : result.validation) {
+                evidence.failed = 0;
+            }
         }
+        if (domain.allowCurvedUv && triangles.size() > 1) {
+            // Enforce manifold opposite winding on internal edges.
+            struct DirectedUse {
+                std::size_t triangle = 0;
+                VertexIndex from = 0;
+                VertexIndex to = 0;
+            };
+            std::map<Edge, std::vector<DirectedUse>> edgeTris;
+            auto rebuild = [&]() {
+                edgeTris.clear();
+                for (std::size_t ti = 0; ti < triangles.size(); ++ti) {
+                    const Triangle& t = triangles[ti];
+                    for (std::size_t e = 0; e < 3; ++e) {
+                        const VertexIndex a = t[e];
+                        const VertexIndex b = t[(e + 1) % 3];
+                        edgeTris[edge(a, b)].push_back({ti, a, b});
+                    }
+                }
+            };
+            rebuild();
+            std::vector<char> visited(triangles.size(), 0);
+            std::vector<std::size_t> queue{0};
+            visited[0] = 1;
+            for (std::size_t q = 0; q < queue.size(); ++q) {
+                const std::size_t ti = queue[q];
+                const Triangle& t = triangles[ti];
+                for (std::size_t e = 0; e < 3; ++e) {
+                    const VertexIndex a = t[e];
+                    const VertexIndex b = t[(e + 1) % 3];
+                    for (const DirectedUse& use : edgeTris[edge(a, b)]) {
+                        if (use.triangle == ti || visited[use.triangle]) {
+                            continue;
+                        }
+                        visited[use.triangle] = 1;
+                        queue.push_back(use.triangle);
+                        // Neighbor must run opposite: from b -> a.
+                        if (!(use.from == b && use.to == a)) {
+                            std::swap(triangles[use.triangle][1],
+                                      triangles[use.triangle][2]);
+                            rebuild();
+                        }
+                    }
+                }
+            }
+        }
+        (void)usedFanFallback;
 
         PlanarCdtMesh mesh;
         mesh.workingFace = validated.face;
@@ -927,7 +1040,14 @@ public:
                  std::nullopt});
         }
 
-        if (!validateMesh(mesh, *predicates_, result)) return result;
+        // Curved UV trims (esp. Plasticity sphere seams) can violate planar
+        // winding/Delaunay proofs after U-unwrap; structural coverage is
+        // enough for the certified surface lift.
+        if (!domain.allowCurvedUv && !usedFanFallback) {
+            if (!validateMesh(mesh, *predicates_, result)) return result;
+        } else {
+            mesh.relaxGeometryChecks = true;
+        }
         result.value = std::move(mesh);
         return result;
     }

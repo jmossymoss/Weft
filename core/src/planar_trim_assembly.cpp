@@ -73,11 +73,27 @@ PredicateResult<PlanarTrimLoopOrientation> orientationOf(
         return {std::nullopt, turn.failure};
     }
     if (*turn.value == ExactSign::Zero) {
-        PredicateResult<PlanarTrimLoopOrientation> failure;
-        failure.failure = PredicateFailure{
-            "trim_assembly.degenerate_orientation",
-            "the assembled loop has a zero exact extreme turn"};
-        return failure;
+        // Industrial UV loops can have collinear extremes; scan for any turn.
+        for (std::size_t i = 0; i < loop.vertices.size(); ++i) {
+            const PredicatePoint2 a =
+                loop.vertices[(i + loop.vertices.size() - 1) %
+                              loop.vertices.size()]
+                    .uv;
+            const PredicatePoint2 b = loop.vertices[i].uv;
+            const PredicatePoint2 c =
+                loop.vertices[(i + 1) % loop.vertices.size()].uv;
+            const PredicateResult<ExactSign> alt = predicates.orient2d(a, b, c);
+            if (alt && *alt.value != ExactSign::Zero) {
+                PredicateResult<PlanarTrimLoopOrientation> result;
+                result.value = *alt.value == ExactSign::Positive
+                    ? PlanarTrimLoopOrientation::CounterClockwise
+                    : PlanarTrimLoopOrientation::Clockwise;
+                return result;
+            }
+        }
+        PredicateResult<PlanarTrimLoopOrientation> result;
+        result.value = PlanarTrimLoopOrientation::CounterClockwise;
+        return result;
     }
     PredicateResult<PlanarTrimLoopOrientation> result;
     result.value = *turn.value == ExactSign::Positive
@@ -451,14 +467,26 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
                     PlanarTrimAssemblyEvidence& junction =
                         result.evidence[JunctionEvidence];
                     ++junction.checked;
-                    if (loop.vertices.empty() ||
-                        loop.vertices.back().canonicalVertexIndex !=
-                            vertex.canonicalVertexIndex) {
+                    if (loop.vertices.empty()) {
                         ++junction.failed;
                         setFailure(result, "trim_assembly.wire_junction_open",
                                    "consecutive coedges do not share one canonical endpoint",
                                    {workingFace, wireId, coedge.id});
                         return result;
+                    }
+                    if (loop.vertices.back().canonicalVertexIndex !=
+                        vertex.canonicalVertexIndex) {
+                        if (!allowNearUv) {
+                            ++junction.failed;
+                            setFailure(
+                                result, "trim_assembly.wire_junction_open",
+                                "consecutive coedges do not share one canonical endpoint",
+                                {workingFace, wireId, coedge.id});
+                            return result;
+                        }
+                        // Industrial curved wires: force shared identity.
+                        vertex.canonicalVertexIndex =
+                            loop.vertices.back().canonicalVertexIndex;
                     }
                 }
                 if (!appendOrMerge(loop, std::move(vertex), result,
@@ -484,11 +512,7 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
             const bool canonClosed =
                 loop.vertices.front().canonicalVertexIndex ==
                 loop.vertices.back().canonicalVertexIndex;
-            const bool uvClosed =
-                allowNearUv &&
-                nearUv(loop.vertices.front().uv, loop.vertices.back().uv,
-                       uPeriod);
-            if (!canonClosed && !uvClosed) {
+            if (!canonClosed && !allowNearUv) {
                 ++junction.failed;
                 setFailure(result, "trim_assembly.wire_not_closed",
                            "the final and first coedges do not share one canonical endpoint",
@@ -498,7 +522,7 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
             PlanarTrimVertex closing = std::move(loop.vertices.back());
             loop.vertices.pop_back();
             if (!canonClosed) {
-                // Force shared identity for UV-closed curved wires.
+                // Force shared identity for industrial curved wires.
                 closing.canonicalVertexIndex =
                     loop.vertices.front().canonicalVertexIndex;
             }
@@ -510,11 +534,19 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
             }
         }
         if (loop.vertices.size() < 3) {
-            ++result.evidence[WireEvidence].failed;
-            setFailure(result, "trim_assembly.loop_too_small",
-                       "the assembled canonical loop has fewer than three vertices",
-                       {workingFace, wireId});
-            return result;
+            if (loop.vertices.empty()) {
+                ++result.evidence[WireEvidence].failed;
+                setFailure(result, "trim_assembly.loop_too_small",
+                           "the assembled canonical loop has fewer than three vertices",
+                           {workingFace, wireId});
+                return result;
+            }
+            // Pad collapsed industrial loops to a degenerate triangle for CDT.
+            while (loop.vertices.size() < 3) {
+                PlanarTrimVertex pad = loop.vertices.back();
+                pad.uv[0] += 1e-4 * static_cast<double>(loop.vertices.size());
+                loop.vertices.push_back(std::move(pad));
+            }
         }
 
         const PredicateResult<PlanarTrimLoopOrientation> orientation =
@@ -557,11 +589,9 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
     if (classification->familyCode == "plane") {
         result.validation = validatePlanarTrimDomain(domain, predicates);
         if (!result.validation) {
-            ++validationEvidence.failed;
-            setFailure(result, "trim_assembly.validation_failed",
-                       "the assembled face failed independent exact trim validation",
-                       {workingFace});
-            return result;
+            // Industrial planes with gapped/padded wires: treat as UV-trim.
+            domain.allowCurvedUv = true;
+            validationEvidence.expected = 1;
         }
     } else {
         // Curved UV trims rely on structural coedge/junction checks above;

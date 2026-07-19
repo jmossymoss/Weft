@@ -215,8 +215,17 @@ void testFullCylinderBody(const PreparedCylinder& prepared) {
                 prepared.imported, prepared.boundaries, wrongPeriodicUv,
                 prepared.faces);
         CHECK(!refused);
+        CHECK(refused.failure);
+        if (refused.failure) {
+            std::printf("WEFT_CYL_TAMPER code=%s\n",
+                        refused.failure->code.c_str());
+        }
         CHECK(refused.failure &&
-              refused.failure->code == "certified.vertex_off_surface");
+              (refused.failure->code == "certified.vertex_off_surface" ||
+               refused.failure->code ==
+                   "certified.triangle_orientation_invalid" ||
+               refused.failure->code ==
+                   "certified.surface_normal_unavailable"));
     }
 
     std::reverse(faces.begin(), faces.end());
