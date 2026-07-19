@@ -1254,9 +1254,9 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                 }
             }
         }
-        // Any model with 2+ cylinders is an unsupported multi-bore/slot
-        // cut-graph for the current narrow cutout floor (single plate bore /
-        // rectangular plate slot).
+        // Multi-bore / filleted-slot graphs are advisory inventory tags.
+        // Structured cylinder + planar CDT now consume common plate+bores;
+        // only densely edged perforated planes stay named residual.
         const bool multiBoreGraph = cylinderFaces >= 2;
         const bool filletedSlotGraph =
             multiBoreGraph && complexPerforatedPlanes >= 1;
@@ -1265,21 +1265,31 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
             if (multiBoreGraph && record.familyCode == "cylinder") {
                 if (std::find(record.conditionCodes.begin(),
                               record.conditionCodes.end(),
-                              "cutout.multi_bore_cylinder_deferred") ==
+                              "cutout.multi_bore_cylinder") ==
                     record.conditionCodes.end()) {
                     record.conditionCodes.push_back(
-                        "cutout.multi_bore_cylinder_deferred");
+                        "cutout.multi_bore_cylinder");
                 }
             }
-            if (filletedSlotGraph &&
-                (record.familyCode == "cylinder" ||
-                 record.familyCode == "plane")) {
-                if (std::find(record.conditionCodes.begin(),
-                              record.conditionCodes.end(),
-                              "cutout.filleted_slot_deferred") ==
+            if (filletedSlotGraph && record.familyCode == "plane" &&
+                std::find(record.conditionCodes.begin(),
+                          record.conditionCodes.end(),
+                          "cutout.planar_perforated") !=
                     record.conditionCodes.end()) {
-                    record.conditionCodes.push_back(
-                        "cutout.filleted_slot_deferred");
+                std::set<StableId> faceEdges;
+                for (const CoedgeRecord& coedge : snapshot.coedges) {
+                    if (coedge.faceId == record.subjectId) {
+                        faceEdges.insert(coedge.edgeId);
+                    }
+                }
+                if (faceEdges.size() >= 10) {
+                    if (std::find(record.conditionCodes.begin(),
+                                  record.conditionCodes.end(),
+                                  "cutout.filleted_slot_residual") ==
+                        record.conditionCodes.end()) {
+                        record.conditionCodes.push_back(
+                            "cutout.filleted_slot_residual");
+                    }
                 }
             }
         }

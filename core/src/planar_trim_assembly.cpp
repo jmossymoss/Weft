@@ -534,14 +534,14 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
             }
         }
         if (loop.vertices.size() < 3) {
-            if (loop.vertices.empty()) {
+            if (!allowNearUv || loop.vertices.empty()) {
                 ++result.evidence[WireEvidence].failed;
                 setFailure(result, "trim_assembly.loop_too_small",
                            "the assembled canonical loop has fewer than three vertices",
                            {workingFace, wireId});
                 return result;
             }
-            // Pad collapsed industrial loops to a degenerate triangle for CDT.
+            // Curved UV only: pad collapsed industrial loops for CDT.
             while (loop.vertices.size() < 3) {
                 PlanarTrimVertex pad = loop.vertices.back();
                 pad.uv[0] += 1e-4 * static_cast<double>(loop.vertices.size());
@@ -589,9 +589,11 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
     if (classification->familyCode == "plane") {
         result.validation = validatePlanarTrimDomain(domain, predicates);
         if (!result.validation) {
-            // Industrial planes with gapped/padded wires: treat as UV-trim.
-            domain.allowCurvedUv = true;
-            validationEvidence.expected = 1;
+            ++validationEvidence.failed;
+            setFailure(result, "trim_assembly.validation_failed",
+                       "the assembled face failed independent exact trim validation",
+                       {workingFace});
+            return result;
         }
     } else {
         // Curved UV trims rely on structural coedge/junction checks above;
