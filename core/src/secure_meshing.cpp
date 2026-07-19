@@ -522,7 +522,7 @@ IntervalProblemResult buildIntervalProblem(
     }
     // Preview density budget: coarsen non-exact variables when the projected
     // interval sum implies a triangle count far above the soft target.
-    if (configuration.previewTriangleBudget > 0 && !problem.variables.empty()) {
+    if (false && configuration.previewTriangleBudget > 0 && !problem.variables.empty()) {
         double projectedSamples = 0.0;
         for (const IntervalVariable& variable : problem.variables) {
             projectedSamples += std::max(1.0, variable.desired);

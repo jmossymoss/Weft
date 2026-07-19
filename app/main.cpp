@@ -1024,12 +1024,8 @@ static weft::SecureMeshingConfiguration secureConfiguration(
         defaults.angleToleranceDeg * 0.01745329251994329576923690768489;
     // UI radial drives revolution features only; general curves stay on a
     // lower floor so radial 32 does not densify every freeform edge.
-    // Preview density: keep UI radial (defaults.radial, typically 32) as the
-    // quality intent, but clamp the active revolution budget so global tris
-    // stay near previewTriangleBudget. Detail LOD can raise the clamp later.
-    const int previewRadialCap = defaults.radial > 24 ? 16 : defaults.radial;
     result.revolutionRadialSegments =
-        static_cast<std::uint32_t>(std::max(3, previewRadialCap));
+        static_cast<std::uint32_t>(std::max(3, defaults.radial));
     result.sampling.minimumClosedCurveSegments = std::max<std::uint32_t>(
         3U, std::min<std::uint32_t>(12U, result.revolutionRadialSegments / 4U));
     result.sampling.maximumSegmentCount = std::max<std::uint32_t>(
