@@ -726,6 +726,13 @@ SecureMeshingResult generateSecureMesh(
         // sampling >=8 so plane-hole CDT bridges stay solvable.
         configuration.revolutionRadialSegments = 8;
     }
+    if (largeIndustrial && configuration.previewTriangleBudget > 0 &&
+        configuration.previewTriangleBudget < 100000) {
+        configuration.sampling.minimumClosedCurveSegments = std::min(
+            configuration.sampling.minimumClosedCurveSegments, 6U);
+        configuration.previewTriangleBudget = std::min(
+            configuration.previewTriangleBudget, 38000U);
+    }
     if (!imported.meshable() || !imported.working ||
         !imported.workingEvaluator) {
         setFailure(result, "secure_pipeline.import_not_meshable",

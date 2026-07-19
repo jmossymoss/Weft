@@ -816,6 +816,15 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
         return static_cast<std::int64_t>(std::llround(value * 1e6));
     };
     std::map<ProjectionKey, std::array<double, 2>> projectionCache;
+    struct CurveKey {
+        std::uint64_t edgeOrdinal = 0;
+        std::int64_t qParam = 0;
+        bool operator<(const CurveKey& other) const {
+            return std::tie(edgeOrdinal, qParam) <
+                   std::tie(other.edgeOrdinal, other.qParam);
+        }
+    };
+    std::map<CurveKey, std::array<double, 3>> curvePositionCache;
     const int boundaryEdgeTotal =
         static_cast<int>(snapshot.edgeTopology.size());
     int boundaryEdgeOrdinal = 0;
@@ -1286,13 +1295,31 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
         for (std::size_t sampleIndex = 0; sampleIndex < sampleCount;
              ++sampleIndex) {
             const double parameter = parameters[sampleIndex];
-            const auto curve =
-                imported.workingEvaluator->evaluateCurve(edgeId, parameter);
-            if (!curve) {
-                return buildFailure(
-                    report, "boundary.curve_evaluation_failed",
-                    "canonical sample did not evaluate on the exact 3D curve",
-                    {edgeId});
+            std::array<double, 3> curvePosition{};
+            bool haveCurve = false;
+            if (configuration.previewFast) {
+                const CurveKey key{edgeId.ordinal, quantize(parameter)};
+                if (const auto cached = curvePositionCache.find(key);
+                    cached != curvePositionCache.end()) {
+                    curvePosition = cached->second;
+                    haveCurve = true;
+                }
+            }
+            if (!haveCurve) {
+                const auto curve =
+                    imported.workingEvaluator->evaluateCurve(edgeId, parameter);
+                if (!curve) {
+                    return buildFailure(
+                        report, "boundary.curve_evaluation_failed",
+                        "canonical sample did not evaluate on the exact 3D curve",
+                        {edgeId});
+                }
+                curvePosition = curve.value->position;
+                if (configuration.previewFast) {
+                    curvePositionCache.emplace(
+                        CurveKey{edgeId.ordinal, quantize(parameter)},
+                        curvePosition);
+                }
             }
 
             CanonicalBoundarySample sample;
@@ -1301,7 +1328,7 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
             sample.workingEdge = edgeId;
             sample.sourceEdge = sourceEdge;
             sample.curveParameter = parameter;
-            sample.position = curve.value->position;
+            sample.position = curvePosition;
             std::optional<StableId> endpointVertex;
             if (almostEqualParameter(parameter, lower, span) &&
                 topology.lowerVertex) {
@@ -1380,7 +1407,7 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                     endpointAllowed = std::min(endpointAllowed, maxAllowed);
                 }
                 const double endpointDiscrepancy = norm(subtract(
-                    vectorOf(curve.value->position),
+                    vectorOf(curvePosition),
                     vectorOf(vertex.value->position)));
                 // Industrial STEP: prefer topological vertex position when the
                 // curve sample is outside a tight envelope but still finite.
