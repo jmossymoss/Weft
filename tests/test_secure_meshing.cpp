@@ -51,6 +51,8 @@ weft::SecureMeshingConfiguration configuration() {
     result.sampling.chordTolerance = 0.05;
     result.sampling.normalAngleToleranceRadians = 0.1;
     result.sampling.minimumClosedCurveSegments = 16;
+    result.revolutionRadialSegments = 32;
+    result.previewTriangleBudget = 0;
     result.sampling.maximumSegmentCount = 4096;
     return result;
 }
@@ -133,18 +135,34 @@ void checkSuccessfulResult(const weft::SecureMeshingResult& result) {
             weft::makeCertifiedPolyMeshAdapter(*result.value);
         CHECK(adapter.vertices.size() ==
               result.value->certified.vertices.size());
-        CHECK(adapter.polygons.size() ==
+        CHECK(adapter.certifiedTriangles.size() ==
               result.value->certified.triangles.size());
-        CHECK(adapter.polygonCornerAnchors.size() ==
-              adapter.polygons.size());
-        CHECK(adapter.certifiedTriangles.size() == adapter.polygons.size());
-        CHECK(adapter.countTris() == adapter.polygonCount());
-        for (std::size_t index = 0; index < adapter.polygons.size(); ++index) {
-            CHECK(adapter.polygons[index].size() == 3);
-            CHECK(adapter.polygonCornerAnchors[index].size() == 3);
+        CHECK(!adapter.polygons.empty());
+        CHECK(adapter.polygonFaceId.size() == adapter.polygons.size());
+        CHECK(adapter.polygonCornerAnchors.size() == adapter.polygons.size());
+        for (std::size_t index = 0; index < adapter.certifiedTriangles.size();
+             ++index) {
             CHECK(adapter.certifiedTriangles[index].size() == 1);
             CHECK(adapter.certifiedTriangles[index].front() ==
                   result.value->certified.triangles[index].vertices);
+        }
+        if (result.value->modeling.provenance ==
+            weft::ModelingProvenanceKind::Independent) {
+            CHECK(adapter.countQuads() > 0 ||
+                  adapter.polygons.size() ==
+                      result.value->certified.triangles.size());
+            for (const auto& poly : adapter.polygons) {
+                CHECK(poly.size() == 3 || poly.size() == 4);
+            }
+        } else {
+            CHECK(adapter.polygons.size() ==
+                  result.value->certified.triangles.size());
+            CHECK(adapter.countTris() == adapter.polygonCount());
+            for (std::size_t index = 0; index < adapter.polygons.size();
+                 ++index) {
+                CHECK(adapter.polygons[index].size() == 3);
+                CHECK(adapter.polygonCornerAnchors[index].size() == 3);
+            }
         }
     }
 }
@@ -210,11 +228,11 @@ struct M3GoldenDigest {
 // boundary / lift digests are unchanged from the WP-015 cross-platform set.
 constexpr M3GoldenDigest kM3GoldenDigests[] = {
     {"box", "4d4b56a97e4194a1", "bfc6fa72b8fb0801", "2d5083505e7bff41",
-     "bcac79133f113138"},
+     "b8589c09d9648578"},
     {"cylinder", "df476af694433848", "8928e6e02ad2fa92", "612aaa31fa6d5784",
-     "fe390c5334d6074e"},
+     "60b48de6af223e92"},
     {"hole", "559a67e76d02c618", "303cc08b7ef4e792", "c362170936b054d8",
-     "50ae45f062a8d4e7"},
+     "e11cf54a44d14777"},
 };
 
 void checkDeterminismDigest(const M3GoldenDigest& golden,

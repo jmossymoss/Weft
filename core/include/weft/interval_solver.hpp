@@ -12,7 +12,7 @@ namespace weft {
 struct SamplingConfiguration {
     double chordTolerance = 5e-5;
     double normalAngleToleranceRadians = 0.017453292519943295;
-    std::uint32_t minimumClosedCurveSegments = 16;
+    std::uint32_t minimumClosedCurveSegments = 8;
     std::uint32_t maximumSegmentCount = 4096;
 };
 

@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <limits>
 #include <map>
+#include <unordered_map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -309,51 +310,109 @@ std::optional<ModelingMesh> tryBuildIndependentModelingMesh(
     modeling.vertices = certified.vertices;
     modeling.provenance = ModelingProvenanceKind::Independent;
     modeling.aliasesCertified = false;
+
+    auto edgeKey = [](std::uint32_t a, std::uint32_t b) {
+        if (a > b) std::swap(a, b);
+        return (static_cast<std::uint64_t>(a) << 32) |
+               static_cast<std::uint64_t>(b);
+    };
+    auto cross = [](const std::array<double, 3>& u,
+                    const std::array<double, 3>& v) {
+        return std::array<double, 3>{u[1] * v[2] - u[2] * v[1],
+                                     u[2] * v[0] - u[0] * v[2],
+                                     u[0] * v[1] - u[1] * v[0]};
+    };
+    auto sub = [](const std::array<double, 3>& a,
+                  const std::array<double, 3>& b) {
+        return std::array<double, 3>{a[0] - b[0], a[1] - b[1], a[2] - b[2]};
+    };
+    auto dot3 = [](const std::array<double, 3>& a,
+                   const std::array<double, 3>& b) {
+        return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    };
+
+    // Undirected interior edges → up to two triangle indices (O(T)).
+    std::unordered_map<std::uint64_t, std::array<std::size_t, 2>> edgeTris;
+    edgeTris.reserve(certified.triangles.size() * 2);
+    std::unordered_map<std::uint64_t, std::uint8_t> edgeCount;
+    edgeCount.reserve(certified.triangles.size() * 2);
+    for (std::size_t ti = 0; ti < certified.triangles.size(); ++ti) {
+        const auto& v = certified.triangles[ti].vertices;
+        for (std::size_t e = 0; e < 3; ++e) {
+            const std::uint64_t key =
+                edgeKey(v[e], v[(e + 1) % 3]);
+            auto& count = edgeCount[key];
+            if (count < 2) {
+                edgeTris[key][count] = ti;
+            }
+            ++count;
+        }
+    }
+
+    struct Candidate {
+        std::size_t a = 0;
+        std::size_t b = 0;
+        double score = 0.0;
+    };
+    std::vector<Candidate> candidates;
+    candidates.reserve(edgeTris.size());
+    for (const auto& [key, count] : edgeCount) {
+        if (count != 2) continue;
+        const auto ends = edgeTris[key];
+        const CertifiedTriangle& ta = certified.triangles[ends[0]];
+        const CertifiedTriangle& tb = certified.triangles[ends[1]];
+        if (ta.workingFace != tb.workingFace) continue;
+        // Prefer more rectangular quads: maximize |nA·nB| and minimize
+        // diagonal length ratio deviation from 1.
+        const auto& pa0 = certified.vertices[ta.vertices[0]].position;
+        const auto& pa1 = certified.vertices[ta.vertices[1]].position;
+        const auto& pa2 = certified.vertices[ta.vertices[2]].position;
+        const auto& pb0 = certified.vertices[tb.vertices[0]].position;
+        const auto& pb1 = certified.vertices[tb.vertices[1]].position;
+        const auto& pb2 = certified.vertices[tb.vertices[2]].position;
+        const auto nA = cross(sub(pa1, pa0), sub(pa2, pa0));
+        const auto nB = cross(sub(pb1, pb0), sub(pb2, pb0));
+        const double nDot = dot3(nA, nB);
+        // Reject strongly opposing folds.
+        if (!(nDot > 0.0)) continue;
+        std::uint32_t shared[2]{};
+        std::size_t sharedN = 0;
+        for (std::uint32_t av : ta.vertices) {
+            for (std::uint32_t bv : tb.vertices) {
+                if (av == bv && sharedN < 2) shared[sharedN++] = av;
+            }
+        }
+        if (sharedN != 2) continue;
+        std::uint32_t onlyA = ta.vertices[0];
+        for (std::uint32_t av : ta.vertices) {
+            if (av != shared[0] && av != shared[1]) onlyA = av;
+        }
+        std::uint32_t onlyB = tb.vertices[0];
+        for (std::uint32_t bv : tb.vertices) {
+            if (bv != shared[0] && bv != shared[1]) onlyB = bv;
+        }
+        const auto& oa = certified.vertices[onlyA].position;
+        const auto& ob = certified.vertices[onlyB].position;
+        const auto& s0 = certified.vertices[shared[0]].position;
+        const auto& s1 = certified.vertices[shared[1]].position;
+        const double diag = std::sqrt(std::max(0.0, dot3(sub(oa, ob), sub(oa, ob))));
+        const double side = std::sqrt(std::max(0.0, dot3(sub(s0, s1), sub(s0, s1))));
+        if (!(side > 0.0) || !(diag > 0.0)) continue;
+        const double aspect = diag / side;
+        const double score = nDot / (1.0 + std::abs(aspect - std::sqrt(2.0)));
+        candidates.push_back({ends[0], ends[1], score});
+    }
+    std::sort(candidates.begin(), candidates.end(),
+              [](const Candidate& left, const Candidate& right) {
+                  return left.score > right.score;
+              });
+
     std::vector<bool> consumed(certified.triangles.size(), false);
     std::size_t paired = 0;
-    for (std::size_t i = 0; i < certified.triangles.size(); ++i) {
-        if (consumed[i]) continue;
-        const CertifiedTriangle& a = certified.triangles[i];
-        std::optional<std::size_t> partner;
-        for (std::size_t j = i + 1; j < certified.triangles.size(); ++j) {
-            if (consumed[j]) continue;
-            const CertifiedTriangle& b = certified.triangles[j];
-            if (a.workingFace != b.workingFace) continue;
-            std::size_t shared = 0;
-            for (std::uint32_t av : a.vertices) {
-                for (std::uint32_t bv : b.vertices) {
-                    if (av == bv) ++shared;
-                }
-            }
-            if (shared == 2) {
-                partner = j;
-                break;
-            }
-        }
-        if (!partner) continue;
-        const CertifiedTriangle& b = certified.triangles[*partner];
-        std::array<std::uint32_t, 4> quad{};
-        std::size_t wrote = 0;
-        // Walk a then insert the unique vertex from b opposite the shared edge.
-        for (std::uint32_t av : a.vertices) quad[wrote++] = av;
-        for (std::uint32_t bv : b.vertices) {
-            bool seen = false;
-            for (std::uint32_t av : a.vertices) {
-                if (av == bv) {
-                    seen = true;
-                    break;
-                }
-            }
-            if (!seen) {
-                // Insert opposite vertex between the shared-edge endpoints by
-                // replacing the diagonal: keep a0,a1,b_unique,a2 ordered later.
-                quad[wrote++] = bv;
-                break;
-            }
-        }
-        if (wrote != 4) continue;
-        // Order as a convex boundary: a0, a1, unique-from-b inserted after the
-        // shared edge's second endpoint. Reconstruct from shared edge.
+    for (const Candidate& candidate : candidates) {
+        if (consumed[candidate.a] || consumed[candidate.b]) continue;
+        const CertifiedTriangle& a = certified.triangles[candidate.a];
+        const CertifiedTriangle& b = certified.triangles[candidate.b];
         std::uint32_t sharedVerts[2]{};
         std::size_t sharedCount = 0;
         for (std::uint32_t av : a.vertices) {
@@ -377,12 +436,11 @@ std::optional<ModelingMesh> tryBuildIndependentModelingMesh(
         polygon.sourceFace = a.sourceFace;
         polygon.vertices = {onlyA, sharedVerts[0], onlyB, sharedVerts[1]};
         modeling.polygons.push_back(std::move(polygon));
-        consumed[i] = true;
-        consumed[*partner] = true;
+        consumed[candidate.a] = true;
+        consumed[candidate.b] = true;
         ++paired;
     }
     if (paired == 0) return std::nullopt;
-    // Residual unpaired triangles remain as tris in the modelling mesh.
     for (std::size_t i = 0; i < certified.triangles.size(); ++i) {
         if (consumed[i]) continue;
         const CertifiedTriangle& triangle = certified.triangles[i];

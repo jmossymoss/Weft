@@ -221,23 +221,30 @@ IntervalProblemResult buildIntervalProblem(
             if (!fullCircle) {
                 count = std::max<std::uint32_t>(count, 2);
             }
-            // Spherical caps need denser parallels so the mid-ring quad band
-            // stays inside the normal LOD budget.
+            bool revolutionOwner = false;
+            bool sphereCapOwner = false;
             for (const CoedgeRecord& coedge : snapshot.coedges) {
                 if (coedge.edgeId != topology.id) continue;
                 const ExactGeometryClassification* face =
                     reconnaissance.find(coedge.faceId);
-                if (face && face->familyCode == "sphere" &&
-                    face->trimDomain &&
+                if (!face) continue;
+                if (face->familyCode == "cylinder" ||
+                    face->familyCode == "cone" ||
+                    face->familyCode == "sphere" ||
+                    face->familyCode == "torus") {
+                    revolutionOwner = true;
+                }
+                if (face->familyCode == "sphere" && face->trimDomain &&
                     *face->trimDomain ==
                         TrimDomainClass::TouchesOneSingularity) {
-                    count = std::max<std::uint32_t>(
-                        count,
-                        std::max<std::uint32_t>(
-                            16, configuration.sampling
-                                    .minimumClosedCurveSegments));
-                    break;
+                    sphereCapOwner = true;
                 }
+            }
+            if (revolutionOwner) {
+                count = std::max(count, configuration.revolutionRadialSegments);
+            }
+            if (sphereCapOwner) {
+                count = std::max(count, configuration.revolutionRadialSegments);
             }
         } else if (classification->familyCode == "ellipse") {
             const EvaluationResult<ParameterDomain> domain =
@@ -512,6 +519,32 @@ IntervalProblemResult buildIntervalProblem(
         }
         problem.equalities.push_back(
             {{rimBoundaries.begin(), rimBoundaries.end()}});
+    }
+    // Preview density budget: coarsen non-exact variables when the projected
+    // interval sum implies a triangle count far above the soft target.
+    if (configuration.previewTriangleBudget > 0 && !problem.variables.empty()) {
+        double projectedSamples = 0.0;
+        for (const IntervalVariable& variable : problem.variables) {
+            projectedSamples += std::max(1.0, variable.desired);
+        }
+        // Rough tris ≈ 2 * boundary samples for a mixed body.
+        const double projectedTris = 2.0 * projectedSamples;
+        const double budget =
+            static_cast<double>(configuration.previewTriangleBudget);
+        if (projectedTris > budget * 1.2) {
+            const double scale = budget / projectedTris;
+            for (IntervalVariable& variable : problem.variables) {
+                if (variable.exact) continue;
+                double next = variable.desired * scale;
+                if (variable.requireEven) {
+                    next = 2.0 * std::ceil(next * 0.5);
+                } else {
+                    next = std::ceil(next);
+                }
+                variable.desired = std::max(static_cast<double>(variable.minimum),
+                                           next);
+            }
+        }
     }
     result.value = std::move(problem);
     return result;
@@ -1218,11 +1251,12 @@ SecureMeshingResult generateSecureMesh(
                 sphere.azimuthIntervals = *azimuth.count;
             } else {
                 sphere.azimuthIntervals = std::max<std::uint32_t>(
-                    16, configuration.sampling.minimumClosedCurveSegments);
+                    configuration.revolutionRadialSegments,
+                    configuration.sampling.minimumClosedCurveSegments);
             }
             // Guard parallel-circle sagitta near the equator.
-            sphere.azimuthIntervals =
-                std::max<std::uint32_t>(sphere.azimuthIntervals, 16);
+            sphere.azimuthIntervals = std::max(
+                sphere.azimuthIntervals, configuration.revolutionRadialSegments);
             SphereWallResult wall;
             if (face.trimDomain &&
                 *face.trimDomain ==
@@ -1276,10 +1310,9 @@ SecureMeshingResult generateSecureMesh(
             torus.maximumChordDeviation = configuration.sampling.chordTolerance;
             torus.maximumNormalDeviationRadians =
                 configuration.sampling.normalAngleToleranceRadians;
-            torus.majorIntervals = std::max<std::uint32_t>(
-                16, configuration.sampling.minimumClosedCurveSegments);
+            torus.majorIntervals = configuration.revolutionRadialSegments;
             torus.minorIntervals = std::max<std::uint32_t>(
-                12, configuration.sampling.minimumClosedCurveSegments / 2);
+                8U, configuration.revolutionRadialSegments / 2U);
             const TorusWallResult wall = buildFullTorusWall(
                 imported, reconnaissance, *boundaries.value, face.subjectId,
                 torus);
@@ -1480,9 +1513,7 @@ SecureMeshingResult generateSecureMesh(
     if (imported.working && imported.working->snapshot.model.faceCount() == 1) {
         assemblyConfig.requireClosedManifold = false;
     }
-    for (PlanarCdtMesh& faceMesh : faceMeshes) {
-        faceMesh.relaxGeometryChecks = true;
-    }
+    // Face meshes keep their own relaxGeometryChecks (CapWall/fan/mapped only).
     const CertifiedMeshAssemblyResult assembled =
         assembleCertifiedBoundaryMesh(
             imported, *boundaries.value, faceMeshes, expectedFaces,
@@ -1699,24 +1730,43 @@ PolyMesh makeCertifiedPolyMeshAdapter(const MeshingResult& result) {
         adapter.constraints.push_back(constraint);
     }
 
-    adapter.polygons.reserve(result.certified.triangles.size());
-    adapter.polygonFaceId.reserve(result.certified.triangles.size());
-    adapter.polygonCornerAnchors.reserve(result.certified.triangles.size());
     adapter.certifiedTriangles.reserve(result.certified.triangles.size());
     for (const CertifiedTriangle& triangle : result.certified.triangles) {
-        adapter.polygons.push_back(
-            {triangle.vertices.begin(), triangle.vertices.end()});
-        adapter.polygonFaceId.push_back(
-            static_cast<int>(triangle.workingFace.ordinal));
-        std::vector<Anchor> corners;
-        corners.reserve(3);
-        for (const PredicatePoint2& uv : triangle.cornerUv) {
-            corners.push_back(
-                {static_cast<int>(triangle.workingFace.ordinal), uv[0],
-                 uv[1]});
-        }
-        adapter.polygonCornerAnchors.push_back(std::move(corners));
         adapter.certifiedTriangles.push_back({triangle.vertices});
+    }
+
+    const bool exportModeling =
+        result.modeling.provenance == ModelingProvenanceKind::Independent &&
+        !result.modeling.polygons.empty();
+    if (exportModeling) {
+        adapter.polygons.reserve(result.modeling.polygons.size());
+        adapter.polygonFaceId.reserve(result.modeling.polygons.size());
+        adapter.polygonCornerAnchors.reserve(result.modeling.polygons.size());
+        for (const ModelingPolygon& polygon : result.modeling.polygons) {
+            adapter.polygons.push_back(polygon.vertices);
+            adapter.polygonFaceId.push_back(
+                static_cast<int>(polygon.workingFace.ordinal));
+            // Modelling polygons inherit face id; corner UVs are optional.
+            adapter.polygonCornerAnchors.push_back({});
+        }
+    } else {
+        adapter.polygons.reserve(result.certified.triangles.size());
+        adapter.polygonFaceId.reserve(result.certified.triangles.size());
+        adapter.polygonCornerAnchors.reserve(result.certified.triangles.size());
+        for (const CertifiedTriangle& triangle : result.certified.triangles) {
+            adapter.polygons.push_back(
+                {triangle.vertices.begin(), triangle.vertices.end()});
+            adapter.polygonFaceId.push_back(
+                static_cast<int>(triangle.workingFace.ordinal));
+            std::vector<Anchor> corners;
+            corners.reserve(3);
+            for (const PredicatePoint2& uv : triangle.cornerUv) {
+                corners.push_back(
+                    {static_cast<int>(triangle.workingFace.ordinal), uv[0],
+                     uv[1]});
+            }
+            adapter.polygonCornerAnchors.push_back(std::move(corners));
+        }
     }
     return adapter;
 }

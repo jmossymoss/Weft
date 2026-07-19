@@ -1022,10 +1022,15 @@ static weft::SecureMeshingConfiguration secureConfiguration(
     result.sampling.chordTolerance = defaults.chordTolerance;
     result.sampling.normalAngleToleranceRadians =
         defaults.angleToleranceDeg * 0.01745329251994329576923690768489;
-    result.sampling.minimumClosedCurveSegments =
-        static_cast<std::uint32_t>(defaults.radial);
+    // UI radial drives revolution features only; general curves stay on a
+    // lower floor so radial 32 does not densify every freeform edge.
+    result.revolutionRadialSegments =
+        static_cast<std::uint32_t>(std::max(3, defaults.radial));
+    result.sampling.minimumClosedCurveSegments = std::max<std::uint32_t>(
+        3U, std::min<std::uint32_t>(12U, result.revolutionRadialSegments / 4U));
     result.sampling.maximumSegmentCount = std::max<std::uint32_t>(
-        4096U, result.sampling.minimumClosedCurveSegments);
+        4096U, result.revolutionRadialSegments);
+    result.previewTriangleBudget = 70000;
     result.cylinderAxialIntervals =
         static_cast<std::uint32_t>(defaults.axial);
     if (settings.perFace.size() == 1) {

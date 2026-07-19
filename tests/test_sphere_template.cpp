@@ -28,6 +28,8 @@ weft::SecureMeshingConfiguration configuration() {
     settings.sampling.chordTolerance = 0.25;
     settings.sampling.normalAngleToleranceRadians = 0.35;
     settings.sampling.minimumClosedCurveSegments = 16;
+    settings.revolutionRadialSegments = 32;
+    settings.previewTriangleBudget = 0;
     return settings;
 }
 
@@ -43,6 +45,8 @@ void testSphereDensityAndDeterminism() {
     weft::SecureMeshingConfiguration dense = configuration();
     dense.sampling.chordTolerance = 0.08;
     dense.sampling.minimumClosedCurveSegments = 24;
+    dense.revolutionRadialSegments = 48;
+    dense.previewTriangleBudget = 0;  // disable budget for LOD monotonicity
     const weft::SecureMeshingResult denser =
         weft::generateSecureMesh(imported, dense);
     CHECK(first && second && denser);

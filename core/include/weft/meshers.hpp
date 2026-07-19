@@ -20,7 +20,7 @@ enum class CapStyle {
 // Named, per-face density controls (the plan's §3.3). A face picks up the
 // defaults unless an override is present for its FaceId.
 struct FaceMeshSettings {
-    int radial = 16;        // divisions around a surface of revolution (u)
+    int radial = 32;        // divisions around a surface of revolution (u)
     int axial = 1;          // divisions along the axis / pole-to-pole (v)
     int gridU = 1;          // planar/parametric grid divisions — start
     int gridV = 1;          // minimal (game topology), densify on demand

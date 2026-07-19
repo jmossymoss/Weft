@@ -33,6 +33,8 @@ weft::SecureMeshingConfiguration configuration() {
     settings.sampling.chordTolerance = 2.0;
     settings.sampling.normalAngleToleranceRadians = 1.2;
     settings.sampling.minimumClosedCurveSegments = 16;
+    settings.revolutionRadialSegments = 32;
+    settings.previewTriangleBudget = 0;
     return settings;
 }
 

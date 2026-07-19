@@ -28,6 +28,8 @@ weft::SecureMeshingConfiguration configuration() {
     settings.sampling.chordTolerance = 0.25;
     settings.sampling.normalAngleToleranceRadians = 0.35;
     settings.sampling.minimumClosedCurveSegments = 8;
+    settings.revolutionRadialSegments = 16;
+    settings.previewTriangleBudget = 0;
     settings.cylinderAxialIntervals = 1;
     return settings;
 }
@@ -85,6 +87,7 @@ void testConeDensitySweepAndDeterminism() {
     weft::SecureMeshingConfiguration dense = configuration();
     dense.sampling.chordTolerance = 0.05;
     dense.sampling.minimumClosedCurveSegments = 16;
+    dense.revolutionRadialSegments = 32;
 
     const weft::SecureMeshingResult first =
         weft::generateSecureMesh(imported, loose);

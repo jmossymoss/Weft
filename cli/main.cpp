@@ -796,10 +796,15 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
         configuration.sampling.normalAngleToleranceRadians =
             selected.defaults.angleToleranceDeg *
             0.01745329251994329576923690768489;
+        configuration.revolutionRadialSegments =
+            static_cast<std::uint32_t>(std::max(3, selected.defaults.radial));
         configuration.sampling.minimumClosedCurveSegments =
-            static_cast<std::uint32_t>(selected.defaults.radial);
+            std::max<std::uint32_t>(
+                3U, std::min<std::uint32_t>(
+                        12U, configuration.revolutionRadialSegments / 4U));
         configuration.sampling.maximumSegmentCount = std::max<std::uint32_t>(
-            4096U, configuration.sampling.minimumClosedCurveSegments);
+            4096U, configuration.revolutionRadialSegments);
+        configuration.previewTriangleBudget = 70000;
         configuration.cylinderAxialIntervals =
             static_cast<std::uint32_t>(selected.defaults.axial);
         configuration.progressToStderr = progress;
@@ -1059,10 +1064,15 @@ int cmdSweep(const std::vector<std::string>& args) {
         configuration.sampling.chordTolerance = 0.1;
         configuration.sampling.normalAngleToleranceRadians =
             28.0 * 0.01745329251994329576923690768489;
+        configuration.revolutionRadialSegments =
+            static_cast<std::uint32_t>(std::max(3, radial));
         configuration.sampling.minimumClosedCurveSegments =
-            static_cast<std::uint32_t>(radial);
+            std::max<std::uint32_t>(
+                3U, std::min<std::uint32_t>(
+                        12U, configuration.revolutionRadialSegments / 4U));
         configuration.sampling.maximumSegmentCount = std::max<std::uint32_t>(
-            4096U, configuration.sampling.minimumClosedCurveSegments);
+            4096U, configuration.revolutionRadialSegments);
+        configuration.previewTriangleBudget = 70000;
 
         const weft::SecureMeshingResult first =
             weft::generateSecureMesh(imported, configuration);
@@ -1367,7 +1377,9 @@ int cmdInventory(const std::vector<std::string>& args) {
         configuration.sampling.chordTolerance = 0.1;
         configuration.sampling.normalAngleToleranceRadians =
             20.0 * 3.141592653589793 / 180.0;
-        configuration.sampling.minimumClosedCurveSegments = 16;
+        configuration.revolutionRadialSegments = 32;
+        configuration.sampling.minimumClosedCurveSegments = 8;
+        configuration.previewTriangleBudget = 70000;
         const weft::SecureMeshingResult body =
             weft::generateSecureMesh(imported, configuration);
         if (body) {
@@ -1401,7 +1413,9 @@ int cmdInventory(const std::vector<std::string>& args) {
         probeConfig.sampling.chordTolerance = 0.1;
         probeConfig.sampling.normalAngleToleranceRadians =
             20.0 * 3.141592653589793 / 180.0;
-        probeConfig.sampling.minimumClosedCurveSegments = 16;
+        probeConfig.revolutionRadialSegments = 32;
+        probeConfig.sampling.minimumClosedCurveSegments = 8;
+        probeConfig.previewTriangleBudget = 70000;
         for (const auto& [family, ids] : probeIdsByFamily) {
             const int n = std::min(probeLimit, static_cast<int>(ids.size()));
             for (int i = 0; i < n; ++i) {
