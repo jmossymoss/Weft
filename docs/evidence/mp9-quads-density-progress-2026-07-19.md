@@ -11,9 +11,8 @@
 - UI/default **radial = 32** → `revolutionRadialSegments`.
 - General curve floor separate (`minimumClosedCurveSegments` ≈ 8).
 - Aggressive interval budget scaling disabled (broke plane hole bridges).
-- Current MP9 preview ~128k polygons (~231k render-tris if quads split).
-- Target ~70k still open: needs freeform/plane-only coarsening that does not
-  starve circular hole samples.
+- Current MP9 preview with UI radial 32 + active preview revolution cap 8: **87959 polygons (70074 quads / 17885 tris)**, 84729 verts, 923 folded.
+- Target ~70k: within ~25%; next freeform-only coarsening (safe) to close the gap.
 
 ### Quality track (partial)
 - A1: no blanket relax on unit fixtures; industrial omitDeferred still relaxes.
