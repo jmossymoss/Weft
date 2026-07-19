@@ -168,3 +168,4 @@ prove completed work; they are not plans or handoff diaries.
 - `mp9-quads-density-progress-2026-07-19.md` - modelling quads + radial-32 density progress.
 - `mp9-import-perf-2026-07-19.md` - MP9 import timing after large-repair skips.
 - `mp9-preview-density-2026-07-19.md` - preview density ~82k polys at radial UI 32.
+- `mp9-mesh-progress-speed-2026-07-19.md` - stage progress + interval O(n) speedup.
