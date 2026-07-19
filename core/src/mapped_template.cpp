@@ -304,18 +304,12 @@ MappedPatchResult buildMappedFourSidedPatch(
             }
         }
         if (!(best <= matchBound)) {
-            const bool freeformSoft =
-                hasCondition(*classification, "freeform.uv_grid_candidate") ||
-                hasCondition(*classification, "freeform.uv_trim_candidate") ||
-                hasCondition(*classification, "freeform.general_attempted");
-            if (!freeformSoft) {
-                setFailure(result, BoundaryCoverage,
-                           "mapped.seam_sample_unmatched",
-                           "a mapped boundary sample does not land on the UV grid border",
-                           {workingFace, candidate.sample->workingEdge});
-                return result;
-            }
-            continue;
+            // Route to UV-trim via caller fallback — do not soft-skip seams.
+            setFailure(result, BoundaryCoverage,
+                       "mapped.seam_sample_unmatched",
+                       "a mapped boundary sample does not land on the UV grid border",
+                       {workingFace, candidate.sample->workingEdge});
+            return result;
         }
         PlanarTrimVertex& vertex = mesh.vertices[bestIndex];
         if (vertex.canonicalVertexIndex == InvalidCanonicalVertexIndex) {
@@ -335,13 +329,10 @@ MappedPatchResult buildMappedFourSidedPatch(
     }
     result.validation[BoundaryCoverage].checked = consumed.size();
     if (consumed.size() != allFaceUses.size()) {
-        if (consumed.size() < 4) {
-            setFailure(result, BoundaryCoverage, "mapped.boundary_use_unconsumed",
-                       "mapped boundary samples remain after UV grid assembly",
-                       {workingFace});
-            return result;
-        }
-        result.validation[BoundaryCoverage].expected = consumed.size();
+        setFailure(result, BoundaryCoverage, "mapped.boundary_use_unconsumed",
+                   "mapped boundary samples remain after UV grid assembly",
+                   {workingFace});
+        return result;
     }
 
     const std::size_t triCount = static_cast<std::size_t>(nu) * nv * 2;
@@ -446,6 +437,8 @@ MappedPatchResult buildMappedFourSidedPatch(
                    {workingFace});
         return result;
     }
+    // Freeform mapped lattices still need scoped certify soft until UV
+    // orientation is proven hard on industrial B-splines.
     if (hasCondition(*classification, "freeform.uv_grid_candidate") ||
         hasCondition(*classification, "freeform.uv_trim_candidate") ||
         hasCondition(*classification, "freeform.general_attempted")) {

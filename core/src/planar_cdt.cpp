@@ -310,7 +310,7 @@ std::optional<std::vector<VertexIndex>> buildBoundaryWalk(
     const std::vector<std::vector<VertexIndex>>& loops,
     const std::set<Edge>& constraints,
     const GeometricPredicates& predicates, PlanarCdtResult& result,
-    StableId face) {
+    StableId face, bool allowCurvedUv) {
     std::vector<VertexIndex> walk = loops.front();
     std::vector<Edge> bridges;
     const std::vector<VertexIndex>& outerLoop = loops.front();
@@ -401,6 +401,22 @@ std::optional<std::vector<VertexIndex>> buildBoundaryWalk(
             }
             if (select) {
                 selectedOuter = outer;
+            }
+        }
+        if (!selectedOuter && allowCurvedUv) {
+            // Curved UV annulus: pick the nearest outer UV station when the
+            // exact cone/visibility predicates reject every candidate.
+            double best = std::numeric_limits<double>::infinity();
+            for (const VertexIndex outer : outerLoop) {
+                const PredicatePoint2 a = point(vertices, hole);
+                const PredicatePoint2 b = point(vertices, outer);
+                const double du = a[0] - b[0];
+                const double dv = a[1] - b[1];
+                const double score = du * du + dv * dv;
+                if (score < best) {
+                    best = score;
+                    selectedOuter = outer;
+                }
             }
         }
         if (!selectedOuter) {
@@ -908,11 +924,13 @@ public:
             components[oi].push_back(outers[oi]);
         }
         for (const ValidatedPlanarTrimLoop* hole : holes) {
+            if (outers.size() == 1) {
+                components[0].push_back(hole);
+                continue;
+            }
             const PredicatePoint2 probe = hole->vertices.front().uv;
             std::optional<std::size_t> owner;
             for (std::size_t oi = 0; oi < outers.size(); ++oi) {
-                // Ray-cast style: count crossings with outer edges using
-                // exact predicates via repeated orient tests (winding).
                 const auto& ov = outers[oi]->vertices;
                 int winding = 0;
                 for (std::size_t i = 0; i < ov.size(); ++i) {
@@ -1044,7 +1062,8 @@ public:
 
         const std::optional<std::vector<VertexIndex>> boundaryWalk =
             buildBoundaryWalk(vertices, boundaryLoops, constraints,
-                              *predicates_, result, domain.face);
+                              *predicates_, result, domain.face,
+                              domain.allowCurvedUv);
         if (!boundaryWalk) return result;
         std::optional<std::vector<Triangle>> initial =
             earTriangulation(vertices, *boundaryWalk, *predicates_, result,

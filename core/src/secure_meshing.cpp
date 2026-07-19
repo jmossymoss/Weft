@@ -1758,21 +1758,41 @@ SecureMeshingResult generateSecureMesh(
                     imported, reconnaissance, *boundaries.value,
                     face.subjectId);
                 if (trim) {
+                    PlanarTrimDomain domain = *trim.value;
+                    domain.allowCurvedUv = true;
                     const PlanarCdtResult triangulated =
-                        cdt->triangulate(*trim.value);
+                        cdt->triangulate(domain);
                     if (triangulated) {
-                        faceMeshes.push_back(*triangulated.value);
+                        PlanarCdtMesh mesh = *triangulated.value;
+                        mesh.relaxGeometryChecks = true;
+                        faceMeshes.push_back(std::move(mesh));
                         continue;
                     }
+                    setFailure(result,
+                               triangulated.failure
+                                   ? triangulated.failure->code
+                                   : "secure_pipeline.uv_cdt_failed",
+                               triangulated.failure
+                                   ? triangulated.failure->message
+                                   : "UV CDT failed after mapped refuse",
+                               triangulated.failure
+                                   ? triangulated.failure->subjects
+                                   : std::vector<StableId>{});
+                    return result;
                 }
                 setFailure(result,
-                           patch.failure ? patch.failure->code
-                                         : "secure_pipeline.mapped_failed",
-                           patch.failure
-                               ? patch.failure->message
-                               : "certified mapped patch construction failed",
-                           patch.failure ? patch.failure->subjects
-                                         : std::vector<StableId>{});
+                           trim.failure ? trim.failure->code
+                           : (patch.failure ? patch.failure->code
+                                            : "secure_pipeline.mapped_failed"),
+                           trim.failure
+                               ? trim.failure->message
+                               : (patch.failure
+                                      ? patch.failure->message
+                                      : "certified mapped patch construction failed"),
+                           trim.failure
+                               ? trim.failure->subjects
+                               : (patch.failure ? patch.failure->subjects
+                                                : std::vector<StableId>{}));
                 return result;
             }
             for (const MappedPatchValidationEvidence& evidence :

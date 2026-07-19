@@ -171,3 +171,4 @@ prove completed work; they are not plans or handoff diaries.
 - `mp9-mesh-progress-speed-2026-07-19.md` - stage progress + interval O(n) speedup.
 - [mp9-failclosed-g0g1-2026-07-19.md](mp9-failclosed-g0g1-2026-07-19.md) — G0/G1 fail-closed MP9 mesh without face omission
 - [mp9-g2-cylinder-no-uv-relax-2026-07-19.md](mp9-g2-cylinder-no-uv-relax-2026-07-19.md) — G2 complex cylinder UV-trim without relax
+- [mp9-g3-mapped-hard-seam-2026-07-19.md](mp9-g3-mapped-hard-seam-2026-07-19.md) — G3 mapped hard seam → UV-trim
