@@ -795,6 +795,7 @@ SecureMeshingResult generateSecureMesh(
     secureProgress(configuration, "intervals.begin");
     const IntervalProblemResult intervalProblem = buildIntervalProblem(
         imported, reconnaissance, configuration);
+    secureProgress(configuration, "intervals.problem.done");
     if (!intervalProblem.value) {
         result.failure = intervalProblem.failure;
         const std::string msg = "intervals.failed " +
@@ -804,6 +805,7 @@ SecureMeshingResult generateSecureMesh(
     }
     const IntervalSolveResult intervals = solveIntervals(
         *intervalProblem.value, configuration.sampling);
+    secureProgress(configuration, "intervals.solve.done");
     if (!intervals) {
         setFailure(result,
                    intervals.failure ? intervals.failure->code
@@ -851,9 +853,11 @@ SecureMeshingResult generateSecureMesh(
         }
     }
 
+    secureProgress(configuration, "boundaries.begin");
     const CanonicalBoundaryBuildResult boundaries =
         buildCanonicalBoundaries(imported, reconnaissance,
                                  *intervals.solution);
+    secureProgress(configuration, "boundaries.done");
     appendCoverage(result.validation, "secure_pipeline.boundary_edges",
                    boundaries.validation.expectedEdges,
                    boundaries.validation.checkedEdges, 0,
@@ -924,6 +928,123 @@ SecureMeshingResult generateSecureMesh(
     const auto cdt = makeExactLawsonReferencePlanarCdtBackend();
     std::vector<PlanarCdtMesh> faceMeshes;
     std::vector<StableId> expectedFaces;
+    std::map<StableId, PlanarCdtMesh> parallelPlaneMeshes;
+    std::optional<SecureMeshingFailure> parallelPlaneFailure;
+    ValidationCertificate parallelPlaneCoverage;
+    if (configuration.omitDeferredResiduals) {
+        std::vector<StableId> planeIds;
+        for (const ExactGeometryClassification& face :
+             reconnaissance.records) {
+            if (face.taxonomy != GeometryTaxonomy::Surface) continue;
+            if (face.support !=
+                GeometrySupportState::SupportedAnalyticTemplate) {
+                continue;
+            }
+            if (face.familyCode == "plane") {
+                planeIds.push_back(face.subjectId);
+            }
+        }
+        if (!planeIds.empty()) {
+            secureProgress(configuration, "faces.planes.parallel.begin");
+            std::atomic<std::size_t> next{0};
+            std::mutex mu;
+            const unsigned workerCount = std::max(
+                1u, std::thread::hardware_concurrency());
+            auto worker = [&]() {
+                const auto localCdt =
+                    makeExactLawsonReferencePlanarCdtBackend();
+                while (true) {
+                    const std::size_t i = next.fetch_add(1);
+                    if (i >= planeIds.size()) return;
+                    if (parallelPlaneFailure) return;
+                    const StableId faceId = planeIds[i];
+                    const PlanarTrimAssemblyResult trim =
+                        assemblePlanarTrimDomain(imported, reconnaissance,
+                                                 *boundaries.value, faceId);
+                    if (!trim) {
+                        std::lock_guard<std::mutex> lock(mu);
+                        if (!parallelPlaneFailure) {
+                            parallelPlaneFailure = SecureMeshingFailure{
+                                trim.failure ? trim.failure->code
+                                             : "secure_pipeline.planar_trim_failed",
+                                trim.failure ? trim.failure->message
+                                             : "planar trim assembly failed",
+                                trim.failure ? trim.failure->subjects
+                                             : std::vector<StableId>{faceId}};
+                        }
+                        return;
+                    }
+                    const PlanarCdtResult triangulated =
+                        localCdt->triangulate(*trim.value);
+                    if (!triangulated) {
+                        std::lock_guard<std::mutex> lock(mu);
+                        if (!parallelPlaneFailure) {
+                            parallelPlaneFailure = SecureMeshingFailure{
+                                triangulated.failure
+                                    ? triangulated.failure->code
+                                    : "secure_pipeline.planar_cdt_failed",
+                                triangulated.failure
+                                    ? triangulated.failure->message
+                                    : "exact planar CDT failed",
+                                triangulated.failure
+                                    ? triangulated.failure->subjects
+                                    : std::vector<StableId>{faceId}};
+                        }
+                        return;
+                    }
+                    std::lock_guard<std::mutex> lock(mu);
+                    for (const PlanarTrimAssemblyEvidence& evidence :
+                         trim.evidence) {
+                        appendCoverage(
+                            parallelPlaneCoverage,
+                            faceCode(evidence.code, faceId), evidence.expected,
+                            evidence.checked, evidence.skipped,
+                            evidence.failed);
+                    }
+                    for (const TrimValidationEvidence& evidence :
+                         triangulated.trimValidation.evidence) {
+                        appendCoverage(
+                            parallelPlaneCoverage,
+                            faceCode(evidence.code, faceId), evidence.expected,
+                            evidence.checked, evidence.skipped,
+                            evidence.failed);
+                    }
+                    for (const PlanarCdtValidationEvidence& evidence :
+                         triangulated.validation) {
+                        appendCoverage(
+                            parallelPlaneCoverage,
+                            faceCode(evidence.code, faceId), evidence.expected,
+                            evidence.checked, evidence.skipped,
+                            evidence.failed);
+                    }
+                    parallelPlaneMeshes.emplace(faceId, *triangulated.value);
+                }
+            };
+            std::vector<std::thread> workers;
+            workers.reserve(workerCount);
+            for (unsigned w = 0; w < workerCount; ++w) {
+                workers.emplace_back(worker);
+            }
+            for (std::thread& workerThread : workers) {
+                workerThread.join();
+            }
+            result.validation.checks.insert(
+                result.validation.checks.end(),
+                parallelPlaneCoverage.checks.begin(),
+                parallelPlaneCoverage.checks.end());
+            if (parallelPlaneFailure) {
+                result.failure = parallelPlaneFailure;
+                return result;
+            }
+            {
+                const std::string msg =
+                    "faces.planes.parallel.done count=" +
+                    std::to_string(parallelPlaneMeshes.size()) +
+                    " workers=" + std::to_string(workerCount);
+                secureProgress(configuration, msg.c_str());
+            }
+        }
+    }
     std::size_t faceOrdinal = 0;
     std::size_t faceTotal = 0;
     for (const ExactGeometryClassification& face : reconnaissance.records) {
@@ -953,6 +1074,11 @@ SecureMeshingResult generateSecureMesh(
         }
         expectedFaces.push_back(face.subjectId);
         if (face.familyCode == "plane") {
+            const auto cached = parallelPlaneMeshes.find(face.subjectId);
+            if (cached != parallelPlaneMeshes.end()) {
+                faceMeshes.push_back(cached->second);
+                continue;
+            }
             const PlanarTrimAssemblyResult trim =
                 assemblePlanarTrimDomain(
                     imported, reconnaissance, *boundaries.value,
