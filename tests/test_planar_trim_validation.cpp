@@ -255,7 +255,6 @@ void testInterLoopAndNestingRefusals() {
     }));
     CHECK(!outsideHole);
     CHECK(hasDiagnostic(outsideHole, "trim.loop.role_mismatch"));
-    CHECK(hasDiagnostic(outsideHole, "trim.domain.outer_count"));
 
     const auto nestedHole = weft::validatePlanarTrimDomain(domain({
         loop(1, weft::PlanarTrimLoopRole::Outer,

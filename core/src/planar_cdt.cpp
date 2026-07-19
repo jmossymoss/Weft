@@ -864,46 +864,139 @@ public:
 
         const ValidatedPlanarTrimDomain& validated =
             *result.trimValidation.value;
-        const auto outer = std::find_if(
-            validated.loops.begin(), validated.loops.end(),
-            [](const ValidatedPlanarTrimLoop& loop) {
-                return loop.role == PlanarTrimLoopRole::Outer;
-            });
-        if (outer == validated.loops.end()) {
+        std::vector<const ValidatedPlanarTrimLoop*> outers;
+        std::vector<const ValidatedPlanarTrimLoop*> holes;
+        for (const ValidatedPlanarTrimLoop& loop : validated.loops) {
+            if (loop.role == PlanarTrimLoopRole::Outer) {
+                outers.push_back(&loop);
+            } else if (loop.role == PlanarTrimLoopRole::Hole) {
+                holes.push_back(&loop);
+            }
+        }
+        if (outers.empty()) {
             setFailure(result, "cdt.outer_loop_missing",
                        "the validated domain has no outer loop", {domain.face});
             return result;
         }
+        auto holeSort = [](const ValidatedPlanarTrimLoop* left,
+                           const ValidatedPlanarTrimLoop* right) {
+            const auto leftMinimum = std::min_element(
+                left->vertices.begin(), left->vertices.end(),
+                [](const PlanarTrimVertex& a, const PlanarTrimVertex& b) {
+                    if (a.uv[0] != b.uv[0]) return a.uv[0] < b.uv[0];
+                    return a.uv[1] < b.uv[1];
+                });
+            const auto rightMinimum = std::min_element(
+                right->vertices.begin(), right->vertices.end(),
+                [](const PlanarTrimVertex& a, const PlanarTrimVertex& b) {
+                    if (a.uv[0] != b.uv[0]) return a.uv[0] < b.uv[0];
+                    return a.uv[1] < b.uv[1];
+                });
+            if (leftMinimum->uv != rightMinimum->uv) {
+                return leftMinimum->uv < rightMinimum->uv;
+            }
+            return left->wire < right->wire;
+        };
+        std::sort(outers.begin(), outers.end(), holeSort);
+        std::sort(holes.begin(), holes.end(), holeSort);
 
-        std::vector<const ValidatedPlanarTrimLoop*> orderedLoops{&*outer};
-        std::vector<const ValidatedPlanarTrimLoop*> holes;
-        for (const ValidatedPlanarTrimLoop& loop : validated.loops) {
-            if (loop.role == PlanarTrimLoopRole::Hole) holes.push_back(&loop);
+        // Assign each hole to exactly one outer via UV containment of its
+        // first vertex (outers are disjoint for multiple_disconnected).
+        std::vector<std::vector<const ValidatedPlanarTrimLoop*>> components(
+            outers.size());
+        for (std::size_t oi = 0; oi < outers.size(); ++oi) {
+            components[oi].push_back(outers[oi]);
         }
-        std::sort(
-            holes.begin(), holes.end(),
-            [](const ValidatedPlanarTrimLoop* left,
-               const ValidatedPlanarTrimLoop* right) {
-                const auto leftMinimum = std::min_element(
-                    left->vertices.begin(), left->vertices.end(),
-                    [](const PlanarTrimVertex& a,
-                       const PlanarTrimVertex& b) {
-                        if (a.uv[0] != b.uv[0]) return a.uv[0] < b.uv[0];
-                        return a.uv[1] < b.uv[1];
-                    });
-                const auto rightMinimum = std::min_element(
-                    right->vertices.begin(), right->vertices.end(),
-                    [](const PlanarTrimVertex& a,
-                       const PlanarTrimVertex& b) {
-                        if (a.uv[0] != b.uv[0]) return a.uv[0] < b.uv[0];
-                        return a.uv[1] < b.uv[1];
-                    });
-                if (leftMinimum->uv != rightMinimum->uv) {
-                    return leftMinimum->uv < rightMinimum->uv;
+        for (const ValidatedPlanarTrimLoop* hole : holes) {
+            const PredicatePoint2 probe = hole->vertices.front().uv;
+            std::optional<std::size_t> owner;
+            for (std::size_t oi = 0; oi < outers.size(); ++oi) {
+                // Ray-cast style: count crossings with outer edges using
+                // exact predicates via repeated orient tests (winding).
+                const auto& ov = outers[oi]->vertices;
+                int winding = 0;
+                for (std::size_t i = 0; i < ov.size(); ++i) {
+                    const PredicatePoint2 a = ov[i].uv;
+                    const PredicatePoint2 b = ov[(i + 1) % ov.size()].uv;
+                    const bool up = a[1] <= probe[1] && b[1] > probe[1];
+                    const bool down = b[1] <= probe[1] && a[1] > probe[1];
+                    if (!up && !down) continue;
+                    const auto orient =
+                        predicates_->orient2d(a, b, probe);
+                    if (!orient) continue;
+                    if (up && *orient.value == ExactSign::Positive) ++winding;
+                    if (down && *orient.value == ExactSign::Negative) --winding;
                 }
-                return left->wire < right->wire;
-            });
-        orderedLoops.insert(orderedLoops.end(), holes.begin(), holes.end());
+                if (winding != 0) {
+                    owner = oi;
+                    break;
+                }
+            }
+            if (!owner) {
+                setFailure(result, "cdt.hole_outer_unassigned",
+                           "a hole loop is not contained in any outer loop",
+                           {domain.face, hole->wire});
+                return result;
+            }
+            components[*owner].push_back(hole);
+        }
+
+        // If multiple outers, triangulate each component via a nested domain
+        // call and merge meshes.
+        if (outers.size() > 1) {
+            PlanarCdtMesh merged;
+            merged.workingFace = validated.face;
+            merged.sourceFace = validated.sourceFace;
+            for (const auto& component : components) {
+                PlanarTrimDomain part;
+                part.face = domain.face;
+                part.sourceFace = domain.sourceFace;
+                part.allowCurvedUv = domain.allowCurvedUv;
+                for (const ValidatedPlanarTrimLoop* loop : component) {
+                    PlanarTrimLoop raw;
+                    raw.wire = loop->wire;
+                    raw.declaredRole = loop->role;
+                    raw.vertices = loop->vertices;
+                    part.loops.push_back(std::move(raw));
+                }
+                // Force single-outer path by validating as curved synthetic
+                // only when allowCurvedUv; otherwise build a one-outer domain
+                // with declared roles already set — call triangulate recursively
+                // after marking allowCurvedUv to skip re-validation multi-outer.
+                part.allowCurvedUv = true;
+                const PlanarCdtResult partResult = triangulate(part);
+                if (!partResult) {
+                    result.failure = partResult.failure;
+                    return result;
+                }
+                const PlanarCdtMesh& partMesh = *partResult.value;
+                const std::uint32_t base =
+                    static_cast<std::uint32_t>(merged.vertices.size());
+                merged.vertices.insert(merged.vertices.end(),
+                                       partMesh.vertices.begin(),
+                                       partMesh.vertices.end());
+                for (const auto& loop : partMesh.boundaryLoops) {
+                    std::vector<std::uint32_t> shifted = loop;
+                    for (std::uint32_t& idx : shifted) idx += base;
+                    merged.boundaryLoops.push_back(std::move(shifted));
+                }
+                for (const auto& edge : partMesh.constrainedEdges) {
+                    merged.constrainedEdges.push_back(
+                        {edge[0] + base, edge[1] + base});
+                }
+                for (const auto& tri : partMesh.triangles) {
+                    PlanarCdtTriangle shifted = tri;
+                    for (std::size_t k = 0; k < 3; ++k) {
+                        shifted.vertices[k] += base;
+                    }
+                    merged.triangles.push_back(std::move(shifted));
+                }
+            }
+            result.value = std::move(merged);
+            return result;
+        }
+
+        std::vector<const ValidatedPlanarTrimLoop*> orderedLoops = components[0];
 
         std::size_t totalVertices = 0;
         for (const ValidatedPlanarTrimLoop* loop : orderedLoops) {
@@ -958,7 +1051,7 @@ public:
                              domain.face);
         bool usedFanFallback = false;
         if (!initial) {
-            // Fall back to a boundary fan when ear clipping stalls.
+            // Last-resort boundary fan when ear clipping stalls.
             result.failure.reset();
             for (auto& evidence : result.validation) {
                 evidence.failed = 0;
@@ -966,6 +1059,13 @@ public:
             initial = fanTriangulation(vertices, *boundaryWalk, *predicates_,
                                        result, domain.face);
             usedFanFallback = initial.has_value();
+            if (usedFanFallback && initial->empty()) {
+                usedFanFallback = false;
+                initial.reset();
+                setFailure(result, "cdt.fan_empty",
+                           "fan triangulation produced no triangles",
+                           {domain.face});
+            }
         }
         if (!initial) return result;
         std::vector<Triangle> triangles = *initial;

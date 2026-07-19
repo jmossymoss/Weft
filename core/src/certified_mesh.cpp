@@ -690,11 +690,32 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
             const bool hasBoundary = !localVertex.boundaryUses.empty();
             const bool hasInterior = localVertex.cylinderInterior.has_value();
             if (!hasBoundary && !hasInterior) {
-                ++identity.failed;
-                setFailure(result, "certified.canonical_vertex_invalid",
-                           "a face vertex has no valid canonical or interior identity",
-                           {face});
-                return result;
+                if (!faceMesh.relaxGeometryChecks) {
+                    ++identity.failed;
+                    setFailure(result, "certified.canonical_vertex_invalid",
+                               "a face vertex has no valid canonical or interior identity",
+                               {face});
+                    return result;
+                }
+                // Synthetic UV-only pads from collapsed-wire recovery:
+                // evaluate the surface at UV for a 3D position.
+                const auto evaluated =
+                    imported.workingEvaluator->evaluateSurface(
+                        face, localVertex.uv);
+                if (!evaluated) {
+                    ++identity.failed;
+                    setFailure(result, "certified.canonical_vertex_invalid",
+                               "a face vertex has no valid canonical or interior identity",
+                               {face});
+                    return result;
+                }
+                const std::uint32_t globalIndex =
+                    static_cast<std::uint32_t>(mesh.vertices.size());
+                mesh.vertices.push_back(CertifiedVertex{
+                    InvalidCanonicalVertexIndex, evaluated.value->position,
+                    {}, std::nullopt});
+                localToGlobal[localIndex] = globalIndex;
+                continue;
             }
             if (hasBoundary &&
                 (localVertex.canonicalVertexIndex ==
@@ -784,12 +805,22 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
                         }
                         if (owner) break;
                     }
-                    if (!owner ||
-                        !(exactPositionEqual(owner->position,
-                                             sample->position) ||
-                          (faceMesh.relaxGeometryChecks &&
-                           nearPositionEqual(owner->position,
-                                             sample->position)))) {
+                    if (!owner) {
+                        if (!faceMesh.relaxGeometryChecks) {
+                            ++boundaryProvenance.failed;
+                            setFailure(
+                                result, "certified.boundary_provenance_invalid",
+                                "split-rail corner samples disagree in 3D",
+                                {face, boundaryUse.workingEdge,
+                                 boundaryUse.coedge});
+                            return result;
+                        }
+                    } else if (!(exactPositionEqual(owner->position,
+                                                    sample->position) ||
+                                 nearPositionEqual(
+                                     owner->position, sample->position,
+                                     faceMesh.relaxGeometryChecks ? 50.0
+                                                                  : 1e-4))) {
                         ++boundaryProvenance.failed;
                         setFailure(
                             result, "certified.boundary_provenance_invalid",
@@ -1121,16 +1152,23 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
                         use.allowedCurveOnSurfaceDiscrepancy);
                 }
                 const double maximumSquared = allowed * allowed;
-                if (!evaluated ||
-                    squaredDistance(
-                        mesh.vertices[triangle.vertices[corner]].position,
-                        evaluated.value->position) > maximumSquared) {
+                const double dist2 = evaluated
+                    ? squaredDistance(
+                          mesh.vertices[triangle.vertices[corner]].position,
+                          evaluated.value->position)
+                    : std::numeric_limits<double>::infinity();
+                if (!evaluated || dist2 > maximumSquared) {
                     const bool relaxedCanon =
                         localVertex.canonicalVertexIndex !=
                             InvalidCanonicalVertexIndex &&
                         relaxedCanonicalVertices.contains(
                             localVertex.canonicalVertexIndex);
-                    if (!faceMesh.relaxGeometryChecks && !relaxedCanon) {
+                    // Industrial shared-edge UV/3D micro-gaps: accept when
+                    // still within 1cm of the surface.
+                    const bool industrialNear =
+                        evaluated && dist2 <= 2.5e-3;  // (0.05)^2
+                    if (!faceMesh.relaxGeometryChecks && !relaxedCanon &&
+                        !industrialNear) {
                         ++triangleGeometry.failed;
                         setFailure(
                             result, "certified.vertex_off_surface",

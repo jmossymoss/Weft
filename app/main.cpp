@@ -1043,7 +1043,7 @@ static weft::SecureMeshingConfiguration secureConfiguration(
     result.sampling.maximumSegmentCount = std::max<std::uint32_t>(
         4096U, result.revolutionRadialSegments);
     result.previewTriangleBudget = 45000;
-    result.omitDeferredResiduals = true;
+    result.omitDeferredResiduals = false;  // G0: no silent face omission
     result.cylinderAxialIntervals =
         static_cast<std::uint32_t>(defaults.axial);
     if (settings.perFace.size() == 1) {

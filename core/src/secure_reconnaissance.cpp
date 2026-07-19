@@ -1028,24 +1028,16 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                     // Only demote when the band trim itself is missing.
                     (void)faceId;
                 } else if (family.code == "plane") {
+                    // G0/G1: keep supported so mesher must certify (or named
+                    // refuse in-consumer). Do not demote/omit.
                     if (record.trimDomain ==
                         TrimDomainClass::SelfIntersectingOrInvalid) {
-                        record.support =
-                            GeometrySupportState::DeferredResidualSurface;
-                        record.strategyOrReasonCode =
-                            "reason.deferred_residual_surface";
                         record.conditionCodes.push_back(
-                            "plane.self_intersecting_deferred");
-                        ++report.unsupportedSubjects;
+                            "plane.self_intersecting_candidate");
                     } else if (record.trimDomain ==
                                TrimDomainClass::MultipleDisconnectedDomains) {
-                        record.support =
-                            GeometrySupportState::DeferredResidualSurface;
-                        record.strategyOrReasonCode =
-                            "reason.deferred_residual_surface";
                         record.conditionCodes.push_back(
-                            "plane.multiple_disconnected_deferred");
-                        ++report.unsupportedSubjects;
+                            "plane.multiple_disconnected_candidate");
                     }
                 }
             }

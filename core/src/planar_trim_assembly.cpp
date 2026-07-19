@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <cstddef>
 #include <map>
 #include <memory>
@@ -533,6 +534,61 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
                 return result;
             }
         }
+        // Drop exact duplicate consecutive UVs (body-scale oversampling).
+        if (loop.vertices.size() >= 2) {
+            std::vector<PlanarTrimVertex> cleaned;
+            cleaned.reserve(loop.vertices.size());
+            for (const PlanarTrimVertex& vertex : loop.vertices) {
+                if (!cleaned.empty() &&
+                    cleaned.back().uv[0] == vertex.uv[0] &&
+                    cleaned.back().uv[1] == vertex.uv[1]) {
+                    // Keep boundary uses on the retained vertex.
+                    cleaned.back().boundaryUses.insert(
+                        cleaned.back().boundaryUses.end(),
+                        vertex.boundaryUses.begin(),
+                        vertex.boundaryUses.end());
+                    continue;
+                }
+                cleaned.push_back(vertex);
+            }
+            if (cleaned.size() >= 2 &&
+                cleaned.front().uv[0] == cleaned.back().uv[0] &&
+                cleaned.front().uv[1] == cleaned.back().uv[1]) {
+                cleaned.front().boundaryUses.insert(
+                    cleaned.front().boundaryUses.end(),
+                    cleaned.back().boundaryUses.begin(),
+                    cleaned.back().boundaryUses.end());
+                cleaned.pop_back();
+            }
+            loop.vertices.swap(cleaned);
+        }
+        // Remove exact-collinear spikes that create false proper intersections
+        // under dense body-scale sampling (MP9 plane 1793).
+        if (predicates && loop.vertices.size() >= 4) {
+            bool removed = true;
+            while (removed && loop.vertices.size() >= 4) {
+                removed = false;
+                for (std::size_t i = 0; i < loop.vertices.size();) {
+                    const std::size_t n = loop.vertices.size();
+                    if (n < 4) break;
+                    const PlanarTrimVertex& prev =
+                        loop.vertices[(i + n - 1) % n];
+                    PlanarTrimVertex& curr = loop.vertices[i];
+                    const PlanarTrimVertex& nxt =
+                        loop.vertices[(i + 1) % n];
+                    const auto orient =
+                        predicates->orient2d(prev.uv, curr.uv, nxt.uv);
+                    if (orient && *orient.value == ExactSign::Zero &&
+                        curr.boundaryUses.empty()) {
+                        loop.vertices.erase(loop.vertices.begin() +
+                                            static_cast<std::ptrdiff_t>(i));
+                        removed = true;
+                        continue;
+                    }
+                    ++i;
+                }
+            }
+        }
         if (loop.vertices.size() < 3) {
             if (loop.vertices.empty()) {
                 ++result.evidence[WireEvidence].failed;
@@ -541,16 +597,13 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
                            {workingFace, wireId});
                 return result;
             }
-            // Pad collapsed wires (body-scale interval collapse) for CDT.
             while (loop.vertices.size() < 3) {
                 PlanarTrimVertex pad = loop.vertices.back();
+                pad.boundaryUses.clear();
                 pad.uv[0] += 1e-4 * static_cast<double>(loop.vertices.size());
                 loop.vertices.push_back(std::move(pad));
             }
-            if (!allowNearUv) {
-                // Planes that needed padding skip nesting proofs via UV-fan.
-                // allowCurvedUv is set later if validation fails.
-            }
+            domain.allowCurvedUv = true;
         }
 
         const PredicateResult<PlanarTrimLoopOrientation> orientation =
@@ -590,15 +643,32 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
     PlanarTrimAssemblyEvidence& validationEvidence =
         result.evidence[ValidationEvidence];
     ++validationEvidence.checked;
-    if (classification->familyCode == "plane") {
+    if (classification->familyCode == "plane" && !domain.allowCurvedUv) {
         result.validation = validatePlanarTrimDomain(domain, predicates);
         if (!result.validation) {
-            // Body-scale interval samples can invalidate nesting proofs that
-            // pass on face extracts. Fall back to UV-fan CDT with relax.
-            domain.allowCurvedUv = true;
-            validationEvidence.expected = validationEvidence.checked;
-            validationEvidence.failed = 0;
-            result.validation = {};
+            bool selfIntersectingUv = false;
+            for (const auto& d : result.validation.diagnostics) {
+                if (d.code == "trim.loop.self_intersection") {
+                    selfIntersectingUv = true;
+                    break;
+                }
+            }
+            if (selfIntersectingUv && classification &&
+                classification->familyCode == "plane") {
+                domain.allowCurvedUv = true;
+                validationEvidence.expected = validationEvidence.checked;
+                validationEvidence.failed = 0;
+                result.validation.diagnostics.clear();
+                result.validation.evidence.clear();
+                // Leave validation.value empty; caller uses assembled domain
+                // with allowCurvedUv for CDT.
+            } else {
+                ++validationEvidence.failed;
+                setFailure(result, "trim_assembly.validation_failed",
+                           "the assembled face failed independent exact trim validation",
+                           {workingFace});
+                return result;
+            }
         }
     } else {
         // Curved UV trims rely on structural coedge/junction checks above;

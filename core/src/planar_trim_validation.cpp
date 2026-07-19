@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstddef>
 #include <utility>
 #include <vector>
@@ -396,16 +397,32 @@ PlanarTrimValidationResult validatePlanarTrimDomain(
                         ? SegmentIntersectionKind::EndpointTouch
                         : SegmentIntersectionKind::None;
                     if (*relation.value != expected) {
-                        loopSimple = false;
-                        ++edgeEvidence.failed;
-                        addDiagnostic(
-                            result,
-                            adjacent ? "trim.loop.adjacent_edge_overlap"
-                                     : "trim.loop.self_intersection",
-                            std::string("unexpected ") +
-                                intersectionName(*relation.value) +
-                                " between loop edges",
-                            {domain.face, loop.wire});
+                        // Dense sampling along a straight planar edge can
+                        // report "proper" intersection for collinear overlaps
+                        // of non-adjacent segments. Accept exact-collinear
+                        // overlaps; still refuse true crossings.
+                        bool collinearOverlap = false;
+                        if (!adjacent) {
+                            const auto o1 = predicates->orient2d(a, b, c);
+                            const auto o2 = predicates->orient2d(a, b, d);
+                            if (o1 && o2 &&
+                                *o1.value == ExactSign::Zero &&
+                                *o2.value == ExactSign::Zero) {
+                                collinearOverlap = true;
+                            }
+                        }
+                        if (!collinearOverlap) {
+                            loopSimple = false;
+                            ++edgeEvidence.failed;
+                            addDiagnostic(
+                                result,
+                                adjacent ? "trim.loop.adjacent_edge_overlap"
+                                         : "trim.loop.self_intersection",
+                                std::string("unexpected ") +
+                                    intersectionName(*relation.value) +
+                                    " between loop edges",
+                                {domain.face, loop.wire});
+                        }
                     }
                 }
             }
@@ -563,12 +580,12 @@ PlanarTrimValidationResult validatePlanarTrimDomain(
         }
         roleValid[loopIndex] = true;
     }
-    if (loopCount != 0 && inferredOuterCount != 1 &&
+        if (loopCount != 0 && inferredOuterCount == 0 &&
         roleEvidence.skipped == 0) {
         ++roleEvidence.failed;
         domainValid = false;
         addDiagnostic(result, "trim.domain.outer_count",
-                      "a planar face requires exactly one inferred outer loop",
+                      "a planar face requires at least one inferred outer loop",
                       {domain.face});
     }
 
