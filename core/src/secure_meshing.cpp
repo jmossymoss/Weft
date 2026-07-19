@@ -659,8 +659,8 @@ SecureMeshingResult generateSecureMesh(
     SecureMeshingConfiguration configuration = configurationIn;
     if (configuration.omitDeferredResiduals &&
         configuration.revolutionRadialSegments > 8) {
-        // Preview density: keep UI radial at 32 but cap active revolution
-        // sampling so global counts approach ~70k polygons (UI radial may still read 32).
+        // Preview density: UI radial may remain 32; active revolution sampling
+        // is capped so global counts approach ~70–90k polygons.
         configuration.revolutionRadialSegments = 8;
     }
     if (!imported.meshable() || !imported.working ||
