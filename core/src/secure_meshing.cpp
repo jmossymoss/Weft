@@ -1388,17 +1388,16 @@ SecureMeshingResult generateSecureMesh(
                                        evidence.expected, evidence.checked,
                                        evidence.skipped, evidence.failed);
                     }
-                    PlanarCdtMesh mesh = *wall.value;
-                    if (faceEdgeCount > 4 || hasEllipseRim) {
-                        mesh.relaxGeometryChecks = true;
-                    }
-                    faceMeshes.push_back(std::move(mesh));
+                    faceMeshes.push_back(*wall.value);
                     continue;
                 }
                 const std::string code =
                     wall.failure ? wall.failure->code : "";
+                // Simple full cylinders with forced axial intervals must
+                // refuse; complex bands fall through to UV-trim.
                 if (code ==
-                    "cylinder.axial_samples_require_interior_provenance") {
+                        "cylinder.axial_samples_require_interior_provenance" &&
+                    faceEdgeCount <= 4 && !hasEllipseRim) {
                     setFailure(result, code,
                                wall.failure ? wall.failure->message
                                             : code,

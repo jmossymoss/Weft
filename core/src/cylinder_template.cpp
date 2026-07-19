@@ -538,6 +538,22 @@ CylinderWallResult buildFullCylinderWall(
             for (PlanarTrimVertex& vertex : mesh.vertices) {
                 if (vertex.canonicalVertexIndex ==
                     leftover.sample->canonicalVertexIndex) {
+                    // Only attach when this UV station is near the sample
+                    // in 3D (shared STEP ids across distant rim corners).
+                    const auto evaluated =
+                        imported.workingEvaluator->evaluateSurface(
+                            workingFace, vertex.uv);
+                    if (evaluated) {
+                        const double dx = evaluated.value->position[0] -
+                                          leftover.sample->position[0];
+                        const double dy = evaluated.value->position[1] -
+                                          leftover.sample->position[1];
+                        const double dz = evaluated.value->position[2] -
+                                          leftover.sample->position[2];
+                        if (dx * dx + dy * dy + dz * dz > 1e-6) {
+                            continue;
+                        }
+                    }
                     vertex.boundaryUses.push_back(boundaryUse(leftover));
                     consumed.insert(leftover.use);
                     attached = true;
@@ -556,7 +572,7 @@ CylinderWallResult buildFullCylinderWall(
                 }
             }
             if (attached) continue;
-            // Evaluate rim stations on the surface and pick the nearest in 3D.
+            // Nearest rim station in 3D — only within 1 mm.
             double best = std::numeric_limits<double>::infinity();
             PlanarTrimVertex* bestVertex = nullptr;
             for (PlanarTrimVertex& vertex : mesh.vertices) {
@@ -580,9 +596,7 @@ CylinderWallResult buildFullCylinderWall(
                     bestVertex = &vertex;
                 }
             }
-            // Complex bands: always attach generator endpoints to the nearest
-            // rim station so endpoint-only rails are covered.
-            if (bestVertex && std::isfinite(best)) {
+            if (bestVertex && best <= 1e-6) {
                 bestVertex->boundaryUses.push_back(boundaryUse(leftover));
                 consumed.insert(leftover.use);
             }
