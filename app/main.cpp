@@ -631,6 +631,17 @@ struct App {
     weft::MeshingResult secureResult;
     weft::GenerationReport report;
     weft::GenerationCache genCache;  // per-face reuse across regenerates
+    struct SecureWarmCache {
+        std::string path;
+        std::int64_t mtimeNs = 0;
+        int radial = 0;
+        int axial = 0;
+        double chord = 0.0;
+        double angleDeg = 0.0;
+        weft::MeshingResult result;
+        weft::PolyMesh mesh;
+    };
+    std::optional<SecureWarmCache> secureWarmCache;
     std::vector<weft::EdgePolyline> brepEdges;
 
     // Selection: Blender-style modes. Face mode selects B-rep faces, edge
@@ -1584,6 +1595,40 @@ static void startGenerate(App& app) {
         logLine("regenerate: BLOCKED: %s", e.what());
         return;
     }
+    {
+        std::int64_t mtimeNs = 0;
+        std::error_code ec;
+        const auto ftime =
+            std::filesystem::last_write_time(app.sourcePath, ec);
+        if (!ec) {
+            mtimeNs = static_cast<std::int64_t>(
+                ftime.time_since_epoch().count());
+        }
+        const auto& d = app.recipe.settings.defaults;
+        if (app.secureWarmCache &&
+            app.secureWarmCache->path == app.sourcePath &&
+            app.secureWarmCache->mtimeNs == mtimeNs &&
+            app.secureWarmCache->radial == d.radial &&
+            app.secureWarmCache->axial == d.axial &&
+            app.secureWarmCache->chord == d.chordTolerance &&
+            app.secureWarmCache->angleDeg == d.angleToleranceDeg) {
+            logLine("regenerate: WARM CACHE HIT (secure)");
+            if (app.genThread.joinable()) app.genThread.join();
+            app.genSettings = app.recipe.settings;
+            app.genProgress = 1;
+            app.genTotal = 1;
+            app.genError.clear();
+            app.genStartTime = glfwGetTime();
+            app.genBusy = true;
+            app.genMesh = app.secureWarmCache->mesh;
+            app.genSecureResult = app.secureWarmCache->result;
+            app.genReport = app.genSecureResult.generation;
+            app.genReady = true;
+            app.dirty = false;
+            ++app.generationEpoch;
+            return;
+        }
+    }
     logLine("regenerate: begin (secure certified, radial=%d, axial=%d, "
             "chord=%g)",
             app.recipe.settings.defaults.radial,
@@ -1652,6 +1697,24 @@ static void finishGenerate(App& app) {
     logLine("regenerate: generate took %.1f ms",
             (glfwGetTime() - app.genStartTime) * 1000.0);
     {
+        std::int64_t mtimeNs = 0;
+        std::error_code ec;
+        const auto ftime =
+            std::filesystem::last_write_time(app.sourcePath, ec);
+        if (!ec) {
+            mtimeNs = static_cast<std::int64_t>(
+                ftime.time_since_epoch().count());
+        }
+        App::SecureWarmCache entry;
+        entry.path = app.sourcePath;
+        entry.mtimeNs = mtimeNs;
+        entry.radial = app.genSettings.defaults.radial;
+        entry.axial = app.genSettings.defaults.axial;
+        entry.chord = app.genSettings.defaults.chordTolerance;
+        entry.angleDeg = app.genSettings.defaults.angleToleranceDeg;
+        entry.result = app.genSecureResult;
+        entry.mesh = app.genMesh;
+        app.secureWarmCache = std::move(entry);
         app.mesh = std::move(app.genMesh);
         app.secureResult = std::move(app.genSecureResult);
         app.meshFinalized = true;
@@ -1843,6 +1906,7 @@ static void finishLoadModel(App& app) {
         app.activeFace = 0;
         app.undoStack.clear();
         app.genCache.clear();
+        app.secureWarmCache.reset();
         // The old model's report must not outlive it: its face ids and
         // build-health flags would render (and be clickable) against the
         // new model until the first async run lands.
@@ -2037,6 +2101,7 @@ static void reloadModel(App& app) {
         }
 
         app.genCache.clear();
+        app.secureWarmCache.reset();
         app.undoStack.clear();
         app.mode = Mode::Idle;
         app.slideOp = -1;

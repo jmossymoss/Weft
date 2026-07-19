@@ -18,6 +18,9 @@
 #include <set>
 #include <string>
 #include <utility>
+#include <thread>
+#include <atomic>
+#include <mutex>
 #include <vector>
 
 namespace weft {
@@ -1489,16 +1492,23 @@ SecureMeshingResult generateSecureMesh(
             mapped.maximumNormalDeviationRadians =
                 configuration.sampling.normalAngleToleranceRadians;
             mapped.uIntervals = std::max<std::uint32_t>(
-                8, configuration.sampling.minimumClosedCurveSegments);
+                4, configuration.sampling.minimumClosedCurveSegments);
             mapped.vIntervals = mapped.uIntervals;
             // WP-174: non-periodic extrusion/offset patches need denser UV
-            // so facet normals stay within the LOD budget.
-            if (face.familyCode == "extrusion" ||
-                face.familyCode == "offset") {
+            // so facet normals stay within the LOD budget — but not under
+            // industrial preview density (omitDeferredResiduals).
+            if (!configuration.omitDeferredResiduals &&
+                (face.familyCode == "extrusion" ||
+                 face.familyCode == "offset")) {
                 mapped.uIntervals = std::max<std::uint32_t>(
                     mapped.uIntervals, 32);
                 mapped.vIntervals = std::max<std::uint32_t>(
                     mapped.vIntervals, 32);
+            }
+            if (configuration.omitDeferredResiduals) {
+                mapped.uIntervals = std::min<std::uint32_t>(
+                    mapped.uIntervals, configuration.revolutionRadialSegments);
+                mapped.vIntervals = mapped.uIntervals;
             }
             const MappedPatchResult patch = buildMappedFourSidedPatch(
                 imported, reconnaissance, *boundaries.value, face.subjectId,
