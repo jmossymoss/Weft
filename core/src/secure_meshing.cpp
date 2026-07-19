@@ -670,6 +670,16 @@ SecureMeshingResult generateSecureMesh(
     // ADR-0014: one unsupported face → no MeshingResult. Fail before
     // interval/boundary work so residuals stay named (WP-175).
     if (!configuration.collectAllUnsupported) {
+        bool anySupportedSurface = false;
+        for (const ExactGeometryClassification& record :
+             reconnaissance.records) {
+            if (record.taxonomy == GeometryTaxonomy::Surface &&
+                record.support ==
+                    GeometrySupportState::SupportedAnalyticTemplate) {
+                anySupportedSurface = true;
+                break;
+            }
+        }
         for (const ExactGeometryClassification& record :
              reconnaissance.records) {
             if (record.taxonomy != GeometryTaxonomy::Surface) continue;
@@ -677,7 +687,7 @@ SecureMeshingResult generateSecureMesh(
                 GeometrySupportState::SupportedAnalyticTemplate) {
                 continue;
             }
-            if (configuration.omitDeferredResiduals &&
+            if (configuration.omitDeferredResiduals && anySupportedSurface &&
                 record.support ==
                     GeometrySupportState::DeferredResidualSurface) {
                 continue;
@@ -1508,7 +1518,9 @@ SecureMeshingResult generateSecureMesh(
     }
     if (expectedFaces.empty()) {
         setFailure(result, "secure_pipeline.face_set_empty",
-                   "the working B-rep contains no faces");
+                   configuration.omitDeferredResiduals
+                       ? "no supported faces remain after omitting deferred residuals"
+                       : "the working B-rep contains no faces");
         return result;
     }
 
