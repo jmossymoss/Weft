@@ -677,6 +677,11 @@ SecureMeshingResult generateSecureMesh(
                 GeometrySupportState::SupportedAnalyticTemplate) {
                 continue;
             }
+            if (configuration.omitDeferredResiduals &&
+                record.support ==
+                    GeometrySupportState::DeferredResidualSurface) {
+                continue;
+            }
             std::string detail = "surface family '" + record.familyCode +
                 "' has no certified automatic floor";
             const char* preferred = nullptr;
@@ -896,14 +901,19 @@ SecureMeshingResult generateSecureMesh(
                 " family=" + face.familyCode;
             secureProgress(configuration, msg.c_str());
         }
-        expectedFaces.push_back(face.subjectId);
         if (face.support !=
             GeometrySupportState::SupportedAnalyticTemplate) {
+            if (configuration.omitDeferredResiduals &&
+                face.support ==
+                    GeometrySupportState::DeferredResidualSurface) {
+                continue;
+            }
             setFailure(result, "secure_pipeline.unsupported_surface_family",
                        "an inspectable surface has no certified automatic floor",
                        {face.subjectId});
             return result;
         }
+        expectedFaces.push_back(face.subjectId);
         if (face.familyCode == "plane") {
             const PlanarTrimAssemblyResult trim =
                 assemblePlanarTrimDomain(

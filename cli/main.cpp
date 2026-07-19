@@ -805,6 +805,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
         configuration.sampling.maximumSegmentCount = std::max<std::uint32_t>(
             4096U, configuration.revolutionRadialSegments);
         configuration.previewTriangleBudget = 70000;
+        configuration.omitDeferredResiduals = true;
         configuration.cylinderAxialIntervals =
             static_cast<std::uint32_t>(selected.defaults.axial);
         configuration.progressToStderr = progress;
@@ -1380,6 +1381,7 @@ int cmdInventory(const std::vector<std::string>& args) {
         configuration.revolutionRadialSegments = 32;
         configuration.sampling.minimumClosedCurveSegments = 8;
         configuration.previewTriangleBudget = 70000;
+        configuration.omitDeferredResiduals = true;
         const weft::SecureMeshingResult body =
             weft::generateSecureMesh(imported, configuration);
         if (body) {

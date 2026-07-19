@@ -43,7 +43,12 @@ struct SecureMeshingConfiguration {
     // Inventory-only: continue past unsupported faces/curves to aggregate
     // refusal codes. Still returns failure and never a MeshingResult.
     bool collectAllUnsupported = false;
+    // Industrial compounds: omit deferred residual faces and still
+    // emit a partial MeshingResult for supported faces (ADR-0014
+    // remains for non-deferred refusals).
+    bool omitDeferredResiduals = false;
 };
+
 
 struct SecureMeshingUnsupportedRecord {
     std::string code;

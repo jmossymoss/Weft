@@ -1027,6 +1027,26 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                     // stay supported and route to UV-trim CDT in the mesher.
                     // Only demote when the band trim itself is missing.
                     (void)faceId;
+                } else if (family.code == "plane") {
+                    if (record.trimDomain ==
+                        TrimDomainClass::SelfIntersectingOrInvalid) {
+                        record.support =
+                            GeometrySupportState::DeferredResidualSurface;
+                        record.strategyOrReasonCode =
+                            "reason.deferred_residual_surface";
+                        record.conditionCodes.push_back(
+                            "plane.self_intersecting_deferred");
+                        ++report.unsupportedSubjects;
+                    } else if (record.trimDomain ==
+                               TrimDomainClass::MultipleDisconnectedDomains) {
+                        record.support =
+                            GeometrySupportState::DeferredResidualSurface;
+                        record.strategyOrReasonCode =
+                            "reason.deferred_residual_surface";
+                        record.conditionCodes.push_back(
+                            "plane.multiple_disconnected_deferred");
+                        ++report.unsupportedSubjects;
+                    }
                 }
             }
         } catch (const Standard_Failure& error) {
