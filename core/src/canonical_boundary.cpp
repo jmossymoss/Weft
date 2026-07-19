@@ -15,6 +15,7 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <map>
 #include <cstdint>
 #include <functional>
 #include <limits>
@@ -792,6 +793,11 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
 
     CanonicalBoundarySet set;
     set.boundaries.reserve(report.expectedEdges);
+    std::map<StableId, std::vector<const CoedgeRecord*>> coedgesByEdge;
+    for (const CoedgeRecord& coedge : snapshot.coedges) {
+        if (!coedge.edgeId.valid()) continue;
+        coedgesByEdge[coedge.edgeId].push_back(&coedge);
+    }
     const std::uint64_t topologicalVertexCount = static_cast<std::uint64_t>(
         std::count_if(snapshot.occurrences.begin(), snapshot.occurrences.end(),
                       [](const TopologyOccurrence& occurrence) {
@@ -847,8 +853,15 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
             }
 
             std::vector<MappingState> mappings;
-            for (const CoedgeRecord& coedge : snapshot.coedges) {
-                if (coedge.edgeId != edgeId) continue;
+            const std::vector<const CoedgeRecord*>* edgeCoedges = nullptr;
+            if (const auto found = coedgesByEdge.find(edgeId);
+                found != coedgesByEdge.end()) {
+                edgeCoedges = &found->second;
+            }
+            static const std::vector<const CoedgeRecord*> kEmptyCoedgesDeg;
+            for (const CoedgeRecord* coedgePtr :
+                 edgeCoedges ? *edgeCoedges : kEmptyCoedgesDeg) {
+                const CoedgeRecord& coedge = *coedgePtr;
                 const ExactGeometryClassification* face =
                     reconnaissance.find(coedge.faceId);
                 if (!face || face->taxonomy != GeometryTaxonomy::Surface) {
@@ -1122,8 +1135,15 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
         }
 
         std::vector<MappingState> mappings;
-        for (const CoedgeRecord& coedge : snapshot.coedges) {
-            if (coedge.edgeId != edgeId) continue;
+        const std::vector<const CoedgeRecord*>* edgeCoedges = nullptr;
+        if (const auto found = coedgesByEdge.find(edgeId);
+            found != coedgesByEdge.end()) {
+            edgeCoedges = &found->second;
+        }
+        static const std::vector<const CoedgeRecord*> kEmptyCoedges;
+        for (const CoedgeRecord* coedgePtr :
+             edgeCoedges ? *edgeCoedges : kEmptyCoedges) {
+            const CoedgeRecord& coedge = *coedgePtr;
             const ExactGeometryClassification* face =
                 reconnaissance.find(coedge.faceId);
             if (!face || face->taxonomy != GeometryTaxonomy::Surface) {
