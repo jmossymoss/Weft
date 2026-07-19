@@ -1409,19 +1409,38 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                 use.mappingKind = mapping.kind;
                 use.traversalOrientation = mapping.coedge->orientation;
                 if (mapping.kind == BoundaryUvMappingKind::StoredPcurve) {
-                    const auto composed =
-                        imported.workingEvaluator->evaluateCurveOnSurface(
-                            *mapping.representation, parameter);
-                    if (!composed) {
-                        return buildFailure(
-                            report, "boundary.curve_on_surface_evaluation_failed",
-                            "stored p-curve did not compose with the exact edge and surface",
-                            {edgeId, mapping.coedge->id,
-                             mapping.coedge->faceId});
+                    if (configuration.previewFast) {
+                        // Preview: UV from p-curve only (skip 3D compose
+                        // discrepancy proof that triples OCCT evaluations).
+                        const auto pcurve =
+                            imported.workingEvaluator->evaluatePcurve(
+                                *mapping.representation, parameter);
+                        if (!pcurve) {
+                            return buildFailure(
+                                report,
+                                "boundary.curve_on_surface_evaluation_failed",
+                                "stored p-curve did not evaluate",
+                                {edgeId, mapping.coedge->id,
+                                 mapping.coedge->faceId});
+                        }
+                        use.uv = pcurve.value->uv;
+                        use.measuredCurveOnSurfaceDiscrepancy = 0.0;
+                    } else {
+                        const auto composed =
+                            imported.workingEvaluator->evaluateCurveOnSurface(
+                                *mapping.representation, parameter);
+                        if (!composed) {
+                            return buildFailure(
+                                report,
+                                "boundary.curve_on_surface_evaluation_failed",
+                                "stored p-curve did not compose with the exact edge and surface",
+                                {edgeId, mapping.coedge->id,
+                                 mapping.coedge->faceId});
+                        }
+                        use.uv = composed.value->uv;
+                        use.measuredCurveOnSurfaceDiscrepancy =
+                            composed.value->discrepancy;
                     }
-                    use.uv = composed.value->uv;
-                    use.measuredCurveOnSurfaceDiscrepancy =
-                        composed.value->discrepancy;
                 } else {
                     const auto projected =
                         imported.workingEvaluator->projectPointToSurface(
@@ -1435,7 +1454,9 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                     }
                     use.uv = projected.value->uv;
                     use.measuredCurveOnSurfaceDiscrepancy =
-                        projected.value->discrepancy;
+                        configuration.previewFast
+                            ? 0.0
+                            : projected.value->discrepancy;
                 }
 
                 const double sourceEnvelope =
