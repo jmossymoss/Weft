@@ -644,8 +644,15 @@ std::optional<SecureMeshingFailure> certifySolvedIntervalConsumption(
 
 SecureMeshingResult generateSecureMesh(
     const ImportedModel& imported,
-    const SecureMeshingConfiguration& configuration) {
+    const SecureMeshingConfiguration& configurationIn) {
     SecureMeshingResult result;
+    SecureMeshingConfiguration configuration = configurationIn;
+    if (configuration.omitDeferredResiduals &&
+        configuration.revolutionRadialSegments > 8) {
+        // Preview density: keep UI radial at 32 but cap active revolution
+        // sampling so global counts approach ~70k polygons (UI radial may still read 32).
+        configuration.revolutionRadialSegments = 8;
+    }
     if (!imported.meshable() || !imported.working ||
         !imported.workingEvaluator) {
         setFailure(result, "secure_pipeline.import_not_meshable",
