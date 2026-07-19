@@ -166,3 +166,4 @@ prove completed work; they are not plans or handoff diaries.
 - `mp9-sphere-cap-seam-fix-2026-07-18.md` - Plasticity sphere-cap CapWall / seam fix.
 - `mp9-full-mesh-gate-2026-07-18.md` - MP9 full-body mesh gate (408342 tris).
 - `mp9-quads-density-progress-2026-07-19.md` - modelling quads + radial-32 density progress.
+- `mp9-import-perf-2026-07-19.md` - MP9 import timing after large-repair skips.
