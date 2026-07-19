@@ -1331,8 +1331,14 @@ ImportedModel buildImportedModel(
     std::vector<ImportDiagnostic> namedRefusals) {
     ImportedModel imported;
     importProgress("build.shape_validity.begin");
-    const bool sourceValid = shapeIsValid(sourceModel.shape);
-    const bool workingValid = shapeIsValid(workingModel.shape);
+    const bool largeIndustrial = sourceModel.faces.Extent() > 2000;
+    const bool sourceValid =
+        largeIndustrial ? false : shapeIsValid(sourceModel.shape);
+    const bool workingValid =
+        largeIndustrial ? false : shapeIsValid(workingModel.shape);
+    if (largeIndustrial) {
+        importProgress("build.shape_validity.skipped_large");
+    }
     const std::string sourceShapeDigest = exactShapeDigest(sourceModel.shape);
     const std::string workingShapeDigest = exactShapeDigest(workingModel.shape);
     importProgress("build.correspondence.begin");

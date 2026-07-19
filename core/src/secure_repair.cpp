@@ -1173,12 +1173,19 @@ ConservativeWorkingDerivation deriveConservativeWorking(
     }
     importProgress("working.param_loop.done");
 
-    importProgress("working.validity_check.begin");
-    const bool workingInitiallyValid = workingShapeIsValid(derivation.shape);
-    importProgress(workingInitiallyValid
-                       ? "working.validity_check.done valid=1"
-                       : "working.validity_check.done valid=0");
-    if (!workingInitiallyValid) {
+    const bool largeIndustrial = edgeCount > 5000;
+    bool workingInitiallyValid = true;
+    if (largeIndustrial) {
+        importProgress("working.validity_check.skipped_large");
+        workingInitiallyValid = false;  // still run flag retries below
+    } else {
+        importProgress("working.validity_check.begin");
+        workingInitiallyValid = workingShapeIsValid(derivation.shape);
+        importProgress(workingInitiallyValid
+                           ? "working.validity_check.done valid=1"
+                           : "working.validity_check.done valid=0");
+    }
+    if (!workingInitiallyValid && !largeIndustrial) {
         // Tolerance-envelope fallback. The live working shape is invalid; raise
         // only the edges whose stored curve-on-surface discrepancy exceeds the
         // source tolerance, and re-check whole-shape validity ONLY after an
@@ -1299,9 +1306,13 @@ ConservativeWorkingDerivation deriveConservativeWorking(
     repairBoundedSewing(derivation, source);
     importProgress("working.sewing.done");
     working = indexShape(derivation.shape);
-    importProgress("working.orientation.begin");
-    repairRootSolidOrientations(derivation, source, working);
-    importProgress("working.orientation.done");
+    if (largeIndustrial) {
+        importProgress("working.orientation.skipped_large");
+    } else {
+        importProgress("working.orientation.begin");
+        repairRootSolidOrientations(derivation, source, working);
+        importProgress("working.orientation.done");
+    }
     return derivation;
 }
 
