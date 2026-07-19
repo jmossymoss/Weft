@@ -142,22 +142,43 @@ IntervalProblemResult buildIntervalProblem(
             return result;
         }
     }
+    std::map<StableId, std::vector<StableId>> facesByEdge;
+    facesByEdge.clear();
+    for (const CoedgeRecord& coedge : snapshot.coedges) {
+        if (!coedge.edgeId.valid() || !coedge.faceId.valid()) continue;
+        facesByEdge[coedge.edgeId].push_back(coedge.faceId);
+    }
     std::set<StableId> cylinderAxialEdges;
-    for (const ExactGeometryClassification& face : reconnaissance.records) {
-        if (face.taxonomy != GeometryTaxonomy::Surface ||
-            face.familyCode != "cylinder") {
-            continue;
-        }
-        for (const CoedgeRecord& coedge : snapshot.coedges) {
-            const ExactGeometryClassification* edge =
-                reconnaissance.find(coedge.edgeId);
-            if (coedge.faceId == face.subjectId && edge &&
-                edge->familyCode == "line") {
-                cylinderAxialEdges.insert(coedge.edgeId);
+    for (const auto& [edgeId, faceIds] : facesByEdge) {
+        const ExactGeometryClassification* edge = reconnaissance.find(edgeId);
+        if (!edge || edge->familyCode != "line") continue;
+        for (const StableId& faceId : faceIds) {
+            const ExactGeometryClassification* face =
+                reconnaissance.find(faceId);
+            if (face && face->familyCode == "cylinder") {
+                cylinderAxialEdges.insert(edgeId);
+                break;
             }
         }
     }
+    const int edgeTotal = static_cast<int>(snapshot.edgeTopology.size());
+    int edgeOrdinal = 0;
+    const int edgeStride = std::max(1, edgeTotal / 20);
     for (const EdgeTopologyRecord& topology : snapshot.edgeTopology) {
+        ++edgeOrdinal;
+        if (configuration.progressToStderr &&
+            (edgeOrdinal % edgeStride == 0 || edgeOrdinal == edgeTotal)) {
+            const std::string msg =
+                "intervals.edges " + std::to_string(edgeOrdinal) + "/" +
+                std::to_string(edgeTotal);
+            secureProgress(configuration, msg.c_str());
+        }
+        if (configuration.faceProgress &&
+            (edgeOrdinal % edgeStride == 0 || edgeOrdinal == edgeTotal)) {
+            // phase 0 still; report edge fraction via done/total fake
+            configuration.faceProgress(
+                0, edgeOrdinal, std::max(1, edgeTotal));
+        }
         const ExactGeometryClassification* classification =
             reconnaissance.find(topology.id);
         if (!classification ||
@@ -182,126 +203,154 @@ IntervalProblemResult buildIntervalProblem(
                 : lineSegmentCount();
             // Spherical-cap meridians: endpoints only (pole + rim). Extra
             // interior samples create split-rail provenance conflicts.
-            for (const CoedgeRecord& coedge : snapshot.coedges) {
-                if (coedge.edgeId != topology.id) continue;
-                const ExactGeometryClassification* face =
-                    reconnaissance.find(coedge.faceId);
-                if (face && face->familyCode == "sphere" && face->trimDomain &&
-                    *face->trimDomain ==
-                        TrimDomainClass::TouchesOneSingularity) {
-                    count = 1;
-                    break;
+            if (const auto found = facesByEdge.find(topology.id);
+                found != facesByEdge.end()) {
+                for (const StableId& faceId : found->second) {
+                    const ExactGeometryClassification* face =
+                        reconnaissance.find(faceId);
+                    if (face && face->familyCode == "sphere" &&
+                        face->trimDomain &&
+                        *face->trimDomain ==
+                            TrimDomainClass::TouchesOneSingularity) {
+                        count = 1;
+                        break;
+                    }
                 }
             }
         } else if (classification->familyCode == "circle") {
-            const EvaluationResult<ParameterDomain> domain =
-                imported.workingEvaluator->curveDomain(topology.id);
-            if (!domain || !domain.value->lower ||
-                !domain.value->upper) {
-                result.failure = SecureMeshingFailure{
-                    "secure_pipeline.circle_domain_invalid",
-                    "a supported circular edge has no finite exact domain",
-                    {topology.id}};
-                return result;
-            }
-            const double midpoint =
-                (*domain.value->lower + *domain.value->upper) * 0.5;
-            const EvaluationResult<CurveEvaluation> evaluated =
-                imported.workingEvaluator->evaluateCurve(topology.id,
-                                                          midpoint);
-            const double radius = evaluated
-                ? vectorLength(evaluated.value->firstDerivative)
-                : 0.0;
             const bool fullCircle = topology.lowerVertex &&
                 topology.upperVertex &&
                 *topology.lowerVertex == *topology.upperVertex;
-            const SegmentCountResult demanded = circularArcSegmentCount(
-                radius, *domain.value->upper - *domain.value->lower,
-                fullCircle, configuration.sampling);
-            if (!demanded) {
-                result.failure = SecureMeshingFailure{
-                    demanded.failure ? demanded.failure->code
-                                     : "secure_pipeline.circle_count_failed",
-                    demanded.failure
-                        ? demanded.failure->message
-                        : "a circular segment count could not be proven",
-                    {topology.id}};
-                return result;
+            bool revolutionOwner = false;
+            bool sphereCapOwner = false;
+            bool planeOwner = false;
+            if (const auto found = facesByEdge.find(topology.id);
+                found != facesByEdge.end()) {
+                for (const StableId& faceId : found->second) {
+                    const ExactGeometryClassification* face =
+                        reconnaissance.find(faceId);
+                    if (!face) continue;
+                    if (face->familyCode == "plane") planeOwner = true;
+                    if (face->familyCode == "cylinder" ||
+                        face->familyCode == "cone" ||
+                        face->familyCode == "sphere" ||
+                        face->familyCode == "torus") {
+                        revolutionOwner = true;
+                    }
+                    if (face->familyCode == "sphere" && face->trimDomain &&
+                        *face->trimDomain ==
+                            TrimDomainClass::TouchesOneSingularity) {
+                        sphereCapOwner = true;
+                    }
+                }
             }
-            count = *demanded.count;
+            if (configuration.omitDeferredResiduals) {
+                // Preview: avoid OCCT radius evaluation on every circle.
+                // Plane-owned circles (holes) need denser floors even when
+                // they also bound a cylinder, or CDT hole bridges fail.
+                if (planeOwner) {
+                    count = std::max<std::uint32_t>(
+                        16U, configuration.revolutionRadialSegments);
+                } else if (revolutionOwner || sphereCapOwner) {
+                    count = configuration.revolutionRadialSegments;
+                } else {
+                    count = std::max<std::uint32_t>(
+                        8U, configuration.sampling.minimumClosedCurveSegments);
+                }
+            } else {
+                const EvaluationResult<ParameterDomain> domain =
+                    imported.workingEvaluator->curveDomain(topology.id);
+                if (!domain || !domain.value->lower ||
+                    !domain.value->upper) {
+                    result.failure = SecureMeshingFailure{
+                        "secure_pipeline.circle_domain_invalid",
+                        "a supported circular edge has no finite exact domain",
+                        {topology.id}};
+                    return result;
+                }
+                const double midpoint =
+                    (*domain.value->lower + *domain.value->upper) * 0.5;
+                const EvaluationResult<CurveEvaluation> evaluated =
+                    imported.workingEvaluator->evaluateCurve(topology.id,
+                                                              midpoint);
+                const double radius = evaluated
+                    ? vectorLength(evaluated.value->firstDerivative)
+                    : 0.0;
+                const SegmentCountResult demanded = circularArcSegmentCount(
+                    radius, *domain.value->upper - *domain.value->lower,
+                    fullCircle, configuration.sampling);
+                if (!demanded) {
+                    result.failure = SecureMeshingFailure{
+                        demanded.failure ? demanded.failure->code
+                                         : "secure_pipeline.circle_count_failed",
+                        demanded.failure
+                            ? demanded.failure->message
+                            : "a circular segment count could not be proven",
+                        {topology.id}};
+                    return result;
+                }
+                count = *demanded.count;
+                if (revolutionOwner) {
+                    count = std::max(
+                        count, configuration.revolutionRadialSegments);
+                }
+                if (sphereCapOwner) {
+                    count = std::max(
+                        count, configuration.revolutionRadialSegments);
+                }
+            }
             // Partial cylinder/cone bands need ≥2 rim intervals (3 samples)
             // so the wall template can form at least two azimuth columns.
             if (!fullCircle) {
                 count = std::max<std::uint32_t>(count, 2);
             }
-            bool revolutionOwner = false;
-            bool sphereCapOwner = false;
-            for (const CoedgeRecord& coedge : snapshot.coedges) {
-                if (coedge.edgeId != topology.id) continue;
-                const ExactGeometryClassification* face =
-                    reconnaissance.find(coedge.faceId);
-                if (!face) continue;
-                if (face->familyCode == "cylinder" ||
-                    face->familyCode == "cone" ||
-                    face->familyCode == "sphere" ||
-                    face->familyCode == "torus") {
-                    revolutionOwner = true;
-                }
-                if (face->familyCode == "sphere" && face->trimDomain &&
-                    *face->trimDomain ==
-                        TrimDomainClass::TouchesOneSingularity) {
-                    sphereCapOwner = true;
-                }
-            }
-            if (revolutionOwner) {
-                count = std::max(count, configuration.revolutionRadialSegments);
-            }
-            if (sphereCapOwner) {
-                count = std::max(count, configuration.revolutionRadialSegments);
-            }
         } else if (classification->familyCode == "ellipse") {
-            const EvaluationResult<ParameterDomain> domain =
-                imported.workingEvaluator->curveDomain(topology.id);
-            if (!domain || !domain.value->lower || !domain.value->upper) {
-                result.failure = SecureMeshingFailure{
-                    "secure_pipeline.ellipse_domain_invalid",
-                    "a supported elliptical edge has no finite exact domain",
-                    {topology.id}};
-                return result;
-            }
-            // Bound radius by the maximum first-derivative length sampled on
-            // the arc (conservative vs. the sharper minor-axis region).
-            double boundRadius = 0.0;
-            for (double fraction : {0.0, 0.25, 0.5, 0.75, 1.0}) {
-                const double parameter = *domain.value->lower +
-                    (*domain.value->upper - *domain.value->lower) * fraction;
-                const EvaluationResult<CurveEvaluation> evaluated =
-                    imported.workingEvaluator->evaluateCurve(topology.id,
-                                                              parameter);
-                if (evaluated) {
-                    boundRadius = std::max(
-                        boundRadius,
-                        vectorLength(evaluated.value->firstDerivative));
-                }
-            }
             const bool fullEllipse = topology.lowerVertex &&
                 topology.upperVertex &&
                 *topology.lowerVertex == *topology.upperVertex;
-            const SegmentCountResult demanded = ellipticalArcSegmentCount(
-                boundRadius, boundRadius,
-                *domain.value->upper - *domain.value->lower, fullEllipse,
-                configuration.sampling);
-            if (!demanded) {
-                result.failure = SecureMeshingFailure{
-                    demanded.failure ? demanded.failure->code
-                                     : "secure_pipeline.ellipse_count_failed",
-                    demanded.failure
-                        ? demanded.failure->message
-                        : "an elliptical segment count could not be proven",
-                    {topology.id}};
-                return result;
+            if (configuration.omitDeferredResiduals) {
+                count = std::max<std::uint32_t>(
+                    12U, configuration.sampling.minimumClosedCurveSegments);
+            } else {
+                const EvaluationResult<ParameterDomain> domain =
+                    imported.workingEvaluator->curveDomain(topology.id);
+                if (!domain || !domain.value->lower || !domain.value->upper) {
+                    result.failure = SecureMeshingFailure{
+                        "secure_pipeline.ellipse_domain_invalid",
+                        "a supported elliptical edge has no finite exact domain",
+                        {topology.id}};
+                    return result;
+                }
+                double boundRadius = 0.0;
+                for (double fraction : {0.0, 0.25, 0.5, 0.75, 1.0}) {
+                    const double parameter = *domain.value->lower +
+                        (*domain.value->upper - *domain.value->lower) *
+                            fraction;
+                    const EvaluationResult<CurveEvaluation> evaluated =
+                        imported.workingEvaluator->evaluateCurve(
+                            topology.id, parameter);
+                    if (evaluated) {
+                        boundRadius = std::max(
+                            boundRadius,
+                            vectorLength(evaluated.value->firstDerivative));
+                    }
+                }
+                const SegmentCountResult demanded = ellipticalArcSegmentCount(
+                    boundRadius, boundRadius,
+                    *domain.value->upper - *domain.value->lower, fullEllipse,
+                    configuration.sampling);
+                if (!demanded) {
+                    result.failure = SecureMeshingFailure{
+                        demanded.failure ? demanded.failure->code
+                                         : "secure_pipeline.ellipse_count_failed",
+                        demanded.failure
+                            ? demanded.failure->message
+                            : "an elliptical segment count could not be proven",
+                        {topology.id}};
+                    return result;
+                }
+                count = *demanded.count;
             }
-            count = *demanded.count;
             if (!fullEllipse) {
                 count = std::max<std::uint32_t>(count, 2);
             }
@@ -312,27 +361,29 @@ IntervalProblemResult buildIntervalProblem(
             bool endpointOnlyGenerator = false;
             bool sawOwner = false;
             bool allBandOrCap = true;
-            for (const CoedgeRecord& coedge : snapshot.coedges) {
-                if (coedge.edgeId != topology.id) continue;
-                const ExactGeometryClassification* face =
-                    reconnaissance.find(coedge.faceId);
-                if (!face) continue;
-                sawOwner = true;
-                const bool sphereCap = face->familyCode == "sphere" &&
-                    face->trimDomain &&
-                    *face->trimDomain ==
-                        TrimDomainClass::TouchesOneSingularity;
-                const bool revolvedBand =
-                    (face->familyCode == "cylinder" ||
-                     face->familyCode == "cone") &&
-                    face->trimDomain &&
-                    (*face->trimDomain ==
-                         TrimDomainClass::FullPeriodicWithCapBoundaries ||
-                     *face->trimDomain ==
-                         TrimDomainClass::PeriodicBandCrossingSeam);
-                if (!(sphereCap || revolvedBand)) {
-                    allBandOrCap = false;
-                    break;
+            if (const auto found = facesByEdge.find(topology.id);
+                found != facesByEdge.end()) {
+                for (const StableId& faceId : found->second) {
+                    const ExactGeometryClassification* face =
+                        reconnaissance.find(faceId);
+                    if (!face) continue;
+                    sawOwner = true;
+                    const bool sphereCap = face->familyCode == "sphere" &&
+                        face->trimDomain &&
+                        *face->trimDomain ==
+                            TrimDomainClass::TouchesOneSingularity;
+                    const bool revolvedBand =
+                        (face->familyCode == "cylinder" ||
+                         face->familyCode == "cone") &&
+                        face->trimDomain &&
+                        (*face->trimDomain ==
+                             TrimDomainClass::FullPeriodicWithCapBoundaries ||
+                         *face->trimDomain ==
+                             TrimDomainClass::PeriodicBandCrossingSeam);
+                    if (!(sphereCap || revolvedBand)) {
+                        allBandOrCap = false;
+                        break;
+                    }
                 }
             }
             endpointOnlyGenerator = sawOwner && allBandOrCap;
@@ -349,6 +400,7 @@ IntervalProblemResult buildIntervalProblem(
             // sample at half-cell offsets and breaks seam matching.
             count = std::max<std::uint32_t>(
                 4, configuration.sampling.minimumClosedCurveSegments);
+            if (!configuration.omitDeferredResiduals) {
             const std::uint32_t gridIntervals = std::max<std::uint32_t>(
                 8, configuration.sampling.minimumClosedCurveSegments);
             for (const CoedgeRecord& coedge : snapshot.coedges) {
@@ -406,17 +458,21 @@ IntervalProblemResult buildIntervalProblem(
                 }
                 break;
             }
+            }  // !omitDeferredResiduals UV-grid align
         } else {
             bool sphereCapMeridian = false;
-            for (const CoedgeRecord& coedge : snapshot.coedges) {
-                if (coedge.edgeId != topology.id) continue;
-                const ExactGeometryClassification* face =
-                    reconnaissance.find(coedge.faceId);
-                if (face && face->familyCode == "sphere" && face->trimDomain &&
-                    *face->trimDomain ==
-                        TrimDomainClass::TouchesOneSingularity) {
-                    sphereCapMeridian = true;
-                    break;
+            if (const auto found = facesByEdge.find(topology.id);
+                found != facesByEdge.end()) {
+                for (const StableId& faceId : found->second) {
+                    const ExactGeometryClassification* face =
+                        reconnaissance.find(faceId);
+                    if (face && face->familyCode == "sphere" &&
+                        face->trimDomain &&
+                        *face->trimDomain ==
+                            TrimDomainClass::TouchesOneSingularity) {
+                        sphereCapMeridian = true;
+                        break;
+                    }
                 }
             }
             if (sphereCapMeridian) {
@@ -793,15 +849,17 @@ SecureMeshingResult generateSecureMesh(
     }
 
     secureProgress(configuration, "intervals.begin");
+    const int surfaceTotal = static_cast<int>(
+        imported.working ? imported.working->snapshot.model.faceCount() : 0);
     if (configuration.faceProgress) {
-        const int surfaces = static_cast<int>(
-            imported.working ? imported.working->snapshot.model.faceCount()
-                             : 0);
-        configuration.faceProgress(0, std::max(1, surfaces));
+        configuration.faceProgress(0, 0, std::max(1, surfaceTotal));
     }
     const IntervalProblemResult intervalProblem = buildIntervalProblem(
         imported, reconnaissance, configuration);
     secureProgress(configuration, "intervals.problem.done");
+    if (configuration.faceProgress) {
+        configuration.faceProgress(0, 0, std::max(1, surfaceTotal));
+    }
     if (!intervalProblem.value) {
         result.failure = intervalProblem.failure;
         const std::string msg = "intervals.failed " +
@@ -812,6 +870,9 @@ SecureMeshingResult generateSecureMesh(
     const IntervalSolveResult intervals = solveIntervals(
         *intervalProblem.value, configuration.sampling);
     secureProgress(configuration, "intervals.solve.done");
+    if (configuration.faceProgress) {
+        configuration.faceProgress(1, 0, std::max(1, surfaceTotal));
+    }
     if (!intervals) {
         setFailure(result,
                    intervals.failure ? intervals.failure->code
@@ -860,10 +921,16 @@ SecureMeshingResult generateSecureMesh(
     }
 
     secureProgress(configuration, "boundaries.begin");
+    if (configuration.faceProgress) {
+        configuration.faceProgress(1, 0, std::max(1, surfaceTotal));
+    }
     const CanonicalBoundaryBuildResult boundaries =
         buildCanonicalBoundaries(imported, reconnaissance,
                                  *intervals.solution);
     secureProgress(configuration, "boundaries.done");
+    if (configuration.faceProgress) {
+        configuration.faceProgress(2, 0, std::max(1, surfaceTotal));
+    }
     appendCoverage(result.validation, "secure_pipeline.boundary_edges",
                    boundaries.validation.expectedEdges,
                    boundaries.validation.checkedEdges, 0,
@@ -1062,8 +1129,9 @@ SecureMeshingResult generateSecureMesh(
         if (face.taxonomy != GeometryTaxonomy::Surface) continue;
         ++faceOrdinal;
         if (configuration.faceProgress) {
-            configuration.faceProgress(static_cast<int>(faceOrdinal),
-                                       static_cast<int>(faceTotal));
+            configuration.faceProgress(
+                2, static_cast<int>(faceOrdinal),
+                static_cast<int>(faceTotal));
         }
         if (configuration.progressToStderr) {
             const std::string msg = "face " + std::to_string(faceOrdinal) +

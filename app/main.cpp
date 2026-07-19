@@ -781,6 +781,7 @@ struct App {
     std::atomic<bool> genReady{false};
     std::atomic<int> genProgress{0};
     std::atomic<int> genTotal{0};
+    std::atomic<int> genPhase{0};  // 0 intervals, 1 boundaries, 2 faces, 3 assemble
     double genStartTime = 0.0;
     weft::GenerationSettings genSettings;
     weft::SecureMeshingConfiguration genSecureConfiguration;
@@ -1647,10 +1648,13 @@ static void startGenerate(App& app) {
     app.genWorkerEpoch = app.generationEpoch;
     App* a = &app;  // outlives the thread (owned by main)
     const std::uint64_t workerEpoch = app.genWorkerEpoch;
-    app.genSecureConfiguration.faceProgress = [a](int done, int total) {
-        a->genProgress.store(done, std::memory_order_relaxed);
-        a->genTotal.store(std::max(1, total), std::memory_order_relaxed);
-    };
+    app.genPhase.store(0, std::memory_order_relaxed);
+    app.genSecureConfiguration.faceProgress =
+        [a](int phase, int done, int total) {
+            a->genPhase.store(phase, std::memory_order_relaxed);
+            a->genProgress.store(done, std::memory_order_relaxed);
+            a->genTotal.store(std::max(1, total), std::memory_order_relaxed);
+        };
     app.genThread = std::thread([a, workerEpoch] {
         try {
             weft::SecureMeshingResult generated = weft::generateSecureMesh(
@@ -4516,12 +4520,24 @@ static void drawGenProgress(App& app) {
         const int done = app.genProgress.load(std::memory_order_relaxed);
         const int total = app.genTotal.load(std::memory_order_relaxed);
         char label[64];
+        const int phase = app.genPhase.load(std::memory_order_relaxed);
         if (total < 0) {
             std::snprintf(label, sizeof label,
                           "planning affected faces...");
         } else if (total == 0) {
             std::snprintf(label, sizeof label,
                           "all faces reused; updating seams...");
+        } else if (phase <= 0) {
+            if (done > 0 && total > 0) {
+                std::snprintf(label, sizeof label,
+                              "edge intervals %d / %d", done, total);
+            } else {
+                std::snprintf(label, sizeof label,
+                              "solving edge intervals...");
+            }
+        } else if (phase == 1) {
+            std::snprintf(label, sizeof label,
+                          "building boundaries...");
         } else if (done < total) {
             std::snprintf(label, sizeof label, "meshing %d / %d faces", done,
                           total);
