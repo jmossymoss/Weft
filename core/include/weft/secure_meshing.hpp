@@ -29,7 +29,7 @@ struct SecureMeshingConfiguration {
     // Azimuth/rim budget for cylinder, cone, sphere, torus, circular bores.
     std::uint32_t revolutionRadialSegments = 32;
     // Soft preview triangle target; 0 disables adaptive coarsening.
-    std::uint32_t previewTriangleBudget = 70000;
+    std::uint32_t previewTriangleBudget = 45000;
     // Working-edge IDs resolved through recipe-v2 correspondence. Counts are
     // exact solver constraints, never face-local sampling requests.
     std::map<StableId, std::uint32_t> exactEdgeIntervalCounts;

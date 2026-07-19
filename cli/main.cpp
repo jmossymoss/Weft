@@ -804,7 +804,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
                         12U, configuration.revolutionRadialSegments / 4U));
         configuration.sampling.maximumSegmentCount = std::max<std::uint32_t>(
             4096U, configuration.revolutionRadialSegments);
-        configuration.previewTriangleBudget = 70000;
+        configuration.previewTriangleBudget = 45000;
         configuration.omitDeferredResiduals = true;
         configuration.cylinderAxialIntervals =
             static_cast<std::uint32_t>(selected.defaults.axial);
@@ -1073,7 +1073,7 @@ int cmdSweep(const std::vector<std::string>& args) {
                         12U, configuration.revolutionRadialSegments / 4U));
         configuration.sampling.maximumSegmentCount = std::max<std::uint32_t>(
             4096U, configuration.revolutionRadialSegments);
-        configuration.previewTriangleBudget = 70000;
+        configuration.previewTriangleBudget = 45000;
 
         const weft::SecureMeshingResult first =
             weft::generateSecureMesh(imported, configuration);
@@ -1380,7 +1380,7 @@ int cmdInventory(const std::vector<std::string>& args) {
             20.0 * 3.141592653589793 / 180.0;
         configuration.revolutionRadialSegments = 32;
         configuration.sampling.minimumClosedCurveSegments = 8;
-        configuration.previewTriangleBudget = 70000;
+        configuration.previewTriangleBudget = 45000;
         configuration.omitDeferredResiduals = true;
         const weft::SecureMeshingResult body =
             weft::generateSecureMesh(imported, configuration);
@@ -1417,7 +1417,7 @@ int cmdInventory(const std::vector<std::string>& args) {
             20.0 * 3.141592653589793 / 180.0;
         probeConfig.revolutionRadialSegments = 32;
         probeConfig.sampling.minimumClosedCurveSegments = 8;
-        probeConfig.previewTriangleBudget = 70000;
+        probeConfig.previewTriangleBudget = 45000;
         for (const auto& [family, ids] : probeIdsByFamily) {
             const int n = std::min(probeLimit, static_cast<int>(ids.size()));
             for (int i = 0; i < n; ++i) {

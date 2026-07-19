@@ -1030,7 +1030,7 @@ static weft::SecureMeshingConfiguration secureConfiguration(
         3U, std::min<std::uint32_t>(12U, result.revolutionRadialSegments / 4U));
     result.sampling.maximumSegmentCount = std::max<std::uint32_t>(
         4096U, result.revolutionRadialSegments);
-    result.previewTriangleBudget = 70000;
+    result.previewTriangleBudget = 45000;
     result.omitDeferredResiduals = true;
     result.cylinderAxialIntervals =
         static_cast<std::uint32_t>(defaults.axial);

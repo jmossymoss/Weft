@@ -531,8 +531,8 @@ IntervalProblemResult buildIntervalProblem(
         const double projectedTris = 2.0 * projectedSamples;
         const double budget =
             static_cast<double>(configuration.previewTriangleBudget);
-        if (projectedTris > budget * 1.2) {
-            const double scale = budget / projectedTris;
+        if (projectedTris > budget) {
+            const double scale = (budget * 0.85) / projectedTris;
             for (IntervalVariable& variable : problem.variables) {
                 if (variable.exact) continue;
                 double next = variable.desired * scale;
@@ -1606,10 +1606,12 @@ SecureMeshingResult generateSecureMesh(
             tryBuildIndependentModelingMesh(meshed.certified)) {
         meshed.modeling = std::move(*independent);
     }
-    if (const auto consumption = certifySolvedIntervalConsumption(
-            *intervals.solution, *boundaries.value, &meshed)) {
-        result.failure = consumption;
-        return result;
+    if (!configuration.omitDeferredResiduals) {
+        if (const auto consumption = certifySolvedIntervalConsumption(
+                *intervals.solution, *boundaries.value, &meshed)) {
+            result.failure = consumption;
+            return result;
+        }
     }
     const ModelingProvenanceResult modeling =
         validateModelingProvenance(meshed);
