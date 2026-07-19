@@ -304,8 +304,17 @@ MappedPatchResult buildMappedFourSidedPatch(
             }
         }
         if (!(best <= matchBound)) {
-            // Freeform / industrial extracts: skip unmatched samples rather
-            // than refusing the whole patch; UV-trim fallback covers leftovers.
+            const bool freeformSoft =
+                hasCondition(*classification, "freeform.uv_grid_candidate") ||
+                hasCondition(*classification, "freeform.uv_trim_candidate") ||
+                hasCondition(*classification, "freeform.general_attempted");
+            if (!freeformSoft) {
+                setFailure(result, BoundaryCoverage,
+                           "mapped.seam_sample_unmatched",
+                           "a mapped boundary sample does not land on the UV grid border",
+                           {workingFace, candidate.sample->workingEdge});
+                return result;
+            }
             continue;
         }
         PlanarTrimVertex& vertex = mesh.vertices[bestIndex];
@@ -437,7 +446,11 @@ MappedPatchResult buildMappedFourSidedPatch(
                    {workingFace});
         return result;
     }
-    mesh.relaxGeometryChecks = true;
+    if (hasCondition(*classification, "freeform.uv_grid_candidate") ||
+        hasCondition(*classification, "freeform.uv_trim_candidate") ||
+        hasCondition(*classification, "freeform.general_attempted")) {
+        mesh.relaxGeometryChecks = true;
+    }
     result.value = std::move(mesh);
     return result;
 }
