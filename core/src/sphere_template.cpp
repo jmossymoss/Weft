@@ -1022,10 +1022,40 @@ SphereWallResult buildSphericalCapWall(
         (void)mid;
         (void)chordMid;
         (void)chordSquared;
-        const auto facet = unit(triangleNormal(
+        auto facet = unit(triangleNormal(
             p0.value->position, p1.value->position, p2.value->position));
         if (!facet) {
             return true; // skip collapsed ears
+        }
+        // Match the geometric (unoriented) surface normal. Certified assembly
+        // applies TopoDS face Reversed after this, so aligning to oriented
+        // unitNormal here would double-flip reversed faces.
+        const auto seedNormal =
+            imported.workingEvaluator->evaluateSurface(workingFace, uv0);
+        std::array<double, 3> geometricTarget{};
+        bool haveTarget = false;
+        if (seedNormal && seedNormal.value->unitNormal) {
+            geometricTarget = *seedNormal.value->unitNormal;
+            haveTarget = true;
+            for (const TopologyOccurrence& record :
+                 imported.working->snapshot.occurrences) {
+                if (record.id == workingFace) {
+                    if (record.orientation ==
+                        TopologyOrientation::Reversed) {
+                        geometricTarget[0] = -geometricTarget[0];
+                        geometricTarget[1] = -geometricTarget[1];
+                        geometricTarget[2] = -geometricTarget[2];
+                    }
+                    break;
+                }
+            }
+        }
+        if (haveTarget && !(dot(*facet, geometricTarget) > 0.0)) {
+            std::swap(triangle.vertices[1], triangle.vertices[2]);
+            std::swap((*triangle.cornerUv)[1], (*triangle.cornerUv)[2]);
+            facet = unit(triangleNormal(
+                p0.value->position, p2.value->position, p1.value->position));
+            if (!facet) return true;
         }
         for (const PredicatePoint2& uv : *triangle.cornerUv) {
             const auto surface =
@@ -1085,38 +1115,9 @@ SphereWallResult buildSphericalCapWall(
                    {workingFace});
         return result;
     }
-    // Choose global winding against the exact surface normal.
-    int positive = 0;
-    int negative = 0;
-    for (const PlanarCdtTriangle& tri : mesh.triangles) {
-        if (!tri.cornerUv) continue;
-        const auto s0 = imported.workingEvaluator->evaluateSurface(
-            workingFace, (*tri.cornerUv)[0]);
-        const auto p0 = imported.workingEvaluator->evaluateSurface(
-            workingFace, (*tri.cornerUv)[0]);
-        const auto p1 = imported.workingEvaluator->evaluateSurface(
-            workingFace, (*tri.cornerUv)[1]);
-        const auto p2 = imported.workingEvaluator->evaluateSurface(
-            workingFace, (*tri.cornerUv)[2]);
-        if (!s0 || !s0.value->unitNormal || !p0 || !p1 || !p2) continue;
-        const auto n = triangleNormal(p0.value->position, p1.value->position,
-                                      p2.value->position);
-        if (dot(n, *s0.value->unitNormal) > 0.0) {
-            ++positive;
-        } else {
-            ++negative;
-        }
-    }
-    if (negative > positive) {
-        for (PlanarCdtTriangle& tri : mesh.triangles) {
-            std::swap(tri.vertices[1], tri.vertices[2]);
-            if (tri.cornerUv) {
-                std::swap((*tri.cornerUv)[1], (*tri.cornerUv)[2]);
-            }
-        }
-    }
-    // Plasticity seam/ear caps: certify with scoped near-3D until CapWall
-    // ears are proven manifold against the face normal without flips.
+    // Scoped: Plasticity seam/ear caps still disagree with certify's
+    // Reversed+oriented normal pairing on some extracts; keep soft until
+    // CapWall/certify orientation contract is unified.
     mesh.relaxGeometryChecks = true;
     result.value = std::move(mesh);
     return result;
