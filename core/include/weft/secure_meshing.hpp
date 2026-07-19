@@ -6,6 +6,7 @@
 #include "weft/interval_solver.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -47,6 +48,8 @@ struct SecureMeshingConfiguration {
     // emit a partial MeshingResult for supported faces (ADR-0014
     // remains for non-deferred refusals).
     bool omitDeferredResiduals = false;
+    // Optional face progress for UI (done/total surface faces).
+    std::function<void(int /*done*/, int /*total*/)> faceProgress;
 };
 
 

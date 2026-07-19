@@ -1615,8 +1615,8 @@ static void startGenerate(App& app) {
             logLine("regenerate: WARM CACHE HIT (secure)");
             if (app.genThread.joinable()) app.genThread.join();
             app.genSettings = app.recipe.settings;
-            app.genProgress = 1;
-            app.genTotal = 1;
+            app.genProgress = std::max(1, app.model.faces.Extent());
+            app.genTotal = std::max(1, app.model.faces.Extent());
             app.genError.clear();
             app.genStartTime = glfwGetTime();
             app.genBusy = true;
@@ -1637,7 +1637,7 @@ static void startGenerate(App& app) {
     if (app.genThread.joinable()) app.genThread.join();
     app.genSettings = app.recipe.settings;
     app.genProgress = 0;
-    app.genTotal = 1;
+    app.genTotal = std::max(1, app.model.faces.Extent());
     app.genError.clear();
     app.genStartTime = glfwGetTime();
     app.genBusy = true;
@@ -1647,6 +1647,10 @@ static void startGenerate(App& app) {
     app.genWorkerEpoch = app.generationEpoch;
     App* a = &app;  // outlives the thread (owned by main)
     const std::uint64_t workerEpoch = app.genWorkerEpoch;
+    app.genSecureConfiguration.faceProgress = [a](int done, int total) {
+        a->genProgress.store(done, std::memory_order_relaxed);
+        a->genTotal.store(std::max(1, total), std::memory_order_relaxed);
+    };
     app.genThread = std::thread([a, workerEpoch] {
         try {
             weft::SecureMeshingResult generated = weft::generateSecureMesh(

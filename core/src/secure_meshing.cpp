@@ -793,6 +793,12 @@ SecureMeshingResult generateSecureMesh(
     }
 
     secureProgress(configuration, "intervals.begin");
+    if (configuration.faceProgress) {
+        const int surfaces = static_cast<int>(
+            imported.working ? imported.working->snapshot.model.faceCount()
+                             : 0);
+        configuration.faceProgress(0, std::max(1, surfaces));
+    }
     const IntervalProblemResult intervalProblem = buildIntervalProblem(
         imported, reconnaissance, configuration);
     secureProgress(configuration, "intervals.problem.done");
@@ -931,7 +937,9 @@ SecureMeshingResult generateSecureMesh(
     std::map<StableId, PlanarCdtMesh> parallelPlaneMeshes;
     std::optional<SecureMeshingFailure> parallelPlaneFailure;
     ValidationCertificate parallelPlaneCoverage;
-    if (configuration.omitDeferredResiduals) {
+    // Parallel plane meshing disabled: shared OCCT evaluators are not
+    // thread-safe and hung app regenerate (UI stuck at meshing 0/1).
+    if (false && configuration.omitDeferredResiduals) {
         std::vector<StableId> planeIds;
         for (const ExactGeometryClassification& face :
              reconnaissance.records) {
@@ -1053,6 +1061,10 @@ SecureMeshingResult generateSecureMesh(
     for (const ExactGeometryClassification& face : reconnaissance.records) {
         if (face.taxonomy != GeometryTaxonomy::Surface) continue;
         ++faceOrdinal;
+        if (configuration.faceProgress) {
+            configuration.faceProgress(static_cast<int>(faceOrdinal),
+                                       static_cast<int>(faceTotal));
+        }
         if (configuration.progressToStderr) {
             const std::string msg = "face " + std::to_string(faceOrdinal) +
                 "/" + std::to_string(faceTotal) + " id=" +
