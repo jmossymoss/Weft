@@ -1360,11 +1360,7 @@ SecureMeshingResult generateSecureMesh(
                                    : std::vector<StableId>{});
                     return false;
                 }
-                PlanarCdtMesh mesh = *triangulated.value;
-                if (faceEdgeCount > 4 || hasEllipseRim) {
-                    mesh.relaxGeometryChecks = true;
-                }
-                faceMeshes.push_back(std::move(mesh));
+                faceMeshes.push_back(*triangulated.value);
                 return true;
             };
             // G2: prefer structured wall whenever rims resolve (>=2 circles).

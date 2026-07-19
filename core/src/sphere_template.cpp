@@ -904,6 +904,20 @@ SphereWallResult buildSphericalCapWall(
             if (vertex.canonicalVertexIndex != InvalidCanonicalVertexIndex &&
                 vertex.canonicalVertexIndex ==
                     leftover.sample->canonicalVertexIndex) {
+                const auto evaluated =
+                    imported.workingEvaluator->evaluateSurface(workingFace,
+                                                               vertex.uv);
+                if (evaluated) {
+                    const double dx = evaluated.value->position[0] -
+                                      leftover.sample->position[0];
+                    const double dy = evaluated.value->position[1] -
+                                      leftover.sample->position[1];
+                    const double dz = evaluated.value->position[2] -
+                                      leftover.sample->position[2];
+                    if (dx * dx + dy * dy + dz * dz > 1e-6) {
+                        continue;
+                    }
+                }
                 vertex.boundaryUses.push_back(boundaryUse(leftover));
                 consumed.insert(leftover.use);
                 attached = true;
@@ -932,7 +946,7 @@ SphereWallResult buildSphericalCapWall(
                     evaluated.value->position[1] - leftover.sample->position[1];
                 const double dz =
                     evaluated.value->position[2] - leftover.sample->position[2];
-                if (dx * dx + dy * dy + dz * dz <= 25.0) {
+                if (dx * dx + dy * dy + dz * dz <= 1e-6) {
                     bestVertex->boundaryUses.push_back(boundaryUse(leftover));
                     consumed.insert(leftover.use);
                 }
@@ -1101,6 +1115,8 @@ SphereWallResult buildSphericalCapWall(
             }
         }
     }
+    // Plasticity seam/ear caps: certify with scoped near-3D until CapWall
+    // ears are proven manifold against the face normal without flips.
     mesh.relaxGeometryChecks = true;
     result.value = std::move(mesh);
     return result;
