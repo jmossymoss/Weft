@@ -591,7 +591,7 @@ IntervalProblemResult buildIntervalProblem(
     }
     // Preview density budget: coarsen non-exact variables when the projected
     // interval sum implies a triangle count far above the soft target.
-    if (false && configuration.previewTriangleBudget > 0 && !problem.variables.empty()) {
+    if (configuration.previewTriangleBudget > 0 && !problem.variables.empty()) {
         double projectedSamples = 0.0;
         for (const IntervalVariable& variable : problem.variables) {
             projectedSamples += std::max(1.0, variable.desired);
@@ -716,7 +716,11 @@ SecureMeshingResult generateSecureMesh(
     const SecureMeshingConfiguration& configurationIn) {
     SecureMeshingResult result;
     SecureMeshingConfiguration configuration = configurationIn;
-    if (configuration.omitDeferredResiduals &&
+    const bool largeIndustrial =
+        imported.working &&
+        imported.working->snapshot.model.faceCount() > 500;
+    if ((configuration.omitDeferredResiduals ||
+         (largeIndustrial && configuration.previewTriangleBudget > 0)) &&
         configuration.revolutionRadialSegments > 12) {
         // Preview density: UI radial may remain 32; keep active revolution
         // sampling >=12 so plane-hole CDT bridges stay solvable.
@@ -1736,7 +1740,7 @@ SecureMeshingResult generateSecureMesh(
             // WP-174: non-periodic extrusion/offset patches need denser UV
             // so facet normals stay within the LOD budget — but not under
             // industrial preview density (omitDeferredResiduals).
-            if (!configuration.omitDeferredResiduals &&
+            if (!configuration.omitDeferredResiduals && !largeIndustrial &&
                 (face.familyCode == "extrusion" ||
                  face.familyCode == "offset")) {
                 mapped.uIntervals = std::max<std::uint32_t>(
@@ -1744,7 +1748,7 @@ SecureMeshingResult generateSecureMesh(
                 mapped.vIntervals = std::max<std::uint32_t>(
                     mapped.vIntervals, 32);
             }
-            if (configuration.omitDeferredResiduals) {
+            if (configuration.omitDeferredResiduals || largeIndustrial) {
                 mapped.uIntervals = std::min<std::uint32_t>(
                     mapped.uIntervals, configuration.revolutionRadialSegments);
                 mapped.vIntervals = mapped.uIntervals;
