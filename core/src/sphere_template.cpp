@@ -1027,30 +1027,13 @@ SphereWallResult buildSphericalCapWall(
         if (!facet) {
             return true; // skip collapsed ears
         }
-        // Match the geometric (unoriented) surface normal. Certified assembly
-        // applies TopoDS face Reversed after this, so aligning to oriented
-        // unitNormal here would double-flip reversed faces.
+        // Align to oriented unitNormal from evaluateSurface. CapWall sets
+        // windingsMatchOrientedFaceNormal so certify skips a second Reversed
+        // swap.
         const auto seedNormal =
             imported.workingEvaluator->evaluateSurface(workingFace, uv0);
-        std::array<double, 3> geometricTarget{};
-        bool haveTarget = false;
-        if (seedNormal && seedNormal.value->unitNormal) {
-            geometricTarget = *seedNormal.value->unitNormal;
-            haveTarget = true;
-            for (const TopologyOccurrence& record :
-                 imported.working->snapshot.occurrences) {
-                if (record.id == workingFace) {
-                    if (record.orientation ==
-                        TopologyOrientation::Reversed) {
-                        geometricTarget[0] = -geometricTarget[0];
-                        geometricTarget[1] = -geometricTarget[1];
-                        geometricTarget[2] = -geometricTarget[2];
-                    }
-                    break;
-                }
-            }
-        }
-        if (haveTarget && !(dot(*facet, geometricTarget) > 0.0)) {
+        if (seedNormal && seedNormal.value->unitNormal &&
+            !(dot(*facet, *seedNormal.value->unitNormal) > 0.0)) {
             std::swap(triangle.vertices[1], triangle.vertices[2]);
             std::swap((*triangle.cornerUv)[1], (*triangle.cornerUv)[2]);
             facet = unit(triangleNormal(
@@ -1115,9 +1098,9 @@ SphereWallResult buildSphericalCapWall(
                    {workingFace});
         return result;
     }
-    // Scoped: Plasticity seam/ear caps still disagree with certify's
-    // Reversed+oriented normal pairing on some extracts; keep soft until
-    // CapWall/certify orientation contract is unified.
+    mesh.windingsMatchOrientedFaceNormal = true;
+    // Plasticity seam ears: vertex positions from rim samples can still
+    // disagree with surface-eval normals at corner UV; keep scoped soft.
     mesh.relaxGeometryChecks = true;
     result.value = std::move(mesh);
     return result;

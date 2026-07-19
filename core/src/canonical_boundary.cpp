@@ -21,6 +21,7 @@
 #include <limits>
 #include <span>
 #include <utility>
+#include <tuple>
 
 namespace weft {
 namespace {
@@ -799,6 +800,22 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
         coedgesByEdge[coedge.edgeId].push_back(&coedge);
     }
     std::map<StableId, std::array<double, 3>> vertexPositionCache;
+    // previewFast: GeomAPI projections dominate industrial freeform edges.
+    // Cache UV feet by face + quantized 3D position.
+    struct ProjectionKey {
+        std::uint64_t faceOrdinal = 0;
+        std::int64_t qx = 0;
+        std::int64_t qy = 0;
+        std::int64_t qz = 0;
+        bool operator<(const ProjectionKey& other) const {
+            return std::tie(faceOrdinal, qx, qy, qz) <
+                   std::tie(other.faceOrdinal, other.qx, other.qy, other.qz);
+        }
+    };
+    auto quantize = [](double value) -> std::int64_t {
+        return static_cast<std::int64_t>(std::llround(value * 1e6));
+    };
+    std::map<ProjectionKey, std::array<double, 2>> projectionCache;
     const int boundaryEdgeTotal =
         static_cast<int>(snapshot.edgeTopology.size());
     int boundaryEdgeOrdinal = 0;
@@ -1442,21 +1459,46 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                             composed.value->discrepancy;
                     }
                 } else {
-                    const auto projected =
-                        imported.workingEvaluator->projectPointToSurface(
-                            mapping.coedge->faceId, sample.position);
-                    if (!projected) {
-                        return buildFailure(
-                            report, "boundary.surface_projection_failed",
-                            "derived analytic boundary UV did not evaluate",
-                            {edgeId, mapping.coedge->id,
-                             mapping.coedge->faceId});
+                    std::array<double, 2> projectedUv{};
+                    double projectedDiscrepancy = 0.0;
+                    bool haveProjected = false;
+                    if (configuration.previewFast) {
+                        const ProjectionKey key{
+                            mapping.coedge->faceId.ordinal,
+                            quantize(sample.position[0]),
+                            quantize(sample.position[1]),
+                            quantize(sample.position[2])};
+                        if (const auto cached = projectionCache.find(key);
+                            cached != projectionCache.end()) {
+                            projectedUv = cached->second;
+                            haveProjected = true;
+                        }
                     }
-                    use.uv = projected.value->uv;
+                    if (!haveProjected) {
+                        const auto projected =
+                            imported.workingEvaluator->projectPointToSurface(
+                                mapping.coedge->faceId, sample.position);
+                        if (!projected) {
+                            return buildFailure(
+                                report, "boundary.surface_projection_failed",
+                                "derived analytic boundary UV did not evaluate",
+                                {edgeId, mapping.coedge->id,
+                                 mapping.coedge->faceId});
+                        }
+                        projectedUv = projected.value->uv;
+                        projectedDiscrepancy = projected.value->discrepancy;
+                        if (configuration.previewFast) {
+                            const ProjectionKey key{
+                                mapping.coedge->faceId.ordinal,
+                                quantize(sample.position[0]),
+                                quantize(sample.position[1]),
+                                quantize(sample.position[2])};
+                            projectionCache.emplace(key, projectedUv);
+                        }
+                    }
+                    use.uv = projectedUv;
                     use.measuredCurveOnSurfaceDiscrepancy =
-                        configuration.previewFast
-                            ? 0.0
-                            : projected.value->discrepancy;
+                        configuration.previewFast ? 0.0 : projectedDiscrepancy;
                 }
 
                 const double sourceEnvelope =

@@ -31,6 +31,9 @@ struct PlanarCdtMesh {
     // Soften certified 3D identity/orientation checks for curved UV trims /
     // Plasticity sphere caps (still boundary-covering).
     bool relaxGeometryChecks = false;
+    // Template already wound triangles against evaluateSurface's oriented
+    // unitNormal; certify must not apply an additional TopoDS Reversed swap.
+    bool windingsMatchOrientedFaceNormal = false;
 };
 
 struct PlanarCdtValidationEvidence {

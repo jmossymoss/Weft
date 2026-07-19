@@ -1085,7 +1085,8 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
                     ? (*localTriangle.cornerUv)[corner]
                     : localVertex.uv;
             }
-            if (*orientation == TopologyOrientation::Reversed) {
+            if (*orientation == TopologyOrientation::Reversed &&
+                !faceMesh.windingsMatchOrientedFaceNormal) {
                 std::swap(triangle.vertices[1], triangle.vertices[2]);
                 std::swap(triangle.cornerUv[1], triangle.cornerUv[2]);
                 std::swap(orientedLocalIndices[1], orientedLocalIndices[2]);

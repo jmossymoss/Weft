@@ -400,21 +400,27 @@ public:
             double u = 0.0;
             double v = 0.0;
             const gp_Pnt point(position[0], position[1], position[2]);
+            gp_Pnt foot = point;
             switch (adaptor.GetType()) {
             case GeomAbs_Plane:
                 ElSLib::Parameters(adaptor.Plane(), point, u, v);
+                foot = ElSLib::Value(u, v, adaptor.Plane());
                 break;
             case GeomAbs_Cylinder:
                 ElSLib::Parameters(adaptor.Cylinder(), point, u, v);
+                foot = ElSLib::Value(u, v, adaptor.Cylinder());
                 break;
             case GeomAbs_Cone:
                 ElSLib::Parameters(adaptor.Cone(), point, u, v);
+                foot = ElSLib::Value(u, v, adaptor.Cone());
                 break;
             case GeomAbs_Sphere:
                 ElSLib::Parameters(adaptor.Sphere(), point, u, v);
+                foot = ElSLib::Value(u, v, adaptor.Sphere());
                 break;
             case GeomAbs_Torus:
                 ElSLib::Parameters(adaptor.Torus(), point, u, v);
+                foot = ElSLib::Value(u, v, adaptor.Torus());
                 break;
             default: {
                 // Extrusion / offset / bspline: orthogonal projection onto
@@ -434,20 +440,15 @@ public:
                         faceId);
                 }
                 projector.LowerDistanceParameters(u, v);
+                foot = projector.NearestPoint();
                 break;
             }
-            }
-            const auto surface = evaluateSurface(faceId, {u, v});
-            if (!surface) {
-                return evaluationFailure<PlanarProjectionEvaluation>(
-                    "geometry.surface_projection_surface_failure",
-                    "projected surface UV did not evaluate", faceId);
             }
             PlanarProjectionEvaluation evaluation;
             evaluation.faceId = faceId;
             evaluation.inputPosition = position;
             evaluation.uv = {u, v};
-            evaluation.surfacePosition = surface.value->position;
+            evaluation.surfacePosition = {foot.X(), foot.Y(), foot.Z()};
             evaluation.discrepancy = std::hypot(
                 position[0] - evaluation.surfacePosition[0],
                 position[1] - evaluation.surfacePosition[1],

@@ -601,7 +601,7 @@ IntervalProblemResult buildIntervalProblem(
         const double budget =
             static_cast<double>(configuration.previewTriangleBudget);
         if (projectedTris > budget) {
-            const double scale = (budget * 0.70) / projectedTris;
+            const double scale = (budget * 0.60) / projectedTris;
             for (IntervalVariable& variable : problem.variables) {
                 if (variable.exact) continue;
                 const StableId edgeId{StableIdKind::Edge,
@@ -721,10 +721,10 @@ SecureMeshingResult generateSecureMesh(
         imported.working->snapshot.model.faceCount() > 500;
     if ((configuration.omitDeferredResiduals ||
          (largeIndustrial && configuration.previewTriangleBudget > 0)) &&
-        configuration.revolutionRadialSegments > 10) {
+        configuration.revolutionRadialSegments > 8) {
         // Preview density: UI radial may remain 32; keep active revolution
-        // sampling >=10 so plane-hole CDT bridges stay solvable.
-        configuration.revolutionRadialSegments = 10;
+        // sampling >=8 so plane-hole CDT bridges stay solvable.
+        configuration.revolutionRadialSegments = 8;
     }
     if (!imported.meshable() || !imported.working ||
         !imported.workingEvaluator) {
