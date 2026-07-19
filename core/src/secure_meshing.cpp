@@ -1361,10 +1361,9 @@ SecureMeshingResult generateSecureMesh(
                     return false;
                 }
                 PlanarCdtMesh mesh = *triangulated.value;
-                // Plasticity split-rail corners share UV junctions with
-                // distinct 3D sample ids; certify with scoped near-3D until
-                // G2 unifies rail endpoints in the UV-trim assembler.
-                mesh.relaxGeometryChecks = true;
+                if (faceEdgeCount > 4 || hasEllipseRim) {
+                    mesh.relaxGeometryChecks = true;
+                }
                 faceMeshes.push_back(std::move(mesh));
                 return true;
             };

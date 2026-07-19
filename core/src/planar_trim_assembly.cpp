@@ -125,11 +125,14 @@ bool mergeVertexUses(PlanarTrimVertex& retained,
     // Planes require exact UV identity. Curved UV trims may disagree by lift
     // noise / periodic seam wraps; when the canonical vertex identity matches,
     // prefer topology over UV equality (sphere poles/seams).
+    // Planes: exact UV. Curved: near-UV or same canonical. Far-3D uses are
+    // pruned after the loop so cylinder seam unwrap cannot create split-rails.
+    const bool sameCanon =
+        retained.canonicalVertexIndex == candidate.canonicalVertexIndex;
     const bool uvCompatible =
         sameUv(retained.uv, candidate.uv) ||
         (allowNearUv && nearUv(retained.uv, candidate.uv, uPeriod)) ||
-        (allowNearUv &&
-         retained.canonicalVertexIndex == candidate.canonicalVertexIndex);
+        (allowNearUv && sameCanon);
     if (!uvCompatible) {
         setFailure(result, "trim_assembly.vertex_uv_mismatch",
                    "incident canonical boundary samples disagree exactly in lifted UV",
@@ -485,9 +488,52 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
                                 {workingFace, wireId, coedge.id});
                             return result;
                         }
-                        // Industrial curved wires: force shared identity.
+                        // Force shared identity only when the endpoint
+                        // samples agree in 3D; otherwise keep UV station
+                        // without importing foreign boundary uses.
+                        auto samplePosition =
+                            [&](SampleId sampleId)
+                            -> std::optional<std::array<double, 3>> {
+                            for (const CanonicalBoundary& boundary :
+                                 boundaries.boundaries) {
+                                for (const CanonicalBoundarySample& s :
+                                     boundary.samples) {
+                                    if (s.id == sampleId) {
+                                        return s.position;
+                                    }
+                                }
+                            }
+                            return std::nullopt;
+                        };
+                        std::optional<std::array<double, 3>> retainedPos;
+                        if (!loop.vertices.back().boundaryUses.empty()) {
+                            retainedPos = samplePosition(
+                                loop.vertices.back().boundaryUses.front().sample);
+                        }
+                        bool geometricMatch = !retainedPos.has_value();
+                        if (retainedPos) {
+                            geometricMatch = true;
+                            for (const PlanarTrimBoundaryUse& use :
+                                 vertex.boundaryUses) {
+                                const auto pos = samplePosition(use.sample);
+                                if (!pos) {
+                                    geometricMatch = false;
+                                    break;
+                                }
+                                const double dx = (*retainedPos)[0] - (*pos)[0];
+                                const double dy = (*retainedPos)[1] - (*pos)[1];
+                                const double dz = (*retainedPos)[2] - (*pos)[2];
+                                if (dx * dx + dy * dy + dz * dz > 1e-6) {
+                                    geometricMatch = false;
+                                    break;
+                                }
+                            }
+                        }
                         vertex.canonicalVertexIndex =
                             loop.vertices.back().canonicalVertexIndex;
+                        if (!geometricMatch) {
+                            vertex.boundaryUses.clear();
+                        }
                     }
                 }
                 if (!appendOrMerge(loop, std::move(vertex), result,
@@ -606,6 +652,39 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
             domain.allowCurvedUv = true;
         }
 
+        // Drop boundary uses whose 3D sample disagrees with the primary
+        // sample for this canonical corner (false split-rail attachments).
+        for (PlanarTrimVertex& vertex : loop.vertices) {
+            if (vertex.boundaryUses.size() < 2) continue;
+            auto samplePosition =
+                [&](SampleId sampleId)
+                -> std::optional<std::array<double, 3>> {
+                for (const CanonicalBoundary& boundary :
+                     boundaries.boundaries) {
+                    for (const CanonicalBoundarySample& s :
+                         boundary.samples) {
+                        if (s.id == sampleId) return s.position;
+                    }
+                }
+                return std::nullopt;
+            };
+            const auto primary =
+                samplePosition(vertex.boundaryUses.front().sample);
+            if (!primary) continue;
+            std::vector<PlanarTrimBoundaryUse> kept;
+            kept.reserve(vertex.boundaryUses.size());
+            for (PlanarTrimBoundaryUse& use : vertex.boundaryUses) {
+                const auto pos = samplePosition(use.sample);
+                if (!pos) continue;
+                const double dx = (*primary)[0] - (*pos)[0];
+                const double dy = (*primary)[1] - (*pos)[1];
+                const double dz = (*primary)[2] - (*pos)[2];
+                if (dx * dx + dy * dy + dz * dz <= 1e-6) {
+                    kept.push_back(std::move(use));
+                }
+            }
+            if (!kept.empty()) vertex.boundaryUses.swap(kept);
+        }
         const PredicateResult<PlanarTrimLoopOrientation> orientation =
             orientationOf(loop, *predicates);
         if (!orientation) {

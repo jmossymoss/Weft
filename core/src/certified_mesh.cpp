@@ -786,41 +786,45 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
                     return result;
                 }
                 // Split rails may assign distinct canonical vertex IDs to one
-                // geometric corner after STEP. Accept when 3D positions match.
+                // geometric corner after STEP. Accept when every boundary use
+                // on this UV station resolves to a near-equal 3D position.
                 if (hasBoundary &&
                     localVertex.canonicalVertexIndex !=
                         InvalidCanonicalVertexIndex &&
                     sample->canonicalVertexIndex !=
                         localVertex.canonicalVertexIndex) {
-                    const CanonicalBoundarySample* owner = nullptr;
-                    for (const CanonicalBoundary& boundary :
-                         boundaries.boundaries) {
-                        for (const CanonicalBoundarySample& candidate :
-                             boundary.samples) {
-                            if (candidate.canonicalVertexIndex ==
-                                localVertex.canonicalVertexIndex) {
-                                owner = &candidate;
-                                break;
+                    std::optional<std::array<double, 3>> cornerPosition;
+                    bool geometricCorner = true;
+                    for (const PlanarTrimBoundaryUse& peerUse :
+                         localVertex.boundaryUses) {
+                        const CanonicalBoundarySample* peer = nullptr;
+                        for (const CanonicalBoundary& boundary :
+                             boundaries.boundaries) {
+                            for (const CanonicalBoundarySample& candidate :
+                                 boundary.samples) {
+                                if (candidate.id == peerUse.sample) {
+                                    peer = &candidate;
+                                    break;
+                                }
                             }
+                            if (peer) break;
                         }
-                        if (owner) break;
+                        if (!peer) {
+                            geometricCorner = false;
+                            break;
+                        }
+                        if (!cornerPosition) {
+                            cornerPosition = peer->position;
+                        } else if (!(exactPositionEqual(*cornerPosition,
+                                                        peer->position) ||
+                                     nearPositionEqual(*cornerPosition,
+                                                       peer->position,
+                                                       1e-3))) {
+                            geometricCorner = false;
+                            break;
+                        }
                     }
-                    if (!owner) {
-                        if (!faceMesh.relaxGeometryChecks) {
-                            ++boundaryProvenance.failed;
-                            setFailure(
-                                result, "certified.boundary_provenance_invalid",
-                                "split-rail corner samples disagree in 3D",
-                                {face, boundaryUse.workingEdge,
-                                 boundaryUse.coedge});
-                            return result;
-                        }
-                    } else if (!(exactPositionEqual(owner->position,
-                                                    sample->position) ||
-                                 nearPositionEqual(
-                                     owner->position, sample->position,
-                                     faceMesh.relaxGeometryChecks ? 50.0
-                                                                  : 1e-4))) {
+                    if (!geometricCorner && !faceMesh.relaxGeometryChecks) {
                         ++boundaryProvenance.failed;
                         setFailure(
                             result, "certified.boundary_provenance_invalid",
