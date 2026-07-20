@@ -1732,10 +1732,9 @@ void testAllMesherStrategies() {
     runModel("flaregun", flaregun, cad);  // rail ladder
     runModel("foam", foam, cad, false); // dome; closedness in KNOWN_RED/WP3
 
-    // Release closed-solid class locks. Foam remains known-red on CAD
-    // (plane_fillet_bspline_junction). Teleporter CAD is watertight after
-    // WP3 MinimalNGon stitch protection; default still carries the
-    // bspline_contract_floor_overweld secondary residual.
+    // Release closed-solid class locks. Foam + teleporter CAD are watertight
+    // after WP3 stitch protect / midpoint chain accept. Teleporter default
+    // still carries bspline_contract_floor_overweld residual.
     // Neighborhood STEP extracts under tests/regressions/release/ are
     // open-shell diagnostics only (see docs/evidence/wp1-release-reducers-*).
     auto checkClosedSolidOpenClass =
@@ -1764,19 +1763,23 @@ void testAllMesherStrategies() {
             }
             CHECK(!vr.watertight());
         };
-    // foam: plane/fillet/bspline junction open+NM (cad profile).
-    checkClosedSolidOpenClass("foam_wt_open_nm", foam, cad, 1, 64, 32);
-    {
-        const weft::Analysis analysis = weft::analyze(teleporter);
-        const weft::PolyMesh mesh = weft::generate(teleporter, analysis, cad);
-        const weft::ValidationReport vr =
-            weft::validateMesh(mesh, &teleporter);
-        CHECK_EQ(vr.inputBoundaryEdges, 0u);
-        CHECK(vr.watertight());
-        std::printf("  teleporter CAD watertight (planar_ngon stitch protect)\n");
-    }
+    auto checkClosedSolidWatertight =
+        [&](const char* label, const weft::Model& model,
+            const weft::GenerationSettings& settings) {
+            const weft::Analysis analysis = weft::analyze(model);
+            const weft::PolyMesh mesh =
+                weft::generate(model, analysis, settings);
+            const weft::ValidationReport vr =
+                weft::validateMesh(mesh, &model);
+            CHECK_EQ(vr.inputBoundaryEdges, 0u);
+            CHECK(vr.watertight());
+            std::printf("  %s watertight\n", label);
+        };
     weft::GenerationSettings def;
     def.defaults.minimal = true;
+    checkClosedSolidWatertight("foam CAD", foam, cad);
+    checkClosedSolidWatertight("foam default", foam, def);
+    checkClosedSolidWatertight("teleporter CAD", teleporter, cad);
     checkClosedSolidOpenClass("teleporter_wt_open_default", teleporter, def, 1,
                               64, 32);
 

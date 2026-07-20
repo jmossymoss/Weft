@@ -52,9 +52,9 @@ hi_aspect	dirty	fixtures/generated/hi_aspect.step	1	1	0	0	-	research	dirty-step	
 tiny_big	dirty	fixtures/generated/tiny_big.step	1	0	0	0	-	research	dirty-step	plane,cylinder	circle,line	tiny_on_large	r=0.08 bore on 400 plate; research scale contrast
 flaregun	release	STEP_Examples/flaregun.stp	1	0	0	1	-	closed_solid	release	-	-	hard_surface	release hard-surface asset
 iso14649-demo	release	STEP_Examples/iso14649-demo.stp	1	0	0	1	-	closed_solid	release	-	-	bores,primitives	release mechanical primitives
-foam	release	STEP_Examples/foam.stp	1	0	0	0	-	closed_solid	release	-	-	hard_surface	release; watertight known-red until WP3
-teleporter	release	STEP_Examples/teleporter.stp	1	0	0	0	-	closed_solid	release	-	-	hard_surface	release; CAD watertight (WP3 stitch protect); default known-red bspline_contract_floor_overweld
-foam_wt_open_nm	regression	STEP_Examples/foam.stp	1	0	0	0	-	closed_solid	release	-	-	plane_fillet_bspline_junction,open_edges,non_manifold	WP1 closed-solid open+NM class; full model remains smallest closed repro (see docs/evidence/wp1-release-reducers-2026-07-20.md)
+foam	release	STEP_Examples/foam.stp	1	0	0	1	-	closed_solid	release	-	-	hard_surface	release; watertight default+CAD after WP3 stitch seal
+teleporter	release	STEP_Examples/teleporter.stp	1	0	0	0	-	closed_solid	release	-	-	hard_surface	release; CAD watertight; default known-red bspline_contract_floor_overweld
+foam_wt_open_nm	regression	STEP_Examples/foam.stp	1	0	0	1	-	closed_solid	release	-	-	plane_fillet_bspline_junction	WP3 sealed with foam; kept as class regression alias
 teleporter_wt_open	regression	STEP_Examples/teleporter.stp	1	0	0	0	-	closed_solid	release	-	-	planar_ngon_border_contract,open_edges	WP1 closed-solid open-edge class; full model remains smallest closed repro (see docs/evidence/wp1-release-reducers-2026-07-20.md)
 foam_plane_fillet_bspline	regression	regressions/release/foam_plane_fillet_bspline_r1.step	1	0	0	0	-	open	release	plane,cylinder,bspline	circle,line,bspline	plane_fillet_bspline_junction	open-shell neighborhood diagnostic for foam junction class; not a closed-solid watertight repro
 foam_fillet_bspline	regression	regressions/release/foam_fillet_bspline_r1.step	1	0	0	0	-	open	release	cylinder,plane,bspline	circle,line,bspline	fillet_bspline_junction	open-shell neighborhood diagnostic for foam fillet/bspline CAD cluster; not a closed-solid watertight repro

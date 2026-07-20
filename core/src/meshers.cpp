@@ -16474,14 +16474,34 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
             // single n-gon chord and open planar_ngon_border_contract.
             // Neighbors may still stitch toward this face; we only refuse
             // to rewrite the authority polygon.
+            //
+            // Same class on the coons side of a MinimalNGon seam
+            // (plane_fillet_bspline_junction): pad/plane n-gon verts
+            // inserted into a successful CoonsGrid fillet/bspline border
+            // fold the strip and open the junction. Skip rewriting that
+            // coons polygon; coons↔revolution and contract-floor stitches
+            // stay enabled.
             if (plans && fellBack) {
                 const int fid = fids[s2];
                 auto pit = plans->find(fid);
-                if (pit != plans->end() &&
-                    pit->second.kind == MesherKind::MinimalNGon &&
+                const bool okFb =
                     fid >= 0 && fid < int(fellBack->size()) &&
-                    ((*fellBack)[fid] == 0 || (*fellBack)[fid] == 2)) {
+                    ((*fellBack)[fid] == 0 || (*fellBack)[fid] == 2);
+                if (pit != plans->end() && okFb &&
+                    pit->second.kind == MesherKind::MinimalNGon) {
                     continue;
+                }
+                if (pit != plans->end() && okFb &&
+                    pit->second.kind == MesherKind::CoonsGrid) {
+                    const int other = fids[1 - s2];
+                    auto oit = plans->find(other);
+                    if (oit != plans->end() &&
+                        oit->second.kind == MesherKind::MinimalNGon &&
+                        other >= 0 && other < int(fellBack->size()) &&
+                        ((*fellBack)[other] == 0 ||
+                         (*fellBack)[other] == 2)) {
+                        continue;
+                    }
                 }
             }
             auto it = facePolys.find(fids[s2]);
@@ -16556,17 +16576,51 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
                     // contamination gate is the ENDPOINT vetting above —
                     // a chord can't reach this test unless both ends
                     // passed the capped band + home checks.
+                    //
+                    // High-curvature open seams (coons↔revolution
+                    // fillets) can exceed the 35% sagitta allowance on
+                    // a short rim chord (dMid ~48% of chord). A pure
+                    // geometric reject then leaves one side un-spliced
+                    // while the neighbour still inserts, opening a
+                    // T-junction. If the union chain already carries
+                    // an intervening on-curve sample between the
+                    // endpoints' params, trust the param span — corner
+                    // chords that merely touch the curve have no such
+                    // interior chain vert.
                     if (!fullEdge &&
                         !paramOf(mid,
                                  std::max(weldTol * 4.0, 0.35 * chordLen),
                                  tm)) {
+                        // Open curves only: closed-ring wrap makes a
+                        // raw [tLo,tHi] interval ambiguous.
+                        bool chainBetween = false;
+                        if (!isClosedPl) {
+                            const double tLo = std::min(ta, tb);
+                            const double tHi = std::max(ta, tb);
+                            for (const auto& [t, v] : chain) {
+                                if (v == a || v == b) continue;
+                                if (t > tLo + 1e-12 && t < tHi - 1e-12) {
+                                    chainBetween = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!chainBetween) {
+                            if (traceEid) {
+                                dbg("stitch eid %d f%d seg v%u-v%u REJ mid "
+                                    "dMid=%.4g chord=%.4g",
+                                    eid, fids[s2], a, b,
+                                    distToCurve(mid, eid), chordLen);
+                            }
+                            continue;
+                        }
+                        tm = 0.5 * (ta + tb);
                         if (traceEid) {
-                            dbg("stitch eid %d f%d seg v%u-v%u REJ mid "
-                                "dMid=%.4g chord=%.4g",
+                            dbg("stitch eid %d f%d seg v%u-v%u ACCEPT mid "
+                                "via chain-between dMid=%.4g chord=%.4g",
                                 eid, fids[s2], a, b,
                                 distToCurve(mid, eid), chordLen);
                         }
-                        continue;
                     }
                     if (traceEid) {
                         dbg("stitch eid %d f%d seg v%u-v%u ta=%.5f "

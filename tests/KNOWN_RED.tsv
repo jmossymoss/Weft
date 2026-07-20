@@ -2,11 +2,14 @@ name	profile	metric	ceiling	reproducer	owning_wp	removal_condition
 slitdrill	cad	require_watertight	0	fixtures/slitdrill.step	WP3	tangent-contact pocket/bore non-manifold edges fixed by topology class
 slitdrill	default	require_watertight	0	fixtures/slitdrill.step	WP3	tangent-contact pocket/bore non-manifold edges fixed by topology class
 ribbonnotch	default	require_watertight	0	fixtures/generated/ribbonnotch.step	WP3	open edges on default profile restored without filename exemption
-foam	cad	require_watertight	0	STEP_Examples/foam.stp	WP3	release watertight restored without filename exemption
-foam	default	require_watertight	0	STEP_Examples/foam.stp	WP3	release watertight restored without filename exemption
-foam_wt_open_nm	cad	require_watertight	0	STEP_Examples/foam.stp	WP3	plane_fillet_bspline_junction open+NM restored without filename exemption
-foam_wt_open_nm	default	require_watertight	0	STEP_Examples/foam.stp	WP3	plane_fillet_bspline_junction open+NM restored without filename exemption
+ribbonnotch	default	max_raw	2	fixtures/generated/ribbonnotch.step	WP3	ribbon end-notch raw demotions cleared without filename exemption
+tan_slit	cad	max_raw	1	fixtures/generated/tan_slit.step	WP3	dirty-step tangent bore raw demotion bounded/cleared
+tan_slit	default	max_raw	1	fixtures/generated/tan_slit.step	WP3	dirty-step tangent bore raw demotion bounded/cleared
+foam	default	max_raw	3	STEP_Examples/foam.stp	WP3	default ribbon/raw demotions cleared; CAD already max_raw=0
+foam_wt_open_nm	default	max_raw	3	STEP_Examples/foam.stp	WP3	same STEP as foam; default raw residual until ribbon demotions fixed
 teleporter	default	require_watertight	0	STEP_Examples/teleporter.stp	WP3	bspline_contract_floor_overweld residual after planar_ngon stitch protect
+teleporter	default	max_raw	3	STEP_Examples/teleporter.stp	WP3	default raw residual with bspline_contract_floor_overweld
 teleporter_wt_open	default	require_watertight	0	STEP_Examples/teleporter.stp	WP3	bspline_contract_floor_overweld residual after planar_ngon stitch protect
+teleporter_wt_open	default	max_raw	3	STEP_Examples/teleporter.stp	WP3	default raw residual with bspline_contract_floor_overweld
 tork	cad	require_watertight	0	STEP_Examples/tork.stp	WP3	broken source; replace or heal with explicit diagnostic, then enforce watertight
 tork	default	require_watertight	0	STEP_Examples/tork.stp	WP3	broken source; replace or heal with explicit diagnostic, then enforce watertight
