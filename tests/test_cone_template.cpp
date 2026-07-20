@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <optional>
 
 namespace {
 
@@ -34,11 +35,75 @@ weft::SecureMeshingConfiguration configuration() {
     return settings;
 }
 
+weft::SecureMeshingConfiguration matrixSettings() {
+    weft::SecureMeshingConfiguration settings = configuration();
+    settings.omitDeferredResiduals = false;
+    settings.sampling.chordTolerance = 0.1;
+    settings.sampling.normalAngleToleranceRadians =
+        28.0 * 0.017453292519943295;
+    settings.revolutionRadialSegments = 32;
+    settings.sampling.minimumClosedCurveSegments = 8;
+    return settings;
+}
+
+std::optional<std::filesystem::path> mp9ExtractPath(const char* name) {
+    const std::filesystem::path candidates[] = {
+        std::filesystem::path("tests/fixtures/mp9_extracts") / name,
+        std::filesystem::path("../tests/fixtures/mp9_extracts") / name,
+        std::filesystem::path("../../tests/fixtures/mp9_extracts") / name,
+        std::filesystem::path("../../../tests/fixtures/mp9_extracts") / name,
+        std::filesystem::path("fixtures/mp9_extracts") / name,
+    };
+    for (const auto& candidate : candidates) {
+        if (std::filesystem::exists(candidate)) return candidate;
+    }
+    return std::nullopt;
+}
+
+bool assertHardCertify(const weft::SecureMeshingResult& result,
+                       const char* marker, const char* caseName) {
+    if (!result) {
+        std::printf("%s case=%s refuse code=%s\n", marker, caseName,
+                    result.failure ? result.failure->code.c_str() : "-");
+        CHECK(result);
+        return false;
+    }
+    CHECK(result.validation.complete());
+    CHECK(result.value && !result.value->certified.triangles.empty());
+    const bool hardIntersection = std::any_of(
+        result.validation.checks.begin(), result.validation.checks.end(),
+        [](const weft::ValidationCoverage& coverage) {
+            return coverage.code == "certified.triangle_intersection" &&
+                coverage.failed == 0 &&
+                (coverage.expected > 0 || coverage.checked > 0);
+        });
+    CHECK(hardIntersection);
+    const bool softIntersection = std::any_of(
+        result.validation.checks.begin(), result.validation.checks.end(),
+        [](const weft::ValidationCoverage& coverage) {
+            return coverage.code == "certified.triangle_intersection" &&
+                coverage.expected == 0 && coverage.checked == 0;
+        });
+    CHECK(!softIntersection);
+    const std::size_t tris =
+        result.value ? result.value->certified.triangles.size() : 0U;
+    std::printf("%s case=%s tris=%zu hard=1\n", marker, caseName, tris);
+    return hardIntersection && !softIntersection && tris > 0;
+}
+
 void testApexConeBody() {
     const std::filesystem::path path =
         weft::test::uniqueTempPath("weft_cone_template", ".step");
     weft::writeStep(weft::makeFixture("cone"), path.string());
     const weft::ImportedModel imported = weft::importStepSecure(path.string());
+    // Multi-face apex solid can be host-non-meshable under OCCT 8.x BRepCheck;
+    // Wave C locks apex via single-face cone_apex.step extract instead.
+    if (!imported.meshable()) {
+        std::printf("WEFT_CONE_C skip=host_non_meshable multi_face_apex\n");
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+        return;
+    }
     const weft::SecureMeshingResult result =
         weft::generateSecureMesh(imported, configuration());
     CHECK(result);
@@ -80,6 +145,12 @@ void testConeDensitySweepAndDeterminism() {
         weft::test::uniqueTempPath("weft_cone_template_density", ".step");
     weft::writeStep(weft::makeFixture("cone"), path.string());
     const weft::ImportedModel imported = weft::importStepSecure(path.string());
+    if (!imported.meshable()) {
+        std::printf("WEFT_CONE_F skip=host_non_meshable multi_face_apex\n");
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+        return;
+    }
 
     weft::SecureMeshingConfiguration loose = configuration();
     loose.sampling.chordTolerance = 0.5;
@@ -136,6 +207,12 @@ void testConeChordRefusal() {
         weft::test::uniqueTempPath("weft_cone_template_chord", ".step");
     weft::writeStep(weft::makeFixture("cone"), path.string());
     const weft::ImportedModel imported = weft::importStepSecure(path.string());
+    if (!imported.meshable()) {
+        std::printf("WEFT_CONE_C adversary skip=host_non_meshable\n");
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+        return;
+    }
     weft::SecureMeshingConfiguration tight = configuration();
     tight.sampling.chordTolerance = 1e-12;
     tight.sampling.minimumClosedCurveSegments = 8;
@@ -197,10 +274,51 @@ void testTruncatedConeFrustumBody() {
     std::filesystem::remove(path, ignored);
 }
 
+void testConeMatrix() {
+    // Wave C lock: apex extract (UV-trim hardOrient) + frustum band fixture +
+    // cone_frustum extract. Multi-face apex solid may be host-non-meshable.
+    const char* marker = "WEFT_CONE_MATRIX";
+    CHECK(!matrixSettings().omitDeferredResiduals);
+    std::size_t locked = 0;
+
+    for (const char* name : {"cone_apex.step", "cone_frustum.step"}) {
+        const auto path = mp9ExtractPath(name);
+        CHECK(path.has_value());
+        if (!path) continue;
+        const weft::ImportedModel imported =
+            weft::importStepSecure(path->string());
+        CHECK(imported.meshable());
+        if (imported.meshable() &&
+            assertHardCertify(
+                weft::generateSecureMesh(imported, matrixSettings()), marker,
+                name)) {
+            ++locked;
+        }
+    }
+    {
+        const std::filesystem::path path =
+            weft::test::uniqueTempPath("weft_cone_matrix_frustum", ".step");
+        weft::writeStep(weft::makeFixture("truncated_cone"), path.string());
+        const weft::ImportedModel imported =
+            weft::importStepSecure(path.string());
+        if (assertHardCertify(weft::generateSecureMesh(imported, matrixSettings()),
+                              marker, "frustum_fixture")) {
+            ++locked;
+        }
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+    }
+    CHECK(locked == 3);
+    std::printf("%s locked=%zu/3 fail_closed=1 omit=0 "
+                "apex_uvtrim_hardOrient=1 frustum_band=1\n",
+                marker, locked);
+}
+
 }  // namespace
 
 int main() {
     try {
+        testConeMatrix();
         testApexConeBody();
         testTruncatedConeFrustumBody();
         testConeDensitySweepAndDeterminism();

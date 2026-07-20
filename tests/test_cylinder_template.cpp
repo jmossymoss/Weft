@@ -4,6 +4,7 @@
 #include "weft/interval_solver.hpp"
 #include "weft/model.hpp"
 #include "weft/planar_trim_assembly.hpp"
+#include "weft/secure_meshing.hpp"
 
 #include "test_temp_path.hpp"
 
@@ -15,6 +16,9 @@
 #include <optional>
 #include <string>
 #include <vector>
+
+// Wave B: WEFT_CYLINDER_MATRIX locks cylinder_* / cyl_* extracts fail-closed
+// with hard UV-trim (relax=0). See docs/governance/brep-consumer-matrix.md.
 
 namespace {
 
@@ -357,6 +361,111 @@ void testNamedRefusals(const std::filesystem::path& path,
     }
 }
 
+std::filesystem::path findMp9Extract(const char* name) {
+    const std::filesystem::path candidates[] = {
+        std::filesystem::path("tests/fixtures/mp9_extracts") / name,
+        std::filesystem::path("../tests/fixtures/mp9_extracts") / name,
+        std::filesystem::path("../../tests/fixtures/mp9_extracts") / name,
+        std::filesystem::path("../../../tests/fixtures/mp9_extracts") / name,
+    };
+    for (const auto& candidate : candidates) {
+        if (std::filesystem::exists(candidate)) return candidate;
+    }
+    return {};
+}
+
+weft::SecureMeshingConfiguration cylinderMatrixSettings() {
+    weft::SecureMeshingConfiguration settings;
+    settings.sampling.chordTolerance = 0.05;
+    settings.sampling.normalAngleToleranceRadians = 0.1;
+    settings.sampling.minimumClosedCurveSegments = 16;
+    settings.revolutionRadialSegments = 32;
+    settings.previewTriangleBudget = 0;
+    // Product path: never omit Deferred residuals / arm previewFast.
+    settings.omitDeferredResiduals = false;
+    return settings;
+}
+
+// Fail-closed product mesh of one cylinder extract. Returns triangle count
+// on success, 0 on failure. Hard UV-trim contract: validation must stay
+// complete with non-vacuous triangle_intersection (relax=0 through assemble).
+std::size_t meshCylinderExtractFailClosed(const char* extractName,
+                                          const char* marker) {
+    const std::filesystem::path path = findMp9Extract(extractName);
+    CHECK(!path.empty());
+    if (path.empty()) {
+        std::printf("FAIL %s missing tests/fixtures/mp9_extracts/%s\n",
+                    marker, extractName);
+        return 0;
+    }
+    const weft::ImportedModel imported =
+        weft::importStepSecure(path.string());
+    CHECK(imported.repair.meshable);
+    if (!imported.repair.meshable) {
+        std::printf("FAIL %s extract=%s not meshable\n", marker, extractName);
+        return 0;
+    }
+    const weft::SecureMeshingResult meshed =
+        weft::generateSecureMesh(imported, cylinderMatrixSettings());
+    if (!meshed) {
+        std::printf("%s extract=%s refuse code=%s\n", marker, extractName,
+                    meshed.failure ? meshed.failure->code.c_str() : "-");
+    }
+    CHECK(meshed);
+    CHECK(meshed.value && !meshed.value->certified.triangles.empty());
+    CHECK(meshed.validation.complete());
+    const bool hardIntersection = std::any_of(
+        meshed.validation.checks.begin(), meshed.validation.checks.end(),
+        [](const weft::ValidationCoverage& coverage) {
+            return coverage.code == "certified.triangle_intersection" &&
+                   coverage.failed == 0 &&
+                   (coverage.expected > 0 || coverage.checked > 0);
+        });
+    CHECK(hardIntersection);
+    const bool softIntersection = std::any_of(
+        meshed.validation.checks.begin(), meshed.validation.checks.end(),
+        [](const weft::ValidationCoverage& coverage) {
+            return coverage.code == "certified.triangle_intersection" &&
+                   coverage.expected == 0 && coverage.checked == 0;
+        });
+    // Soft (vacuous) intersection would indicate leftover relaxGeometryChecks.
+    CHECK(!softIntersection);
+    const std::size_t tris =
+        meshed.value ? meshed.value->certified.triangles.size() : 0U;
+    std::printf("%s extract=%s tris=%zu hard_intersection=1 relax=0\n",
+                marker, extractName, tris);
+    return tris;
+}
+
+void testCyl24SplitRimExtract() {
+    // MP9 face 24: full-period cylinder with seam + four open semicircle
+    // rim arcs. Import is identity-invalid single-face (G3 allow); G2 must
+    // certify without relaxGeometryChecks.
+    meshCylinderExtractFailClosed("cyl_24.step", "WEFT_G2_CYL24");
+}
+
+void testCylinderMatrix() {
+    // Wave B lock: every committed cylinder_* / cyl_* extract hard-certifies
+    // fail-closed. UV-trim subclasses clear relax via Wave-0 hardOrient
+    // (proven here by non-vacuous triangle_intersection). Subclasses: full
+    // periodic band, complex UV-trim, ellipse rims, cyl_24 split-rim,
+    // multi-bore / filleted-slot bore, multi-rim ellipse-cut UV-trim.
+    const char* marker = "WEFT_CYLINDER_MATRIX";
+    const char* extracts[] = {
+        "cylinder_band.step",         "cylinder_complex.step",
+        "cylinder_ellipse.step",      "cylinder_ellipse_band.step",
+        "cyl_24.step",                "cyl_24_from_mp9.step",
+        "cyl_filleted_slot_bore.step", "cyl_441.step"};
+    constexpr std::size_t kExpected = 8;
+    std::size_t locked = 0;
+    for (const char* name : extracts) {
+        if (meshCylinderExtractFailClosed(name, marker) > 0) ++locked;
+    }
+    CHECK(locked == kExpected);
+    std::printf("%s locked=%zu/%zu fail_closed=1 relax=0\n", marker, locked,
+                kExpected);
+}
+
 }  // namespace
 
 int main() {
@@ -371,6 +480,8 @@ int main() {
             testFullCylinderBody(*prepared);
             testNamedRefusals(step.path(), *prepared);
         }
+        testCyl24SplitRimExtract();
+        testCylinderMatrix();
     } catch (const std::exception& error) {
         std::printf("FAIL cylinder-template exception: %s\n", error.what());
         ++failures;

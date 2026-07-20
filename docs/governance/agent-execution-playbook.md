@@ -1061,7 +1061,7 @@ only with indexed evidence.
 
 ### WP-161 — M9 clean rebuilds
 
-- Status: `BLOCKED`
+- Status: `DONE`
 - Milestone: M9
 - Prerequisites: WP-160
 - Goal: clean empty-dir Linux and Windows builds.
@@ -1176,6 +1176,8 @@ only with indexed evidence.
 - Goal: `weft mesh MP9.stp` succeeds with complete certificate; app screenshot.
 - Evidence: `docs/evidence/mp9-full-mesh-gate-2026-07-18.md`.
 - Exit gate: whole MP9 body certifies under ADR-0014.
+- Note: family×subclass HARD/REFUSE authority before this gate is
+  `docs/governance/brep-consumer-matrix.md` (not face-id chase).
 
 ## M8 family packet
 
