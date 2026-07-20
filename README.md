@@ -69,6 +69,10 @@ Common controls:
 
 - `R`: loop-cut mode.
 - `G`: constrained grab.
+- `X`: delete selected faces or polygons.
+- `J`: bridge selected/open boundary edges.
+- `M`: weld selected vertices in vertex mode; toggle minimal n-gon in face
+  mode.
 - Type a number then `Enter`: set the selected face's primary divisions.
 - `Shift+Enter`: set its secondary divisions.
 - `[` / `]`: adjust divisions; hold Shift for the secondary axis.
@@ -83,6 +87,10 @@ Common controls:
 
 Install `blender/weft_link.py` as a Blender add-on and use the Weft sidebar to
 watch the app's live-link OBJ.
+
+Interactive regeneration may defer expensive whole-model repairs for
+responsiveness. Export always regenerates with finalization enabled and is the
+authoritative mesh.
 
 Headless screenshots are available for visual checks:
 
@@ -137,5 +145,6 @@ app/                       interactive client
 blender/                   live-link add-on
 tests/                     fixtures, corpus inventory, and pipeline tests
 tools/                     corpus, visual, and diagnostic tooling
+build.sh / build.bat       platform build entry points
 WINDOWS_BUILD.md           Windows setup and troubleshooting
 ```

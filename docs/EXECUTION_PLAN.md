@@ -5,6 +5,12 @@ session handoffs are not authoritative. If code, comments, issues, or old
 branches disagree with this document, follow this document or revise it with
 new test evidence before changing direction.
 
+Active work package: WP0 — restore truth.
+
+Change the active package only when its exit criteria pass at one revision. If
+a later failure invalidates an earlier gate, reopen the earliest affected
+package.
+
 ## 1. Mission
 
 Weft is a B-rep-native retopology bridge for hard-surface artists:
@@ -28,6 +34,9 @@ and retopologizing it from scratch.
 - Manual-first assistance with strong automatic defaults.
 - Exact B-rep projection rather than shrinkwrap approximation.
 - Local, named controls for primitives and blends.
+- Route topology by feature priority: cylinder, sphere, hemisphere, box, torus,
+  general curves, then interior cuts. Lower-priority features adapt to the
+  dominant primitive instead of destroying its flow.
 - Watertightness and determinism before topology breadth.
 - Persist decisions in recipes; treat generated meshes as replaceable output.
 - One production generation pipeline, with experiments kept out of the release
@@ -115,8 +124,19 @@ Do not claim that a mesher can repair arbitrary invalid input.
 - Per-face and per-edge overrides preserve shared-border compatibility.
 - A local edit does not silently demote an adjacent face.
 - Regeneration is deterministic for identical input, settings, and platform.
-- Linux and Windows produce equivalent topology according to the committed
-  cross-platform policy.
+- Linux and Windows satisfy the cross-platform policy below.
+
+Cross-platform policy:
+
+- face routing, raw/empty status, polygon arity counts, connectivity, and all
+  validity metrics are identical;
+- corresponding anchored vertices agree within the committed geometric
+  tolerance;
+- byte-identical OBJ text and floating-point formatting are not required;
+- Linux golden counts plus Windows `--no-golden` is a temporary bootstrap
+  check, not sufficient evidence for MVP completion;
+- WP2 must add a machine-comparable topology signature or equivalent artifact
+  comparison before cross-platform determinism can pass.
 
 ### 3.3 Workflow
 
@@ -253,7 +273,42 @@ MP9 is a target-shaped integration and performance workload. It is not the
 geometry-coverage oracle. Research failures must be recorded, not hidden by
 weakening release assertions.
 
-### 4.5 Public real-world corpus
+### 4.5 Corpus authority and CI policy
+
+`tests/CAD_CORPUS.tsv` is the sole corpus inventory. CTest, corpus scripts,
+release gates, and scheduled public-corpus jobs must select cases from it rather
+than maintain separate hardcoded model lists.
+
+WP0 begins with known bootstrap debt: the manifest contains generated and
+reduced paths that are absent, while `tools/corpus_gate.sh` has an independent
+fixture list and automatically includes every committed STEP example. Reconcile
+these before treating corpus results as authoritative.
+
+The manifest must distinguish:
+
+- release cases, which must eventually meet every strict completion invariant;
+- deterministic non-release fixtures, which must meet their declared valid or
+  invalid-input expectations;
+- stress/research cases, which may retain explicit bounded known-red metrics but
+  may not regress;
+- performance cases, which run on a scheduled or manual cadence.
+
+During WP0-WP2, record each reproducible release blocker in
+`tests/KNOWN_RED.tsv` with case, metric, observed ceiling, reproducer, owning
+work package, and removal condition. Regression CI may pass when actual results
+match that file exactly, allowing root-cause work to proceed without normalizing
+failures. The strict release gate ignores those allowances and remains red until
+WP3 removes every release entry.
+
+At MVP completion:
+
+- normal CI is green;
+- the strict release gate is green with no release allowances;
+- stress cases remain green against their validity-specific expectations or
+  bounded ceilings;
+- no model is silently exempted by filename in a runner.
+
+### 4.6 Public real-world corpus
 
 Use reproducible manifests with upstream URL, version, checksum, license note,
 selection rule, and expected local path. Do not commit an unbounded external
@@ -262,23 +317,22 @@ dataset to this repository.
 - Fusion 360 Gallery Extended STEP: primary mechanical-feature corpus. Select a
   stratified subset using its operation labels for extrusion, cut, fillet,
   chamfer, and revolution, plus face-count and body-count bands.
-  Source: `https://github.com/AutodeskAILab/Fusion360GalleryDataset`
+  Source: [Fusion 360 Gallery Dataset](https://github.com/AutodeskAILab/Fusion360GalleryDataset)
 - ABC STEP dataset: broad geometry and robustness corpus. Select by surface and
   curve types, face count, body count, and import result rather than taking an
   unclassified random sample.
-  Source: `https://deep-geometry.github.io/abc-dataset/`
+  Source: [ABC Dataset](https://deep-geometry.github.io/abc-dataset/)
 - NIST and CAx-IF STEP models: interoperability corpus for AP203/AP242, units,
   assemblies, and files produced by different kernels.
-  Source: `https://www.nist.gov/ctl/smart-connected-systems-division/`
-  `smart-connected-manufacturing-systems-group/mbe-pmi-0`
+  Source: [NIST CAD models and STEP files](https://www.nist.gov/ctl/smart-connected-systems-division/smart-connected-manufacturing-systems-group/mbe-pmi-0)
 - MAMBO may be used as a small meshing-topology supplement, but it does not
   replace the mechanical or interoperability corpora.
-  Source: `https://gitlab.com/franck.ledoux/mambo`
+  Source: [MAMBO](https://gitlab.com/franck.ledoux/mambo)
 
 Start with a reviewable subset, then expand nightly breadth only after failures
 are classified automatically. Dataset volume is not a substitute for coverage.
 
-### 4.6 Fresh Plasticity set
+### 4.7 Fresh Plasticity set
 
 Maintain a private or appropriately licensed test set of current Plasticity
 exports matching the intended asset class. Record Plasticity version, export
@@ -287,9 +341,9 @@ regression that can be shared into a deterministic fixture.
 
 ## 5. Scoreboard
 
-`tests/CAD_CORPUS.tsv` is the machine-readable inventory. Extend it or generate a
-separate machine-readable result without turning this plan into a session log.
-For each case record:
+`tests/CAD_CORPUS.tsv` is the sole machine-readable inventory. Generated result
+files may supplement it but must not define a competing case list. For each
+case record:
 
 - corpus tier and source validity;
 - source and license/provenance;
@@ -379,9 +433,14 @@ Tasks:
 
 - Reconcile `tests/CAD_CORPUS.tsv` paths with fixture generation and committed
   regression assets.
+- Replace hardcoded case lists in CTest and corpus scripts with manifest-driven
+  selection.
 - Ensure tests generate ephemeral fixtures before attempting to load them, or
   commit deterministic fixtures when generation is not appropriate.
 - Separate release, stress, intentionally invalid, and performance cases.
+- Create `tests/KNOWN_RED.tsv` from reproduced baseline failures; every row must
+  name its owning work package and removal condition.
+- Add a strict release gate that never consumes known-red allowances.
 - Add or generate the scoreboard fields required for correctness triage.
 - Make Linux and Windows failures reproducible locally where practical.
 - Remove stale assertions and goldens only when replaced by correct,
@@ -391,9 +450,12 @@ Exit:
 
 - Corpus paths and documented commands exist.
 - CTest runs the intended deterministic cases rather than failing on setup.
-- The release gate reports all current failures precisely.
-- Linux and Windows CI either pass or fail only on an explicit, reproducible
-  release-blocker list owned by WP2/WP3.
+- All runners consume `tests/CAD_CORPUS.tsv`; no independent fixture or
+  committed-STEP list remains.
+- Regression CI is green against exact validity-specific expectations and
+  `tests/KNOWN_RED.tsv`.
+- The strict release gate reports all remaining release blockers and is
+  expected to remain red until WP3.
 - No documentation claims a red gate is green.
 
 ### WP1: build coverage
@@ -429,6 +491,8 @@ Tasks:
 - Audit raw-demotion paths and make unsupported cases explicit.
 - A/B the stitch experiment; retain it only as a diagnostic unless it meets
   AD-2 promotion criteria.
+- Add the cross-platform topology signature and comparison defined in section
+  3.2.
 - Convert useful probes into fixture assertions and retire superseded probes.
 
 Exit:
@@ -456,6 +520,7 @@ Exit:
 
 - All section 3.1 requirements pass for valid release models.
 - All section 3.2 requirements pass.
+- `tests/KNOWN_RED.tsv` contains no release-model allowances.
 - Intentional exceptions are limited to source-invalid cases with explicit
   diagnostics and cannot be silently broadened.
 - Relevant visual rubric items pass with saved evidence.

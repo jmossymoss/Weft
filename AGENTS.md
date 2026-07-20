@@ -16,6 +16,8 @@ handoffs are historical evidence only. They do not override the execution plan.
 ## Work order
 
 - Work on the first incomplete work package in `docs/EXECUTION_PLAN.md`.
+- The plan's `Active work package` line is the current state marker; update it
+  only after all exit criteria pass at one revision.
 - Choose a failing exit criterion, reproduce it, and address its shared topology
   class rather than one model.
 - Do not begin deferred or post-MVP work while an earlier gate is red.
@@ -37,6 +39,11 @@ handoffs are historical evidence only. They do not override the execution plan.
   visual inspection of affected output.
 - Keep generated status in machine-readable reports. Do not append session
   diaries or transient pass claims to roadmap documents.
+- Treat `tests/CAD_CORPUS.tsv` as the sole case inventory. A runner must not
+  create a competing hardcoded model list.
+- During stabilization, known release failures belong in
+  `tests/KNOWN_RED.tsv`; the strict release gate never consumes those
+  allowances.
 
 ## Testing
 
@@ -54,7 +61,7 @@ For a topology change, also run:
 - the smallest reproducer;
 - affected geometry-zoo fixtures;
 - every release model;
-- relevant density and override sweeps;
+- relevant density and override sweeps using `build/cli/weft sweep <model>`;
 - visual inspection in the app and Blender when output quality is affected.
 
 Compile success or application startup alone is not sufficient evidence.

@@ -127,9 +127,11 @@ executables, so they run from any prompt or double-click with no PATH setup:
 
 ## Next Steps
 
-- Generate a demo model: `weft fixture demo.step --shape demo`
-- Inspect the B-rep: `weft inspect demo.step`
-- Generate topology: `weft mesh demo.step -o demo.obj --radial 12 --axial 3`
+- Generate a demo model:
+  `build\bin\Release\weft.exe fixture demo.step --shape demo`
+- Inspect the B-rep: `build\bin\Release\weft.exe inspect demo.step`
+- Generate topology:
+  `build\bin\Release\weft.exe mesh demo.step -o demo.obj --radial 12 --axial 3`
 - Open the OBJ in Blender; each B-rep face arrives as a named group
 
 See [README.md](README.md) for product usage and

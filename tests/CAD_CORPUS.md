@@ -23,10 +23,14 @@ The intended corpus is layered by purpose:
 - `visual_baselines` stores reviewed viewport evidence. It is not a
   pixel-perfect golden-image gate.
 
-`CAD_CORPUS.tsv` is the machine-readable inventory. During work package 0, its
-fixture and regression paths must be reconciled with files generated or
-committed by the tests. A manifest row is not evidence that its referenced file
-currently exists.
+`CAD_CORPUS.tsv` is the sole machine-readable case inventory. During work
+package 0, its fixture and regression paths must be reconciled with files
+generated or committed by the tests, and every runner must select from it. A
+manifest row is not evidence that its referenced file currently exists.
+
+The current `tools/corpus_gate.sh` hardcodes fixtures and automatically includes
+all committed STEP examples. That is known bootstrap debt, not an alternate
+inventory. Work package 0 replaces those lists with manifest tiers.
 
 ## Validation policy
 
@@ -44,6 +48,11 @@ Failure limits in the manifest are temporary known-red ceilings, not acceptance
 targets. Do not raise them or change `require_watertight` merely to make a test
 pass.
 
+Reproducible release blockers belong in `KNOWN_RED.tsv` during stabilization.
+Regression gates may consume those exact allowances; the strict release gate
+must not. Stress/research ceilings may remain at release when they describe
+their source validity and cannot increase.
+
 ## Current runners
 
 The standard pipeline tests are:
@@ -52,8 +61,8 @@ The standard pipeline tests are:
 ctest --test-dir build --output-on-failure
 ```
 
-The corpus gate generates its fixture inputs in a temporary directory and tests
-committed STEP examples at default and CAD profiles:
+The bootstrap corpus gate generates its fixture inputs in a temporary directory
+and tests committed STEP examples at default and CAD profiles:
 
 ```sh
 tools/corpus_gate.sh
