@@ -12,6 +12,13 @@ offset	surface	offset surface
 line	curve	linear edges
 circle	curve	circular edges / arcs
 ellipse	curve	elliptical trim
+parabola	curve	parabolic trim / edge
+hyperbola	curve	hyperbolic trim / edge
+bezier_curve	curve	Bezier curve edge / trim (not only Bezier surface)
+bspline_curve	curve	B-spline curve edge / trim
+offset_curve	curve	offset curve (Geom_OffsetCurve)
+reversed_wire	feature	reversed wire orientation (distinct from reversed face)
+unequal_samples	feature	unequal opposite-side / rim sample counts
 fillet_strip	feature	constant-radius fillet strip
 bore	feature	through bore / hole
 inner_wire	feature	inner wire / hole in face

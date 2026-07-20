@@ -22,12 +22,17 @@
 #include <BRep_Tool.hxx>
 #include <GeomAPI_PointsToBSpline.hxx>
 #include <GeomAPI_PointsToBSplineSurface.hxx>
+#include <Geom_BezierCurve.hxx>
 #include <Geom_BezierSurface.hxx>
 #include <Geom_BSplineCurve.hxx>
 #include <Geom_BSplineSurface.hxx>
 #include <Geom_Curve.hxx>
 #include <Geom_Ellipse.hxx>
+#include <Geom_Hyperbola.hxx>
+#include <GeomConvert.hxx>
+#include <Geom_OffsetCurve.hxx>
 #include <Geom_OffsetSurface.hxx>
+#include <Geom_Parabola.hxx>
 #include <Geom_Plane.hxx>
 #include <Geom_TrimmedCurve.hxx>
 #include <Precision.hxx>
@@ -48,6 +53,8 @@
 #include <gp_Ax3.hxx>
 #include <gp_Circ.hxx>
 #include <gp_Elips.hxx>
+#include <gp_Hypr.hxx>
+#include <gp_Parab.hxx>
 #include <gp_Trsf.hxx>
 #include <gp_Vec.hxx>
 
@@ -730,6 +737,142 @@ TopoDS_Shape makeFixture(const std::string& name) {
             BRepPrimAPI_MakePrism(profile, gp_Vec(0, 0, 8)).Shape();
         return BRepAlgoAPI_Cut(plate, cutter).Shape();
     }
+    if (name == "parabola_plate") {
+        // Closed solid whose outer profile carries a parabolic trim edge.
+        // Apex at origin, opens +X; close with the chord between ends.
+        const gp_Ax2 ax(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1), gp_Dir(1, 0, 0));
+        Handle(Geom_Parabola) par = new Geom_Parabola(gp_Parab(ax, 2.5));
+        Handle(Geom_TrimmedCurve) trimmed =
+            new Geom_TrimmedCurve(par, -8.0, 8.0);
+        const gp_Pnt p0 = trimmed->Value(-8.0);
+        const gp_Pnt p1 = trimmed->Value(8.0);
+        BRepBuilderAPI_MakeWire wire;
+        wire.Add(BRepBuilderAPI_MakeEdge(trimmed).Edge());
+        wire.Add(BRepBuilderAPI_MakeEdge(p1, p0).Edge());
+        const TopoDS_Face profile =
+            BRepBuilderAPI_MakeFace(wire.Wire(), true).Face();
+        return BRepPrimAPI_MakePrism(profile, gp_Vec(0, 0, 6)).Shape();
+    }
+    if (name == "hyperbola_plate") {
+        // Closed solid with a hyperbolic arc on the outer wire.
+        const gp_Ax2 ax(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1), gp_Dir(1, 0, 0));
+        Handle(Geom_Hyperbola) hypr =
+            new Geom_Hyperbola(gp_Hypr(ax, 5.0, 3.0));
+        Handle(Geom_TrimmedCurve) trimmed =
+            new Geom_TrimmedCurve(hypr, -1.2, 1.2);
+        const gp_Pnt p0 = trimmed->Value(-1.2);
+        const gp_Pnt p1 = trimmed->Value(1.2);
+        // Close toward +X (outside the branch) with three line segments.
+        const double xBack = std::max(p0.X(), p1.X()) + 8.0;
+        BRepBuilderAPI_MakeWire wire;
+        wire.Add(BRepBuilderAPI_MakeEdge(trimmed).Edge());
+        wire.Add(BRepBuilderAPI_MakeEdge(p1, gp_Pnt(xBack, p1.Y(), 0)).Edge());
+        wire.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(xBack, p1.Y(), 0),
+                                         gp_Pnt(xBack, p0.Y(), 0))
+                     .Edge());
+        wire.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(xBack, p0.Y(), 0), p0).Edge());
+        const TopoDS_Face profile =
+            BRepBuilderAPI_MakeFace(wire.Wire(), true).Face();
+        return BRepPrimAPI_MakePrism(profile, gp_Vec(0, 0, 5)).Shape();
+    }
+    if (name == "bezier_curve") {
+        // Explicit Geom_BezierCurve edge (not a Bezier surface). Prism keeps
+        // a closed solid; STEP may promote the curve to BSpline on reload.
+        TColgp_Array1OfPnt poles(1, 4);
+        poles.SetValue(1, gp_Pnt(0, 0, 0));
+        poles.SetValue(2, gp_Pnt(6, 14, 0));
+        poles.SetValue(3, gp_Pnt(14, 14, 0));
+        poles.SetValue(4, gp_Pnt(20, 0, 0));
+        Handle(Geom_BezierCurve) bez = new Geom_BezierCurve(poles);
+        BRepBuilderAPI_MakeWire wire;
+        wire.Add(BRepBuilderAPI_MakeEdge(bez).Edge());
+        wire.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(20, 0, 0), gp_Pnt(20, -6, 0))
+                     .Edge());
+        wire.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(20, -6, 0), gp_Pnt(0, -6, 0))
+                     .Edge());
+        wire.Add(
+            BRepBuilderAPI_MakeEdge(gp_Pnt(0, -6, 0), gp_Pnt(0, 0, 0)).Edge());
+        const TopoDS_Face profile =
+            BRepBuilderAPI_MakeFace(wire.Wire(), true).Face();
+        return BRepPrimAPI_MakePrism(profile, gp_Vec(0, 0, 4)).Shape();
+    }
+    if (name == "bspline_curve") {
+        // Atomic B-spline curve edge (distinct from bspline_slab surface).
+        TColgp_Array1OfPnt pts(1, 5);
+        pts.SetValue(1, gp_Pnt(0, 0, 0));
+        pts.SetValue(2, gp_Pnt(5, 8, 0));
+        pts.SetValue(3, gp_Pnt(12, 10, 0));
+        pts.SetValue(4, gp_Pnt(18, 6, 0));
+        pts.SetValue(5, gp_Pnt(24, 0, 0));
+        Handle(Geom_BSplineCurve) curve = GeomAPI_PointsToBSpline(pts).Curve();
+        BRepBuilderAPI_MakeWire wire;
+        wire.Add(BRepBuilderAPI_MakeEdge(curve).Edge());
+        wire.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(24, 0, 0), gp_Pnt(24, -5, 0))
+                     .Edge());
+        wire.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(24, -5, 0), gp_Pnt(0, -5, 0))
+                     .Edge());
+        wire.Add(
+            BRepBuilderAPI_MakeEdge(gp_Pnt(0, -5, 0), gp_Pnt(0, 0, 0)).Edge());
+        const TopoDS_Face profile =
+            BRepBuilderAPI_MakeFace(wire.Wire(), true).Face();
+        return BRepPrimAPI_MakePrism(profile, gp_Vec(0, 0, 4)).Shape();
+    }
+    if (name == "offset_curve") {
+        // Author via Geom_OffsetCurve of a planar Bezier basis. OCCT STEP
+        // AsIs export does not round-trip OffsetCurve (collapses the solid),
+        // so persist the evaluated offset as a BSpline edge for a closed
+        // watertight fixture while keeping OffsetCurve in the construction.
+        TColgp_Array1OfPnt poles(1, 4);
+        poles.SetValue(1, gp_Pnt(0, 0, 0));
+        poles.SetValue(2, gp_Pnt(4, 10, 0));
+        poles.SetValue(3, gp_Pnt(12, 10, 0));
+        poles.SetValue(4, gp_Pnt(16, 0, 0));
+        Handle(Geom_BezierCurve) basis = new Geom_BezierCurve(poles);
+        Handle(Geom_OffsetCurve) offset =
+            new Geom_OffsetCurve(basis, 2.0, gp_Dir(0, 0, 1));
+        Handle(Geom_BSplineCurve) persisted =
+            GeomConvert::CurveToBSplineCurve(offset);
+        const gp_Pnt p0 = persisted->Value(persisted->FirstParameter());
+        const gp_Pnt p1 = persisted->Value(persisted->LastParameter());
+        BRepBuilderAPI_MakeWire wire;
+        wire.Add(BRepBuilderAPI_MakeEdge(persisted).Edge());
+        wire.Add(BRepBuilderAPI_MakeEdge(p1, gp_Pnt(p1.X(), -6, 0)).Edge());
+        wire.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(p1.X(), -6, 0),
+                                         gp_Pnt(p0.X(), -6, 0))
+                     .Edge());
+        wire.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(p0.X(), -6, 0), p0).Edge());
+        const TopoDS_Face profile =
+            BRepBuilderAPI_MakeFace(wire.Wire(), true).Face();
+        return BRepPrimAPI_MakePrism(profile, gp_Vec(0, 0, 3.5)).Shape();
+    }
+    if (name == "rev_wire") {
+        // Closed solid from a face whose outer wire is explicitly reversed.
+        // Distinct from rev_orient (face Orientation flip on a box shell).
+        BRepBuilderAPI_MakePolygon poly;
+        poly.Add(gp_Pnt(0, 0, 0));
+        poly.Add(gp_Pnt(18, 0, 0));
+        poly.Add(gp_Pnt(18, 12, 0));
+        poly.Add(gp_Pnt(0, 12, 0));
+        poly.Close();
+        TopoDS_Wire wire = poly.Wire();
+        wire.Reverse();
+        const TopoDS_Face profile =
+            BRepBuilderAPI_MakeFace(wire, true).Face();
+        return BRepPrimAPI_MakePrism(profile, gp_Vec(0, 0, 7)).Shape();
+    }
+    if (name == "unequal_rims") {
+        // Trapezoid prism: opposite parallel edges differ in length so
+        // length-based rim sampling yields unequal opposite-side counts.
+        BRepBuilderAPI_MakePolygon poly;
+        poly.Add(gp_Pnt(0, 0, 0));
+        poly.Add(gp_Pnt(30, 0, 0));   // long base
+        poly.Add(gp_Pnt(22, 14, 0));  // short top (length 14)
+        poly.Add(gp_Pnt(8, 14, 0));
+        poly.Close();
+        const TopoDS_Face profile =
+            BRepBuilderAPI_MakeFace(poly.Wire(), true).Face();
+        return BRepPrimAPI_MakePrism(profile, gp_Vec(0, 0, 8)).Shape();
+    }
     if (name == "plate_holes") {
         // Interaction: planar plate with two circular holes.
         TopoDS_Shape plate = BRepPrimAPI_MakeBox(60.0, 30.0, 5.0).Shape();
@@ -963,9 +1106,10 @@ TopoDS_Shape makeFixture(const std::string& name) {
         " (expected cylinder|box|cone|sphere|torus|fillet|hole|demo|boss|"
         "hairline|canrev|slitdrill|microedge|filletslot|torture|extrusion|"
         "bspline_slab|bezier_slab|bezier_face|offset_slab|ellipse_plate|"
-        "plate_holes|compound2|open_shell|dirty_gap|gap_lo|gap_at|sliver|"
-        "near_dup|rev_orient|dup_trim|bowtie|tan_slit|seam_cut|hi_aspect|"
-        "tiny_big)");
+        "parabola_plate|hyperbola_plate|bezier_curve|bspline_curve|"
+        "offset_curve|rev_wire|unequal_rims|plate_holes|compound2|"
+        "open_shell|dirty_gap|gap_lo|gap_at|sliver|near_dup|rev_orient|"
+        "dup_trim|bowtie|tan_slit|seam_cut|hi_aspect|tiny_big)");
 }
 
 }  // namespace weft

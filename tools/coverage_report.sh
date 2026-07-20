@@ -33,9 +33,7 @@ while IFS= read -r line; do
     [[ -z "$line" || "$line" == \#* ]] && continue
     tag=$(printf '%s\n' "$line" | awk -F'\t' '{print $1}')
     kind=$(printf '%s\n' "$line" | awk -F'\t' '{print $2}')
-    # bspline_curve accepts surfaces/curves token "bspline"
     key="$tag"
-    [[ "$tag" == "bspline_curve" ]] && key="bspline"
     if [[ "$covered" == *"|$key|"* ]]; then
         echo "  OK  $kind/$tag"
     else

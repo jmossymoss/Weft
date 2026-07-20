@@ -5,21 +5,28 @@ cone	fixture	fixtures/generated/cone.step	1	0	0	1	-	closed_solid	geometry-zoo	co
 sphere	fixture	fixtures/generated/sphere.step	1	0	0	1	-	closed_solid	geometry-zoo	sphere	circle	poles	sphere with both poles
 torus	fixture	fixtures/generated/torus.step	1	0	0	1	-	closed_solid	geometry-zoo	torus	circle	periodic_uv	doubly periodic torus
 extrusion	fixture	fixtures/generated/extrusion.step	1	0	0	1	-	closed_solid	geometry-zoo	extrusion,plane	line	prism	linear extrusion prism
-canrev	fixture	fixtures/canrev.step	1	0	0	1	-	closed_solid	geometry-zoo	revolution,plane,cylinder	circle,line,bspline	revolution_stack	canonical revolution stack
+canrev	fixture	fixtures/canrev.step	1	0	0	1	-	closed_solid	geometry-zoo	revolution,plane,cylinder	circle,line,bspline,bspline_curve	revolution_stack	canonical revolution stack
 bspline_slab	fixture	fixtures/generated/bspline_slab.step	1	0	0	1	-	closed_solid	geometry-zoo	bspline,extrusion	bspline,line	freeform	B-spline surface slab
 bezier_slab	fixture	fixtures/generated/bezier_slab.step	1	0	0	1	-	closed_solid	geometry-zoo	bspline,extrusion	bspline,line	freeform	prism of Bezier (OCCT may promote caps to BSpline)
 bezier_face	dirty	fixtures/generated/bezier_face.step	1	0	0	0	-	open	geometry-zoo	bezier	bezier	open_face	single Bezier face for SurfaceType::Bezier classification
 offset_slab	fixture	fixtures/generated/offset_slab.step	1	0	0	1	-	closed_solid	geometry-zoo	offset,extrusion	bspline,line	offset_surface	offset surface slab
 ellipse_plate	fixture	fixtures/generated/ellipse_plate.step	1	0	0	1	-	closed_solid	geometry-zoo	plane,cylinder	ellipse,line	inner_wire	elliptical hole trim
+parabola_plate	fixture	fixtures/generated/parabola_plate.step	1	0	0	1	-	closed_solid	geometry-zoo	plane,extrusion	parabola,line	parabola_trim	parabolic outer trim prism
+hyperbola_plate	fixture	fixtures/generated/hyperbola_plate.step	1	0	0	1	-	closed_solid	geometry-zoo	plane,extrusion	hyperbola,line	hyperbola_trim	hyperbolic outer trim prism
+bezier_curve	fixture	fixtures/generated/bezier_curve.step	1	0	0	1	-	closed_solid	geometry-zoo	plane,extrusion	bezier_curve,line	bezier_edge	explicit Bezier curve edge (STEP may promote to BSpline)
+bspline_curve	fixture	fixtures/generated/bspline_curve.step	1	0	0	1	-	closed_solid	geometry-zoo	plane,extrusion	bspline_curve,line	bspline_edge	atomic B-spline curve edge (not surface)
+offset_curve	fixture	fixtures/generated/offset_curve.step	1	0	0	1	-	closed_solid	geometry-zoo	plane,extrusion	offset_curve,line	offset_edge	authored Geom_OffsetCurve; BSpline-persisted for STEP (AsIs drops OffsetCurve)
+rev_wire	fixture	fixtures/generated/rev_wire.step	1	0	0	1	-	closed_solid	geometry-zoo	plane,extrusion	line	reversed_wire	outer wire reversed before face/prism; distinct from rev_orient
+unequal_rims	fixture	fixtures/generated/unequal_rims.step	1	0	0	1	-	closed_solid	geometry-zoo	plane,extrusion	line	unequal_samples	trapezoid prism forces unequal opposite-side rim samples
 fillet	fixture	fixtures/generated/fillet.step	1	0	0	1	-	closed_solid	geometry-zoo	cylinder,plane	circle,line	fillet_strip	constant-radius fillet
 microedge	fixture	fixtures/microedge.step	1	0	0	1	visual_baselines/generated/microedge.png	closed_solid	geometry-zoo	plane	line	chamfer,micro_feature	micro chamfer
 hole	fixture	fixtures/generated/hole.step	1	0	0	1	-	closed_solid	interaction-zoo	plane,cylinder	circle,line	bore,ring_junction	single through bore
 plate_holes	fixture	fixtures/generated/plate_holes.step	1	0	0	1	-	closed_solid	interaction-zoo	plane,cylinder	circle,line	multi_bore,plate_web	two-hole plate
 slotted	fixture	fixtures/generated/slotted.step	1	0	0	1	-	closed_solid	interaction-zoo	cylinder,plane	circle,line	slot,interior_trim	tube with capsule slot
 barrel	fixture	fixtures/generated/barrel.step	1	0	0	1	-	closed_solid	interaction-zoo	cylinder,plane	circle,line	partial_wrap,slot	partial-wrap wall with cut
-barrel2	fixture	fixtures/generated/barrel2.step	1	0	0	1	visual_baselines/generated/barrel2.png	closed_solid	interaction-zoo	cylinder,plane	circle,line	chained_rim	chained rim plus capsule cut
+barrel2	fixture	fixtures/generated/barrel2.step	1	0	0	1	visual_baselines/generated/barrel2.png	closed_solid	interaction-zoo	cylinder,plane	circle,line	chained_rim,unequal_samples	chained rim plus capsule cut; unequal rim-chain sample counts
 drilled	fixture	fixtures/generated/drilled.step	1	0	0	1	-	closed_solid	interaction-zoo	cylinder,plane	circle,line	bore,partial_wrap	partial-wrap with round bore
-notched	fixture	fixtures/generated/notched.step	1	0	0	1	visual_baselines/generated/notched.png	closed_solid	interaction-zoo	cylinder,plane	circle,line	rim_notch	rim-open channel cut
+notched	fixture	fixtures/generated/notched.step	1	0	0	1	visual_baselines/generated/notched.png	closed_solid	interaction-zoo	cylinder,plane	circle,line	rim_notch,unequal_samples	rim-open channel cut; unequal opposite rim lengths
 boss	fixture	fixtures/generated/boss.step	1	0	0	1	-	closed_solid	interaction-zoo	plane,cylinder	circle,line	boss,trimmed_plane	boss on plate
 bossfillet	fixture	fixtures/generated/bossfillet.step	1	0	0	1	visual_baselines/generated/bossfillet.png	closed_solid	interaction-zoo	torus,plane,cylinder	circle,line	fillet_ring	closed torus fillet ring
 ribbon	fixture	fixtures/generated/ribbon.step	1	0	0	1	-	closed_solid	interaction-zoo	extrusion,plane	line	ribbon	curved extrusion strip

@@ -2036,6 +2036,43 @@ void testZooSurfaceClassification() {
     }
 }
 
+void testZooCurveClassification() {
+    // STEP-stable curve families from the §4.1 zoo. Bezier/offset edges are
+    // authored natively but STEP persists them as BSpline (asserted here).
+    std::printf("-- zoo curve classification --\n");
+    struct Expect {
+        const char* fixture;
+        GeomAbs_CurveType type;
+    };
+    const Expect expects[] = {
+        {"parabola_plate", GeomAbs_Parabola},
+        {"hyperbola_plate", GeomAbs_Hyperbola},
+        {"bspline_curve", GeomAbs_BSplineCurve},
+        {"bezier_curve", GeomAbs_BSplineCurve},  // STEP promotes Bezier→BSpline
+        {"offset_curve", GeomAbs_BSplineCurve},  // OffsetCurve → BSpline for STEP
+    };
+    for (const Expect& e : expects) {
+        const std::string path =
+            tmpPath(std::string("weft_zoo_curve_") + e.fixture + ".step");
+        weft::writeStep(weft::makeFixture(e.fixture), path);
+        const weft::Model model = weft::loadStep(path);
+        bool found = false;
+        for (TopExp_Explorer ex(model.shape, TopAbs_EDGE); ex.More();
+             ex.Next()) {
+            BRepAdaptor_Curve ac(TopoDS::Edge(ex.Current()));
+            if (ac.GetType() == e.type) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            std::printf("  missing curve type on fixture %s\n", e.fixture);
+        }
+        CHECK(found);
+        std::printf("  %-18s ok\n", e.fixture);
+    }
+}
+
 // WP1: selected mesher family on deterministic zoo fixtures. Kind presence
 // on the body is enough — do not hardcode face IDs. Any listed kind counts.
 void testZooMesherFamily() {
@@ -2252,6 +2289,7 @@ int main() {
     RUN(testDirtyStepFixtures);
     RUN(testCoverageMatrix);
     RUN(testZooSurfaceClassification);
+    RUN(testZooCurveClassification);
     RUN(testZooMesherFamily);
     if (failures) {
         std::printf("\n%d FAILURE(S)\n", failures);
