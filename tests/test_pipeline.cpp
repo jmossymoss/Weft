@@ -2036,6 +2036,87 @@ void testZooSurfaceClassification() {
     }
 }
 
+// WP1: selected mesher family on deterministic zoo fixtures. Kind presence
+// on the body is enough — do not hardcode face IDs. Any listed kind counts.
+void testZooMesherFamily() {
+    std::printf("-- zoo mesher family --\n");
+    enum class Mode { Defaults, DenseFlats, HoleJunction };
+    struct Row {
+        const char* fixture;
+        Mode mode;
+        // Acceptable kinds (any one present on the body passes).
+        weft::MesherKind accept[4];
+        int acceptCount;
+    };
+    const Row rows[] = {
+        // Cylinder side → revolution-grid; caps → disk-cap.
+        {"cylinder", Mode::Defaults,
+         {weft::MesherKind::RevolutionGrid, weft::MesherKind::DiskCap},
+         2},
+        // Flat panels: game-default minimal n-gon, or dense planar grid.
+        {"box", Mode::Defaults,
+         {weft::MesherKind::MinimalNGon, weft::MesherKind::PlanarGrid},
+         2},
+        {"box", Mode::DenseFlats, {weft::MesherKind::PlanarGrid}, 1},
+        // Blend strip → coons-grid (blend-related structured family).
+        {"fillet", Mode::Defaults, {weft::MesherKind::CoonsGrid}, 1},
+        // Through-bore plate: ring-junction when flats are dense enough for
+        // the junction route (minimal flats demote those faces to n-gons).
+        {"hole", Mode::HoleJunction,
+         {weft::MesherKind::RingJunction, weft::MesherKind::AnnulusRing,
+          weft::MesherKind::PlateWeb},
+         3},
+    };
+    for (const Row& row : rows) {
+        const std::string path =
+            tmpPath(std::string("weft_zoo_mesher_") + row.fixture + ".step");
+        weft::writeStep(weft::makeFixture(row.fixture), path);
+        const weft::Model model = weft::loadStep(path);
+        const weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationSettings settings;
+        switch (row.mode) {
+            case Mode::Defaults:
+                break;
+            case Mode::DenseFlats:
+                settings.defaults.minimal = false;
+                settings.defaults.gridU = 3;
+                settings.defaults.gridV = 3;
+                break;
+            case Mode::HoleJunction:
+                settings.defaults.minimal = false;
+                settings.defaults.gridU = 4;
+                settings.defaults.gridV = 4;
+                settings.defaults.axial = 2;
+                settings.defaults.junctionRings = 3;
+                break;
+        }
+        weft::GenerationReport report;
+        (void)weft::generate(model, analysis, settings, &report);
+
+        std::set<weft::MesherKind> present;
+        for (const auto& [fid, kind] : report.faceMesher) {
+            (void)fid;
+            present.insert(kind);
+        }
+        bool hit = false;
+        for (int i = 0; i < row.acceptCount; ++i) {
+            if (present.count(row.accept[i])) hit = true;
+        }
+        if (!hit) {
+            std::printf("  %s: expected one of", row.fixture);
+            for (int i = 0; i < row.acceptCount; ++i) {
+                std::printf(" %s", weft::mesherKindName(row.accept[i]));
+            }
+            std::printf("; got");
+            for (weft::MesherKind k : present) {
+                std::printf(" %s", weft::mesherKindName(k));
+            }
+            std::printf("\n");
+        }
+        CHECK(hit);
+    }
+}
+
 void testDirtyStepFixtures() {
     // Focused import + validity-policy checks for new §4.2 dirty fixtures.
     // Corpus meshing coverage stays in testCadCorpus; keep this minimal.
@@ -2171,6 +2252,7 @@ int main() {
     RUN(testDirtyStepFixtures);
     RUN(testCoverageMatrix);
     RUN(testZooSurfaceClassification);
+    RUN(testZooMesherFamily);
     if (failures) {
         std::printf("\n%d FAILURE(S)\n", failures);
         return 1;

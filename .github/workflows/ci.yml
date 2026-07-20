@@ -25,8 +25,13 @@ jobs:
           cmake --build build -j"$(nproc)"
       - name: Pipeline tests
         run: ctest --test-dir build --output-on-failure
+      - name: Coverage report
+        run: tools/coverage_report.sh
       - name: Corpus gate
         run: tools/corpus_gate.sh --no-golden
+      - name: Public corpus (optional; skipped unless WEFT_RUN_PUBLIC=1)
+        continue-on-error: true
+        run: tools/public_corpus_gate.sh
       - name: Strict release gate (expected red until WP3)
         continue-on-error: true
         run: tools/release_gate.sh
@@ -53,11 +58,20 @@ jobs:
       - name: Pipeline tests
         shell: pwsh
         run: ctest --test-dir build -C Release --output-on-failure
+      - name: Coverage report
+        shell: bash
+        run: tools/coverage_report.sh
       - name: Corpus invariants
         shell: bash
         run: |
           WEFT=build/bin/Release/weft.exe \
             tools/corpus_gate.sh --no-golden
+      - name: Public corpus (optional; skipped unless WEFT_RUN_PUBLIC=1)
+        continue-on-error: true
+        shell: bash
+        run: |
+          WEFT=build/bin/Release/weft.exe \
+            tools/public_corpus_gate.sh
       - name: Strict release gate (expected red until WP3)
         continue-on-error: true
         shell: bash
