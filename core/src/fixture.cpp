@@ -28,18 +28,25 @@
 #include <Geom_Curve.hxx>
 #include <Geom_Ellipse.hxx>
 #include <Geom_OffsetSurface.hxx>
+#include <Geom_Plane.hxx>
 #include <Geom_TrimmedCurve.hxx>
 #include <Precision.hxx>
 #include <TColgp_Array1OfPnt.hxx>
 #include <TColgp_Array2OfPnt.hxx>
+#include <TopAbs_Orientation.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
+#include <TopoDS_Shell.hxx>
+#include <TopoDS_Solid.hxx>
+#include <TopoDS_Wire.hxx>
 #include <gp_Ax1.hxx>
 #include <gp_Ax2.hxx>
+#include <gp_Ax3.hxx>
+#include <gp_Circ.hxx>
 #include <gp_Elips.hxx>
 #include <gp_Trsf.hxx>
 #include <gp_Vec.hxx>
@@ -758,8 +765,14 @@ TopoDS_Shape makeFixture(const std::string& name) {
                    true)
             .Face();
     }
-    if (name == "dirty_gap") {
-        // Two face shells sewn with a deliberate gap — invalid/open source.
+    if (name == "dirty_gap" || name == "gap_lo" || name == "gap_at") {
+        // Two coplanar faces with a controlled gap vs import sew (1e-4).
+        // dirty_gap: well above tol (0.2) — gap survives; invalid.
+        // gap_lo: below tol (5e-5) — sew should close the gap; still open shell.
+        // gap_at: at tol (1e-4) — borderline heal; research.
+        const double gap = (name == "gap_lo")   ? 5e-5
+                           : (name == "gap_at") ? 1e-4
+                                                : 0.2;
         const TopoDS_Face a =
             BRepBuilderAPI_MakeFace(
                 BRepBuilderAPI_MakePolygon(gp_Pnt(0, 0, 0), gp_Pnt(10, 0, 0),
@@ -768,26 +781,191 @@ TopoDS_Shape makeFixture(const std::string& name) {
                     .Wire(),
                 true)
                 .Face();
+        const double x0 = 10.0 + gap;
         const TopoDS_Face b =
             BRepBuilderAPI_MakeFace(
-                BRepBuilderAPI_MakePolygon(gp_Pnt(10.2, 0, 0),
-                                           gp_Pnt(20, 0, 0), gp_Pnt(20, 10, 0),
-                                           gp_Pnt(10.2, 10, 0), true)
+                BRepBuilderAPI_MakePolygon(gp_Pnt(x0, 0, 0), gp_Pnt(20, 0, 0),
+                                           gp_Pnt(20, 10, 0), gp_Pnt(x0, 10, 0),
+                                           true)
                     .Wire(),
                 true)
                 .Face();
-        BRepBuilderAPI_Sewing sew(0.05);
-        sew.Add(a);
-        sew.Add(b);
-        sew.Perform();
-        return sew.SewedShape();
+        // Pre-sew only for the legacy above-tol case (matches prior fixture).
+        // Below/at cases stay as a compound so import healing owns the gap.
+        if (name == "dirty_gap") {
+            BRepBuilderAPI_Sewing sew(0.05);
+            sew.Add(a);
+            sew.Add(b);
+            sew.Perform();
+            return sew.SewedShape();
+        }
+        BRep_Builder builder;
+        TopoDS_Compound compound;
+        builder.MakeCompound(compound);
+        builder.Add(compound, a);
+        builder.Add(compound, b);
+        return compound;
+    }
+    if (name == "sliver") {
+        // Micro-edge / sliver face: 20 x 2e-4 open strip (aspect ~1e5).
+        // Not a closed solid; adversarial for sampling and welding.
+        return BRepBuilderAPI_MakeFace(
+                   BRepBuilderAPI_MakePolygon(
+                       gp_Pnt(0, 0, 0), gp_Pnt(20, 0, 0), gp_Pnt(20, 2e-4, 0),
+                       gp_Pnt(0, 2e-4, 0), true)
+                       .Wire(),
+                   true)
+            .Face();
+    }
+    if (name == "near_dup") {
+        // Near-coincident parallel edges (~1e-5 apart): duplicate-ish border
+        // topology that import sew may or may not collapse.
+        const TopoDS_Face a =
+            BRepBuilderAPI_MakeFace(
+                BRepBuilderAPI_MakePolygon(gp_Pnt(0, 0, 0), gp_Pnt(10, 0, 0),
+                                           gp_Pnt(10, 10, 0), gp_Pnt(0, 10, 0),
+                                           true)
+                    .Wire(),
+                true)
+                .Face();
+        const double eps = 1e-5;
+        const TopoDS_Face b =
+            BRepBuilderAPI_MakeFace(
+                BRepBuilderAPI_MakePolygon(
+                    gp_Pnt(10.0 + eps, 0, 0), gp_Pnt(20, 0, 0),
+                    gp_Pnt(20, 10, 0), gp_Pnt(10.0 + eps, 10, 0), true)
+                    .Wire(),
+                true)
+                .Face();
+        BRep_Builder builder;
+        TopoDS_Compound compound;
+        builder.MakeCompound(compound);
+        builder.Add(compound, a);
+        builder.Add(compound, b);
+        return compound;
+    }
+    if (name == "rev_orient") {
+        // Closed box shell with one face orientation flipped — inconsistent
+        // source winding / reversed face.
+        TopoDS_Shape box = BRepPrimAPI_MakeBox(12.0, 10.0, 8.0).Shape();
+        BRep_Builder builder;
+        TopoDS_Shell shell;
+        builder.MakeShell(shell);
+        int faceIdx = 0;
+        for (TopExp_Explorer ex(box, TopAbs_FACE); ex.More(); ex.Next()) {
+            TopoDS_Face f = TopoDS::Face(ex.Current());
+            if (faceIdx == 0) {
+                f.Orientation(f.Orientation() == TopAbs_FORWARD
+                                  ? TopAbs_REVERSED
+                                  : TopAbs_FORWARD);
+            }
+            builder.Add(shell, f);
+            ++faceIdx;
+        }
+        TopoDS_Solid solid;
+        builder.MakeSolid(solid);
+        builder.Add(solid, shell);
+        return solid;
+    }
+    if (name == "dup_trim") {
+        // Planar face with the same inner hole wire added twice (duplicate trim).
+        Handle(Geom_Plane) plane =
+            new Geom_Plane(gp_Ax3(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)));
+        const TopoDS_Wire outer =
+            BRepBuilderAPI_MakePolygon(gp_Pnt(0, 0, 0), gp_Pnt(40, 0, 0),
+                                       gp_Pnt(40, 30, 0), gp_Pnt(0, 30, 0),
+                                       true)
+                .Wire();
+        BRepBuilderAPI_MakeFace maker(plane, outer);
+        const gp_Circ circ(gp_Ax2(gp_Pnt(20, 15, 0), gp_Dir(0, 0, 1)), 6.0);
+        const TopoDS_Wire hole =
+            BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(circ).Edge()).Wire();
+        maker.Add(hole);
+        maker.Add(hole);
+        return maker.Face();
+    }
+    if (name == "bowtie") {
+        // Self-intersecting (bow-tie) outer wire. Research-only: must load
+        // without crash; mesh quality is explicitly unbounded.
+        BRepBuilderAPI_MakePolygon poly;
+        poly.Add(gp_Pnt(0, 0, 0));
+        poly.Add(gp_Pnt(10, 10, 0));
+        poly.Add(gp_Pnt(10, 0, 0));
+        poly.Add(gp_Pnt(0, 10, 0));
+        poly.Close();
+        BRepBuilderAPI_MakeFace maker(poly.Wire(), true);
+        if (maker.IsDone()) return maker.Face();
+        // If OCCT refuses the face, still emit the wire edges as a compound
+        // so import has a deterministic non-empty shape.
+        BRep_Builder builder;
+        TopoDS_Compound compound;
+        builder.MakeCompound(compound);
+        for (TopExp_Explorer ex(poly.Wire(), TopAbs_EDGE); ex.More();
+             ex.Next()) {
+            builder.Add(compound, ex.Current());
+        }
+        return compound;
+    }
+    if (name == "tan_slit") {
+        // Atomic tangent / zero-width contact: two equal bores whose walls
+        // meet at a generator (centers = 2r). Smaller than slitdrill.
+        TopoDS_Shape block = BRepPrimAPI_MakeBox(36.0, 20.0, 12.0).Shape();
+        const double r = 5.0;
+        const TopoDS_Shape boreA =
+            BRepPrimAPI_MakeCylinder(
+                gp_Ax2(gp_Pnt(12.0, 10.0, -1.0), gp_Dir(0, 0, 1)), r, 14.0)
+                .Shape();
+        const TopoDS_Shape boreB =
+            BRepPrimAPI_MakeCylinder(
+                gp_Ax2(gp_Pnt(12.0 + 2.0 * r, 10.0, -1.0), gp_Dir(0, 0, 1)), r,
+                14.0)
+                .Shape();
+        TopoDS_Shape cut = BRepAlgoAPI_Cut(block, boreA).Shape();
+        return BRepAlgoAPI_Cut(cut, boreB).Shape();
+    }
+    if (name == "seam_cut") {
+        // Periodic cylinder seam (default +X) intersected by a wall notch.
+        TopoDS_Shape cyl = BRepPrimAPI_MakeCylinder(10.0, 30.0).Shape();
+        const TopoDS_Shape notch =
+            BRepPrimAPI_MakeBox(gp_Pnt(7.0, -2.5, 8.0),
+                                gp_Pnt(12.0, 2.5, 18.0))
+                .Shape();
+        return BRepAlgoAPI_Cut(cyl, notch).Shape();
+    }
+    if (name == "hi_aspect") {
+        // High aspect-ratio / near-singular B-spline patch (100 x 0.08,
+        // nearly flat poles). Open face; research meshing.
+        TColgp_Array2OfPnt poles(1, 3, 1, 3);
+        for (int u = 1; u <= 3; ++u) {
+            for (int v = 1; v <= 3; ++v) {
+                const double x = 50.0 * (u - 1);
+                const double y = 0.04 * (v - 1);
+                const double z = (u == 2 && v == 2) ? 1e-3 : 0.0;
+                poles.SetValue(u, v, gp_Pnt(x, y, z));
+            }
+        }
+        Handle(Geom_BSplineSurface) surf =
+            GeomAPI_PointsToBSplineSurface(poles).Surface();
+        return BRepBuilderAPI_MakeFace(surf, Precision::Confusion()).Face();
+    }
+    if (name == "tiny_big") {
+        // Very small feature on a large body: 400-unit plate, r=0.08 bore.
+        TopoDS_Shape plate = BRepPrimAPI_MakeBox(400.0, 400.0, 20.0).Shape();
+        const TopoDS_Shape bore =
+            BRepPrimAPI_MakeCylinder(
+                gp_Ax2(gp_Pnt(200.0, 200.0, -1.0), gp_Dir(0, 0, 1)), 0.08,
+                22.0)
+                .Shape();
+        return BRepAlgoAPI_Cut(plate, bore).Shape();
     }
     throw std::runtime_error(
         "unknown fixture: " + name +
         " (expected cylinder|box|cone|sphere|torus|fillet|hole|demo|boss|"
         "hairline|canrev|slitdrill|microedge|filletslot|torture|extrusion|"
         "bspline_slab|bezier_slab|bezier_face|offset_slab|ellipse_plate|"
-        "plate_holes|compound2|open_shell|dirty_gap)");
+        "plate_holes|compound2|open_shell|dirty_gap|gap_lo|gap_at|sliver|"
+        "near_dup|rev_orient|dup_trim|bowtie|tan_slit|seam_cut|hi_aspect|"
+        "tiny_big)");
 }
 
 }  // namespace weft

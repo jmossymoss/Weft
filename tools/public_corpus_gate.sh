@@ -10,9 +10,9 @@
 #
 #   tools/public_corpus_gate.sh           # ABC nightly (default)
 #   tools/public_corpus_gate.sh abc       # same
+#   tools/public_corpus_gate.sh nist      # NIST/CAx-IF interop smoke
 #   tools/public_corpus_gate.sh mambo     # MAMBO blocking/stress smoke
-#   tools/public_corpus_gate.sh fusion    # Fusion 360 smoke only
-#   tools/public_corpus_gate.sh all       # ABC, then fusion/nist/mambo if present
+#   tools/public_corpus_gate.sh all       # ABC, then NIST, then MAMBO
 #
 # Validity-aware: watertight / demotion checks only when validity=closed_solid.
 # research_stress (MAMBO Medium) may fail meshing without failing the gate.
@@ -38,23 +38,22 @@ case "$SCOPE" in
     abc|abc-nightly|nightly)
         MANIFESTS=(tests/public_corpus/abc_nightly.tsv)
         ;;
+    nist|nist-interop|cax-if)
+        MANIFESTS=(tests/public_corpus/nist_interop.tsv)
+        ;;
     mambo|mambo-stress)
         MANIFESTS=(tests/public_corpus/mambo_stress.tsv)
         ;;
-    fusion|fusion360|fusion360-smoke)
-        MANIFESTS=(tests/public_corpus/fusion360_smoke.tsv)
-        ;;
     all)
-        # ABC first (broad-nightly / geometric diversity), then optional layers.
+        # Public authority: ABC (diversity), NIST (interop), MAMBO (stress).
         MANIFESTS=(
             tests/public_corpus/abc_nightly.tsv
-            tests/public_corpus/fusion360_smoke.tsv
             tests/public_corpus/nist_interop.tsv
             tests/public_corpus/mambo_stress.tsv
         )
         ;;
     *)
-        echo "usage: $0 [abc|mambo|fusion|all]" >&2
+        echo "usage: $0 [abc|nist|mambo|all]" >&2
         exit 2
         ;;
 esac
@@ -186,9 +185,9 @@ done
 
 if [[ "$any_present" == 0 ]]; then
     echo "public corpus gate: no cached CAD files for selected manifests"
-    echo "  ABC (default): export WEFT_ABC_ROOT=/path/to/abc && tools/fetch_public_corpus.sh abc-nightly"
-    echo "  mambo: tools/fetch_mambo_corpus.sh"
-    echo "  docs: tests/public_corpus/ABC.md tests/public_corpus/MAMBO.md"
+    echo "  ABC:  export WEFT_ABC_ROOT=/path/to/abc && tools/fetch_public_corpus.sh abc-nightly"
+    echo "  NIST: tools/fetch_nist_corpus.sh"
+    echo "  MAMBO: tools/fetch_mambo_corpus.sh"
     exit 0
 fi
 

@@ -30,8 +30,19 @@ slitdrill	fixture	fixtures/slitdrill.step	1	0	0	0	visual_baselines/generated/sli
 compound2	fixture	fixtures/generated/compound2.step	1	0	0	0	-	closed_solid	interaction-zoo	cylinder,plane	circle,line	compound,multi_solid	two solids in one compound; multi-body watertight deferred
 demo	fixture	fixtures/demo.step	1	0	0	1	-	closed_solid	interaction-zoo	plane,cylinder,torus	circle,line	combined	alias of torture
 torture	release	fixtures/torture.step	1	0	0	1	visual_baselines/generated/torture.png	closed_solid	release	plane,cylinder,torus	circle,line	combined_features	release synthetic combined scene
-open_shell	dirty	fixtures/generated/open_shell.step	1	0	0	0	-	open	dirty-step	plane	line	open_shell	single face; not a closed solid
-dirty_gap	dirty	fixtures/generated/dirty_gap.step	1	0	0	0	-	invalid	dirty-step	plane	line	gap,sewing	sewn faces with deliberate gap
+open_shell	dirty	fixtures/generated/open_shell.step	1	0	0	0	-	open	dirty-step	plane	line	open_shell	open shell; expect open mesh (not a closed solid)
+dirty_gap	dirty	fixtures/generated/dirty_gap.step	1	0	0	0	-	invalid	dirty-step	plane	line	gap,sewing	gap above heal tol (0.2>>1e-4); expect open/invalid bounded mesh, no crash
+gap_lo	dirty	fixtures/generated/gap_lo.step	1	0	0	0	-	open	dirty-step	plane	line	gap,sewing	gap below heal tol (5e-5<1e-4); expect sew heal of gap; still open shell
+gap_at	dirty	fixtures/generated/gap_at.step	1	0	0	0	-	research	dirty-step	plane	line	gap,sewing	gap at heal tol (1e-4); borderline heal; bounded research mesh
+sliver	dirty	fixtures/generated/sliver.step	1	0	0	0	-	open	dirty-step	plane	line	sliver,micro_edge	sliver face (20x2e-4); expect open bounded mesh, no crash
+near_dup	dirty	fixtures/generated/near_dup.step	1	0	0	0	-	invalid	dirty-step	plane	line	near_coincident	near-coincident edges (~1e-5); expect open/invalid bounded mesh
+rev_orient	dirty	fixtures/generated/rev_orient.step	1	0	0	0	-	invalid	dirty-step	plane	line	reversed_face	one face orientation flipped; expect load+mesh without crash (bounded)
+dup_trim	dirty	fixtures/generated/dup_trim.step	1	0	0	0	-	invalid	dirty-step	plane	circle,line	duplicate_trim	duplicate inner hole trim; expect load; heal/reject/bounded mesh
+bowtie	dirty	fixtures/generated/bowtie.step	1	1	0	0	-	research	dirty-step	plane	line	self_intersect	self-intersecting wire; research — load + bounded mesh, no crash
+tan_slit	dirty	fixtures/generated/tan_slit.step	1	0	0	0	-	research	dirty-step	plane,cylinder	circle,line	tangent_contact	two tangent bores (zero-width wall meet); research bounded defects OK
+seam_cut	dirty	fixtures/generated/seam_cut.step	1	0	0	0	-	research	dirty-step	cylinder,plane	circle,line	periodic_seam,seam_notch	cylinder seam crossed by notch; research meshing
+hi_aspect	dirty	fixtures/generated/hi_aspect.step	1	1	0	0	-	research	dirty-step	bspline	bspline	high_aspect,near_singular	100x0.08 near-flat patch; research open face mesh
+tiny_big	dirty	fixtures/generated/tiny_big.step	1	0	0	0	-	research	dirty-step	plane,cylinder	circle,line	tiny_on_large	r=0.08 bore on 400 plate; research scale contrast
 flaregun	release	STEP_Examples/flaregun.stp	1	0	0	1	-	closed_solid	release	-	-	hard_surface	release hard-surface asset
 iso14649-demo	release	STEP_Examples/iso14649-demo.stp	1	0	0	1	-	closed_solid	release	-	-	bores,primitives	release mechanical primitives
 foam	release	STEP_Examples/foam.stp	1	0	0	0	-	closed_solid	release	-	-	hard_surface	release; watertight known-red until WP3

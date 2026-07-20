@@ -15,7 +15,9 @@ namespace weft {
 // Interaction zoo: hole, plate_holes, slotted, barrel, barrel2, drilled,
 //   notched, boss, bossfillet, ribbon, ribbonnotch, filletslot, hairline,
 //   slitdrill, torture, compound2
-// Dirty / adversarial: open_shell, dirty_gap, bezier_face
+// Dirty / adversarial (§4.2): open_shell, dirty_gap, bezier_face,
+//   sliver, near_dup, gap_lo, gap_at, rev_orient, dup_trim, bowtie,
+//   tan_slit, seam_cut, hi_aspect, tiny_big
 // Aliases: demo -> torture
 TopoDS_Shape makeFixture(const std::string& name);
 

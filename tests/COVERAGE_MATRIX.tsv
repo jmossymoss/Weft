@@ -22,3 +22,15 @@ multi_bore	feature	multiple holes on one plate
 compound	feature	multi-solid compound
 open_shell	feature	intentionally open shell
 gap	feature	tolerance gap / dirty sew
+sewing	feature	import/fixture sewing of open faces
+sliver	feature	micro-edge or sliver face
+micro_edge	feature	extremely short edge / thin strip
+near_coincident	feature	near-coincident or duplicate verts/edges
+reversed_face	feature	reversed or inconsistent face orientation
+duplicate_trim	feature	degenerate or duplicate trim wires
+self_intersect	feature	self-intersecting wire
+tangent_contact	feature	tangent / zero-width contact region
+seam_notch	feature	periodic seam intersected by notch or hole
+high_aspect	feature	high aspect-ratio surface patch
+near_singular	feature	near-singular / degenerate Jacobian patch
+tiny_on_large	feature	very small feature on large body
