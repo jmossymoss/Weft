@@ -53,10 +53,17 @@ extracted models.
 ## Other subsets
 
 ```sh
-WEFT_FETCH_FUSION_ZIP=1 tools/fetch_public_corpus.sh fusion360-smoke
+tools/fetch_mambo_corpus.sh                # preferred MAMBO stress fetch
+tools/fetch_public_corpus.sh mambo         # thin wrapper → fetch_mambo_corpus.sh
 tools/fetch_public_corpus.sh nist
-tools/fetch_public_corpus.sh mambo
+WEFT_FETCH_FUSION_ZIP=1 tools/fetch_public_corpus.sh fusion360-smoke
+
+# MAMBO opt-in gate (require_watertight only for validity=closed_solid)
+WEFT_RUN_PUBLIC=1 tools/public_corpus_gate.sh mambo
 ```
+
+See [`MAMBO.md`](MAMBO.md): shallow sparse-clone of Basic/Simple/Medium, ~13
+smoke STEP files under `_cache/mambo/`. Cache is gitignored.
 
 ## Environment
 
@@ -64,7 +71,9 @@ tools/fetch_public_corpus.sh mambo
   (default `tests/public_corpus/_cache`)
 - `WEFT_ABC_ROOT` — local ABC STEP tree for nightly selection
 - `WEFT_ABC_SEED` — sampler seed (default `42`)
-- `WEFT_RUN_PUBLIC=1` — enable `tools/public_corpus_gate.sh` (ABC first)
+- `WEFT_MAMBO_ROOT` — optional existing MAMBO checkout for `fetch_mambo_corpus.sh`
+- `WEFT_RUN_PUBLIC=1` — enable `tools/public_corpus_gate.sh` (ABC default;
+  use `mambo` / `all` for other layers)
 - `WEFT_FETCH_FUSION_ZIP=1` — allow Fusion zip download (optional layer)
 
 Public cases are intentionally kept out of `CAD_CORPUS.tsv` so missing cache

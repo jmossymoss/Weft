@@ -1,3 +1,20 @@
-# MAMBO meshing-topology stress (public corpus authority; not geometry coverage).
+# MAMBO difficult blocking / meshing configurations (supplement only).
+# Paths are relative to tests/public_corpus/_cache/
+# Fetch: tools/fetch_mambo_corpus.sh  (or tools/fetch_public_corpus.sh mambo)
+# Upstream: https://gitlab.com/franck.ledoux/mambo (Apache-2.0)
+# Validity: closed_solid => gate requires watertight mesh; research_stress =>
+# mesh/import may fail or be non-watertight (stress/research outcome, not release).
 # id	local_path	validity	notes
-MAMBO_SMOKE_1	mambo/pending/case_01.step	closed_solid	placeholder; clone https://gitlab.com/franck.ledoux/mambo
+MAMBO_B0	mambo/Basic/B0.step	closed_solid	basic boolean primitive; hex-blocking smoke
+MAMBO_B25	mambo/Basic/B25.step	closed_solid	basic; denser boolean composition (watertight smoke)
+MAMBO_B40	mambo/Basic/B40.step	closed_solid	basic; larger boolean composition
+MAMBO_B1	mambo/Basic/B1.step	research_stress	basic; known open-edge meshing stress (not release-gated)
+MAMBO_S0	mambo/Simple/S0.step	closed_solid	simple CAD boolean part
+MAMBO_S5	mambo/Simple/S5.step	closed_solid	simple; higher face-count blocking stress
+MAMBO_S34	mambo/Simple/S34.step	closed_solid	simple; multi-feature blocking
+MAMBO_M1	mambo/Medium/M1.step	closed_solid	medium; holes and chamfers
+MAMBO_M2	mambo/Medium/M2.step	closed_solid	medium; compact feature stress
+MAMBO_M3	mambo/Medium/M3.step	research_stress	medium; dense holes — research/stress; watertight not release-gated
+MAMBO_M5	mambo/Medium/M5.step	research_stress	medium; chamfer-heavy topology stress
+MAMBO_M7	mambo/Medium/M7.step	research_stress	medium; high face-count blocking stress
+MAMBO_M8	mambo/Medium/M8.step	research_stress	medium; largest STEP — topology stress

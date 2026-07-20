@@ -61,7 +61,9 @@ tools/corpus_gate.sh --no-golden
 tools/release_gate.sh          # expected red until WP3
 tools/corpus_scoreboard.sh > build/scoreboard.tsv
 tools/fetch_public_corpus.sh status
-WEFT_RUN_PUBLIC=1 tools/public_corpus_gate.sh   # ABC first; opt-in
+tools/fetch_mambo_corpus.sh
+WEFT_RUN_PUBLIC=1 tools/public_corpus_gate.sh         # ABC first; opt-in
+WEFT_RUN_PUBLIC=1 tools/public_corpus_gate.sh mambo   # MAMBO stress smoke
 ```
 
 Public rows run only when `WEFT_RUN_PUBLIC=1` and cache files exist
