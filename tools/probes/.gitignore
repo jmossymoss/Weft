@@ -1,2 +1,4 @@
-probe*
-!probe*.cpp
+# No compiled leftover binaries from the retired probe tree.
+*
+!.gitignore
+!README.md
