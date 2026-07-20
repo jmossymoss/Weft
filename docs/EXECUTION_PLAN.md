@@ -388,7 +388,8 @@ new architecture decision supported by release-corpus evidence.
 experiments. They are off by default and are not a second product architecture.
 They may be used for controlled diagnosis. Promote or remove them only after an
 A/B report across the release set shows a consistent advantage and no new
-correctness failures.
+correctness failures. Evidence (keep quarantined):
+`docs/evidence/wp2-stitch-ab-2026-07-20.md` via `tools/stitch_ab.sh`.
 
 ### AD-3: mesher breadth
 

@@ -62,7 +62,9 @@ Where the opt-in lives:
 - Tests/probes may force it for A/B; corpus and release gates do not
 
 Promote or remove only after the AD-2 A/B evidence criteria in the execution
-plan.
+plan. Release-set A/B (2026-07-20): keep quarantined —
+[`docs/evidence/wp2-stitch-ab-2026-07-20.md`](evidence/wp2-stitch-ab-2026-07-20.md)
+(`tools/stitch_ab.sh`).
 
 ## What is not a second architecture
 
