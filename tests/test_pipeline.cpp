@@ -11,6 +11,7 @@
 #include "weft/model.hpp"
 #include "weft/recipe.hpp"
 #include "weft/remap.hpp"
+#include "weft/topology_signature.hpp"
 #include "weft/validate.hpp"
 
 #include <BRepAdaptor_Curve.hxx>
@@ -2118,6 +2119,49 @@ void testPromotedProbeInvariants() {
     }
 }
 
+
+// WP2 / §3.2: topology signature is stable across repeated generate() on
+// the same platform (policy fields; not byte-identical OBJ floats).
+void testTopologySignature() {
+    std::printf("-- topology signature --\n");
+    for (const char* name : {"cylinder", "box", "torture"}) {
+        const std::string path =
+            tmpPath(std::string("weft_topo_sig_") + name + ".step");
+        weft::writeStep(weft::makeFixture(name), path);
+        weft::Model model = weft::loadStep(path);
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationSettings gs;
+        weft::TopologySignatureInfo info;
+        info.inputLabel = path;
+
+        weft::GenerationReport r1, r2;
+        weft::PolyMesh m1 = weft::generate(model, analysis, gs, &r1);
+        weft::PolyMesh m2 = weft::generate(model, analysis, gs, &r2);
+        weft::ValidationReport v1 = weft::validateMesh(m1, &model);
+        weft::ValidationReport v2 = weft::validateMesh(m2, &model);
+        const std::string s1 =
+            weft::formatTopologySignature(m1, model, r1, v1, info);
+        const std::string s2 =
+            weft::formatTopologySignature(m2, model, r2, v2, info);
+        std::string diff;
+        CHECK(weft::topologySignaturesEqual(s1, s2, &diff));
+        if (!diff.empty()) {
+            std::printf("%s", diff.c_str());
+        }
+        CHECK(s1.find("schema=weft.topology_signature.v1") !=
+              std::string::npos);
+        CHECK(s1.find("kind.") != std::string::npos);
+        CHECK(s1.find("quads=") != std::string::npos);
+        CHECK(s1.find("anchors.uv_qhash=") != std::string::npos);
+        CHECK(s1.find("info.note=") != std::string::npos);
+        // Informational drift must not break policy equality.
+        std::string s1b = s1;
+        s1b += "info.extra=platform-noise\n";
+        CHECK(weft::topologySignaturesEqual(s1, s1b, &diff));
+        std::printf("  %s policy-equal across repeated generate()\n", name);
+    }
+}
+
 void testCadCorpus() {
     std::printf("-- layered CAD corpus --\n");
     const std::filesystem::path root =
@@ -2507,6 +2551,7 @@ int main() {
     RUN(testCadConversionPreservesObjects);
     RUN(testAllMesherStrategies);
     RUN(testDemotionAttribution);
+    RUN(testTopologySignature);
     RUN(testPromotedProbeInvariants);
     RUN(testCadCorpus);
     RUN(testDirtyStepFixtures);

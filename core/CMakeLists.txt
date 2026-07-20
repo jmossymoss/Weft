@@ -16,6 +16,7 @@ add_library(weft_core
   src/recipe.cpp
   src/remap.cpp
   src/validate.cpp
+  src/topology_signature.cpp
   src/export_fbx.cpp
   src/export_gltf.cpp
   src/viz.cpp

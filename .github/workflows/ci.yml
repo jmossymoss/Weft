@@ -29,6 +29,17 @@ jobs:
         run: tools/coverage_report.sh
       - name: Corpus gate
         run: tools/corpus_gate.sh --no-golden
+      - name: Topology signature fixture set
+        run: |
+          mkdir -p build/topology_signatures
+          tools/topology_signature.sh fixture-set -o build/topology_signatures
+          tools/topology_signature.sh self-check
+      - name: Upload topology signatures
+        uses: actions/upload-artifact@v4
+        with:
+          name: topology-signatures-linux
+          path: build/topology_signatures/
+          if-no-files-found: warn
       - name: Public corpus (optional; skipped unless WEFT_RUN_PUBLIC=1)
         continue-on-error: true
         run: tools/public_corpus_gate.sh

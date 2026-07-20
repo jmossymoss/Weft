@@ -61,6 +61,7 @@ release gate never consumes them.
 ctest --test-dir build --output-on-failure
 tools/coverage_report.sh
 tools/corpus_gate.sh --no-golden
+tools/topology_signature.sh self-check   # §3.2 cross-platform signature smoke
 tools/release_gate.sh          # expected red until WP3
 tools/corpus_scoreboard.sh > build/scoreboard.tsv
 tools/fetch_public_corpus.sh status
@@ -68,6 +69,11 @@ tools/fetch_mambo_corpus.sh
 WEFT_RUN_PUBLIC=1 tools/public_corpus_gate.sh         # ABC first; opt-in
 WEFT_RUN_PUBLIC=1 tools/public_corpus_gate.sh mambo   # MAMBO stress smoke
 ```
+
+Topology signatures (`tools/topology_signature.sh`) are the §3.2 machine-
+comparable artifact for face routing, raw/empty status, polygon arity, and
+connectivity — not golden OBJ bytes. See
+[`docs/PRODUCTION_PATH.md`](../docs/PRODUCTION_PATH.md).
 
 Public rows run only when `WEFT_RUN_PUBLIC=1` and cache files exist
 (`tools/public_corpus_gate.sh`; default manifest is `abc_nightly.tsv`).

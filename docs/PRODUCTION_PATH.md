@@ -64,9 +64,7 @@ Where the opt-in lives:
   `docs/evidence/wp2-probe-retirement-2026-07-20.md`).
 
 Promote or remove only after the AD-2 A/B evidence criteria in the execution
-plan. Release-set A/B (2026-07-20): keep quarantined —
-[`docs/evidence/wp2-stitch-ab-2026-07-20.md`](evidence/wp2-stitch-ab-2026-07-20.md)
-(`tools/stitch_ab.sh`).
+plan.
 
 ## What is not a second architecture
 
@@ -81,3 +79,27 @@ plan. Release-set A/B (2026-07-20): keep quarantined —
 
 If a new entry point meshes without `weft::generate()`, treat that as a WP2
 blocker and document it here before landing it.
+
+## Cross-platform topology signature (§3.2)
+
+Machine-comparable artifact for Linux/Windows determinism. It captures face
+routing (`MesherKind` counts + per-face ids), raw/empty/floor status, polygon
+arity, connectivity/validity metrics, and an optional quantized UV anchor
+hash. Byte-identical OBJ floats are **not** required.
+
+```sh
+# Emit (runs generate + validate; writes policy + info lines)
+tools/topology_signature.sh emit model.step -o model.sig
+# or: build/cli/weft mesh model.step --validate --signature model.sig
+
+# Compare (exit 0 if policy-equal, 1 if not; ignores info.* lines)
+tools/topology_signature.sh compare a.sig b.sig
+
+# Same-platform smoke (cylinder / box / torture, twice each)
+tools/topology_signature.sh self-check
+
+# Small CI fixture set for later Windows comparison
+tools/topology_signature.sh fixture-set -o build/topology_signatures
+```
+
+Schema: `weft.topology_signature.v1` (`weft::formatTopologySignature`).
