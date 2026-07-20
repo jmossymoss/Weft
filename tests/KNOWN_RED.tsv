@@ -4,7 +4,11 @@ slitdrill	default	require_watertight	0	fixtures/slitdrill.step	WP3	tangent-conta
 ribbonnotch	default	require_watertight	0	fixtures/generated/ribbonnotch.step	WP3	open edges on default profile restored without filename exemption
 foam	cad	require_watertight	0	STEP_Examples/foam.stp	WP3	release watertight restored without filename exemption
 foam	default	require_watertight	0	STEP_Examples/foam.stp	WP3	release watertight restored without filename exemption
+foam_wt_open_nm	cad	require_watertight	0	STEP_Examples/foam.stp	WP3	plane_fillet_bspline_junction open+NM restored without filename exemption
+foam_wt_open_nm	default	require_watertight	0	STEP_Examples/foam.stp	WP3	plane_fillet_bspline_junction open+NM restored without filename exemption
 teleporter	cad	require_watertight	0	STEP_Examples/teleporter.stp	WP3	release watertight restored without filename exemption
 teleporter	default	require_watertight	0	STEP_Examples/teleporter.stp	WP3	release watertight restored without filename exemption
+teleporter_wt_open	cad	require_watertight	0	STEP_Examples/teleporter.stp	WP3	planar_ngon_border_contract opens restored without filename exemption
+teleporter_wt_open	default	require_watertight	0	STEP_Examples/teleporter.stp	WP3	planar_ngon_border_contract opens restored without filename exemption
 tork	cad	require_watertight	0	STEP_Examples/tork.stp	WP3	broken source; replace or heal with explicit diagnostic, then enforce watertight
 tork	default	require_watertight	0	STEP_Examples/tork.stp	WP3	broken source; replace or heal with explicit diagnostic, then enforce watertight

@@ -11,6 +11,7 @@
 #include "weft/model.hpp"
 #include "weft/recipe.hpp"
 #include "weft/remap.hpp"
+#include "weft/validate.hpp"
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
@@ -1705,8 +1706,43 @@ void testAllMesherStrategies() {
         weft::loadStep((corpus / "flaregun.stp").string());
     const weft::Model foam =
         weft::loadStep((corpus / "foam.stp").string());
+    const weft::Model teleporter =
+        weft::loadStep((corpus / "teleporter.stp").string());
     runModel("flaregun", flaregun, cad);  // rail ladder
     runModel("foam", foam, cad, false); // dome; closedness in KNOWN_RED/WP3
+
+    // WP1 focused asserts for release watertight known-red classes. Meshers
+    // are unchanged; these lock the closed-solid failure shape until WP3.
+    // Neighborhood STEP extracts under tests/regressions/release/ are
+    // open-shell diagnostics only (see docs/evidence/wp1-release-reducers-*).
+    auto checkClosedSolidOpenClass =
+        [&](const char* label, const weft::Model& model, size_t minOpen,
+            size_t maxOpen, size_t maxNonManifold) {
+            const weft::Analysis analysis = weft::analyze(model);
+            const weft::PolyMesh mesh = weft::generate(model, analysis, cad);
+            const weft::ValidationReport vr =
+                weft::validateMesh(mesh, &model);
+            CHECK_EQ(vr.inputBoundaryEdges, 0u);
+            const size_t unexplained =
+                vr.openEdges >= vr.openEdgesOnInputBoundary
+                    ? vr.openEdges - vr.openEdgesOnInputBoundary
+                    : vr.openEdges;
+            if (unexplained < minOpen || unexplained > maxOpen) {
+                std::printf("FAIL %s unexplained open edges %zu not in [%zu,%zu]\n",
+                            label, unexplained, minOpen, maxOpen);
+                ++failures;
+            }
+            if (vr.nonManifoldEdges > maxNonManifold) {
+                std::printf("FAIL %s non-manifold %zu > %zu\n", label,
+                            vr.nonManifoldEdges, maxNonManifold);
+                ++failures;
+            }
+            CHECK(!vr.watertight());
+        };
+    // foam: plane/fillet/bspline junction open+NM (cad profile).
+    checkClosedSolidOpenClass("foam_wt_open_nm", foam, 1, 64, 32);
+    // teleporter: multi-neighbor planar n-gon border opens (cad profile).
+    checkClosedSolidOpenClass("teleporter_wt_open", teleporter, 1, 64, 32);
 
     // Regression for impossible two-vertex rail wires: a propagated radial
     // edit used to pin both rail edges to one segment, defeating the generic

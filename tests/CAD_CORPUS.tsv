@@ -54,6 +54,11 @@ flaregun	release	STEP_Examples/flaregun.stp	1	0	0	1	-	closed_solid	release	-	-	h
 iso14649-demo	release	STEP_Examples/iso14649-demo.stp	1	0	0	1	-	closed_solid	release	-	-	bores,primitives	release mechanical primitives
 foam	release	STEP_Examples/foam.stp	1	0	0	0	-	closed_solid	release	-	-	hard_surface	release; watertight known-red until WP3
 teleporter	release	STEP_Examples/teleporter.stp	1	0	0	0	-	closed_solid	release	-	-	hard_surface	release; watertight known-red until WP3
+foam_wt_open_nm	regression	STEP_Examples/foam.stp	1	0	0	0	-	closed_solid	release	-	-	plane_fillet_bspline_junction,open_edges,non_manifold	WP1 closed-solid open+NM class; full model remains smallest closed repro (see docs/evidence/wp1-release-reducers-2026-07-20.md)
+teleporter_wt_open	regression	STEP_Examples/teleporter.stp	1	0	0	0	-	closed_solid	release	-	-	planar_ngon_border_contract,open_edges	WP1 closed-solid open-edge class; full model remains smallest closed repro (see docs/evidence/wp1-release-reducers-2026-07-20.md)
+foam_plane_fillet_bspline	regression	regressions/release/foam_plane_fillet_bspline_r1.step	1	0	0	0	-	open	release	plane,cylinder,bspline	circle,line,bspline	plane_fillet_bspline_junction	open-shell neighborhood diagnostic for foam junction class; not a closed-solid watertight repro
+foam_fillet_bspline	regression	regressions/release/foam_fillet_bspline_r1.step	1	0	0	0	-	open	release	cylinder,plane,bspline	circle,line,bspline	fillet_bspline_junction	open-shell neighborhood diagnostic for foam fillet/bspline CAD cluster; not a closed-solid watertight repro
+teleporter_planar_ngon	regression	regressions/release/teleporter_planar_ngon_r1.step	1	0	0	0	-	open	release	plane	line	planar_ngon_border_contract	open-shell neighborhood diagnostic for teleporter planar n-gon class; not a closed-solid watertight repro
 nasty_cheese	stress	STEP_Examples/nasty_cheese.stp	0	0	0	0	-	closed_solid	target-assets	-	-	stress	manual/scheduled stress
 tork	stress	STEP_Examples/tork.stp	0	0	0	0	-	invalid	target-assets	-	-	broken_source	broken source; mesh without crash
 MP9	performance	STEP_Examples/MP9.stp	0	6	2	0	-	closed_solid	target-assets	-	-	performance,workload	performance/integration only — not geometry coverage
