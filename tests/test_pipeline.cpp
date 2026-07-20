@@ -504,6 +504,16 @@ void testFillet() {
     // Curved fillet strips now take the Coons patch (border rows on
     // the 3D edge curves) instead of a surface-sampled grid.
     CHECK(report.faceMesher[filletFaceId] == weft::MesherKind::CoonsGrid);
+    // Promoted from probe103: blend strips expose which patch axis the
+    // fillet-loops knob drives (faceAcross). Discover via isFillet — no
+    // hardcoded face-ID product routing.
+    {
+        auto ax = report.faceAcross.find(filletFaceId);
+        CHECK(ax != report.faceAcross.end());
+        if (ax != report.faceAcross.end()) {
+            CHECK(ax->second == 1 || ax->second == 2);
+        }
+    }
     std::map<int, int> polysPerFace;
     for (size_t p = 0; p < mesh.polygons.size(); ++p) {
         ++polysPerFace[mesh.polygonFaceId[p]];
@@ -1535,9 +1545,19 @@ void testConcurrentGenerationSettings() {
     weft::GenerationSettings decoupled = coupled;
     decoupled.decoupleSeams = true;
 
-    const weft::PolyMesh coupledBase = weft::generate(model, a, coupled);
-    const weft::PolyMesh decoupledBase = weft::generate(model, a, decoupled);
+    weft::GenerationReport coupledRep, decoupledRep;
+    const weft::PolyMesh coupledBase =
+        weft::generate(model, a, coupled, &coupledRep);
+    const weft::PolyMesh decoupledBase =
+        weft::generate(model, a, decoupled, &decoupledRep);
     CHECK(coupledBase.polygonCount() != decoupledBase.polygonCount());
+    // Promoted from probe89: default (coupled) path must not emit empty
+    // faces; stitch remains a quarantined A/B diagnostic, not a second
+    // production gate.
+    for (const auto& [fid, build] : coupledRep.faceBuild) {
+        (void)fid;
+        CHECK(build != -1);
+    }
 
     for (int pass = 0; pass < 4; ++pass) {
         std::atomic<int> ready{0};
@@ -1762,7 +1782,21 @@ void testAllMesherStrategies() {
             CHECK(build != -1);
         }
     };
-    checkDensityEdit(flaregun, 81);
+    // Discover a rail-ladder face from the report (not a hard-coded face id).
+    {
+        const weft::Analysis analysis = weft::analyze(flaregun);
+        weft::GenerationReport planRep;
+        (void)weft::generate(flaregun, analysis, cad, &planRep);
+        int railFace = 0;
+        for (const auto& [fid, kind] : planRep.faceMesher) {
+            if (kind == weft::MesherKind::RailLadder) {
+                railFace = fid;
+                break;
+            }
+        }
+        CHECK(railFace > 0);
+        if (railFace > 0) checkDensityEdit(flaregun, railFace);
+    }
     // foam density-edit closedness is tracked in KNOWN_RED / WP3.
 
     constexpr weft::MesherKind expected[] = {
@@ -2011,6 +2045,77 @@ void testDemotionAttribution() {
     }
     std::printf("  demotions floor=%d raw=%d empty=%d (cached ok)\n", floor,
                 raw, empty);
+}
+
+// WP2: durable invariants promoted from tools/probes (retired). Assert by
+// fixture class / report fields — never by hard-coded face IDs in product
+// routing. Stitch / foam-teleporter mesher routing stays out of scope (WP3).
+void testPromotedProbeInvariants() {
+    std::printf("-- promoted probe invariants --\n");
+
+    auto cadSettings = []() {
+        weft::GenerationSettings gs;
+        gs.defaults.minimal = true;
+        gs.defaults.adaptive = true;
+        gs.defaults.relativeDeviation = true;
+        return gs;
+    };
+
+    // From probe101 + probe78: CAD-profile closed zoo stays fold-free,
+    // never empty, and every demotion carries a cause string.
+    for (const char* name : {"cylinder", "box", "boss", "fillet"}) {
+        const std::string path =
+            tmpPath(std::string("weft_probe_promo_") + name + ".step");
+        weft::writeStep(weft::makeFixture(name), path);
+        const weft::Model model = weft::loadStep(path);
+        const weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        const weft::PolyMesh mesh =
+            weft::generate(model, analysis, cadSettings(), &report);
+        CHECK(isWatertight(mesh));
+        const std::vector<uint8_t> folded = weft::foldedPolys(model, mesh);
+        CHECK(std::find(folded.begin(), folded.end(), uint8_t{1}) ==
+              folded.end());
+        int empty = 0, raw = 0;
+        for (const auto& [fid, build] : report.faceBuild) {
+            if (build == -1) ++empty;
+            if (build == 1) ++raw;
+            if (build != 0) {
+                auto cit = report.faceBuildCause.find(fid);
+                CHECK(cit != report.faceBuildCause.end());
+                if (cit != report.faceBuildCause.end()) {
+                    CHECK(!cit->second.empty());
+                }
+            }
+        }
+        CHECK_EQ(empty, 0);
+        CHECK_EQ(raw, 0);
+        std::printf("  %-10s folds=0 empty=0 raw=0 demotions_ok\n", name);
+    }
+
+    // From probe85: conformBorders on/off must not invent unexplained opens
+    // on a closed analytic solid (cylinder).
+    {
+        const std::string path = tmpPath("weft_probe_promo_conform.step");
+        weft::writeStep(weft::makeFixture("cylinder"), path);
+        const weft::Model model = weft::loadStep(path);
+        const weft::Analysis analysis = weft::analyze(model);
+        for (bool conform : {true, false}) {
+            weft::GenerationSettings gs = cadSettings();
+            gs.conformBorders = conform;
+            const weft::PolyMesh mesh = weft::generate(model, analysis, gs);
+            const weft::ValidationReport vr =
+                weft::validateMesh(mesh, &model);
+            CHECK_EQ(vr.inputBoundaryEdges, 0u);
+            const size_t unexplained =
+                vr.openEdges >= vr.openEdgesOnInputBoundary
+                    ? vr.openEdges - vr.openEdgesOnInputBoundary
+                    : vr.openEdges;
+            CHECK_EQ(unexplained, 0u);
+            CHECK_EQ(vr.nonManifoldEdges, 0u);
+            std::printf("  conform=%d open=0 nm=0\n", conform ? 1 : 0);
+        }
+    }
 }
 
 void testCadCorpus() {
@@ -2402,6 +2507,7 @@ int main() {
     RUN(testCadConversionPreservesObjects);
     RUN(testAllMesherStrategies);
     RUN(testDemotionAttribution);
+    RUN(testPromotedProbeInvariants);
     RUN(testCadCorpus);
     RUN(testDirtyStepFixtures);
     RUN(testCoverageMatrix);

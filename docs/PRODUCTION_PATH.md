@@ -25,7 +25,7 @@ routing inside that call, not alternate product pipelines.
 | App export / finalized mesh | Yes | `finalizeMesh = true` (authoritative mesh) |
 | CLI `mesh` / `validate` / `sweep` / `cache-check` | Yes | Default `finalizeMesh = true` |
 | Corpus / release / public gates | Yes | Via `build/cli/weft mesh` (no `--stitch`) |
-| `tests/test_pipeline.cpp` and probes | Yes | Direct API; some probes A/B stitch for diagnosis |
+| `tests/test_pipeline.cpp` | Yes | Direct API; stitch A/B only in quarantined tests |
 | Blender live-link add-on | N/A | Consumes exported OBJ; does not mesh |
 | CLI `convert` | No | Non-retopo import→export; mesh outputs use OCCT tessellation only |
 
@@ -59,7 +59,9 @@ Where the opt-in lives:
 - Default `false` in `GenerationSettings` (`core/include/weft/meshers.hpp`)
 - CLI: `--stitch` in `cli/main.cpp` (experiment flag on `mesh` / validate options)
 - App: `--stitch` for screenshot runs; optional ImGui “decoupled seams (stitch)”
-- Tests/probes may force it for A/B; corpus and release gates do not
+- Tests may force it for A/B; corpus and release gates do not.
+  Former `tools/probes` stitch dumps are retired (see
+  `docs/evidence/wp2-probe-retirement-2026-07-20.md`).
 
 Promote or remove only after the AD-2 A/B evidence criteria in the execution
 plan. Release-set A/B (2026-07-20): keep quarantined —
