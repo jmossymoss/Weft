@@ -1732,15 +1732,19 @@ void testAllMesherStrategies() {
     runModel("flaregun", flaregun, cad);  // rail ladder
     runModel("foam", foam, cad, false); // dome; closedness in KNOWN_RED/WP3
 
-    // WP1 focused asserts for release watertight known-red classes. Meshers
-    // are unchanged; these lock the closed-solid failure shape until WP3.
+    // Release closed-solid class locks. Foam remains known-red on CAD
+    // (plane_fillet_bspline_junction). Teleporter CAD is watertight after
+    // WP3 MinimalNGon stitch protection; default still carries the
+    // bspline_contract_floor_overweld secondary residual.
     // Neighborhood STEP extracts under tests/regressions/release/ are
     // open-shell diagnostics only (see docs/evidence/wp1-release-reducers-*).
     auto checkClosedSolidOpenClass =
-        [&](const char* label, const weft::Model& model, size_t minOpen,
+        [&](const char* label, const weft::Model& model,
+            const weft::GenerationSettings& settings, size_t minOpen,
             size_t maxOpen, size_t maxNonManifold) {
             const weft::Analysis analysis = weft::analyze(model);
-            const weft::PolyMesh mesh = weft::generate(model, analysis, cad);
+            const weft::PolyMesh mesh =
+                weft::generate(model, analysis, settings);
             const weft::ValidationReport vr =
                 weft::validateMesh(mesh, &model);
             CHECK_EQ(vr.inputBoundaryEdges, 0u);
@@ -1761,9 +1765,20 @@ void testAllMesherStrategies() {
             CHECK(!vr.watertight());
         };
     // foam: plane/fillet/bspline junction open+NM (cad profile).
-    checkClosedSolidOpenClass("foam_wt_open_nm", foam, 1, 64, 32);
-    // teleporter: multi-neighbor planar n-gon border opens (cad profile).
-    checkClosedSolidOpenClass("teleporter_wt_open", teleporter, 1, 64, 32);
+    checkClosedSolidOpenClass("foam_wt_open_nm", foam, cad, 1, 64, 32);
+    {
+        const weft::Analysis analysis = weft::analyze(teleporter);
+        const weft::PolyMesh mesh = weft::generate(teleporter, analysis, cad);
+        const weft::ValidationReport vr =
+            weft::validateMesh(mesh, &teleporter);
+        CHECK_EQ(vr.inputBoundaryEdges, 0u);
+        CHECK(vr.watertight());
+        std::printf("  teleporter CAD watertight (planar_ngon stitch protect)\n");
+    }
+    weft::GenerationSettings def;
+    def.defaults.minimal = true;
+    checkClosedSolidOpenClass("teleporter_wt_open_default", teleporter, def, 1,
+                              64, 32);
 
     // Regression for impossible two-vertex rail wires: a propagated radial
     // edit used to pin both rail edges to one segment, defeating the generic

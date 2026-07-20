@@ -4378,6 +4378,7 @@ bool samplePlanarRings(const TopoDS_Face& face, const Model& model,
                        const std::vector<int>& solvedEdge, int radialDefault,
                        std::vector<PlanarRing>& rings,
                        const PinnedEdges* pins = nullptr) {
+    (void)radialDefault; // retained for call-site compatibility; unused floor
     TopoDS_Wire outerWire = BRepTools::OuterWire(face);
     for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
         const TopoDS_Wire wire = TopoDS::Wire(wx.Current());
@@ -4413,10 +4414,11 @@ bool samplePlanarRings(const TopoDS_Face& face, const Model& model,
                 int n = (eid >= 1 && eid < int(solvedEdge.size()))
                             ? solvedEdge[eid]
                             : 0;
-                if (n < 1) {
-                    n = std::max(1, std::max(3, radialDefault) /
-                                        std::max(1, rawEdges));
-                }
+                // Missing solved counts must stay face-independent: a
+                // radialDefault/wireEdges share disagreed across the shared
+                // edge and opened planar_ngon seams (WP3). One segment is
+                // the deterministic shared floor both sides can emit.
+                if (n < 1) n = 1;
                 double f3, l3, f2, l2;
                 Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, f3, l3);
                 Handle(Geom2d_Curve) c2 =
@@ -4492,10 +4494,8 @@ bool samplePlanarRings(const TopoDS_Face& face, const Model& model,
             int n = (eid >= 1 && eid < int(solvedEdge.size()))
                         ? solvedEdge[eid]
                         : 0;
-            if (n < 1) {
-                n = std::max(1, std::max(3, radialDefault) /
-                                    std::max(1, wireEdges));
-            }
+            // See sloppy-wire path: never invent a face-local share.
+            if (n < 1) n = 1;
             double f3, l3, f2, l2;
             Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, f3, l3);
             Handle(Geom2d_Curve) c2 =
@@ -15398,6 +15398,14 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
         // moving them tears its web triangles open.
         if (fid < int(fellBack.size()) && fellBack[fid] == 2) return false;
         MesherKind k = plans.at(fid).kind;
+        // Successful minimal-ngon already samples the shared border
+        // contract. Treating it as freeform (via non-empty loops) let
+        // conformFallbackBorders re-splice high-degree planar webs toward
+        // analytic neighbors and opened planar_ngon_border_contract seams.
+        if (k == MesherKind::MinimalNGon && fid < int(fellBack.size()) &&
+            fellBack[fid] == 0) {
+            return false;
+        }
         return (k == MesherKind::Fallback || k == MesherKind::QuadDominant ||
                 k == MesherKind::AnnulusRing ||
                 !plans.at(fid).loops.empty() ||
@@ -16183,7 +16191,9 @@ void fuseSeamTwins(PolyMesh& mesh, const Model& model, double weldTol) {
 // each face meshed at — the load-bearing pass of the decoupled-seams
 // architecture, replacing forced count equality. Geometry never moves:
 // only polygon connectivity gains vertices that already exist.
-void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
+void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
+                 const std::map<int, FacePlan>* plans = nullptr,
+                 const std::vector<char>* fellBack = nullptr) {
     // face -> polygon indices (only 2-owner edges are stitched).
     std::map<int, std::vector<size_t>> facePolys;
     for (size_t p = 0; p < mesh.polygons.size(); ++p) {
@@ -16458,6 +16468,22 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol) {
         std::sort(chain.begin(), chain.end());
         // Insert missing union verts into each side's border segments.
         for (int s2 = 0; s2 < 2; ++s2) {
+            // Contract-exact minimal-ngon (and verified contract floors)
+            // already emit the shared border. Pitch-scaled fullEdge
+            // insertions pull foreign fillet/pad corner verts into the
+            // single n-gon chord and open planar_ngon_border_contract.
+            // Neighbors may still stitch toward this face; we only refuse
+            // to rewrite the authority polygon.
+            if (plans && fellBack) {
+                const int fid = fids[s2];
+                auto pit = plans->find(fid);
+                if (pit != plans->end() &&
+                    pit->second.kind == MesherKind::MinimalNGon &&
+                    fid >= 0 && fid < int(fellBack->size()) &&
+                    ((*fellBack)[fid] == 0 || (*fellBack)[fid] == 2)) {
+                    continue;
+                }
+            }
             auto it = facePolys.find(fids[s2]);
             if (it == facePolys.end()) continue;
             const auto& bset = faceBoundary[fids[s2]];
@@ -16790,6 +16816,7 @@ void unionSeams(PolyMesh& mesh, const Model& model, double weldTol) {
 int outerWireSolvedTotal(const TopoDS_Face& face, const Model& model,
                          const std::vector<int>& solvedEdge,
                          int radialDefault) {
+    (void)radialDefault; // retained for call-site compatibility; unused floor
     int total = 0;
     try {
         const TopoDS_Wire w = BRepTools::OuterWire(face);
@@ -16797,8 +16824,7 @@ int outerWireSolvedTotal(const TopoDS_Face& face, const Model& model,
         // BRepTools_WireExplorer, which SILENTLY DROPS the edges of a sloppy
         // wire — samplePlanarRings falls back to exactly this raw-edge walk
         // when it detects the drop, so mirroring it keeps the total in step
-        // with the boundary the mesh actually laid down. The per-edge fallback
-        // share matches samplePlanarRings' sloppy-path divisor (raw count).
+        // with the boundary the mesh actually laid down.
         int rawEdges = 0;
         for (TopoDS_Iterator it(w); it.More(); it.Next()) {
             if (it.Value().ShapeType() == TopAbs_EDGE &&
@@ -16813,10 +16839,8 @@ int outerWireSolvedTotal(const TopoDS_Face& face, const Model& model,
             const int eid = model.edges.FindIndex(e);
             int n = (eid >= 1 && eid < int(solvedEdge.size())) ? solvedEdge[eid]
                                                                : 0;
-            if (n < 1) {
-                n = std::max(1, std::max(3, radialDefault) /
-                                    std::max(1, rawEdges));
-            }
+            // Mirror samplePlanarRings' shared floor (not a face-local share).
+            if (n < 1) n = 1;
             total += n;
         }
     } catch (const Standard_Failure&) {
@@ -20022,7 +20046,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         if (!std::getenv("WEFT_NO_FUSE")) {
             fuseSeamTwins(mesh, model, weldGlobal);
         }
-        stitchSeams(mesh, model, weldGlobal);
+        stitchSeams(mesh, model, weldGlobal, &plans, &fellBack);
     }
 
     // Fold cleanup: a directed edge traversed twice WITHIN one face means
