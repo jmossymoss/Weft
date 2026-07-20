@@ -18,7 +18,9 @@ evidence required for an artist-usable MVP. Do not interpret the implemented
 feature count as a release-readiness claim.
 
 The sole roadmap, completion definition, corpus strategy, and work order are in
-[docs/EXECUTION_PLAN.md](docs/EXECUTION_PLAN.md).
+[docs/EXECUTION_PLAN.md](docs/EXECUTION_PLAN.md). The single production
+generation path (`weft::generate()`) is summarized in
+[docs/PRODUCTION_PATH.md](docs/PRODUCTION_PATH.md).
 
 ## Product boundary
 
@@ -139,6 +141,7 @@ preserves CAD face identity for Blender workflows.
 ```text
 AGENTS.md                  autonomous-agent operating rules
 docs/EXECUTION_PLAN.md     sole product roadmap and completion definition
+docs/PRODUCTION_PATH.md    authoritative generate() path and stitch quarantine
 core/                      headless geometry and meshing library
 cli/                       command-line client
 app/                       interactive client

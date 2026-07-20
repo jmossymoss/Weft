@@ -375,6 +375,8 @@ Current measurements must come from scripts or test output. Do not put volatile
 
 `weft::generate()` and its border-count contract are the only production
 generation path for MVP. Improve it incrementally behind corpus tests.
+Entry-point audit and settings summary:
+[PRODUCTION_PATH.md](PRODUCTION_PATH.md).
 
 The removed decoupled-core rewrite is not an active direction. Do not restore
 it, port work from old branches, or begin another ground-up rewrite without a
