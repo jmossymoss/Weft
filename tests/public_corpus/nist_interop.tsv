@@ -1,4 +1,14 @@
-# NIST / CAx-IF interoperability samples for import, units, assemblies.
+# NIST / CAx-IF interoperability samples for import, assemblies, units, metadata.
+# Paths are relative to tests/public_corpus/_cache/
+# Fetch: tools/fetch_nist_corpus.sh  (or tools/fetch_public_corpus.sh nist)
+# Upstream: https://www.nist.gov/ctl/smart-connected-systems-division/smart-connected-manufacturing-systems-group/mbe-pmi-0
+# Role: STEP import / schema / units / assembly-mate smoke — not retopology quality.
+# Validity: closed_solid => geometry is a manifold solid B-rep; PMI/syntax warnings
+# in official NIST STEP are expected (see archive README) and do not change validity.
 # id	local_path	validity	notes
-NIST_AP242_SMOKE	nist/pending/ap242_smoke.stp	closed_solid	placeholder; download from NIST MBE PMI / CAx-IF links
-NIST_ASSEMBLY_SMOKE	nist/pending/assembly_smoke.stp	closed_solid	placeholder; multi-body / assembly import
+NIST_CTC01_AP203	nist/ap203/nist_ctc_01_asme1_rd.stp	closed_solid	ap203;import;units_mm;geometry-only CTC-01
+NIST_CTC01_AP242	nist/ap242/nist_ctc_01_asme1_ap242-e1.stp	closed_solid	ap242;import;metadata;pmi;AP242 edition 1 CTC-01
+NIST_FTC07_AP203	nist/ap203/nist_ftc_07_asme1_rd.stp	closed_solid	ap203;import;units_inch;assembly_mate;FTC-07 box (mates 08/09/10)
+NIST_FTC08_AP203	nist/ap203/nist_ftc_08_asme1_rc.stp	closed_solid	ap203;import;units_inch;assembly_mate;FTC-08 lid (mates 07/09/10)
+NIST_STC06_AP242	nist/ap242/nist_stc_06_asme1_ap242-e3.stp	closed_solid	ap242;import;metadata;pmi;AP242 edition 3 STC-06
+NIST_D2MI_905	nist/d2mi/827-9999-905.stp	closed_solid	ap203;import;units_inch;cax-if;D2MI small fastener

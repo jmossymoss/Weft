@@ -56,9 +56,8 @@ abc-nightly)
     echo "tests/public_corpus/abc_nightly.tsv."
     ;;
 nist)
-    mkdir -p "$CACHE/nist/pending"
-    echo "NIST / CAx-IF models: place AP203/AP242 samples under $CACHE/nist/"
-    echo "Upstream index: https://www.nist.gov/ctl/smart-connected-systems-division/smart-connected-manufacturing-systems-group/mbe-pmi-0"
+    # Dedicated fetcher avoids merge conflicts with other corpus layers.
+    exec "$ROOT/tools/fetch_nist_corpus.sh"
     ;;
 mambo)
     mkdir -p "$CACHE/mambo/pending"
