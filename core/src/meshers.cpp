@@ -8597,6 +8597,19 @@ struct DensitySolution {
     // 16 radial segments means exactly 16.
     std::set<int> pinnedRoots;
 
+    // Reporting-only attribution (does not affect mesh topology).
+    struct Proposal {
+        int faceId = 0;  // 0 = non-face source (per-edge pin)
+        int count = 0;
+        bool faceOverride = false;
+    };
+    std::map<int, std::vector<Proposal>> proposalsByRoot;
+    // root -> ownership tag after resolve (before post-solve floors).
+    std::map<int, std::string> ownerByRoot;
+    std::set<int> edgePinnedRoots;
+    std::set<int> facePinnedRoots;
+    std::set<int> ringDerivedRoots;
+
     explicit DensitySolution(int edgeCount) : groups(edgeCount) {}
 
     // Solved count for an edge, or `fallback` if it never got a proposal.
@@ -8854,7 +8867,7 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
     // reapply after), so one slider re-budgets the whole model.
     const double dScale = std::clamp(settings.densityScale, 0.05, 20.0);
     auto propose = [&](const std::vector<int>& edges, int count,
-                       bool overridden) {
+                       bool overridden, int faceId) {
         if (edges.empty()) return;
         // Explicit counts stay EXACT — the budget knob never rescales a
         // number the user typed. Straight lines don't scale either:
@@ -8882,6 +8895,10 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
             auto [pit, pIns] = facePinned.try_emplace(root, count);
             if (!pIns) pit->second = std::max(pit->second, count);
         }
+        // Attribution only — every face that proposed on this group is
+        // recorded so CLI/validate can show who lost a max-resolve.
+        sol.proposalsByRoot[root].push_back(
+            DensitySolution::Proposal{faceId, count, overridden});
     };
     // Curvature-adaptive proposals: an edge's count comes from tangential-
     // deflection sampling of its curve under the proposing face's chord +
@@ -9012,9 +9029,10 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
     // curvature count with `floorA` as the minimum.
     auto proposeSet = [&](const std::vector<int>& edges, int flat,
                           int floorA, bool adaptive,
-                          const FaceMeshSettings& s, bool overridden) {
+                          const FaceMeshSettings& s, bool overridden,
+                          int faceId) {
         if (!adaptive || curCountOverride) {
-            propose(edges, flat, overridden);
+            propose(edges, flat, overridden, faceId);
             return;
         }
         for (int eid : edges) {
@@ -9022,7 +9040,7 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
             // of 6 must survive a 0.5x budget.
             propose({eid}, std::max(int(std::lround(floorA / dScale)),
                                     adaptiveCount(eid, s)),
-                    overridden);
+                    overridden, faceId);
         }
     };
 
@@ -9070,13 +9088,13 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                 const int n = std::max(1, int(std::lround(
                     (drum ? std::max(3, s.radial) : std::max(1, s.gridU)) *
                     frac)));
-                proposeSet({e}, n, 1, s.adaptive, s, overridden);
+                proposeSet({e}, n, 1, s.adaptive, s, overridden, fid);
             }
             for (int e : plan.vEdges) {
                 const double frac = spanOf(e, false) / vs;
                 const int n = std::max(1, int(std::lround(
                     std::max(1, drum ? s.axial : s.gridV) * frac)));
-                proposeSet({e}, n, 1, s.adaptive, s, overridden);
+                proposeSet({e}, n, 1, s.adaptive, s, overridden, fid);
             }
         } else if (!plan.loops.empty()) {
             // Explicit boundary control: a TOTAL vertex count around the
@@ -9104,7 +9122,7 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                                        int(std::floor(total * lens[i] / sum +
                                                       0.5)));
                     assigned += share;
-                    propose({outer[i]}, share, /*overridden=*/true);
+                    propose({outer[i]}, share, /*overridden=*/true, fid);
                 }
             }
             // Every other border edge proposes independently. Plate webs
@@ -9122,9 +9140,9 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                                                     int(loop.size()));
                 for (int eid : loop) {
                     if (minimal) {
-                        propose({eid}, 1, false);
+                        propose({eid}, 1, false, fid);
                     } else {
-                        proposeSet({eid}, per, 1, s.adaptive, s, overridden);
+                        proposeSet({eid}, per, 1, s.adaptive, s, overridden, fid);
                     }
                 }
             }
@@ -9163,8 +9181,8 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
             // other directions adapt to their edges' curvature.
             bool adU = s.adaptive && !(plan.isFillet && plan.acrossIsU);
             bool adV = s.adaptive && !(plan.isFillet && !plan.acrossIsU);
-            proposeSet(plan.uEdges, nu, nu, adU, s, overridden);
-            proposeSet(plan.vEdges, nv, nv, adV, s, overridden);
+            proposeSet(plan.uEdges, nu, nu, adU, s, overridden, fid);
+            proposeSet(plan.vEdges, nv, nv, adV, s, overridden, fid);
             // Ring junction: the concentric loops need the SAME angular count
             // on the inner circle and the outer rectangle row, but the circle
             // (a full bore) otherwise solves to its own adaptive ring count
@@ -9180,7 +9198,7 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                 plan.circleEdgeId > 0 && overridden &&
                 s.junctionRings != settings.defaults.junctionRings) {
                 propose({plan.circleEdgeId}, 2 * (nu + nv),
-                        /*overridden=*/true);
+                        /*overridden=*/true, fid);
             }
             // Chained Coons sides: every piece proposes on its own; the
             // chain pass below reconciles opposite sides by sum. But a
@@ -9203,11 +9221,11 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                         const int share =
                             sideTotal / k + (i < sideTotal % k ? 1 : 0);
                         proposeSet({sedges[i]}, std::max(1, share), 1, false,
-                                   s, overridden);
+                                   s, overridden, fid);
                     }
                 } else {
                     for (int e : sedges) {
-                        proposeSet({e}, sideTotal, 1, adSide, s, overridden);
+                        proposeSet({e}, sideTotal, 1, adSide, s, overridden, fid);
                     }
                 }
             }
@@ -9215,9 +9233,9 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
             // Both loops are rings; they solve independently (their own
             // neighbours usually drive them).
             proposeSet(plan.uEdges, std::max(3, s.radial), 3, s.adaptive, s,
-                       overridden);
+                       overridden, fid);
             proposeSet(plan.vEdges, std::max(3, s.radial), 3, s.adaptive, s,
-                       overridden);
+                       overridden, fid);
         } else if (plan.kind == MesherKind::RailLadder &&
                    [&]() -> bool {
                        // Rail-ladder blend strips lying ON a revolution
@@ -9284,7 +9302,7 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                                1, int(std::lround(std::max(3, s.radial) *
                                                   frac)));
                            proposeSet({e}, flat, 1, s.adaptive, s,
-                                      /*overridden=*/false);
+                                      /*overridden=*/false, fid);
                        }
                        return true;
                    }()) {
@@ -9327,28 +9345,29 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                         eu1 > eu0 ? (eu1 - eu0) / (2.0 * M_PI) : 0.0;
                     const int flat = std::max(
                         1, int(std::lround(std::max(3, s.radial) * frac)));
-                    proposeSet({e}, flat, 1, s.adaptive, s, overridden);
+                    proposeSet({e}, flat, 1, s.adaptive, s, overridden, fid);
                 }
             } else if (!plan.linkRims && plan.uEdges.size() == 2) {
                 // Unlinked rims: each ring solves on its own (pin per-edge
                 // or via the rim fields to make them differ).
                 proposeSet({plan.uEdges[0]}, std::max(3, s.radial), 3,
-                           s.adaptive, s, overridden);
+                           s.adaptive, s, overridden, fid);
                 proposeSet({plan.uEdges[1]}, std::max(3, s.radial), 3,
-                           s.adaptive, s, overridden);
+                           s.adaptive, s, overridden, fid);
             } else {
                 proposeSet(plan.uEdges, std::max(3, s.radial), 3, s.adaptive,
-                           s, overridden);
+                           s, overridden, fid);
             }
             // Explicit axial acts as the floor along the axis; profile
             // curvature (a vase wall) adds what it needs.
             proposeSet(plan.vEdges, std::max(1, s.axial),
-                       std::max(1, s.axial), s.adaptive, s, overridden);
+                       std::max(1, s.axial), s.adaptive, s, overridden, fid);
         }
     }
     for (const auto& [root, count] : facePinned) {
         sol.groupCount[root] = count;
         sol.pinnedRoots.insert(root);
+        sol.facePinnedRoots.insert(root);
     }
 
     // Explicit per-edge overrides pin their whole group (max if several),
@@ -9359,10 +9378,14 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
         int root = sol.groups.find(eid);
         auto [it, inserted] = pinned.try_emplace(root, count);
         if (!inserted) it->second = std::max(it->second, count);
+        // Record the pin as a faceId=0 proposal for conflict reporting.
+        sol.proposalsByRoot[root].push_back(
+            DensitySolution::Proposal{0, count, true});
     }
     for (const auto& [root, count] : pinned) {
         sol.groupCount[root] = std::max(1, count);  // a pin of 0 is a leak
         sol.pinnedRoots.insert(root);
+        sol.edgePinnedRoots.insert(root);
     }
 
     // Chained Coons: opposite sides must sample equal TOTALS. Chains
@@ -9437,6 +9460,31 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
             continue;
         }
         sol.groupCount[root] = derived;
+        sol.ringDerivedRoots.insert(root);
+        sol.proposalsByRoot[root].push_back(
+            DensitySolution::Proposal{fid, derived, true});
+    }
+
+    // Resolve ownership tags for every group that received a proposal.
+    // Post-solve floors (curvature / wire / annulus) may overwrite these
+    // tags later in generate(); tags here describe the proposal resolve.
+    for (const auto& [root, props] : sol.proposalsByRoot) {
+        if (sol.edgePinnedRoots.count(root)) {
+            sol.ownerByRoot[root] = "edge-pin";
+            continue;
+        }
+        if (sol.ringDerivedRoots.count(root)) {
+            sol.ownerByRoot[root] = "ring-derived";
+            continue;
+        }
+        if (sol.facePinnedRoots.count(root)) {
+            sol.ownerByRoot[root] = "face-pin";
+            continue;
+        }
+        std::set<int> distinct;
+        for (const auto& p : props) distinct.insert(p.count);
+        sol.ownerByRoot[root] =
+            distinct.size() > 1 ? "max-proposal" : "sole-proposal";
     }
 
     return sol;
@@ -16902,6 +16950,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         auto it = density.groupCount.find(root);
         if (it != density.groupCount.end() && it->second < floorN) {
             it->second = floorN;
+            density.ownerByRoot[root] = "curvature-floor";
         }
     }
     // Flat per-edge count table: lets meshers consume per-edge counts from
@@ -16980,10 +17029,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             auto it = density.groupCount.find(root);
             if (it != density.groupCount.end() && it->second < target) {
                 it->second = target;
+                density.ownerByRoot[root] = "wire-floor";
             }
             for (int e = 1; e <= model.edgeCount(); ++e) {
                 if (density.groups.find(e) == root && solvedEdge[e] < target) {
                     solvedEdge[e] = target;
+                    density.ownerByRoot[root] = "wire-floor";
                 }
             }
         }
@@ -17081,11 +17132,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             auto git = density.groupCount.find(root);
             if (git != density.groupCount.end() && git->second < target) {
                 git->second = target;
+                density.ownerByRoot[root] = "annulus-floor";
             }
             for (int e2 = 1; e2 <= model.edgeCount(); ++e2) {
                 if (density.groups.find(e2) == root &&
                     solvedEdge[e2] < target) {
                     solvedEdge[e2] = target;
+                    density.ownerByRoot[root] = "annulus-floor";
                 }
             }
         }
@@ -19589,17 +19642,85 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     ? builtCounts[fid]
                     : std::array<int, 2>{counts[fid][0], counts[fid][1]};
             if (plan.constrains) {
-                for (int eid : plan.uEdges) {
-                    report->edgeDivisions[eid] = density.countFor(eid, 0);
-                }
-                for (int eid : plan.vEdges) {
-                    report->edgeDivisions[eid] = density.countFor(eid, 0);
-                }
-                if (plan.circleEdgeId > 0) {
-                    report->edgeDivisions[plan.circleEdgeId] =
-                        density.countFor(plan.circleEdgeId, 0);
+                // Prefer the flat solvedEdge table (includes post-solve
+                // floors) so reported counts match the border samples
+                // meshers actually emitted.
+                auto publishEdge = [&](int eid) {
+                    if (eid < 1 || eid > model.edgeCount()) return;
+                    const int n =
+                        eid < int(solvedEdge.size()) && solvedEdge[eid] > 0
+                            ? solvedEdge[eid]
+                            : density.countFor(eid, 0);
+                    report->edgeDivisions[eid] = n;
+                    const int root = density.groups.find(eid);
+                    auto oit = density.ownerByRoot.find(root);
+                    if (oit != density.ownerByRoot.end()) {
+                        report->edgeDivisionOwner[eid] = oit->second;
+                    }
+                };
+                for (int eid : plan.uEdges) publishEdge(eid);
+                for (int eid : plan.vEdges) publishEdge(eid);
+                if (plan.circleEdgeId > 0) publishEdge(plan.circleEdgeId);
+                for (const auto& loop : plan.loops) {
+                    for (int eid : loop) publishEdge(eid);
                 }
             }
+        }
+        // One conflict entry per density group that disagreed or was
+        // raised by a pin/floor above a face proposal. Representative
+        // edge is the smallest EdgeId in the published set.
+        {
+            std::map<int, int> rootRep;  // root -> min published edge
+            for (const auto& [eid, n] : report->edgeDivisions) {
+                (void)n;
+                const int root = density.groups.find(eid);
+                auto [it, inserted] = rootRep.try_emplace(root, eid);
+                if (!inserted) it->second = std::min(it->second, eid);
+            }
+            for (const auto& [root, repEid] : rootRep) {
+                auto oit = density.ownerByRoot.find(root);
+                const std::string owner =
+                    oit != density.ownerByRoot.end() ? oit->second
+                                                     : "sole-proposal";
+                const int solved = report->edgeDivisions[repEid];
+                std::map<int, int> faceProps;
+                bool disagree = false;
+                auto pit = density.proposalsByRoot.find(root);
+                if (pit != density.proposalsByRoot.end()) {
+                    for (const auto& p : pit->second) {
+                        auto [fit, ins] =
+                            faceProps.try_emplace(p.faceId, p.count);
+                        if (!ins) {
+                            fit->second = std::max(fit->second, p.count);
+                        }
+                        if (p.count != solved) disagree = true;
+                    }
+                    std::set<int> distinct;
+                    for (const auto& p : pit->second) {
+                        if (p.faceId != 0) distinct.insert(p.count);
+                    }
+                    if (distinct.size() > 1) disagree = true;
+                }
+                const bool ownedConflict =
+                    owner == "max-proposal" || owner == "face-pin" ||
+                    owner == "edge-pin" || owner == "ring-derived" ||
+                    owner == "curvature-floor" || owner == "wire-floor" ||
+                    owner == "annulus-floor";
+                if (!ownedConflict && !disagree) continue;
+                if (owner == "sole-proposal" && !disagree) continue;
+                GenerationReport::DensityConflict c;
+                c.edgeId = repEid;
+                c.solved = solved;
+                c.reason = owner;
+                c.faceProposals = std::move(faceProps);
+                report->densityConflicts.push_back(std::move(c));
+            }
+            std::sort(report->densityConflicts.begin(),
+                      report->densityConflicts.end(),
+                      [](const GenerationReport::DensityConflict& a,
+                         const GenerationReport::DensityConflict& b) {
+                          return a.edgeId < b.edgeId;
+                      });
         }
     }
 

@@ -550,12 +550,11 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         const std::string demotions = weft::formatBuildDemotions(report);
         if (!demotions.empty()) std::printf("%s", demotions.c_str());
     }
-    if (!report.edgeDivisions.empty()) {
-        std::printf("  density-matched edges:");
-        for (const auto& [eid, div] : report.edgeDivisions) {
-            std::printf(" #%d=%d", eid, div);
-        }
-        std::printf("\n");
+    {
+        // Density-matched edge counts, ownership tags, and proposal/pin/
+        // floor conflicts (WP2 attribution — topology unchanged).
+        const std::string density = weft::formatDensityOwnership(report);
+        if (!density.empty()) std::printf("%s", density.c_str());
     }
     if (!signatureOut.empty()) {
         weft::TopologySignatureInfo info;

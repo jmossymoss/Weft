@@ -246,6 +246,24 @@ struct GenerationReport {
     // EdgeId -> solved subdivision count, for edges that took part in
     // density matching. Adjacent faces sharing an edge agree on this count.
     std::map<int, int> edgeDivisions;
+    // EdgeId -> how the solved count was chosen for that edge's density
+    // group. Short stable tags for CLI/validate attribution:
+    // "sole-proposal", "max-proposal", "face-pin", "edge-pin",
+    // "ring-derived", "curvature-floor", "wire-floor", "annulus-floor".
+    // Present for the same edges as edgeDivisions when attribution ran.
+    std::map<int, std::string> edgeDivisionOwner;
+    // Shared-group ownership conflicts: proposing faces disagreed, or a
+    // pin/floor raised the count above a face's proposal. Empty when every
+    // proposing face agreed and no post-solve floor raised the group.
+    // Does not change mesh topology — reporting only.
+    struct DensityConflict {
+        int edgeId = 0;     // representative edge from the density group
+        int solved = 0;     // final subdivision count after floors
+        std::string reason; // same tags as edgeDivisionOwner
+        // FaceId -> proposed count (0 = non-face source such as a pin).
+        std::map<int, int> faceProposals;
+    };
+    std::vector<DensityConflict> densityConflicts;
     // Revolution faces: the edge ids of their two rims (u-boundary rings),
     // so UIs can pin each rim's count individually when rims are unlinked.
     std::map<int, std::array<int, 2>> faceRims;
@@ -267,6 +285,10 @@ struct GenerationReport {
 // Human-readable demotion attribution for CLI/validate: counts plus
 // per-face id and cause for contract-floor, raw OCCT, and empty faces.
 std::string formatBuildDemotions(const GenerationReport& report);
+
+// Human-readable density-matching attribution for CLI/validate: matched
+// edge counts, ownership tags, and any proposal/pin/floor conflicts.
+std::string formatDensityOwnership(const GenerationReport& report);
 
 // Per-face mesh reuse across generate() calls: pass the same cache and
 // only faces whose settings, solved counts, or plan changed re-mesh —

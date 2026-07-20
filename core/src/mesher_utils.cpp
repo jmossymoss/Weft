@@ -92,4 +92,55 @@ std::string formatBuildDemotions(const GenerationReport& report) {
     return out;
 }
 
+std::string formatDensityOwnership(const GenerationReport& report) {
+    if (report.edgeDivisions.empty() && report.densityConflicts.empty()) {
+        return {};
+    }
+    std::string out;
+    char line[256];
+    std::snprintf(line, sizeof(line), "  density-matched edges: %zu",
+                  report.edgeDivisions.size());
+    out += line;
+    if (!report.edgeDivisions.empty()) {
+        out += ':';
+        for (const auto& [eid, div] : report.edgeDivisions) {
+            auto oit = report.edgeDivisionOwner.find(eid);
+            if (oit != report.edgeDivisionOwner.end() &&
+                !oit->second.empty()) {
+                std::snprintf(line, sizeof(line), " #%d=%d(%s)", eid, div,
+                              oit->second.c_str());
+            } else {
+                std::snprintf(line, sizeof(line), " #%d=%d", eid, div);
+            }
+            out += line;
+        }
+    }
+    out += '\n';
+
+    if (!report.densityConflicts.empty()) {
+        std::snprintf(line, sizeof(line),
+                      "  density ownership conflicts: %zu\n",
+                      report.densityConflicts.size());
+        out += line;
+        for (const auto& c : report.densityConflicts) {
+            std::snprintf(line, sizeof(line), "    edge #%d=%d (%s)",
+                          c.edgeId, c.solved, c.reason.c_str());
+            out += line;
+            if (!c.faceProposals.empty()) {
+                out += " proposals:";
+                for (const auto& [fid, n] : c.faceProposals) {
+                    if (fid == 0) {
+                        std::snprintf(line, sizeof(line), " pin=%d", n);
+                    } else {
+                        std::snprintf(line, sizeof(line), " f%d=%d", fid, n);
+                    }
+                    out += line;
+                }
+            }
+            out += '\n';
+        }
+    }
+    return out;
+}
+
 }  // namespace weft

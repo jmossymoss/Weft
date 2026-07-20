@@ -1968,6 +1968,98 @@ void testWeldVerts() {
 // default CTest suite — use tools/corpus_gate.sh with performance rows or a
 // manual `weft mesh tests/STEP_Examples/MP9.stp` for workload timing.
 
+// WP2: a shared border between two faces must carry matching sample counts
+// after generate(). Discover the faces and edge from analysis — no product
+// face-ID special cases. Also exercises density-ownership reporting when one
+// face proposes a denser grid.
+void testSharedBorderSampleCounts() {
+    std::printf("-- shared border sample counts --\n");
+    const std::string stepPath = tmpPath("weft_test_shared_border.step");
+    weft::writeStep(weft::makeFixture("box"), stepPath);
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis analysis = weft::analyze(model);
+
+    // Discover any manifold shared edge and its two bounding faces.
+    int sharedEdge = 0, faceA = 0, faceB = 0;
+    for (const auto& e : analysis.edges) {
+        if (e.faceIds.size() != 2) continue;
+        sharedEdge = e.id;
+        faceA = e.faceIds[0];
+        faceB = e.faceIds[1];
+        break;
+    }
+    CHECK(sharedEdge > 0);
+    CHECK(faceA > 0);
+    CHECK(faceB > 0);
+    CHECK(faceA != faceB);
+
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = false;
+    gs.defaults.gridU = 3;
+    gs.defaults.gridV = 3;
+    // One discovered face asks for a denser grid; density matching must
+    // raise the shared edge so both faces sample the same count.
+    weft::FaceMeshSettings dense = gs.defaults;
+    dense.gridU = 5;
+    dense.gridV = 5;
+    gs.perFace[faceA] = dense;
+
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    CHECK(isWatertight(mesh));
+    CHECK(report.edgeDivisions.count(sharedEdge) == 1);
+    const int solved = report.edgeDivisions.at(sharedEdge);
+    CHECK(solved >= 5);  // denser face proposal must win the max-resolve
+
+    auto oit = report.edgeDivisionOwner.find(sharedEdge);
+    CHECK(oit != report.edgeDivisionOwner.end());
+    if (oit != report.edgeDivisionOwner.end()) {
+        CHECK(!oit->second.empty());
+        std::printf("  edge #%d faces %d/%d solved=%d owner=%s\n", sharedEdge,
+                    faceA, faceB, solved, oit->second.c_str());
+    }
+
+    const std::string formatted = weft::formatDensityOwnership(report);
+    CHECK(!formatted.empty());
+    CHECK(formatted.find("density-matched edges:") != std::string::npos);
+    CHECK(formatted.find("#" + std::to_string(sharedEdge) + "=") !=
+          std::string::npos);
+    // Conflicting proposals on the shared group should surface explicitly.
+    CHECK(!report.densityConflicts.empty());
+    CHECK(formatted.find("density ownership conflicts:") !=
+          std::string::npos);
+
+    // Matching sample counts: after weld, both faces use the same undirected
+    // mesh edges along the shared border. The number of those segments must
+    // equal the solved division count.
+    auto collectEdges = [&](int faceId) {
+        std::set<std::pair<uint32_t, uint32_t>> edges;
+        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+            if (p >= mesh.polygonFaceId.size() ||
+                mesh.polygonFaceId[p] != faceId) {
+                continue;
+            }
+            const auto& poly = mesh.polygons[p];
+            for (size_t i = 0; i < poly.size(); ++i) {
+                uint32_t a = poly[i];
+                uint32_t b = poly[(i + 1) % poly.size()];
+                if (a > b) std::swap(a, b);
+                edges.insert({a, b});
+            }
+        }
+        return edges;
+    };
+    const auto edgesA = collectEdges(faceA);
+    const auto edgesB = collectEdges(faceB);
+    int sharedSegments = 0;
+    for (const auto& e : edgesA) {
+        if (edgesB.count(e)) ++sharedSegments;
+    }
+    CHECK_EQ(sharedSegments, solved);
+    std::printf("  shared mesh segments=%d (solved divisions=%d)\n",
+                sharedSegments, solved);
+}
+
 // WP2: raw/empty/floor demotions must be attributed by face id and cause
 // string (not dbg-only). Force the contract-floor path on a boss face so
 // the report surfaces a known demotion without filename special-casing.
@@ -2550,6 +2642,7 @@ int main() {
     RUN(testConcurrentGenerationSettings);
     RUN(testCadConversionPreservesObjects);
     RUN(testAllMesherStrategies);
+    RUN(testSharedBorderSampleCounts);
     RUN(testDemotionAttribution);
     RUN(testTopologySignature);
     RUN(testPromotedProbeInvariants);
