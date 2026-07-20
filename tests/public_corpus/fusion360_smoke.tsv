@@ -1,0 +1,10 @@
+# Stratified Fusion 360 Gallery Extended STEP smoke subset.
+# Paths are relative to tests/public_corpus/_cache/fusion360/
+# Fill local_path after tools/fetch_public_corpus.sh fusion360-smoke.
+# id	ops_band	face_band	local_path	validity	notes
+# Placeholders — replace with concrete IDs once the zip is fetched and sampled.
+F360_EXT_EXTRUDE_S	extrude	1-50	fusion360/pending/extrude_small.step	closed_solid	placeholder; fetch + sample before enabling WEFT_RUN_PUBLIC
+F360_EXT_FILLET_M	fillet	50-200	fusion360/pending/fillet_medium.step	closed_solid	placeholder
+F360_EXT_CHAMFER_M	chamfer	50-200	fusion360/pending/chamfer_medium.step	closed_solid	placeholder
+F360_EXT_REVOL_S	revolution	1-50	fusion360/pending/revol_small.step	closed_solid	placeholder
+F360_EXT_CUT_L	cut	200-800	fusion360/pending/cut_large.step	closed_solid	placeholder

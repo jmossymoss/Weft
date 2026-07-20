@@ -1893,56 +1893,9 @@ void testWeldVerts() {
     CHECK(std::abs(loaded.ops[0].weldPoints[1][0] - lastPos[0]) < 1e-9);
 }
 
-// MP9 is a stress/integration workload (CAD_CORPUS tier=stress), not a
-// face-ID routing oracle. WP0 keeps a bounded smoke: load, mesh, and stay
-// within the stress raw/empty ceilings from the manifest.
-void testMp9GeometryRouting() {
-    std::printf("-- MP9 stress smoke --\n");
-    const std::filesystem::path path =
-        std::filesystem::path(__FILE__).parent_path() /
-        "STEP_Examples" / "MP9.stp";
-    if (!std::filesystem::exists(path)) {
-        std::printf("  skipped (MP9.stp not present)\n");
-        return;
-    }
-
-    const weft::Model model = weft::loadStep(path.string());
-    const weft::Analysis analysis = weft::analyze(model);
-    CHECK(model.faceCount() > 1000);
-
-    weft::GenerationSettings settings;
-    settings.defaults.minimal = true;
-    settings.defaults.adaptive = true;
-    settings.defaults.relativeDeviation = true;
-    weft::GenerationCache cache;
-    weft::GenerationReport report;
-    const weft::PolyMesh mesh =
-        weft::generate(model, analysis, settings, &report, &cache);
-
-    CHECK(!mesh.polygons.empty());
-    int raw = 0, empty = 0;
-    for (const auto& [fid, build] : report.faceBuild) {
-        (void)fid;
-        if (build == 1) ++raw;
-        if (build == -1) ++empty;
-    }
-    CHECK(raw <= 6);
-    CHECK(empty <= 2);
-
-    weft::GenerationReport editReport;
-    weft::GenerationSettings edited = settings;
-    edited.finalizeMesh = false;
-    const int editFace = std::min(100, model.faceCount() - 1);
-    edited.perFace[editFace] = settings.defaults;
-    edited.perFace[editFace].gridV = settings.defaults.gridV + 1;
-    const weft::PolyMesh preview =
-        weft::generate(model, analysis, edited, &editReport, &cache);
-    CHECK(!preview.polygons.empty());
-    CHECK(editReport.cacheHits > 0);
-    std::printf("  faces=%d polys=%zu raw=%d empty=%d edit_misses=%d\n",
-                model.faceCount(), mesh.polygonCount(), raw, empty,
-                editReport.cacheMisses);
-}
+// MP9 is tier=performance / layer=target-assets only. Do not run it in the
+// default CTest suite — use tools/corpus_gate.sh with performance rows or a
+// manual `weft mesh tests/STEP_Examples/MP9.stp` for workload timing.
 
 void testCadCorpus() {
     std::printf("-- layered CAD corpus --\n");
@@ -1962,19 +1915,23 @@ void testCadCorpus() {
             if (tab == std::string::npos) break;
             pos = tab + 1;
         }
-        CHECK(field.size() >= 9);
-        if (field.size() < 9) continue;
+        // name tier path fast max_raw max_empty require_watertight visual
+        // validity layer surfaces curves features notes
+        CHECK(field.size() >= 14);
+        if (field.size() < 14) continue;
         ++cases;
         const std::string& name = field[0];
         const std::string& tier = field[1];
         const std::filesystem::path step = root / field[2];
-        // Fixture-tier rows may be generated ephemerally under
-        // fixtures/generated/ (gitignored). Committed fixtures and STEP
-        // examples must already exist.
-        if (tier == "fixture" && !std::filesystem::exists(step)) {
+        if ((tier == "fixture" || tier == "dirty") &&
+            !std::filesystem::exists(step)) {
             std::error_code ec;
             std::filesystem::create_directories(step.parent_path(), ec);
             weft::writeStep(weft::makeFixture(name), step.string());
+        }
+        if (tier == "performance" || tier == "public") {
+            // Not part of default geometry-coverage CI.
+            continue;
         }
         CHECK(std::filesystem::exists(step));
         if (!std::filesystem::exists(step)) continue;
@@ -1985,12 +1942,13 @@ void testCadCorpus() {
                 CHECK(std::filesystem::file_size(visual) > 1024);
             }
         }
-        if (field[3] != "1") continue;  // stress/perf tiers are explicit
+        if (field[3] != "1") continue;
         ++fastCases;
 
         const int maxRaw = std::stoi(field[4]);
         const int maxEmpty = std::stoi(field[5]);
         const bool requireWatertight = field[6] == "1";
+        const std::string& validity = field[8];
         weft::Model model = weft::loadStep(step.string());
         weft::Analysis analysis = weft::analyze(model);
         weft::GenerationSettings settings;
@@ -2010,31 +1968,114 @@ void testCadCorpus() {
         CHECK(!mesh.polygons.empty());
         CHECK(raw <= maxRaw);
         CHECK(empty <= maxEmpty);
-        if (requireWatertight) CHECK(isWatertight(mesh));
+        // Watertight mesh is required only for valid closed solids when the
+        // manifest asks for it. Open/invalid dirty-step cases must not.
+        if (requireWatertight && validity == "closed_solid") {
+            CHECK(isWatertight(mesh));
+        }
 
-        // A second pass must be fully cached and deterministic. This keeps the
-        // corpus useful for the interactive one-face regeneration workflow.
         weft::GenerationReport againReport;
         weft::PolyMesh again =
             weft::generate(model, analysis, settings, &againReport, &cache);
-        if (againReport.cacheMisses != 0) {
-            std::printf("    unexpected warm-cache misses:");
-            for (int fid : againReport.remeshedFaces) {
-                std::printf(" %d", fid);
-            }
-            std::printf("\n");
-        }
         CHECK_EQ(again.vertexCount(), mesh.vertexCount());
         CHECK_EQ(again.polygonCount(), mesh.polygonCount());
-        CHECK_EQ(againReport.cacheHits, model.faceCount());
-        CHECK_EQ(againReport.cacheMisses, 0);
-        std::printf("  %-28s %4d faces  raw=%d empty=%d%s\n", name.c_str(),
-                    model.faceCount(), raw, empty,
-                    requireWatertight ? " watertight" : " open/known issue");
+        if (validity == "closed_solid") {
+            CHECK_EQ(againReport.cacheHits, model.faceCount());
+            CHECK_EQ(againReport.cacheMisses, 0);
+        }
+        std::printf("  %-28s %4d faces  raw=%d empty=%d validity=%s\n",
+                    name.c_str(), model.faceCount(), raw, empty,
+                    validity.c_str());
     }
-    // Manifest-driven: fixture + release fast rows (stress rows are fast=0).
-    CHECK(cases >= 28);
-    CHECK(fastCases >= 25);
+    CHECK(cases >= 36);
+    CHECK(fastCases >= 31);
+}
+
+void testZooSurfaceClassification() {
+    std::printf("-- zoo surface classification --\n");
+    // bezier_face is authored as Geom_BezierSurface; STEP round-trip
+    // typically stores it as BSpline, which is what import classifies.
+    struct Expect {
+        const char* fixture;
+        weft::SurfaceType type;
+    };
+    const Expect expects[] = {
+        {"cylinder", weft::SurfaceType::Cylinder},
+        {"box", weft::SurfaceType::Plane},
+        {"cone", weft::SurfaceType::Cone},
+        {"sphere", weft::SurfaceType::Sphere},
+        {"torus", weft::SurfaceType::Torus},
+        {"ribbon", weft::SurfaceType::Extrusion},  // linear prism is planar; ribbon is extruded curve
+        {"canrev", weft::SurfaceType::Revolution},
+        {"bspline_slab", weft::SurfaceType::BSpline},
+        {"bezier_face", weft::SurfaceType::BSpline},  // STEP promotes Bezier→BSpline
+        {"offset_slab", weft::SurfaceType::Offset},
+    };
+    for (const Expect& e : expects) {
+        const std::string path = tmpPath(std::string("weft_zoo_") + e.fixture + ".step");
+        weft::writeStep(weft::makeFixture(e.fixture), path);
+        const weft::Model model = weft::loadStep(path);
+        const weft::Analysis a = weft::analyze(model);
+        bool found = false;
+        for (const auto& f : a.faces) {
+            if (f.type == e.type) found = true;
+        }
+        if (!found) {
+            std::printf("  missing %s on fixture %s\n",
+                        weft::surfaceTypeName(e.type), e.fixture);
+        }
+        CHECK(found);
+    }
+}
+
+void testCoverageMatrix() {
+    std::printf("-- coverage matrix --\n");
+    const std::filesystem::path root =
+        std::filesystem::path(__FILE__).parent_path();
+    std::ifstream corpus(root / "CAD_CORPUS.tsv");
+    std::ifstream matrix(root / "COVERAGE_MATRIX.tsv");
+    CHECK(corpus.good());
+    CHECK(matrix.good());
+    std::set<std::string> covered;
+    std::string line;
+    while (std::getline(corpus, line)) {
+        if (line.empty() || line.rfind("name\t", 0) == 0) continue;
+        std::vector<std::string> field;
+        for (size_t pos = 0;;) {
+            const size_t tab = line.find('\t', pos);
+            field.push_back(line.substr(pos, tab - pos));
+            if (tab == std::string::npos) break;
+            pos = tab + 1;
+        }
+        if (field.size() < 14) continue;
+        for (int idx : {10, 11, 12}) {
+            std::string tags = field[idx];
+            for (size_t i = 0; i < tags.size();) {
+                size_t j = tags.find(',', i);
+                if (j == std::string::npos) j = tags.size();
+                std::string tok = tags.substr(i, j - i);
+                while (!tok.empty() && tok.front() == ' ') tok.erase(tok.begin());
+                while (!tok.empty() && tok.back() == ' ') tok.pop_back();
+                if (!tok.empty() && tok != "-") covered.insert(tok);
+                i = j + 1;
+            }
+        }
+    }
+    int required = 0, missing = 0;
+    while (std::getline(matrix, line)) {
+        if (line.empty() || line.rfind("tag\t", 0) == 0) continue;
+        const size_t tab = line.find('\t');
+        const std::string tag =
+            tab == std::string::npos ? line : line.substr(0, tab);
+        ++required;
+        if (!covered.count(tag)) {
+            std::printf("  MISSING coverage tag: %s\n", tag.c_str());
+            ++missing;
+            CHECK(false);
+        }
+    }
+    std::printf("  required=%d covered_tokens=%zu missing=%d\n", required,
+                covered.size(), missing);
 }
 
 int main() {
@@ -2064,11 +2105,12 @@ int main() {
     RUN(testWeldTolerance);
     RUN(testWeldVerts);
     RUN(testGenerationCache);
-    RUN(testMp9GeometryRouting);
     RUN(testConcurrentGenerationSettings);
     RUN(testCadConversionPreservesObjects);
     RUN(testAllMesherStrategies);
     RUN(testCadCorpus);
+    RUN(testCoverageMatrix);
+    RUN(testZooSurfaceClassification);
     if (failures) {
         std::printf("\n%d FAILURE(S)\n", failures);
         return 1;

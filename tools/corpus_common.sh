@@ -22,9 +22,10 @@ corpus_field() {
 ensure_fixture_step() {
     # $1 = weft binary, $2 = absolute step path, $3 = fixture name, $4 = tier
     local weft="$1" step="$2" name="$3" tier="$4"
-    if [[ "$tier" != "fixture" ]]; then
-        return 0
-    fi
+    case "$tier" in
+        fixture|dirty) ;;
+        *) return 0 ;;
+    esac
     if [[ -f "$step" ]]; then
         return 0
     fi

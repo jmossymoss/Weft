@@ -6,21 +6,17 @@
 
 namespace weft {
 
-// Test/demo geometry built with OCCT primitives so the pipeline can be
-// exercised without external CAD files.
+// Deterministic OpenCASCADE fixtures for the geometry / interaction / dirty
+// zoo. Names are the CAD_CORPUS fixture keys; see tests/CAD_CORPUS.tsv.
 //
-//   "cylinder" - a single solid cylinder (r=10, h=30)
-//   "box"      - a single solid box (20 x 30 x 15)
-//   "cone"     - solid cone to an apex (r=10, h=20)
-//   "sphere"   - solid sphere (r=10)
-//   "torus"    - solid torus (R=10, r=3)
-//   "fillet"   - box with one long edge blended r=4 (a fillet strip with
-//                two tangent-smooth joins, for support-loop testing)
-//   "hole"     - plate with a through-bore r=8 (two ring junctions and a
-//                bore wall, for hole detection and junction testing)
-//   "demo"     - compound of cylinder and box side by side
-//   "boss"     - box fused with a cylindrical boss (exercises trimmed
-//                planar faces, which must fall back to triangulation)
+// Geometry zoo: cylinder, box, cone, sphere, torus, extrusion, canrev,
+//   bspline_slab, bezier_slab, bezier_face, offset_slab, ellipse_plate,
+//   fillet, microedge
+// Interaction zoo: hole, plate_holes, slotted, barrel, barrel2, drilled,
+//   notched, boss, bossfillet, ribbon, ribbonnotch, filletslot, hairline,
+//   slitdrill, torture, compound2
+// Dirty / adversarial: open_shell, dirty_gap, bezier_face
+// Aliases: demo -> torture
 TopoDS_Shape makeFixture(const std::string& name);
 
 }  // namespace weft

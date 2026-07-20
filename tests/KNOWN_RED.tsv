@@ -8,8 +8,3 @@ teleporter	cad	require_watertight	0	STEP_Examples/teleporter.stp	WP3	release wat
 teleporter	default	require_watertight	0	STEP_Examples/teleporter.stp	WP3	release watertight restored without filename exemption
 tork	cad	require_watertight	0	STEP_Examples/tork.stp	WP3	broken source; replace or heal with explicit diagnostic, then enforce watertight
 tork	default	require_watertight	0	STEP_Examples/tork.stp	WP3	broken source; replace or heal with explicit diagnostic, then enforce watertight
-mp9_raw_127	setup	missing_path	1	regressions/mp9/mp9_raw_127.step	WP1	commit reduced STEP under tests/regressions matching visual_baselines/mp9
-mp9_raw_cluster_243_247	setup	missing_path	1	regressions/mp9/mp9_raw_cluster_243_247.step	WP1	commit reduced STEP matching visual baseline
-mp9_raw_1692	setup	missing_path	1	regressions/mp9/mp9_raw_1692.step	WP1	commit reduced STEP matching visual baseline
-mp9_empty_1189	setup	missing_path	1	regressions/mp9/mp9_empty_1189.step	WP1	commit reduced STEP matching visual baseline
-mp9_empty_2128	setup	missing_path	1	regressions/mp9/mp9_empty_2128.step	WP1	commit reduced STEP matching visual baseline

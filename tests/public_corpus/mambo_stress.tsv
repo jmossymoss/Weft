@@ -1,0 +1,3 @@
+# MAMBO difficult blocking / meshing configurations (supplement only).
+# id	local_path	validity	notes
+MAMBO_SMOKE_1	mambo/pending/case_01.step	closed_solid	placeholder; clone https://gitlab.com/franck.ledoux/mambo

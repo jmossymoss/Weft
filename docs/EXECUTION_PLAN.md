@@ -279,19 +279,22 @@ weakening release assertions.
 release gates, and scheduled public-corpus jobs must select cases from it rather
 than maintain separate hardcoded model lists.
 
-WP0 begins with known bootstrap debt: the manifest contains generated and
-reduced paths that are absent, while `tools/corpus_gate.sh` has an independent
-fixture list and automatically includes every committed STEP example. Reconcile
-these before treating corpus results as authoritative.
+Corpus runners select from `tests/CAD_CORPUS.tsv` (and optional public
+manifests under `tests/public_corpus/`). Geometry coverage comes from the
+deterministic zoo and `tests/COVERAGE_MATRIX.tsv`. Fusion 360 Gallery Extended
+is the primary public-real benchmark; ABC is broad-nightly; NIST/CAx-IF is
+interop; MAMBO is a small stress supplement. MP9 is `tier=performance` only.
 
 The manifest must distinguish:
 
 - release cases, which must eventually meet every strict completion invariant;
 - deterministic non-release fixtures, which must meet their declared valid or
   invalid-input expectations;
+- dirty-step cases with explicit open/invalid expectations;
 - stress/research cases, which may retain explicit bounded known-red metrics but
   may not regress;
-- performance cases, which run on a scheduled or manual cadence.
+- performance cases (including MP9), which run on a scheduled or manual cadence
+  and never define geometry coverage.
 
 During WP0-WP2, record each reproducible release blocker in
 `tests/KNOWN_RED.tsv` with case, metric, observed ceiling, reproducer, owning

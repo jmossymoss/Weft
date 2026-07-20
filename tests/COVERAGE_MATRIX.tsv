@@ -1,0 +1,24 @@
+tag	kind	description
+plane	surface	planar faces
+cylinder	surface	cylindrical faces
+cone	surface	conical faces including apex
+sphere	surface	spherical faces including poles
+torus	surface	toroidal faces
+extrusion	surface	surface of extrusion / prism sides
+revolution	surface	surface of revolution
+bezier	surface	Bezier surface
+bspline	surface	B-spline surface
+offset	surface	offset surface
+line	curve	linear edges
+circle	curve	circular edges / arcs
+ellipse	curve	elliptical trim
+fillet_strip	feature	constant-radius fillet strip
+bore	feature	through bore / hole
+inner_wire	feature	inner wire / hole in face
+periodic_seam	feature	periodic cylinder/torus seam
+poles	feature	sphere poles
+apex	feature	cone apex
+multi_bore	feature	multiple holes on one plate
+compound	feature	multi-solid compound
+open_shell	feature	intentionally open shell
+gap	feature	tolerance gap / dirty sew

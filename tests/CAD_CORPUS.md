@@ -6,131 +6,69 @@ datasets, and completion gates are defined only in
 
 ## Corpus layers
 
-The intended corpus is layered by purpose:
+| Layer | Purpose | Inventory |
+| --- | --- | --- |
+| `geometry-zoo` | Atomic OCCT surface/curve coverage | generated fixtures in `CAD_CORPUS.tsv` |
+| `interaction-zoo` | Holes, fillets, seams, multi-body | generated / committed fixtures |
+| `dirty-step` | Gaps, open shells, invalid trims | `tier=dirty` fixtures with explicit validity |
+| `public-real` | Stratified Fusion 360 Gallery Extended | `tests/public_corpus/fusion360_smoke.tsv` |
+| `broad-nightly` | ABC breadth | `tests/public_corpus/abc_nightly.tsv` |
+| `release` | MVP artist gate | `tier=release` in `CAD_CORPUS.tsv` |
+| `target-assets` | Plasticity workloads (incl. MP9) | `tier=performance` / `stress` — **not** geometry coverage |
 
-- Generated geometry fixtures isolate one surface, trim, feature, or topology
-  interaction. `weft fixture` creates these deterministically for tests.
-- Adversarial generated fixtures exercise invalid or near-degenerate input with
-  an explicit expected healing or diagnostic outcome.
-- Reduced regressions preserve the smallest adjacency context needed to
-  reproduce a real model failure.
-- Committed STEP examples exercise real mechanical parts and assemblies.
-- Release models gate the artist-usable MVP.
-- Stress and performance models remain visible without silently expanding the
-  release definition.
-- External public datasets are selected through reproducible manifests and are
-  not committed wholesale.
-- `visual_baselines` stores reviewed viewport evidence. It is not a
-  pixel-perfect golden-image gate.
+Primary real-world benchmark: Fusion 360 Gallery Extended STEP. ABC is nightly
+breadth. NIST/CAx-IF covers import interoperability. MAMBO is a small meshing
+stress supplement. See [`public_corpus/README.md`](public_corpus/README.md).
 
-`CAD_CORPUS.tsv` is the sole machine-readable case inventory. Fixture-tier rows
-under `fixtures/generated/` are created by `weft fixture` / CTest before load.
-Committed fixtures live under `tests/fixtures/*.step`. Release and stress STEP
-files live under `tests/STEP_Examples/`. Runners must not maintain a parallel
-model list.
+MP9 is a performance / integration workload only. It must not drive geometry
+coverage or face-ID assertions.
 
-Reproducible temporary failures are listed in `tests/KNOWN_RED.tsv`. The
-regression corpus gate may consume those exact allowances; `tools/release_gate.sh`
-never does.
+`CAD_CORPUS.tsv` is the sole machine-readable case inventory for CI. Public
+manifests select external files; they do not replace the zoo.
+
+## Manifest columns
+
+`name tier path fast max_raw max_empty require_watertight visual validity layer surfaces curves features notes`
+
+- `validity`: `closed_solid` | `open` | `invalid` | `research`
+- Watertight mesh is required only when `validity=closed_solid` and
+  `require_watertight=1`
+- `surfaces` / `curves` / `features`: comma-separated coverage tags checked by
+  `tests/COVERAGE_MATRIX.tsv`
 
 ## Validation policy
 
-Every case records source validity before asserting output validity:
+- Validate source topology first.
+- A valid closed solid in the release gate must eventually produce 0 open edges,
+  0 non-manifold edges, no folds, no raw demotions, and no empty faces.
+- Open or dirty inputs declare heal / reject / bounded research outcomes.
+- Do not raise failure limits merely to pass.
 
-- A valid closed solid must produce 0 open edges, 0 non-manifold edges, no
-  folds, no raw triangulation demotions, and no empty faces when it is in the
-  release gate.
-- An intentionally open extracted neighborhood may have boundary edges that are
-  identified as expected extraction boundaries.
-- Invalid or deliberately dirty input must declare whether Weft should heal it,
-  reject it with a diagnostic, or retain a bounded research-only defect.
+`tests/KNOWN_RED.tsv` holds temporary release/regression allowances. The strict
+release gate never consumes them.
 
-Failure limits in the manifest are temporary known-red ceilings, not acceptance
-targets. Do not raise them or change `require_watertight` merely to make a test
-pass.
-
-Reproducible release blockers belong in `KNOWN_RED.tsv` during stabilization.
-Regression gates may consume those exact allowances; the strict release gate
-must not. Stress/research ceilings may remain at release when they describe
-their source validity and cannot increase.
-
-## Current runners
-
-The standard pipeline tests are:
+## Runners
 
 ```sh
 ctest --test-dir build --output-on-failure
-```
-
-The corpus gate selects `fast=1` rows from `CAD_CORPUS.tsv`, generates missing
-fixture-tier STEP files, and meshes each at default and CAD profiles:
-
-```sh
-tools/corpus_gate.sh
-```
-
-The strict release gate meshes only `tier=release` rows and ignores
-`KNOWN_RED.tsv` (expected red until WP3):
-
-```sh
-tools/release_gate.sh
-```
-
-Scoreboard triage (fast rows, machine-readable):
-
-```sh
+tools/coverage_report.sh
+tools/corpus_gate.sh --no-golden
+tools/release_gate.sh          # expected red until WP3
 tools/corpus_scoreboard.sh > build/scoreboard.tsv
+tools/fetch_public_corpus.sh status
 ```
 
-Use `--no-golden` only for cross-platform invariant checks. Use `--update` only
-after an intentional topology change has been explained and visually reviewed.
-
-For one model:
-
-```sh
-build/cli/weft mesh model.step -o out.obj --profile cad --validate
-build/cli/weft sweep model.step
-```
+Public rows run only when `WEFT_RUN_PUBLIC=1` and cache files exist.
 
 ## Adding a generated fixture
 
-1. Add the geometry constructor to the fixture registry.
-2. Give it one primary surface/topology purpose.
-3. Record source validity and expected behavior.
-4. Generate it during the test; do not depend on an untracked local STEP file.
-5. Add focused assertions for import, routing, topology, and diagnostics.
-6. Add visual evidence when polygon flow matters.
-7. Add it to `CAD_CORPUS.tsv` only when the manifest path and generation
-   lifecycle are implemented.
+1. Add the constructor to `weft::makeFixture`.
+2. Tag surfaces / curves / features / validity / layer in `CAD_CORPUS.tsv`.
+3. Ensure `COVERAGE_MATRIX.tsv` tags are covered (or extend the matrix).
+4. Generate during test; do not depend on an untracked local STEP file.
+5. Add visual evidence when polygon flow matters.
 
 ## Reducing a real-world failure
 
-```sh
-build/cli/weft extract model.step \
-  --faces 42 --rings 1 \
-  -o tests/regressions/model_face_42.step
-```
-
-Keep the failing face and the smallest adjacency radius that reproduces the
-failure. Then:
-
-1. Confirm the reduced model has the same failure class.
-2. Record whether the reduced source is closed and valid.
-3. Add the file and expectations to `CAD_CORPUS.tsv`.
-4. Add an automated assertion that fails for the observed reason.
-5. Save one useful viewport artifact when the defect is visual.
-6. Fix the topology class rather than the source filename or face ID.
-
-## Visual review
-
-Review wireframe and diagnostic overlays in both the app and Blender when a
-mesher change affects topology. Check:
-
-- straight and coherent primitive columns;
-- understandable fillet flow;
-- local collars around holes and slots;
-- deliberate poles, triangles, and n-gons;
-- folds, overlaps, spirals, slivers, and seam artifacts;
-- hard-surface shading and editability.
-
-Numeric counts alone cannot approve a topology change.
+Prefer a Fusion (or release) failure class, extract a minimal neighborhood, and
+add a deterministic fixture. Do not special-case filenames or face IDs.

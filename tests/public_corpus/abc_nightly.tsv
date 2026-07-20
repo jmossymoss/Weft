@@ -1,0 +1,6 @@
+# ABC Dataset nightly breadth sample (not CI-blocking).
+# Requires WEFT_ABC_ROOT pointing at a local ABC STEP checkout.
+# id	face_band	local_path	validity	notes
+ABC_NIGHTLY_S1	1-100	abc/pending/small_001.step	closed_solid	placeholder; sample from WEFT_ABC_ROOT
+ABC_NIGHTLY_M1	100-500	abc/pending/medium_001.step	closed_solid	placeholder
+ABC_NIGHTLY_L1	500-2000	abc/pending/large_001.step	closed_solid	placeholder

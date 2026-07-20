@@ -1,0 +1,4 @@
+# NIST / CAx-IF interoperability samples for import, units, assemblies.
+# id	local_path	validity	notes
+NIST_AP242_SMOKE	nist/pending/ap242_smoke.stp	closed_solid	placeholder; download from NIST MBE PMI / CAx-IF links
+NIST_ASSEMBLY_SMOKE	nist/pending/assembly_smoke.stp	closed_solid	placeholder; multi-body / assembly import
