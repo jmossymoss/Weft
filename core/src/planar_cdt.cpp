@@ -977,11 +977,9 @@ public:
                     raw.vertices = loop->vertices;
                     part.loops.push_back(std::move(raw));
                 }
-                // Force single-outer path by validating as curved synthetic
-                // only when allowCurvedUv; otherwise build a one-outer domain
-                // with declared roles already set — call triangulate recursively
-                // after marking allowCurvedUv to skip re-validation multi-outer.
-                part.allowCurvedUv = true;
+                // G1: keep the parent's allowCurvedUv (false for honest
+                // planes). One-outer recursive parts already have declared
+                // roles; do not force curved-UV to skip nesting proofs.
                 const PlanarCdtResult partResult = triangulate(part);
                 if (!partResult) {
                     result.failure = partResult.failure;
