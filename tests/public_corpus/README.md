@@ -3,41 +3,59 @@
 External datasets are **not** committed. Manifests here select a reproducible
 subset; fetch into `tests/public_corpus/_cache/` (gitignored) before running.
 
-Public corpus authority (roles are distinct; none is a geometry-coverage
-oracle — that remains the deterministic zoo + `COVERAGE_MATRIX.tsv`):
-
 | Layer | Role | Upstream |
 | --- | --- | --- |
-| `abc_nightly.tsv` | Broad diversity / nightly robustness | [ABC Dataset](https://deep-geometry.github.io/abc-dataset/) |
-| `nist_interop.tsv` | STEP import interoperability | [NIST MBE PMI / CAx-IF](https://www.nist.gov/ctl/smart-connected-systems-division/smart-connected-manufacturing-systems-group/mbe-pmi-0) |
-| `mambo_stress.tsv` | Meshing-topology stress | [MAMBO](https://gitlab.com/franck.ledoux/mambo) |
+| `abc_nightly.tsv` | **Broad nightly / geometric diversity** (WP1 public) | [ABC Dataset](https://deep-geometry.github.io/abc-dataset/) |
+| `fusion360_smoke.tsv` | Optional mechanical-feature smoke (stratified) | [Fusion 360 Gallery Extended STEP](https://github.com/AutodeskAILab/Fusion360GalleryDataset) |
+| `nist_interop.tsv` | STEP import / assemblies / units | [NIST MBE PMI / CAx-IF](https://www.nist.gov/ctl/smart-connected-systems-division/smart-connected-manufacturing-systems-group/mbe-pmi-0) |
+| `mambo_stress.tsv` | Difficult meshing topologies | [MAMBO](https://gitlab.com/franck.ledoux/mambo) |
 
-Optional supplemental smoke (not required, not primary):
+Local `tests/STEP_Examples` assets (MP9, flaregun, foam, …) stay out of this
+layer. Plasticity targets remain in `CAD_CORPUS.tsv` as `tier=performance` /
+`layer=target-assets` — they are **not** the public corpus.
 
-| Layer | Role | Upstream |
-| --- | --- | --- |
-| `fusion360_smoke.tsv` | Optional stratified mechanical-feature sample | [Fusion 360 Gallery Extended STEP](https://github.com/AutodeskAILab/Fusion360GalleryDataset) (`s2.0.1_extended_step`) |
+## ABC nightly (primary public / broad-nightly)
 
-See also [`ABC.md`](ABC.md), [`NIST.md`](NIST.md), and [`MAMBO.md`](MAMBO.md).
-
-Local `STEP_Examples` release/stress paths and MP9 live in `CAD_CORPUS.tsv`.
-MP9 is `tier=performance` / `layer=target-assets` only. Neither MP9 nor other
-Plasticity target assets are public-corpus geometry-coverage benchmarks.
-
-## Fetch
+ABC STEP chunks are multi-GB; the fetch helper documents chunk URLs and samples
+from a local tree. Details: [`ABC.md`](ABC.md).
 
 ```sh
-tools/fetch_public_corpus.sh abc-nightly   # requires WEFT_ABC_ROOT
-tools/fetch_public_corpus.sh nist
-tools/fetch_public_corpus.sh mambo
+# Print obtain steps + refresh expected-slot paths (no multi-GB download)
+tools/fetch_public_corpus.sh abc-nightly
 
-# Optional Fusion sample (not part of public corpus authority):
-tools/fetch_public_corpus.sh fusion360-smoke
+# After unpacking ABC STEP locally:
+export WEFT_ABC_ROOT=/path/to/abc/step
+tools/fetch_public_corpus.sh abc-nightly
+# equivalent sampler:
+tools/sample_abc_nightly.py
 
+# Status
 tools/fetch_public_corpus.sh status
 
-# Optional gate (skips unless WEFT_RUN_PUBLIC=1 and files exist)
+# Opt-in gate (ABC first; skips unless WEFT_RUN_PUBLIC=1 and files exist)
 WEFT_RUN_PUBLIC=1 tools/public_corpus_gate.sh
+```
+
+Manual obtain (same URLs the fetch helper prints):
+
+```sh
+curl -fsSL -o step_v00.txt \
+  https://deep-geometry.github.io/abc-dataset/data/step_v00.txt
+# ~0.8–1.6 GB per chunk — download only what you need:
+sed '1q;d' step_v00.txt | xargs -n 2 sh -c 'curl -fL -o "$1" "$0"'
+7z x abc_0000_step_v00.7z -o"$WEFT_ABC_ROOT"
+tools/sample_abc_nightly.py
+```
+
+Sampled STEP files stay in the gitignored cache. Do not commit ABC archives or
+extracted models.
+
+## Other subsets
+
+```sh
+WEFT_FETCH_FUSION_ZIP=1 tools/fetch_public_corpus.sh fusion360-smoke
+tools/fetch_public_corpus.sh nist
+tools/fetch_public_corpus.sh mambo
 ```
 
 ## Environment
@@ -45,25 +63,18 @@ WEFT_RUN_PUBLIC=1 tools/public_corpus_gate.sh
 - `WEFT_PUBLIC_CORPUS_ROOT` — optional override for cache root
   (default `tests/public_corpus/_cache`)
 - `WEFT_ABC_ROOT` — local ABC STEP tree for nightly selection
-- `WEFT_MAMBO_ROOT` — optional existing MAMBO checkout
-- `WEFT_FETCH_FUSION_ZIP=1` — allow downloading the optional Fusion archive
-- `WEFT_RUN_PUBLIC=1` — enable `tools/public_corpus_gate.sh`
+- `WEFT_ABC_SEED` — sampler seed (default `42`)
+- `WEFT_RUN_PUBLIC=1` — enable `tools/public_corpus_gate.sh` (ABC first)
+- `WEFT_FETCH_FUSION_ZIP=1` — allow Fusion zip download (optional layer)
 
 Public cases are intentionally kept out of `CAD_CORPUS.tsv` so missing cache
 paths cannot break the default corpus gate.
 
-## Selection notes
+## Stratification (ABC)
 
-- **ABC**: select by surface/curve mix and face-count bands rather than an
-  unclassified random sample. Expand breadth only after failures classify
-  automatically.
-- **NIST / CAx-IF**: import, units, assemblies, and kernel-produced STEP
-  (AP203/AP242-style). Prefer small reviewable smoke rows before large suites.
-- **MAMBO**: difficult blocking / meshing configurations for stress, not
-  breadth or interop coverage.
-- **Fusion (optional)**: if used, prefer Extended STEP segmentation labels and
-  face-count bands so a tiny sample stays reviewable. It does not define public
-  corpus authority.
+Select by B-rep surface / face-count bands (`1-100`, `100-500`, `500-2000`)
+using ABC stats `#surfs` when present, else STEP `ADVANCED_FACE` counts, else
+file-size proxy. Expand breadth only after failures classify automatically.
 
 ## Validity
 

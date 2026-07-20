@@ -20,7 +20,8 @@ datasets, and completion gates are defined only in
 
 Public corpus authority is ABC (broad diversity), NIST/CAx-IF (interop), and
 MAMBO (meshing stress). Fusion 360 Gallery is optional supplemental smoke, not
-required or primary. See [`public_corpus/README.md`](public_corpus/README.md).
+required or primary. See [`public_corpus/README.md`](public_corpus/README.md)
+and [`public_corpus/ABC.md`](public_corpus/ABC.md).
 
 Geometry coverage comes from the deterministic zoo and `COVERAGE_MATRIX.tsv`.
 Local `STEP_Examples` release models are the artist gate, not a public-corpus
@@ -60,9 +61,11 @@ tools/corpus_gate.sh --no-golden
 tools/release_gate.sh          # expected red until WP3
 tools/corpus_scoreboard.sh > build/scoreboard.tsv
 tools/fetch_public_corpus.sh status
+WEFT_RUN_PUBLIC=1 tools/public_corpus_gate.sh   # ABC first; opt-in
 ```
 
-Public rows run only when `WEFT_RUN_PUBLIC=1` and cache files exist.
+Public rows run only when `WEFT_RUN_PUBLIC=1` and cache files exist
+(`tools/public_corpus_gate.sh`; default manifest is `abc_nightly.tsv`).
 
 ## Adding a generated fixture
 
