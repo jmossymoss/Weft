@@ -1,4 +1,4 @@
-# Stratified Fusion 360 Gallery Extended STEP smoke subset.
+# Optional Fusion 360 Gallery Extended STEP smoke (not public corpus authority).
 # Paths are relative to tests/public_corpus/_cache/fusion360/
 # Fill local_path after tools/fetch_public_corpus.sh fusion360-smoke.
 # id	ops_band	face_band	local_path	validity	notes

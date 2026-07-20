@@ -144,6 +144,8 @@ cli/                       command-line client
 app/                       interactive client
 blender/                   live-link add-on
 tests/                     fixtures, corpus inventory, and pipeline tests
+tests/CAD_CORPUS.md        corpus mechanics (zoo, release, public layers)
+tests/public_corpus/       ABC, NIST/CAx-IF, MAMBO manifests (external cache)
 tools/                     corpus, visual, and diagnostic tooling
 build.sh / build.bat       platform build entry points
 WINDOWS_BUILD.md           Windows setup and troubleshooting

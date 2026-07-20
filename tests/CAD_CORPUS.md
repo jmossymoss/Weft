@@ -11,17 +11,21 @@ datasets, and completion gates are defined only in
 | `geometry-zoo` | Atomic OCCT surface/curve coverage | generated fixtures in `CAD_CORPUS.tsv` |
 | `interaction-zoo` | Holes, fillets, seams, multi-body | generated / committed fixtures |
 | `dirty-step` | Gaps, open shells, invalid trims | `tier=dirty` fixtures with explicit validity |
-| `public-real` | Stratified Fusion 360 Gallery Extended | `tests/public_corpus/fusion360_smoke.tsv` |
-| `broad-nightly` | ABC breadth | `tests/public_corpus/abc_nightly.tsv` |
+| `broad-nightly` | ABC broad diversity | `tests/public_corpus/abc_nightly.tsv` |
+| `interop` | NIST / CAx-IF STEP import | `tests/public_corpus/nist_interop.tsv` |
+| `meshing-stress` | MAMBO difficult topologies | `tests/public_corpus/mambo_stress.tsv` |
+| `public-optional` | Optional Fusion 360 Gallery sample | `tests/public_corpus/fusion360_smoke.tsv` |
 | `release` | MVP artist gate | `tier=release` in `CAD_CORPUS.tsv` |
 | `target-assets` | Plasticity workloads (incl. MP9) | `tier=performance` / `stress` — **not** geometry coverage |
 
-Primary real-world benchmark: Fusion 360 Gallery Extended STEP. ABC is nightly
-breadth. NIST/CAx-IF covers import interoperability. MAMBO is a small meshing
-stress supplement. See [`public_corpus/README.md`](public_corpus/README.md).
+Public corpus authority is ABC (broad diversity), NIST/CAx-IF (interop), and
+MAMBO (meshing stress). Fusion 360 Gallery is optional supplemental smoke, not
+required or primary. See [`public_corpus/README.md`](public_corpus/README.md).
 
-MP9 is a performance / integration workload only. It must not drive geometry
-coverage or face-ID assertions.
+Geometry coverage comes from the deterministic zoo and `COVERAGE_MATRIX.tsv`.
+Local `STEP_Examples` release models are the artist gate, not a public-corpus
+or geometry-coverage oracle. MP9 is a performance / integration workload only;
+it must not drive geometry coverage or face-ID assertions.
 
 `CAD_CORPUS.tsv` is the sole machine-readable case inventory for CI. Public
 manifests select external files; they do not replace the zoo.
@@ -70,5 +74,6 @@ Public rows run only when `WEFT_RUN_PUBLIC=1` and cache files exist.
 
 ## Reducing a real-world failure
 
-Prefer a Fusion (or release) failure class, extract a minimal neighborhood, and
-add a deterministic fixture. Do not special-case filenames or face IDs.
+Prefer an ABC, NIST/CAx-IF, MAMBO, or release failure class, extract a minimal
+neighborhood, and add a deterministic fixture. Do not special-case filenames or
+face IDs.
