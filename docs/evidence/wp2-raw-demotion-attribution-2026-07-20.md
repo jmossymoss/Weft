@@ -44,9 +44,9 @@ Cause strings passed into `demote()` (and now stored on the report):
 - `rim notch failed`
 - `open band insert failed`
 - `revolution insert failed`
-- `tapered revolution failed` (and related revolution failures)
 - `open band failed`
 - `revolution grid failed`
+- `orthogonal surface grid failed`
 - `coons failed`
 - `minimal planar failed`
 - `dome cap failed`
