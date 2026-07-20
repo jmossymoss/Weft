@@ -842,7 +842,7 @@ bool isClosedRevolution(const BRepAdaptor_Surface& surf) {
     }
 }
 
-// Adaptor-independent closed-revolution probe (MVP demand #2): OFFSET
+// Adaptor-independent closed-revolution probe: OFFSET
 // surfaces report IsUClosed()=false even across a full 2-pi period
 // (foam's can body — 411 coons patches instead of columns), and geometry
 // kernels export revolves as plain bsplines whose closure flag can lie

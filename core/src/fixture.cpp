@@ -314,8 +314,7 @@ TopoDS_Shape makeFixture(const std::string& name) {
         // profile, then hollowed with MakeThickSolid — the walls become
         // OFFSET_SURFACE geometry that is a perfect surface of revolution
         // but is not TYPED as one, so it takes coons patchwork unless the
-        // planner detects revolution geometry from the shape itself
-        // (MVP demand #2).
+        // planner detects revolution geometry from the shape itself.
         TColgp_Array1OfPnt pts(1, 6);
         pts.SetValue(1, gp_Pnt(14.0, 0.0, 0.0));
         pts.SetValue(2, gp_Pnt(15.5, 0.0, 8.0));
@@ -410,7 +409,7 @@ TopoDS_Shape makeFixture(const std::string& name) {
         return cham.Shape();
     }
     if (name == "filletslot") {
-        // The artist's coons-loop-spam report ISOLATED (MVP demand #1b):
+        // Isolates the reported coons-loop-spam failure:
         // a slot through a plate whose four interior vertical edges are
         // blended r=2 — the slot ends become quarter-round constant-
         // radius fillet strips that weld into the flat slot walls. The

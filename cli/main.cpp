@@ -1,6 +1,5 @@
-// weft — Phase 0 spike CLI.
-// Proves the loop: STEP in → B-rep analysis → per-face controllable
-// topology generation → OBJ out. See docs/PLAN.md §9.
+// weft — headless client for B-rep import, analysis, topology generation,
+// validation, recipes, conversion, and export.
 
 #include "weft/analysis.hpp"
 #include "weft/edit.hpp"
@@ -32,7 +31,7 @@ namespace {
 
 void usage() {
     std::printf(
-        "weft — B-rep retopology core (phase 0)\n"
+        "weft — B-rep retopology CLI\n"
         "\n"
         "usage:\n"
         "  weft fixture <out.step> [--shape cylinder|box|cone|sphere|torus|\n"
@@ -635,7 +634,7 @@ int cmdCacheCheck(const std::vector<std::string>& args) {
     return 0;
 }
 
-// weft sweep — the adversarial density harness (MVP plan §8 / P0.1):
+// weft sweep — the adversarial density and override harness:
 // meshes the model at its base settings, then bumps every curved /
 // revolution face's radial through a sweep of counts, re-validating each
 // time. The per-face override must never open a seam, never demote any

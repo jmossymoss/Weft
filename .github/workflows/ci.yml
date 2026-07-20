@@ -1,7 +1,6 @@
-# Cross-platform CI (MVP plan P0.3): the pipeline suite must pass
-# identically on Linux and Windows — determinism is a feature. The Linux
-# job also runs the fixture half of the corpus gate (fast, no committed
-# models needed beyond the repo).
+# Cross-platform correctness gate: the pipeline suite must pass equivalently
+# on Linux and Windows. Linux also runs the complete corpus gate; Windows runs
+# the same invariants without platform-specific golden polygon counts.
 name: ci
 
 on:

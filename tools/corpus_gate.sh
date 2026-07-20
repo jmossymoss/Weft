@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Corpus gate — the MVP verification harness (docs/MVP_PLAN.md §8).
+# Corpus gate — release invariants and topology regression harness.
 #
 # Meshes every fixture and every committed STEP example at the library
-# default and the cad profile, and asserts the P0 invariants:
+# default and the cad profile, and asserts the correctness invariants:
 #   * watertight (0 open / 0 non-manifold) — tork is exempt (broken
 #     source per the artist's verdict; it must still mesh without
 #     crashing),
@@ -55,7 +55,7 @@ run_one() { # name file profile-args profile-tag watertight-required
     local stats
     stats=$(grep -Eo '[0-9]+ quads, [0-9]+ tris, [0-9]+ n-gons' "$log" | head -1)
     echo "$name $tag $stats" >> "$OUT/counts.txt"
-    # Never-fall-back census (P0.1): the border-exact contract floor is a
+    # Never-fall-back census: the border-exact contract floor is a
     # valid graceful plan. Only an actual demotion to raw OCCT triangles or
     # an empty face is a failure, checked through faceBuild's summary below.
     local demo

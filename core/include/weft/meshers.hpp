@@ -234,7 +234,7 @@ struct GenerationReport {
     // are not listed. faceMesher alone can't tell a contract-floor
     // demotion from a clean build (the floor keeps the planned kind so
     // conform treats its exact borders as authority) — the
-    // never-fall-back gate (MVP P0.1) reads this map instead: 1 and -1
+    // never-fall-back gate reads this map instead: 1 and -1
     // are failures, 2 is a visible graceful floor.
     std::map<int, int> faceBuild;
     // EdgeId -> solved subdivision count, for edges that took part in

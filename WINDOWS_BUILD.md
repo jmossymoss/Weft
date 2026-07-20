@@ -132,4 +132,6 @@ executables, so they run from any prompt or double-click with no PATH setup:
 - Generate topology: `weft mesh demo.step -o demo.obj --radial 12 --axial 3`
 - Open the OBJ in Blender; each B-rep face arrives as a named group
 
-See [README.md](README.md) and [docs/PLAN.md](docs/PLAN.md) for more details.
+See [README.md](README.md) for product usage and
+[docs/EXECUTION_PLAN.md](docs/EXECUTION_PLAN.md) for the authoritative roadmap
+and completion gates.

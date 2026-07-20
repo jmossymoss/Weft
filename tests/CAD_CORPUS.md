@@ -1,45 +1,113 @@
 # CAD regression corpus
 
-The corpus is deliberately layered:
+This document explains corpus mechanics. Product scope, release models, public
+datasets, and completion gates are defined only in
+[`docs/EXECUTION_PLAN.md`](../docs/EXECUTION_PLAN.md).
 
-- `fixtures/generated` contains small OCCT-authored feature fixtures. These
-  isolate surface and topology families and run in the fast CTest gate.
-- `regressions/mp9` contains real faces reduced from MP9 with one ring of
-  adjacent CAD faces. They preserve the failure context while running in less
-  than a second each.
-- `STEP_Examples/MP9.stp` is the hero integration/performance model. It is not
-  part of the fast gate.
-- `visual_baselines` contains viewport captures with wireframe and diagnostic
-  overlays. They are reviewed alongside numeric results; they are not treated
-  as pixel-perfect golden images.
+## Corpus layers
 
-`CAD_CORPUS.tsv` is the machine-readable inventory. Failure limits are maxima:
-fixing a raw or empty face is allowed, while introducing additional failures is
-not. Cases marked `require_watertight=0` are either intentionally extracted
-open neighborhoods or known topology defects.
+The intended corpus is layered by purpose:
 
-## Reducing a new real-world failure
+- Generated geometry fixtures isolate one surface, trim, feature, or topology
+  interaction. `weft fixture` creates these deterministically for tests.
+- Adversarial generated fixtures exercise invalid or near-degenerate input with
+  an explicit expected healing or diagnostic outcome.
+- Reduced regressions preserve the smallest adjacency context needed to
+  reproduce a real model failure.
+- Committed STEP examples exercise real mechanical parts and assemblies.
+- Release models gate the artist-usable MVP.
+- Stress and performance models remain visible without silently expanding the
+  release definition.
+- External public datasets are selected through reproducible manifests and are
+  not committed wholesale.
+- `visual_baselines` stores reviewed viewport evidence. It is not a
+  pixel-perfect golden-image gate.
 
-```powershell
-weft extract model.step --faces 42 --rings 1 -o tests/regressions/model_face_42.step
+`CAD_CORPUS.tsv` is the machine-readable inventory. During work package 0, its
+fixture and regression paths must be reconciled with files generated or
+committed by the tests. A manifest row is not evidence that its referenced file
+currently exists.
+
+## Validation policy
+
+Every case records source validity before asserting output validity:
+
+- A valid closed solid must produce 0 open edges, 0 non-manifold edges, no
+  folds, no raw triangulation demotions, and no empty faces when it is in the
+  release gate.
+- An intentionally open extracted neighborhood may have boundary edges that are
+  identified as expected extraction boundaries.
+- Invalid or deliberately dirty input must declare whether Weft should heal it,
+  reject it with a diagnostic, or retain a bounded research-only defect.
+
+Failure limits in the manifest are temporary known-red ceilings, not acceptance
+targets. Do not raise them or change `require_watertight` merely to make a test
+pass.
+
+## Current runners
+
+The standard pipeline tests are:
+
+```sh
+ctest --test-dir build --output-on-failure
+```
+
+The corpus gate generates its fixture inputs in a temporary directory and tests
+committed STEP examples at default and CAD profiles:
+
+```sh
+tools/corpus_gate.sh
+```
+
+Use `--no-golden` only for cross-platform invariant checks. Use `--update` only
+after an intentional topology change has been explained and visually reviewed.
+
+For one model:
+
+```sh
+build/cli/weft mesh model.step -o out.obj --profile cad --validate
+build/cli/weft sweep model.step
+```
+
+## Adding a generated fixture
+
+1. Add the geometry constructor to the fixture registry.
+2. Give it one primary surface/topology purpose.
+3. Record source validity and expected behavior.
+4. Generate it during the test; do not depend on an untracked local STEP file.
+5. Add focused assertions for import, routing, topology, and diagnostics.
+6. Add visual evidence when polygon flow matters.
+7. Add it to `CAD_CORPUS.tsv` only when the manifest path and generation
+   lifecycle are implemented.
+
+## Reducing a real-world failure
+
+```sh
+build/cli/weft extract model.step \
+  --faces 42 --rings 1 \
+  -o tests/regressions/model_face_42.step
 ```
 
 Keep the failing face and the smallest adjacency radius that reproduces the
-problem. Add the result to `CAD_CORPUS.tsv`, generate a viewport screenshot,
-and record what is visibly wrong rather than only its polygon counts.
+failure. Then:
 
-## Current visual findings
+1. Confirm the reduced model has the same failure class.
+2. Record whether the reduced source is closed and valid.
+3. Add the file and expectations to `CAD_CORPUS.tsv`.
+4. Add an automated assertion that fails for the observed reason.
+5. Save one useful viewport artifact when the defect is visual.
+6. Fix the topology class rather than the source filename or face ID.
 
-- MP9 127 and the 243-247 cluster are circular/annular trimmed surfaces whose
-  fallback triangulation produces dense fans and visible folded cells.
-- MP9 1692 is a sharply folded extrusion junction with overlapping triangular
-  sheets and non-manifold edges.
-- MP9 1189 is an offset face that emits no surface inside its boundary.
-- MP9 2128 is a missing curved extrusion patch between otherwise structured
-  neighboring faces.
-- `slitdrill` looks closed by silhouette but the diagnostic overlay reports
-  four non-manifold edges along the slit. This is exactly why visual and
-  topological checks are both required.
-- The remaining reviewed generated fixtures are visually coherent and their
-  structured flow follows the intended analytic features. `barrel2` retains
-  long transition diagonals around its chained cut and remains worth watching.
+## Visual review
+
+Review wireframe and diagnostic overlays in both the app and Blender when a
+mesher change affects topology. Check:
+
+- straight and coherent primitive columns;
+- understandable fillet flow;
+- local collars around holes and slots;
+- deliberate poles, triangles, and n-gons;
+- folds, overlaps, spirals, slivers, and seam artifacts;
+- hard-surface shading and editability.
+
+Numeric counts alone cannot approve a topology change.
