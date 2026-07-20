@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <map>
 #include <memory>
+#include <string>
 
 namespace weft {
 
@@ -237,6 +238,11 @@ struct GenerationReport {
     // never-fall-back gate reads this map instead: 1 and -1
     // are failures, 2 is a visible graceful floor.
     std::map<int, int> faceBuild;
+    // FaceId -> short cause string for faceBuild values other than 0
+    // (raw, empty, or contract-floor). Absent for clean planned builds.
+    // CLI/validate print this next to face ids so unsupported cases are
+    // explicit rather than silent dbg-only notes.
+    std::map<int, std::string> faceBuildCause;
     // EdgeId -> solved subdivision count, for edges that took part in
     // density matching. Adjacent faces sharing an edge agree on this count.
     std::map<int, int> edgeDivisions;
@@ -258,6 +264,10 @@ struct GenerationReport {
     std::map<int, int> faceAcross;
 };
 
+// Human-readable demotion attribution for CLI/validate: counts plus
+// per-face id and cause for contract-floor, raw OCCT, and empty faces.
+std::string formatBuildDemotions(const GenerationReport& report);
+
 // Per-face mesh reuse across generate() calls: pass the same cache and
 // only faces whose settings, solved counts, or plan changed re-mesh —
 // a topology-only face edit re-meshes that face, while a density edit also
@@ -278,6 +288,10 @@ struct GenerationCache {
         // to the table. Stored so a cache HIT reports the same count a
         // fresh mesh would, not the sparse/zero placeholder.
         std::array<int, 2> builtCounts = {-1, -1};
+        // Cause string for fellBack != 0 (and empty-face leftovers). Kept
+        // so a cache hit re-emits the same faceBuildCause a fresh mesh
+        // would have written into GenerationReport.
+        std::string buildCause;
     };
     std::map<int, CachedFace> faces;
     // Geometry-only memos (settings-independent, per model): results of

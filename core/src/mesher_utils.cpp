@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <string>
+#include <vector>
 
 namespace weft {
 
@@ -39,6 +42,54 @@ const char* mesherKindName(MesherKind kind) {
         case MesherKind::DomeCap: return "dome-cap";
     }
     return "fallback-tri";
+}
+
+std::string formatBuildDemotions(const GenerationReport& report) {
+    int floor = 0, raw = 0, empty = 0;
+    std::vector<int> floorFaces, rawFaces, emptyFaces;
+    for (const auto& [fid, how] : report.faceBuild) {
+        if (how == 2) {
+            ++floor;
+            floorFaces.push_back(fid);
+        } else if (how == 1) {
+            ++raw;
+            rawFaces.push_back(fid);
+        } else if (how == -1) {
+            ++empty;
+            emptyFaces.push_back(fid);
+        }
+    }
+    if (!floor && !raw && !empty) return {};
+
+    std::string out;
+    char line[256];
+    std::snprintf(line, sizeof(line),
+                  "  demoted: %d to contract floor, %d to raw "
+                  "triangulation, %d emitted nothing\n",
+                  floor, raw, empty);
+    out += line;
+
+    auto appendFaces = [&](const char* label, const std::vector<int>& ids) {
+        if (ids.empty()) return;
+        out += "    ";
+        out += label;
+        out += ":";
+        for (int fid : ids) {
+            auto cit = report.faceBuildCause.find(fid);
+            if (cit != report.faceBuildCause.end() && !cit->second.empty()) {
+                std::snprintf(line, sizeof(line), " %d(%s)", fid,
+                              cit->second.c_str());
+            } else {
+                std::snprintf(line, sizeof(line), " %d", fid);
+            }
+            out += line;
+        }
+        out += '\n';
+    };
+    appendFaces("floor face ids", floorFaces);
+    appendFaces("raw face ids", rawFaces);
+    appendFaces("empty face ids", emptyFaces);
+    return out;
 }
 
 }  // namespace weft

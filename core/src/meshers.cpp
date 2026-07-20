@@ -18085,6 +18085,9 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     // triangulation, and the PLAN must follow (conform treats structured
     // meshers as exact-border authorities — a fallback part isn't one).
     std::vector<char> fellBack(faceN + 1, 0);
+    // Parallel to fellBack: why a face took the floor / raw OCCT / empty
+    // path. Surfaced on GenerationReport::faceBuildCause for CLI/validate.
+    std::vector<std::string> buildCause(faceN + 1);
     int cacheHits = 0;
     if (cache) {
         for (int fid = 1; fid <= faceN; ++fid) {
@@ -18094,6 +18097,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 parts[fid] = it->second.part;  // copy: merge mutates
                 fellBack[fid] = it->second.fellBack;
                 builtCounts[fid] = it->second.builtCounts;
+                buildCause[fid] = it->second.buildCause;
                 cached[fid] = true;
                 ++cacheHits;
             }
@@ -18343,6 +18347,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                       const FaceMeshSettings& s, const char* why) {
         parts[fid] = PolyMesh();
         fellBack[fid] = 1;
+        buildCause[fid] = why ? why : "mesher failed";
         // Density settings reach demoted faces too: the floor's interior
         // refinement and the OCCT retry both honor the (budget-scaled)
         // deviation, so a failed mesher doesn't freeze the face's detail.
@@ -18938,6 +18943,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     borderContractViolation(fid, parts[fid]) == 0) {
                     if (repairFloorFolds(fid, face, parts[fid])) {
                         fellBack[fid] = 2;  // exact borders: authority
+                        buildCause[fid] = "planned contract floor";
                         break;
                     }
                 }
@@ -18953,13 +18959,18 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     if (exactFloor &&
                         repairFloorFolds(fid, face, parts[fid])) {
                         fellBack[fid] = 2;  // exact borders: authority
+                        buildCause[fid] = "planned contract floor";
                         break;
                     }
                 }
+                // Last resort for faces no structured family (and no
+                // verified floor) can express — attribute as raw OCCT.
                 parts[fid] = PolyMesh();
                 MeshBuilder retryFb(parts[fid]);
                 meshFallback(face, surf, fid, fs, retryFb);
                 repairFloorFolds(fid, face, parts[fid]);
+                fellBack[fid] = 1;
+                buildCause[fid] = "contract floor unavailable";
                 break;
             }
         }
@@ -19323,6 +19334,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                     mesherKindName(plan.kind), cinverted);
                                 parts[fid] = std::move(cand);
                                 fellBack[fid] = 2;  // exact borders
+                                buildCause[fid] =
+                                    "fold self-heal → contract floor";
                             }
                         }
                     }
@@ -19398,6 +19411,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             demote(fid, face, surf, s, "mesher threw");
         } catch (...) {
             parts[fid] = PolyMesh();  // fallback threw too: leave it empty
+            fellBack[fid] = 0;
+            buildCause[fid] = "fallback threw";
             dbg("mesh face %d: fallback threw too -> left empty", fid);
         }
     };
@@ -19436,7 +19451,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         for (int fid = 1; fid <= faceN; ++fid) {
             if (!cached[fid]) {
                 cache->faces[fid] = {cacheKey[fid], parts[fid],
-                                     fellBack[fid], builtCounts[fid]};
+                                     fellBack[fid], builtCounts[fid],
+                                     buildCause[fid]};
             }
         }
     }
@@ -19540,6 +19556,16 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 report->faceBuild[fid] = parts[fid].polygons.empty()
                                              ? -1
                                              : int(fellBack[fid]);
+                const int how = report->faceBuild[fid];
+                if (how != 0) {
+                    std::string cause = buildCause[fid];
+                    if (cause.empty()) {
+                        if (how == -1) cause = "emitted nothing";
+                        else if (how == 1) cause = "raw OCCT triangulation";
+                        else if (how == 2) cause = "contract floor";
+                    }
+                    report->faceBuildCause[fid] = std::move(cause);
+                }
             }
             if (plan.kind == MesherKind::RevolutionGrid &&
                 plan.uEdges.size() == 2) {

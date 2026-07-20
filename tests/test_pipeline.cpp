@@ -1933,6 +1933,86 @@ void testWeldVerts() {
 // default CTest suite — use tools/corpus_gate.sh with performance rows or a
 // manual `weft mesh tests/STEP_Examples/MP9.stp` for workload timing.
 
+// WP2: raw/empty/floor demotions must be attributed by face id and cause
+// string (not dbg-only). Force the contract-floor path on a boss face so
+// the report surfaces a known demotion without filename special-casing.
+void testDemotionAttribution() {
+    std::printf("-- demotion attribution --\n");
+    const std::string stepPath = tmpPath("weft_test_demotion_boss.step");
+    weft::writeStep(weft::makeFixture("boss"), stepPath);
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis analysis = weft::analyze(model);
+
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    // Face 1 is a valid B-rep face; forcing Fallback exercises the planned
+    // contract-floor path that every unsupported structured case shares.
+    CHECK(model.faceCount() >= 1);
+    gs.perFace[1] = gs.defaults;
+    gs.perFace[1].forceMesher = 1 + int(weft::MesherKind::Fallback);
+
+    weft::GenerationCache cache;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh =
+        weft::generate(model, analysis, gs, &report, &cache);
+    CHECK(!mesh.polygons.empty());
+    CHECK(isWatertight(mesh));
+
+    int floor = 0, raw = 0, empty = 0;
+    for (const auto& [fid, how] : report.faceBuild) {
+        if (how == 2) ++floor;
+        else if (how == 1) ++raw;
+        else if (how == -1) ++empty;
+    }
+    CHECK(floor + raw + empty >= 1);
+
+    auto bit = report.faceBuild.find(1);
+    CHECK(bit != report.faceBuild.end());
+    if (bit != report.faceBuild.end()) {
+        CHECK(bit->second == 2 || bit->second == 1 || bit->second == -1);
+        auto cit = report.faceBuildCause.find(1);
+        CHECK(cit != report.faceBuildCause.end());
+        if (cit != report.faceBuildCause.end()) {
+            CHECK(!cit->second.empty());
+            std::printf("  face 1 build=%d cause=\"%s\"\n", bit->second,
+                        cit->second.c_str());
+        }
+    }
+    for (const auto& [fid, how] : report.faceBuild) {
+        if (how == 0) continue;
+        auto cit = report.faceBuildCause.find(fid);
+        CHECK(cit != report.faceBuildCause.end());
+        if (cit != report.faceBuildCause.end()) {
+            CHECK(!cit->second.empty());
+        }
+    }
+
+    const std::string formatted = weft::formatBuildDemotions(report);
+    CHECK(!formatted.empty());
+    CHECK(formatted.find("demoted:") != std::string::npos);
+    CHECK(formatted.find("face ids:") != std::string::npos);
+    CHECK(formatted.find("1(") != std::string::npos);
+
+    // Cache hit must re-emit the same attribution (no silent drop).
+    weft::GenerationReport again;
+    weft::generate(model, analysis, gs, &again, &cache);
+    CHECK_EQ(again.cacheHits, model.faceCount());
+    auto abit = again.faceBuild.find(1);
+    auto acit = again.faceBuildCause.find(1);
+    CHECK(abit != again.faceBuild.end());
+    CHECK(acit != again.faceBuildCause.end());
+    if (bit != report.faceBuild.end() && abit != again.faceBuild.end()) {
+        CHECK_EQ(abit->second, bit->second);
+    }
+    if (acit != again.faceBuildCause.end()) {
+        CHECK(!acit->second.empty());
+    }
+    std::printf("  demotions floor=%d raw=%d empty=%d (cached ok)\n", floor,
+                raw, empty);
+}
+
 void testCadCorpus() {
     std::printf("-- layered CAD corpus --\n");
     const std::filesystem::path root =
@@ -2321,6 +2401,7 @@ int main() {
     RUN(testConcurrentGenerationSettings);
     RUN(testCadConversionPreservesObjects);
     RUN(testAllMesherStrategies);
+    RUN(testDemotionAttribution);
     RUN(testCadCorpus);
     RUN(testDirtyStepFixtures);
     RUN(testCoverageMatrix);
