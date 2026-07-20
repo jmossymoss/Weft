@@ -1732,37 +1732,11 @@ void testAllMesherStrategies() {
     runModel("flaregun", flaregun, cad);  // rail ladder
     runModel("foam", foam, cad, false); // dome; closedness in KNOWN_RED/WP3
 
-    // Release closed-solid class locks. Foam + teleporter CAD are watertight
-    // after WP3 stitch protect / midpoint chain accept. Teleporter default
-    // still carries bspline_contract_floor_overweld residual.
-    // Neighborhood STEP extracts under tests/regressions/release/ are
-    // open-shell diagnostics only (see docs/evidence/wp1-release-reducers-*).
-    auto checkClosedSolidOpenClass =
-        [&](const char* label, const weft::Model& model,
-            const weft::GenerationSettings& settings, size_t minOpen,
-            size_t maxOpen, size_t maxNonManifold) {
-            const weft::Analysis analysis = weft::analyze(model);
-            const weft::PolyMesh mesh =
-                weft::generate(model, analysis, settings);
-            const weft::ValidationReport vr =
-                weft::validateMesh(mesh, &model);
-            CHECK_EQ(vr.inputBoundaryEdges, 0u);
-            const size_t unexplained =
-                vr.openEdges >= vr.openEdgesOnInputBoundary
-                    ? vr.openEdges - vr.openEdgesOnInputBoundary
-                    : vr.openEdges;
-            if (unexplained < minOpen || unexplained > maxOpen) {
-                std::printf("FAIL %s unexplained open edges %zu not in [%zu,%zu]\n",
-                            label, unexplained, minOpen, maxOpen);
-                ++failures;
-            }
-            if (vr.nonManifoldEdges > maxNonManifold) {
-                std::printf("FAIL %s non-manifold %zu > %zu\n", label,
-                            vr.nonManifoldEdges, maxNonManifold);
-                ++failures;
-            }
-            CHECK(!vr.watertight());
-        };
+    // Release closed-solid class locks. Foam + teleporter (default and CAD)
+    // are watertight after WP3 stitch protect / midpoint chain accept /
+    // digon-chord floor (bspline_contract_floor_overweld). Neighborhood
+    // STEP extracts under tests/regressions/release/ are open-shell
+    // diagnostics only (see docs/evidence/wp1-release-reducers-*).
     auto checkClosedSolidWatertight =
         [&](const char* label, const weft::Model& model,
             const weft::GenerationSettings& settings) {
@@ -1780,8 +1754,7 @@ void testAllMesherStrategies() {
     checkClosedSolidWatertight("foam CAD", foam, cad);
     checkClosedSolidWatertight("foam default", foam, def);
     checkClosedSolidWatertight("teleporter CAD", teleporter, cad);
-    checkClosedSolidOpenClass("teleporter_wt_open_default", teleporter, def, 1,
-                              64, 32);
+    checkClosedSolidWatertight("teleporter default", teleporter, def);
 
     // Regression for impossible two-vertex rail wires: a propagated radial
     // edit used to pin both rail edges to one segment, defeating the generic

@@ -30,7 +30,7 @@ notched	fixture	fixtures/generated/notched.step	1	0	0	1	visual_baselines/generat
 boss	fixture	fixtures/generated/boss.step	1	0	0	1	-	closed_solid	interaction-zoo	plane,cylinder	circle,line	boss,trimmed_plane	boss on plate
 bossfillet	fixture	fixtures/generated/bossfillet.step	1	0	0	1	visual_baselines/generated/bossfillet.png	closed_solid	interaction-zoo	torus,plane,cylinder	circle,line	fillet_ring	closed torus fillet ring
 ribbon	fixture	fixtures/generated/ribbon.step	1	0	0	1	-	closed_solid	interaction-zoo	extrusion,plane	line	ribbon	curved extrusion strip
-ribbonnotch	fixture	fixtures/generated/ribbonnotch.step	1	0	0	0	visual_baselines/generated/ribbonnotch.png	closed_solid	interaction-zoo	extrusion,plane	line	ribbon,notch	ribbon with end notch; default open known-red
+ribbonnotch	fixture	fixtures/generated/ribbonnotch.step	1	0	0	1	visual_baselines/generated/ribbonnotch.png	closed_solid	interaction-zoo	extrusion,plane	line	ribbon,notch	ribbon with end notch; sealed after exact-border floor-over-raw (folds remain on default)
 filletslot	fixture	fixtures/filletslot.step	1	0	0	1	-	closed_solid	interaction-zoo	cylinder,plane	circle,line	fillet,slot	fillet band around slot
 hairline	fixture	fixtures/hairline.step	1	0	0	1	-	closed_solid	interaction-zoo	plane,cylinder	circle,line	hairline_spacing	hairline feature spacing
 slitdrill	fixture	fixtures/slitdrill.step	1	0	0	0	visual_baselines/generated/slitdrill.png	closed_solid	interaction-zoo	plane,cylinder	circle,line	tangent_contact,bore	slit plus bore; known-red
@@ -52,10 +52,10 @@ hi_aspect	dirty	fixtures/generated/hi_aspect.step	1	1	0	0	-	research	dirty-step	
 tiny_big	dirty	fixtures/generated/tiny_big.step	1	0	0	0	-	research	dirty-step	plane,cylinder	circle,line	tiny_on_large	r=0.08 bore on 400 plate; research scale contrast
 flaregun	release	STEP_Examples/flaregun.stp	1	0	0	1	-	closed_solid	release	-	-	hard_surface	release hard-surface asset
 iso14649-demo	release	STEP_Examples/iso14649-demo.stp	1	0	0	1	-	closed_solid	release	-	-	bores,primitives	release mechanical primitives
-foam	release	STEP_Examples/foam.stp	1	0	0	1	-	closed_solid	release	-	-	hard_surface	release; watertight default+CAD after WP3 stitch seal
-teleporter	release	STEP_Examples/teleporter.stp	1	0	0	0	-	closed_solid	release	-	-	hard_surface	release; CAD watertight; default known-red bspline_contract_floor_overweld
+foam	release	STEP_Examples/foam.stp	1	0	0	1	-	closed_solid	release	-	-	hard_surface	release; watertight default+CAD, max_raw=0 after exact-border floor-over-raw; folds remain
+teleporter	release	STEP_Examples/teleporter.stp	1	0	0	1	-	closed_solid	release	-	-	hard_surface	release; watertight default+CAD, max_raw=0 after exact-border floor-over-raw; folds remain on default
 foam_wt_open_nm	regression	STEP_Examples/foam.stp	1	0	0	1	-	closed_solid	release	-	-	plane_fillet_bspline_junction	WP3 sealed with foam; kept as class regression alias
-teleporter_wt_open	regression	STEP_Examples/teleporter.stp	1	0	0	0	-	closed_solid	release	-	-	planar_ngon_border_contract,open_edges	WP1 closed-solid open-edge class; full model remains smallest closed repro (see docs/evidence/wp1-release-reducers-2026-07-20.md)
+teleporter_wt_open	regression	STEP_Examples/teleporter.stp	1	0	0	1	-	closed_solid	release	-	-	planar_ngon_border_contract,bspline_contract_floor_overweld	WP3 sealed with teleporter; kept as class regression alias
 foam_plane_fillet_bspline	regression	regressions/release/foam_plane_fillet_bspline_r1.step	1	0	0	0	-	open	release	plane,cylinder,bspline	circle,line,bspline	plane_fillet_bspline_junction	open-shell neighborhood diagnostic for foam junction class; not a closed-solid watertight repro
 foam_fillet_bspline	regression	regressions/release/foam_fillet_bspline_r1.step	1	0	0	0	-	open	release	cylinder,plane,bspline	circle,line,bspline	fillet_bspline_junction	open-shell neighborhood diagnostic for foam fillet/bspline CAD cluster; not a closed-solid watertight repro
 teleporter_planar_ngon	regression	regressions/release/teleporter_planar_ngon_r1.step	1	0	0	0	-	open	release	plane	line	planar_ngon_border_contract	open-shell neighborhood diagnostic for teleporter planar n-gon class; not a closed-solid watertight repro

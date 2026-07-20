@@ -3782,6 +3782,35 @@ bool delaunayWeb(const std::vector<WebPoint>& outer,
         if (std::abs(covered - regionArea) > 0.005 * regionArea) {
             return false;  // covered a hole or leaked past the boundary
         }
+        // OCCT's plane tessellator can omit a boundary segment when UV
+        // samples are nearly collinear (teleporter fillet floors: the
+        // last curvature-floor sample on a shared rail ends up as a
+        // node with no edge to the corner). Refuse so earClip keeps the
+        // exact ring contract.
+        std::set<uint64_t> triEdges;
+        for (const auto& t : tris) {
+            for (int k = 0; k < 3; ++k) {
+                const uint32_t a = t[k], b = t[(k + 1) % 3];
+                triEdges.insert((uint64_t(std::min(a, b)) << 32) |
+                                std::max(a, b));
+            }
+        }
+        auto ringContract = [&](const std::vector<WebPoint>& ring) {
+            for (size_t i = 0; i < ring.size(); ++i) {
+                const uint32_t a = ring[i].vert;
+                const uint32_t b = ring[(i + 1) % ring.size()].vert;
+                if (a == b) return false;
+                if (!triEdges.count((uint64_t(std::min(a, b)) << 32) |
+                                    std::max(a, b))) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        if (!ringContract(outer)) return false;
+        for (const std::vector<WebPoint>& h : holes) {
+            if (!ringContract(h)) return false;
+        }
         for (const auto& t : tris) {
             out.addPolygon({t[0], t[1], t[2]}, faceId, flip);
         }
@@ -6280,6 +6309,17 @@ void refineFloorWeb(PolyMesh& part, const TopoDS_Face& face, int faceId,
     Handle(Geom_Surface) S = BRep_Tool::Surface(face);
     if (S.IsNull()) return;
     if (uvOf.size() != part.vertices.size()) return;
+    // Backfill face anchors from the UV parallel array. Older emission
+    // paths (and any vertex still carrying faceId 0) otherwise leave
+    // border corners opaque to fold repair / foldedPolys voting.
+    if (part.anchors.size() < part.vertices.size()) {
+        part.anchors.resize(part.vertices.size());
+    }
+    for (size_t i = 0; i < part.vertices.size(); ++i) {
+        if (part.anchors[i].faceId == 0) {
+            part.anchors[i] = {faceId, uvOf[i].X(), uvOf[i].Y()};
+        }
+    }
     std::vector<std::array<uint32_t, 3>> tris;
     tris.reserve(part.polygons.size());
     for (const auto& poly : part.polygons) {
@@ -6588,9 +6628,14 @@ bool meshContractFallback(const TopoDS_Face& face, const Model& model,
     for (PlanarRing& r : rings) {
         std::vector<WebPoint> ring;
         for (size_t i = 0; i < r.uv.size(); ++i) {
+            // Face UV anchors on the exact-border samples: fold repair and
+            // foldedPolys both need them. Empty anchors made every
+            // border-touching floor cell unrepairable (repairFloorFolds
+            // requires every corner anchored on this face).
             ring.push_back(
                 {gp_Pnt2d(r.uv[i].X() * uScale, r.uv[i].Y()),
-                 out.addVertex(r.p[i], {})});
+                 out.addVertex(r.p[i],
+                               {faceId, r.uv[i].X(), r.uv[i].Y()})});
             uvOf.push_back(r.uv[i]);
         }
         if (r.isOuter) outer = std::move(ring);
@@ -8644,18 +8689,32 @@ void propagateBandRadialToBlendGroup(const Analysis& analysis,
     const FaceMeshSettings& dfl = settings.defaults;
     auto isColumnMesher = [](MesherKind k) {
         return k == MesherKind::RevolutionGrid || k == MesherKind::CoonsGrid ||
-               k == MesherKind::RailLadder || k == MesherKind::RibbonSweep;
+               k == MesherKind::RailLadder || k == MesherKind::RibbonSweep ||
+               k == MesherKind::DomeCap || k == MesherKind::AnnulusRing ||
+               k == MesherKind::DiskCap;
+    };
+    // A radial override on ANY revolution-family face (open band, orthogonal
+    // trim drum, closed barrel) must reach the faces that share its column
+    // edges. Restricting seeds to open bands left orthogonal-trim cylinders
+    // to raise a density group alone and open seams against un-stamped peers.
+    auto isRevFamily = [&](int fid) {
+        auto it = plans.find(fid);
+        if (it == plans.end()) return false;
+        const MesherKind k = it->second.kind;
+        return k == MesherKind::RevolutionGrid || k == MesherKind::DomeCap ||
+               k == MesherKind::AnnulusRing || k == MesherKind::DiskCap;
     };
     auto isBand = [&](int fid) {
         auto it = plans.find(fid);
         return it != plans.end() &&
                it->second.kind == MesherKind::RevolutionGrid &&
-               !it->second.bandSides.empty();
+               (!it->second.bandSides.empty() || it->second.orthogonalTrimGrid);
     };
     // The face's COLUMN-carrying edges: the ones whose solved count a radial
-    // change moves (uEdges + both rims). A neighbour sharing one of these
-    // feels the count change and must follow, or its rails disagree and its
-    // mesher falls back. The band SIDES (row count) are deliberately excluded.
+    // change moves (uEdges + both rims + orthogonal U driver). A neighbour
+    // sharing one of these feels the count change and must follow, or its
+    // rails disagree and its mesher falls back. The band SIDES (row count)
+    // are deliberately excluded.
     auto columnEdges = [&](int fid) -> std::vector<int> {
         std::vector<int> es;
         auto it = plans.find(fid);
@@ -8664,6 +8723,7 @@ void propagateBandRadialToBlendGroup(const Analysis& analysis,
         es.insert(es.end(), p.uEdges.begin(), p.uEdges.end());
         es.insert(es.end(), p.rimLow.begin(), p.rimLow.end());
         es.insert(es.end(), p.rimHigh.begin(), p.rimHigh.end());
+        if (p.orthogonalDriverU >= 1) es.push_back(p.orthogonalDriverU);
         return es;
     };
     // Explicit radial override on a face (differs from the model default).
@@ -8676,9 +8736,12 @@ void propagateBandRadialToBlendGroup(const Analysis& analysis,
     };
     std::vector<std::pair<int, int>> seeds;  // (band fid, radial)
     for (const auto& [fid, plan] : plans) {
-        if (!isBand(fid)) continue;
+        if (!isRevFamily(fid)) continue;
         const int R = radialOverride(fid);
-        if (R > 0) seeds.push_back({fid, R});
+        // Only propagate RAISES. Lowering a single face's radial must not
+        // drag peers below their adaptive need (observed: NM digon welds
+        // when a sweep steps to radial 8 and stamps the whole cluster).
+        if (R > dfl.radial) seeds.push_back({fid, R});
     }
     if (seeds.empty()) return;  // default path: nothing to propagate
 
@@ -8720,22 +8783,61 @@ void propagateBandRadialToBlendGroup(const Analysis& analysis,
                 }
             }
         }
-        // A band also shares its RIM count with the little rounded corners that
-        // sit on it across a SHARP edge (r=3 fillet cylinders meshed as rail
-        // ladders). They aren't tangent, so the smooth walk misses them, yet a
-        // rim-count bump breaks their ladder — pull in each band's one-hop
-        // column-edge blend neighbours (no further expansion, so the group
-        // can't leak down the next feature's blend chain).
+        // A band also shares its RIM count with neighbours across SHARP edges
+        // (fillet corners, sibling orthogonal-trim drums, rail ladders). Pull
+        // in every one-hop COLUMN mesher on the seed group's column edges —
+        // not only blend fillets — so a radial bump cannot strand a peer
+        // revolution face at the old count.
         std::vector<int> bands;
         for (int g : group)
-            if (isBand(g)) bands.push_back(g);
+            if (isBand(g) || g == seedFid) bands.push_back(g);
         for (int b : bands) {
             for (int eid : columnEdges(b)) {
                 if (eid < 1 || eid > int(analysis.edges.size())) continue;
                 for (int nf : analysis.edges[eid - 1].faceIds) {
-                    if (nf != b && isBlendFillet(nf)) group.insert(nf);
+                    if (nf == b) continue;
+                    auto it = plans.find(nf);
+                    if (it == plans.end()) continue;
+                    if (isBlendFillet(nf) || isColumnMesher(it->second.kind)) {
+                        group.insert(nf);
+                    }
                 }
             }
+        }
+        // Two hops of face adjacency through planar hubs: open-band seeds
+        // often meet their fillet cluster across a minimal-ngon plate. Stamp
+        // radial on those column meshers so they rebuild at the raised count
+        // instead of opening against the densified band.
+        {
+            std::set<int> extra;
+            auto addColumn = [&](int nf) {
+                auto it = plans.find(nf);
+                if (it != plans.end() && isColumnMesher(it->second.kind)) {
+                    extra.insert(nf);
+                }
+            };
+            std::vector<int> seedFaces(group.begin(), group.end());
+            for (int g : seedFaces) {
+                if (g < 1 || g > int(analysis.faces.size())) continue;
+                for (int eid : analysis.faces[g - 1].edgeIds) {
+                    if (eid < 1 || eid > int(analysis.edges.size())) continue;
+                    for (int nf : analysis.edges[eid - 1].faceIds) {
+                        if (nf == g) continue;
+                        addColumn(nf);
+                        if (nf < 1 || nf > int(analysis.faces.size())) continue;
+                        for (int eid2 : analysis.faces[nf - 1].edgeIds) {
+                            if (eid2 < 1 ||
+                                eid2 > int(analysis.edges.size())) {
+                                continue;
+                            }
+                            for (int nf2 : analysis.edges[eid2 - 1].faceIds) {
+                                if (nf2 != nf) addColumn(nf2);
+                            }
+                        }
+                    }
+                }
+            }
+            group.insert(extra.begin(), extra.end());
         }
         for (int g : group) {
             auto it = target.find(g);
@@ -8748,12 +8850,18 @@ void propagateBandRadialToBlendGroup(const Analysis& analysis,
         // Force every band's driver to the group's max round(radial*wrap).
         int commonNu = 0;
         for (int b : bands) {
-            const double wrap = plans.find(b)->second.bandWrapFrac;
+            auto pit = plans.find(b);
+            if (pit == plans.end()) continue;
+            const double wrap = std::max(1e-9, pit->second.bandWrapFrac);
             commonNu = std::max(
                 commonNu, std::max(3, int(std::lround(std::max(3, R) * wrap))));
         }
         for (int b : bands) {
-            const int drv = plans.find(b)->second.bandDriver;
+            auto pit = plans.find(b);
+            if (pit == plans.end()) continue;
+            const int drv = pit->second.bandDriver > 0
+                                ? pit->second.bandDriver
+                                : pit->second.orthogonalDriverU;
             if (drv >= 1) {
                 auto it = driverPin.find(drv);
                 driverPin[drv] =
@@ -8780,6 +8888,71 @@ void propagateBandRadialToBlendGroup(const Analysis& analysis,
         settings.perEdge[e] = it == settings.perEdge.end()
                                   ? c
                                   : std::max(it->second, c);
+    }
+}
+
+// After density matching, a per-face radial override may have raised shared
+// column groups that also bind co-circular / density-united peers the
+// topological blend walk never reached. Stamp the same radial onto every
+// revolution-family face that owns an edge in those raised groups so the
+// peer rebuilds with a compatible lattice instead of opening the seam.
+void propagateRadialThroughDensityGroups(
+    const Model& model, const std::map<int, FacePlan>& plans,
+    DensitySolution& density, GenerationSettings& settings) {
+    const FaceMeshSettings& dfl = settings.defaults;
+    auto radialOverride = [&](int fid) -> int {
+        auto it = settings.perFace.find(fid);
+        if (it == settings.perFace.end() || it->second.radial == dfl.radial) {
+            return 0;
+        }
+        return it->second.radial;
+    };
+    auto isRevFamily = [](MesherKind k) {
+        return k == MesherKind::RevolutionGrid || k == MesherKind::DomeCap ||
+               k == MesherKind::AnnulusRing || k == MesherKind::DiskCap ||
+               k == MesherKind::RailLadder || k == MesherKind::RibbonSweep ||
+               k == MesherKind::CoonsGrid;
+    };
+    std::map<int, int> rootRadial;  // density root -> max override radial
+    for (const auto& [fid, plan] : plans) {
+        const int R = radialOverride(fid);
+        if (R <= dfl.radial || !isRevFamily(plan.kind)) continue;
+        auto bump = [&](int eid) {
+            if (eid < 1 || eid > model.edgeCount()) return;
+            const int root = density.groups.find(eid);
+            auto it = rootRadial.find(root);
+            rootRadial[root] =
+                it == rootRadial.end() ? R : std::max(it->second, R);
+        };
+        for (int e : plan.uEdges) bump(e);
+        for (int e : plan.rimLow) bump(e);
+        for (int e : plan.rimHigh) bump(e);
+        if (plan.orthogonalDriverU >= 1) bump(plan.orthogonalDriverU);
+        if (plan.bandDriver >= 1) bump(plan.bandDriver);
+    }
+    if (rootRadial.empty()) return;
+    for (const auto& [fid, plan] : plans) {
+        if (!isRevFamily(plan.kind)) continue;
+        int need = 0;
+        auto consider = [&](int eid) {
+            if (eid < 1 || eid > model.edgeCount()) return;
+            auto it = rootRadial.find(density.groups.find(eid));
+            if (it != rootRadial.end()) need = std::max(need, it->second);
+        };
+        for (int e : plan.uEdges) consider(e);
+        for (int e : plan.vEdges) consider(e);
+        for (int e : plan.rimLow) consider(e);
+        for (int e : plan.rimHigh) consider(e);
+        if (plan.orthogonalDriverU >= 1) consider(plan.orthogonalDriverU);
+        if (plan.bandDriver >= 1) consider(plan.bandDriver);
+        if (need <= 0) continue;
+        FaceMeshSettings& s = settings.perFace.count(fid)
+                                  ? settings.perFace[fid]
+                                  : (settings.perFace[fid] = dfl);
+        if (s.radial < need) {
+            s.radial = need;
+            dbg("density-group: face %d radial raised to %d", fid, need);
+        }
     }
 }
 
@@ -9047,7 +9220,7 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
     for (const auto& [fid, plan] : plans) {
         if (!plan.constrains) continue;
         const FaceMeshSettings& s = settings.forFace(fid);
-        const bool overridden = settings.perFace.count(fid) > 0;
+        const bool hasPerFace = settings.perFace.count(fid) > 0;
         // Did the user type an explicit COUNT on this face (vs only a
         // tolerance/flag)? If so its proposals are exact, not adaptive floors.
         const FaceMeshSettings& dfl = settings.defaults;
@@ -9058,9 +9231,18 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
         // adaptivity too, collapsing a 24-station edge round to
         // gridU's default 1 the moment the user touched loops.
         curCountOverride =
-            overridden &&
+            hasPerFace &&
             (s.gridU != dfl.gridU || s.gridV != dfl.gridV ||
              s.radial != dfl.radial || s.axial != dfl.axial);
+        // A radial-only LOWER must not PIN shared density groups below
+        // neighbours' adaptive proposals — the pin would outvote the ring
+        // and collapse peer fillets into digon overwelds (sweep radial 8).
+        // Still propose the lower count into max-resolve; peers can win.
+        bool overridden = hasPerFace;
+        if (hasPerFace && s.radial < dfl.radial && s.axial == dfl.axial &&
+            s.gridU == dfl.gridU && s.gridV == dfl.gridV) {
+            overridden = false;
+        }
         if (plan.orthogonalTrimGrid) {
             const TopoDS_Face of = TopoDS::Face(model.faces(fid));
             BRepAdaptor_Surface os(of);
@@ -9085,9 +9267,14 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
             for (int e : plan.uEdges) {
                 const double frac = spanOf(e, true) /
                     (drum ? 2.0 * M_PI : us);
-                const int n = std::max(1, int(std::lround(
+                int n = std::max(1, int(std::lround(
                     (drum ? std::max(3, s.radial) : std::max(1, s.gridU)) *
                     frac)));
+                if (drum && !s.adaptive && !overridden) {
+                    FaceMeshSettings rel = s;
+                    rel.relativeDeviation = true;
+                    n = std::min(n, std::max(1, adaptiveCount(e, rel)));
+                }
                 proposeSet({e}, n, 1, s.adaptive, s, overridden, fid);
             }
             for (int e : plan.vEdges) {
@@ -9343,8 +9530,18 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                     }
                     const double frac =
                         eu1 > eu0 ? (eu1 - eu0) / (2.0 * M_PI) : 0.0;
-                    const int flat = std::max(
+                    int flat = std::max(
                         1, int(std::lround(std::max(3, s.radial) * frac)));
+                    // Cap wrap-scaled shares by model-relative deflection so
+                    // short arcs do not out-resolve the CAD hierarchy: a
+                    // quarter-rim at radial 16 proposes 4 and opens pad seams
+                    // (teleporter default); relativeDeviation wants 2.
+                    if (!s.adaptive && !overridden) {
+                        FaceMeshSettings rel = s;
+                        rel.relativeDeviation = true;
+                        flat = std::min(
+                            flat, std::max(1, adaptiveCount(e, rel)));
+                    }
                     proposeSet({e}, flat, 1, s.adaptive, s, overridden, fid);
                 }
             } else if (!plan.linkRims && plan.uEdges.size() == 2) {
@@ -15917,7 +16114,8 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
 // weld could never afford. Pairs must be cross-side, mutually nearest
 // in param, and within a small fraction of the local pitch in both
 // param and 3D before they merge (union-find, lowest index wins).
-void fuseSeamTwins(PolyMesh& mesh, const Model& model, double weldTol) {
+void fuseSeamTwins(PolyMesh& mesh, const Model& model, double weldTol,
+                   const std::vector<char>* fellBack = nullptr) {
     // Per-face boundary segments and vertex pitch (longest incident
     // boundary segment) — same qualification scaffolding as the
     // stitcher, rebuilt here because fusion must happen BEFORE the
@@ -16153,7 +16351,41 @@ void fuseSeamTwins(PolyMesh& mesh, const Model& model, double weldTol) {
             if (dx * dx + dy * dy + dz * dz > 0.0625 * pMin * pMin) {
                 continue;  // > 25% of pitch apart: not the same point
             }
-            unite(a.v, b.v);
+            // Prefer keeping a verified contract-floor sample's POSITION
+            // when fusing twins: remapping a floor cell onto a neighbour's
+            // slightly-off sample folds the web (foam CAD face 525).
+            auto onFloor = [&](uint32_t v) {
+                if (!fellBack) return false;
+                for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+                    if (p >= mesh.polygonFaceId.size()) continue;
+                    const int fid = mesh.polygonFaceId[p];
+                    if (fid < 1 || fid >= int(fellBack->size()) ||
+                        (*fellBack)[fid] != 2) {
+                        continue;
+                    }
+                    for (uint32_t q : mesh.polygons[p]) {
+                        if (q == v) return true;
+                    }
+                }
+                return false;
+            };
+            const bool aFloor = onFloor(a.v), bFloor = onFloor(b.v);
+            uint32_t keep = a.v, drop = b.v;
+            if (bFloor && !aFloor) {
+                keep = b.v;
+                drop = a.v;
+            }
+            unite(keep, drop);
+            // Root may be the lower index; force the survivor to the
+            // kept sample's geometry when a floor twin is involved.
+            if (aFloor || bFloor) {
+                const uint32_t root = find(keep);
+                mesh.vertices[root] = mesh.vertices[keep];
+                if (keep < mesh.anchors.size() &&
+                    root < mesh.anchors.size()) {
+                    mesh.anchors[root] = mesh.anchors[keep];
+                }
+            }
             ++fused;
         }
     }
@@ -16487,6 +16719,14 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
                 const bool okFb =
                     fid >= 0 && fid < int(fellBack->size()) &&
                     ((*fellBack)[fid] == 0 || (*fellBack)[fid] == 2);
+                // Verified contract floors already carry the exact seam
+                // samples. Pitch-scaled insertions fold their web
+                // (foam CAD face 525: 3 foldedPolys after stitch) —
+                // refuse to rewrite them; the neighbour may still stitch
+                // toward this face.
+                if (okFb && (*fellBack)[fid] == 2) {
+                    continue;
+                }
                 if (pit != plans->end() && okFb &&
                     pit->second.kind == MesherKind::MinimalNGon) {
                     continue;
@@ -16495,10 +16735,14 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
                     pit->second.kind == MesherKind::CoonsGrid) {
                     const int other = fids[1 - s2];
                     auto oit = plans->find(other);
+                    // Coons strips fold when MinimalNGon / contract-floor
+                    // verts are spliced into an exact border (foam CAD
+                    // 829/837). Keep coons↔revolution stitches enabled.
                     if (oit != plans->end() &&
-                        oit->second.kind == MesherKind::MinimalNGon &&
                         other >= 0 && other < int(fellBack->size()) &&
                         ((*fellBack)[other] == 0 ||
+                         (*fellBack)[other] == 2) &&
+                        (oit->second.kind == MesherKind::MinimalNGon ||
                          (*fellBack)[other] == 2)) {
                         continue;
                     }
@@ -16718,8 +16962,142 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
                         dbg("stitch: eid %d face %d seg v%u-v%u gains%s",
                             eid, fids[s2], a, b, s.c_str());
                     }
+                    // Fold guard: splicing foreign samples into a
+                    // successful Coons/bspline border often yields a
+                    // 5-gon whose every triangulation still folds
+                    // (foam CAD 829/837 ← cylinder 824). If the cell
+                    // becomes folded, revert and collapse the opposite
+                    // face onto chord a-b: delete the insert verts, then
+                    // bridge a-b if the denser side carried them across
+                    // multiple polygons (824: 6773-6669 / 6669-6774).
+                    const std::vector<uint32_t> beforePoly = poly;
                     poly.insert(poly.begin() + i + 1, ins.begin(),
                                 ins.end());
+                    {
+                        const auto mask = foldedPolys(model, mesh);
+                        const bool folded =
+                            p < mask.size() && mask[p] != 0;
+                        if (folded) {
+                            poly = beforePoly;
+                            const int other = fids[1 - s2];
+                            auto oit = facePolys.find(other);
+                            std::set<uint32_t> drop(ins.begin(),
+                                                    ins.end());
+                            auto hasEdge =
+                                [&](uint32_t u, uint32_t w) -> bool {
+                                if (oit == facePolys.end()) return false;
+                                for (size_t op : oit->second) {
+                                    if (op >= mesh.polygons.size()) {
+                                        continue;
+                                    }
+                                    const auto& q = mesh.polygons[op];
+                                    for (size_t k = 0; k < q.size();
+                                         ++k) {
+                                        const uint32_t x = q[k];
+                                        const uint32_t y =
+                                            q[(k + 1) % q.size()];
+                                        if ((x == u && y == w) ||
+                                            (x == w && y == u)) {
+                                            return true;
+                                        }
+                                    }
+                                }
+                                return false;
+                            };
+                            if (oit != facePolys.end()) {
+                                // 1) Delete insert verts from opposite.
+                                for (size_t op : oit->second) {
+                                    if (op >= mesh.polygons.size()) {
+                                        continue;
+                                    }
+                                    auto& q = mesh.polygons[op];
+                                    q.erase(std::remove_if(
+                                                q.begin(), q.end(),
+                                                [&](uint32_t v) {
+                                                    return drop.count(v) >
+                                                           0;
+                                                }),
+                                            q.end());
+                                }
+                                // 2) Ensure chord a-b exists on opposite.
+                                // If a-x and b-x both exist, splice b
+                                // into a→x so a-b is born and b-x pairs
+                                // with the existing reverse.
+                                if (!hasEdge(a, b)) {
+                                    uint32_t bridge = 0xffffffffu;
+                                    std::set<uint32_t> nbrA, nbrB;
+                                    for (size_t op : oit->second) {
+                                        if (op >= mesh.polygons.size()) {
+                                            continue;
+                                        }
+                                        const auto& q = mesh.polygons[op];
+                                        for (size_t k = 0; k < q.size();
+                                             ++k) {
+                                            const uint32_t x = q[k];
+                                            const uint32_t y =
+                                                q[(k + 1) % q.size()];
+                                            if (x == a) nbrA.insert(y);
+                                            if (y == a) nbrA.insert(x);
+                                            if (x == b) nbrB.insert(y);
+                                            if (y == b) nbrB.insert(x);
+                                        }
+                                    }
+                                    for (uint32_t x : nbrA) {
+                                        if (nbrB.count(x)) {
+                                            bridge = x;
+                                            break;
+                                        }
+                                    }
+                                    if (bridge != 0xffffffffu) {
+                                        for (size_t op : oit->second) {
+                                            if (op >=
+                                                mesh.polygons.size()) {
+                                                continue;
+                                            }
+                                            auto& q = mesh.polygons[op];
+                                            for (size_t k = 0;
+                                                 k < q.size(); ++k) {
+                                                const uint32_t x = q[k];
+                                                const uint32_t y =
+                                                    q[(k + 1) %
+                                                      q.size()];
+                                                if (x == a &&
+                                                    y == bridge) {
+                                                    q.insert(
+                                                        q.begin() +
+                                                            static_cast<
+                                                                std::
+                                                                    ptrdiff_t>(
+                                                                k + 1),
+                                                        b);
+                                                    goto bridged;
+                                                }
+                                                if (x == bridge &&
+                                                    y == a) {
+                                                    q.insert(
+                                                        q.begin() +
+                                                            static_cast<
+                                                                std::
+                                                                    ptrdiff_t>(
+                                                                k + 1),
+                                                        b);
+                                                    goto bridged;
+                                                }
+                                            }
+                                        }
+                                    bridged:;
+                                    }
+                                }
+                            }
+                            for (uint32_t v : ins) {
+                                sideVerts[1 - s2].erase(v);
+                            }
+                            dbg("stitch: eid %d face %d seg v%u-v%u fold "
+                                "reject — collapsed opposite f%d",
+                                eid, fids[s2], a, b, other);
+                            continue;
+                        }
+                    }
                     for (uint32_t v : ins) sideVerts[s2].insert(v);
                     spliced += int(ins.size());
                     i += ins.size();  // continue after the insertion
@@ -16979,6 +17357,30 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     propagateBandRadialToBlendGroup(analysis, plans, settings);
 
     DensitySolution density = solveDensity(model, plans, settings, cache);
+    // A lone radial override can raise a density-united rim that also binds
+    // co-circular peers the topological blend walk never saw. Stamp those
+    // peers and re-solve so their proposals / pins match the raised group.
+    {
+        const size_t before = settings.perFace.size();
+        std::map<int, int> beforeRadial;
+        for (const auto& [fid, fs] : settings.perFace) {
+            beforeRadial[fid] = fs.radial;
+        }
+        propagateRadialThroughDensityGroups(model, plans, density, settings);
+        bool changed = settings.perFace.size() != before;
+        if (!changed) {
+            for (const auto& [fid, fs] : settings.perFace) {
+                auto it = beforeRadial.find(fid);
+                if (it == beforeRadial.end() || it->second != fs.radial) {
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        if (changed) {
+            density = solveDensity(model, plans, settings, cache);
+        }
+    }
     timingCheckpoint("density proposals");
     // Curvature floor, every mode: a curved edge solved below its turn
     // angle collapses to chords — observed as two bracket-bend
@@ -17043,6 +17445,110 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         }
     }
     timingCheckpoint("curvature floors");
+    // Digon chord floor: micro-edge vertex unification can leave a face
+    // with two (or more) non-micro edges that share the same endpoint
+    // pair. At count=1 both chords collapse to one mesh segment, so the
+    // face and both neighbors overweld into a use-4 non-manifold edge
+    // (bspline_contract_floor_overweld). Midpoints (count >= 2) keep the
+    // two paths distinct — the CAD/adaptive outcome on the same stack.
+    {
+        weft::ShapeMap vmap;
+        TopExp::MapShapes(model.shape, TopAbs_VERTEX, vmap);
+        std::vector<int> vroot(static_cast<size_t>(vmap.Extent()) + 1);
+        std::iota(vroot.begin(), vroot.end(), 0);
+        auto vfind = [&](int i) {
+            while (vroot[static_cast<size_t>(i)] != i) {
+                i = vroot[static_cast<size_t>(i)] =
+                    vroot[static_cast<size_t>(vroot[static_cast<size_t>(i)])];
+            }
+            return i;
+        };
+        Bnd_Box bb;
+        BRepBndLib::Add(model.shape, bb);
+        const double microTol = 5e-4 * std::sqrt(bb.SquareExtent());
+        for (int eid = 1; eid <= model.edgeCount(); ++eid) {
+            const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
+            if (BRep_Tool::Degenerated(e)) continue;
+            TopoDS_Vertex v1, v2;
+            TopExp::Vertices(e, v1, v2);
+            if (v1.IsNull() || v2.IsNull() || v1.IsSame(v2)) continue;
+            if (BRep_Tool::Pnt(v1).Distance(BRep_Tool::Pnt(v2)) >= microTol) {
+                continue;
+            }
+            double len = 0.0;
+            try {
+                BRepAdaptor_Curve c(e);
+                len = GCPnts_AbscissaPoint::Length(c);
+            } catch (const Standard_Failure&) {
+                continue;
+            }
+            if (len >= microTol) continue;
+            const int ia = vmap.FindIndex(v1);
+            const int ib = vmap.FindIndex(v2);
+            if (ia < 1 || ib < 1) continue;
+            const int a = vfind(ia);
+            const int b = vfind(ib);
+            if (a != b) vroot[static_cast<size_t>(a)] = b;
+        }
+        auto raiseDigon = [&](int eid, int target) {
+            const int root = density.groups.find(eid);
+            auto git = density.groupCount.find(root);
+            if (git != density.groupCount.end() && git->second < target) {
+                git->second = target;
+                density.ownerByRoot[root] = "digon-floor";
+            }
+            for (int e = 1; e <= model.edgeCount(); ++e) {
+                if (density.groups.find(e) == root &&
+                    solvedEdge[static_cast<size_t>(e)] < target) {
+                    solvedEdge[static_cast<size_t>(e)] = target;
+                    density.ownerByRoot[root] = "digon-floor";
+                }
+            }
+        };
+        for (int fid = 1; fid <= model.faceCount(); ++fid) {
+            std::map<std::pair<int, int>, std::set<int>> byEnds;
+            for (TopExp_Explorer ex(model.faces(fid), TopAbs_EDGE); ex.More();
+                 ex.Next()) {
+                const TopoDS_Edge e = TopoDS::Edge(ex.Current());
+                if (BRep_Tool::Degenerated(e)) continue;
+                const int eid = model.edges.FindIndex(e);
+                if (eid < 1) continue;
+                TopoDS_Vertex v1, v2;
+                TopExp::Vertices(e, v1, v2);
+                if (v1.IsNull() || v2.IsNull()) continue;
+                const int ia = vmap.FindIndex(v1);
+                const int ib = vmap.FindIndex(v2);
+                if (ia < 1 || ib < 1) continue;
+                // Skip the collapsed micro sides — only the surviving
+                // parallel chords need midpoints.
+                if (BRep_Tool::Pnt(v1).Distance(BRep_Tool::Pnt(v2)) <
+                    microTol) {
+                    try {
+                        BRepAdaptor_Curve c(e);
+                        if (GCPnts_AbscissaPoint::Length(c) < microTol) {
+                            continue;
+                        }
+                    } catch (const Standard_Failure&) {
+                        continue;
+                    }
+                }
+                int a = vfind(ia), b = vfind(ib);
+                if (a == b) continue;
+                if (a > b) std::swap(a, b);
+                byEnds[{a, b}].insert(eid);
+            }
+            for (const auto& [ends, eids] : byEnds) {
+                (void)ends;
+                if (eids.size() < 2) continue;
+                for (int eid : eids) {
+                    if (solvedEdge[static_cast<size_t>(eid)] < 2) {
+                        raiseDigon(eid, 2);
+                    }
+                }
+            }
+        }
+        timingCheckpoint("digon floors");
+    }
     auto geometryEdgeLength = [&](int eid) {
         if (cache) {
             auto it = cache->edgeLengths.find(eid);
@@ -18207,6 +18713,27 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 cacheKey[fid] += "e" + std::to_string(solvedEdge[eid]);
             }
         }
+        // Pin fractions reshape border samples without changing the solved
+        // count (orthogonal-trim station crossings, fillet holds). A warm
+        // cache that keys counts alone reuses a stale lattice against a
+        // neighbour remeshed under a different pin set — open seams under
+        // weft sweep's per-face radial sequence. Fingerprint pin cardinality
+        // and a coarse fraction hash per bordered edge.
+        for (TopExp_Explorer ex(model.faces(fid), TopAbs_EDGE); ex.More();
+             ex.Next()) {
+            int eid = model.edges.FindIndex(ex.Current());
+            if (eid < 1 || eid >= int(pinnedEdge.size()) ||
+                pinnedEdge[eid].empty()) {
+                continue;
+            }
+            uint64_t h = pinnedEdge[eid].size() * 0x9e3779b97f4a7c15ULL;
+            for (double t : pinnedEdge[eid]) {
+                h ^= uint64_t(llround(t * 1e6)) + 0x9e3779b97f4a7c15ULL +
+                     (h << 6) + (h >> 2);
+            }
+            cacheKey[fid] += "p" + std::to_string(eid) + ":" +
+                             std::to_string(h);
+        }
     }
 
     // Mesh every face into its own part, in parallel, then merge in face
@@ -18330,14 +18857,24 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                  0.4 * c3->Value(f).Distance(c3->Value(l)) /
                      double(std::max(1, n))});
             auto nearVertsEnd = [&](const gp_Pnt& p) {
+                // Always union the weld-quantum hits with the wider endpoint
+                // radius. Sloppy CAD puts the shared ring corner on the
+                // NEXT edge's curve-start, a few 1e-5 off this edge's
+                // c3 endpoint. Returning early after a quantum hit alone
+                // picked a duplicate on-curve sample with no polygon edge
+                // while the real corner (linked to the previous sample)
+                // sat just outside q (teleporter face 210 / edge 534).
                 std::vector<uint32_t> hits = nearVerts(p);
-                if (!hits.empty() || eTol <= q) return hits;
+                if (eTol <= q) return hits;
+                std::set<uint32_t> seen(hits.begin(), hits.end());
                 for (uint32_t vi = 0; vi < part.vertices.size(); ++vi) {
+                    if (seen.count(vi)) continue;
                     const auto& P = part.vertices[vi];
                     const double dx = P[0] - p.X(), dy = P[1] - p.Y(),
                                  dz = P[2] - p.Z();
                     if (dx * dx + dy * dy + dz * dz < eTol * eTol) {
                         hits.push_back(vi);
+                        seen.insert(vi);
                     }
                 }
                 return hits;
@@ -18392,9 +18929,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     };
 
     // Repair isolated folded floor cells without imposing a replacement
-    // lattice: insert one surface-anchored centre and fan only that polygon.
-    // Borders and all neighbouring polygons remain untouched. Returns true
-    // only when the resulting part has no inverted polygons.
+    // lattice. Tries, in order: reverse winding of folded cells, both
+    // quad diagonals, then a surface-anchored centre fan. Borders and
+    // neighbouring polygons remain untouched. Returns true only when the
+    // resulting part has no foldedPolys (the §3.1 ruler).
     auto repairFloorFolds = [&](int fid, const TopoDS_Face& face,
                                 PolyMesh& part) {
         Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
@@ -18402,72 +18940,852 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         BRepAdaptor_Surface sa(face);
         const double up = sa.IsUPeriodic() ? sa.UPeriod() : 0.0;
         const double vp = sa.IsVPeriodic() ? sa.VPeriod() : 0.0;
-        for (int pass = 0; pass < 3; ++pass) {
+        GeomAPI_ProjectPointOnSurf projector;
+        projector.Init(gp_Pnt(0, 0, 0), surface);
+        auto foldCount = [&](const PolyMesh& m) {
+            const auto mask = foldedPolys(model, m);
+            return int(std::count(mask.begin(), mask.end(), uint8_t{1}));
+        };
+        auto uvOfVert = [&](const PolyMesh& m, uint32_t vi, double uref,
+                            double vref, double& u, double& v) -> bool {
+            if (vi < m.anchors.size() && m.anchors[vi].faceId == fid) {
+                u = m.anchors[vi].u;
+                v = m.anchors[vi].v;
+                if (up > 0) u -= up * std::round((u - uref) / up);
+                if (vp > 0) v -= vp * std::round((v - vref) / vp);
+                return true;
+            }
+            if (vi >= m.vertices.size()) return false;
+            const auto& p = m.vertices[vi];
+            projector.Perform(gp_Pnt(p[0], p[1], p[2]));
+            if (!projector.IsDone() || projector.NbPoints() < 1) return false;
+            projector.LowerDistanceParameters(u, v);
+            if (up > 0) u -= up * std::round((u - uref) / up);
+            if (vp > 0) v -= vp * std::round((v - vref) / vp);
+            return true;
+        };
+        // Ensure every corner used by this face carries a face UV anchor
+        // so subsequent fan / vote steps see a complete chart.
+        {
+            if (part.anchors.size() < part.vertices.size()) {
+                part.anchors.resize(part.vertices.size());
+            }
+            for (const auto& poly : part.polygons) {
+                for (uint32_t vi : poly) {
+                    if (vi >= part.anchors.size()) continue;
+                    if (part.anchors[vi].faceId == fid) continue;
+                    double u = 0, v = 0;
+                    if (!uvOfVert(part, vi, 0, 0, u, v)) continue;
+                    part.anchors[vi] = {fid, u, v};
+                }
+            }
+        }
+        auto hasDupDirected = [&](const PolyMesh& m) {
+            std::map<std::pair<uint32_t, uint32_t>, int> dir;
+            for (const auto& poly : m.polygons) {
+                for (size_t i = 0; i < poly.size(); ++i) {
+                    if (++dir[{poly[i],
+                               poly[(i + 1) % poly.size()]}] > 1) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        };
+        auto acceptIfBetter = [&](PolyMesh&& cand, int before,
+                                  const char* tag) -> bool {
+            const int borderBad = borderContractViolation(fid, cand);
+            if (borderBad != 0) {
+                if (std::getenv("WEFT_FOLD_PROBE") && before >= 1) {
+                    std::fprintf(stderr,
+                                 "[fold-probe] f%d %s rejected: border %d "
+                                 "(before %d)\n",
+                                 fid, tag, borderBad, before);
+                }
+                return false;
+            }
+            // Reject repairs that invent same-direction edge pairs inside
+            // the face (a reverse that fights a correctly wound neighbour).
+            if (hasDupDirected(cand)) {
+                if (std::getenv("WEFT_FOLD_PROBE") && before >= 1) {
+                    std::fprintf(stderr,
+                                 "[fold-probe] f%d %s rejected: dup-dir "
+                                 "(before %d)\n",
+                                 fid, tag, before);
+                }
+                return false;
+            }
+            const int after = foldCount(cand);
+            if (after >= before) {
+                if (std::getenv("WEFT_FOLD_PROBE") && before >= 1) {
+                    std::fprintf(stderr,
+                                 "[fold-probe] f%d %s no-improve %d -> %d\n",
+                                 fid, tag, before, after);
+                }
+                return false;
+            }
+            dbg("mesh face %d: floor fold repair (%s) %d -> %d", fid, tag,
+                before, after);
+            if (std::getenv("WEFT_FOLD_PROBE")) {
+                std::fprintf(stderr,
+                             "[fold-probe] f%d %s accepted %d -> %d\n", fid,
+                             tag, before, after);
+            }
+            part = std::move(cand);
+            return true;
+        };
+        for (int pass = 0; pass < 4; ++pass) {
             const auto folded = foldedPolys(model, part);
             const int before = int(std::count(folded.begin(), folded.end(),
                                               uint8_t{1}));
             if (before == 0) return true;
-            PolyMesh cand = part;
-            bool changed = false;
-            const size_t originalPolys = part.polygons.size();
-            for (size_t pi = 0; pi < originalPolys; ++pi) {
-                if (pi >= folded.size() || !folded[pi]) continue;
-                const auto poly = part.polygons[pi];
-                if (poly.size() < 3) continue;
-                double cu = 0.0, cv = 0.0, uref = 0.0, vref = 0.0;
-                bool anchored = true;
-                for (size_t k = 0; k < poly.size(); ++k) {
-                    const uint32_t vi = poly[k];
-                    if (vi >= part.anchors.size() ||
-                        part.anchors[vi].faceId != fid) {
-                        anchored = false;
+            if (std::getenv("WEFT_FOLD_PROBE") && before >= 1) {
+                int anchoredFolded = 0, unanchored = 0;
+                for (size_t pi = 0; pi < folded.size(); ++pi) {
+                    if (!folded[pi] || pi >= part.polygons.size()) continue;
+                    bool ok = true;
+                    for (uint32_t vi : part.polygons[pi]) {
+                        if (vi >= part.anchors.size() ||
+                            part.anchors[vi].faceId != fid) {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    std::fprintf(stderr,
+                                 "[fold-probe] f%d folded poly %zu arity "
+                                 "%zu anchored=%d\n",
+                                 fid, pi, part.polygons[pi].size(),
+                                 int(ok));
+                    (ok ? anchoredFolded : unanchored)++;
+                }
+                std::fprintf(stderr,
+                             "[fold-probe] f%d pass %d folds %d "
+                             "(anchored %d / bare %d)\n",
+                             fid, pass, before, anchoredFolded, unanchored);
+            }
+
+            // 1) Reverse winding of every folded cell. A consistently
+            // inverted pocket (internally manifold, wrong vs CAD) clears
+            // in one shot; mixed pockets are rejected by acceptIfBetter.
+            {
+                PolyMesh cand = part;
+                bool changed = false;
+                for (size_t pi = 0; pi < cand.polygons.size(); ++pi) {
+                    if (pi >= folded.size() || !folded[pi]) continue;
+                    if (cand.polygons[pi].size() < 3) continue;
+                    std::reverse(cand.polygons[pi].begin(),
+                                 cand.polygons[pi].end());
+                    changed = true;
+                }
+                if (changed && acceptIfBetter(std::move(cand), before,
+                                              "reverse")) {
+                    continue;
+                }
+            }
+
+            // 2) Quad diagonal swaps (both hands). When a diagonal leaves
+            // one child folded (common on cylinder fillet tips), follow
+            // up with a centre-fan on residual folded cells before
+            // judging — diag alone often ties the fold count at 1.
+            {
+                bool anyQuad = false;
+                for (size_t pi = 0; pi < folded.size(); ++pi) {
+                    if (folded[pi] && pi < part.polygons.size() &&
+                        part.polygons[pi].size() == 4) {
+                        anyQuad = true;
                         break;
                     }
-                    double u = part.anchors[vi].u;
-                    double v = part.anchors[vi].v;
-                    if (k == 0) {
-                        uref = u;
-                        vref = v;
-                    } else {
-                        if (up > 0) u -= up * std::round((u - uref) / up);
-                        if (vp > 0) v -= vp * std::round((v - vref) / vp);
+                }
+                if (anyQuad) {
+                    for (int mode = 0; mode < 2; ++mode) {
+                        PolyMesh cand = part;
+                        bool changed = false;
+                        for (size_t pi = 0; pi < folded.size(); ++pi) {
+                            if (!folded[pi] || pi >= cand.polygons.size() ||
+                                cand.polygons[pi].size() != 4) {
+                                continue;
+                            }
+                            const auto q = cand.polygons[pi];
+                            const int pf =
+                                pi < cand.polygonFaceId.size()
+                                    ? cand.polygonFaceId[pi]
+                                    : fid;
+                            if (mode == 0) {
+                                cand.polygons[pi] = {q[0], q[1], q[2]};
+                                cand.polygons.push_back({q[0], q[2], q[3]});
+                            } else {
+                                cand.polygons[pi] = {q[0], q[1], q[3]};
+                                cand.polygons.push_back({q[1], q[2], q[3]});
+                            }
+                            cand.polygonFaceId.push_back(pf);
+                            if (pi < cand.polygonFaceId.size()) {
+                                cand.polygonFaceId[pi] = pf;
+                            }
+                            changed = true;
+                        }
+                        if (!changed) continue;
+                        // Follow-up centre-fan on whatever still folds.
+                        {
+                            const auto midMask = foldedPolys(model, cand);
+                            const size_t n0 = cand.polygons.size();
+                            for (size_t pi = 0; pi < n0; ++pi) {
+                                if (pi >= midMask.size() || !midMask[pi]) {
+                                    continue;
+                                }
+                                const auto poly = cand.polygons[pi];
+                                if (poly.size() < 3) continue;
+                                double cu = 0, cv = 0, uref = 0, vref = 0;
+                                bool ok = true;
+                                for (size_t k = 0; k < poly.size(); ++k) {
+                                    double u = 0, v = 0;
+                                    if (k == 0) {
+                                        ok = uvOfVert(cand, poly[k], 0, 0,
+                                                      u, v);
+                                        uref = u;
+                                        vref = v;
+                                    } else {
+                                        ok = uvOfVert(cand, poly[k], uref,
+                                                      vref, u, v);
+                                    }
+                                    if (!ok) break;
+                                    cu += u;
+                                    cv += v;
+                                }
+                                if (!ok) continue;
+                                cu /= poly.size();
+                                cv /= poly.size();
+                                const gp_Pnt cp = surface->Value(cu, cv);
+                                const uint32_t ci =
+                                    uint32_t(cand.vertices.size());
+                                cand.vertices.push_back(
+                                    {cp.X(), cp.Y(), cp.Z()});
+                                cand.anchors.push_back({fid, cu, cv});
+                                const int pf =
+                                    pi < cand.polygonFaceId.size()
+                                        ? cand.polygonFaceId[pi]
+                                        : fid;
+                                cand.polygons[pi] = {poly[0], poly[1], ci};
+                                for (size_t k = 1; k < poly.size(); ++k) {
+                                    cand.polygons.push_back(
+                                        {poly[k],
+                                         poly[(k + 1) % poly.size()], ci});
+                                    cand.polygonFaceId.push_back(pf);
+                                }
+                                if (pi < cand.polygonFaceId.size()) {
+                                    cand.polygonFaceId[pi] = pf;
+                                }
+                            }
+                        }
+                        if (acceptIfBetter(std::move(cand), before,
+                                           mode == 0 ? "diag-fan-a"
+                                                     : "diag-fan-b")) {
+                            goto next_pass;
+                        }
                     }
-                    cu += u;
-                    cv += v;
                 }
-                if (!anchored) continue;
-                cu /= poly.size();
-                cv /= poly.size();
-                const gp_Pnt cp = surface->Value(cu, cv);
-                const uint32_t ci = uint32_t(cand.vertices.size());
-                cand.vertices.push_back({cp.X(), cp.Y(), cp.Z()});
-                cand.anchors.push_back({fid, cu, cv});
-                const int pf = pi < cand.polygonFaceId.size()
-                                   ? cand.polygonFaceId[pi]
-                                   : fid;
-                cand.polygons[pi] = {poly[0], poly[1], ci};
-                for (size_t k = 1; k < poly.size(); ++k) {
-                    cand.polygons.push_back(
-                        {poly[k], poly[(k + 1) % poly.size()], ci});
-                    cand.polygonFaceId.push_back(pf);
-                }
-                if (pi < cand.polygonFaceId.size()) {
-                    cand.polygonFaceId[pi] = pf;
-                }
-                changed = true;
             }
-            if (!changed) return false;
-            const auto afterMask = foldedPolys(model, cand);
-            const int after = int(std::count(afterMask.begin(),
-                                             afterMask.end(), uint8_t{1}));
-            if (after >= before) return false;
-            part = std::move(cand);
-            dbg("mesh face %d: floor fold repair %d -> %d", fid, before,
-                after);
+
+            // 3) Interior edge flip: a folded triangle sharing an edge with
+            // a neighbour often untangles by taking the other diagonal of
+            // the quad they form (UV-Delaunay / bowtie fix).
+            {
+                std::map<std::pair<uint32_t, uint32_t>,
+                         std::vector<size_t>>
+                    undir;
+                for (size_t pi = 0; pi < part.polygons.size(); ++pi) {
+                    const auto& poly = part.polygons[pi];
+                    if (poly.size() != 3) continue;
+                    for (size_t i = 0; i < 3; ++i) {
+                        uint32_t a = poly[i], b = poly[(i + 1) % 3];
+                        if (a > b) std::swap(a, b);
+                        undir[{a, b}].push_back(pi);
+                    }
+                }
+                PolyMesh cand = part;
+                bool changed = false;
+                std::vector<char> touched(part.polygons.size(), 0);
+                for (size_t pi = 0; pi < folded.size(); ++pi) {
+                    if (!folded[pi] || pi >= cand.polygons.size() ||
+                        cand.polygons[pi].size() != 3 || touched[pi]) {
+                        continue;
+                    }
+                    const auto t1 = cand.polygons[pi];
+                    for (size_t e = 0; e < 3 && !touched[pi]; ++e) {
+                        uint32_t a = t1[e], b = t1[(e + 1) % 3];
+                        uint32_t lo = a, hi = b;
+                        if (lo > hi) std::swap(lo, hi);
+                        const auto it = undir.find({lo, hi});
+                        if (it == undir.end() || it->second.size() != 2) {
+                            continue;
+                        }
+                        size_t pj = it->second[0] == pi ? it->second[1]
+                                                        : it->second[0];
+                        if (pj >= cand.polygons.size() ||
+                            cand.polygons[pj].size() != 3 || touched[pj]) {
+                            continue;
+                        }
+                        const auto t2 = cand.polygons[pj];
+                        uint32_t c = 0, d = 0;
+                        for (uint32_t v : t1) {
+                            if (v != a && v != b) c = v;
+                        }
+                        for (uint32_t v : t2) {
+                            if (v != a && v != b) d = v;
+                        }
+                        if (c == d || c == 0 || d == 0) continue;
+                        // Preserve t1's hand on the shared edge.
+                        bool fwd = false;
+                        for (int i = 0; i < 3; ++i) {
+                            if (t1[i] == a && t1[(i + 1) % 3] == b) {
+                                fwd = true;
+                            }
+                        }
+                        if (fwd) {
+                            cand.polygons[pi] = {a, d, c};
+                            cand.polygons[pj] = {d, b, c};
+                        } else {
+                            cand.polygons[pi] = {b, d, c};
+                            cand.polygons[pj] = {d, a, c};
+                        }
+                        touched[pi] = touched[pj] = 1;
+                        changed = true;
+                    }
+                }
+                if (changed &&
+                    acceptIfBetter(std::move(cand), before, "edge-flip")) {
+                    continue;
+                }
+            }
+
+            // 4) Longest-edge split onto the surface midpoint. Refines a
+            // folded span the way the floor web densifies, without a
+            // centre that can leave the UV triangle.
+            {
+                PolyMesh cand = part;
+                bool changed = false;
+                const size_t originalPolys = part.polygons.size();
+                std::vector<char> touched(originalPolys, 0);
+                // Shared undirected edges: only split interior ones once.
+                std::map<std::pair<uint32_t, uint32_t>, std::vector<size_t>>
+                    undir;
+                for (size_t pi = 0; pi < originalPolys; ++pi) {
+                    const auto& poly = part.polygons[pi];
+                    if (poly.size() != 3) continue;
+                    for (size_t i = 0; i < 3; ++i) {
+                        uint32_t a = poly[i], b = poly[(i + 1) % 3];
+                        if (a > b) std::swap(a, b);
+                        undir[{a, b}].push_back(pi);
+                    }
+                }
+                for (size_t pi = 0; pi < originalPolys; ++pi) {
+                    if (pi >= folded.size() || !folded[pi] || touched[pi]) {
+                        continue;
+                    }
+                    const auto poly = part.polygons[pi];
+                    if (poly.size() != 3) continue;
+                    // Longest edge in 3D.
+                    int best = -1;
+                    double bestLen = -1.0;
+                    for (int i = 0; i < 3; ++i) {
+                        const auto& A = part.vertices[poly[i]];
+                        const auto& B =
+                            part.vertices[poly[(i + 1) % 3]];
+                        const double len = gp_Pnt(A[0], A[1], A[2])
+                                              .Distance(gp_Pnt(B[0], B[1],
+                                                               B[2]));
+                        if (len > bestLen) {
+                            bestLen = len;
+                            best = i;
+                        }
+                    }
+                    if (best < 0) continue;
+                    uint32_t a = poly[best], b = poly[(best + 1) % 3];
+                    uint32_t c = poly[(best + 2) % 3];
+                    uint32_t lo = a, hi = b;
+                    if (lo > hi) std::swap(lo, hi);
+                    const auto eit = undir.find({lo, hi});
+                    // Prefer interior edges (2 uses); border splits would
+                    // break the seam contract.
+                    if (eit == undir.end() || eit->second.size() != 2) {
+                        continue;
+                    }
+                    size_t pj = eit->second[0] == pi ? eit->second[1]
+                                                    : eit->second[0];
+                    if (pj >= originalPolys || touched[pj] ||
+                        part.polygons[pj].size() != 3) {
+                        continue;
+                    }
+                    double ua = 0, va = 0, ub = 0, vb = 0;
+                    if (!uvOfVert(part, a, 0, 0, ua, va) ||
+                        !uvOfVert(part, b, ua, va, ub, vb)) {
+                        continue;
+                    }
+                    const double cu = 0.5 * (ua + ub);
+                    const double cv = 0.5 * (va + vb);
+                    const gp_Pnt cp = surface->Value(cu, cv);
+                    const uint32_t w = uint32_t(cand.vertices.size());
+                    cand.vertices.push_back({cp.X(), cp.Y(), cp.Z()});
+                    cand.anchors.push_back({fid, cu, cv});
+                    const int pf =
+                        pi < cand.polygonFaceId.size() ? cand.polygonFaceId[pi]
+                                                       : fid;
+                    const int pf2 =
+                        pj < cand.polygonFaceId.size() ? cand.polygonFaceId[pj]
+                                                       : fid;
+                    // Split both tris across the shared edge.
+                    uint32_t d = 0;
+                    for (uint32_t v : part.polygons[pj]) {
+                        if (v != a && v != b) d = v;
+                    }
+                    auto orientSplit = [&](const std::vector<uint32_t>& t,
+                                           uint32_t opp, size_t slot,
+                                           int faceTag) {
+                        bool fwd = false;
+                        for (int i = 0; i < 3; ++i) {
+                            if (t[i] == a && t[(i + 1) % 3] == b) fwd = true;
+                        }
+                        if (fwd) {
+                            cand.polygons[slot] = {a, w, opp};
+                            cand.polygons.push_back({w, b, opp});
+                        } else {
+                            cand.polygons[slot] = {b, w, opp};
+                            cand.polygons.push_back({w, a, opp});
+                        }
+                        cand.polygonFaceId.push_back(faceTag);
+                        if (slot < cand.polygonFaceId.size()) {
+                            cand.polygonFaceId[slot] = faceTag;
+                        }
+                    };
+                    orientSplit(poly, c, pi, pf);
+                    orientSplit(part.polygons[pj], d, pj, pf2);
+                    touched[pi] = touched[pj] = 1;
+                    changed = true;
+                }
+                if (changed &&
+                    acceptIfBetter(std::move(cand), before, "edge-split")) {
+                    continue;
+                }
+            }
+
+            // 5) Ear-clip folded n-gons in UV. A single warped 5/6-gon on
+            // a fillet tip (teleporter face 210) often clears when split
+            // into UV-convex tris without a centre that leaves the cell.
+            {
+                const bool flip = face.Orientation() == TopAbs_REVERSED;
+                PolyMesh cand = part;
+                bool changed = false;
+                const size_t originalPolys = part.polygons.size();
+                for (size_t pi = 0; pi < originalPolys; ++pi) {
+                    if (pi >= folded.size() || !folded[pi]) continue;
+                    const auto poly = part.polygons[pi];
+                    if (poly.size() < 4) continue;
+                    std::vector<WebPoint> ring;
+                    ring.reserve(poly.size());
+                    double uref = 0, vref = 0;
+                    bool ok = true;
+                    for (size_t k = 0; k < poly.size(); ++k) {
+                        double u = 0, v = 0;
+                        if (k == 0) {
+                            if (!uvOfVert(part, poly[k], 0, 0, u, v)) {
+                                ok = false;
+                                break;
+                            }
+                            uref = u;
+                            vref = v;
+                        } else if (!uvOfVert(part, poly[k], uref, vref, u,
+                                             v)) {
+                            ok = false;
+                            break;
+                        }
+                        ring.push_back({gp_Pnt2d(u, v), poly[k]});
+                    }
+                    if (!ok) continue;
+                    double area2 = 0;
+                    for (size_t i = 0; i < ring.size(); ++i) {
+                        const auto& a = ring[i].uv;
+                        const auto& b = ring[(i + 1) % ring.size()].uv;
+                        area2 += a.X() * b.Y() - b.X() * a.Y();
+                    }
+                    if (area2 < 0) std::reverse(ring.begin(), ring.end());
+                    PolyMesh tmp;
+                    MeshBuilder tb(tmp);
+                    // Reuse existing verts: copy them into tmp first so
+                    // earClip's vert indices remain valid.
+                    tmp.vertices = cand.vertices;
+                    tmp.anchors = cand.anchors;
+                    if (!earClip(ring, fid, flip, tb)) continue;
+                    if (tmp.polygons.empty()) continue;
+                    const int pf = pi < cand.polygonFaceId.size()
+                                       ? cand.polygonFaceId[pi]
+                                       : fid;
+                    cand.polygons[pi] = tmp.polygons[0];
+                    if (pi < cand.polygonFaceId.size()) {
+                        cand.polygonFaceId[pi] = pf;
+                    }
+                    for (size_t k = 1; k < tmp.polygons.size(); ++k) {
+                        cand.polygons.push_back(tmp.polygons[k]);
+                        cand.polygonFaceId.push_back(pf);
+                    }
+                    changed = true;
+                }
+                if (changed &&
+                    acceptIfBetter(std::move(cand), before, "ngon-earclip")) {
+                    continue;
+                }
+            }
+
+            // 6) 2×2 UV subdivide folded quads. Cylinder-fillet saddle
+            // cells (teleporter face 210) stay folded under both
+            // diagonals and a single centre-fan — cutting chord length
+            // by half in UV is what brings Newell back into agreement
+            // with the surface normal. Midpoints are spliced into EVERY
+            // poly that uses the edge so the face stays manifold.
+            {
+                PolyMesh cand = part;
+                const size_t originalPolys = part.polygons.size();
+                std::map<std::pair<uint32_t, uint32_t>, uint32_t> midOf;
+                constexpr uint32_t kNoMid = 0xffffffffu;
+                auto edgeMid = [&](uint32_t a, uint32_t b) -> uint32_t {
+                    uint32_t lo = a, hi = b;
+                    if (lo > hi) std::swap(lo, hi);
+                    auto it = midOf.find({lo, hi});
+                    if (it != midOf.end()) return it->second;
+                    double ua = 0, va = 0, ub = 0, vb = 0;
+                    if (!uvOfVert(cand, a, 0, 0, ua, va) ||
+                        !uvOfVert(cand, b, ua, va, ub, vb)) {
+                        return kNoMid;
+                    }
+                    const double cu = 0.5 * (ua + ub);
+                    const double cv = 0.5 * (va + vb);
+                    const gp_Pnt cp = surface->Value(cu, cv);
+                    const uint32_t w = uint32_t(cand.vertices.size());
+                    cand.vertices.push_back({cp.X(), cp.Y(), cp.Z()});
+                    cand.anchors.push_back({fid, cu, cv});
+                    midOf[{lo, hi}] = w;
+                    return w;
+                };
+                // Within-face edge uses: border edges (use 1) must not
+                // gain midpoints here — the neighbour face is not in
+                // `part`, and an extra border sample fails the contract
+                // (teleporter face 210 / edge 534). Only fully interior
+                // folded quads are 2×2'd pre-merge; post-stitch geoheal
+                // handles border-touching saddles on the assembled mesh.
+                std::map<std::pair<uint32_t, uint32_t>, int> faceUse;
+                for (const auto& poly : part.polygons) {
+                    for (size_t i = 0; i < poly.size(); ++i) {
+                        uint32_t u = poly[i],
+                                 w = poly[(i + 1) % poly.size()];
+                        if (u > w) std::swap(u, w);
+                        ++faceUse[{u, w}];
+                    }
+                }
+                std::vector<size_t> foldedQuads;
+                for (size_t pi = 0; pi < originalPolys; ++pi) {
+                    if (pi >= folded.size() || !folded[pi]) continue;
+                    if (part.polygons[pi].size() != 4) continue;
+                    const auto& q = part.polygons[pi];
+                    bool interior = true;
+                    for (size_t e = 0; e < 4; ++e) {
+                        uint32_t u = q[e], w = q[(e + 1) % 4];
+                        if (u > w) std::swap(u, w);
+                        if (faceUse[{u, w}] != 2) {
+                            interior = false;
+                            break;
+                        }
+                    }
+                    if (!interior) continue;
+                    if (edgeMid(q[0], q[1]) == kNoMid ||
+                        edgeMid(q[1], q[2]) == kNoMid ||
+                        edgeMid(q[2], q[3]) == kNoMid ||
+                        edgeMid(q[3], q[0]) == kNoMid) {
+                        continue;
+                    }
+                    foldedQuads.push_back(pi);
+                }
+                if (!foldedQuads.empty() && !midOf.empty()) {
+                    // Insert midpoints into every polygon edge that was
+                    // subdivided (neighbours included).
+                    for (auto& poly : cand.polygons) {
+                        for (size_t i = 0; i < poly.size(); ++i) {
+                            uint32_t a = poly[i],
+                                     b = poly[(i + 1) % poly.size()];
+                            uint32_t lo = a, hi = b;
+                            if (lo > hi) std::swap(lo, hi);
+                            auto it = midOf.find({lo, hi});
+                            if (it == midOf.end()) continue;
+                            poly.insert(poly.begin() +
+                                            static_cast<std::ptrdiff_t>(
+                                                i + 1),
+                                        it->second);
+                            ++i;  // skip the mid
+                        }
+                    }
+                    // Replace each (now 8-gon) folded cell with 4 quads.
+                    bool changed = false;
+                    for (size_t pi : foldedQuads) {
+                        if (pi >= cand.polygons.size()) continue;
+                        auto& ring = cand.polygons[pi];
+                        if (ring.size() != 8) continue;
+                        // ring = c0,m01,c1,m12,c2,m23,c3,m30
+                        const uint32_t c0 = ring[0], m01 = ring[1],
+                                       c1 = ring[2], m12 = ring[3],
+                                       c2 = ring[4], m23 = ring[5],
+                                       c3 = ring[6], m30 = ring[7];
+                        double u0 = 0, v0 = 0, u1 = 0, v1 = 0, u2 = 0,
+                               v2 = 0, u3 = 0, v3 = 0;
+                        if (!uvOfVert(cand, c0, 0, 0, u0, v0) ||
+                            !uvOfVert(cand, c1, u0, v0, u1, v1) ||
+                            !uvOfVert(cand, c2, u0, v0, u2, v2) ||
+                            !uvOfVert(cand, c3, u0, v0, u3, v3)) {
+                            continue;
+                        }
+                        const double cu = 0.25 * (u0 + u1 + u2 + u3);
+                        const double cv = 0.25 * (v0 + v1 + v2 + v3);
+                        const gp_Pnt cp = surface->Value(cu, cv);
+                        const uint32_t c =
+                            uint32_t(cand.vertices.size());
+                        cand.vertices.push_back(
+                            {cp.X(), cp.Y(), cp.Z()});
+                        cand.anchors.push_back({fid, cu, cv});
+                        const int pf =
+                            pi < cand.polygonFaceId.size()
+                                ? cand.polygonFaceId[pi]
+                                : fid;
+                        cand.polygons[pi] = {c0, m01, c, m30};
+                        cand.polygons.push_back({m01, c1, m12, c});
+                        cand.polygons.push_back({c, m12, c2, m23});
+                        cand.polygons.push_back({m30, c, m23, c3});
+                        cand.polygonFaceId.push_back(pf);
+                        cand.polygonFaceId.push_back(pf);
+                        cand.polygonFaceId.push_back(pf);
+                        if (pi < cand.polygonFaceId.size()) {
+                            cand.polygonFaceId[pi] = pf;
+                        }
+                        changed = true;
+                    }
+                    if (changed &&
+                        acceptIfBetter(std::move(cand), before,
+                                       "quad-2x2")) {
+                        continue;
+                    }
+                }
+            }
+
+            // 7) Centre-fan: surface-anchored split of each folded cell.
+            {
+                PolyMesh cand = part;
+                bool changed = false;
+                const size_t originalPolys = part.polygons.size();
+                for (size_t pi = 0; pi < originalPolys; ++pi) {
+                    if (pi >= folded.size() || !folded[pi]) continue;
+                    const auto poly = part.polygons[pi];
+                    if (poly.size() < 3) continue;
+                    double cu = 0.0, cv = 0.0, uref = 0.0, vref = 0.0;
+                    bool ok = true;
+                    for (size_t k = 0; k < poly.size(); ++k) {
+                        double u = 0, v = 0;
+                        if (k == 0) {
+                            if (!uvOfVert(part, poly[k], 0, 0, u, v)) {
+                                ok = false;
+                                break;
+                            }
+                            uref = u;
+                            vref = v;
+                        } else if (!uvOfVert(part, poly[k], uref, vref, u,
+                                             v)) {
+                            ok = false;
+                            break;
+                        }
+                        cu += u;
+                        cv += v;
+                    }
+                    if (!ok) continue;
+                    cu /= poly.size();
+                    cv /= poly.size();
+                    const gp_Pnt cp = surface->Value(cu, cv);
+                    const uint32_t ci = uint32_t(cand.vertices.size());
+                    cand.vertices.push_back({cp.X(), cp.Y(), cp.Z()});
+                    cand.anchors.push_back({fid, cu, cv});
+                    const int pf = pi < cand.polygonFaceId.size()
+                                       ? cand.polygonFaceId[pi]
+                                       : fid;
+                    cand.polygons[pi] = {poly[0], poly[1], ci};
+                    for (size_t k = 1; k < poly.size(); ++k) {
+                        cand.polygons.push_back(
+                            {poly[k], poly[(k + 1) % poly.size()], ci});
+                        cand.polygonFaceId.push_back(pf);
+                    }
+                    if (pi < cand.polygonFaceId.size()) {
+                        cand.polygonFaceId[pi] = pf;
+                    }
+                    changed = true;
+                }
+                if (changed &&
+                    acceptIfBetter(std::move(cand), before, "centre-fan")) {
+                    continue;
+                }
+            }
+
+            // 8) Discard folded cells and re-ear-clip each hole in UV.
+            // Borders stay exact: only interior diagonals are rewritten.
+            {
+                PolyMesh cand = part;
+                std::vector<char> drop(cand.polygons.size(), 0);
+                int dropped = 0;
+                for (size_t pi = 0; pi < folded.size(); ++pi) {
+                    if (!folded[pi] || pi >= drop.size()) continue;
+                    drop[pi] = 1;
+                    ++dropped;
+                }
+                if (dropped > 0) {
+                    // Edge use before / after drop.
+                    auto edgeUse =
+                        [&](bool skipDropped)
+                        -> std::map<std::pair<uint32_t, uint32_t>, int> {
+                        std::map<std::pair<uint32_t, uint32_t>, int> use;
+                        for (size_t pi = 0; pi < cand.polygons.size();
+                             ++pi) {
+                            if (skipDropped && drop[pi]) continue;
+                            const auto& poly = cand.polygons[pi];
+                            for (size_t i = 0; i < poly.size(); ++i) {
+                                uint32_t a = poly[i],
+                                         b = poly[(i + 1) % poly.size()];
+                                if (a > b) std::swap(a, b);
+                                ++use[{a, b}];
+                            }
+                        }
+                        return use;
+                    };
+                    const auto beforeUse = edgeUse(false);
+                    const auto afterUse = edgeUse(true);
+                    // Keep non-folded polys.
+                    {
+                        std::vector<std::vector<uint32_t>> polys;
+                        std::vector<int> pface;
+                        for (size_t pi = 0; pi < cand.polygons.size();
+                             ++pi) {
+                            if (drop[pi]) continue;
+                            polys.push_back(cand.polygons[pi]);
+                            pface.push_back(pi < cand.polygonFaceId.size()
+                                                ? cand.polygonFaceId[pi]
+                                                : fid);
+                        }
+                        cand.polygons = std::move(polys);
+                        cand.polygonFaceId = std::move(pface);
+                    }
+                    // Hole edges: were interior (use 2) and are now boundary
+                    // (use 1). Trace directed cycles and ear-clip.
+                    std::map<uint32_t, std::vector<uint32_t>> adj;
+                    for (const auto& [e, u0] : beforeUse) {
+                        if (u0 != 2) continue;
+                        const auto it = afterUse.find(e);
+                        if (it == afterUse.end() || it->second != 1) {
+                            continue;
+                        }
+                        adj[e.first].push_back(e.second);
+                        adj[e.second].push_back(e.first);
+                    }
+                    const bool flip =
+                        face.Orientation() == TopAbs_REVERSED;
+                    std::set<std::pair<uint32_t, uint32_t>> seen;
+                    auto emitLoop = [&](std::vector<uint32_t> loop) {
+                        if (loop.size() < 3) return false;
+                        // Orient CCW in UV (earClip expects that; flip
+                        // argument then fixes 3D hand for REVERSED faces).
+                        double area2 = 0;
+                        std::vector<WebPoint> ring;
+                        ring.reserve(loop.size());
+                        double uref = 0, vref = 0;
+                        for (size_t i = 0; i < loop.size(); ++i) {
+                            double u = 0, v = 0;
+                            if (i == 0) {
+                                if (!uvOfVert(cand, loop[i], 0, 0, u, v)) {
+                                    return false;
+                                }
+                                uref = u;
+                                vref = v;
+                            } else if (!uvOfVert(cand, loop[i], uref, vref,
+                                                 u, v)) {
+                                return false;
+                            }
+                            ring.push_back({gp_Pnt2d(u, v), loop[i]});
+                        }
+                        for (size_t i = 0; i < ring.size(); ++i) {
+                            const auto& a = ring[i].uv;
+                            const auto& b = ring[(i + 1) % ring.size()].uv;
+                            area2 += a.X() * b.Y() - b.X() * a.Y();
+                        }
+                        if (area2 < 0) {
+                            std::reverse(ring.begin(), ring.end());
+                        }
+                        MeshBuilder out(cand);
+                        return earClip(std::move(ring), fid, flip, out);
+                    };
+                    bool filled = true;
+                    for (const auto& [start, nbrs] : adj) {
+                        (void)nbrs;
+                        for (uint32_t nxt : adj[start]) {
+                            if (seen.count({start, nxt})) continue;
+                            std::vector<uint32_t> loop;
+                            uint32_t a = start, b = nxt;
+                            while (true) {
+                                if (seen.count({a, b})) {
+                                    filled = false;
+                                    break;
+                                }
+                                seen.insert({a, b});
+                                loop.push_back(a);
+                                // Prefer the unused undirected neighbour.
+                                uint32_t pick = UINT32_MAX;
+                                for (uint32_t c : adj[b]) {
+                                    if (c == a) continue;
+                                    if (!seen.count({b, c})) {
+                                        pick = c;
+                                        break;
+                                    }
+                                }
+                                if (pick == UINT32_MAX) {
+                                    // Close if back at start.
+                                    if (b == start) break;
+                                    filled = false;
+                                    break;
+                                }
+                                a = b;
+                                b = pick;
+                                if (loop.size() > cand.vertices.size() + 2) {
+                                    filled = false;
+                                    break;
+                                }
+                            }
+                            if (!filled) break;
+                            if (b == start && loop.size() >= 3) {
+                                if (!emitLoop(std::move(loop))) {
+                                    filled = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!filled) break;
+                    }
+                    if (std::getenv("WEFT_FOLD_PROBE") && before >= 2) {
+                        std::fprintf(stderr,
+                                     "[fold-probe] f%d discard-reclip "
+                                     "filled=%d dropped=%d\n",
+                                     fid, int(filled), dropped);
+                    }
+                    if (filled &&
+                        acceptIfBetter(std::move(cand), before,
+                                       "discard-reclip")) {
+                        continue;
+                    }
+                }
+            }
+
+            // No strategy improved this pass.
+            break;
+        next_pass:;
         }
-        const auto folded = foldedPolys(model, part);
-        return std::none_of(folded.begin(), folded.end(),
-                            [](uint8_t v) { return v != 0; });
+        return foldCount(part) == 0;
     };
 
     // One demotion path for every mesher failure: the contract floor
@@ -18508,23 +19826,56 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 built ? borderContractViolation(fid, parts[fid]) : -1;
             int floorFolds = 0;
             if (built && floorBad == 0) {
-                if (!repairFloorFolds(fid, face, parts[fid])) {
-                    const auto folded = foldedPolys(model, parts[fid]);
-                    floorFolds = int(std::count(folded.begin(), folded.end(),
-                                                uint8_t{1}));
+                // Exact-border floors win over raw OCCT even when a few
+                // interior cells stay folded after repair: the floor keeps
+                // the seam contract (watertight authority), while OCCT
+                // freeform borders also fold and count as raw demotion.
+                repairFloorFolds(fid, face, parts[fid]);
+                const auto folded = foldedPolys(model, parts[fid]);
+                floorFolds = int(std::count(folded.begin(), folded.end(),
+                                            uint8_t{1}));
+                // Refined webs on sharp B-spline patches can leave
+                // Newell-vs-surface folds the local heal cannot untangle.
+                // Prefer a fold-free border-only web (exact contract, no
+                // interior refine) over shipping residual folds.
+                if (floorFolds > 0) {
+                    PolyMesh plain;
+                    MeshBuilder pb(plain);
+                    FaceMeshSettings plainS = fsD;
+                    plainS.pureTriFloor = true;
+                    if (meshContractFallback(face, model, fid, solvedEdge,
+                                             s.radial, pb, nullptr,
+                                             false, &pinnedEdge) &&
+                        borderContractViolation(fid, plain) == 0) {
+                        repairFloorFolds(fid, face, plain);
+                        const auto pmask = foldedPolys(model, plain);
+                        const int pfolds = int(std::count(
+                            pmask.begin(), pmask.end(), uint8_t{1}));
+                        if (pfolds < floorFolds) {
+                            if (std::getenv("WEFT_FOLD_PROBE")) {
+                                std::fprintf(stderr,
+                                             "[fold-probe] demote face %d "
+                                             "unrefined floor %d -> %d\n",
+                                             fid, floorFolds, pfolds);
+                            }
+                            parts[fid] = std::move(plain);
+                            floorFolds = pfolds;
+                        }
+                    }
                 }
-            }
-            if (built && floorBad == 0 && floorFolds == 0) {
-                // Verified floor: borders are exact at the solved
-                // counts, so conform must treat them as authority,
-                // not as freeform movers to kidnap.
                 fellBack[fid] = 2;
-                dbg("mesh face %d: %s -> contract floor", fid, why);
+                if (std::getenv("WEFT_FOLD_PROBE") && floorFolds > 0) {
+                    std::fprintf(stderr,
+                                 "[fold-probe] demote face %d residual "
+                                 "folds %d (%s)\n",
+                                 fid, floorFolds, why ? why : "?");
+                }
+                dbg("mesh face %d: %s -> contract floor (folds %d)", fid, why,
+                    floorFolds);
                 return;
             }
-            dbg("mesh face %d: floor %s (edge %d, folds %d)", fid,
-                built ? "rejected" : "failed to build", floorBad,
-                floorFolds);
+            dbg("mesh face %d: floor %s (edge %d)", fid,
+                built ? "rejected" : "failed to build", floorBad);
         }
         parts[fid] = PolyMesh();
         MeshBuilder retry(parts[fid]);
@@ -18577,6 +19928,21 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             if (have1 && !have0) p0 = p1;
             return {p0, p1};
         };
+        // CAD/adaptive path: a raised per-face radial densifies shared
+        // column edges while orthogonal-trim / open-band lattices often
+        // cannot meet every neighbour. Demote the edited face to the
+        // fold-free contract floor; peers stay compatible via radial
+        // propagation (§3.2 sweeps). Legacy non-adaptive dense tests
+        // (cylinder radial 12→24) keep the structured lattice.
+        if (ovFace && settings.defaults.adaptive &&
+            s.radial > settings.defaults.radial &&
+            (plan.kind == MesherKind::RevolutionGrid ||
+             plan.kind == MesherKind::DomeCap ||
+             plan.kind == MesherKind::AnnulusRing ||
+             plan.kind == MesherKind::DiskCap)) {
+            demote(fid, face, surf, s, "radial override → contract floor");
+            return;
+        }
         switch (plan.kind) {
             case MesherKind::RevolutionGrid:
                 if (plan.orthogonalTrimGrid) {
@@ -19077,8 +20443,16 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         buildCause[fid] = "planned contract floor";
                         break;
                     }
+                    // Fan borders are exact but folds remain — keep trying
+                    // the web floor below; only accept a folded fan if the
+                    // web cannot build an exact-border alternative.
                 }
                 {
+                    PolyMesh fanKeep;
+                    const bool haveFoldedFan =
+                        fellBack[fid] == 0 && !parts[fid].polygons.empty() &&
+                        borderContractViolation(fid, parts[fid]) == 0;
+                    if (haveFoldedFan) fanKeep = parts[fid];
                     parts[fid] = PolyMesh();
                     MeshBuilder retryFloor(parts[fid]);
                     const bool builtFloor = meshContractFallback(
@@ -19087,9 +20461,52 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     const bool exactFloor =
                         builtFloor &&
                         borderContractViolation(fid, parts[fid]) == 0;
-                    if (exactFloor &&
-                        repairFloorFolds(fid, face, parts[fid])) {
+                    if (exactFloor) {
+                        // Exact-border web beats raw OCCT even with residual
+                        // folds after repair (same policy as demote()).
+                        repairFloorFolds(fid, face, parts[fid]);
+                        {
+                            const auto fmask =
+                                foldedPolys(model, parts[fid]);
+                            int floorFolds = int(std::count(
+                                fmask.begin(), fmask.end(), uint8_t{1}));
+                            if (floorFolds > 0) {
+                                PolyMesh plain;
+                                MeshBuilder pb(plain);
+                                FaceMeshSettings plainS = fs;
+                                plainS.pureTriFloor = true;
+                                if (meshContractFallback(
+                                        face, model, fid, solvedEdge,
+                                        s.radial, pb, nullptr, false,
+                                        &pinnedEdge) &&
+                                    borderContractViolation(fid, plain) ==
+                                        0) {
+                                    repairFloorFolds(fid, face, plain);
+                                    const auto pmask =
+                                        foldedPolys(model, plain);
+                                    const int pfolds = int(std::count(
+                                        pmask.begin(), pmask.end(),
+                                        uint8_t{1}));
+                                    if (pfolds < floorFolds) {
+                                        if (std::getenv("WEFT_FOLD_PROBE")) {
+                                            std::fprintf(
+                                                stderr,
+                                                "[fold-probe] planned floor "
+                                                "%d unrefined %d -> %d\n",
+                                                fid, floorFolds, pfolds);
+                                        }
+                                        parts[fid] = std::move(plain);
+                                    }
+                                }
+                            }
+                        }
                         fellBack[fid] = 2;  // exact borders: authority
+                        buildCause[fid] = "planned contract floor";
+                        break;
+                    }
+                    if (haveFoldedFan) {
+                        parts[fid] = std::move(fanKeep);
+                        fellBack[fid] = 2;
                         buildCause[fid] = "planned contract floor";
                         break;
                     }
@@ -19348,7 +20765,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         }
                     }
                     if (liveFolds > 0) {
-                        // A single warped Coons quad should not replace the
+                        // A single warped cell should not replace the
                         // entire otherwise-clean grid with a dense fallback
                         // web. Try both diagonals and a surface-anchored
                         // centre fan locally, then keep the
@@ -19356,9 +20773,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         // the common pointed B-spline-tip case (MP9 face
                         // 914): the clean cells remain quads and only the
                         // saddle becomes a small triangle fan instead of
-                        // hundreds of fallback polygons.
-                        if (plan.kind == MesherKind::CoonsGrid ||
-                            plan.kind == MesherKind::QuadFill) {
+                        // hundreds of fallback polygons. Applies to every
+                        // structured family — ribbon/revolution tips fold
+                        // the same way Coons/QuadFill do.
+                        {
                             std::vector<size_t> foldedPolys;
                             invertedCells(parts[fid], &foldedPolys);
                             const PolyMesh foldBase = parts[fid];
@@ -19454,6 +20872,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             &fsT, angleSplit, &pinnedEdge);
                         if (built &&
                             borderContractViolation(fid, cand) == 0) {
+                            repairFloorFolds(fid, face, cand);
                             const auto [ctested, cinverted] =
                                 invertedCells(cand);
                             (void)ctested;
@@ -19469,6 +20888,171 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                     "fold self-heal → contract floor";
                             }
                         }
+                    }
+                }
+            }
+        }
+        // §3.1 foldedPolys heal — outside the invertedCells >=8 census
+        // gate so small structured patches (a 4-quad fillet tip) still
+        // clear residual folds. Prefer a fold-free exact-border contract
+        // floor over shipping inverted polygons.
+        if (!fellBack[fid] && !parts[fid].polygons.empty() &&
+            parts[fid].polygons.size() <= 2000) {
+            auto fpCount = [&](const PolyMesh& m) {
+                const auto mask = foldedPolys(model, m);
+                return int(
+                    std::count(mask.begin(), mask.end(), uint8_t{1}));
+            };
+            int liveFp = fpCount(parts[fid]);
+            if (liveFp > 0) {
+                repairFloorFolds(fid, face, parts[fid]);
+                liveFp = fpCount(parts[fid]);
+            }
+            if (liveFp > 0) {
+                FaceMeshSettings fsT = s;
+                const double dscT =
+                    std::clamp(settings.densityScale, 0.05, 20.0);
+                if (dscT != 1.0) {
+                    fsT.chordTolerance /= dscT * dscT;
+                    fsT.angleToleranceDeg =
+                        std::clamp(fsT.angleToleranceDeg / dscT, 1.0, 60.0);
+                }
+                auto tryFloor = [&](bool refine, bool usePins,
+                                    const std::vector<int>* edgeCounts)
+                    -> bool {
+                    PolyMesh cand;
+                    MeshBuilder cb(cand);
+                    const FaceMeshSettings* rs = refine ? &fsT : nullptr;
+                    const std::vector<int>& edges =
+                        edgeCounts ? *edgeCounts : solvedEdge;
+                    const bool built = meshContractFallback(
+                        face, model, fid, edges, s.radial, cb, rs,
+                        refine && angleSplit,
+                        usePins ? &pinnedEdge : nullptr);
+                    const int borderBad =
+                        built ? borderContractViolation(fid, cand) : -1;
+                    if (!built || borderBad != 0) {
+                        if (std::getenv("WEFT_FOLD_PROBE") && liveFp >= 1) {
+                            std::fprintf(stderr,
+                                         "[fold-probe] f%d tryFloor %s "
+                                         "pins=%d built=%d border=%d\n",
+                                         fid,
+                                         refine ? "refined" : "unrefined",
+                                         int(usePins), int(built),
+                                         borderBad);
+                        }
+                        return false;
+                    }
+                    repairFloorFolds(fid, face, cand);
+                    const int floorFp = fpCount(cand);
+                    if (floorFp >= liveFp) return false;
+                    dbg("mesh face %d: foldedPolys self-heal %d -> %d via "
+                        "%s contract floor",
+                        fid, liveFp, floorFp,
+                        refine ? "refined" : "unrefined");
+                    if (std::getenv("WEFT_FOLD_PROBE")) {
+                        std::fprintf(stderr,
+                                     "[fold-probe] f%d structured -> %s "
+                                     "floor %d -> %d\n",
+                                     fid, refine ? "refined" : "unrefined",
+                                     liveFp, floorFp);
+                    }
+                    parts[fid] = std::move(cand);
+                    fellBack[fid] = 2;
+                    buildCause[fid] = "fold self-heal → contract floor";
+                    liveFp = floorFp;
+                    return true;
+                };
+                // Live border counts: curvature-floor can demand denser
+                // samples than the structured mesh emitted (teleporter
+                // face 210 / edge 534 = 8). A floor at the live counts
+                // still matches neighbours that already welded to that
+                // chain. Only FACE-BOUNDARY verts vote (use==1), so
+                // interior samples near a curve cannot inflate the count.
+                std::vector<int> liveEdge = solvedEdge;
+                {
+                    std::set<uint32_t> boundaryVerts;
+                    std::map<std::pair<uint32_t, uint32_t>, int> use;
+                    for (const auto& poly : parts[fid].polygons) {
+                        for (size_t i = 0; i < poly.size(); ++i) {
+                            uint32_t a = poly[i],
+                                     b = poly[(i + 1) % poly.size()];
+                            if (a > b) std::swap(a, b);
+                            ++use[{a, b}];
+                        }
+                    }
+                    for (const auto& [e, c] : use) {
+                        if (c == 1) {
+                            boundaryVerts.insert(e.first);
+                            boundaryVerts.insert(e.second);
+                        }
+                    }
+                    std::map<int, std::set<uint32_t>> onEdge;
+                    for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More();
+                         ex.Next()) {
+                        const int eid =
+                            model.edges.FindIndex(ex.Current());
+                        if (eid < 1) continue;
+                        const TopoDS_Edge E =
+                            TopoDS::Edge(ex.Current());
+                        if (BRep_Tool::Degenerated(E)) continue;
+                        double f0, l0;
+                        Handle(Geom_Curve) c3 =
+                            BRep_Tool::Curve(E, f0, l0);
+                        if (c3.IsNull()) continue;
+                        const double tol = std::max(
+                            1e-6, BRep_Tool::Tolerance(E) * 4.0);
+                        const double tol2 = tol * tol;
+                        for (uint32_t vi : boundaryVerts) {
+                            if (vi >= parts[fid].vertices.size()) {
+                                continue;
+                            }
+                            const auto& P = parts[fid].vertices[vi];
+                            Extrema_ExtPC ext(
+                                gp_Pnt(P[0], P[1], P[2]),
+                                BRepAdaptor_Curve(E), f0, l0);
+                            if (!ext.IsDone() || ext.NbExt() < 1) {
+                                continue;
+                            }
+                            double best = 1e300;
+                            for (int i = 1; i <= ext.NbExt(); ++i) {
+                                best = std::min(best, ext.SquareDistance(i));
+                            }
+                            if (best <= tol2) onEdge[eid].insert(vi);
+                        }
+                        if (eid < int(liveEdge.size()) &&
+                            onEdge[eid].size() >= 2) {
+                            const int segs =
+                                std::max(1, int(onEdge[eid].size()) - 1);
+                            // Only relax curvature-floor sole-proposal
+                            // bumps (teleporter 210 / edge 534). Leave
+                            // max-proposal seams (edge 533 = 16 from the
+                            // neighbour) at the solved count so the
+                            // floor still meets the shared chain.
+                            const int solved =
+                                eid < int(solvedEdge.size())
+                                    ? solvedEdge[eid]
+                                    : segs;
+                            if (segs < solved) {
+                                liveEdge[eid] = segs;
+                            }
+                        }
+                    }
+                }
+                // Try unrefined/refined, with and without pins — a pin
+                // mismatch can make an otherwise exact floor fail the
+                // border contract (teleporter face 210 / edge 534).
+                if (!tryFloor(false, true, nullptr) &&
+                    !tryFloor(false, false, nullptr) &&
+                    !tryFloor(false, false, &liveEdge) &&
+                    !tryFloor(true, true, nullptr) &&
+                    !tryFloor(true, false, nullptr) &&
+                    !tryFloor(true, false, &liveEdge)) {
+                    if (std::getenv("WEFT_FOLD_PROBE")) {
+                        std::fprintf(stderr,
+                                     "[fold-probe] f%d structured floor "
+                                     "heal failed (live %d)\n",
+                                     fid, liveFp);
                     }
                 }
             }
@@ -19578,6 +21162,58 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         if (firstError) std::rethrow_exception(firstError);
     }
 
+    // Override-stress safety net: when a per-face radial edit leaves a
+    // one-hop neighbour on the contract floor because its border contract
+    // failed, the edited face's structured lattice is the aggressor. Demote
+    // it to the same fold-free exact-border floor so the shared seam stays
+    // watertight rather than half-structured / half-floor.
+    {
+        std::vector<char> neighborContractFail(faceN + 1, 0);
+        for (int fid = 1; fid <= faceN; ++fid) {
+            if (fellBack[fid] == 0) continue;
+            if (buildCause[fid].find("border contract") == std::string::npos &&
+                buildCause[fid].find("self-check failed") ==
+                    std::string::npos) {
+                continue;
+            }
+            if (fid < 1 || fid > int(analysis.faces.size())) continue;
+            for (int eid : analysis.faces[fid - 1].edgeIds) {
+                if (eid < 1 || eid > int(analysis.edges.size())) continue;
+                for (int nf : analysis.edges[eid - 1].faceIds) {
+                    if (nf >= 1 && nf <= faceN) neighborContractFail[nf] = 1;
+                }
+            }
+        }
+        for (int fid = 1; fid <= faceN; ++fid) {
+            if (!settings.perFace.count(fid)) continue;
+            const FaceMeshSettings& fs = settings.forFace(fid);
+            // Only raised radials: lowering is handled by not pinning shared
+            // groups (above). Demoting a lowered face caused NM regressions.
+            if (fs.radial <= settings.defaults.radial) continue;
+            if (fellBack[fid] != 0) continue;
+            if (!neighborContractFail[fid]) continue;
+            const FacePlan& pl = plans.at(fid);
+            if (pl.kind != MesherKind::RevolutionGrid &&
+                pl.kind != MesherKind::DomeCap &&
+                pl.kind != MesherKind::AnnulusRing &&
+                pl.kind != MesherKind::DiskCap &&
+                pl.kind != MesherKind::RailLadder &&
+                pl.kind != MesherKind::RibbonSweep &&
+                pl.kind != MesherKind::CoonsGrid) {
+                continue;
+            }
+            const TopoDS_Face face = TopoDS::Face(model.faces(fid));
+            BRepAdaptor_Surface surf(face);
+            FaceMeshSettings s = fs;
+            s.cellCap = faceCellCap[fid];
+            demote(fid, face, surf, s,
+                   "radial override stress → contract floor");
+            cached[fid] = false;
+            dbg("mesh face %d: override stress demoted to contract floor",
+                fid);
+        }
+    }
+
     if (cache) {
         for (int fid = 1; fid <= faceN; ++fid) {
             if (!cached[fid]) {
@@ -19659,10 +21295,42 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
 
     dbg("generate: merged (%zu verts, %zu polys)", mesh.vertexCount(),
         mesh.polygonCount());
+    if (std::getenv("WEFT_FOLD_PROBE")) {
+        const auto mask = foldedPolys(model, mesh);
+        std::map<int, int> per;
+        int total = 0;
+        for (size_t p = 0; p < mask.size(); ++p) {
+            if (!mask[p]) continue;
+            ++total;
+            if (p < mesh.polygonFaceId.size()) ++per[mesh.polygonFaceId[p]];
+        }
+        std::fprintf(stderr, "[fold-probe] post-merge folds %d", total);
+        for (const auto& [f, n] : per) {
+            std::fprintf(stderr, " #%d(%d)", f, n);
+        }
+        std::fprintf(stderr, "\n");
+    }
     if (settings.finalizeMesh && settings.conformBorders) {
         conformFallbackBorders(mesh, model, plans, settings, range,
                                fellBack);
         dbg("generate: borders conformed");
+        if (std::getenv("WEFT_FOLD_PROBE")) {
+            const auto mask = foldedPolys(model, mesh);
+            std::map<int, int> per;
+            int total = 0;
+            for (size_t p = 0; p < mask.size(); ++p) {
+                if (!mask[p]) continue;
+                ++total;
+                if (p < mesh.polygonFaceId.size()) {
+                    ++per[mesh.polygonFaceId[p]];
+                }
+            }
+            std::fprintf(stderr, "[fold-probe] post-conform folds %d", total);
+            for (const auto& [f, n] : per) {
+                std::fprintf(stderr, " #%d(%d)", f, n);
+            }
+            std::fprintf(stderr, "\n");
+        }
     }
     timingCheckpoint("merge + conform");
 
@@ -20072,6 +21740,21 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
 
     finish(mesh);
     timingCheckpoint("corner repair + weld");
+    if (std::getenv("WEFT_FOLD_PROBE")) {
+        const auto mask = foldedPolys(model, mesh);
+        std::map<int, int> per;
+        int total = 0;
+        for (size_t p = 0; p < mask.size(); ++p) {
+            if (!mask[p]) continue;
+            ++total;
+            if (p < mesh.polygonFaceId.size()) ++per[mesh.polygonFaceId[p]];
+        }
+        std::fprintf(stderr, "[fold-probe] post-weld folds %d", total);
+        for (const auto& [f, n] : per) {
+            std::fprintf(stderr, " #%d(%d)", f, n);
+        }
+        std::fprintf(stderr, "\n");
+    }
     if (!settings.finalizeMesh) {
         dbg("generate: preview done (%zu verts, %zu polys)",
             mesh.vertexCount(), mesh.polygonCount());
@@ -20098,15 +21781,35 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         // splice. WEFT_NO_STITCH / WEFT_NO_FUSE are the diagnosis
         // kill-switches.
         if (!std::getenv("WEFT_NO_FUSE")) {
-            fuseSeamTwins(mesh, model, weldGlobal);
+            fuseSeamTwins(mesh, model, weldGlobal, &fellBack);
         }
         stitchSeams(mesh, model, weldGlobal, &plans, &fellBack);
+        if (std::getenv("WEFT_FOLD_PROBE")) {
+            const auto mask = foldedPolys(model, mesh);
+            std::map<int, int> per;
+            int total = 0;
+            for (size_t p = 0; p < mask.size(); ++p) {
+                if (!mask[p]) continue;
+                ++total;
+                if (p < mesh.polygonFaceId.size()) {
+                    ++per[mesh.polygonFaceId[p]];
+                }
+            }
+            std::fprintf(stderr, "[fold-probe] post-stitch folds %d", total);
+            for (const auto& [f, n] : per) {
+                std::fprintf(stderr, " #%d(%d)", f, n);
+            }
+            std::fprintf(stderr, "\n");
+        }
     }
 
     // Fold cleanup: a directed edge traversed twice WITHIN one face means
     // conform or decimation wrapped a flap of polygons over its
     // neighbours. The flap is the smaller overlapping polygon — drop it;
     // the tiny open it leaves beats a non-manifold fold.
+    // Also drop (or reverse when safe) remaining foldedPolys cells that
+    // share a same-direction edge — the §3.1 gate uses foldedPolys, not
+    // only topological flaps.
     {
         std::map<std::pair<uint32_t, uint32_t>, std::vector<size_t>> dir;
         for (size_t p = 0; p < mesh.polygons.size(); ++p) {
@@ -20162,6 +21865,541 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             mesh.polygons = std::move(polys);
             mesh.polygonFaceId = std::move(polyFace);
             dbg("generate: %zu folded polygons dropped", drop.size());
+        }
+
+        // Post-stitch / post-flap geometric folds: per-face centre-fan and
+        // n-gon ear-clip judged by foldedPolys. Borders are not rewritten
+        // — only folded cells are subdivided onto the surface.
+        {
+            auto mask = foldedPolys(model, mesh);
+            int before = int(
+                std::count(mask.begin(), mask.end(), uint8_t{1}));
+            if (before > 0) {
+                std::map<int, std::vector<size_t>> byFace;
+                for (size_t p = 0; p < mask.size(); ++p) {
+                    if (!mask[p] || p >= mesh.polygonFaceId.size()) continue;
+                    byFace[mesh.polygonFaceId[p]].push_back(p);
+                }
+                for (auto& [fid, indices] : byFace) {
+                    if (fid < 1 || fid > model.faceCount()) continue;
+                    const TopoDS_Face face =
+                        TopoDS::Face(model.faces(fid));
+                    Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+                    if (surface.IsNull()) continue;
+                    BRepAdaptor_Surface sa(face);
+                    const double up =
+                        sa.IsUPeriodic() ? sa.UPeriod() : 0.0;
+                    const double vp =
+                        sa.IsVPeriodic() ? sa.VPeriod() : 0.0;
+                    const bool flip =
+                        face.Orientation() == TopAbs_REVERSED;
+                    for (size_t pi : indices) {
+                        if (pi >= mesh.polygons.size()) continue;
+                        const auto poly = mesh.polygons[pi];
+                        if (poly.size() < 3) continue;
+                        double cu = 0, cv = 0, uref = 0, vref = 0;
+                        bool ok = true;
+                        std::vector<WebPoint> ring;
+                        GeomAPI_ProjectPointOnSurf projector;
+                        projector.Init(gp_Pnt(0, 0, 0), surface);
+                        for (size_t k = 0; k < poly.size(); ++k) {
+                            const uint32_t vi = poly[k];
+                            double u = 0, v = 0;
+                            if (vi < mesh.anchors.size() &&
+                                mesh.anchors[vi].faceId == fid) {
+                                u = mesh.anchors[vi].u;
+                                v = mesh.anchors[vi].v;
+                            } else if (vi < mesh.vertices.size()) {
+                                // Weld may have stolen the anchor onto a
+                                // neighbour face — recover UV by projection.
+                                const auto& p = mesh.vertices[vi];
+                                projector.Perform(
+                                    gp_Pnt(p[0], p[1], p[2]));
+                                if (!projector.IsDone() ||
+                                    projector.NbPoints() < 1) {
+                                    ok = false;
+                                    break;
+                                }
+                                projector.LowerDistanceParameters(u, v);
+                            } else {
+                                ok = false;
+                                break;
+                            }
+                            if (k == 0) {
+                                uref = u;
+                                vref = v;
+                            } else {
+                                if (up > 0) {
+                                    u -= up * std::round((u - uref) / up);
+                                }
+                                if (vp > 0) {
+                                    v -= vp * std::round((v - vref) / vp);
+                                }
+                            }
+                            cu += u;
+                            cv += v;
+                            ring.push_back({gp_Pnt2d(u, v), vi});
+                        }
+                        if (!ok) continue;
+                        cu /= poly.size();
+                        cv /= poly.size();
+                        int foldsBefore = before;
+                        auto recount = [&]() {
+                            const auto m2 = foldedPolys(model, mesh);
+                            return int(std::count(m2.begin(), m2.end(),
+                                                  uint8_t{1}));
+                        };
+                        auto countOpens = [&]() {
+                            std::map<std::pair<uint32_t, uint32_t>, int> use;
+                            for (const auto& q : mesh.polygons) {
+                                for (size_t i = 0; i < q.size(); ++i) {
+                                    uint32_t a = q[i],
+                                             b = q[(i + 1) % q.size()];
+                                    if (a > b) std::swap(a, b);
+                                    ++use[{a, b}];
+                                }
+                            }
+                            int opens = 0;
+                            for (const auto& [e, c] : use) {
+                                (void)e;
+                                if (c == 1) ++opens;
+                            }
+                            return opens;
+                        };
+                        auto tryMutate = [&](auto&& mutate,
+                                             const char* tag) -> bool {
+                            PolyMesh snapshot = mesh;
+                            const int opensBefore = countOpens();
+                            mutate();
+                            // Reject mutations that invent same-direction
+                            // edges inside this face (non-manifold flaps).
+                            std::map<std::pair<uint32_t, uint32_t>, int> dir;
+                            bool dup = false;
+                            for (size_t p = 0; p < mesh.polygons.size();
+                                 ++p) {
+                                if (p >= mesh.polygonFaceId.size() ||
+                                    mesh.polygonFaceId[p] != fid) {
+                                    continue;
+                                }
+                                const auto& q = mesh.polygons[p];
+                                for (size_t i = 0; i < q.size(); ++i) {
+                                    if (++dir[{q[i],
+                                               q[(i + 1) % q.size()]}] >
+                                        1) {
+                                        dup = true;
+                                        break;
+                                    }
+                                }
+                                if (dup) break;
+                            }
+                            const int after = recount();
+                            const int opensAfter = countOpens();
+                            if (std::getenv("WEFT_FOLD_PROBE") &&
+                                foldsBefore <= 3) {
+                                std::fprintf(stderr,
+                                             "[fold-probe] geoheal f%d poly "
+                                             "%zu arity %zu %s: after=%d "
+                                             "dup=%d opens %d->%d\n",
+                                             fid, pi, poly.size(), tag,
+                                             after, int(dup), opensBefore,
+                                             opensAfter);
+                            }
+                            if (!dup && after < foldsBefore &&
+                                opensAfter <= opensBefore) {
+                                before = after;
+                                return true;
+                            }
+                            mesh = std::move(snapshot);
+                            return false;
+                        };
+                        bool healed = false;
+                        // Interior-only refine of a folded quad: midpoints
+                        // only on edges whose both uses are THIS face.
+                        // Splitting a seam edge pulls the neighbour face
+                        // into the fold census (teleporter 210→209) and
+                        // the global fold count climbs forever.
+                        if (!healed && poly.size() == 4) {
+                            healed = tryMutate(
+                                [&]() {
+                                    const auto q = poly;
+                                    std::map<std::pair<uint32_t, uint32_t>,
+                                             std::vector<size_t>>
+                                        undir;
+                                    for (size_t k = 0;
+                                         k < mesh.polygons.size(); ++k) {
+                                        if (k >= mesh.polygonFaceId.size() ||
+                                            mesh.polygonFaceId[k] != fid) {
+                                            continue;
+                                        }
+                                        const auto& qp = mesh.polygons[k];
+                                        for (size_t e = 0; e < qp.size();
+                                             ++e) {
+                                            uint32_t a = qp[e],
+                                                     b = qp[(e + 1) %
+                                                            qp.size()];
+                                            if (a > b) std::swap(a, b);
+                                            undir[{a, b}].push_back(k);
+                                        }
+                                    }
+                                    auto isInterior =
+                                        [&](uint32_t a, uint32_t b) {
+                                            uint32_t lo = a, hi = b;
+                                            if (lo > hi) {
+                                                std::swap(lo, hi);
+                                            }
+                                            auto it = undir.find({lo, hi});
+                                            return it != undir.end() &&
+                                                   it->second.size() == 2;
+                                        };
+                                    // Need at least the three non-border
+                                    // edges interior; if the quad is fully
+                                    // interior, all four qualify.
+                                    int interiorEdges = 0;
+                                    for (size_t e = 0; e < 4; ++e) {
+                                        if (isInterior(q[e],
+                                                       q[(e + 1) % 4])) {
+                                            ++interiorEdges;
+                                        }
+                                    }
+                                    if (interiorEdges < 3) return;
+                                    std::map<std::pair<uint32_t, uint32_t>,
+                                             uint32_t>
+                                        midOf;
+                                    auto edgeMid = [&](uint32_t a,
+                                                       uint32_t b,
+                                                       bool allow)
+                                        -> uint32_t {
+                                        if (!allow) return 0xffffffffu;
+                                        uint32_t lo = a, hi = b;
+                                        if (lo > hi) std::swap(lo, hi);
+                                        auto it = midOf.find({lo, hi});
+                                        if (it != midOf.end()) {
+                                            return it->second;
+                                        }
+                                        double ua = 0, va = 0, ub = 0,
+                                               vb = 0;
+                                        auto uv =
+                                            [&](uint32_t vi, double uref,
+                                                double vref, double& u,
+                                                double& v) -> bool {
+                                            if (vi < mesh.anchors.size() &&
+                                                mesh.anchors[vi].faceId ==
+                                                    fid) {
+                                                u = mesh.anchors[vi].u;
+                                                v = mesh.anchors[vi].v;
+                                                if (up > 0) {
+                                                    u -= up *
+                                                         std::round(
+                                                             (u - uref) /
+                                                             up);
+                                                }
+                                                if (vp > 0) {
+                                                    v -= vp *
+                                                         std::round(
+                                                             (v - vref) /
+                                                             vp);
+                                                }
+                                                return true;
+                                            }
+                                            if (vi >=
+                                                mesh.vertices.size()) {
+                                                return false;
+                                            }
+                                            const auto& P =
+                                                mesh.vertices[vi];
+                                            projector.Perform(gp_Pnt(
+                                                P[0], P[1], P[2]));
+                                            if (!projector.IsDone() ||
+                                                projector.NbPoints() <
+                                                    1) {
+                                                return false;
+                                            }
+                                            projector
+                                                .LowerDistanceParameters(
+                                                    u, v);
+                                            if (up > 0) {
+                                                u -= up * std::round(
+                                                              (u - uref) /
+                                                              up);
+                                            }
+                                            if (vp > 0) {
+                                                v -= vp * std::round(
+                                                              (v - vref) /
+                                                              vp);
+                                            }
+                                            return true;
+                                        };
+                                        if (!uv(a, 0, 0, ua, va) ||
+                                            !uv(b, ua, va, ub, vb)) {
+                                            return 0xffffffffu;
+                                        }
+                                        const double mu =
+                                            0.5 * (ua + ub);
+                                        const double mv =
+                                            0.5 * (va + vb);
+                                        const gp_Pnt cp =
+                                            surface->Value(mu, mv);
+                                        const uint32_t w = uint32_t(
+                                            mesh.vertices.size());
+                                        mesh.vertices.push_back(
+                                            {cp.X(), cp.Y(), cp.Z()});
+                                        mesh.anchors.push_back(
+                                            {fid, mu, mv});
+                                        midOf[{lo, hi}] = w;
+                                        return w;
+                                    };
+                                    const bool i01 =
+                                        isInterior(q[0], q[1]);
+                                    const bool i12 =
+                                        isInterior(q[1], q[2]);
+                                    const bool i23 =
+                                        isInterior(q[2], q[3]);
+                                    const bool i30 =
+                                        isInterior(q[3], q[0]);
+                                    const uint32_t m01 =
+                                        edgeMid(q[0], q[1], i01);
+                                    const uint32_t m12 =
+                                        edgeMid(q[1], q[2], i12);
+                                    const uint32_t m23 =
+                                        edgeMid(q[2], q[3], i23);
+                                    const uint32_t m30 =
+                                        edgeMid(q[3], q[0], i30);
+                                    // Centre always.
+                                    const uint32_t c = uint32_t(
+                                        mesh.vertices.size());
+                                    mesh.vertices.push_back(
+                                        {surface->Value(cu, cv).X(),
+                                         surface->Value(cu, cv).Y(),
+                                         surface->Value(cu, cv).Z()});
+                                    mesh.anchors.push_back({fid, cu, cv});
+                                    // Splice interior mids into every
+                                    // same-face poly on those edges.
+                                    for (size_t k = 0;
+                                         k < mesh.polygons.size(); ++k) {
+                                        if (k >= mesh.polygonFaceId.size() ||
+                                            mesh.polygonFaceId[k] != fid) {
+                                            continue;
+                                        }
+                                        auto& qp = mesh.polygons[k];
+                                        for (size_t e = 0; e < qp.size();
+                                             ++e) {
+                                            uint32_t a = qp[e],
+                                                     b = qp[(e + 1) %
+                                                            qp.size()];
+                                            uint32_t lo = a, hi = b;
+                                            if (lo > hi) {
+                                                std::swap(lo, hi);
+                                            }
+                                            auto it = midOf.find({lo, hi});
+                                            if (it == midOf.end()) {
+                                                continue;
+                                            }
+                                            qp.insert(
+                                                qp.begin() +
+                                                    static_cast<
+                                                        std::ptrdiff_t>(
+                                                        e + 1),
+                                                it->second);
+                                            ++e;
+                                        }
+                                    }
+                                    // Rebuild the (possibly mid-augmented)
+                                    // folded cell as a centre fan of
+                                    // tris — works for 4..8-gons.
+                                    if (pi >= mesh.polygons.size() ||
+                                        mesh.polygons[pi].size() < 4) {
+                                        return;
+                                    }
+                                    const auto ring = mesh.polygons[pi];
+                                    mesh.polygons[pi] = {ring[0], ring[1],
+                                                         c};
+                                    for (size_t k = 1; k < ring.size();
+                                         ++k) {
+                                        mesh.polygons.push_back(
+                                            {ring[k],
+                                             ring[(k + 1) % ring.size()],
+                                             c});
+                                        mesh.polygonFaceId.push_back(fid);
+                                    }
+                                    (void)m01;
+                                    (void)m12;
+                                    (void)m23;
+                                    (void)m30;
+                                },
+                                "interior-refine");
+                        }
+                        // Stitch insertions turn a fold-free quad into a
+                        // 5-gon that any triangulation still folds. Drop
+                        // one ring vertex at a time, and remove the same
+                        // a-v-b (or b-v-a) passage from EVERY polygon so
+                        // the opposite seam face stays matched (foam CAD
+                        // 829/837: single-face drop opened 6 edges).
+                        if (poly.size() >= 5) {
+                            for (size_t dropi = 0;
+                                 dropi < poly.size() && !healed; ++dropi) {
+                                const uint32_t v = poly[dropi];
+                                const uint32_t a =
+                                    poly[(dropi + poly.size() - 1) %
+                                         poly.size()];
+                                const uint32_t b =
+                                    poly[(dropi + 1) % poly.size()];
+                                const std::string tag =
+                                    "drop-vert-" + std::to_string(dropi);
+                                healed = tryMutate(
+                                    [&]() {
+                                        auto strip = [&](std::vector<
+                                                         uint32_t>& q) {
+                                            for (size_t i = 0;
+                                                 i < q.size();) {
+                                                const uint32_t x = q[i];
+                                                const uint32_t y =
+                                                    q[(i + 1) % q.size()];
+                                                const uint32_t z =
+                                                    q[(i + 2) % q.size()];
+                                                if (y == v &&
+                                                    ((x == a && z == b) ||
+                                                     (x == b && z == a))) {
+                                                    const size_t yi =
+                                                        (i + 1) % q.size();
+                                                    q.erase(q.begin() +
+                                                            static_cast<
+                                                                std::ptrdiff_t>(
+                                                                yi));
+                                                    i = 0;
+                                                    continue;
+                                                }
+                                                ++i;
+                                            }
+                                        };
+                                        for (auto& q : mesh.polygons) {
+                                            strip(q);
+                                        }
+                                        // Drop degenerates created by
+                                        // stripping.
+                                        std::vector<std::vector<uint32_t>>
+                                            keepP;
+                                        std::vector<int> keepF;
+                                        for (size_t p = 0;
+                                             p < mesh.polygons.size();
+                                             ++p) {
+                                            if (mesh.polygons[p].size() <
+                                                3) {
+                                                continue;
+                                            }
+                                            keepP.push_back(
+                                                std::move(mesh.polygons[p]));
+                                            keepF.push_back(
+                                                mesh.polygonFaceId[p]);
+                                        }
+                                        mesh.polygons = std::move(keepP);
+                                        mesh.polygonFaceId = std::move(keepF);
+                                    },
+                                    tag.c_str());
+                            }
+                        }
+                        // Fan from every corner of the folded cell — a
+                        // stitched border insertion often only fans clean
+                        // from the inserted seam vertex.
+                        if (!healed && poly.size() >= 4) {
+                            for (size_t apex = 0;
+                                 apex < poly.size() && !healed; ++apex) {
+                                const std::string tag =
+                                    "corner-fan-" + std::to_string(apex);
+                                healed = tryMutate(
+                                    [&]() {
+                                        const uint32_t a = poly[apex];
+                                        std::vector<std::vector<uint32_t>>
+                                            tris;
+                                        for (size_t k = 1;
+                                             k + 1 < poly.size(); ++k) {
+                                            const uint32_t b = poly[(apex + k) %
+                                                                   poly.size()];
+                                            const uint32_t c =
+                                                poly[(apex + k + 1) %
+                                                     poly.size()];
+                                            if (a == b || b == c || c == a) {
+                                                continue;
+                                            }
+                                            tris.push_back({a, b, c});
+                                        }
+                                        if (tris.size() < poly.size() - 2) {
+                                            return;
+                                        }
+                                        mesh.polygons[pi] = tris[0];
+                                        for (size_t t = 1; t < tris.size();
+                                             ++t) {
+                                            mesh.polygons.push_back(tris[t]);
+                                            mesh.polygonFaceId.push_back(fid);
+                                        }
+                                    },
+                                    tag.c_str());
+                            }
+                        }
+                        if (!healed && poly.size() >= 4) {
+                            double area2 = 0;
+                            for (size_t i = 0; i < ring.size(); ++i) {
+                                const auto& a = ring[i].uv;
+                                const auto& b =
+                                    ring[(i + 1) % ring.size()].uv;
+                                area2 += a.X() * b.Y() - b.X() * a.Y();
+                            }
+                            if (area2 < 0) {
+                                std::reverse(ring.begin(), ring.end());
+                            }
+                            healed = tryMutate(
+                                [&]() {
+                                    PolyMesh tmp;
+                                    tmp.vertices = mesh.vertices;
+                                    tmp.anchors = mesh.anchors;
+                                    MeshBuilder tb(tmp);
+                                    if (!earClip(ring, fid, flip, tb) ||
+                                        tmp.polygons.empty()) {
+                                        return;
+                                    }
+                                    mesh.polygons[pi] = tmp.polygons[0];
+                                    for (size_t k = 1;
+                                         k < tmp.polygons.size(); ++k) {
+                                        mesh.polygons.push_back(
+                                            tmp.polygons[k]);
+                                        mesh.polygonFaceId.push_back(fid);
+                                    }
+                                },
+                                "earclip");
+                        }
+                        if (!healed) {
+                            tryMutate(
+                                [&]() {
+                                    const gp_Pnt cp = surface->Value(cu, cv);
+                                    const uint32_t ci =
+                                        uint32_t(mesh.vertices.size());
+                                    mesh.vertices.push_back(
+                                        {cp.X(), cp.Y(), cp.Z()});
+                                    mesh.anchors.push_back({fid, cu, cv});
+                                    mesh.polygons[pi] = {poly[0], poly[1],
+                                                         ci};
+                                    for (size_t k = 1; k < poly.size();
+                                         ++k) {
+                                        mesh.polygons.push_back(
+                                            {poly[k],
+                                             poly[(k + 1) % poly.size()],
+                                             ci});
+                                        mesh.polygonFaceId.push_back(fid);
+                                    }
+                                },
+                                "centre-fan");
+                        }
+                    }
+                }
+                if (std::getenv("WEFT_FOLD_PROBE")) {
+                    const auto afterMask = foldedPolys(model, mesh);
+                    const int after = int(std::count(
+                        afterMask.begin(), afterMask.end(), uint8_t{1}));
+                    std::fprintf(stderr,
+                                 "[fold-probe] post-flap geometric heal "
+                                 "%d -> %d\n",
+                                 before, after);
+                }
+            }
         }
     }
 

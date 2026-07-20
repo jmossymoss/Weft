@@ -2,6 +2,6 @@ class	models	reproducer_path	metric	notes
 plane_fillet_bspline_junction	foam	STEP_Examples/foam.stp	require_watertight	closed on default+CAD after Coons←MinimalNGon stitch protect + open-curve midpoint chain accept (wp3-foam-stitch-2026-07-20)
 plane_fillet_bspline_junction	foam	regressions/release/foam_plane_fillet_bspline_r1.step	open_shell_diagnostic	surface-stack neighborhood; 0 unexplained cracks (cut boundary only)
 plane_fillet_bspline_junction	foam	regressions/release/foam_fillet_bspline_r1.step	open_shell_partial	historical CAD arm cracks; closed-solid foam is authoritative
-planar_ngon_border_contract	teleporter	STEP_Examples/teleporter.stp	require_watertight	CAD watertight after MinimalNGon stitch protect; default residual is secondary class
+planar_ngon_border_contract	teleporter	STEP_Examples/teleporter.stp	require_watertight	closed on CAD after MinimalNGon stitch protect; default sealed with digon-chord floor
 planar_ngon_border_contract	teleporter	regressions/release/teleporter_planar_ngon_r1.step	open_shell_diagnostic	planar n-gon neighborhood; 0 unexplained cracks (cut boundary only)
-bspline_contract_floor_overweld	teleporter	STEP_Examples/teleporter.stp	require_watertight	default-only residual; revolution/pad opens + NM near contract-floor demotions
+bspline_contract_floor_overweld	teleporter	STEP_Examples/teleporter.stp	require_watertight	closed on default after digon-chord floor (count>=2 on micro-collapsed digon chords)
