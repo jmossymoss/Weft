@@ -5,7 +5,7 @@ session handoffs are not authoritative. If code, comments, issues, or old
 branches disagree with this document, follow this document or revise it with
 new test evidence before changing direction.
 
-Active work package: WP1 — build coverage.
+Active work package: WP2 — stabilize one production pipeline.
 
 Change the active package only when its exit criteria pass at one revision. If
 a later failure invalidates an earlier gate, reopen the earliest affected
