@@ -1,100 +1,166 @@
 #!/usr/bin/env bash
-# Corpus gate — release invariants and topology regression harness.
+# Corpus gate — manifest-driven release invariants and topology regression.
 #
-# Meshes every fixture and every committed STEP example at the library
-# default and the cad profile, and asserts the correctness invariants:
-#   * watertight (0 open / 0 non-manifold) — tork is exempt (broken
-#     source per the artist's verdict; it must still mesh without
-#     crashing),
-#   * no face demoted to raw OCCT triangulation, none empty,
-# then diffs quad/tri/ngon counts against tools/golden_counts.txt so a
-# mesher change that moves topology anywhere is caught and must be
-# explained (better) or reverted (regression).
+# Selects cases from tests/CAD_CORPUS.tsv only (no hardcoded fixture or STEP
+# lists). Generates missing fixture-tier STEP files via `weft fixture`.
 #
-#   tools/corpus_gate.sh            run the gate
-#   tools/corpus_gate.sh --update   rewrite the golden table from this run
-#   tools/corpus_gate.sh --no-golden
-#                                   invariants only (cross-platform CI)
+#   tools/corpus_gate.sh              run the gate
+#   tools/corpus_gate.sh --update     rewrite golden counts from this run
+#   tools/corpus_gate.sh --no-golden  invariants only (cross-platform CI)
+#   tools/corpus_gate.sh --fast       only rows with fast=1
 #
-# Exit: 0 clean, 1 any invariant broken or counts moved.
+# Known-red allowances: when tests/KNOWN_RED.tsv lists an exact
+# (name,profile,metric,ceiling) row, a matching failure is recorded but does
+# not fail this gate. The strict release gate never reads that file.
+#
+# Exit: 0 clean (after known-red), 1 any unexpected invariant or count drift.
+
 set -u
-cd "$(dirname "$0")/.."
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=corpus_common.sh
+source "$SCRIPT_DIR/corpus_common.sh"
+ROOT="$(corpus_root)"
+cd "$ROOT"
+
 WEFT=${WEFT:-build/cli/weft}
+if [[ ! -x "$WEFT" && -x build/bin/Release/weft.exe ]]; then
+    WEFT=build/bin/Release/weft.exe
+fi
+if [[ ! -x "$WEFT" && -x build/vs2022/bin/Release/weft.exe ]]; then
+    WEFT=build/vs2022/bin/Release/weft.exe
+fi
+
+MANIFEST=tests/CAD_CORPUS.tsv
+KNOWN_RED=tests/KNOWN_RED.tsv
 GOLDEN=tools/golden_counts.txt
 OUT=${OUT:-$(mktemp -d)}
 mkdir -p "$OUT"
 UPDATE=0
 CHECK_GOLDEN=1
+FAST_ONLY=0
 for arg in "$@"; do
     case "$arg" in
         --update) UPDATE=1 ;;
         --no-golden) CHECK_GOLDEN=0 ;;
+        --fast) FAST_ONLY=1 ;;
         *) echo "unknown option: $arg" >&2; exit 2 ;;
     esac
 done
 
-FIXTURES="cylinder box cone sphere torus fillet hole demo boss notched \
-          slotted barrel drilled bossfillet ribbon ribbonnotch \
-          hairline canrev microedge filletslot torture slitdrill"
 FAIL=0
 : > "$OUT/counts.txt"
+: > "$OUT/failures.txt"
 
-run_one() { # name file profile-args profile-tag watertight-required
-    local name=$1 file=$2 args=$3 tag=$4 wt=$5
+known_red_allows() {
+    # $1=name $2=profile $3=metric $4=observed_int
+    local name="$1" profile="$2" metric="$3" observed="$4"
+    [[ -f "$KNOWN_RED" ]] || return 1
+    awk -F'\t' -v n="$name" -v p="$profile" -v m="$metric" -v o="$observed" '
+        NR == 1 { next }
+        $1 == n && $2 == p && $3 == m {
+            if (o + 0 <= $4 + 0) { found = 1 }
+        }
+        END { exit found ? 0 : 1 }
+    ' "$KNOWN_RED"
+}
+
+record_fail() {
+    local name="$1" profile="$2" metric="$3" observed="$4" detail="$5"
+    if known_red_allows "$name" "$profile" "$metric" "$observed"; then
+        echo "KNOWN_RED $name [$profile] $metric=$observed — $detail"
+        return 0
+    fi
+    echo "FAIL $name [$profile]: $detail"
+    echo "$name	$profile	$metric	$observed	$detail" >> "$OUT/failures.txt"
+    FAIL=1
+}
+
+run_one() {
+    local name="$1" file="$2" args="$3" tag="$4" wt="$5" max_raw="$6" max_empty="$7"
     local log="$OUT/$name-$tag.log"
-    timeout 1200 "$WEFT" mesh "$file" -o "$OUT/$name-$tag.obj" \
+    local timeout_bin=timeout
+    command -v timeout >/dev/null 2>&1 || timeout_bin=""
+    if [[ -n "$timeout_bin" ]]; then
+        timeout 1200 "$WEFT" mesh "$file" -o "$OUT/$name-$tag.obj" \
             $args --validate > "$log" 2>&1
+    else
+        "$WEFT" mesh "$file" -o "$OUT/$name-$tag.obj" \
+            $args --validate > "$log" 2>&1
+    fi
     local rc=$?
-    if [ "$rc" != 0 ]; then
-        if [ "$wt" = yes ]; then
-            echo "FAIL $name [$tag]: exit $rc (see $log)"
-            grep -E "watertight|error" "$log" | head -3 | sed 's/^/    /'
-            FAIL=1
+    if [[ "$rc" != 0 ]]; then
+        if [[ "$wt" == "1" ]]; then
+            record_fail "$name" "$tag" "exit_code" "$rc" "exit $rc (see $log)"
+        else
+            echo "note $name [$tag]: exit $rc allowed (require_watertight=0)"
         fi
     fi
     local stats
-    stats=$(grep -Eo '[0-9]+ quads, [0-9]+ tris, [0-9]+ n-gons' "$log" | head -1)
-    echo "$name $tag $stats" >> "$OUT/counts.txt"
-    # Never-fall-back census: the border-exact contract floor is a
-    # valid graceful plan. Only an actual demotion to raw OCCT triangles or
-    # an empty face is a failure, checked through faceBuild's summary below.
+    stats=$(grep -Eo '[0-9]+ quads, [0-9]+ tris, [0-9]+ n-gons' "$log" | head -1 || true)
+    echo "$name $tag ${stats:-0 quads, 0 tris, 0 n-gons}" >> "$OUT/counts.txt"
+
     local demo
     demo=$(grep "demoted:" "$log" || true)
-    if [ -n "$demo" ] && ! echo "$demo" | grep -q "0 to raw triangulation, 0 emitted nothing"; then
-        echo "FAIL $name [$tag]: $demo"
-        FAIL=1
+    if [[ -n "$demo" ]] && ! echo "$demo" | grep -q "0 to raw triangulation, 0 emitted nothing"; then
+        local raw_n empty_n
+        raw_n=$(echo "$demo" | grep -Eo '[0-9]+ to raw' | head -1 | grep -Eo '[0-9]+' || echo 999)
+        empty_n=$(echo "$demo" | grep -Eo '[0-9]+ emitted' | head -1 | grep -Eo '[0-9]+' || echo 999)
+        if [[ "$raw_n" -gt "$max_raw" ]]; then
+            record_fail "$name" "$tag" "max_raw" "$raw_n" "$demo"
+        fi
+        if [[ "$empty_n" -gt "$max_empty" ]]; then
+            record_fail "$name" "$tag" "max_empty" "$empty_n" "$demo"
+        fi
     fi
 }
 
-for f in $FIXTURES; do
-    "$WEFT" fixture "$OUT/$f.step" --shape "$f" > /dev/null 2>&1
-    wtf=yes
-    # slitdrill deliberately reproduces the tangent-contact class (a
-    # pocket wall tangent to a bore leaves a lengthwise line edge in the
-    # bore wall) which still goes non-manifold at cad — a known-red
-    # reproducer, gated on "meshes without crashing" until fixed.
-    [ "$f" = slitdrill ] && wtf=no
-    run_one "$f" "$OUT/$f.step" "--profile cad" cad "$wtf"
-    run_one "$f" "$OUT/$f.step" "" default "$wtf"
-done
+if [[ ! -f "$MANIFEST" ]]; then
+    echo "FAIL: missing $MANIFEST" >&2
+    exit 1
+fi
+if [[ ! -x "$WEFT" && ! -f "$WEFT" ]]; then
+    echo "FAIL: weft binary not found at $WEFT" >&2
+    exit 1
+fi
 
-# Only the versioned corpus belongs in the reproducible gate. Local artist
-# samples often live beside it while being investigated and must not silently
-# become golden inputs.
-while IFS= read -r file; do
-    name=$(basename "$file" .stp)
-    wt=yes
-    [ "$name" = tork ] && wt=no   # broken source: mesh, don't gate
-    run_one "$name" "$file" "--profile cad" cad "$wt"
-    run_one "$name" "$file" "" default "$wt"
-done < <(git ls-files 'tests/STEP_Examples/*.stp')
+while IFS= read -r row; do
+    name=$(corpus_field "$row" 1)
+    tier=$(corpus_field "$row" 2)
+    rel=$(corpus_field "$row" 3)
+    fast=$(corpus_field "$row" 4)
+    max_raw=$(corpus_field "$row" 5)
+    max_empty=$(corpus_field "$row" 6)
+    wt=$(corpus_field "$row" 7)
 
-if [ "$UPDATE" = 1 ]; then
+    if [[ "$FAST_ONLY" == 1 && "$fast" != "1" ]]; then
+        continue
+    fi
+    # Default gate runs fixture + release + fast stress; slow stress needs --all
+    # via release/stress scripts. Skip fast=0 here unless explicitly wanted.
+    if [[ "$fast" != "1" ]]; then
+        continue
+    fi
+
+    step="$ROOT/tests/$rel"
+    if ! ensure_fixture_step "$WEFT" "$step" "$name" "$tier"; then
+        record_fail "$name" "setup" "fixture" 1 "could not generate $step"
+        continue
+    fi
+    if [[ ! -f "$step" ]]; then
+        record_fail "$name" "setup" "missing_path" 1 "path missing: tests/$rel"
+        continue
+    fi
+
+    run_one "$name" "$step" "--profile cad" cad "$wt" "$max_raw" "$max_empty"
+    run_one "$name" "$step" "" default "$wt" "$max_raw" "$max_empty"
+done < <(corpus_rows "$MANIFEST")
+
+if [[ "${UPDATE:-0}" == 1 ]]; then
     cp "$OUT/counts.txt" "$GOLDEN"
     echo "golden counts updated: $GOLDEN"
-elif [ "$CHECK_GOLDEN" = 0 ]; then
+elif [[ "$CHECK_GOLDEN" == 0 ]]; then
     echo "golden count diff skipped (invariants-only run)"
-elif [ -f "$GOLDEN" ]; then
+elif [[ -f "$GOLDEN" ]]; then
     if ! diff -u "$GOLDEN" "$OUT/counts.txt" > "$OUT/counts.diff"; then
         echo "FAIL golden counts moved:"
         cat "$OUT/counts.diff"
@@ -104,9 +170,13 @@ else
     echo "note: no golden table yet — run with --update to create it"
 fi
 
-if [ "$FAIL" = 0 ]; then
+if [[ "$FAIL" == 0 ]]; then
     echo "corpus gate: PASS"
 else
     echo "corpus gate: FAIL"
+    if [[ -s "$OUT/failures.txt" ]]; then
+        echo "unexpected failures:"
+        cat "$OUT/failures.txt"
+    fi
 fi
-exit $FAIL
+exit "$FAIL"

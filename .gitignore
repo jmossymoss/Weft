@@ -3,6 +3,9 @@ build*/
 *.obj
 *.step
 !tests/fixtures/*.step
+!tests/fixtures/**/*.step
+!tests/regressions/**/*.step
+tests/fixtures/generated/
 compile_commands.json
 .cache/
 imgui.ini

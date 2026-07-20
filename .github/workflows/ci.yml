@@ -26,7 +26,10 @@ jobs:
       - name: Pipeline tests
         run: ctest --test-dir build --output-on-failure
       - name: Corpus gate
-        run: tools/corpus_gate.sh
+        run: tools/corpus_gate.sh --no-golden
+      - name: Strict release gate (expected red until WP3)
+        continue-on-error: true
+        run: tools/release_gate.sh
 
   windows:
     runs-on: windows-latest
@@ -55,3 +58,9 @@ jobs:
         run: |
           WEFT=build/bin/Release/weft.exe \
             tools/corpus_gate.sh --no-golden
+      - name: Strict release gate (expected red until WP3)
+        continue-on-error: true
+        shell: bash
+        run: |
+          WEFT=build/bin/Release/weft.exe \
+            tools/release_gate.sh

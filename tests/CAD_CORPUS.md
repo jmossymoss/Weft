@@ -23,14 +23,15 @@ The intended corpus is layered by purpose:
 - `visual_baselines` stores reviewed viewport evidence. It is not a
   pixel-perfect golden-image gate.
 
-`CAD_CORPUS.tsv` is the sole machine-readable case inventory. During work
-package 0, its fixture and regression paths must be reconciled with files
-generated or committed by the tests, and every runner must select from it. A
-manifest row is not evidence that its referenced file currently exists.
+`CAD_CORPUS.tsv` is the sole machine-readable case inventory. Fixture-tier rows
+under `fixtures/generated/` are created by `weft fixture` / CTest before load.
+Committed fixtures live under `tests/fixtures/*.step`. Release and stress STEP
+files live under `tests/STEP_Examples/`. Runners must not maintain a parallel
+model list.
 
-The current `tools/corpus_gate.sh` hardcodes fixtures and automatically includes
-all committed STEP examples. That is known bootstrap debt, not an alternate
-inventory. Work package 0 replaces those lists with manifest tiers.
+Reproducible temporary failures are listed in `tests/KNOWN_RED.tsv`. The
+regression corpus gate may consume those exact allowances; `tools/release_gate.sh`
+never does.
 
 ## Validation policy
 
@@ -61,11 +62,24 @@ The standard pipeline tests are:
 ctest --test-dir build --output-on-failure
 ```
 
-The bootstrap corpus gate generates its fixture inputs in a temporary directory
-and tests committed STEP examples at default and CAD profiles:
+The corpus gate selects `fast=1` rows from `CAD_CORPUS.tsv`, generates missing
+fixture-tier STEP files, and meshes each at default and CAD profiles:
 
 ```sh
 tools/corpus_gate.sh
+```
+
+The strict release gate meshes only `tier=release` rows and ignores
+`KNOWN_RED.tsv` (expected red until WP3):
+
+```sh
+tools/release_gate.sh
+```
+
+Scoreboard triage (fast rows, machine-readable):
+
+```sh
+tools/corpus_scoreboard.sh > build/scoreboard.tsv
 ```
 
 Use `--no-golden` only for cross-platform invariant checks. Use `--update` only
