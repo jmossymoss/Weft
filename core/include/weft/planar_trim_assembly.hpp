@@ -48,6 +48,9 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
     const CanonicalBoundarySet& boundaries,
     StableId workingFace,
     std::shared_ptr<const GeometricPredicates> predicates =
-        makeExactDyadicPredicates());
+        makeExactDyadicPredicates(),
+    // HardSurfaceFloor last resort: emit allowCurvedUv domain when plane
+    // nesting/self-intersect validation fails (soft residual, not G1 default).
+    bool softPlaneFallback = false);
 
 }  // namespace weft

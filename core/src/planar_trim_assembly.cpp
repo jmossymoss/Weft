@@ -121,7 +121,9 @@ bool mergeVertexUses(PlanarTrimVertex& retained,
                      PlanarTrimVertex candidate,
                      PlanarTrimAssemblyResult& result, StableId face,
                      StableId wire, bool allowNearUv,
-                     std::optional<double> uPeriod) {
+                     std::optional<double> uPeriod,
+                     std::optional<double> vPeriod = std::nullopt) {
+    (void)vPeriod;
     // Planes require exact UV identity. Curved UV trims may disagree by lift
     // noise / periodic seam wraps; when the canonical vertex identity matches,
     // prefer topology over UV equality (sphere poles/seams).
@@ -162,15 +164,26 @@ bool mergeVertexUses(PlanarTrimVertex& retained,
 bool appendOrMerge(PlanarTrimLoop& loop, PlanarTrimVertex candidate,
                    PlanarTrimAssemblyResult& result, StableId face,
                    StableId wire, bool allowNearUv,
-                   std::optional<double> uPeriod) {
+                   std::optional<double> uPeriod, bool digonPlaneWire,
+                   std::optional<double> vPeriod = std::nullopt) {
     if (loop.vertices.empty() ||
         loop.vertices.back().canonicalVertexIndex !=
             candidate.canonicalVertexIndex) {
         loop.vertices.push_back(std::move(candidate));
         return true;
     }
+    // Digon planes: two coedges share 3D vertices but carry parallel-offset
+    // p-curve UVs. Keep both UV corners (thin strip) instead of collapsing
+    // to two stations / pad-fan (G1 certified digon recovery).
+    if (digonPlaneWire &&
+        !sameUv(loop.vertices.back().uv, candidate.uv) &&
+        !(allowNearUv &&
+          nearUv(loop.vertices.back().uv, candidate.uv, uPeriod))) {
+        loop.vertices.push_back(std::move(candidate));
+        return true;
+    }
     return mergeVertexUses(loop.vertices.back(), std::move(candidate), result,
-                           face, wire, allowNearUv, uPeriod);
+                           face, wire, allowNearUv, uPeriod, vPeriod);
 }
 
 }  // namespace
@@ -180,7 +193,8 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
     const ReconnaissanceReport& reconnaissance,
     const CanonicalBoundarySet& boundaries,
     StableId workingFace,
-    std::shared_ptr<const GeometricPredicates> predicates) {
+    std::shared_ptr<const GeometricPredicates> predicates,
+    bool softPlaneFallback) {
     PlanarTrimAssemblyResult result;
     result.evidence = {
         {"trim_assembly.face", 1},
@@ -240,6 +254,7 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
          classification->familyCode == "bezier" ||
          classification->familyCode == "extrusion" ||
          classification->familyCode == "offset" ||
+         classification->familyCode == "revolution" ||
          classification->familyCode == "torus");
     if (!uvSurface) {
         ++faceEvidence.failed;
@@ -367,6 +382,12 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
         classification->parameterDomains[0].period) {
         uPeriod = *classification->parameterDomains[0].period;
     }
+    std::optional<double> vPeriod;
+    if (classification->parameterDomains.size() >= 2 &&
+        classification->parameterDomains[1].periodic &&
+        classification->parameterDomains[1].period) {
+        vPeriod = *classification->parameterDomains[1].period;
+    }
 
     for (const auto& [wireId, coedges] : wireCoedges) {
         PlanarTrimLoop loop;
@@ -376,6 +397,9 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
             : PlanarTrimLoopRole::Hole;
         loop.closed = true;
         bool implicitClosedEdge = false;
+        // Two-coedge plane wires are digons / thin p-curve strips (MP9 2732).
+        const bool digonPlaneWire =
+            classification->familyCode == "plane" && coedges.size() == 2;
 
         for (std::size_t coedgeIndex = 0; coedgeIndex < coedges.size();
              ++coedgeIndex) {
@@ -489,8 +513,11 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
                             return result;
                         }
                         // Force shared identity only when the endpoint
-                        // samples agree in 3D; otherwise keep UV station
-                        // without importing foreign boundary uses.
+                        // samples agree in 3D. When they do not (circle
+                        // densify stopped short of the seam corner), keep
+                        // the candidate's own canon/UV so the periodic
+                        // dual-image corner is not merged into a mid-edge
+                        // sample (freeform_399 shared-seam chart).
                         auto samplePosition =
                             [&](SampleId sampleId)
                             -> std::optional<std::array<double, 3>> {
@@ -529,16 +556,19 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
                                 }
                             }
                         }
-                        vertex.canonicalVertexIndex =
-                            loop.vertices.back().canonicalVertexIndex;
-                        if (!geometricMatch) {
-                            vertex.boundaryUses.clear();
+                        if (geometricMatch) {
+                            vertex.canonicalVertexIndex =
+                                loop.vertices.back().canonicalVertexIndex;
                         }
+                        // When 3D disagrees, keep the candidate's own
+                        // canon/UV (do not force onto the previous mid-edge
+                        // station). Shared-seam circular-cap freeform needs
+                        // the period dual corner (freeform_399).
                     }
                 }
                 if (!appendOrMerge(loop, std::move(vertex), result,
                                    workingFace, wireId, allowNearUv,
-                                   uPeriod)) {
+                                   uPeriod, digonPlaneWire, vPeriod)) {
                     ++sampleEvidence.failed;
                     return result;
                 }
@@ -566,18 +596,28 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
                            {workingFace, wireId});
                 return result;
             }
-            PlanarTrimVertex closing = std::move(loop.vertices.back());
-            loop.vertices.pop_back();
-            if (!canonClosed) {
-                // Force shared identity for industrial curved wires.
-                closing.canonicalVertexIndex =
-                    loop.vertices.front().canonicalVertexIndex;
-            }
-            if (!mergeVertexUses(loop.vertices.front(), std::move(closing),
-                                 result, workingFace, wireId, allowNearUv,
-                                 uPeriod)) {
-                ++junction.failed;
-                return result;
+            // Digon strip: first/last share a 3D vertex but keep distinct UV
+            // corners — leave both stations (implicit close edge).
+            if (digonPlaneWire && canonClosed &&
+                !sameUv(loop.vertices.front().uv, loop.vertices.back().uv) &&
+                !(allowNearUv &&
+                  nearUv(loop.vertices.front().uv, loop.vertices.back().uv,
+                         uPeriod))) {
+                // Keep four (or more) UV corners; loop.closed already true.
+            } else {
+                PlanarTrimVertex closing = std::move(loop.vertices.back());
+                loop.vertices.pop_back();
+                if (!canonClosed) {
+                    // Force shared identity for industrial curved wires.
+                    closing.canonicalVertexIndex =
+                        loop.vertices.front().canonicalVertexIndex;
+                }
+                if (!mergeVertexUses(loop.vertices.front(), std::move(closing),
+                                     result, workingFace, wireId, allowNearUv,
+                                     uPeriod, vPeriod)) {
+                    ++junction.failed;
+                    return result;
+                }
             }
         }
         // Drop exact duplicate consecutive UVs (body-scale oversampling).
@@ -643,6 +683,16 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
                            {workingFace, wireId});
                 return result;
             }
+            // G1: planes refuse collapsed loops by name. Curved UV families
+            // may still densify a degenerate station until their consumers
+            // prove denser sampling (G2+).
+            if (classification && classification->familyCode == "plane") {
+                ++result.evidence[WireEvidence].failed;
+                setFailure(result, "plane.loop_collapsed_unmeshable",
+                           "planar trim loop collapsed below three UV stations",
+                           {workingFace, wireId});
+                return result;
+            }
             while (loop.vertices.size() < 3) {
                 PlanarTrimVertex pad = loop.vertices.back();
                 pad.boundaryUses.clear();
@@ -650,6 +700,12 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
                 loop.vertices.push_back(std::move(pad));
             }
             domain.allowCurvedUv = true;
+            if (uPeriod && *uPeriod > 0.0) {
+                domain.curvedUvUPeriod = uPeriod;
+            }
+            if (vPeriod && *vPeriod > 0.0) {
+                domain.curvedUvVPeriod = vPeriod;
+            }
         }
 
         // Drop boundary uses whose 3D sample disagrees with the primary
@@ -722,7 +778,10 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
     PlanarTrimAssemblyEvidence& validationEvidence =
         result.evidence[ValidationEvidence];
     ++validationEvidence.checked;
-    if (classification->familyCode == "plane" && !domain.allowCurvedUv) {
+    if (classification->familyCode == "plane") {
+        // G1: planes always run nesting/orientation proofs. Self-intersecting
+        // UV loops refuse by name — never soften via allowCurvedUv.
+        domain.allowCurvedUv = false;
         result.validation = validatePlanarTrimDomain(domain, predicates);
         if (!result.validation) {
             bool selfIntersectingUv = false;
@@ -732,28 +791,40 @@ PlanarTrimAssemblyResult assemblePlanarTrimDomain(
                     break;
                 }
             }
-            if (selfIntersectingUv && classification &&
-                classification->familyCode == "plane") {
+            if (softPlaneFallback) {
                 domain.allowCurvedUv = true;
                 validationEvidence.expected = validationEvidence.checked;
                 validationEvidence.failed = 0;
                 result.validation.diagnostics.clear();
                 result.validation.evidence.clear();
-                // Leave validation.value empty; caller uses assembled domain
-                // with allowCurvedUv for CDT.
+                result.failure.reset();
+                result.value = std::move(domain);
+                return result;
+            }
+            ++validationEvidence.failed;
+            if (selfIntersectingUv) {
+                setFailure(result, "plane.self_intersecting_unmeshable",
+                           "planar trim loop self-intersects in UV; no certified "
+                           "recovery consumer",
+                           {workingFace});
             } else {
-                ++validationEvidence.failed;
                 setFailure(result, "trim_assembly.validation_failed",
                            "the assembled face failed independent exact trim validation",
                            {workingFace});
-                return result;
             }
+            return result;
         }
     } else {
         // Curved UV trims rely on structural coedge/junction checks above;
         // planar-specific nesting/orientation proofs do not apply.
         validationEvidence.expected = 1;
         domain.allowCurvedUv = true;
+        if (uPeriod && *uPeriod > 0.0) {
+            domain.curvedUvUPeriod = uPeriod;
+        }
+        if (vPeriod && *vPeriod > 0.0) {
+            domain.curvedUvVPeriod = vPeriod;
+        }
     }
     result.value = std::move(domain);
     return result;

@@ -6,6 +6,9 @@ may supersede a result but must not rewrite what an earlier run proved.
 Use `docs/governance/agent-execution-playbook.md` for sequencing. Evidence files
 prove completed work; they are not plans or handoff diaries.
 
+Family×subclass consumer coverage (HARD/REFUSE + extracts + `WEFT_*_MATRIX`
+hooks): [docs/governance/brep-consumer-matrix.md](../governance/brep-consumer-matrix.md).
+
 - `m0-legacy-baseline-2026-07-17.md` - pre-rewrite Release test baseline.
 - `m0-strict-build-2026-07-17.md` - MSVC warnings-as-errors and static-analysis build evidence.
 - `m0-parallel-test-isolation-2026-07-17.md` - process-isolated temporary artifacts and concurrent strict/static test evidence.
@@ -170,9 +173,41 @@ prove completed work; they are not plans or handoff diaries.
 - `mp9-preview-density-2026-07-19.md` - preview density ~82k polys at radial UI 32.
 - `mp9-mesh-progress-speed-2026-07-19.md` - stage progress + interval O(n) speedup.
 - [mp9-failclosed-g0g1-2026-07-19.md](mp9-failclosed-g0g1-2026-07-19.md) — G0/G1 fail-closed MP9 mesh without face omission
+- [mp9-g0-failclosed-defaults-2026-07-20.md](mp9-g0-failclosed-defaults-2026-07-20.md) — G0 omit/skip defaults + `--allow-partial-body`
+- [mp9-g1-plane-failclosed-partial-2026-07-20.md](mp9-g1-plane-failclosed-partial-2026-07-20.md) — G1 plane soft-path removal (partial; MP9 AV blocker)
+- [mp9-g1-plane-2732-collapsed-2026-07-20.md](mp9-g1-plane-2732-collapsed-2026-07-20.md) — G1 digon plane 2732 named refuse (superseded by recovery)
+- [mp9-g1-plane-2732-digon-recovery-2026-07-20.md](mp9-g1-plane-2732-digon-recovery-2026-07-20.md) — G1 certified digon UV-strip recovery; extract meshes
+- [mp9-g1-plane-3605-ear-stalled-2026-07-20.md](mp9-g1-plane-3605-ear-stalled-2026-07-20.md) — G1 multiply-perforated 3605 ear stall (superseded by recovery)
+- [mp9-g1-plane-3605-perforated-recovery-2026-07-20.md](mp9-g1-plane-3605-perforated-recovery-2026-07-20.md) — G1 walk-landing / alternate-bridge perforated recovery; extract meshes
+- [mp9-g1-plane-3821-self-intersect-2026-07-20.md](mp9-g1-plane-3821-self-intersect-2026-07-20.md) — G1 plane 3821 self-intersect refuse (superseded by densify)
+- [mp9-g1-plane-3821-ellipse-densify-2026-07-20.md](mp9-g1-plane-3821-ellipse-densify-2026-07-20.md) — G1 plane-owned ellipse ≥48 intervals; extract meshes; body reaches assembly @ face 33
+- [brep-wave0-product-contract-2026-07-20.md](brep-wave0-product-contract-2026-07-20.md) — Wave 0 UV-trim hardOrient / no residual / previewFast omit-only product contract
+- [brep-hardsurface-floor-2026-07-20.md](brep-hardsurface-floor-2026-07-20.md) — HardSurfaceFloor default (hard cyl/Coons/fillet/plane; soft plane/torus/freeform residuals)
+- [brep-wave-a-plane-matrix-2026-07-20.md](brep-wave-a-plane-matrix-2026-07-20.md) — Wave A `WEFT_PLANE_MATRIX` locks all five plane_* extracts HARD (allowCurvedUv=0)
+- [brep-wave-b-cylinder-matrix-2026-07-20.md](brep-wave-b-cylinder-matrix-2026-07-20.md) — Wave B `WEFT_CYLINDER_MATRIX` locks seven cylinder_* / cyl_* extracts HARD (relax=0)
+- [brep-wave-c-analytic-matrix-2026-07-20.md](brep-wave-c-analytic-matrix-2026-07-20.md) — Wave C cone/sphere/torus matrix HARD incl. `face_116_torus` (not fixture-only LOD)
+- [brep-wave-d-freeform-matrix-2026-07-20.md](brep-wave-d-freeform-matrix-2026-07-20.md) — Wave D mapped/UV general orient; revolution n≠4 UV-promote; `WEFT_MAPPED_MATRIX` / `WEFT_FREEFORM_MATRIX`
+- [brep-wave-d-freeform-135-2026-07-20.md](brep-wave-d-freeform-135-2026-07-20.md) — Wave D periodic-band pent `freeform_135` UV-trim HARD (interval cap + coarsen retry)
+- [brep-wave-d-freeform-137-2026-07-20.md](brep-wave-d-freeform-137-2026-07-20.md) — Wave D periodic-band hex `freeform_137` UV-trim HARD (authoritative `curvedUvUPeriod` unwrap)
+- [brep-wave-c-torus-143-2026-07-20.md](brep-wave-c-torus-143-2026-07-20.md) — Wave C torus UV-degen densify `face_143_torus`
+- [mp9-gate-blocker-freeform-186-2026-07-20.md](mp9-gate-blocker-freeform-186-2026-07-20.md) — V-periodic freeform tiny OCCT period HARD (`freeform_186`; dual-image V unwrap)
+- [mp9-gate-blocker-freeform-399-2026-07-20.md](mp9-gate-blocker-freeform-399-2026-07-20.md) — shared-seam U-periodic + circular caps HARD (`freeform_399`; circular-cap UV band)
+- [mp9-gate-blocker-cyl-441-2026-07-20.md](mp9-gate-blocker-cyl-441-2026-07-20.md) — multi-rim ellipse-cut cylinder HARD (`cyl_441`; period-folded iso-lattice)
+- [mp9-gate-blocker-freeform-553-2026-07-20.md](mp9-gate-blocker-freeform-553-2026-07-20.md) — convex simple-region freeform HARD (`freeform_553`; non-periodic iso-lattice)
+- [mp9-gate-blocker-freeform-1555-2026-07-20.md](mp9-gate-blocker-freeform-1555-2026-07-20.md) — offset convex freeform OPEN (`freeform_1555`; lattice 1911/9 against)
+- [brep-wave-e-assembly-2026-07-20.md](brep-wave-e-assembly-2026-07-20.md) — Wave E assembly certificate: per-solid closed-manifold, non-vacuous incidence/winding/intersection, Track M light; `WEFT_ASSEMBLY_MATRIX`
 - [mp9-g2-cylinder-no-uv-relax-2026-07-19.md](mp9-g2-cylinder-no-uv-relax-2026-07-19.md) — G2 complex cylinder UV-trim without relax
+- [mp9-g2-cyl24-split-rim-2026-07-20.md](mp9-g2-cyl24-split-rim-2026-07-20.md) — G2 cyl_24 boundary clamp + split-rim structured wall
 - [mp9-g3-mapped-hard-seam-2026-07-19.md](mp9-g3-mapped-hard-seam-2026-07-19.md) — G3 mapped hard seam → UV-trim
+- [mp9-g3-freeform-hard-certify-2026-07-20.md](mp9-g3-freeform-hard-certify-2026-07-20.md) — G3 freeform/mapped/offset hard certify + Independent quads
+- [mp9-g3-face33-orientation-2026-07-20.md](mp9-g3-face33-orientation-2026-07-20.md) — G3 face 33 mapped UV-trim windingsMatch hard orient; extract EXIT 0
 - [mp9-density-failclosed-2026-07-19.md](mp9-density-failclosed-2026-07-19.md) — fail-closed MP9 density ~85k polys
 - [mp9-previewfast-density-2026-07-19.md](mp9-previewfast-density-2026-07-19.md) — previewFast + ~82k polys fail-closed
 - [mp9-proj-cache-density-2026-07-19.md](mp9-proj-cache-density-2026-07-19.md) — projection cache + ~79k polys
 - [mp9-density-70k-2026-07-19.md](mp9-density-70k-2026-07-19.md) — fail-closed density ~54k polys
+- [mp9-failclosed-inventory-2026-07-20.md](mp9-failclosed-inventory-2026-07-20.md) — fail-closed extract/body refusal matrix → G1–G4
+- [mp9-import-extract-meshable-2026-07-20.md](mp9-import-extract-meshable-2026-07-20.md) — single-face extract import meshable after G3 identity allow; G4 green; cyl_24 handed to G2
+- [mp9-g4-sphere-cone-torus-2026-07-20.md](mp9-g4-sphere-cone-torus-2026-07-20.md) — G4 sphere/cone/torus hard accept; sphere_cap UV-trim windingsMatch + relax=0
+- [mp9-g3-bspline-136-crash-2026-07-20.md](mp9-g3-bspline-136-crash-2026-07-20.md) — G3 MP9 face-136 AV: curved UV CDT winding list UAF fix
+- [mp9-g5-hard-assembly-2026-07-20.md](mp9-g5-hard-assembly-2026-07-20.md) — G5 no coverage zeroing; closed-manifold per solid; interval consumption always on
+- [wave-f-unsupported-2026-07-20.md](wave-f-unsupported-2026-07-20.md) — Wave F named refuse codes + hyperbola/parabola/offset/kernel_specific fixtures

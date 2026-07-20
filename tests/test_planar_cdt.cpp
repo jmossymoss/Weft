@@ -310,6 +310,169 @@ void testNamedRefusals(const weft::PlanarCdtBackend& backend) {
     }
 }
 
+void testMultiOuterSeparateDomains(const weft::PlanarCdtBackend& backend) {
+    // Two disjoint outers on one face: certify as separate CDT components.
+    weft::PlanarTrimDomain multi;
+    multi.face = {weft::StableIdKind::Face, 1};
+    multi.sourceFace = weft::StableId{weft::StableIdKind::Face, 101};
+    multi.allowCurvedUv = false;
+    multi.loops.push_back(makeLoop(
+        1, weft::PlanarTrimLoopRole::Outer,
+        {{0.0, 0.0}, {3.0, 0.0}, {3.0, 3.0}, {0.0, 3.0}}));
+    multi.loops.push_back(makeLoop(
+        2, weft::PlanarTrimLoopRole::Outer,
+        {{5.0, 0.0}, {8.0, 0.0}, {8.0, 3.0}, {5.0, 3.0}}));
+    const auto result = backend.triangulate(multi);
+    CHECK(result);
+    CHECK(result.value);
+    if (!result.value) return;
+    CHECK(!result.value->relaxGeometryChecks);
+    CHECK(result.value->boundaryLoops.size() == 2);
+    CHECK(result.value->triangles.size() == 4);
+    CHECK(result.value->vertices.size() == 8);
+}
+
+void testHoleBridgeOccludedMinLex(const weft::PlanarCdtBackend& backend) {
+    // C-shaped outer: the hole's min-lex corner faces into the pocket and
+    // has no visible outer bridge; a later hole station must win.
+    weft::PlanarTrimDomain domain;
+    domain.face = {weft::StableIdKind::Face, 1};
+    domain.sourceFace = weft::StableId{weft::StableIdKind::Face, 101};
+    domain.allowCurvedUv = false;
+    domain.loops.push_back(makeLoop(
+        1, weft::PlanarTrimLoopRole::Outer,
+        {{0.0, 0.0}, {10.0, 0.0}, {10.0, 10.0}, {6.0, 10.0},
+         {6.0, 4.0}, {4.0, 4.0}, {4.0, 10.0}, {0.0, 10.0}}));
+    // Hole in the right bay; min-lex vertex is near the bay's left wall.
+    domain.loops.push_back(makeLoop(
+        2, weft::PlanarTrimLoopRole::Hole,
+        {{7.0, 1.0}, {7.0, 3.0}, {9.0, 3.0}, {9.0, 1.0}}));
+    const auto result = backend.triangulate(domain);
+    checkCertified(result, 12, 1);
+    CHECK(result.value && !result.value->relaxGeometryChecks);
+}
+
+void testPlaneNeverRelaxes(const weft::PlanarCdtBackend& backend) {
+    const auto square = backend.triangulate(
+        makeDomain({{0.0, 0.0}, {2.0, 0.0}, {2.0, 2.0}, {0.0, 2.0}}));
+    CHECK(square);
+    CHECK(square.value && !square.value->relaxGeometryChecks);
+
+    // Non-cocircular convex outer: ear mesh is locally Delaunay without
+    // Lawson, so curved UV ears should keep validateMesh-on (no relax).
+    weft::PlanarTrimDomain curved = makeDomain(
+        {{0.0, 0.0}, {3.0, 0.0}, {2.0, 1.5}, {0.0, 2.0}});
+    curved.allowCurvedUv = true;
+    const auto curvedOk = backend.triangulate(curved);
+    CHECK(curvedOk);
+    CHECK(curvedOk.value);
+    if (!curvedOk.value) return;
+    CHECK(!curvedOk.value->relaxGeometryChecks);
+}
+
+void testCurvedUvAnnulusWindingNoAv(const weft::PlanarCdtBackend& backend) {
+    // Regression for MP9 face-136 AV: curved UV hole bridging + fan can
+    // flip neighbor windings; rebuild() must not invalidate live edgeTris
+    // iteration (was ACCESS_VIOLATION).
+    weft::PlanarTrimDomain annulus = makeDomain(
+        {{0.0, 0.0}, {6.0, 0.0}, {6.0, 6.0}, {0.0, 6.0}});
+    annulus.allowCurvedUv = true;
+    annulus.loops.push_back(makeLoop(
+        2, weft::PlanarTrimLoopRole::Hole,
+        {{2.0, 2.0}, {2.0, 4.0}, {4.0, 4.0}, {4.0, 2.0}}));
+    const auto result = backend.triangulate(annulus);
+    CHECK(result);
+    CHECK(result.value);
+    if (!result.value) return;
+    CHECK(result.value->triangles.size() >= 8);
+    CHECK(result.value->boundaryLoops.size() == 2);
+}
+
+void testCurvedUvAuthoritativePeriodUnwrap(
+    const weft::PlanarCdtBackend& backend) {
+    // freeform_137 subclass: bspline U period is 1, not 2π. A band that
+    // crosses the principal cut must unwrap with curvedUvUPeriod=1 or the
+    // CDT polygon stays seam-crossed.
+    weft::PlanarTrimDomain band = makeDomain(
+        {{0.6, 0.0},
+         {0.85, 0.0},
+         {0.1, 0.0},  // principal jump across U=0
+         {0.35, 0.0},
+         {0.35, 0.4},
+         {0.1, 0.4},
+         {0.85, 0.4},
+         {0.6, 0.4}});
+    band.allowCurvedUv = true;
+    band.curvedUvUPeriod = 1.0;
+    const auto withPeriod = backend.triangulate(band);
+    CHECK(withPeriod);
+    CHECK(withPeriod.value);
+    if (withPeriod.value) {
+        CHECK(withPeriod.value->triangles.size() >= 6);
+    }
+}
+
+void testCurvedUvTinyVPeriodDualImage(
+    const weft::PlanarCdtBackend& backend) {
+    // freeform_186 subclass: tiny VPeriod with a digon spur between two
+    // UV images of the same canonical seam vertex. Dual-image placement +
+    // spur reverse must open a positive-area chart (not shred / zero-area).
+    constexpr double kPeriod = 0.016;
+    weft::PlanarTrimDomain band;
+    band.face = {weft::StableIdKind::Face, 1};
+    band.sourceFace = weft::StableId{weft::StableIdKind::Face, 101};
+    band.allowCurvedUv = true;
+    band.curvedUvVPeriod = kPeriod;
+    weft::PlanarTrimLoop loop;
+    loop.wire = {weft::StableIdKind::Wire, 1};
+    loop.declaredRole = weft::PlanarTrimLoopRole::Outer;
+    loop.closed = true;
+    auto add = [&](std::uint64_t cv, double u, double v) {
+        const std::uint64_t edgeOrdinal = cv + 1;
+        weft::PlanarTrimBoundaryUse use;
+        use.sample = {{weft::StableIdKind::Boundary, edgeOrdinal},
+                      static_cast<std::uint32_t>(loop.vertices.size())};
+        use.workingEdge = {weft::StableIdKind::Edge, edgeOrdinal};
+        use.sourceEdge = weft::StableId{weft::StableIdKind::Edge,
+                                       edgeOrdinal + 100000};
+        use.coedge = {weft::StableIdKind::Coedge, edgeOrdinal};
+        use.uv = {u, v};
+        use.allowedCurveOnSurfaceDiscrepancy = 1e-7;
+        weft::PlanarTrimVertex vertex;
+        vertex.boundaryUses.push_back(std::move(use));
+        vertex.canonicalVertexIndex = cv;
+        vertex.uv = {u, v};
+        loop.vertices.push_back(std::move(vertex));
+    };
+    // Seam at v=0 (cv 0→1), digon spur on left returning to cv 1, seam
+    // reverse (cv 1→0), right edge.
+    add(0, 0.4, 0.0);
+    add(5, 0.2, 0.0);
+    add(1, 0.0, 0.0);
+    add(14, 0.0, kPeriod);           // jump to other sheet
+    add(13, 0.0, 0.75 * kPeriod);    // digon back
+    add(12, 0.0, 0.25 * kPeriod);
+    add(1, 0.0, 0.0);                // same sheet again (collapsed dual)
+    add(5, 0.2, 0.0);
+    add(0, 0.4, 0.0);
+    add(20, 0.4, 0.5 * kPeriod);
+    add(21, 0.4, kPeriod);
+    band.loops.push_back(std::move(loop));
+    const auto result = backend.triangulate(band);
+    CHECK(result);
+    CHECK(result.value);
+    if (!result.value) return;
+    CHECK(result.value->triangles.size() >= 4);
+    // Opened chart must span ~one V period across dual seam images.
+    double vMin = 1e300;
+    double vMax = -1e300;
+    for (const weft::PlanarTrimVertex& vertex : result.value->vertices) {
+        vMin = std::min(vMin, vertex.uv[1]);
+        vMax = std::max(vMax, vertex.uv[1]);
+    }
+    CHECK(vMax - vMin > 0.5 * kPeriod);
+}
+
 }  // namespace
 
 int main() {
@@ -324,6 +487,12 @@ int main() {
         testSubnormalDomain(*backend);
         testConcavePerforatedDomain(*backend);
         testNamedRefusals(*backend);
+        testMultiOuterSeparateDomains(*backend);
+        testHoleBridgeOccludedMinLex(*backend);
+        testPlaneNeverRelaxes(*backend);
+        testCurvedUvAnnulusWindingNoAv(*backend);
+        testCurvedUvAuthoritativePeriodUnwrap(*backend);
+        testCurvedUvTinyVPeriodDualImage(*backend);
     }
     if (failures == 0) {
         std::printf("exact planar CDT reference checks passed\n");

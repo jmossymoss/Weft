@@ -264,10 +264,18 @@ void appendCriticalEvent(std::vector<CriticalParameterEvent>& events,
                          double upper, bool closed, double span) {
     event.curveParameter = normalizeClosedParameter(
         event.curveParameter, lower, upper, closed, span);
-    if (event.curveParameter < lower - kCriticalParamEpsilon * std::max(1.0, span) ||
-        event.curveParameter > upper + kCriticalParamEpsilon * std::max(1.0, span)) {
+    const double tol =
+        kCriticalParamEpsilon * std::max(1.0, std::abs(span));
+    if (event.curveParameter < lower - tol ||
+        event.curveParameter > upper + tol) {
         return;
     }
+    // Periodic-target / p-curve inverse solves can land a few ULPs outside
+    // the exact 3D trim. Clamp into the closed domain so evaluateCurve's
+    // strict [first,last] check accepts the certified station (cyl_24 seam
+    // + second-period rim p-curves).
+    if (event.curveParameter < lower) event.curveParameter = lower;
+    if (event.curveParameter > upper) event.curveParameter = upper;
     if (closed && almostEqualParameter(event.curveParameter, upper, span)) {
         event.curveParameter = lower;
     }
@@ -1306,12 +1314,28 @@ CanonicalBoundaryBuildResult buildCanonicalBoundaries(
                 }
             }
             if (!haveCurve) {
+                // Uniform samples and clamped critical events are in-range;
+                // still snap endpoint ULPs before the strict domain check.
+                double evaluateAt = parameter;
+                if (evaluateAt < lower &&
+                    almostEqualParameter(evaluateAt, lower, span)) {
+                    evaluateAt = lower;
+                } else if (evaluateAt > upper &&
+                           almostEqualParameter(evaluateAt, upper, span)) {
+                    evaluateAt = upper;
+                }
                 const auto curve =
-                    imported.workingEvaluator->evaluateCurve(edgeId, parameter);
+                    imported.workingEvaluator->evaluateCurve(edgeId,
+                                                             evaluateAt);
                 if (!curve) {
+                    const std::string detail =
+                        curve.failure ? curve.failure->code
+                                      : "geometry.curve_evaluation_failure";
                     return buildFailure(
                         report, "boundary.curve_evaluation_failed",
-                        "canonical sample did not evaluate on the exact 3D curve",
+                        "canonical sample did not evaluate on the exact 3D "
+                        "curve (" +
+                            detail + ")",
                         {edgeId});
                 }
                 curvePosition = curve.value->position;

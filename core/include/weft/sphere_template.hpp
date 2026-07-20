@@ -57,9 +57,9 @@ SphereWallResult buildFullSphereWall(
     std::shared_ptr<const GeometricPredicates> predicates =
         makeExactDyadicPredicates());
 
-// Single-pole spherical cap: one singular pole + one closed circular parallel.
-// Emits a mid-latitude ring so the outer band pairs into modelling quads; the
-// pole band remains a certified triangle fan.
+// Single-pole spherical cap: one singular pole + circular rim. Densifies with
+// mid-latitude rings (and optional boundary parallels) so chord/normal bounds
+// certify hard; orientation uses UV winding plus one global face flip only.
 SphereWallResult buildSphericalCapWall(
     const ImportedModel& imported,
     const ReconnaissanceReport& reconnaissance,

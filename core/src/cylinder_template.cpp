@@ -224,12 +224,13 @@ CylinderWallResult buildFullCylinderWall(
     for (const CanonicalBoundary& boundary : boundaries.boundaries) {
         const ExactGeometryClassification* edgeClass =
             reconnaissance.find(boundary.edge);
+        // Full-period walls accept closed rims and Plasticity split open arcs
+        // (two semicircles per axial level). Partial bands stay open-only.
         const bool ringCandidate = edgeClass &&
             edgeClass->taxonomy == GeometryTaxonomy::Curve &&
             (edgeClass->familyCode == "circle" ||
              edgeClass->familyCode == "ellipse") &&
-            ((fullPeriodic && boundary.closed) ||
-             (partialBand && !boundary.closed));
+            (fullPeriodic || (partialBand && !boundary.closed));
         Ring ring;
         ring.boundary = &boundary;
         double vSum = 0.0;
@@ -257,6 +258,65 @@ CylinderWallResult buildFullCylinderWall(
             ring.meanV = vSum / static_cast<double>(ring.samples.size());
             rings.push_back(std::move(ring));
         }
+    }
+    // Merge split open arcs that share an axial level into two rims.
+    if (fullPeriodic && rings.size() > 2) {
+        std::sort(rings.begin(), rings.end(),
+                  [](const Ring& a, const Ring& b) {
+                      if (a.meanV != b.meanV) return a.meanV < b.meanV;
+                      return a.boundary->edge < b.boundary->edge;
+                  });
+        std::size_t splitAfter = 0;
+        double bestGap = -1.0;
+        for (std::size_t i = 0; i + 1 < rings.size(); ++i) {
+            const double gap = rings[i + 1].meanV - rings[i].meanV;
+            if (gap > bestGap) {
+                bestGap = gap;
+                splitAfter = i;
+            }
+        }
+        if (!(bestGap > 0.0) || splitAfter + 1 >= rings.size()) {
+            setFailure(result, BoundaryCoverage, "cylinder.rim_levels_invalid",
+                       "split cylinder rim arcs do not form two distinct axial levels",
+                       {workingFace});
+            return result;
+        }
+        auto mergeLevel = [&](std::size_t begin,
+                              std::size_t end) -> Ring {
+            Ring merged;
+            merged.boundary = rings[begin].boundary;
+            double vSum = 0.0;
+            std::size_t vCount = 0;
+            for (std::size_t i = begin; i < end; ++i) {
+                for (const FaceSampleUse& sample : rings[i].samples) {
+                    merged.samples.push_back(sample);
+                    vSum += sample.use->liftedUv[1];
+                    ++vCount;
+                }
+            }
+            std::sort(merged.samples.begin(), merged.samples.end(),
+                      [&](const FaceSampleUse& a, const FaceSampleUse& b) {
+                          return a.use->liftedUv[0] < b.use->liftedUv[0];
+                      });
+            // Drop duplicate U stations from chained open-arc endpoints.
+            merged.samples.erase(
+                std::unique(merged.samples.begin(), merged.samples.end(),
+                            [&](const FaceSampleUse& a,
+                                const FaceSampleUse& b) {
+                                return std::abs(a.use->liftedUv[0] -
+                                                b.use->liftedUv[0]) <=
+                                    1e-9 * period;
+                            }),
+                merged.samples.end());
+            merged.meanV =
+                vCount > 0 ? vSum / static_cast<double>(vCount) : 0.0;
+            return merged;
+        };
+        Ring lower = mergeLevel(0, splitAfter + 1);
+        Ring upper = mergeLevel(splitAfter + 1, rings.size());
+        rings.clear();
+        rings.push_back(std::move(lower));
+        rings.push_back(std::move(upper));
     }
     result.validation[BoundaryCoverage].expected = allFaceUses.size();
     if (rings.size() != 2 || allFaceUses.empty()) {

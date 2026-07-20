@@ -39,8 +39,16 @@
 #include <BRep_Tool.hxx>
 #include <Geom_BSplineCurve.hxx>
 #include <Geom_BSplineSurface.hxx>
+#include <Geom_Circle.hxx>
 #include <Geom_Curve.hxx>
 #include <Geom_Ellipse.hxx>
+#include <Geom_Hyperbola.hxx>
+#include <Geom_OffsetCurve.hxx>
+#include <Geom_Parabola.hxx>
+#include <Geom_SurfaceOfRevolution.hxx>
+#include <gp_Pnt2d.hxx>
+#include <gp_Dir2d.hxx>
+#include <gp_Vec2d.hxx>
 
 #include <cmath>
 #include <stdexcept>
@@ -344,6 +352,75 @@ TopoDS_Shape makeFixture(const std::string& name) {
         BRepBuilderAPI_MakeFace face(surf, wire.Wire());
         if (!face.IsDone()) {
             throw std::runtime_error("freeform_patch face from UV wire failed");
+        }
+        ShapeFix_Shape fix(face.Face());
+        fix.SetPrecision(1e-7);
+        fix.Perform();
+        return fix.Shape();
+    }
+    if (name == "extrusion_quad") {
+        // Wave D: four-sided linear-extrusion face via MakePrism of a
+        // bspline edge (raw Geom_SurfaceOfLinearExtrusion faces often lose
+        // complete edge topology after STEP round-trip).
+        NCollection_Array1<gp_Pnt> pts(1, 4);
+        pts.SetValue(1, gp_Pnt(0.0, 0.0, 0.0));
+        pts.SetValue(2, gp_Pnt(10.0, 3.0, 0.0));
+        pts.SetValue(3, gp_Pnt(20.0, -2.0, 0.0));
+        pts.SetValue(4, gp_Pnt(30.0, 1.0, 0.0));
+        Handle(Geom_BSplineCurve) basis =
+            GeomAPI_PointsToBSpline(pts).Curve();
+        TopoDS_Edge profile = BRepBuilderAPI_MakeEdge(basis).Edge();
+        return BRepPrimAPI_MakePrism(profile, gp_Vec(0.0, 0.0, 12.0)).Shape();
+    }
+    if (name == "revolution_ngon") {
+        // Wave D: five-sided UV trim on SurfaceOfRevolution (bspline
+        // meridian — line meridians become cylinder/cone).
+        NCollection_Array1<gp_Pnt> pts(1, 4);
+        pts.SetValue(1, gp_Pnt(10.0, 0.0, 0.0));
+        pts.SetValue(2, gp_Pnt(12.0, 0.0, 6.0));
+        pts.SetValue(3, gp_Pnt(11.0, 0.0, 12.0));
+        pts.SetValue(4, gp_Pnt(9.0, 0.0, 18.0));
+        Handle(Geom_BSplineCurve) meridian =
+            GeomAPI_PointsToBSpline(pts).Curve();
+        Handle(Geom_SurfaceOfRevolution) surf = new Geom_SurfaceOfRevolution(
+            meridian, gp_Ax1(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(0.0, 0.0, 1.0)));
+        double uMin = 0.0, uMax = 0.0, vMin = 0.0, vMax = 0.0;
+        surf->Bounds(uMin, uMax, vMin, vMax);
+        const double u0 = uMin + 0.15 * (uMax - uMin);
+        const double u1 = uMin + 0.85 * (uMax - uMin);
+        const double v0 = vMin + 0.10 * (vMax - vMin);
+        const double v1 = vMin + 0.90 * (vMax - vMin);
+        const double uMid = 0.5 * (u0 + u1);
+        const gp_Pnt2d ptsUv[5] = {
+            gp_Pnt2d(u0, v0), gp_Pnt2d(uMid, v0), gp_Pnt2d(u1, v0),
+            gp_Pnt2d(u1, v1), gp_Pnt2d(u0, v1),
+        };
+        BRepBuilderAPI_MakeWire wire;
+        for (int k = 0; k < 5; ++k) {
+            const gp_Pnt2d& a = ptsUv[k];
+            const gp_Pnt2d& b = ptsUv[(k + 1) % 5];
+            const gp_Vec2d vec(a, b);
+            const double len = vec.Magnitude();
+            if (len <= 1e-12) {
+                throw std::runtime_error("revolution_ngon degenerate UV edge");
+            }
+            Handle(Geom2d_Line) line2d = new Geom2d_Line(a, gp_Dir2d(vec));
+            Handle(Geom2d_TrimmedCurve) trimmed =
+                new Geom2d_TrimmedCurve(line2d, 0.0, len);
+            BRepBuilderAPI_MakeEdge makeEdge(trimmed, surf);
+            if (!makeEdge.IsDone()) {
+                throw std::runtime_error("revolution_ngon UV edge failed");
+            }
+            TopoDS_Edge edge = makeEdge.Edge();
+            BRepLib::BuildCurves3d(edge);
+            wire.Add(edge);
+        }
+        if (!wire.IsDone()) {
+            throw std::runtime_error("revolution_ngon UV wire failed");
+        }
+        BRepBuilderAPI_MakeFace face(surf, wire.Wire());
+        if (!face.IsDone()) {
+            throw std::runtime_error("revolution_ngon face from UV wire failed");
         }
         ShapeFix_Shape fix(face.Face());
         fix.SetPrecision(1e-7);
@@ -759,12 +836,49 @@ TopoDS_Shape makeFixture(const std::string& name) {
         }
         return solid;
     }
+    if (name == "curve_hyperbola") {
+        // Planar face closed by a hyperbola branch + chord. Product mesh
+        // must named-refuse the hyperbola edge (Wave F).
+        const gp_Ax2 ax(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(0.0, 0.0, 1.0));
+        const Handle(Geom_Hyperbola) hypr = new Geom_Hyperbola(ax, 5.0, 3.0);
+        const TopoDS_Edge branch =
+            BRepBuilderAPI_MakeEdge(hypr, -1.0, 1.0).Edge();
+        const TopoDS_Edge chord =
+            BRepBuilderAPI_MakeEdge(hypr->Value(-1.0), hypr->Value(1.0)).Edge();
+        const TopoDS_Wire wire =
+            BRepBuilderAPI_MakeWire(branch, chord).Wire();
+        return BRepBuilderAPI_MakeFace(wire, true).Face();
+    }
+    if (name == "curve_parabola") {
+        const gp_Ax2 ax(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(0.0, 0.0, 1.0));
+        const Handle(Geom_Parabola) parab = new Geom_Parabola(ax, 3.5);
+        const TopoDS_Edge branch =
+            BRepBuilderAPI_MakeEdge(parab, -2.0, 2.0).Edge();
+        const TopoDS_Edge chord =
+            BRepBuilderAPI_MakeEdge(parab->Value(-2.0), parab->Value(2.0))
+                .Edge();
+        const TopoDS_Wire wire =
+            BRepBuilderAPI_MakeWire(branch, chord).Wire();
+        return BRepBuilderAPI_MakeFace(wire, true).Face();
+    }
+    if (name == "curve_offset") {
+        // Offset of a circle retains GeomAbs_OffsetCurve in native B-rep;
+        // STEP often flattens it — Wave F commits the .brep form.
+        const gp_Ax2 ax(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(0.0, 0.0, 1.0));
+        const Handle(Geom_Curve) circle = new Geom_Circle(ax, 10.0);
+        const Handle(Geom_Curve) offset =
+            new Geom_OffsetCurve(circle, 2.0, gp_Dir(0.0, 0.0, 1.0));
+        const TopoDS_Edge edge =
+            BRepBuilderAPI_MakeEdge(offset, 0.0, 2.0 * M_PI).Edge();
+        const TopoDS_Wire wire = BRepBuilderAPI_MakeWire(edge).Wire();
+        return BRepBuilderAPI_MakeFace(wire, true).Face();
+    }
     throw std::runtime_error(
         "unknown fixture: " + name +
         " (expected cylinder|partial_cylinder|box|cone|truncated_cone|sphere|"
         "sphere_cap|torus|fillet|hole|ellipse_hole|plate_slot|demo|boss|"
         "hairline|canrev|slitdrill|microedge|filletslot|torture|ribbon|ribbonnotch|"
-        "mapped_patch|freeform_patch)");
+        "mapped_patch|freeform_patch|curve_hyperbola|curve_parabola|curve_offset)");
 }
 
 }  // namespace weft

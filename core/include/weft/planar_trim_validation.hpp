@@ -75,6 +75,15 @@ struct PlanarTrimDomain {
     // When true, CDT skips planar nesting/orientation proofs and triangulates
     // the assembled UV loops directly (cylinder/freeform/sphere UV trims).
     bool allowCurvedUv = false;
+    // When true, reverse the curved-UV outer/hole CDT convention (outer CW,
+    // holes CCW). Used once as a hard-orient retry when the default lattice
+    // cannot agree with the oriented surface normal under one winding.
+    bool invertCurvedUvOrientation = false;
+    // Authoritative U/V periods for curved UV seam unwrap in the CDT plane.
+    // Must match face classification (bspline periods are often 1, not 2π);
+    // leaving these empty falls back to 2π per axis when that axis is walked.
+    std::optional<double> curvedUvUPeriod;
+    std::optional<double> curvedUvVPeriod;
 };
 
 struct TrimValidationEvidence {

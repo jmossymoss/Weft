@@ -811,6 +811,11 @@ struct App {
     Buffer problems;
     int openEdgeCount = 0, multiEdgeCount = 0;
     int foldedPolyCount = 0;
+    // Track M (light): per-solid open counts so multi-solid assemblies can
+    // distinguish within-solid leaks from inter-solid free borders.
+    std::vector<int> solidOpenEdgeCounts;
+    int leakSolidCount = 0;
+    int closedSolidWithOpenGlobal = 0;
     bool meshFinalized = false;
     bool gpuProxyPending = false;
     int gpuProxyFace = 0;
@@ -1043,7 +1048,11 @@ static weft::SecureMeshingConfiguration secureConfiguration(
     result.sampling.maximumSegmentCount = std::max<std::uint32_t>(
         4096U, result.revolutionRadialSegments);
     result.previewTriangleBudget = 45000;
-    result.omitDeferredResiduals = false;  // G0: no silent face omission
+    // G0: app regenerate never omits deferred faces. Partial-body omit is
+    // CLI --allow-partial-body only; there is no UI toggle for it.
+    result.omitDeferredResiduals = false;
+    // Product default: hard floor (plane/cyl/fillet/Coons) + soft residuals.
+    result.floorPolicy = weft::SecureMeshingFloorPolicy::HardSurfaceFloor;
     result.cylinderAxialIntervals =
         static_cast<std::uint32_t>(defaults.axial);
     if (settings.perFace.size() == 1) {
@@ -1521,6 +1530,9 @@ static void updateProblems(App& app) {
     app.openEdgeCount = 0;
     app.multiEdgeCount = 0;
     app.foldedPolyCount = 0;
+    app.solidOpenEdgeCounts.assign(app.analysis.solidFaces.size(), 0);
+    app.leakSolidCount = 0;
+    app.closedSolidWithOpenGlobal = 0;
     std::map<std::pair<uint32_t, uint32_t>, int> dir;
     if (app.meshFinalized) {
         for (const auto& poly : app.mesh.polygons) {
@@ -1541,6 +1553,17 @@ static void updateProblems(App& app) {
             lines.push_back(bl);
         }
     };
+    // Face → solid index for Track M attribution.
+    std::vector<int> faceSolid(
+        static_cast<size_t>(std::max(0, app.model.faceCount())) + 1, -1);
+    for (size_t si = 0; si < app.analysis.solidFaces.size(); ++si) {
+        for (int fid : app.analysis.solidFaces[si]) {
+            if (fid > 0 &&
+                static_cast<size_t>(fid) < faceSolid.size()) {
+                faceSolid[static_cast<size_t>(fid)] = static_cast<int>(si);
+            }
+        }
+    }
     if (app.meshFinalized) {
         for (const auto& [e, count] : dir) {
             if (count > 1) {
@@ -1549,6 +1572,38 @@ static void updateProblems(App& app) {
             } else if (!dir.count({e.second, e.first})) {
                 pushEdge(e.first, e.second, 1.0f, 0.25f, 0.15f);  // red
                 ++app.openEdgeCount;
+            }
+        }
+        // Per-solid open undirected edges (polygon subset of each solid).
+        if (!app.analysis.solidFaces.empty() &&
+            app.mesh.polygonFaceId.size() == app.mesh.polygons.size()) {
+            for (size_t si = 0; si < app.analysis.solidFaces.size(); ++si) {
+                std::map<std::pair<uint32_t, uint32_t>, int> solidDir;
+                for (size_t p = 0; p < app.mesh.polygons.size(); ++p) {
+                    const int fid = app.mesh.polygonFaceId[p];
+                    if (fid <= 0 ||
+                        static_cast<size_t>(fid) >= faceSolid.size() ||
+                        faceSolid[static_cast<size_t>(fid)] !=
+                            static_cast<int>(si)) {
+                        continue;
+                    }
+                    const auto& poly = app.mesh.polygons[p];
+                    for (size_t i = 0; i < poly.size(); ++i) {
+                        ++solidDir[{poly[i], poly[(i + 1) % poly.size()]}];
+                    }
+                }
+                int solidOpen = 0;
+                for (const auto& [e, count] : solidDir) {
+                    if (count == 1 && !solidDir.count({e.second, e.first})) {
+                        ++solidOpen;
+                    }
+                }
+                app.solidOpenEdgeCounts[si] = solidOpen;
+                if (solidOpen > 0) ++app.leakSolidCount;
+            }
+            if (app.openEdgeCount > 0 && app.leakSolidCount == 0 &&
+                app.analysis.solidFaces.size() > 1) {
+                app.closedSolidWithOpenGlobal = 1;
             }
         }
     }
@@ -5460,10 +5515,21 @@ static void drawUi(App& app) {
             ImGui::TextColored({1.0f, 0.45f, 0.3f, 1.0f},
                                "%d open edge(s), %d non-manifold",
                                app.openEdgeCount, app.multiEdgeCount);
-            if (app.model.solids.Extent() > 1) {
-                ImGui::TextDisabled(
-                    "multi-solid assembly: counts mix free borders / "
-                    "coincident skins (per-solid manifold TBD)");
+            if (app.model.solids.Extent() > 1 ||
+                app.analysis.solidFaces.size() > 1) {
+                if (app.leakSolidCount > 0) {
+                    ImGui::TextDisabled(
+                        "multi-solid: %d solid(s) with within-solid leaks "
+                        "(%d closed / manifold locally)",
+                        app.leakSolidCount,
+                        static_cast<int>(app.analysis.solidFaces.size()) -
+                            app.leakSolidCount);
+                } else if (app.closedSolidWithOpenGlobal != 0 ||
+                           app.openEdgeCount > 0) {
+                    ImGui::TextDisabled(
+                        "multi-solid: open edges look like inter-solid "
+                        "free borders / coincident skins (each solid closed)");
+                }
             }
             ImGui::SameLine();
             ImGui::Checkbox("show##problems", &app.showProblems);

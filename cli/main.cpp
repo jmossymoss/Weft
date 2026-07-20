@@ -121,6 +121,12 @@ void usage() {
         "                      where quality allows (default: pure tris)\n"
         "    --chord T         fallback triangulation tolerance (default 0.1)\n"
         "    --progress        stderr stage/face progress (WEFT_PROGRESS ...)\n"
+        "    --allow-partial-body\n"
+        "                      G0 escape hatch: omit deferred residual faces\n"
+        "                      and mesh supported faces only (not product default)\n"
+        "    --strict-all-faces\n"
+        "                      Require hardOrient on every UV-trim face\n"
+        "                      (disables HardSurfaceFloor soft residuals)\n"
         "    --inventory-refusals\n"
         "                      aggregate unsupported curve/surface families\n"
         "                      from reconnaissance and refuse (no mesh)\n"
@@ -165,7 +171,13 @@ int cmdFixture(const std::vector<std::string>& args) {
     for (size_t i = 1; i < args.size(); ++i) {
         if (args[i] == "--shape" && i + 1 < args.size()) shape = args[++i];
     }
-    weft::writeStep(weft::makeFixture(shape), args[0]);
+    const TopoDS_Shape fixture = weft::makeFixture(shape);
+    const std::filesystem::path out(args[0]);
+    if (out.extension() == ".brep") {
+        weft::writeBRep(fixture, args[0]);
+    } else {
+        weft::writeStep(fixture, args[0]);
+    }
     std::printf("wrote %s (%s)\n", args[0].c_str(), shape.c_str());
     return 0;
 }
@@ -374,6 +386,8 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
     bool recipeLoaded = false;
     bool ignoredMigrationControl = false;
     bool progress = false;
+    bool allowPartialBody = false;
+    bool strictAllFaces = false;
     bool inventoryRefusals = false;
     weft::RepairProfile repairProfile = weft::RepairProfile::Conservative;
     std::vector<double> lods;
@@ -396,6 +410,8 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
         };
         if (a == "-o" || a == "--output") output = next();
         else if (a == "--progress") progress = true;
+        else if (a == "--allow-partial-body") allowPartialBody = true;
+        else if (a == "--strict-all-faces") strictAllFaces = true;
         else if (a == "--inventory-refusals") inventoryRefusals = true;
         else if (a == "--radial") {
             const int value = std::stoi(next());
@@ -805,7 +821,14 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
         configuration.sampling.maximumSegmentCount = std::max<std::uint32_t>(
             4096U, configuration.revolutionRadialSegments);
         configuration.previewTriangleBudget = 45000;
-        configuration.omitDeferredResiduals = false;  // G0: no silent face omission
+        // G0: product default is fail-closed; only --allow-partial-body omits
+        // DeferredResidualSurface faces under ADR-0014.
+        configuration.omitDeferredResiduals = allowPartialBody;
+        // HardSurfaceFloor (default): soft-admit non-floor freeform/sphere.
+        // --strict-all-faces restores Wave 0 full hardOrient.
+        configuration.floorPolicy =
+            strictAllFaces ? weft::SecureMeshingFloorPolicy::StrictAllFaces
+                           : weft::SecureMeshingFloorPolicy::HardSurfaceFloor;
         configuration.cylinderAxialIntervals =
             static_cast<std::uint32_t>(selected.defaults.axial);
         configuration.progressToStderr = progress;
@@ -856,8 +879,18 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly) {
             const std::string message = generated.failure
                 ? generated.failure->message
                 : "secure meshing produced neither a result nor a failure";
+            // G0: always surface subject ids so failures are not anonymous.
+            std::string subjects;
+            if (generated.failure) {
+                for (const weft::StableId& id : generated.failure->subjects) {
+                    if (!subjects.empty()) subjects += ",";
+                    subjects += std::to_string(static_cast<int>(id.kind)) +
+                        ":" + std::to_string(id.ordinal);
+                }
+            }
             throw std::runtime_error(
-                "secure meshing refused [" + code + "]: " + message);
+                "secure meshing refused [" + code + "]: " + message +
+                (subjects.empty() ? "" : (" subjects=[" + subjects + "]")));
         }
         latestSecureResult = std::move(*generated.value);
         const weft::CertifiedAdmissionResult admitted =

@@ -97,4 +97,8 @@ Model loadStep(const std::string& path);
 // Write any shape to STEP (used by the fixture generator and tests).
 void writeStep(const TopoDS_Shape& shape, const std::string& path);
 
+// Write any shape to OCCT ASCII B-rep (native type retention for fixtures
+// that STEP flattens, e.g. offset curves and OtherSurface).
+void writeBRep(const TopoDS_Shape& shape, const std::string& path);
+
 }  // namespace weft

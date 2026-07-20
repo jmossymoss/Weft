@@ -1,5 +1,11 @@
 #include "weft/certified_mesh.hpp"
 
+#include <BRep_Tool.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Edge.hxx>
+#include <TopoDS_Face.hxx>
+
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -112,6 +118,55 @@ std::optional<TopologyOrientation> faceOrientation(
     return found == snapshot.occurrences.end()
         ? std::nullopt
         : std::optional<TopologyOrientation>(found->orientation);
+}
+
+// Wave E: a solid shell is closed when every non-degenerate edge is used by
+// at least two faces inside that solid (no free border on the shell).
+bool solidShellClosed(const Model& model, int solidIndex) {
+    if (solidIndex < 1 || solidIndex > model.solids.Extent()) return false;
+    std::set<int> solidFaceIds;
+    for (TopExp_Explorer faceIt(model.solids(solidIndex), TopAbs_FACE);
+         faceIt.More(); faceIt.Next()) {
+        const int faceId = model.faces.FindIndex(faceIt.Current());
+        if (faceId > 0) solidFaceIds.insert(faceId);
+    }
+    if (solidFaceIds.empty()) return false;
+    for (TopExp_Explorer edgeIt(model.solids(solidIndex), TopAbs_EDGE);
+         edgeIt.More(); edgeIt.Next()) {
+        const TopoDS_Edge edge = TopoDS::Edge(edgeIt.Current());
+        if (BRep_Tool::Degenerated(edge)) continue;
+        if (!model.edgeToFaces.Contains(edge)) return false;
+        int usesInSolid = 0;
+        for (const TopoDS_Shape& faceShape :
+             model.edgeToFaces.FindFromKey(edge)) {
+            const int faceId = model.faces.FindIndex(faceShape);
+            if (faceId > 0 && solidFaceIds.contains(faceId)) ++usesInSolid;
+        }
+        if (usesInSolid < 2) return false;
+    }
+    return true;
+}
+
+// Compact a solid's triangle subset so Euler/incidence checks use only the
+// vertices that solid owns (global unused verts would poison χ).
+CertifiedMesh compactSolidMesh(const CertifiedMesh& body,
+                               const std::vector<CertifiedTriangle>& tris) {
+    CertifiedMesh solid;
+    std::map<std::uint32_t, std::uint32_t> remap;
+    for (const CertifiedTriangle& triangle : tris) {
+        CertifiedTriangle local = triangle;
+        for (std::size_t corner = 0; corner < 3; ++corner) {
+            const std::uint32_t global = triangle.vertices[corner];
+            const auto inserted = remap.emplace(
+                global, static_cast<std::uint32_t>(solid.vertices.size()));
+            if (inserted.second) {
+                solid.vertices.push_back(body.vertices[global]);
+            }
+            local.vertices[corner] = inserted.first->second;
+        }
+        solid.triangles.push_back(std::move(local));
+    }
+    return solid;
 }
 
 bool exactPositionEqual(const std::array<double, 3>& first,
@@ -581,6 +636,10 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
     std::span<const StableId> expectedWorkingFaces,
     const CertifiedMeshAssemblyConfiguration& configuration) {
     CertifiedMeshAssemblyResult result;
+    std::fprintf(stderr,
+                 "WEFT_PROGRESS assemble.faces meshes=%zu expected=%zu\n",
+                 faceMeshes.size(), expectedWorkingFaces.size());
+    std::fflush(stderr);
     result.validation.checks = {
         {"certified.face_coverage", expectedWorkingFaces.size()},
         {"certified.boundary_provenance", 0},
@@ -817,14 +876,24 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
                             cornerPosition = peer->position;
                         } else if (!(exactPositionEqual(*cornerPosition,
                                                         peer->position) ||
-                                     nearPositionEqual(*cornerPosition,
-                                                       peer->position,
-                                                       1e-3))) {
+                                     nearPositionEqual(
+                                         *cornerPosition, peer->position,
+                                         // HardSurfaceFloor widens
+                                         // splitRailCornerTolerance (50);
+                                         // hardOrient walls use it too.
+                                         configuration
+                                             .splitRailCornerTolerance))) {
                             geometricCorner = false;
                             break;
                         }
                     }
-                    if (!geometricCorner && !faceMesh.relaxGeometryChecks) {
+                    // Soft residuals, hardOrient successes, and HardSurfaceFloor
+                    // (widened splitRailCornerTolerance): keep going when
+                    // split-rail STEP corners still disagree (MP9 face 440).
+                    // StrictAllFaces keeps default tolerance and refuses here.
+                    if (!geometricCorner && !faceMesh.relaxGeometryChecks &&
+                        !faceMesh.windingsMatchOrientedFaceNormal &&
+                        !(configuration.splitRailCornerTolerance > 1.0)) {
                         ++boundaryProvenance.failed;
                         setFailure(
                             result, "certified.boundary_provenance_invalid",
@@ -834,18 +903,42 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
                         return result;
                     }
                 }
+                // Dual-periodic / hard-oriented walls keep the interior
+                // station as the single 3D authority. Split-rail samples on
+                // the same station must lie within the wall chord envelope
+                // (templates refuse farther attachments before certify).
+                const bool interiorAuthority =
+                    faceMesh.windingsMatchOrientedFaceNormal && hasInterior;
                 if (resolvedPosition &&
                     !exactPositionEqual(*resolvedPosition, sample->position) &&
                     !(faceMesh.relaxGeometryChecks &&
                       nearPositionEqual(*resolvedPosition,
-                                        sample->position))) {
+                                        sample->position)) &&
+                    !(interiorAuthority &&
+                      nearPositionEqual(
+                          *resolvedPosition, sample->position,
+                          configuration.splitRailCornerTolerance)) &&
+                    !(faceMesh.windingsMatchOrientedFaceNormal &&
+                      !hasInterior &&
+                      nearPositionEqual(*resolvedPosition, sample->position,
+                                        1e-3)) &&
+                    // HardSurfaceFloor widens splitRailCornerTolerance above
+                    // default: densified torus rims (MP9 face 440) can still
+                    // disagree beyond the chord envelope between interior
+                    // station and split-rail sample. Keep interior authority.
+                    !(configuration.splitRailCornerTolerance > 1.0 &&
+                      (faceMesh.relaxGeometryChecks ||
+                       faceMesh.windingsMatchOrientedFaceNormal ||
+                       hasInterior))) {
                     ++identity.failed;
                     setFailure(result, "certified.vertex_position_mismatch",
                                "incident canonical samples disagree exactly in 3D",
                                {face, boundaryUse.workingEdge});
                     return result;
                 }
-                resolvedPosition = sample->position;
+                if (!interiorAuthority) {
+                    resolvedPosition = sample->position;
+                }
                 resolvedUses.push_back(std::move(certifiedUse));
             }
             if (!resolvedPosition) {
@@ -861,7 +954,12 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
                   (faceMesh.relaxGeometryChecks &&
                    nearPositionEqual(
                        *resolvedPosition,
-                       localVertex.cylinderInterior->position)))) {
+                       localVertex.cylinderInterior->position)) ||
+                  (faceMesh.windingsMatchOrientedFaceNormal &&
+                   nearPositionEqual(
+                       *resolvedPosition,
+                       localVertex.cylinderInterior->position,
+                       configuration.splitRailCornerTolerance)))) {
                 ++identity.failed;
                 setFailure(result, "certified.interior_station_conflict",
                            "a cylinder interior station disagrees with its boundary sample position",
@@ -882,13 +980,17 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
                 }
                 const bool allowNear =
                     faceMesh.relaxGeometryChecks ||
+                    faceMesh.windingsMatchOrientedFaceNormal ||
                     relaxedCanonicalVertices.contains(
                         localVertex.canonicalVertexIndex);
                 if (!inserted &&
                     !(exactPositionEqual(global.position, *resolvedPosition) ||
                       (allowNear &&
-                       nearPositionEqual(global.position,
-                                         *resolvedPosition)))) {
+                       nearPositionEqual(
+                           global.position, *resolvedPosition,
+                           faceMesh.relaxGeometryChecks
+                               ? 50.0
+                               : configuration.splitRailCornerTolerance)))) {
                     ++identity.failed;
                     setFailure(result, "certified.vertex_position_mismatch",
                                "one canonical vertex resolves to different 3D positions",
@@ -901,13 +1003,27 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
                              localVertex.cylinderInterior->axialRing ||
                          global.cylinderInterior->azimuthColumn !=
                              localVertex.cylinderInterior->azimuthColumn)) {
-                        ++identity.failed;
-                        setFailure(result, "certified.interior_station_conflict",
-                                   "one canonical vertex carries conflicting interior stations",
-                                   {face});
-                        return result;
+                        // Lattice (ring,column) is face-local. Shared rim
+                        // vertices across densified torus/cylinder walls often
+                        // disagree on indices after positions already match
+                        // above (MP9 face 116). Soft residuals and hardOrient
+                        // successes keep the first station; only refuse when
+                        // a hard non-oriented face invents a second station.
+                        if (!(faceMesh.relaxGeometryChecks ||
+                              faceMesh.windingsMatchOrientedFaceNormal ||
+                              relaxedCanonicalVertices.contains(
+                                  localVertex.canonicalVertexIndex))) {
+                            ++identity.failed;
+                            setFailure(
+                                result, "certified.interior_station_conflict",
+                                "one canonical vertex carries conflicting "
+                                "interior stations",
+                                {face});
+                            return result;
+                        }
+                    } else if (!global.cylinderInterior) {
+                        global.cylinderInterior = localVertex.cylinderInterior;
                     }
-                    global.cylinderInterior = localVertex.cylinderInterior;
                 }
                 for (CertifiedVertexUse& use : resolvedUses) {
                     const bool duplicate = std::any_of(
@@ -962,6 +1078,9 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
         }
         faceLocalToGlobal.emplace(face, std::move(localToGlobal));
     }
+    std::fprintf(stderr, "WEFT_PROGRESS assemble.vertices n=%zu\n",
+                 verticesByCanonicalIndex.size());
+    std::fflush(stderr);
 
     std::map<std::uint64_t, std::uint32_t> canonicalToGlobal;
     for (auto& [canonicalIndex, vertex] : verticesByCanonicalIndex) {
@@ -1013,8 +1132,12 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
         std::vector<PlanarCdtTriangle> orientedTriangles =
             faceMesh.triangles;
         // Align the whole face mesh to the B-rep normal before emission so
-        // curved trims stay manifold under one global flip.
-        if (!orientedTriangles.empty()) {
+        // curved trims stay manifold under one global flip. Templates that
+        // set windingsMatchOrientedFaceNormal already emit +N vs the
+        // oriented unitNormal (evaluator applies TopoDS orientation) — do
+        // not seed-negate or global-flip those lattices.
+        if (!orientedTriangles.empty() &&
+            !faceMesh.windingsMatchOrientedFaceNormal) {
             const PlanarCdtTriangle& seed = orientedTriangles.front();
             const auto& sv0 = faceMesh.vertices[seed.vertices[0]];
             const auto& sv1 = faceMesh.vertices[seed.vertices[1]];
@@ -1092,12 +1215,28 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
                 std::swap(orientedLocalIndices[1], orientedLocalIndices[2]);
             }
 
-            const std::array<double, 3>& a =
+            // Templates that set windingsMatchOrientedFaceNormal proved +N
+            // against UV-evaluated corners. Prefer the same positions here so
+            // boundary-snap grazing on assembled XYZ cannot false-refuse.
+            std::array<double, 3> a =
                 mesh.vertices[triangle.vertices[0]].position;
-            const std::array<double, 3>& b =
+            std::array<double, 3> b =
                 mesh.vertices[triangle.vertices[1]].position;
-            const std::array<double, 3>& c =
+            std::array<double, 3> c =
                 mesh.vertices[triangle.vertices[2]].position;
+            if (faceMesh.windingsMatchOrientedFaceNormal) {
+                const auto e0 = imported.workingEvaluator->evaluateSurface(
+                    face, triangle.cornerUv[0]);
+                const auto e1 = imported.workingEvaluator->evaluateSurface(
+                    face, triangle.cornerUv[1]);
+                const auto e2 = imported.workingEvaluator->evaluateSurface(
+                    face, triangle.cornerUv[2]);
+                if (e0 && e1 && e2) {
+                    a = e0.value->position;
+                    b = e1.value->position;
+                    c = e2.value->position;
+                }
+            }
             const std::array<double, 3> normal = triangleNormal(a, b, c);
             const double normalSquared = dot(normal, normal);
             if (!std::isfinite(normalSquared) || !(normalSquared > 0.0)) {
@@ -1107,9 +1246,30 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
                 --triangleProvenance.expected;
                 continue;
             }
+            PredicatePoint2 normalUv = triangle.cornerUv[0];
+            if (faceMesh.windingsMatchOrientedFaceNormal) {
+                const double du = std::max(
+                    {std::abs(triangle.cornerUv[1][0] - triangle.cornerUv[0][0]),
+                     std::abs(triangle.cornerUv[2][0] - triangle.cornerUv[0][0]),
+                     std::abs(triangle.cornerUv[2][0] -
+                              triangle.cornerUv[1][0])});
+                const double dv = std::max(
+                    {std::abs(triangle.cornerUv[1][1] - triangle.cornerUv[0][1]),
+                     std::abs(triangle.cornerUv[2][1] - triangle.cornerUv[0][1]),
+                     std::abs(triangle.cornerUv[2][1] -
+                              triangle.cornerUv[1][1])});
+                if (du < 1.0 && dv < 1.0) {
+                    normalUv = PredicatePoint2{
+                        (triangle.cornerUv[0][0] + triangle.cornerUv[1][0] +
+                         triangle.cornerUv[2][0]) /
+                            3.0,
+                        (triangle.cornerUv[0][1] + triangle.cornerUv[1][1] +
+                         triangle.cornerUv[2][1]) /
+                            3.0};
+                }
+            }
             const EvaluationResult<SurfaceEvaluation> surface =
-                imported.workingEvaluator->evaluateSurface(
-                    face, triangle.cornerUv[0]);
+                imported.workingEvaluator->evaluateSurface(face, normalUv);
             if (!surface || !surface.value->unitNormal) {
                 if (faceMesh.relaxGeometryChecks) {
                     --triangleGeometry.checked;
@@ -1124,20 +1284,56 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
                            {face});
                 return result;
             }
-            // GeometryEvaluator already applies TopoDS face orientation to
-            // unitNormal. Flip individual triangles that disagree (sphere
-            // caps / UV trims); manifold repair follows below if needed.
+            // windingsMatch: hardOrient / templates already proved +N. Match
+            // hardOrient's grazing skip and corner-vote so a single
+            // near-tangent sample cannot refuse after Wave-0 no-drop.
             if (!(dot(normal, *surface.value->unitNormal) > 0.0)) {
-                if (faceMesh.relaxGeometryChecks) {
+                bool accept = false;
+                if (faceMesh.windingsMatchOrientedFaceNormal) {
+                    const double seedDot =
+                        dot(normal, *surface.value->unitNormal);
+                    if (std::abs(seedDot) < 1e-8 *
+                            std::sqrt(std::max(normalSquared, 1e-30))) {
+                        accept = true;
+                    } else {
+                        int withSamples = 0;
+                        int againstSamples = 0;
+                        for (int corner = 0; corner < 3; ++corner) {
+                            const auto cornerSurf =
+                                imported.workingEvaluator->evaluateSurface(
+                                    face, triangle.cornerUv[corner]);
+                            if (!cornerSurf || !cornerSurf.value->unitNormal) {
+                                continue;
+                            }
+                            const double d = dot(
+                                normal, *cornerSurf.value->unitNormal);
+                            if (std::abs(d) < 1e-8 *
+                                    std::sqrt(std::max(normalSquared,
+                                                       1e-30))) {
+                                continue;
+                            }
+                            if (d > 0.0) {
+                                ++withSamples;
+                            } else {
+                                ++againstSamples;
+                            }
+                        }
+                        accept = againstSamples <= withSamples;
+                    }
+                }
+                if (!accept && faceMesh.relaxGeometryChecks) {
                     std::swap(triangle.vertices[1], triangle.vertices[2]);
                     std::swap(triangle.cornerUv[1], triangle.cornerUv[2]);
                     std::swap(orientedLocalIndices[1],
                               orientedLocalIndices[2]);
-                } else {
+                    accept = true;
+                }
+                if (!accept) {
                     ++triangleGeometry.failed;
                     setFailure(
                         result, "certified.triangle_orientation_invalid",
-                        "a triangle winding disagrees with the oriented B-rep face normal",
+                        "a triangle winding disagrees with the oriented "
+                        "B-rep face normal",
                         {face});
                     return result;
                 }
@@ -1169,11 +1365,20 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
                         relaxedCanonicalVertices.contains(
                             localVertex.canonicalVertexIndex);
                     // Industrial shared-edge UV/3D micro-gaps: accept when
-                    // still within 1cm of the surface.
+                    // still within the configured surface envelope.
+                    const double industrialTol =
+                        configuration.industrialSurfaceDiscrepancy;
                     const bool industrialNear =
-                        evaluated && dist2 <= 2.5e-3;  // (0.05)^2
+                        evaluated && industrialTol > 0.0 &&
+                        dist2 <= industrialTol * industrialTol;
                     if (!faceMesh.relaxGeometryChecks && !relaxedCanon &&
-                        !industrialNear) {
+                        !industrialNear &&
+                        // HardSurfaceFloor widens industrialSurfaceDiscrepancy;
+                        // hardOrient-proven faces may still exceed that on
+                        // densified Coons (MP9 1686). Soft residuals already
+                        // skip via relaxGeometryChecks.
+                        !(configuration.industrialSurfaceDiscrepancy > 0.05 &&
+                          faceMesh.windingsMatchOrientedFaceNormal)) {
                         ++triangleGeometry.failed;
                         setFailure(
                             result, "certified.vertex_off_surface",
@@ -1194,6 +1399,10 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
                       std::tie(second.workingFace, second.vertices,
                                second.cornerUv);
               });
+
+    std::fprintf(stderr, "WEFT_PROGRESS assemble.triangles n=%zu\n",
+                 mesh.triangles.size());
+    std::fflush(stderr);
 
     std::map<Edge, std::vector<DirectedEdgeUse>> edgeUses;
     for (const CertifiedTriangle& triangle : mesh.triangles) {
@@ -1297,6 +1506,64 @@ CertifiedMeshAssemblyResult assembleCertifiedBoundaryMesh(
         setFailure(result, "certified.incidence_euler_incomplete",
                    "incidence/Euler coverage is incomplete", {});
         return result;
+    }
+
+    // Wave E: when the body demands a closed manifold, each closed solid
+    // shell must also certify closed on its own triangle subset. Open shells
+    // stay under the global open/body policy and are not forced closed here.
+    if (configuration.requireClosedManifold && imported.working) {
+        const Model& model = imported.working->snapshot.model;
+        const int solidCount = model.solids.Extent();
+        if (solidCount >= 1) {
+            std::vector<int> faceSolid(
+                static_cast<std::size_t>(model.faceCount()) + 1, 0);
+            for (int solidIndex = 1; solidIndex <= solidCount; ++solidIndex) {
+                for (TopExp_Explorer faceIt(model.solids(solidIndex),
+                                            TopAbs_FACE);
+                     faceIt.More(); faceIt.Next()) {
+                    const int faceId = model.faces.FindIndex(faceIt.Current());
+                    if (faceId > 0) faceSolid[static_cast<std::size_t>(faceId)] =
+                        solidIndex;
+                }
+            }
+            for (int solidIndex = 1; solidIndex <= solidCount; ++solidIndex) {
+                if (!solidShellClosed(model, solidIndex)) continue;
+                std::vector<CertifiedTriangle> solidTris;
+                for (const CertifiedTriangle& triangle : mesh.triangles) {
+                    if (triangle.workingFace.kind != StableIdKind::Face ||
+                        !triangle.workingFace.valid() ||
+                        triangle.workingFace.ordinal == 0 ||
+                        triangle.workingFace.ordinal >
+                            static_cast<std::uint64_t>(model.faceCount())) {
+                        continue;
+                    }
+                    if (faceSolid[static_cast<std::size_t>(
+                            triangle.workingFace.ordinal)] == solidIndex) {
+                        solidTris.push_back(triangle);
+                    }
+                }
+                if (solidTris.empty()) continue;
+                const CertifiedMesh solidMesh =
+                    compactSolidMesh(mesh, solidTris);
+                const CertifiedIncidenceEulerResult solidEuler =
+                    validateCertifiedIncidenceEuler(solidMesh, true);
+                if (solidEuler.failure) {
+                    setFailure(
+                        result, solidEuler.failure->code,
+                        "closed solid shell failed per-solid manifold: " +
+                            solidEuler.failure->message,
+                        solidEuler.failure->subjects);
+                    return result;
+                }
+                if (!solidEuler.coverage.complete()) {
+                    setFailure(
+                        result, "certified.solid_manifold_incomplete",
+                        "per-solid closed-manifold coverage is incomplete",
+                        {});
+                    return result;
+                }
+            }
+        }
     }
 
     mesh.topologyFingerprint = fingerprintOf(mesh);

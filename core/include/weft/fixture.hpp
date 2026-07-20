@@ -26,6 +26,11 @@ namespace weft {
 //   "demo"     - compound of cylinder and box side by side
 //   "boss"     - box fused with a cylindrical boss (exercises trimmed
 //                planar faces, which must fall back to triangulation)
+//   "curve_hyperbola" / "curve_parabola" / "curve_offset" — planar faces
+//                whose boundary retains an unsupported curve family for
+//                Wave F named-refuse locks (offset prefers native .brep)
+//   "extrusion_quad" — four-sided SurfaceOfLinearExtrusion patch (Wave D)
+//   "revolution_ngon" — five-sided SurfaceOfRevolution UV-trim (Wave D)
 TopoDS_Shape makeFixture(const std::string& name);
 
 }  // namespace weft

@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <limits>
 #include <optional>
 #include <set>
@@ -254,7 +255,9 @@ MappedPatchResult buildMappedFourSidedPatch(
 
     const double cell = (u1 - u0) / nu;
     const double cellV = (v1 - v0) / nv;
-    const double matchBound = cell * cell + cellV * cellV;
+    // Two cell diagonals: curved boundary lifts can sit between grid
+    // stations after period unwrap without leaving the border rails.
+    const double matchBound = 4.0 * (cell * cell + cellV * cellV);
     std::set<const CoedgeUvUse*> consumed;
     for (const FaceSampleUse& candidate : allFaceUses) {
         std::uint32_t bestIndex = 0;
@@ -428,6 +431,121 @@ MappedPatchResult buildMappedFourSidedPatch(
         }
     }
 
+    // Emit +N vs oriented unitNormal (evaluator already applies TopoDS
+    // orientation). UV orient2d alone can leave the lattice against +N on
+    // Reversed faces; windingsMatchOrientedFaceNormal=true so certify skips
+    // Reversed seed-negation and per-tri swap. One global flip only.
+    // Position resolution mirrors certify / UV-trim: boundary stations use
+    // canonical sample XYZ (not a fresh UV evaluate), so grazing ears that
+    // flip under boundary snap are oriented against the same geometry.
+    {
+        auto certifyLikePosition = [&](std::uint32_t index)
+            -> std::optional<std::array<double, 3>> {
+            const PlanarTrimVertex& vertex = mesh.vertices[index];
+            if (!vertex.boundaryUses.empty()) {
+                for (const PlanarTrimBoundaryUse& use : vertex.boundaryUses) {
+                    for (const CanonicalBoundary& boundary :
+                         boundaries.boundaries) {
+                        for (const CanonicalBoundarySample& sample :
+                             boundary.samples) {
+                            if (sample.id == use.sample) {
+                                return sample.position;
+                            }
+                        }
+                    }
+                }
+            }
+            return positionOf(index);
+        };
+        auto agreesWithNormal = [&](const PlanarCdtTriangle& tri)
+            -> std::optional<bool> {
+            if (!tri.cornerUv) return std::nullopt;
+            // Prefer UV-evaluated corners + centroid normal (same proof as
+            // hardOrientUvTrimMesh / certify windingsMatch). Boundary-snap
+            // XYZ alone false-againsts grazing lattice ears (MP9 face 57).
+            const auto e0 = imported.workingEvaluator->evaluateSurface(
+                workingFace, (*tri.cornerUv)[0]);
+            const auto e1 = imported.workingEvaluator->evaluateSurface(
+                workingFace, (*tri.cornerUv)[1]);
+            const auto e2 = imported.workingEvaluator->evaluateSurface(
+                workingFace, (*tri.cornerUv)[2]);
+            constexpr double kTwoPi = 6.28318530717958647692;
+            auto unwrapIfPeriodic = [](double x, double ref) {
+                if (std::abs(x - ref) <= 0.5 * kTwoPi) return x;
+                while (x - ref > 0.5 * kTwoPi) x -= kTwoPi;
+                while (ref - x > 0.5 * kTwoPi) x += kTwoPi;
+                return x;
+            };
+            const double u0 = (*tri.cornerUv)[0][0];
+            const double v0 = (*tri.cornerUv)[0][1];
+            const double u1 = unwrapIfPeriodic((*tri.cornerUv)[1][0], u0);
+            const double v1 = unwrapIfPeriodic((*tri.cornerUv)[1][1], v0);
+            const double u2 = unwrapIfPeriodic((*tri.cornerUv)[2][0], u0);
+            const double v2 = unwrapIfPeriodic((*tri.cornerUv)[2][1], v0);
+            const PredicatePoint2 uvC{(u0 + u1 + u2) / 3.0,
+                                      (v0 + v1 + v2) / 3.0};
+            const auto surface = imported.workingEvaluator->evaluateSurface(
+                workingFace, uvC);
+            if (e0 && e1 && e2 && surface && surface.value->unitNormal) {
+                const auto facet = unit(triangleNormal(
+                    e0.value->position, e1.value->position,
+                    e2.value->position));
+                if (facet) {
+                    return dot(*facet, *surface.value->unitNormal) > 0.0;
+                }
+            }
+            const auto a = certifyLikePosition(tri.vertices[0]);
+            const auto b = certifyLikePosition(tri.vertices[1]);
+            const auto c = certifyLikePosition(tri.vertices[2]);
+            if (!a || !b || !c || !surface || !surface.value->unitNormal) {
+                return std::nullopt;
+            }
+            const auto facet = unit(triangleNormal(*a, *b, *c));
+            if (!facet) return std::nullopt;
+            return dot(*facet, *surface.value->unitNormal) > 0.0;
+        };
+
+        std::size_t withN = 0;
+        std::size_t againstN = 0;
+        for (const PlanarCdtTriangle& tri : mesh.triangles) {
+            const auto agrees = agreesWithNormal(tri);
+            if (!agrees) continue;
+            if (*agrees) {
+                ++withN;
+            } else {
+                ++againstN;
+            }
+        }
+        if (againstN > withN) {
+            for (PlanarCdtTriangle& tri : mesh.triangles) {
+                std::swap(tri.vertices[1], tri.vertices[2]);
+                if (tri.cornerUv) {
+                    std::swap((*tri.cornerUv)[1], (*tri.cornerUv)[2]);
+                }
+            }
+            std::swap(withN, againstN);
+        }
+        for (std::size_t i = 0; i < mesh.triangles.size(); ++i) {
+            const auto agrees = agreesWithNormal(mesh.triangles[i]);
+            if (agrees && *agrees) {
+                if (i != 0) {
+                    std::swap(mesh.triangles[0], mesh.triangles[i]);
+                }
+                break;
+            }
+        }
+        std::fprintf(stderr,
+                     "WEFT_G3_MAPPED_ORIENT with=%zu against=%zu tris=%zu\n",
+                     withN, againstN, mesh.triangles.size());
+        if (againstN > 0) {
+            setFailure(result, TriangleOrientation,
+                       "mapped.orientation_unresolved",
+                       "mapped lattice cannot agree with the oriented face normal under one winding",
+                       {workingFace});
+            return result;
+        }
+    }
+
     if (!std::all_of(result.validation.begin(), result.validation.end(),
                      [](const MappedPatchValidationEvidence& evidence) {
                          return evidence.complete();
@@ -437,13 +555,10 @@ MappedPatchResult buildMappedFourSidedPatch(
                    {workingFace});
         return result;
     }
-    // Freeform mapped lattices still need scoped certify soft until UV
-    // orientation is proven hard on industrial B-splines.
-    if (hasCondition(*classification, "freeform.uv_grid_candidate") ||
-        hasCondition(*classification, "freeform.uv_trim_candidate") ||
-        hasCondition(*classification, "freeform.general_attempted")) {
-        mesh.relaxGeometryChecks = true;
-    }
+    // G3: hard seam match + UV orientation proofs already ran above.
+    // Do not soft-relax certified assembly for freeform lattices.
+    mesh.windingsMatchOrientedFaceNormal = true;
+    mesh.relaxGeometryChecks = false;
     result.value = std::move(mesh);
     return result;
 }

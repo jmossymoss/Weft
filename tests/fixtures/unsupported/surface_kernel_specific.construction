@@ -1,0 +1,17 @@
+# Wave F kernel_specific surface fixture (in-test construction)
+#
+# OCCT ASCII BREP cannot persist GeomPlate_Surface / GeomAbs_OtherSurface
+# (writer emits "UNKNOWN SURFACE TYPE" and drops the surface payload).
+# testUnsupportedFamilyMatrix rebuilds this plate in-process and imports via
+# secure_detail::buildImportedModel (same path as native BREP import).
+#
+builder_degree=3
+builder_nb_pts_on_cur=8
+builder_nb_iter=3
+point=0,0,0 order=0
+point=20,0,0 order=0
+point=0,15,0 order=0
+point=20,15,1 order=0
+point=10,7.5,0.5 order=0
+expected_family=kernel_specific
+expected_refuse=secure_pipeline.unsupported_surface_family.kernel_specific

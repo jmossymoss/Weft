@@ -23,6 +23,17 @@ struct EdgeIntervalChainSum {
     std::vector<StableId> rhs;
 };
 
+// Product default vs research/strict matrix batteries.
+// HardSurfaceFloor: fail-closed on planes (boolean cuts), cylinders, cones,
+// tori/analytic fillets, and four-sided Coons/mapped. Other freeform/sphere/
+// offset residuals may soft-admit (relaxGeometryChecks) so bodies mesh fast
+// where Plasticity-class faceting is "good enough" for games.
+// StrictAllFaces: prior Wave 0 behaviour — every UV-trim must hardOrient.
+enum class SecureMeshingFloorPolicy {
+    HardSurfaceFloor = 0,
+    StrictAllFaces = 1,
+};
+
 struct SecureMeshingConfiguration {
     SamplingConfiguration sampling;
     CertifiedMeshAssemblyConfiguration assembly;
@@ -31,6 +42,9 @@ struct SecureMeshingConfiguration {
     std::uint32_t revolutionRadialSegments = 32;
     // Soft preview triangle target; 0 disables adaptive coarsening.
     std::uint32_t previewTriangleBudget = 45000;
+    // Product default: hard floor + soft residuals (see enum).
+    SecureMeshingFloorPolicy floorPolicy =
+        SecureMeshingFloorPolicy::HardSurfaceFloor;
     // Working-edge IDs resolved through recipe-v2 correspondence. Counts are
     // exact solver constraints, never face-local sampling requests.
     std::map<StableId, std::uint32_t> exactEdgeIntervalCounts;
@@ -44,9 +58,13 @@ struct SecureMeshingConfiguration {
     // Inventory-only: continue past unsupported faces/curves to aggregate
     // refusal codes. Still returns failure and never a MeshingResult.
     bool collectAllUnsupported = false;
-    // Industrial compounds: omit deferred residual faces and still
-    // emit a partial MeshingResult for supported faces (ADR-0014
-    // remains for non-deferred refusals).
+    // Escape hatch only: skip DeferredResidualSurface faces and still
+    // emit a partial MeshingResult for supported faces. Product app/CLI
+    // defaults leave this false (G0 / Wave 0). CLI exposes it solely as
+    // --allow-partial-body; never enable as a silent industrial default.
+    // Also arms previewFast + discrepancy widen + assemble tol bump —
+    // never from faceCount alone. Non-deferred unsupported surfaces still
+    // refuse under ADR-0014.
     bool omitDeferredResiduals = false;
     // Optional progress for UI.
     // phase: 0=intervals, 1=boundaries, 2=faces, 3=assemble

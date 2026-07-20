@@ -15,6 +15,7 @@
 #include <IFSelect_ReturnStatus.hxx>
 #include <ShapeProcess.hxx>
 #include <STEPControl_Writer.hxx>
+#include <BRepTools.hxx>
 #include <ShapeBuild_ReShape.hxx>
 #include <ShapeFix_Shape.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
@@ -401,6 +402,12 @@ void writeStep(const TopoDS_Shape& shape, const std::string& path) {
     if (writer.Transfer(shape, STEPControl_AsIs) != IFSelect_RetDone ||
         writer.Write(path.c_str()) != IFSelect_RetDone) {
         throw std::runtime_error("failed to write STEP file: " + path);
+    }
+}
+
+void writeBRep(const TopoDS_Shape& shape, const std::string& path) {
+    if (!BRepTools::Write(shape, path.c_str())) {
+        throw std::runtime_error("failed to write B-rep file: " + path);
     }
 }
 

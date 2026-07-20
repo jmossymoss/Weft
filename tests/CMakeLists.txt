@@ -89,6 +89,12 @@ weft_enable_strict_warnings(weft_secure_meshing_tests)
 add_test(NAME secure_meshing COMMAND weft_secure_meshing_tests)
 weft_deploy_occt_dlls(weft_secure_meshing_tests)
 
+# B-rep family×subclass matrix scaffold (docs/governance/brep-consumer-matrix.md).
+# Presence-only today; Wave A–F agents fill WEFT_*_MATRIX mesh/refuse assertions.
+add_executable(weft_brep_consumer_matrix_tests test_brep_consumer_matrix.cpp)
+weft_enable_strict_warnings(weft_brep_consumer_matrix_tests)
+add_test(NAME brep_consumer_matrix COMMAND weft_brep_consumer_matrix_tests)
+
 add_executable(weft_secure_recipe_tests test_secure_recipe.cpp)
 target_link_libraries(weft_secure_recipe_tests PRIVATE weft_core)
 weft_enable_strict_warnings(weft_secure_recipe_tests)

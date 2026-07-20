@@ -321,8 +321,10 @@ TorusWallResult buildFullTorusWall(
             vertex.canonicalVertexIndex =
                 candidate.sample->canonicalVertexIndex;
             vertex.uv = candidate.use->liftedUv;
-            // Reconcile the dual-periodic station to the exact seam sample so
-            // assembly accepts boundary+interior provenance together.
+            // First seam sample becomes the station's single 3D authority.
+            // Later split-rail uses (Plasticity / MP9 face 116) share the UV
+            // cell for interval consumption but must not overwrite XYZ —
+            // certify keeps this interior position when windingsMatch.
             vertex.cylinderInterior = CylinderInteriorStation{
                 workingFace, sourceFace, vertex.uv, candidate.sample->position,
                 vertex.cylinderInterior ? vertex.cylinderInterior->axialRing
@@ -330,20 +332,6 @@ TorusWallResult buildFullTorusWall(
                 vertex.cylinderInterior
                     ? vertex.cylinderInterior->azimuthColumn
                     : 0};
-        } else if (vertex.canonicalVertexIndex !=
-                   candidate.sample->canonicalVertexIndex) {
-            // Distinct seam sample IDs at one corner: keep uses only when the
-            // 3D sample positions match within a tiny absolute tolerance.
-            const auto& left = vertex.cylinderInterior->position;
-            const auto& right = candidate.sample->position;
-            const double err2 = squaredDistance(left, right);
-            if (!(err2 <= 1e-24)) {
-                setFailure(result, BoundaryCoverage,
-                           "torus.seam_identity_conflict",
-                           "two torus seam identities disagree at one grid corner",
-                           {workingFace, candidate.sample->workingEdge});
-                return result;
-            }
         }
         vertex.boundaryUses.push_back(boundaryUse(candidate));
         consumed.insert(candidate.use);

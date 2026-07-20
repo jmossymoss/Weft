@@ -425,7 +425,7 @@ public:
             default: {
                 // Extrusion / offset / bspline: orthogonal projection onto
                 // the exact surface (MP9 mapped four-sided without p-curves).
-                const Handle(Geom_Surface) geom = adaptor.Surface().Surface();
+                const Handle(Geom_Surface) geom = adaptor.GeomSurfaceOriginal();
                 if (geom.IsNull()) {
                     return evaluationFailure<PlanarProjectionEvaluation>(
                         "geometry.surface_projection_unsupported",
@@ -2099,17 +2099,29 @@ ImportedModel buildImportedModel(
                 event.code == "import.correspondence.incomplete" ||
                 event.code == "import.topology_correspondence.incomplete";
         });
+    // Large industrial bodies (MP9) and single-face Plasticity extracts that
+    // fail BRepCheck as open shells still carry identity correspondence.
+    // Allow meshing entry so G3/G4 family extracts can prove consumers;
+    // per-face refusals remain. Keep small multi-face corrupt fixtures blocked.
+    const int workingEdges =
+        imported.working->snapshot.model.edges.Extent();
+    const int workingFaces =
+        imported.working->snapshot.model.faces.Extent();
     if (!imported.repair.meshable && !blockedByOrientationOrHeal &&
         imported.repair.identity && !sourceValid && !workingValid &&
         imported.correspondence.complete &&
         imported.correspondence.topologyComplete &&
-        imported.working->snapshot.model.edges.Extent() > 500) {
+        (workingEdges > 500 || workingFaces == 1)) {
         imported.repair.meshable = true;
         diagnostic(
             "import.working.invalid_identity_mesh_allowed",
             DiagnosticSeverity::Warning,
-            "meshing allowed for large identity-invalid source/working pair; "
-            "unsupported or defective faces will refuse individually");
+            workingFaces == 1
+                ? "meshing allowed for single-face identity-invalid extract; "
+                  "unsupported or defective geometry will refuse by name"
+                : "meshing allowed for large identity-invalid source/working "
+                  "pair; unsupported or defective faces will refuse "
+                  "individually");
     }
     if (!imported.repair.meshable) {
         diagnostic("import.working.non_meshable", DiagnosticSeverity::Error,

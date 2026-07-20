@@ -788,14 +788,18 @@ ReconnaissanceReport reconnoitre(const ImportedModel& imported) {
                     record.conditionCodes.push_back(
                         "mapped.non_four_sided_deferred");
                     if (family.code == "offset" ||
-                        family.code == "extrusion") {
-                        // N-sided offset/extrusion → UV-trim CDT attempt.
+                        family.code == "extrusion" ||
+                        family.code == "revolution") {
+                        // N-sided offset/extrusion/revolution → UV-trim CDT
+                        // (Wave D: revolution n≠4 same promote as extrusion).
                         record.conditionCodes.push_back(
                             "freeform.uv_trim_candidate");
                         record.conditionCodes.push_back(
                             family.code == "offset"
                                 ? "offset.uv_trim_attempted"
-                                : "extrusion.uv_trim_attempted");
+                                : (family.code == "extrusion"
+                                       ? "extrusion.uv_trim_attempted"
+                                       : "revolution.uv_trim_attempted"));
                     }
                 }
                 // FREE-A / WP-173: rectangular UV-grid floor is proven for

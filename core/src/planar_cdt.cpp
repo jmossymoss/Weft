@@ -305,130 +305,180 @@ PredicateResult<bool> bridgeDoesNotCross(
     return result;
 }
 
+struct BridgeCandidate {
+    VertexIndex hole = 0;
+    VertexIndex landing = 0;
+    std::size_t holeLocal = 0;
+    std::size_t landingWalkPos = 0;
+    double score = 0.0;
+};
+
+bool bridgeCandidateLess(const BridgeCandidate& a, const BridgeCandidate& b) {
+    if (a.score != b.score) return a.score < b.score;
+    if (a.hole != b.hole) return a.hole < b.hole;
+    if (a.landing != b.landing) return a.landing < b.landing;
+    if (a.holeLocal != b.holeLocal) return a.holeLocal < b.holeLocal;
+    return a.landingWalkPos < b.landingWalkPos;
+}
+
+// Exact in-domain bridges from a hole onto the current cut walk (original
+// outer plus already-inserted hole seams). Landing at a specific walk
+// position keeps duplicate bridge endpoints unambiguous.
+bool collectWalkBridgeCandidates(
+    const std::vector<PlanarTrimVertex>& vertices,
+    const std::vector<VertexIndex>& walk,
+    const std::vector<VertexIndex>& holeLoop, const std::set<Edge>& constraints,
+    const std::vector<Edge>& bridges, const GeometricPredicates& predicates,
+    PlanarCdtResult& result, StableId face,
+    std::vector<BridgeCandidate>& out) {
+    out.clear();
+    if (walk.size() < 3 || holeLoop.empty()) return true;
+    for (std::size_t holeLocal = 0; holeLocal < holeLoop.size(); ++holeLocal) {
+        const VertexIndex hole = holeLoop[holeLocal];
+        for (std::size_t walkPos = 0; walkPos < walk.size(); ++walkPos) {
+            const VertexIndex landing = walk[walkPos];
+            if (landing == hole) continue;
+            const VertexIndex prev =
+                walk[(walkPos + walk.size() - 1) % walk.size()];
+            const VertexIndex next = walk[(walkPos + 1) % walk.size()];
+            if (prev == landing || next == landing) continue;
+
+            const PredicateResult<bool> walkCone = insideCcwCone(
+                vertices, landing, prev, next, hole, predicates);
+            if (!walkCone) {
+                setFailure(result, "cdt.predicate_failure",
+                           walkCone.failure ? walkCone.failure->message
+                                            : "walk bridge cone predicate failed",
+                           {face});
+                return false;
+            }
+            if (!*walkCone.value) continue;
+
+            // Hole is stored clockwise; swap neighbours for a CCW interior
+            // cone. A domain bridge must leave that cone.
+            const PredicateResult<bool> holeInteriorCone = insideCcwCone(
+                vertices, hole, holeLoop[(holeLocal + 1) % holeLoop.size()],
+                holeLoop[(holeLocal + holeLoop.size() - 1) % holeLoop.size()],
+                landing, predicates);
+            if (!holeInteriorCone) {
+                setFailure(
+                    result, "cdt.predicate_failure",
+                    holeInteriorCone.failure ? holeInteriorCone.failure->message
+                                             : "hole bridge cone predicate failed",
+                    {face});
+                return false;
+            }
+            if (*holeInteriorCone.value) continue;
+
+            const PredicateResult<bool> visible = bridgeDoesNotCross(
+                vertices, hole, landing, constraints, bridges, predicates);
+            if (!visible) {
+                setFailure(result, "cdt.predicate_failure",
+                           visible.failure ? visible.failure->message
+                                           : "bridge visibility predicate failed",
+                           {face});
+                return false;
+            }
+            if (!*visible.value) continue;
+
+            const PredicatePoint2 h = point(vertices, hole);
+            const PredicatePoint2 o = point(vertices, landing);
+            const double du = h[0] - o[0];
+            const double dv = h[1] - o[1];
+            out.push_back(BridgeCandidate{hole, landing, holeLocal, walkPos,
+                                          du * du + dv * dv});
+        }
+    }
+    std::sort(out.begin(), out.end(), bridgeCandidateLess);
+    return true;
+}
+
 std::optional<std::vector<VertexIndex>> buildBoundaryWalk(
     const std::vector<PlanarTrimVertex>& vertices,
     const std::vector<std::vector<VertexIndex>>& loops,
     const std::set<Edge>& constraints,
     const GeometricPredicates& predicates, PlanarCdtResult& result,
-    StableId face, bool allowCurvedUv) {
+    StableId face, bool allowCurvedUv,
+    const std::map<std::size_t, std::size_t>* holeBridgeRank = nullptr,
+    std::vector<std::size_t>* candidateCounts = nullptr) {
     std::vector<VertexIndex> walk = loops.front();
     std::vector<Edge> bridges;
-    const std::vector<VertexIndex>& outerLoop = loops.front();
+    if (candidateCounts) candidateCounts->assign(loops.size(), 0);
 
     for (std::size_t loopIndex = 1; loopIndex < loops.size(); ++loopIndex) {
         const std::vector<VertexIndex>& holeLoop = loops[loopIndex];
-        const auto holePosition = std::min_element(
-            holeLoop.begin(), holeLoop.end(),
-            [&](VertexIndex left, VertexIndex right) {
-                const PredicatePoint2 a = point(vertices, left);
-                const PredicatePoint2 b = point(vertices, right);
-                if (a[0] != b[0]) return a[0] < b[0];
-                if (a[1] != b[1]) return a[1] < b[1];
-                return left < right;
-            });
-        const std::size_t holeLocal = static_cast<std::size_t>(
-            holePosition - holeLoop.begin());
-        const VertexIndex hole = *holePosition;
-
-        std::optional<VertexIndex> selectedOuter;
-        for (std::size_t outerLocal = 0; outerLocal < outerLoop.size();
-             ++outerLocal) {
-            const VertexIndex outer = outerLoop[outerLocal];
-            const PredicateResult<bool> outerCone = insideCcwCone(
-                vertices, outer,
-                outerLoop[(outerLocal + outerLoop.size() - 1) %
-                          outerLoop.size()],
-                outerLoop[(outerLocal + 1) % outerLoop.size()], hole,
-                predicates);
-            if (!outerCone) {
-                setFailure(result, "cdt.predicate_failure",
-                           outerCone.failure
-                               ? outerCone.failure->message
-                               : "outer bridge cone predicate failed",
-                           {face});
-                return std::nullopt;
+        std::vector<BridgeCandidate> candidates;
+        const bool exactCollectOk = collectWalkBridgeCandidates(
+            vertices, walk, holeLoop, constraints, bridges, predicates,
+            result, face, candidates);
+        if (!exactCollectOk) {
+            // Hard planes: predicate failure is fatal. Soft/curved UV
+            // (HardSurfaceFloor plane residual): clear and fall through to
+            // nearest-UV bridge so self-intersecting outers still mesh.
+            if (!allowCurvedUv) return std::nullopt;
+            result.failure.reset();
+            for (auto& evidence : result.validation) {
+                evidence.failed = 0;
             }
-            if (!*outerCone.value) continue;
-
-            // The stored hole is clockwise. Swapping its previous/next
-            // neighbours presents its interior as a counter-clockwise cone;
-            // a valid domain bridge must leave that cone.
-            const PredicateResult<bool> holeInteriorCone = insideCcwCone(
-                vertices, hole,
-                holeLoop[(holeLocal + 1) % holeLoop.size()],
-                holeLoop[(holeLocal + holeLoop.size() - 1) %
-                         holeLoop.size()],
-                outer, predicates);
-            if (!holeInteriorCone) {
-                setFailure(result, "cdt.predicate_failure",
-                           holeInteriorCone.failure
-                               ? holeInteriorCone.failure->message
-                               : "hole bridge cone predicate failed",
-                           {face});
-                return std::nullopt;
-            }
-            if (*holeInteriorCone.value) continue;
-
-            const PredicateResult<bool> visible = bridgeDoesNotCross(
-                vertices, hole, outer, constraints, bridges, predicates);
-            if (!visible) {
-                setFailure(result, "cdt.predicate_failure",
-                           visible.failure
-                               ? visible.failure->message
-                               : "bridge visibility predicate failed",
-                           {face});
-                return std::nullopt;
-            }
-            if (!*visible.value) continue;
-
-            bool select = !selectedOuter;
-            if (selectedOuter) {
-                const PredicateResult<ExactSign> distanceOrder =
-                    predicates.compareSquaredDistance(
-                        point(vertices, hole), point(vertices, outer),
-                        point(vertices, *selectedOuter));
-                if (!distanceOrder) {
-                    setFailure(result, "cdt.predicate_failure",
-                               distanceOrder.failure
-                                   ? distanceOrder.failure->message
-                                   : "bridge distance predicate failed",
-                               {face});
-                    return std::nullopt;
-                }
-                select = *distanceOrder.value == ExactSign::Negative ||
-                    (*distanceOrder.value == ExactSign::Zero &&
-                     outer < *selectedOuter);
-            }
-            if (select) {
-                selectedOuter = outer;
-            }
+            candidates.clear();
         }
-        if (!selectedOuter && allowCurvedUv) {
-            // Curved UV annulus: pick the nearest outer UV station when the
-            // exact cone/visibility predicates reject every candidate.
+        if (candidateCounts) (*candidateCounts)[loopIndex] = candidates.size();
+
+        std::optional<BridgeCandidate> selected;
+        if (!candidates.empty()) {
+            std::size_t rank = 0;
+            if (holeBridgeRank) {
+                const auto found = holeBridgeRank->find(loopIndex);
+                if (found != holeBridgeRank->end()) rank = found->second;
+            }
+            if (rank >= candidates.size()) rank = 0;
+            selected = candidates[rank];
+        }
+
+        if (!selected && allowCurvedUv) {
+            // Curved UV annulus: nearest walk UV station when exact
+            // cone/visibility predicates reject every candidate.
             double best = std::numeric_limits<double>::infinity();
-            for (const VertexIndex outer : outerLoop) {
-                const PredicatePoint2 a = point(vertices, hole);
-                const PredicatePoint2 b = point(vertices, outer);
-                const double du = a[0] - b[0];
-                const double dv = a[1] - b[1];
-                const double score = du * du + dv * dv;
-                if (score < best) {
-                    best = score;
-                    selectedOuter = outer;
+            BridgeCandidate soft;
+            bool have = false;
+            for (std::size_t holeLocal = 0; holeLocal < holeLoop.size();
+                 ++holeLocal) {
+                const VertexIndex hole = holeLoop[holeLocal];
+                for (std::size_t walkPos = 0; walkPos < walk.size();
+                     ++walkPos) {
+                    const VertexIndex landing = walk[walkPos];
+                    if (landing == hole) continue;
+                    const PredicatePoint2 a = point(vertices, hole);
+                    const PredicatePoint2 b = point(vertices, landing);
+                    const double du = a[0] - b[0];
+                    const double dv = a[1] - b[1];
+                    const double score = du * du + dv * dv;
+                    if (!have || score < best ||
+                        (score == best &&
+                         (hole < soft.hole ||
+                          (hole == soft.hole &&
+                           (landing < soft.landing ||
+                            (landing == soft.landing &&
+                             walkPos < soft.landingWalkPos)))))) {
+                        best = score;
+                        soft = BridgeCandidate{hole, landing, holeLocal,
+                                               walkPos, score};
+                        have = true;
+                    }
                 }
             }
+            if (have) selected = soft;
         }
-        if (!selectedOuter) {
+        if (!selected) {
             setFailure(result, "cdt.hole_bridge_not_found",
                        "no exact non-crossing in-domain bridge connects a hole to the outer loop",
                        {face});
             return std::nullopt;
         }
 
-        const auto outerInWalk =
-            std::find(walk.begin(), walk.end(), *selectedOuter);
-        if (outerInWalk == walk.end()) {
+        const BridgeCandidate& bridge = *selected;
+        if (bridge.landingWalkPos >= walk.size() ||
+            walk[bridge.landingWalkPos] != bridge.landing) {
             setFailure(result, "cdt.hole_bridge_internal_failure",
                        "selected bridge endpoint is absent from the cut walk",
                        {face});
@@ -436,17 +486,93 @@ std::optional<std::vector<VertexIndex>> buildBoundaryWalk(
         }
         std::vector<VertexIndex> insertion;
         insertion.reserve(holeLoop.size() + 2);
-        insertion.push_back(hole);
+        insertion.push_back(bridge.hole);
         for (std::size_t offset = 1; offset < holeLoop.size(); ++offset) {
             insertion.push_back(
-                holeLoop[(holeLocal + offset) % holeLoop.size()]);
+                holeLoop[(bridge.holeLocal + offset) % holeLoop.size()]);
         }
-        insertion.push_back(hole);
-        insertion.push_back(*selectedOuter);
-        walk.insert(outerInWalk + 1, insertion.begin(), insertion.end());
-        bridges.push_back(edge(hole, *selectedOuter));
+        insertion.push_back(bridge.hole);
+        insertion.push_back(bridge.landing);
+        walk.insert(walk.begin() +
+                        static_cast<std::ptrdiff_t>(bridge.landingWalkPos + 1),
+                    insertion.begin(), insertion.end());
+        bridges.push_back(edge(bridge.hole, bridge.landing));
     }
     return walk;
+}
+
+// G1 perforated recovery: default shortest walk-landing bridges, then try
+// alternate exact bridges per hole when ear clipping stalls. No fan.
+std::optional<std::vector<Triangle>> triangulateWithBridgeRecovery(
+    const std::vector<PlanarTrimVertex>& vertices,
+    const std::vector<std::vector<VertexIndex>>& loops,
+    const std::set<Edge>& constraints, const GeometricPredicates& predicates,
+    PlanarCdtResult& result, StableId face, bool allowCurvedUv) {
+    auto attempt = [&](const std::map<std::size_t, std::size_t>* ranks,
+                       std::vector<std::size_t>* counts)
+        -> std::optional<std::vector<Triangle>> {
+        result.failure.reset();
+        for (auto& evidence : result.validation) {
+            evidence.failed = 0;
+        }
+        const std::optional<std::vector<VertexIndex>> walk = buildBoundaryWalk(
+            vertices, loops, constraints, predicates, result, face,
+            allowCurvedUv, ranks, counts);
+        if (!walk) return std::nullopt;
+        return earTriangulation(vertices, *walk, predicates, result, face);
+    };
+
+    std::vector<std::size_t> candidateCounts;
+    std::optional<std::vector<Triangle>> tris =
+        attempt(nullptr, &candidateCounts);
+    if (tris) return tris;
+    if (allowCurvedUv || loops.size() <= 1) return std::nullopt;
+
+    // Rank 0 already tried. Perturb one hole at a time through its exact
+    // candidate list (deterministic, bounded).
+    const std::optional<PlanarCdtFailure> primaryFailure = result.failure;
+    for (std::size_t holeIndex = 1; holeIndex < loops.size(); ++holeIndex) {
+        const std::size_t count =
+            holeIndex < candidateCounts.size() ? candidateCounts[holeIndex]
+                                               : 0;
+        for (std::size_t rank = 1; rank < count; ++rank) {
+            std::map<std::size_t, std::size_t> ranks;
+            ranks[holeIndex] = rank;
+            tris = attempt(&ranks, nullptr);
+            if (tris) return tris;
+        }
+    }
+
+    // Pairwise: two holes off their shortest bridges (still bounded).
+    constexpr std::size_t kMaxPairRanks = 4;
+    for (std::size_t i = 1; i < loops.size(); ++i) {
+        const std::size_t countI =
+            i < candidateCounts.size() ? candidateCounts[i] : 0;
+        for (std::size_t j = i + 1; j < loops.size(); ++j) {
+            const std::size_t countJ =
+                j < candidateCounts.size() ? candidateCounts[j] : 0;
+            for (std::size_t ri = 0;
+                 ri < countI && ri < kMaxPairRanks; ++ri) {
+                for (std::size_t rj = 0;
+                     rj < countJ && rj < kMaxPairRanks; ++rj) {
+                    if (ri == 0 && rj == 0) continue;
+                    std::map<std::size_t, std::size_t> ranks;
+                    ranks[i] = ri;
+                    ranks[j] = rj;
+                    tris = attempt(&ranks, nullptr);
+                    if (tris) return tris;
+                }
+            }
+        }
+    }
+
+    if (!result.failure && primaryFailure) result.failure = primaryFailure;
+    if (!result.failure) {
+        setFailure(result, "cdt.ear_clipping_stalled",
+                   "no exact positive ear exists for the perforated planar walk",
+                   {face});
+    }
+    return std::nullopt;
 }
 
 bool applyLawsonFlips(std::vector<Triangle>& triangles,
@@ -822,20 +948,147 @@ public:
                 validatedLoop.nestingDepth =
                     loop.declaredRole == PlanarTrimLoopRole::Outer ? 0 : 1;
                 validatedLoop.vertices = loop.vertices;
-                // Unwrap periodic U so the polygon does not cut across the
-                // seam in the CDT plane (sphere/cylinder caps).
+                // Unwrap periodic U/V so the polygon does not cut across the
+                // seam in the CDT plane (sphere/cylinder/freeform bands).
+                // Authoritative periods come from face classification via
+                // PlanarTrimDomain::curvedUvUPeriod / curvedUvVPeriod
+                // (bspline periods are often 1, not 2π). Default 2π preserves
+                // analytic charts that omit the fields.
                 if (validatedLoop.vertices.size() >= 2) {
-                    // Infer a period from the max U span; prefer 2π.
                     constexpr double kTwoPi = 6.28318530717958647692;
-                    double period = kTwoPi;
+                    // Authoritative periods from classification (bspline often
+                    // 1, not 2π). Default 2π preserves analytic charts that
+                    // omit the fields.
+                    // Tiny OCCT V periods (freeform_186 ≈0.016): enable V
+                    // unwrap with seam-cut keep + dual-image placement. Plain
+                    // nearest-unwrap collapses the full-period cut and leaves
+                    // both seam copies on one sheet (zero-area digon).
+                    constexpr double kMinUUnwrapPeriod = 0.25;
+                    const bool unwrapU =
+                        domain.curvedUvUPeriod &&
+                        *domain.curvedUvUPeriod >= kMinUUnwrapPeriod;
+                    const bool unwrapV =
+                        domain.curvedUvVPeriod && *domain.curvedUvVPeriod > 0.0;
+                    const bool legacyU =
+                        !unwrapU && !unwrapV &&
+                        !domain.curvedUvVPeriod.has_value();
+                    const double uPeriod = unwrapU ? *domain.curvedUvUPeriod
+                                                   : kTwoPi;
+                    const double vPeriod = unwrapV ? *domain.curvedUvVPeriod
+                                                   : kTwoPi;
+                    auto unwrapCoord = [](double& value, double reference,
+                                          double period, bool keepSeamCut) {
+                        if (!(period > 0.0)) return;
+                        if (keepSeamCut) {
+                            const double absDelta =
+                                std::abs(value - reference);
+                            if (std::abs(absDelta - period) <=
+                                0.005 * period) {
+                                return;
+                            }
+                        }
+                        while (value - reference > 0.5 * period) {
+                            value -= period;
+                        }
+                        while (reference - value > 0.5 * period) {
+                            value += period;
+                        }
+                    };
                     for (std::size_t i = 1; i < validatedLoop.vertices.size();
                          ++i) {
-                        double& u = validatedLoop.vertices[i].uv[0];
-                        const double prev =
-                            validatedLoop.vertices[i - 1].uv[0];
-                        while (u - prev > 0.5 * period) u -= period;
-                        while (prev - u > 0.5 * period) u += period;
+                        if (unwrapU || legacyU) {
+                            unwrapCoord(validatedLoop.vertices[i].uv[0],
+                                        validatedLoop.vertices[i - 1].uv[0],
+                                        uPeriod, false);
+                        }
+                        if (unwrapV) {
+                            unwrapCoord(validatedLoop.vertices[i].uv[1],
+                                        validatedLoop.vertices[i - 1].uv[1],
+                                        vPeriod, true);
+                        }
                     }
+                    // Dual seam images share a canonical vertex. On a healthy
+                    // chart (freeform_137) consecutive unwrap already places
+                    // them one period apart. On tiny-V freeform_186 the walk
+                    // returns to the same sheet via a digon spur — force the
+                    // second image onto the adjacent sheet and re-chain, then
+                    // collapse digon interiors onto the cut (keep sample
+                    // provenance; do not erase boundary vertices).
+                    auto placeDualImages = [&](int axis, double period) {
+                        if (!(period > 0.0)) return;
+                        const int ortho = 1 - axis;
+                        std::vector<PlanarTrimVertex>& verts =
+                            validatedLoop.vertices;
+                        for (std::size_t second = 1; second < verts.size();
+                             ++second) {
+                            const std::uint64_t cv =
+                                verts[second].canonicalVertexIndex;
+                            if (cv == InvalidCanonicalVertexIndex) continue;
+                            std::size_t first = verts.size();
+                            for (std::size_t j = 0; j < second; ++j) {
+                                if (verts[j].canonicalVertexIndex == cv) {
+                                    first = j;
+                                    break;
+                                }
+                            }
+                            if (first >= second) continue;
+                            const double dAxis = std::abs(
+                                verts[second].uv[static_cast<std::size_t>(
+                                    axis)] -
+                                verts[first].uv[static_cast<std::size_t>(
+                                    axis)]);
+                            if (dAxis >= 0.5 * period) continue;
+                            double orthoSpan = 0.0;
+                            double axisMin =
+                                verts[first].uv[static_cast<std::size_t>(axis)];
+                            double axisMax = axisMin;
+                            const double axis0 = axisMin;
+                            const double ortho0 =
+                                verts[first]
+                                    .uv[static_cast<std::size_t>(ortho)];
+                            for (std::size_t k = first; k <= second; ++k) {
+                                const double a =
+                                    verts[k].uv[static_cast<std::size_t>(axis)];
+                                const double o =
+                                    verts[k].uv[static_cast<std::size_t>(
+                                        ortho)];
+                                orthoSpan =
+                                    std::max(orthoSpan, std::abs(o - ortho0));
+                                axisMin = std::min(axisMin, a);
+                                axisMax = std::max(axisMax, a);
+                            }
+                            const double orthoTol =
+                                std::max(1e-6, 1e-3 * (std::abs(ortho0) + 1.0));
+                            if (orthoSpan > orthoTol) continue;
+                            const double shift =
+                                (axisMax - axis0) >= (axis0 - axisMin)
+                                    ? period
+                                    : -period;
+                            verts[second].uv[static_cast<std::size_t>(axis)] =
+                                axis0 + shift;
+                            // Digon spur walks out-and-back on one sheet. Reverse
+                            // the interior so the cut advances monotonically
+                            // from the first image to the second (same UVs /
+                            // 3D samples — no off-surface relocate).
+                            if (second > first + 1) {
+                                std::reverse(
+                                    verts.begin() +
+                                        static_cast<std::ptrdiff_t>(first + 1),
+                                    verts.begin() +
+                                        static_cast<std::ptrdiff_t>(second));
+                            }
+                            for (std::size_t i = second + 1; i < verts.size();
+                                 ++i) {
+                                unwrapCoord(
+                                    verts[i].uv[static_cast<std::size_t>(axis)],
+                                    verts[i - 1]
+                                        .uv[static_cast<std::size_t>(axis)],
+                                    period, false);
+                            }
+                        }
+                    };
+                    if (unwrapV) placeDualImages(1, vPeriod);
+                    if (unwrapU || legacyU) placeDualImages(0, uPeriod);
                 }
                 // Orient for CDT convention: outer CCW, holes CW.
                 double area2 = 0.0;
@@ -850,7 +1103,8 @@ public:
                 }
                 const bool ccw = area2 > 0.0;
                 const bool wantCcw =
-                    loop.declaredRole == PlanarTrimLoopRole::Outer;
+                    (loop.declaredRole == PlanarTrimLoopRole::Outer) !=
+                    domain.invertCurvedUvOrientation;
                 if (ccw != wantCcw) {
                     std::reverse(validatedLoop.vertices.begin(),
                                  validatedLoop.vertices.end());
@@ -951,10 +1205,17 @@ public:
                 }
             }
             if (!owner) {
-                setFailure(result, "cdt.hole_outer_unassigned",
-                           "a hole loop is not contained in any outer loop",
-                           {domain.face, hole->wire});
-                return result;
+                // Soft/curved UV: self-intersecting outers can make winding
+                // containment fail. Park the hole on outer 0 so CDT can still
+                // emit a residual mesh (HardSurfaceFloor). Hard planes refuse.
+                if (domain.allowCurvedUv && !outers.empty()) {
+                    owner = 0;
+                } else {
+                    setFailure(result, "cdt.hole_outer_unassigned",
+                               "a hole loop is not contained in any outer loop",
+                               {domain.face, hole->wire});
+                    return result;
+                }
             }
             components[*owner].push_back(hole);
         }
@@ -974,6 +1235,7 @@ public:
                     PlanarTrimLoop raw;
                     raw.wire = loop->wire;
                     raw.declaredRole = loop->role;
+                    raw.closed = true;  // validated loops are closed wires
                     raw.vertices = loop->vertices;
                     part.loops.push_back(std::move(raw));
                 }
@@ -1058,21 +1320,45 @@ public:
             boundaryLoops.push_back(std::move(indices));
         }
 
-        const std::optional<std::vector<VertexIndex>> boundaryWalk =
-            buildBoundaryWalk(vertices, boundaryLoops, constraints,
-                              *predicates_, result, domain.face,
-                              domain.allowCurvedUv);
-        if (!boundaryWalk) return result;
         std::optional<std::vector<Triangle>> initial =
-            earTriangulation(vertices, *boundaryWalk, *predicates_, result,
-                             domain.face);
+            triangulateWithBridgeRecovery(vertices, boundaryLoops, constraints,
+                                          *predicates_, result, domain.face,
+                                          domain.allowCurvedUv);
         bool usedFanFallback = false;
         if (!initial) {
-            // Last-resort boundary fan when ear clipping stalls.
+            // Planes with holes: do not fan. Fan skips zero-area wedges and
+            // then fails cdt.triangle_count_mismatch (V+2H-2), hiding the
+            // real ear stall (MP9 plane 3605 multiply-perforated). Bridge
+            // recovery above already exhausted exact alternate cuts.
+            if (!domain.allowCurvedUv && boundaryLoops.size() > 1) {
+                if (!result.failure) {
+                    setFailure(result, "cdt.ear_clipping_stalled",
+                               "no exact positive ear exists for the perforated planar walk",
+                               {domain.face});
+                }
+                return result;
+            }
+            // Last-resort boundary fan when ear clipping stalls (simple
+            // plane disks or curved UV walks only).
             result.failure.reset();
             for (auto& evidence : result.validation) {
                 evidence.failed = 0;
             }
+            std::optional<std::vector<VertexIndex>> boundaryWalk =
+                buildBoundaryWalk(vertices, boundaryLoops, constraints,
+                                  *predicates_, result, domain.face,
+                                  domain.allowCurvedUv);
+            // Soft residual: if hole bridging still fails (self-intersecting
+            // outer), fan the outer walk alone and drop holes.
+            if (!boundaryWalk && domain.allowCurvedUv &&
+                !boundaryLoops.empty()) {
+                result.failure.reset();
+                for (auto& evidence : result.validation) {
+                    evidence.failed = 0;
+                }
+                boundaryWalk = boundaryLoops.front();
+            }
+            if (!boundaryWalk) return result;
             initial = fanTriangulation(vertices, *boundaryWalk, *predicates_,
                                        result, domain.face);
             usedFanFallback = initial.has_value();
@@ -1086,19 +1372,11 @@ public:
         }
         if (!initial) return result;
         std::vector<Triangle> triangles = *initial;
-        // Skip Lawson when curved or fan-backed; industrial loops are not
-        // Delaunay-safe after unwrap / padding.
-        if (!domain.allowCurvedUv && !usedFanFallback &&
-            !applyLawsonFlips(triangles, vertices, constraints, *predicates_,
-                             result, domain.face)) {
-            // Soft: accept the ear mesh without flips.
-            result.failure.reset();
-            for (auto& evidence : result.validation) {
-                evidence.failed = 0;
-            }
-        }
+        // Curved UV: fix manifold winding before Lawson so Delaunay flips
+        // are not undone (G3: prefer validateMesh-on when ears succeed).
         if (domain.allowCurvedUv && triangles.size() > 1) {
-            // Enforce manifold opposite winding on internal edges.
+            // Copy adjacency lists before mutation: rebuild() clears the map
+            // and must not invalidate an active range-for over edgeTris[...].
             struct DirectedUse {
                 std::size_t triangle = 0;
                 VertexIndex from = 0;
@@ -1126,7 +1404,9 @@ public:
                 for (std::size_t e = 0; e < 3; ++e) {
                     const VertexIndex a = t[e];
                     const VertexIndex b = t[(e + 1) % 3];
-                    for (const DirectedUse& use : edgeTris[edge(a, b)]) {
+                    const std::vector<DirectedUse> uses = edgeTris[edge(a, b)];
+                    bool rebuilt = false;
+                    for (const DirectedUse& use : uses) {
                         if (use.triangle == ti || visited[use.triangle]) {
                             continue;
                         }
@@ -1136,10 +1416,23 @@ public:
                         if (!(use.from == b && use.to == a)) {
                             std::swap(triangles[use.triangle][1],
                                       triangles[use.triangle][2]);
-                            rebuild();
+                            rebuilt = true;
                         }
                     }
+                    if (rebuilt) rebuild();
                 }
+            }
+        }
+        // Fan-backed meshes skip Lawson. Ear meshes (plane and curved UV)
+        // attempt Lawson so validateMesh can stay hard when Delaunay holds;
+        // Lawson failure is soft — keep the ear mesh and let validateMesh
+        // decide (curved may still relax after unwrap).
+        if (!usedFanFallback &&
+            !applyLawsonFlips(triangles, vertices, constraints, *predicates_,
+                             result, domain.face)) {
+            result.failure.reset();
+            for (auto& evidence : result.validation) {
+                evidence.failed = 0;
             }
         }
         (void)usedFanFallback;
@@ -1157,13 +1450,23 @@ public:
                  std::nullopt});
         }
 
-        // Curved UV trims (esp. Plasticity sphere seams) can violate planar
-        // winding/Delaunay proofs after U-unwrap; structural coverage is
-        // enough for the certified surface lift.
-        if (!domain.allowCurvedUv && !usedFanFallback) {
-            if (!validateMesh(mesh, *predicates_, result)) return result;
-        } else {
+        // Planes (allowCurvedUv=false): always validateMesh; never relax.
+        // Curved UV ears: prefer validateMesh-on; only relax when planar CDT
+        // proofs fail after period unwrap (G3 residual / G1 ownership).
+        // Fan fallback on curved UV keeps relax; fan on planes still validates.
+        if (!usedFanFallback) {
+            if (!validateMesh(mesh, *predicates_, result)) {
+                if (!domain.allowCurvedUv) return result;
+                result.failure.reset();
+                for (auto& evidence : result.validation) {
+                    evidence.failed = 0;
+                }
+                mesh.relaxGeometryChecks = true;
+            }
+        } else if (domain.allowCurvedUv) {
             mesh.relaxGeometryChecks = true;
+        } else if (!validateMesh(mesh, *predicates_, result)) {
+            return result;
         }
         result.value = std::move(mesh);
         return result;
@@ -1183,3 +1486,4 @@ makeExactLawsonReferencePlanarCdtBackend(
 }
 
 }  // namespace weft
+

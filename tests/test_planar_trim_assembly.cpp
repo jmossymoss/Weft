@@ -2,6 +2,7 @@
 #include "weft/model.hpp"
 #include "weft/planar_cdt.hpp"
 #include "weft/planar_trim_assembly.hpp"
+#include "weft/secure_meshing.hpp"
 
 #include "test_temp_path.hpp"
 
@@ -50,9 +51,22 @@ struct PreparedFixture {
     weft::CanonicalBoundarySet boundaries;
 };
 
-std::optional<PreparedFixture> prepare(const std::string& fixture,
-                                       const std::filesystem::path& path) {
-    weft::writeStep(weft::makeFixture(fixture), path.string());
+std::optional<std::filesystem::path> mp9ExtractPath(const char* name) {
+    const std::filesystem::path candidates[] = {
+        std::filesystem::path("tests/fixtures/mp9_extracts") / name,
+        std::filesystem::path("../tests/fixtures/mp9_extracts") / name,
+        std::filesystem::path("../../tests/fixtures/mp9_extracts") / name,
+        std::filesystem::path("../../../tests/fixtures/mp9_extracts") / name,
+        std::filesystem::path("fixtures/mp9_extracts") / name,
+    };
+    for (const auto& candidate : candidates) {
+        if (std::filesystem::exists(candidate)) return candidate;
+    }
+    return std::nullopt;
+}
+
+std::optional<PreparedFixture> preparePath(
+    const std::filesystem::path& path) {
     PreparedFixture prepared;
     prepared.imported = weft::importStepSecure(path.string());
     prepared.reconnaissance = weft::reconnoitre(prepared.imported);
@@ -87,6 +101,12 @@ std::optional<PreparedFixture> prepare(const std::string& fixture,
     }
     prepared.boundaries = *built.value;
     return prepared;
+}
+
+std::optional<PreparedFixture> prepare(const std::string& fixture,
+                                       const std::filesystem::path& path) {
+    weft::writeStep(weft::makeFixture(fixture), path.string());
+    return preparePath(path);
 }
 
 bool completeAssemblyEvidence(const weft::PlanarTrimAssemblyResult& result) {
@@ -240,6 +260,112 @@ weft::CanonicalBoundary* mutableBoundary(
     return found == set.boundaries.end() ? nullptr : &*found;
 }
 
+weft::SecureMeshingConfiguration planeMatrixSettings() {
+    weft::SecureMeshingConfiguration settings;
+    settings.omitDeferredResiduals = false;
+    settings.sampling.chordTolerance = 0.1;
+    settings.sampling.normalAngleToleranceRadians =
+        20.0 * 3.141592653589793 / 180.0;
+    settings.revolutionRadialSegments = 32;
+    settings.sampling.minimumClosedCurveSegments = 8;
+    return settings;
+}
+
+// Fail-closed product mesh of one plane extract. Returns triangle count on
+// success, 0 on failure. Plane allowCurvedUv=false is enforced in
+// assemblePlanarTrimDomain (family plane) and asserted separately via
+// testPlaneMatrixAllowCurvedUvClosed.
+std::size_t meshPlaneExtractFailClosed(const char* extractName,
+                                       const char* marker) {
+    const auto path = mp9ExtractPath(extractName);
+    CHECK(path.has_value());
+    if (!path) {
+        std::printf("FAIL %s missing tests/fixtures/mp9_extracts/%s\n",
+                    marker, extractName);
+        return 0;
+    }
+    const weft::ImportedModel imported = weft::importStepSecure(path->string());
+    const weft::SecureMeshingResult meshed =
+        weft::generateSecureMesh(imported, planeMatrixSettings());
+    if (!meshed) {
+        std::printf("%s extract=%s refuse code=%s\n", marker, extractName,
+                    meshed.failure ? meshed.failure->code.c_str() : "-");
+    }
+    CHECK(meshed);
+    CHECK(meshed.value && !meshed.value->certified.triangles.empty());
+    const std::size_t tris =
+        meshed.value ? meshed.value->certified.triangles.size() : 0U;
+    std::printf("%s extract=%s tris=%zu\n", marker, extractName, tris);
+    return tris;
+}
+
+void testPlaneMatrixAllowCurvedUvClosed() {
+    // Product plane path must never arm allowCurvedUv. Proven on a simple
+    // multi-loop plane fixture (hole) where preparePath intervals match CDT.
+    TemporaryStep step("weft_plane_matrix_curved_uv");
+    const auto prepared = prepare("hole", step.path());
+    CHECK(prepared.has_value());
+    if (!prepared) return;
+    std::size_t planeFaces = 0;
+    for (weft::StableId face : planarFaces(prepared->reconnaissance)) {
+        ++planeFaces;
+        const weft::PlanarTrimAssemblyResult assembled =
+            weft::assemblePlanarTrimDomain(
+                prepared->imported, prepared->reconnaissance,
+                prepared->boundaries, face);
+        CHECK(assembled);
+        if (!assembled.value) continue;
+        CHECK(!assembled.value->allowCurvedUv);
+        if (assembled.value->allowCurvedUv) {
+            std::printf("FAIL WEFT_PLANE_MATRIX allowCurvedUv=1 on hole plane\n");
+        }
+    }
+    CHECK(planeFaces > 0);
+    std::printf("WEFT_PLANE_MATRIX allowCurvedUv=0 plane_faces=%zu\n",
+                planeFaces);
+}
+
+void testG1Plane2732DigonRecovery() {
+    // MP9 face 2732: two-edge digon with parallel-offset p-curves. Certified
+    // recovery keeps distinct UV corners at shared 3D vertices (no pad-fan /
+    // allowCurvedUv). Product mesh path must certify.
+    meshPlaneExtractFailClosed("plane_2732.step", "WEFT_G1_PLANE2732");
+}
+
+void testG1Plane3605PerforatedRecovery() {
+    // MP9 face 3605: multiply-perforated filleted-slot plane (1 outer + 6
+    // holes). Certified recovery uses walk-landing bridges + alternate
+    // exact cuts when the shortest bridged walk stalls ears. No fan /
+    // allowCurvedUv soften.
+    meshPlaneExtractFailClosed("plane_3605.step", "WEFT_G1_PLANE3605");
+}
+
+void testG1Plane3821EllipseDensifyRecovery() {
+    // MP9 face 3821: concave plane (4 lines + 2 eccentric ellipses). Sparse
+    // sagitta chords self-intersected in UV; plane-owned ellipse densify
+    // (≥48 intervals) keeps the loop simple. No allowCurvedUv / pad-fan.
+    meshPlaneExtractFailClosed("plane_3821.step", "WEFT_G1_PLANE3821");
+}
+
+void testPlaneMatrix() {
+    // Wave A lock: every committed plane_* extract hard-certifies fail-closed
+    // with allowCurvedUv=false. Subclasses: simple/multi-outer (plane_multi),
+    // digon (2732), perforated/filleted-slot (3605), ellipse densify (3821),
+    // self-intersect candidate recovery (1793).
+    const char* marker = "WEFT_PLANE_MATRIX";
+    testPlaneMatrixAllowCurvedUvClosed();
+    const char* extracts[] = {"plane_multi.step", "plane_2732.step",
+                              "plane_3605.step", "plane_3821.step",
+                              "plane_1793.step"};
+    std::size_t locked = 0;
+    for (const char* name : extracts) {
+        if (meshPlaneExtractFailClosed(name, marker) > 0) ++locked;
+    }
+    CHECK(locked == 5);
+    std::printf("%s locked=%zu/5 fail_closed=1 allowCurvedUv=0\n", marker,
+                locked);
+}
+
 void testTamperedJunctionUvRefuses() {
     TemporaryStep step("weft_trim_assembly_tamper");
     const auto prepared = prepare("box", step.path());
@@ -296,6 +422,10 @@ int main() {
             testBoxFaces(*cdt);
             testCylinderCapsAndWallRefusal(*cdt);
             testPerforatedPlanarFace(*cdt);
+            testPlaneMatrix();
+            testG1Plane2732DigonRecovery();
+            testG1Plane3605PerforatedRecovery();
+            testG1Plane3821EllipseDensifyRecovery();
             testTamperedJunctionUvRefuses();
         }
     } catch (const std::exception& error) {

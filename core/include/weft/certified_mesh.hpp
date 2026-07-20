@@ -130,6 +130,15 @@ MeshingResult makeCertifiedFloorMeshingResult(
 struct CertifiedMeshAssemblyConfiguration {
     bool requireClosedManifold = true;
     double maximumVertexSurfaceDiscrepancy = 1e-3;
+    // When windingsMatchOrientedFaceNormal, split-rail corners that share a UV
+    // station but disagree on canonical vertex id must still agree in 3D.
+    // HardSurfaceFloor widens this for industrial torus/cyl lattices; Strict
+    // keeps the certified default (1.0).
+    double splitRailCornerTolerance = 1.0;
+    // Secondary on-surface envelope after the exact discrepancy limit fails.
+    // HardSurfaceFloor widens for densified Coons/mapped chords; Strict keeps
+    // the certified 5cm-class default (0.05).
+    double industrialSurfaceDiscrepancy = 0.05;
 };
 
 struct CertifiedMeshAssemblyFailure {

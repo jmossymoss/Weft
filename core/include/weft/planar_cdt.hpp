@@ -28,8 +28,10 @@ struct PlanarCdtMesh {
     std::vector<std::vector<std::uint32_t>> boundaryLoops;
     std::vector<std::array<std::uint32_t, 2>> constrainedEdges;
     std::vector<PlanarCdtTriangle> triangles;
-    // Soften certified 3D identity/orientation checks for curved UV trims /
-    // Plasticity sphere caps (still boundary-covering).
+    // Soften certified 3D identity/orientation checks for curved UV trims.
+    // Shared CDT may set this for allowCurvedUv; product consumers must clear
+    // via hardOrient or named-refuse before assemble (Wave 0). Never admit
+    // relax=1 residuals on the omitDeferredResiduals=false path.
     bool relaxGeometryChecks = false;
     // Template already wound triangles against evaluateSurface's oriented
     // unitNormal; certify must not apply an additional TopoDS Reversed swap.
