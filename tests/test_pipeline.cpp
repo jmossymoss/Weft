@@ -1043,6 +1043,58 @@ void testPlateWebSliverRefine() {
     CHECK(plateSlivers * 20 <= platePolys);  // < 5%
 }
 
+// WP5 / MP9: a spherical dimple through a planar annulus used to miss
+// RevolutionGrid (adaptor IsUClosed=false on the trim), fall to the
+// contract floor, then ship hundreds of needle tris after fold demotion.
+// CAD adaptive must keep the sphere off contract-floor (minimal n-gon
+// rescue is OK) and stay watertight with the annulus.
+void testSphereDimpleNotContractFloor() {
+    std::printf("-- sphere dimple not contract-floor --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/sphere_dimple_annulus.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+
+    weft::GenerationReport report;
+    weft::PolyMesh mesh =
+        weft::generate(model, analysis, gs, &report);
+    CHECK(isWatertight(mesh));
+
+    int spheres = 0, sphereFloor = 0;
+    for (const auto& f : analysis.faces) {
+        if (f.type != weft::SurfaceType::Sphere) continue;
+        ++spheres;
+        auto kit = report.faceMesher.find(f.id);
+        CHECK(kit != report.faceMesher.end());
+        if (kit != report.faceMesher.end()) {
+            CHECK(kit->second != weft::MesherKind::Fallback);
+            CHECK(kit->second != weft::MesherKind::QuadDominant);
+            if (kit->second == weft::MesherKind::Fallback ||
+                kit->second == weft::MesherKind::QuadDominant) {
+                ++sphereFloor;
+            }
+            std::printf("  sphere face %d -> %s\n", f.id,
+                        weft::mesherKindName(kit->second));
+        }
+        auto bit = report.faceBuild.find(f.id);
+        // Not a demoted contract-floor soup.
+        if (bit != report.faceBuild.end()) {
+            CHECK(bit->second != 2);
+        }
+    }
+    CHECK(spheres >= 1);
+    CHECK_EQ(sphereFloor, 0);
+
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK(vr.watertight());
+    CHECK(vr.sliverPolygons == 0);
+}
+
 // Auto-mesher gates: a plate with a slot has "two wires" but is NOT an
 // annulus and its hole is NOT collar material — on auto it must stay with
 // the fallback, while forcing plate-web or minimal-ngon still builds.
@@ -2986,6 +3038,7 @@ int main() {
     RUN(testUnlinkedRims);
     RUN(testPlateWeb);
     RUN(testPlateWebSliverRefine);
+    RUN(testSphereDimpleNotContractFloor);
     RUN(testNudgeVertex);
     RUN(testRecipeRemap);
     RUN(testAutoGates);

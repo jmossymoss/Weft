@@ -831,9 +831,13 @@ bool isClosedRevolution(const BRepAdaptor_Surface& surf) {
     switch (surf.GetType()) {
         case GeomAbs_Cylinder:
         case GeomAbs_Cone:
-        case GeomAbs_Sphere:
         case GeomAbs_Torus:
         case GeomAbs_SurfaceOfRevolution: return surf.IsUClosed();
+        // Geometric spheres are always U-periodic. Trimmed dimple / bowl
+        // patches (MP9 boolean spheres) often report IsUClosed()=false on
+        // the adaptor, which used to skip RevolutionGrid and dump them on
+        // the contract floor (needle soup). Trust the surface type.
+        case GeomAbs_Sphere: return true;
         case GeomAbs_BSplineSurface:
         case GeomAbs_BezierSurface:
         case GeomAbs_OffsetSurface:
@@ -8290,6 +8294,16 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         if (edgesHugRimsOrInserts(face, surf, model, inserts)) {
             plan.insertWires = std::move(inserts);
             finishRevolution();
+            return plan;
+        }
+        // Bounded sphere patches (4-edge dimples): rim-hug often fails
+        // because the trim is a spherical rectangle, not a clean dual
+        // rim chain. The revolution lattice still owns the chart —
+        // without this, CAD adaptive lands them on the contract floor.
+        if (surf.GetType() == GeomAbs_Sphere) {
+            finishRevolution();
+            dbg("plan face %d: sphere patch -> revolution grid (no rim-hug)",
+                fid);
             return plan;
         }
     }
@@ -20885,7 +20899,33 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     dbg("mesh face %d: fold check failed (%d/%d inverted, "
                         "%s)",
                         fid, inverted, tested, mesherKindName(plan.kind));
-                    demote(fid, face, surf, s, "fold check failed");
+                    // Sphere dimple / bowl patches: the UV lattice often
+                    // fails this census near the trim, and demoting to the
+                    // contract floor ships hundreds of needles (MP9 face
+                    // 1224). Under CAD/minimal, a single boundary n-gon on
+                    // the exact rim welds to the annulus and stays editable.
+                    bool sphereRescue = false;
+                    if (s.minimal &&
+                        plan.kind == MesherKind::RevolutionGrid &&
+                        surf.GetType() == GeomAbs_Sphere) {
+                        PolyMesh ngon;
+                        MeshBuilder nb(ngon);
+                        if (meshMinimalPlanar(face, model, fid, solvedEdge,
+                                              s.radial, nb, &pinnedEdge) &&
+                            borderContractViolation(fid, ngon) == 0 &&
+                            !ngon.polygons.empty()) {
+                            parts[fid] = std::move(ngon);
+                            plans[fid].kind = MesherKind::MinimalNGon;
+                            fellBack[fid] = 0;
+                            buildCause[fid] = "sphere fold -> minimal n-gon";
+                            sphereRescue = true;
+                            dbg("mesh face %d: sphere fold -> minimal n-gon",
+                                fid);
+                        }
+                    }
+                    if (!sphereRescue) {
+                        demote(fid, face, surf, s, "fold check failed");
+                    }
                 } else if (inverted > 0 && tested >= 8) {
                     // Self-heal tournament: a FEW folded cells sit below
                     // the demote threshold, ship broken, and stay broken
