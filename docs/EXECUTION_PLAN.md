@@ -85,7 +85,7 @@ completion gate is deferred.
 - Asset-class presets and broad pipeline APIs.
 - Making every stress or research model release-perfect.
 
-Deferred work may be reconsidered only after work package 6 passes. It must not
+Deferred work may be reconsidered only after work package 7 passes. It must not
 be inserted into an active package merely because adjacent code is being
 changed.
 
@@ -410,6 +410,61 @@ Split `core/src/meshers.cpp` only with behavior locked by tests. Keep mechanical
 extraction and topology changes in separate commits. Refactoring is not itself
 an MVP milestone.
 
+### AD-5: classify once, route from class
+
+Stabilization after WP5 residual Plasticity classes uses feature recognition
+style predicates, not more meshers and not face-id / filename specials.
+
+`analyze()` owns geometry facts once per face. `planFace` / density / self-heal
+consume those facts. Do not rediscover chart validity, hole/fillet/drum shape,
+or loop signatures inside every mesher escape hatch.
+
+Required face facts (names may vary; fields must be explicit on `FaceInfo` or a
+sidecar filled by `analyze()`):
+
+| Field | Meaning |
+| --- | --- |
+| `surfaceType` | Existing typed surface (plane/cylinder/sphere/…) |
+| `chartKind` | `pole` / `fullPeriod` / `isoBand` / `geometricCap` / `freeTrim` |
+| `loopSignature` | Wire count, real vs degenerate edges, roundness hints |
+| `featureClass` | `drum` / `sphereCap` / `filletStrip` / `holePlate` / `bossJunction` / `planarPanel` / `freeform` |
+| `priority` | Product order: cylinder → sphere → hemisphere → box → torus → curves → cuts |
+
+Routing rule:
+
+```text
+featureClass × chartKind → existing MesherKind
+```
+
+Keep AD-3: no new `MesherKind` families for screenshot classes. Reuse
+revolution, disk/cap, coons/ladder, plate-web/annulus, minimal-ngon, and the
+border-exact floor.
+
+Density and self-heal are class-scoped:
+
+- closed curved rings share `minCurvedSegments`;
+- fillet opposite rails share station fractions;
+- plate/boss bores are not crushed by sparse plate `nu`/`nv`;
+- primitive neighbors adapt to the primitive, not the reverse;
+- fold / contract-floor demotion may not apply a policy from another
+  `featureClass` (sphere tip ≠ foam bowl).
+
+Fix gate for WP5 leftovers and all of WP6:
+
+1. Name the `featureClass` + `chartKind` the bug violates.
+2. One positive reducer in the deterministic zoo.
+3. One counterexample from another corpus model (foam, teleporter, dimple, or
+   equivalent).
+4. Reject patches that only work on an extract or a hard-coded face id.
+
+Steal recognition ideas from B-rep feature / blend literature (graph +
+convexity + radius + surface type). Do not import FEA “suppress fillets”
+pipelines; Weft keeps blend and primitive flow for game topology.
+
+Evidence of the tip-class application of this rule:
+`docs/evidence/wp5-mp9-plasticity-failures-2026-07-21.md` (geometric sphere
+cap → quad-fill/disk rings; pole-chart spheres stay revolution).
+
 ## 7. Visual acceptance rubric
 
 Numeric validity is necessary but insufficient. Review release and fresh
@@ -568,6 +623,11 @@ Tasks:
 - Reduce shareable failures and add them to the appropriate deterministic tier.
 - Compare Weft and Plasticity output in Blender with section 7.
 - Measure completion without engineering intervention, not just batch success.
+- For each residual Plasticity visual class still open (fillet/capsule spans,
+  grip freeform, bullet body `#3728`, residual opens), prefer a class-level
+  predicate fix under AD-5 over another `planFace` special case. If the fix
+  needs new `FaceInfo` fields, land the smallest analyze-side fact and continue
+  the structural move in WP6 rather than growing the monolith ladder.
 
 Exit:
 
@@ -576,8 +636,52 @@ Exit:
 - Visual comparison demonstrates a useful advantage or a materially faster
   path to an acceptable editable result.
 - No new common failure class remains unrepresented in the deterministic zoo.
+- Remaining systematic routing debt is listed as WP6 work (not left as
+  undocumented `planFace` folklore).
 
-### WP6: ship readiness
+### WP6: feature-class planning foundation
+
+Goal: make automatic routing stable across models by classifying B-rep faces
+once, then planning, densifying, and self-healing from that class (AD-5).
+
+Do this package after WP5’s current Plasticity visual residuals are either
+fixed at class level or explicitly parked with reducers. Do not start WP7
+ship packaging while routing still depends on rediscovering geometry inside
+mesher demotion paths.
+
+Tasks:
+
+- Extend `FaceInfo` (or an analyze-owned sidecar) with `chartKind`,
+  `loopSignature`, `featureClass`, and `priority` as in AD-5.
+- Move existing probes into `analyze()` where they are pure geometry:
+  sphere UV pole chart, geometric closed revolution, fillet-strip narrowness,
+  hole/boss bore hints, outer-wire roundness. `planFace` reads fields.
+- Replace the long auto ladder with a priority table:
+  `featureClass × chartKind → MesherKind` using only existing backends (AD-3).
+- Tie density solve rules to `featureClass` (mincurve rings, fillet stations,
+  plate/boss bore ownership, primitive-neighbor adaptation).
+- Constrain fold / contract-floor self-heal so demotion cannot apply another
+  class’s policy.
+- Per AD-4, extract classify / density / plan-from-class phases behind tests;
+  do not rewrite `generate()` or add a second architecture (AD-1).
+- Keep the WP5 fix gate: class name + positive reducer + other-model
+  counterexample; no filename or face-id specials.
+- Report `featureClass` / `chartKind` in inspect, topology signature, and the
+  selection roster so artists and agents debug classes, not only meshers.
+
+Exit:
+
+- Sphere tip, sphere dimple, foam bowls, and teleporter stay green under the
+  same chart/feature rules (no model-specific branches).
+- Fillet strip, hole plate, and drum classes each have at least one zoo reducer
+  and one cross-model counterexample in tests.
+- `planFace` no longer re-implements chart or fillet detection that `analyze()`
+  already provides (duplicated probes removed or thin wrappers).
+- Topology signature or inspect exposes `featureClass` and `chartKind` for
+  release and Plasticity samples.
+- AD-3 holds: no new `MesherKind` added for this package.
+
+### WP7: ship readiness
 
 Goal: produce a reproducible MVP release.
 
@@ -624,7 +728,9 @@ The agent must not:
 - weaken a gate, exempt a valid model, or update goldens simply to make CI pass;
 - treat compile success, application startup, or polygon counts alone as proof;
 - append session diaries, speculative directions, or stale pass claims here;
-- begin deferred work before WP6 passes.
+- begin deferred work before WP7 passes;
+- land face-id / filename specials or a new `MesherKind` to clear a WP5
+  screenshot when AD-5 / WP6 class routing would address the class.
 
 ## 10. Verification commands
 
