@@ -3484,6 +3484,10 @@ struct WebPoint {
     uint32_t vert;  // index in the MeshBuilder
 };
 
+bool splitIntoSimplePolys(std::vector<WebPoint> outer,
+                          std::vector<std::vector<WebPoint>> holes,
+                          std::vector<std::vector<WebPoint>>& polysOut);
+
 double loopSignedArea(const std::vector<WebPoint>& pts) {
     double a = 0;
     for (size_t i = 0; i < pts.size(); ++i) {
@@ -4587,7 +4591,8 @@ bool samplePlanarRings(const TopoDS_Face& face, const Model& model,
 bool meshPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                   const Model& model, int faceId,
                   const std::vector<int>& solvedEdge, int radialDefault,
-                  int collarRings, bool squareCollar, MeshBuilder& out) {
+                  int collarRings, bool squareCollar, MeshBuilder& out,
+                  bool minimalResidual = false) {
     std::vector<PlanarRing> rings;
     if (!samplePlanarRings(face, model, solvedEdge, radialDefault, rings)) {
         return false;
@@ -4842,6 +4847,27 @@ bool meshPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
             dStep /= 2;  // even the first ring didn't fit: pull in, retry
         }
         webHoles.push_back(std::move(boundary));
+    }
+
+    // CAD / minimal: keep the hole collars (section 7) but fill the
+    // residual with bridged simple n-gons instead of a dense CDT soup.
+    // Artists report the CDT residual as "tonnes of unnecessary geometry"
+    // on bored plate walls even with "minimal n-gon" checked — that flag
+    // never reached this path before.
+    if (minimalResidual) {
+        std::vector<std::vector<WebPoint>> simple;
+        if (splitIntoSimplePolys(webOuter, webHoles, simple)) {
+            for (const auto& ring : simple) {
+                std::vector<uint32_t> poly;
+                poly.reserve(ring.size());
+                for (const WebPoint& w : ring) poly.push_back(w.vert);
+                if (poly.size() >= 3) {
+                    out.addPolygon(std::move(poly), faceId, flip);
+                }
+            }
+            return true;
+        }
+        // Visibility failure: fall through to CDT rather than emit nothing.
     }
 
     return triangulateWeb(std::move(webOuter), std::move(webHoles), faceId,
@@ -20613,7 +20639,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     outerWireSolvedTotal(face, model, solvedEdge, s.radial), 0};
                 if (!meshPlateWeb(face, surf, model, fid, solvedEdge,
                                   s.radial, s.junctionRings, s.squareCollar,
-                                  out)) {
+                                  out, /*minimalResidual=*/s.minimal)) {
                     // Under CAD/minimal, prefer a boundary n-gon over raw
                     // OCCT when the structured web cannot build (slitdrill
                     // tangent contacts). Keeps the face editable and inside
@@ -20633,10 +20659,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     } else {
                         demote(fid, face, surf, s, "plate web failed");
                     }
-                } else {
-                    // Collar quads stay put; residual CDT needles between
-                    // holes get the same quality Steiner refine the
-                    // contract floor uses (borders remain exact).
+                } else if (!s.minimal) {
+                    // Dense mode only: collar quads stay put; residual CDT
+                    // needles between holes get the Steiner refine. Under
+                    // CAD/minimal the residual is already bridged n-gons —
+                    // refining densifies them back into soup.
                     PolyMesh& part = parts[fid];
                     if (part.anchors.size() == part.vertices.size() &&
                         !part.polygons.empty()) {

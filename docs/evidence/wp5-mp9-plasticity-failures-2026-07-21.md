@@ -79,10 +79,27 @@ contract-floor needle soup — worse visually).
 1. **Residual opens** — ~1.1k remain; #1805 family still leads.
 2. **Fillet coons** — corner mismatch, fanning, demote-to-floor on torus blends.
 3. **Freeform expected quad flow** — grip/optic/fluted compares still sliver fans.
-4. **Adaptive radial floors** — `minCurvedSegments` / `--min-curve` / recipe
-   `mincurve=` now sets the closed-ring adaptive lower bound (default 6;
-   raise to 12 for CAD/relative-deviation rings that looked faceted).
-5. **Full Plasticity side-by-side** — artist sign-off on expected meshes.
+4. **Bullet tip soup (#3729)** — sphere `revolution-grid` fold self-heal still
+   swaps to contract-floor tip soup. Reducer:
+   `tests/regressions/mp9/bullet_tip_3728.step`. Keeping the lattice seals the
+   extract but opens foam/teleporter — needs a tip-specific path (dome-cap /
+   fold-local repair) that does not skip foam sphere heals.
+5. **Grip / capsule fillet spans** — uneven coons, open borders vs boolean.
+6. **Full Plasticity side-by-side** — artist sign-off on expected meshes.
+
+## CAD plate-web residual (2026-07-21)
+
+Under CAD/`minimal`, `meshPlateWeb` still built hole collars (wanted) but
+filled the residual with CDT + Steiner refine — the "tonnes of unnecessary
+geometry" on demo/torture bored plate walls (artist face often labeled #44;
+stable id on `torture.step` is **#5**).
+
+Fix: when `minimal`, residual uses `splitIntoSimplePolys` (bridged n-gons)
+and skips `refineFloorWeb`. Collars stay. Demo CAD verts 851→772; plate-web
+tris → 0.
+
+Tests: `testPlateWebSliverRefine` (asserts 0 plate-web tris under minimal),
+`testTorturePlateWebMinimalResidual`.
 
 ## Adaptive curved-ring floor (2026-07-21)
 

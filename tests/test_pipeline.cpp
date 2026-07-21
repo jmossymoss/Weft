@@ -1041,6 +1041,64 @@ void testPlateWebSliverRefine() {
     // Residual needles must be gone (or vanishingly rare). Pre-fix ABC
     // plate-web faces were >50% slivers; the refine clears them.
     CHECK(plateSlivers * 20 <= platePolys);  // < 5%
+
+    // CAD/minimal residual must stay bridged n-gons (+ collar quads), not
+    // a CDT triangle soup. Count tris attributed to plate-web faces.
+    int plateTris = 0, plateNgons = 0, plateQuads = 0;
+    for (size_t i = 0; i < mesh.polygons.size(); ++i) {
+        const int fid =
+            i < mesh.polygonFaceId.size() ? mesh.polygonFaceId[i] : 0;
+        auto kit = report.faceMesher.find(fid);
+        if (kit == report.faceMesher.end() ||
+            kit->second != weft::MesherKind::PlateWeb) {
+            continue;
+        }
+        const size_t n = mesh.polygons[i].size();
+        if (n == 3) ++plateTris;
+        else if (n == 4) ++plateQuads;
+        else if (n > 4) ++plateNgons;
+    }
+    std::printf("  plate-web quads=%d tris=%d ngons=%d\n", plateQuads,
+                plateTris, plateNgons);
+    CHECK(plateQuads > 0);   // collars survive
+    CHECK(plateNgons > 0);   // residual is bridged simple n-gons
+    CHECK(plateTris == 0);   // no CDT soup under minimal
+}
+
+// Demo/torture vertical plate wall with a round bore: under CAD, plate-web
+// must keep collars but not fill the wall with CDT needles.
+void testTorturePlateWebMinimalResidual() {
+    std::printf("-- torture plate-web minimal residual --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() / "fixtures/torture.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    CHECK(isWatertight(mesh));
+
+    int plateWebs = 0, plateTris = 0, plateNgons = 0;
+    for (const auto& [fid, kind] : report.faceMesher) {
+        if (kind != weft::MesherKind::PlateWeb) continue;
+        ++plateWebs;
+        for (size_t i = 0; i < mesh.polygons.size(); ++i) {
+            if (i >= mesh.polygonFaceId.size() ||
+                mesh.polygonFaceId[i] != fid) {
+                continue;
+            }
+            const size_t n = mesh.polygons[i].size();
+            if (n == 3) ++plateTris;
+            else if (n > 4) ++plateNgons;
+        }
+    }
+    CHECK(plateWebs >= 1);
+    CHECK(plateNgons > 0);
+    CHECK(plateTris == 0);
 }
 
 // WP5 / MP9: a spherical dimple through a planar annulus used to miss
@@ -3166,6 +3224,7 @@ int main() {
     RUN(testUnlinkedRims);
     RUN(testPlateWeb);
     RUN(testPlateWebSliverRefine);
+    RUN(testTorturePlateWebMinimalResidual);
     RUN(testSphereDimpleNotContractFloor);
     RUN(testMp9CoonsPlaneSeamCanonicalize);
     RUN(testNudgeVertex);
