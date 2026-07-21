@@ -1200,6 +1200,14 @@ void testBulletTipNotContractFloor() {
         }
     }
     CHECK(spheres >= 1);
+    for (const auto& f : analysis.faces) {
+        if (f.type != weft::SurfaceType::Sphere) continue;
+        CHECK(f.featureClass == weft::FeatureClass::SphereCap);
+        CHECK(f.chartKind == weft::ChartKind::GeometricCap);
+        auto fcit = report.faceFeatureClass.find(f.id);
+        CHECK(fcit != report.faceFeatureClass.end());
+        CHECK(fcit->second == weft::FeatureClass::SphereCap);
+    }
 
     int tipTris = 0, tipQuads = 0;
     for (size_t i = 0; i < mesh.polygons.size(); ++i) {
@@ -1215,6 +1223,120 @@ void testBulletTipNotContractFloor() {
     }
     CHECK(tipQuads > 0);
     CHECK_EQ(tipTris, 0);
+}
+
+// WP5 / AD-5: analyze() owns featureClass × chartKind once per face.
+void testFeatureClassAnalyze() {
+    std::printf("-- feature class analyze --\n");
+    {
+        const std::string path = tmpPath("weft_fc_cyl.step");
+        weft::writeStep(weft::makeFixture("cylinder"), path);
+        const weft::Analysis a = weft::analyze(weft::loadStep(path));
+        int drums = 0;
+        for (const auto& f : a.faces) {
+            if (f.type == weft::SurfaceType::Cylinder) {
+                CHECK(f.featureClass == weft::FeatureClass::Drum);
+                CHECK(f.chartKind == weft::ChartKind::FullPeriod ||
+                      f.chartKind == weft::ChartKind::IsoBand);
+                CHECK(f.priority >= 95);
+                ++drums;
+            }
+            if (f.type == weft::SurfaceType::Plane) {
+                CHECK(f.featureClass == weft::FeatureClass::PlanarPanel ||
+                      f.featureClass == weft::FeatureClass::HolePlate ||
+                      f.featureClass == weft::FeatureClass::BossJunction);
+            }
+        }
+        CHECK(drums >= 1);
+        std::printf("  cylinder: drums=%d\n", drums);
+    }
+    {
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "regressions/mp9/sphere_dimple_annulus.step";
+        const weft::Analysis a = weft::analyze(weft::loadStep(stepPath.string()));
+        int poleCaps = 0;
+        for (const auto& f : a.faces) {
+            if (f.type != weft::SurfaceType::Sphere) continue;
+            CHECK(f.featureClass == weft::FeatureClass::SphereCap);
+            CHECK(f.chartKind == weft::ChartKind::Pole ||
+                  f.chartKind == weft::ChartKind::FullPeriod);
+            ++poleCaps;
+        }
+        CHECK(poleCaps >= 1);
+        std::printf("  dimple: pole-chart spheres=%d\n", poleCaps);
+    }
+    {
+        const std::string path = tmpPath("weft_fc_fillet.step");
+        weft::writeStep(weft::makeFixture("fillet"), path);
+        const weft::Analysis a = weft::analyze(weft::loadStep(path));
+        int strips = 0;
+        for (const auto& f : a.faces) {
+            if (!f.isFillet) continue;
+            CHECK(f.featureClass == weft::FeatureClass::FilletStrip);
+            ++strips;
+        }
+        CHECK(strips >= 1);
+        std::printf("  fillet: strips=%d\n", strips);
+    }
+}
+
+// WP5: body-scoped cylindrical continuity — circumferential seam counts
+// match across drum + cap faces in one solid (unless explicitly pinned).
+void testCylindricalStackContinuity() {
+    std::printf("-- cylindrical stack continuity --\n");
+    const std::string path = tmpPath("weft_cyl_stack.step");
+    weft::writeStep(weft::makeFixture("cylinder"), path);
+    weft::Model model = weft::loadStep(path);
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    gs.defaults.minCurvedSegments = 12;
+    gs.defaults.radial = 16;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    CHECK(isWatertight(mesh));
+
+    std::set<int> circCounts;
+    for (const auto& f : analysis.faces) {
+        if (f.featureClass != weft::FeatureClass::Drum &&
+            f.featureClass != weft::FeatureClass::PlanarPanel) {
+            continue;
+        }
+        for (int eid : f.edgeIds) {
+            auto it = report.edgeDivisions.find(eid);
+            if (it == report.edgeDivisions.end()) continue;
+            // Caps and drum share the circular rims; collect those divisions.
+            if (analysis.edges[eid - 1].faceIds.size() >= 2) {
+                circCounts.insert(it->second);
+            }
+        }
+    }
+    CHECK(!circCounts.empty());
+    // One circumferential total on the stack (allow a single shared count).
+    CHECK_EQ(circCounts.size(), 1u);
+    std::printf("  shared circumferential count=%d\n", *circCounts.begin());
+
+    // Deliberate per-edge pin may diverge — documents the allowed mismatch.
+    {
+        weft::GenerationSettings pinned = gs;
+        int pinEdge = 0;
+        for (const auto& [eid, div] : report.edgeDivisions) {
+            pinEdge = eid;
+            break;
+        }
+        CHECK(pinEdge > 0);
+        pinned.perEdge[pinEdge] = 24;
+        weft::GenerationReport pr;
+        weft::PolyMesh pm = weft::generate(model, analysis, pinned, &pr);
+        CHECK(isWatertight(pm));
+        auto it = pr.edgeDivisions.find(pinEdge);
+        CHECK(it != pr.edgeDivisions.end());
+        CHECK_EQ(it->second, 24);
+        std::printf("  pinned edge %d stays %d\n", pinEdge, it->second);
+    }
 }
 
 // MP9 freeformComb orthogonal trim can leave plane↔bspline seams open when
@@ -2893,6 +3015,8 @@ void testTopologySignature() {
         CHECK(s1.find("schema=weft.topology_signature.v1") !=
               std::string::npos);
         CHECK(s1.find("kind.") != std::string::npos);
+        CHECK(s1.find(".feature=") != std::string::npos);
+        CHECK(s1.find(".chart=") != std::string::npos);
         CHECK(s1.find("quads=") != std::string::npos);
         CHECK(s1.find("anchors.uv_qhash=") != std::string::npos);
         CHECK(s1.find("info.note=") != std::string::npos);
@@ -3283,6 +3407,8 @@ int main() {
     RUN(testTorturePlateWebMinimalResidual);
     RUN(testSphereDimpleNotContractFloor);
     RUN(testBulletTipNotContractFloor);
+    RUN(testFeatureClassAnalyze);
+    RUN(testCylindricalStackContinuity);
     RUN(testMp9CoonsPlaneSeamCanonicalize);
     RUN(testNudgeVertex);
     RUN(testRecipeRemap);

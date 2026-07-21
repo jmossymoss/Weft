@@ -129,6 +129,16 @@ std::string formatTopologySignature(const PolyMesh& mesh, const Model& model,
         const auto bit = report.faceBuild.find(fid);
         if (bit != report.faceBuild.end()) build = bit->second;
         appendKv(oss, "face." + std::to_string(fid) + ".build", build);
+        const auto fcit = report.faceFeatureClass.find(fid);
+        if (fcit != report.faceFeatureClass.end()) {
+            appendKv(oss, "face." + std::to_string(fid) + ".feature",
+                     featureClassName(fcit->second));
+        }
+        const auto chit = report.faceChartKind.find(fid);
+        if (chit != report.faceChartKind.end()) {
+            appendKv(oss, "face." + std::to_string(fid) + ".chart",
+                     chartKindName(chit->second));
+        }
         const auto cit = report.faceBuildCause.find(fid);
         if (cit != report.faceBuildCause.end() && !cit->second.empty() &&
             build != 0) {

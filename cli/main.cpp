@@ -166,6 +166,8 @@ int cmdInspect(const std::vector<std::string>& args) {
         else std::printf("           ");
         std::printf("%s", f.isFillet ? " fillet " : f.isHole ? " hole   "
                                                             : "        ");
+        std::printf(" %s/%s", weft::featureClassName(f.featureClass),
+                    weft::chartKindName(f.chartKind));
         std::printf(" edges=%zu neighbors=[", f.edgeIds.size());
         for (size_t i = 0; i < f.neighborFaceIds.size(); ++i) {
             std::printf("%s%d", i ? "," : "", f.neighborFaceIds[i]);

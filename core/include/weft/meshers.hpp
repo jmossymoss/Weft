@@ -238,6 +238,10 @@ struct GenerationReport {
     std::vector<int> reusedFaces;
     std::vector<int> remeshedFaces;
     std::map<int, MesherKind> faceMesher;  // FaceId -> strategy used
+    // AD-5 analyze facts echoed into the report so signatures / CLI can
+    // show featureClass × chartKind without re-running probes.
+    std::map<int, FeatureClass> faceFeatureClass;
+    std::map<int, ChartKind> faceChartKind;
     // FaceId -> how the face was actually built: 0 = its planned mesher,
     // 1 = raw OCCT triangulation (the tri-soup last resort), 2 = the
     // contract floor (exact borders, quad-paired web), -1 = the face

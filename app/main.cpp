@@ -2085,9 +2085,11 @@ static std::string faceDebugLabel(const App& app, int fid) {
         else if (bit->second == 1) build = "  raw-fallback";
         else if (bit->second == 2) build = "  contract-floor";
     }
-    std::snprintf(buf, sizeof buf, "#%d  %s%s%s  [%s]%s", f.id,
+    std::snprintf(buf, sizeof buf, "#%d  %s%s%s  %s/%s  [%s]%s", f.id,
                   weft::surfaceTypeName(f.type),
                   f.isFillet ? " [fillet]" : "", f.isHole ? " [hole]" : "",
+                  weft::featureClassName(f.featureClass),
+                  weft::chartKindName(f.chartKind),
                   weft::mesherKindName(effectiveKind(app, fid)), build);
     return buf;
 }
