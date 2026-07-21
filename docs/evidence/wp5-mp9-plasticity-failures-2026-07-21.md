@@ -100,6 +100,21 @@ points: `adaptiveCount` clamps and `proposeSet` densityScale survival in
 Regression: `testAdaptiveDensity` asserts CAD/`relativeDeviation` +
 `minCurvedSegments=12` + `densityScale=0.5` still yields rim ≥ 12.
 
+## Selection / topology debug aids (2026-07-21)
+
+Artist multi-select was collapsing to "N faces (active #id)" plus knobs for
+the last-clicked face only — hard to inventory a broken cluster. App now:
+
+- Lists every selected face as `#id  type [mesher]  build-health` (scrollable;
+  click a row to retarget the editor without shrinking the set).
+- Shows `faceBuildCause` under the active face when demoted/empty/raw.
+- Topology panel `select` buttons for folded-cell owners, open-border-loop
+  neighbours, raw-fallback faces, and contract-floor faces (plus the
+  existing empty-face select).
+
+Use these to dump the exact failing face set when reporting residual MP9
+classes (sphere dimple, fillet #2219/#1644, grip coons, cylinder #3405).
+
 ## Next leverage order
 
 1. Remaining #1805-class seam drift (border emission without surf.Value).
