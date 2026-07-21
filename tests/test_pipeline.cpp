@@ -1095,6 +1095,53 @@ void testSphereDimpleNotContractFloor() {
     CHECK(vr.sliverPolygons == 0);
 }
 
+// MP9 freeformComb orthogonal trim can leave plane↔bspline seams open when
+// clipped lattice verts drift off the shared 3D edge. The #1805-class
+// reducer must keep structured coons grids (not contract-floor) and stay
+// below the pre-fix unexplained-crack floor (~131 on this extract).
+void testMp9CoonsPlaneSeamCanonicalize() {
+    std::printf("-- MP9 coons/plane seam canonicalize --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/coons_plane_1805_r0.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+
+    int coons = 0, floors = 0;
+    for (const auto& f : analysis.faces) {
+        if (f.type != weft::SurfaceType::BSpline) continue;
+        auto kit = report.faceMesher.find(f.id);
+        if (kit == report.faceMesher.end()) continue;
+        if (kit->second == weft::MesherKind::CoonsGrid) ++coons;
+        auto bit = report.faceBuild.find(f.id);
+        if (bit != report.faceBuild.end() && bit->second == 2) ++floors;
+        std::printf("  bspline face %d -> %s build=%d\n", f.id,
+                    weft::mesherKindName(kit->second),
+                    bit != report.faceBuild.end() ? bit->second : -1);
+    }
+    CHECK(coons >= 3);
+    // One fold self-heal → floor on a sibling panel is acceptable; the
+    // class gate is "not a blanket contract-floor demotion of the stack".
+    CHECK(floors <= 1);
+
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    const size_t unexplained =
+        vr.openEdges > vr.openEdgesOnInputBoundary
+            ? vr.openEdges - vr.openEdgesOnInputBoundary
+            : 0;
+    std::printf("  unexplained cracks=%zu (open=%zu onBoundary=%zu)\n",
+                unexplained, vr.openEdges, vr.openEdgesOnInputBoundary);
+    // Pre-fix floor on this extract was 131; keep a margin under that.
+    CHECK(unexplained < 110);
+}
+
 // Auto-mesher gates: a plate with a slot has "two wires" but is NOT an
 // annulus and its hole is NOT collar material — on auto it must stay with
 // the fallback, while forcing plate-web or minimal-ngon still builds.
@@ -3039,6 +3086,7 @@ int main() {
     RUN(testPlateWeb);
     RUN(testPlateWebSliverRefine);
     RUN(testSphereDimpleNotContractFloor);
+    RUN(testMp9CoonsPlaneSeamCanonicalize);
     RUN(testNudgeVertex);
     RUN(testRecipeRemap);
     RUN(testAutoGates);

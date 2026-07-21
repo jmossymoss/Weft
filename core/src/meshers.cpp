@@ -13420,14 +13420,15 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
                     best = duv; p3 = ep;
                 }
             }
-            // Sloppy STEP pcurves can miss the shared 3D edge by several
-            // microns even at the same logical station. A cell vertex that
-            // is already within 0.02 mm of an exact pinned edge sample is
-            // that sample; canonicalize it now so the neighbouring face
-            // shares the identical point. The radius is well below the CAD
-            // profile's 0.1 mm deviation and only considers explicit pins.
-            gp_Pnt surfaceP = surf.Value(p.X(),p.Y());
-            double d3 = 0.02;
+            // Sloppy STEP pcurves / freeform UV clips can miss the shared
+            // 3D edge by tens of microns. Canonicalize any cell vertex that
+            // lands near an exact border sample onto that sample so the
+            // neighbouring face shares the identical point. 0.15 mm covers
+            // Plasticity freeform pcurve/clip drift on MP9 #1805-class
+            // seams (~0.03–0.12 mm) without swallowing distinct lattice
+            // stations on typical CAD chords (≥0.5 mm).
+            gp_Pnt surfaceP = surf.Value(p.X(), p.Y());
+            double d3 = 0.15;
             for (const auto& [uv,ep] : exactSamples) {
                 const double d = surfaceP.Distance(ep);
                 if (d < d3) { d3 = d; p3 = ep; }

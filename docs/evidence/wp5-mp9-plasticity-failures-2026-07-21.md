@@ -5,31 +5,31 @@ export; no separate STL in-repo — the STEP is the source). MP9 remains
 `tier=performance` in `CAD_CORPUS.tsv`; these notes classify failures for
 reduction into the zoo, not as a silent release-oracle expansion.
 
-## Batch CAD profile snapshot (pre-sphere fix)
+## Batch CAD profile snapshot
 
-| Metric | Value |
-| --- | --- |
-| Faces / edges | 3748 / 10155 |
-| Polygons | ~40k (CAD adaptive) |
-| Watertight | NO — 1917 open edges, 15 non-manifold |
-| Slivers | 2143 |
-| Demotions | 141 → contract floor, 5 raw, 1 empty |
-| Leakiest faces | #1827/#1805/#1904/#1806 (~200 opens each, bspline coons) |
+| Metric | Pre-sphere | After sphere + ortho seam |
+| --- | --- | --- |
+| Faces / edges | 3748 / 10155 | same |
+| Polygons | ~40k (CAD adaptive) | ~39k |
+| Watertight | NO — 1917 open edges | NO — 1086 open edges |
+| Slivers | 2143 | ~2123 |
+| Demotions | 141 → contract floor | 122 → contract floor |
+| Leakiest faces | #1827/#1805/#1904/#1806 (~200 each) | same IDs (~93–97 each) |
 
 ## Screenshot classes → code attribution
 
 | Artist note | Example IDs (session) | Class | Status |
 | --- | --- | --- | --- |
-| Open holes on foregrip | #2334, #2374 bspline | Junction / open-shell + large coons leaks (#1805 family dominates opens) | Open |
+| Open holes on foregrip | #2334, #2374 bspline | Junction / open-shell + large coons leaks (#1805 family dominates opens) | Partial — ortho border canonicalize |
 | Fillets over corners; mismatched counts | torus fillets, coons vs contract-floor | Fillet coons corner / demotion | Open |
 | Foregrip fillet fanning | coons-grid torus | Coons rail fanning at tips | Open |
-| Outer ≠ inner boolean counts; “5 vs floor 12” | sphere + plane annulus | Adaptive density + wrong sphere floor | Partial — sphere routing fixed |
+| Outer ≠ inner boolean counts; “5 vs floor 12” | sphere + plane annulus | Adaptive density + wrong sphere floor | Fixed — sphere routing |
 | B-spline / freeform on contract-floor | #1446-class | Wrong Fallback routing / demotion | Open |
 | Grip / optic / fluted body: Plasticity vs Weft vs Expected | freeform panels | Quad flow vs sliver fans (expected = structured quads) | Open |
 
 Face IDs in the UI can drift across import settings; reducers below pin geometry.
 
-## Fix landed this revision (sphere dimple class)
+## Fix: sphere dimple class
 
 Trimmed `GeomAbs_Sphere` patches often report `IsUClosed()=false`, so they
 skipped `RevolutionGrid` and became planned contract-floor needle soup. After
@@ -42,19 +42,41 @@ Changes in `core/src/meshers.cpp`:
 3. Fold-check demote: under CAD/`minimal`, rescue folding sphere revolution
    grids to `meshMinimalPlanar` instead of the contract floor.
 
-Reducer: `tests/regressions/mp9/sphere_dimple_annulus.step` (MP9 #1221+#1224).
+Reducer: `tests/regressions/mp9/sphere_dimple_annulus.step`.
+Test: `testSphereDimpleNotContractFloor`.
+
+## Fix: freeformComb ortho ↔ plane seam class (#1805 family)
+
+Large multi-edge bspline panels match `planOrthogonalTrimGrid`'s freeformComb
+gate and mesh as a UV-clipped lattice (`meshOrthogonalTrimGrid`, reported as
+`coons-grid`). Clip/pcurve drift left lattice border verts ~0.03–0.12 mm off
+the shared 3D edge while planar `minimal-ngon` neighbours sampled the exact
+curve — unexplained opens concentrated on #1805/#1806/#1827/#1904.
+
+Change in `meshOrthogonalTrimGrid` (`core/src/meshers.cpp`): widen on-curve
+canonicalize radius for cell verts near exact border samples from 0.02 mm to
+0.15 mm (class-level; no filename specials).
+
+Reducer: `tests/regressions/mp9/coons_plane_1805_r0.step`
+(MP9 #1804/#1805/#1806/#1826/#1904/#1910/#1918/#1957).
 
 | | Before | After |
 | --- | --- | --- |
-| Sphere face mesher | contract-floor (472 tris) | minimal-ngon (1 n-gon) |
-| Slivers on reducer | 3 | 0 |
-| Watertight (annulus+sphere+wall) | yes | yes |
+| Full MP9 open edges | 1917 | 1086 |
+| Leakiest #1805-family opens | ~194–198 each | ~92–97 each |
+| Extract unexplained cracks | 131 | 83 |
+| Structured coons on big panels | yes | yes (not demoted) |
 
-Test: `testSphereDimpleNotContractFloor`.
+Test: `testMp9CoonsPlaneSeamCanonicalize`.
+
+Tried and rejected on this class: raising `solvedEdge` to pin counts (opens
+exploded); skipping freeform `pinOrthogonalTrimGrids` (opens got worse);
+disabling freeformComb (zeros extract cracks but demotes panels to
+contract-floor needle soup — worse visually).
 
 ## Still open on MP9 (block visual / Plasticity compare exit)
 
-1. **Watertightness** — ~1.9k opens; leakiest are large bspline coons panels.
+1. **Residual opens** — ~1.1k remain; #1805 family still leads.
 2. **Fillet coons** — corner mismatch, fanning, demote-to-floor on torus blends.
 3. **Freeform expected quad flow** — grip/optic/fluted compares still sliver fans.
 4. **Adaptive radial floors** — verify cylinder “≥12” against boolean neighbors.
@@ -62,6 +84,6 @@ Test: `testSphereDimpleNotContractFloor`.
 
 ## Next leverage order
 
-1. Coons open-edge / weld class on multi-edge bspline panels (#1805 family).
+1. Remaining #1805-class seam drift (border emission without surf.Value).
 2. Torus fillet corner continuity (shared count + non-fanning tips).
 3. Keep extracting zoo reducers from each closed class (no filename specials).

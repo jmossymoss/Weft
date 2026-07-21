@@ -67,12 +67,15 @@ WP5 visual exit is still **not met**.
 2. Freeform demotions (rail-ladder / ribbon → floor) — teleporter, foam.
 3. Complex non-round planar cutouts — MinimalNGon when plate-web rejects slots.
 4. Density transition artifacts — adaptive CAD cliffs between features.
-5. Fresh Plasticity Blender compare — still needs artist Plasticity meshes.
+5. MP9 Plasticity workload — residual opens, fillet fanning, freeform vs
+   expected quads (see `docs/evidence/wp5-mp9-plasticity-failures-2026-07-21.md`;
+   sphere dimple fixed; #1805-class opens cut ~43%).
 
 ## Next work
 
 Do not treat public-gate green as visual green. Next highest leverage:
 
-- structured routing (or curved-safe floor) for notched closed drums;
+- MP9 residual #1805 seams and torus fillet corners;
+- structured routing for notched closed drums (ABC face 57);
 - rail-ladder / ribbon border-contract demotion class on teleporter;
-- keep reducing shareable ABC/MAMBO defects into the deterministic zoo.
+- keep reducing shareable ABC/MAMBO/MP9 defects into the deterministic zoo.
