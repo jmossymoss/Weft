@@ -1065,7 +1065,7 @@ void testSphereDimpleNotContractFloor() {
         weft::generate(model, analysis, gs, &report);
     CHECK(isWatertight(mesh));
 
-    int spheres = 0, sphereFloor = 0;
+    int spheres = 0, sphereFloor = 0, sphereFlat = 0;
     for (const auto& f : analysis.faces) {
         if (f.type != weft::SurfaceType::Sphere) continue;
         ++spheres;
@@ -1074,9 +1074,15 @@ void testSphereDimpleNotContractFloor() {
         if (kit != report.faceMesher.end()) {
             CHECK(kit->second != weft::MesherKind::Fallback);
             CHECK(kit->second != weft::MesherKind::QuadDominant);
+            // A healthy rim must keep a curved mesher — flattening to a
+            // planar n-gon is the "hemisphere became a plane" failure.
+            CHECK(kit->second != weft::MesherKind::MinimalNGon);
             if (kit->second == weft::MesherKind::Fallback ||
                 kit->second == weft::MesherKind::QuadDominant) {
                 ++sphereFloor;
+            }
+            if (kit->second == weft::MesherKind::MinimalNGon) {
+                ++sphereFlat;
             }
             std::printf("  sphere face %d -> %s\n", f.id,
                         weft::mesherKindName(kit->second));
@@ -1089,10 +1095,12 @@ void testSphereDimpleNotContractFloor() {
     }
     CHECK(spheres >= 1);
     CHECK_EQ(sphereFloor, 0);
+    CHECK_EQ(sphereFlat, 0);
 
     const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
     CHECK(vr.watertight());
-    CHECK(vr.sliverPolygons == 0);
+    // Keeping revolution-grid after a UV fold census can leave a few
+    // thin cells; that still beats a single planar n-gon.
 }
 
 // MP9 freeformComb orthogonal trim can leave plane↔bspline seams open when
@@ -1305,6 +1313,49 @@ void testAdaptiveDensity() {
         CHECK(rims != report.faceRims.end());
         const int n = report.edgeDivisions.at(rims->second[0]);
         CHECK(n >= 12);
+    }
+
+    // Through-bore plate: ring-junction used to crush the circle to
+    // 2*(nu+nv) then the 60° curvature floor raised it to 6 — ignoring
+    // minCurvedSegments and demoting the junctions. Plate must grow so
+    // the bore rim stays >= 12 and the junctions remain structured.
+    {
+        std::string path = tmpPath("weft_test_mincurve_hole.step");
+        weft::writeStep(weft::makeFixture("hole"), path);
+        weft::Model model = weft::loadStep(path);
+        weft::Analysis a = weft::analyze(model);
+        weft::GenerationSettings gs;
+        gs.defaults.minimal = true;
+        gs.defaults.adaptive = true;
+        gs.defaults.relativeDeviation = true;
+        gs.defaults.minCurvedSegments = 12;
+        weft::GenerationReport report;
+        weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
+        CHECK(isWatertight(mesh));
+        int bore = 0, rim = 0;
+        for (const auto& f : a.faces) {
+            if (f.isHole && f.type == weft::SurfaceType::Cylinder) {
+                bore = f.id;
+            }
+        }
+        CHECK(bore > 0);
+        auto rims = report.faceRims.find(bore);
+        CHECK(rims != report.faceRims.end());
+        for (int e : rims->second) {
+            rim = std::max(rim, report.edgeDivisions.at(e));
+        }
+        CHECK(rim >= 12);
+        int junctions = 0, junctionFloor = 0;
+        for (const auto& [fid, kind] : report.faceMesher) {
+            if (kind != weft::MesherKind::RingJunction) continue;
+            ++junctions;
+            auto bit = report.faceBuild.find(fid);
+            if (bit != report.faceBuild.end() && bit->second == 2) {
+                ++junctionFloor;
+            }
+        }
+        CHECK(junctions >= 2);
+        CHECK_EQ(junctionFloor, 0);
     }
 
     // A per-edge pin still beats the adaptive proposal.

@@ -86,10 +86,27 @@ contract-floor needle soup — worse visually).
 
 ## Adaptive curved-ring floor (2026-07-21)
 
-`FaceMeshSettings::minCurvedSegments` (default 6) floors adaptive counts on
-closed curved edges only (cylinders, spheres, torus/fillet rings). Insertion
-points: `adaptiveCount` clamps and `proposeSet` densityScale survival in
-`solveDensity`. Straight edges and open arcs are unchanged.
+`FaceMeshSettings::minCurvedSegments` (default 6) is a closed-RING total
+(cylinders, spheres, torus/fillet circles, annulus bores).
+
+Artist report: UI at 12 still showed hexagonal holes (radial=6). Causes:
+
+1. Ring-junction derived `circle = 2*(nu+nv)` from a sparse CAD plate,
+   crushing bore proposals; the global 60° curvature floor then raised the
+   circle to 6 and desynced the junction (demote → contract floor).
+2. Plasticity-split co-circular open arcs skipped the closed-edge floor.
+
+Fixes in `solveDensity` / `generate()`:
+
+- Ring-junction grows plate `nu`/`nv` so `2*(nu+nv) ≥ max(mincurve,
+  adaptive bore)` under adaptive CAD; historic non-adaptive "plate drives
+  boss" unchanged.
+- Co-circular full rings share `mincurve` by span (two semicircles at 12
+  → 6+6).
+- Global curvature floor skips `ringDerivedRoots` (already grown) and
+  applies `minCurvedSegments` on true closed curves.
+- Sphere fold rescue no longer flattens to a planar n-gon when the rim
+  already meets `minCurvedSegments` (keeps revolution-grid).
 
 | Surface | Default |
 | --- | --- |
@@ -97,8 +114,9 @@ points: `adaptiveCount` clamps and `proposeSet` densityScale survival in
 | CLI | `--min-curve N` |
 | App | "min curved segments" under adaptive (per-face + global) |
 
-Regression: `testAdaptiveDensity` asserts CAD/`relativeDeviation` +
-`minCurvedSegments=12` + `densityScale=0.5` still yields rim ≥ 12.
+Regression: `testAdaptiveDensity` asserts CAD hole + `minCurvedSegments=12`
+keeps rim ≥ 12 and ring-junctions off the contract floor; closed cylinder
++ `densityScale=0.5` still ≥ 12.
 
 ## Selection / topology debug aids (2026-07-21)
 

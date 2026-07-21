@@ -104,13 +104,15 @@ struct FaceMeshSettings {
     // Off by default in the core (recipes/tests keep exact counts) — the
     // app turns it on for new sessions.
     bool adaptive = false;
-    // Lower floor on adaptive counts for closed curved loops (cylinder /
-    // sphere / torus / fillet rings, annulus bores, …). Adaptive may raise
-    // the count for large features but never resolves a closed curved rim
-    // below this many segments. Default 6 matches the historic hard floor;
-    // raise it (e.g. 12) when CAD/relative-deviation's 60° gate would
-    // otherwise leave rings looking faceted. Straight edges and open arcs
-    // are unaffected. Recipe/CLI: mincurve / --min-curve.
+    // Lower floor on adaptive counts for closed curved RINGS (cylinder /
+    // sphere / torus / fillet circles, annulus bores, …), as a TOTAL around
+    // the ring. Plasticity/STEP often splits one circle into open arcs —
+    // those arcs still share this floor by span (two semicircles at 12 →
+    // 6+6). Ring-junction plates grow their boundary so 2*(nu+nv) meets
+    // this floor instead of crushing the bore back to a hexagon. Default 6
+    // matches the historic hard floor; raise it (e.g. 12) when CAD/
+    // relative-deviation's 60° gate would otherwise leave rings faceted.
+    // Straight edges are unaffected. Recipe/CLI: mincurve / --min-curve.
     int minCurvedSegments = 6;
     // Per-face pathology guard: a hard ceiling on this face's total cell
     // count (0 = no ceiling). A face's mesh should scale with its surface

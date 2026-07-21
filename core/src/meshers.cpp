@@ -9104,6 +9104,11 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
     // unite into one group — both halves then carry the same count and
     // their columns meet exactly at the seams. Proportional splits
     // (a quarter against a three-quarter arc) keep their own counts.
+    //
+    // Also record per-arc floors for closed rings (~2π total span):
+    // minCurvedSegments is a RING total, so a Plasticity-split semicircle
+    // pair must each carry ceil(N/2), not skip the floor as open arcs.
+    std::map<int, int> cocircArcFloor;  // eid -> per-arc share of ring floor
     {
         std::map<std::array<long long, 7>, std::vector<std::pair<int, double>>>
             rings;
@@ -9130,16 +9135,32 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
         }
         for (auto& [key, arcs] : rings) {
             if (arcs.size() < 2) continue;
-            double mn = 1e300, mx = 0.0;
+            double mn = 1e300, mx = 0.0, totalSpan = 0.0;
             for (const auto& [eid, span] : arcs) {
                 mn = std::min(mn, span);
                 mx = std::max(mx, span);
+                totalSpan += span;
             }
-            if (mx > 1.3 * mn) continue;
-            std::vector<int> ids;
-            ids.reserve(arcs.size());
-            for (const auto& [eid, span] : arcs) ids.push_back(eid);
-            sol.groups.unite(ids);
+            const bool fullRing = totalSpan >= 2.0 * M_PI - 1e-2;
+            if (mx <= 1.3 * mn) {
+                std::vector<int> ids;
+                ids.reserve(arcs.size());
+                for (const auto& [eid, span] : arcs) ids.push_back(eid);
+                sol.groups.unite(ids);
+            }
+            if (!fullRing) continue;
+            // Share the artist ring floor across arcs by span fraction.
+            // Equal semicircles with mincurve=12 each take 6 (visual 12).
+            const int ringFloor = std::clamp(
+                settings.defaults.minCurvedSegments, 1, 256);
+            for (const auto& [eid, span] : arcs) {
+                const double frac =
+                    totalSpan > 1e-12 ? span / totalSpan : 0.0;
+                const int share = std::max(
+                    1, int(std::ceil(ringFloor * frac - 1e-9)));
+                auto [it, inserted] = cocircArcFloor.try_emplace(eid, share);
+                if (!inserted) it->second = std::max(it->second, share);
+            }
         }
     }
 
@@ -9314,6 +9335,20 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                         n = std::max(n, ringFloor);
                     }
                 }
+                // Plasticity-split co-circular arcs: apply this edge's share
+                // of the closed-ring floor (ceil(N * span/2π)).
+                auto cit = cocircArcFloor.find(eid);
+                if (cit != cocircArcFloor.end()) {
+                    int share = cit->second;
+                    const int defFloor =
+                        std::max(1, settings.defaults.minCurvedSegments);
+                    if (ringFloor != defFloor) {
+                        share = std::max(
+                            1, int(std::ceil(double(share) * ringFloor /
+                                             defFloor)));
+                    }
+                    n = std::max(n, share);
+                }
             }
         }
         adCache[key] = n;
@@ -9342,9 +9377,24 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
             // must survive a 0.5x budget. Closed curved edges also raise
             // the floor to minCurvedSegments so densityScale cannot drop
             // a cylinder/sphere/fillet rim below the artist setting.
+            // Split co-circular arcs use their span share of that floor.
             int flo = floorA;
             if (closedCurvedEdge(eid)) {
                 flo = std::max(flo, std::clamp(s.minCurvedSegments, 1, 256));
+            }
+            auto cit = cocircArcFloor.find(eid);
+            if (cit != cocircArcFloor.end()) {
+                int share = cit->second;
+                const int faceFloor =
+                    std::clamp(s.minCurvedSegments, 1, 256);
+                const int defFloor = std::max(
+                    1, settings.defaults.minCurvedSegments);
+                if (faceFloor != defFloor) {
+                    share = std::max(
+                        1, int(std::ceil(double(share) * faceFloor /
+                                         defFloor)));
+                }
+                flo = std::max(flo, share);
             }
             propose({eid}, std::max(int(std::lround(flo / dScale)),
                                     adaptiveCount(eid, s)),
@@ -9774,11 +9824,13 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
     }
 
     // Ring junctions close the loop: the circle must take exactly one ring
-    // vertex per boundary vertex, so its group count is DERIVED from the
-    // boundary — 2*(nu+nv) — and propagates through the group to whatever
-    // boss/bore shares that circle ("the plate drives the boss"). A face
-    // whose circle is pinned to an incompatible count can't form the
-    // pattern and demotes to fallback triangulation.
+    // vertex per boundary vertex, so its group count equals 2*(nu+nv) and
+    // propagates through the group to whatever boss/bore shares that circle.
+    // Under adaptive / minCurvedSegments the bore often wants MORE than the
+    // sparse plate boundary (CAD 60° floor → 6, artist mincurve → 12). Crushing
+    // the circle down to 2*(nu+nv) then letting the global curvature floor
+    // raise it again desyncs the junction and demotes it. Grow the plate
+    // edges so 2*(nu+nv) meets max(proposals, mincurve), then derive.
     for (auto& [fid, plan] : plans) {
         if (plan.kind != MesherKind::RingJunction) continue;
         int nu = sol.countFor(plan.uEdges[0], 1);
@@ -9786,11 +9838,58 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
         int derived = 2 * (nu + nv);
         int root = sol.groups.find(plan.circleEdgeId);
         auto pin = pinned.find(root);
+        const FaceMeshSettings& s = settings.forFace(fid);
+        // Always honor the artist closed-ring floor. Under adaptive CAD,
+        // also keep the bore's curvature/proposal count (plate grows to
+        // match). Manual non-adaptive mode keeps the historic "plate
+        // drives the boss" rule so typed gridU/gridV stay authoritative
+        // over a neighbour's radial default.
+        int want = std::max(derived, std::clamp(s.minCurvedSegments, 1, 256));
+        const bool adaptiveRing = s.adaptive || settings.defaults.adaptive;
+        if (adaptiveRing) {
+            auto git = sol.groupCount.find(root);
+            if (git != sol.groupCount.end()) {
+                want = std::max(want, git->second);
+            }
+        }
+        for (const auto& [pfid, pplan] : plans) {
+            if (pplan.circleEdgeId == plan.circleEdgeId ||
+                (std::find(pplan.uEdges.begin(), pplan.uEdges.end(),
+                           plan.circleEdgeId) != pplan.uEdges.end())) {
+                want = std::max(
+                    want, std::clamp(settings.forFace(pfid).minCurvedSegments,
+                                     1, 256));
+            }
+        }
+        if (pin != pinned.end()) {
+            // Explicit edge pin wins; junction must match or demote.
+            want = pin->second;
+        }
+        // Grow nu/nv (balanced) until 2*(nu+nv) >= want. Skip edges that
+        // carry an explicit pin — those stay exact.
+        auto uRoot = sol.groups.find(plan.uEdges[0]);
+        auto vRoot = sol.groups.find(plan.vEdges[0]);
+        const bool uPinned = pinned.count(uRoot) > 0;
+        const bool vPinned = pinned.count(vRoot) > 0;
+        while (2 * (nu + nv) < want) {
+            const bool growU =
+                !uPinned && (vPinned || (!uPinned && !vPinned && nu <= nv));
+            if (growU) {
+                ++nu;
+            } else if (!vPinned) {
+                ++nv;
+            } else {
+                break;  // both plate axes pinned short of want
+            }
+        }
+        derived = 2 * (nu + nv);
         if (pin != pinned.end() && pin->second != derived) {
             plan.kind = MesherKind::Fallback;
             plan.constrains = false;
             continue;
         }
+        if (!uPinned) sol.groupCount[uRoot] = nu;
+        if (!vPinned) sol.groupCount[vRoot] = nv;
         sol.groupCount[root] = derived;
         sol.ringDerivedRoots.insert(root);
         sol.proposalsByRoot[root].push_back(
@@ -17539,6 +17638,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         if (settings.perEdge.count(eid)) continue;
         const int root = density.groups.find(eid);
         if (density.pinnedRoots.count(root)) continue;
+        // Ring-junction circles already grew the plate to satisfy
+        // minCurvedSegments + proposals. Raising them again here without
+        // growing nu/nv desyncs 2*(nu+nv) and demotes the junction.
+        if (density.ringDerivedRoots.count(root)) continue;
         const TopoDS_Edge E = TopoDS::Edge(model.edges(eid));
         if (BRep_Tool::Degenerated(E)) continue;
         double f, l;
@@ -17556,6 +17659,24 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 floorN = std::clamp(
                     stableDeflectionCount(gc, M_PI / 3.0, 1e6), 1, 32);
                 if (cache) cache->curvatureFloors[eid] = floorN;
+            }
+            // Artist closed-ring floor: a full circle (or near-full) never
+            // resolves below minCurvedSegments. Defaults cover edges with
+            // no proposing face in the attribution map.
+            const bool closedLoop =
+                c3->Value(f).Distance(c3->Value(l)) < 1e-9;
+            if (closedLoop) {
+                int artist = settings.defaults.minCurvedSegments;
+                auto own = density.proposalsByRoot.find(root);
+                if (own != density.proposalsByRoot.end()) {
+                    for (const auto& p : own->second) {
+                        if (p.faceId < 1) continue;
+                        artist = std::max(
+                            artist,
+                            settings.forFace(p.faceId).minCurvedSegments);
+                    }
+                }
+                floorN = std::max(floorN, std::clamp(artist, 1, 256));
             }
             auto [it, inserted] = floorOfRoot.try_emplace(root, floorN);
             if (!inserted && it->second < floorN) it->second = floorN;
@@ -20927,25 +21048,51 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     // Sphere dimple / bowl patches: the UV lattice often
                     // fails this census near the trim, and demoting to the
                     // contract floor ships hundreds of needles (MP9 face
-                    // 1224). Under CAD/minimal, a single boundary n-gon on
-                    // the exact rim welds to the annulus and stays editable.
+                    // 1224). Flattening to a single boundary n-gon used to
+                    // be the CAD rescue — but with a healthy rim count that
+                    // reads as "hemisphere became a plane". Only flatten
+                    // when the rim is still below the artist floor (the
+                    // old hexagonal cap); otherwise keep the revolution
+                    // lattice (a few UV folds beat a planar n-gon).
                     bool sphereRescue = false;
                     if (s.minimal &&
                         plan.kind == MesherKind::RevolutionGrid &&
                         surf.GetType() == GeomAbs_Sphere) {
-                        PolyMesh ngon;
-                        MeshBuilder nb(ngon);
-                        if (meshMinimalPlanar(face, model, fid, solvedEdge,
-                                              s.radial, nb, &pinnedEdge) &&
-                            borderContractViolation(fid, ngon) == 0 &&
-                            !ngon.polygons.empty()) {
-                            parts[fid] = std::move(ngon);
-                            plans[fid].kind = MesherKind::MinimalNGon;
-                            fellBack[fid] = 0;
-                            buildCause[fid] = "sphere fold -> minimal n-gon";
+                        int rimN = 0;
+                        for (int e : plan.uEdges) {
+                            if (e > 0 && e < int(solvedEdge.size())) {
+                                rimN = std::max(rimN, solvedEdge[e]);
+                            }
+                        }
+                        const int floorN =
+                            std::clamp(s.minCurvedSegments, 1, 256);
+                        if (rimN > 0 && rimN < floorN) {
+                            PolyMesh ngon;
+                            MeshBuilder nb(ngon);
+                            if (meshMinimalPlanar(face, model, fid,
+                                                  solvedEdge, s.radial, nb,
+                                                  &pinnedEdge) &&
+                                borderContractViolation(fid, ngon) == 0 &&
+                                !ngon.polygons.empty()) {
+                                parts[fid] = std::move(ngon);
+                                plans[fid].kind = MesherKind::MinimalNGon;
+                                fellBack[fid] = 0;
+                                buildCause[fid] =
+                                    "sphere fold -> minimal n-gon";
+                                sphereRescue = true;
+                                dbg("mesh face %d: sphere fold -> minimal "
+                                    "n-gon (rim %d < floor %d)",
+                                    fid, rimN, floorN);
+                            }
+                        } else {
+                            // Keep the revolution mesh; skip contract-floor
+                            // demote that would needle-soup the dimple.
                             sphereRescue = true;
-                            dbg("mesh face %d: sphere fold -> minimal n-gon",
-                                fid);
+                            buildCause[fid] =
+                                "sphere fold kept revolution-grid";
+                            dbg("mesh face %d: sphere fold kept "
+                                "revolution-grid (rim %d)",
+                                fid, rimN);
                         }
                     }
                     if (!sphereRescue) {
