@@ -1008,10 +1008,9 @@ void testAutoGates() {
           weft::MesherKind::PlateWeb);
     CHECK(isWatertight(forced));
 
-    // Minimal everywhere: both plate faces become flat hole-bridged webs
-    // with zero interior vertices, and the solid still welds.
+    // Minimal + elongated slot: structured plate-web rejects non-round
+    // holes, so the slotted flats stay boundary n-gons.
     weft::GenerationSettings gsMin;
-    gsMin.defaults.minimal = false;  // legacy dense-flat counts
     gsMin.defaults.minimal = true;
     weft::GenerationReport repMin;
     weft::PolyMesh minimal = weft::generate(model, a, gsMin, &repMin);
@@ -1019,6 +1018,39 @@ void testAutoGates() {
         CHECK(repMin.faceMesher.at(fid) == weft::MesherKind::MinimalNGon);
     }
     CHECK(isWatertight(minimal));
+
+    // Minimal + ROUND bore (CAD profile): ring-junction / plate-web must
+    // win over the residual minimal-ngon grab so bored flats keep local
+    // collars instead of one hair-thin fan n-gon (WP5 visual rubric).
+    {
+        std::string holePath = tmpPath("weft_test_minimal_hole.step");
+        weft::writeStep(weft::makeFixture("hole"), holePath);
+        weft::Model hole = weft::loadStep(holePath);
+        weft::Analysis ha = weft::analyze(hole);
+        weft::GenerationSettings hg;
+        hg.defaults.minimal = true;
+        hg.defaults.adaptive = true;
+        weft::GenerationReport hr;
+        weft::PolyMesh hm = weft::generate(hole, ha, hg, &hr);
+        CHECK(isWatertight(hm));
+        int boredFlats = 0;
+        for (const auto& f : ha.faces) {
+            if (f.type != weft::SurfaceType::Plane) continue;
+            int wires = 0;
+            for (TopExp_Explorer wx(hole.faces(f.id), TopAbs_WIRE); wx.More();
+                 wx.Next()) {
+                ++wires;
+            }
+            if (wires < 2) continue;
+            ++boredFlats;
+            weft::MesherKind k = hr.faceMesher.at(f.id);
+            CHECK(k == weft::MesherKind::RingJunction ||
+                  k == weft::MesherKind::PlateWeb ||
+                  k == weft::MesherKind::AnnulusRing ||
+                  k == weft::MesherKind::PlanarGrid);
+        }
+        CHECK(boredFlats >= 1);
+    }
 }
 
 // Adaptive density: with `adaptive` set, an edge's count comes from its

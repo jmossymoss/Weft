@@ -8175,10 +8175,15 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         // the revolution / coons path below. A nearly-flat cylinder ring, and
         // any shallow cone/bspline (foam's dished spray-can rings), still
         // collapse. Only a CURVED cylinder is excluded from the grab.
+        // True PLANAR faces with holes must NOT take this early grab either:
+        // they need ring-junction / plate-web collars (section 7) and are
+        // handled after AnnulusCRing below. Swallowing them here produced
+        // one fan n-gon per bored flat under the CAD profile.
         const bool curvedCyl =
             surf.GetType() == GeomAbs_Cylinder &&
             !isGeometricallyFlat(face, surf, /*flatFrac=*/0.08);
-        if (wireCount > 1 && !curvedCyl &&
+        const bool truePlane = surf.GetType() == GeomAbs_Plane;
+        if (wireCount > 1 && !curvedCyl && !truePlane &&
             planMinimalPlanar(face, surf, model, plan, /*requirePlane=*/false)) {
             dbg("plan face %d: curved cutout -> minimal n-gon (%d wires, "
                 "local holes)",
@@ -8259,26 +8264,29 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // per-face minimal override handled just above).
     if (planAnnulusCRing(face, model, plan)) return plan;
 
-    // Minimal n-gon owns EVERY flat face it can express when the mode is
-    // on (the topology policy: big flats are n-gons, quads go to curves;
-    // triangulation is an export option). The junction patterns below
-    // only see flat faces when minimal is off or can't build the face.
+    // Hole / ring structured flats BEFORE the minimal-ngon grab, even when
+    // `minimal` is on (CAD profile). Section 7 wants holes with local
+    // collars — not a single fan n-gon across a bored plate that renders
+    // as hair-thin triangles. Simple single-wire panels still fall through
+    // to MinimalNGon below (sparse CAD flats). Elongated slots reject
+    // plate-web and also keep MinimalNGon.
+    if (planRingJunction(face, model, plan)) return plan;
+
+    // Auto picks stay conservative: the annulus band only for actual
+    // concentric rings, the plate web only for compact (bolt-style) holes.
+    if (planAnnulus(face, model, plan, /*requireRing=*/true)) return plan;
+
+    if (planPlateWeb(face, surf, model, plan, /*requireRoundHoles=*/true)) {
+        return plan;
+    }
+
+    // Residual flats under CAD/minimal: boundary n-gon. Dense / flat-quads
+    // (`minimal=false`) continue to PlanarGrid below.
     if (s.minimal && planMinimalPlanar(face, surf, model, plan)) {
         if (getenv("WEFT_FLAT_DEBUG")) {
             dbg("plan face %d: minimal-ngon (surf type %d)", fid,
                 (int)surf.GetType());
         }
-        return plan;
-    }
-
-    if (planRingJunction(face, model, plan)) return plan;
-
-    // Auto picks stay conservative: the annulus band only for actual
-    // concentric rings, the plate web only for compact (bolt-style) holes.
-    // Everything else keeps the fallback unless the user forces a mesher.
-    if (planAnnulus(face, model, plan, /*requireRing=*/true)) return plan;
-
-    if (planPlateWeb(face, surf, model, plan, /*requireRoundHoles=*/true)) {
         return plan;
     }
 
@@ -20357,7 +20365,25 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 if (!meshPlateWeb(face, surf, model, fid, solvedEdge,
                                   s.radial, s.junctionRings, s.squareCollar,
                                   out)) {
-                    demote(fid, face, surf, s, "plate web failed");
+                    // Under CAD/minimal, prefer a boundary n-gon over raw
+                    // OCCT when the structured web cannot build (slitdrill
+                    // tangent contacts). Keeps the face editable and inside
+                    // the max_raw corpus ceilings.
+                    FacePlan rescue;
+                    if (s.minimal &&
+                        planMinimalPlanar(face, surf, model, rescue) &&
+                        meshMinimalPlanar(face, model, fid, solvedEdge,
+                                          s.radial, out, &pinnedEdge)) {
+                        plans[fid].kind = MesherKind::MinimalNGon;
+                        builtCounts[fid] = {
+                            outerWireSolvedTotal(face, model, solvedEdge,
+                                                 s.radial),
+                            0};
+                        dbg("mesh face %d: plate web failed -> minimal n-gon",
+                            fid);
+                    } else {
+                        demote(fid, face, surf, s, "plate web failed");
+                    }
                 }
                 break;
             case MesherKind::RibbonSweep: {
