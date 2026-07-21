@@ -451,6 +451,24 @@ Density and self-heal are class-scoped:
 - fold / contract-floor demotion may not apply a policy from another
   `featureClass` (sphere tip ≠ foam bowl).
 
+Body-scoped cylindrical continuity (hard rule):
+
+- Within one solid/body, circumferential segment counts stay continuous along
+  a cylindrical stack: the same column count through every surface that
+  participates in that stack — analytic drums, fillets/blends on those
+  rails, planar caps/annuli, bosses/holes, and freeform/bspline walls that
+  inherit the same circular or co-axial seams.
+- Continuity means shared solved edge-group counts (and matching station
+  totals on split co-circular arcs), not “similar looking” densities per
+  face. Grids, coons, ribbons, and floors on that body must honor the same
+  circumferential contract on those seams.
+- A local override may raise a stack’s common count; it must not leave one
+  face on the stack at a different circumferential total than its co-axial
+  neighbors unless the artist explicitly decouples that seam (`linkRims` /
+  unlinked rims / per-edge pin with documented intent).
+- Axial / across-blend counts remain free to differ; this rule is about the
+  around-the-cylinder direction that carries silhouette continuity.
+
 Fix gate for WP5 and WP6:
 
 1. Name the `featureClass` + `chartKind` the bug violates.
@@ -476,6 +494,8 @@ Plasticity models in the Weft viewport and Blender:
 
 - primitive silhouette follows the exact CAD shape at the selected density;
 - cylinder and revolution columns are straight and intentional;
+- within one body, co-axial / cylindrical stacks keep one circumferential
+  segment count across drums, blends, caps, and freeform faces on those seams;
 - fillet strips run across and along the blend in understandable directions;
 - holes and slots receive local collars without global triangle fans;
 - flat regions remain sparse;
@@ -638,6 +658,10 @@ Tasks:
   `featureClass × chartKind → MesherKind` using only existing backends (AD-3).
 - Tie density solve rules to `featureClass` (mincurve rings, fillet stations,
   plate/boss bore ownership, primitive-neighbor adaptation).
+- Enforce body-scoped cylindrical continuity (AD-5): one circumferential
+  count along each co-axial stack across analytic, blend, planar, and
+  bspline/freeform faces that share those circular seams; cover grids and
+  floors on the same contract, not only revolution rims.
 - Constrain fold / contract-floor self-heal so demotion cannot apply another
   class’s policy.
 - Per AD-4, extract classify / density / plan-from-class phases behind tests;
@@ -653,6 +677,9 @@ Exit:
   same chart/feature rules (no model-specific branches).
 - Fillet strip, hole plate, and drum classes each have at least one zoo reducer
   and one cross-model counterexample in tests.
+- A cylindrical-stack continuity test proves equal circumferential seam
+  counts across at least drum + blend + cap (or bspline wall) faces in one
+  body; a deliberate unlink/pin case documents the only allowed mismatch.
 - `planFace` no longer re-implements chart or fillet detection that `analyze()`
   already provides (duplicated probes removed or thin wrappers).
 - Topology signature or inspect exposes `featureClass` and `chartKind` for
