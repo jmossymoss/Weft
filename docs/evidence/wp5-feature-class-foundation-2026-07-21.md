@@ -19,7 +19,8 @@ self-heal from those facts, expose class+chart for debugging.
 
 - `FaceInfo`: `chartKind`, `featureClass`, `loop`, `priority`
 - analyze(): sphere UV chart, narrow fillet vs wide false-fillet drum, loop signature
-- Early `featureClass` table: SphereCap, BossJunction, HolePlate, PlanarPanel, Freeform (dome/rail/ribbon)
+- Early `featureClass` table: SphereCap, BossJunction, HolePlate, PlanarPanel,
+  Freeform→dome only (early ribbon/rail opened foam — kept in late ladder)
 - Drum open-band from class×chart; sliver fillet + fold heal class-scoped
 - Adjacency-limited stack continuity; pin blocks → `densityConflicts` reason `stack-continuity-pin`
 - Report / signature / inspect / app roster
