@@ -51,6 +51,12 @@ No separate private “fresh Plasticity export” bundle is in-repo. Release
 Plasticity side-by-side (section 7) still needs artist Plasticity mesh
 exports alongside these STEPs.
 
+## Visual (Weft-only)
+
+See `docs/evidence/wp5-visual-rubric-2026-07-21.md` and
+`docs/evidence/wp5-visual/` — release hard-surface set still watertight under
+CAD profile; Plasticity side-by-side still pending artist mesh exports.
+
 ## Remaining for WP5 exit
 
 - Reduce the ABC hang (`00000792`) and/or Fusion open/NM cases into
