@@ -12,10 +12,10 @@ recipes so output can be regenerated after density or CAD changes.
 
 ## Status
 
-Weft is alpha software under correctness and workflow stabilization. The core
-loop exists, but the release corpus and cross-platform gates are not yet the
-evidence required for an artist-usable MVP. Do not interpret the implemented
-feature count as a release-readiness claim.
+Weft is alpha software under correctness and workflow stabilization. The
+automatic release set and artist correction loop are under evidence; real-work
+asset validation and packaging remain before MVP. Do not interpret the
+implemented feature count as a release-readiness claim.
 
 The sole roadmap, completion definition, corpus strategy, and work order are in
 [docs/EXECUTION_PLAN.md](docs/EXECUTION_PLAN.md). The single production

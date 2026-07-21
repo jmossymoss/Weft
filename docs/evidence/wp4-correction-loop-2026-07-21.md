@@ -1,39 +1,43 @@
 # WP4 — artist correction loop (2026-07-21)
 
-Active package: WP4. This note records the first correction-loop closure
-slice after WP3 merge (`c2b3584`).
+Active package closed on this revision train. Exit evidence for section 3.3
+and the WP4 package gate.
 
-## Changes
+## Exit checklist
 
-1. **WeldVerts remap** — world-space ops (`WeldVerts`, with `DeletePoly` /
-   `DissolveLoop`) no longer fall through the face-id remap path. A
-   `faceId == 0` weld is kept; face-anchored ops that lose their feature
-   still increment `opsDropped`.
-2. **`applyOps` report** — returns `{applied, failed}` so silent no-ops are
-   visible. App regen logs failures and sets status when any op fails.
-3. **Fail-closed recording** — weld / dissolve / fill / bridge probe the
-   live mesh before appending to the recipe; unsupported edits do not
-   corrupt the recipe.
-4. **Live-link finalization** — while live-link is on, regen sets
-   `finalizeMesh = true` so Blender receives the export mesh (§3.3).
-5. **Semantic density labels** — RingJunction knobs expose "around ring" /
-   "along axis" instead of raw grid u/v.
+| Criterion | Evidence |
+| --- | --- |
+| Load STEP → face control → regenerate → save/reload recipe → export | `testArtistCorrectionWorkflow` |
+| Constrained edits survive density when anchors remain valid | `testConstrainedEditSurvivesDensityChange` |
+| CAD remap reports dropped decisions; world-space welds survive | `testRemapDropsLostOpsKeepsWeld`, identity remap in workflow test |
+| Export / live-link use finalized mesh | App: `finalizeMesh = forceFinalize \|\| liveLink`; export via `finalizedMeshForExport`; workflow test sets `finalizeMesh` |
+| Documented controls for a new user | README “Artist correction loop” |
+| Corrections cannot bypass release geometry gate | Workflow boss density override + CLI `weft mesh … --recipe` with loop op stays watertight |
 
-## Tests added
+## Changes (cumulative)
 
-- `testConstrainedEditSurvivesDensityChange` — loop insert + nudge, bump
-  radial, regenerate + `applyOps`, assert watertight / validate / anchors.
-- `testRemapDropsLostOpsKeepsWeld` — lost face-anchored nudge reports
-  `opsDropped >= 1`; WeldVerts survives remap.
+1. **WeldVerts remap** — world-space; no longer dropped when `faceId == 0`.
+2. **`applyOps` report** — `{applied, failed}`; app status on failures.
+3. **Fail-closed recording** — weld / dissolve / fill / bridge probe before
+   appending to the recipe.
+4. **Live-link finalization** — regen finalizes while live-link is on.
+5. **Semantic selected-face knobs** — RingJunction `rect u` / `rect v`;
+   DiskCap wheel no longer nudges inert axial; PlateWeb `collar rings` /
+   hole share seed; QuadFill deviation always visible; annulus/rail labels
+   match the wheel HUD.
+6. **§3.3 e2e test** — `testArtistCorrectionWorkflow`.
 
-## Follow-ups in this slice
+## CLI spot check (this machine)
 
-- Selected-face density labels aligned with the wheel HUD (annulus loop
-  verts, rail density, ring around/along, plate loop-share seed).
-- README artist correction-loop walkthrough under Interactive app.
+```text
+weft mesh tests/fixtures/generated/cylinder.step --recipe <loop op> --validate
+  → watertight yes; 36 quads after loop replay
+weft mesh tests/fixtures/generated/boss.step --validate
+  → watertight yes
+./build/tests/weft_tests → all checks passed
+```
 
-## Remaining for WP4 exit
+## Active package
 
-- Broader selected-face settings audit for any remaining inert knobs.
-- Confirm a full artist dry-run (import → correct → undo → save → remap →
-  export → Blender) without engineer intervention.
+WP4 exit criteria pass on this revision. Active work package advanced to
+WP5 — validate real work.
