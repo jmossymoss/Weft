@@ -26,8 +26,14 @@ slice after WP3 merge (`c2b3584`).
 - `testRemapDropsLostOpsKeepsWeld` — lost face-anchored nudge reports
   `opsDropped >= 1`; WeldVerts survives remap.
 
+## Follow-ups in this slice
+
+- Selected-face density labels aligned with the wheel HUD (annulus loop
+  verts, rail density, ring around/along, plate loop-share seed).
+- README artist correction-loop walkthrough under Interactive app.
+
 ## Remaining for WP4 exit
 
-- Broader selected-face settings audit (hide inert knobs for every kind).
-- Documented artist walkthrough / onboarding for the correction loop.
-- Confirm live-link + export still pass release geometry gate with ops.
+- Broader selected-face settings audit for any remaining inert knobs.
+- Confirm a full artist dry-run (import → correct → undo → save → remap →
+  export → Blender) without engineer intervention.

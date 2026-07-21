@@ -67,12 +67,29 @@ capabilities include:
 - STEP hot reload with geometric recipe remapping.
 - OBJ-based Blender live link.
 
+### Artist correction loop
+
+Typical pass after a STEP loads with a strong automatic start:
+
+1. Select the problem face (face mode). Only knobs that drive that face's
+   mesher appear; scroll or drag primary/secondary density (`[` / `]`, or
+   Shift for the secondary axis).
+2. Insert a constrained loop (`R`, click, drag to slide) or grab a vertex
+   (`G`) — both stay on the CAD surface and record into the recipe.
+3. For open borders after a delete (`X`): bridge (`J` / `B`) or fill (`F` in
+   bridge mode). Weld verts with `M` in vertex mode. Unsupported edits fail
+   with a status line and do not append to the recipe.
+4. Undo with `Ctrl+Z`. Save the recipe (`Ctrl+S`), bump density, and regenerate
+   — surviving ops re-apply from anchors.
+5. Export (`Ctrl+E`) for the finalized mesh. With Blender live-link enabled,
+   regenerates also write the finalized OBJ (not the reduced preview).
+
 Common controls:
 
 - `R`: loop-cut mode.
 - `G`: constrained grab.
-- `X`: delete selected faces or polygons.
-- `J`: bridge selected/open boundary edges.
+- `X`: delete selected faces or polygons; `Ctrl+X` dissolves a mesh-edge loop.
+- `J` / `B`: bridge selected/open boundary edges.
 - `M`: weld selected vertices in vertex mode; toggle minimal n-gon in face
   mode.
 - Type a number then `Enter`: set the selected face's primary divisions.
@@ -80,19 +97,18 @@ Common controls:
 - `[` / `]`: adjust divisions; hold Shift for the secondary axis.
 - `C`: cap style.
 - `T`: triangle/quad-dominant toggle.
-- `M`: minimal n-gon.
 - `W`: wireframe.
-- `B`: feature edges.
-- `F`: frame selection.
+- `F`: frame selection (or fill the hovered open boundary in bridge mode).
 - `Esc`: cancel or deselect.
 - `Ctrl+S`: save the recipe.
+- `Ctrl+E`: export (finalized).
 
 Install `blender/weft_link.py` as a Blender add-on and use the Weft sidebar to
 watch the app's live-link OBJ.
 
 Interactive regeneration may defer expensive whole-model repairs for
-responsiveness. Export always regenerates with finalization enabled and is the
-authoritative mesh.
+responsiveness unless live-link is on. Export always regenerates with
+finalization enabled and is the authoritative mesh.
 
 Headless screenshots are available for visual checks:
 

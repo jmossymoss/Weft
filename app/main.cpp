@@ -3347,9 +3347,18 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
         // Typing a count IS choosing manual density for this face —
         // same rule as the wheel — otherwise the number displays while
         // adaptive keeps driving and they never match.
+        // Labels match the wheel HUD so selected-face settings name the
+        // same semantic axes the artist already scrolled.
+        const char* radialLabel = "radial";
+        if (k == MK::AnnulusRing) radialLabel = "loop verts";
+        else if (k == MK::RibbonSweep || k == MK::RailLadder) {
+            radialLabel = "rail density";
+        } else if (k == MK::PlateWeb || k == MK::QuadFill) {
+            radialLabel = "loop share seed";
+        }
         int radialShown =
             s.adaptive && liveN[0] > 0 ? liveN[0] : s.radial;
-        if (ImGui::DragInt("radial", &radialShown, 0.2f, 3, 256)) {
+        if (ImGui::DragInt(radialLabel, &radialShown, 0.2f, 3, 256)) {
             s.radial = radialShown;
             ch = true;
             // Manual only where radial IS the density; on plate-web /
