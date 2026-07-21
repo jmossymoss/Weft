@@ -6,6 +6,7 @@ build*/
 !tests/fixtures/**/*.step
 !tests/regressions/**/*.step
 tests/fixtures/generated/
+tests/public_corpus/_cache/
 compile_commands.json
 .cache/
 imgui.ini

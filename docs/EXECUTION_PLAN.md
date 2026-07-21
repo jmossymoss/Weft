@@ -5,7 +5,7 @@ session handoffs are not authoritative. If code, comments, issues, or old
 branches disagree with this document, follow this document or revise it with
 new test evidence before changing direction.
 
-Active work package: WP1 — build coverage.
+Active work package: WP4 — complete the artist correction loop.
 
 Change the active package only when its exit criteria pass at one revision. If
 a later failure invalidates an earlier gate, reopen the earliest affected
@@ -279,19 +279,24 @@ weakening release assertions.
 release gates, and scheduled public-corpus jobs must select cases from it rather
 than maintain separate hardcoded model lists.
 
-WP0 begins with known bootstrap debt: the manifest contains generated and
-reduced paths that are absent, while `tools/corpus_gate.sh` has an independent
-fixture list and automatically includes every committed STEP example. Reconcile
-these before treating corpus results as authoritative.
+Corpus runners select from `tests/CAD_CORPUS.tsv` (and optional public
+manifests under `tests/public_corpus/`). Geometry coverage comes from the
+deterministic zoo and `tests/COVERAGE_MATRIX.tsv`. Public corpus authority is
+ABC (broad diversity), NIST/CAx-IF (interop), and MAMBO (meshing stress).
+Fusion 360 Gallery is optional supplemental smoke, not required or primary.
+Local `STEP_Examples` release models are the artist gate, not a public-corpus
+or geometry-coverage oracle. MP9 is `tier=performance` only.
 
 The manifest must distinguish:
 
 - release cases, which must eventually meet every strict completion invariant;
 - deterministic non-release fixtures, which must meet their declared valid or
   invalid-input expectations;
+- dirty-step cases with explicit open/invalid expectations;
 - stress/research cases, which may retain explicit bounded known-red metrics but
   may not regress;
-- performance cases, which run on a scheduled or manual cadence.
+- performance cases (including MP9), which run on a scheduled or manual cadence
+  and never define geometry coverage.
 
 During WP0-WP2, record each reproducible release blocker in
 `tests/KNOWN_RED.tsv` with case, metric, observed ceiling, reproducer, owning
@@ -314,20 +319,21 @@ Use reproducible manifests with upstream URL, version, checksum, license note,
 selection rule, and expected local path. Do not commit an unbounded external
 dataset to this repository.
 
-- Fusion 360 Gallery Extended STEP: primary mechanical-feature corpus. Select a
-  stratified subset using its operation labels for extrusion, cut, fillet,
-  chamfer, and revolution, plus face-count and body-count bands.
-  Source: [Fusion 360 Gallery Dataset](https://github.com/AutodeskAILab/Fusion360GalleryDataset)
-- ABC STEP dataset: broad geometry and robustness corpus. Select by surface and
-  curve types, face count, body count, and import result rather than taking an
+Public corpus authority:
+
+- ABC STEP dataset: broad diversity and robustness. Select by surface and curve
+  types, face count, body count, and import result rather than taking an
   unclassified random sample.
   Source: [ABC Dataset](https://deep-geometry.github.io/abc-dataset/)
 - NIST and CAx-IF STEP models: interoperability corpus for AP203/AP242, units,
   assemblies, and files produced by different kernels.
   Source: [NIST CAD models and STEP files](https://www.nist.gov/ctl/smart-connected-systems-division/smart-connected-manufacturing-systems-group/mbe-pmi-0)
-- MAMBO may be used as a small meshing-topology supplement, but it does not
-  replace the mechanical or interoperability corpora.
+- MAMBO: meshing-topology stress corpus for difficult blocking configurations.
   Source: [MAMBO](https://gitlab.com/franck.ledoux/mambo)
+
+Fusion 360 Gallery Extended STEP may be used as optional stratified mechanical-
+feature smoke. It is not required and does not define public corpus authority.
+Source: [Fusion 360 Gallery Dataset](https://github.com/AutodeskAILab/Fusion360GalleryDataset)
 
 Start with a reviewable subset, then expand nightly breadth only after failures
 are classified automatically. Dataset volume is not a substitute for coverage.
@@ -369,6 +375,8 @@ Current measurements must come from scripts or test output. Do not put volatile
 
 `weft::generate()` and its border-count contract are the only production
 generation path for MVP. Improve it incrementally behind corpus tests.
+Entry-point audit and settings summary:
+[PRODUCTION_PATH.md](PRODUCTION_PATH.md).
 
 The removed decoupled-core rewrite is not an active direction. Do not restore
 it, port work from old branches, or begin another ground-up rewrite without a
@@ -380,7 +388,8 @@ new architecture decision supported by release-corpus evidence.
 experiments. They are off by default and are not a second product architecture.
 They may be used for controlled diagnosis. Promote or remove them only after an
 A/B report across the release set shows a consistent advantage and no new
-correctness failures.
+correctness failures. Evidence (keep quarantined):
+`docs/evidence/wp2-stitch-ab-2026-07-20.md` via `tools/stitch_ab.sh`.
 
 ### AD-3: mesher breadth
 
@@ -553,7 +562,7 @@ Goal: demonstrate that fixture success transfers to the target asset class.
 
 Tasks:
 
-- Run stratified Fusion 360, ABC, and NIST smoke subsets.
+- Run ABC, NIST/CAx-IF, and MAMBO smoke subsets (optional Fusion sample allowed).
 - Run the fresh Plasticity set.
 - Classify every failure by input validity and topology class.
 - Reduce shareable failures and add them to the appropriate deterministic tier.

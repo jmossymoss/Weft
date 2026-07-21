@@ -25,13 +25,33 @@ jobs:
           cmake --build build -j"$(nproc)"
       - name: Pipeline tests
         run: ctest --test-dir build --output-on-failure
+      - name: Coverage report
+        run: tools/coverage_report.sh
       - name: Corpus gate
         run: tools/corpus_gate.sh --no-golden
-      - name: Strict release gate (expected red until WP3)
+      - name: Topology signature fixture set
+        run: |
+          mkdir -p build/topology_signatures
+          tools/topology_signature.sh fixture-set -o build/topology_signatures
+          tools/topology_signature.sh self-check
+      - name: Topology signature release set (Linux reference)
+        run: |
+          mkdir -p build/topology_signatures/release
+          tools/topology_signature.sh release-set -o build/topology_signatures/release
+      - name: Upload topology signatures
+        uses: actions/upload-artifact@v4
+        with:
+          name: topology-signatures-linux
+          path: build/topology_signatures/
+          if-no-files-found: warn
+      - name: Public corpus (optional; skipped unless WEFT_RUN_PUBLIC=1)
         continue-on-error: true
+        run: tools/public_corpus_gate.sh
+      - name: Strict release gate
         run: tools/release_gate.sh
 
   windows:
+    needs: linux
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -53,14 +73,51 @@ jobs:
       - name: Pipeline tests
         shell: pwsh
         run: ctest --test-dir build -C Release --output-on-failure
+      - name: Coverage report
+        shell: bash
+        run: tools/coverage_report.sh
       - name: Corpus invariants
         shell: bash
         run: |
           WEFT=build/bin/Release/weft.exe \
             tools/corpus_gate.sh --no-golden
-      - name: Strict release gate (expected red until WP3)
+      - name: Public corpus (optional; skipped unless WEFT_RUN_PUBLIC=1)
         continue-on-error: true
         shell: bash
         run: |
           WEFT=build/bin/Release/weft.exe \
+            tools/public_corpus_gate.sh
+      - name: Strict release gate
+        shell: bash
+        run: |
+          WEFT=build/bin/Release/weft.exe \
             tools/release_gate.sh
+      - name: Download Linux topology signatures
+        uses: actions/download-artifact@v4
+        with:
+          name: topology-signatures-linux
+          path: build/topology_signatures-linux
+      - name: Topology signature release set (Windows) + compare
+        shell: bash
+        run: |
+          WEFT=build/bin/Release/weft.exe
+          mkdir -p build/topology_signatures/release
+          tools/topology_signature.sh release-set -o build/topology_signatures/release
+          fail=0
+          for sig in build/topology_signatures/release/*.sig; do
+            base=$(basename "$sig")
+            ref="build/topology_signatures-linux/release/$base"
+            if [[ ! -f "$ref" ]]; then
+              echo "FAIL missing Linux reference $ref"
+              fail=1
+              continue
+            fi
+            echo "== compare $base =="
+            if ! "$WEFT" signature-compare "$ref" "$sig"; then
+              echo "FAIL $base not policy-equal across Linux/Windows"
+              fail=1
+            else
+              echo "ok $base"
+            fi
+          done
+          exit "$fail"

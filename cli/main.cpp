@@ -11,6 +11,7 @@
 #include "weft/export_gltf.hpp"
 #include "weft/io/system.hpp"
 #include "weft/recipe.hpp"
+#include "weft/topology_signature.hpp"
 #include "weft/validate.hpp"
 
 #include <BRep_Builder.hxx>
@@ -19,6 +20,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <stdexcept>
 #include <algorithm>
 #include <chrono>
@@ -53,6 +55,10 @@ void usage() {
         "      bake-ready checks: watertightness, winding, degenerates,\n"
         "      chord deviation vs the live B-rep; exits 1 on leaks\n"
         "\n"
+        "  weft signature-compare <a.sig> <b.sig>\n"
+        "      policy-equal topology signatures (EXECUTION_PLAN §3.2);\n"
+        "      exit 0 if equal, 1 if not\n"
+        "\n"
         "  weft convert <in> -o <out>\n"
         "      import then export with no retopo: B-rep->B-rep serializes the\n"
         "      shape (step/iges/brep); B-rep->mesh tessellates (obj/glb/stl/fbx)\n"
@@ -78,6 +84,8 @@ void usage() {
         "    --rings N         concentric quad loops around holes/bosses in\n"
         "                      planar faces (default 2)\n"
         "    --validate        run bake-ready checks after meshing\n"
+        "    --signature FILE  write cross-platform topology signature\n"
+        "                      (implies --validate; see tools/topology_signature.sh)\n"
         "    --no-normals      skip exact CAD vertex normals in exports\n"
         "    --triangulate     ear-clip everything to triangles on export\n"
         "    --yup / --scale F Y-up + unit scale (engine spaces)\n"
@@ -273,6 +281,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     std::string input = args[0];
     std::string output;
     std::string recipeOut;
+    std::string signatureOut;
     bool validate = validateOnly;
     bool noNormals = false;
     std::vector<double> lods;
@@ -330,6 +339,10 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
             }
         }
         else if (a == "--validate") validate = true;
+        else if (a == "--signature") {
+            signatureOut = next();
+            validate = true;  // signature needs ValidationReport
+        }
         else if (a == "--stitch") gs.decoupleSeams = true;  // experiment
         else if (a == "--debug") weft::setGenerateDebugLog(stderr);
         else if (a == "--no-normals") noNormals = true;
@@ -391,8 +404,9 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
             throw std::runtime_error("unknown option: " + a);
         }
     }
-    if (output.empty() && !validateOnly) {
-        throw std::runtime_error("missing -o <out.obj>");
+    if (output.empty() && !validateOnly && signatureOut.empty()) {
+        throw std::runtime_error(
+            "missing -o <out.obj> (or use validate / --signature)");
     }
     for (const std::string& spec : faceSpecs) parseFaceOverride(gs, spec);
     if (!recipeOut.empty()) {
@@ -506,10 +520,14 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
             std::printf("\n");
         }
     }
+    // Print mesher plan + demotions before the watertight exit so failed
+    // validates still yield classification evidence (WEFT_FACE_KINDS / counts).
+    int rc = 0;
+    weft::ValidationReport vr;
     if (validate) {
-        weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+        vr = weft::validateMesh(mesh, &model);
         std::printf("%s", weft::formatReport(vr).c_str());
-        if (!vr.watertight()) return 1;
+        if (!vr.watertight()) rc = 1;
     }
     if (report.faceMesher.size() <= 48 || std::getenv("WEFT_FACE_KINDS")) {
         for (const auto& [fid, kind] : report.faceMesher) {
@@ -526,45 +544,54 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     }
     // Build honesty: the kinds above show the PLAN; say when a face's
     // planned mesher couldn't build (contract floor keeps exact borders,
-    // raw triangulation is the tri-soup last resort, empty is a hole).
+    // raw triangulation is the tri-soup last resort, empty is a hole),
+    // attributed by face id and cause string.
     {
-        int floor = 0, raw = 0, empty = 0;
-        std::vector<int> rawFaces, emptyFaces;
-        for (const auto& [fid, how] : report.faceBuild) {
-            if (how == 2) ++floor;
-            if (how == 1) {
-                ++raw;
-                rawFaces.push_back(fid);
-            }
-            if (how == -1) {
-                ++empty;
-                emptyFaces.push_back(fid);
-            }
-        }
-        if (floor || raw || empty) {
-            std::printf("  demoted: %d to contract floor, %d to raw "
-                        "triangulation, %d emitted nothing\n",
-                        floor, raw, empty);
-            if (!rawFaces.empty()) {
-                std::printf("    raw face ids:");
-                for (int fid : rawFaces) std::printf(" %d", fid);
-                std::printf("\n");
-            }
-            if (!emptyFaces.empty()) {
-                std::printf("    empty face ids:");
-                for (int fid : emptyFaces) std::printf(" %d", fid);
-                std::printf("\n");
-            }
-        }
+        const std::string demotions = weft::formatBuildDemotions(report);
+        if (!demotions.empty()) std::printf("%s", demotions.c_str());
     }
-    if (!report.edgeDivisions.empty()) {
-        std::printf("  density-matched edges:");
-        for (const auto& [eid, div] : report.edgeDivisions) {
-            std::printf(" #%d=%d", eid, div);
-        }
-        std::printf("\n");
+    {
+        // Density-matched edge counts, ownership tags, and proposal/pin/
+        // floor conflicts (WP2 attribution — topology unchanged).
+        const std::string density = weft::formatDensityOwnership(report);
+        if (!density.empty()) std::printf("%s", density.c_str());
     }
-    return 0;
+    if (!signatureOut.empty()) {
+        weft::TopologySignatureInfo info;
+        info.inputLabel = input;
+        const std::string text =
+            weft::formatTopologySignature(mesh, model, report, vr, info);
+        std::ofstream out(signatureOut);
+        if (!out) {
+            throw std::runtime_error("cannot write signature: " +
+                                     signatureOut);
+        }
+        out << text;
+        std::printf("  topology signature -> %s\n", signatureOut.c_str());
+    }
+    return rc;
+}
+
+int cmdSignatureCompare(const std::vector<std::string>& args) {
+    if (args.size() != 2) {
+        throw std::runtime_error(
+            "signature-compare needs <a.sig> <b.sig>");
+    }
+    auto readAll = [](const std::string& path) -> std::string {
+        std::ifstream in(path);
+        if (!in) throw std::runtime_error("cannot read " + path);
+        return std::string(std::istreambuf_iterator<char>(in),
+                           std::istreambuf_iterator<char>());
+    };
+    const std::string a = readAll(args[0]);
+    const std::string b = readAll(args[1]);
+    std::string diff;
+    if (weft::topologySignaturesEqual(a, b, &diff)) {
+        std::printf("topology signatures policy-equal\n");
+        return 0;
+    }
+    std::printf("%s", diff.c_str());
+    return 1;
 }
 
 int cmdCacheCheck(const std::vector<std::string>& args) {
@@ -801,6 +828,7 @@ int main(int argc, char** argv) {
         if (cmd == "mesh") return cmdMesh(args);
         if (cmd == "cache-check") return cmdCacheCheck(args);
         if (cmd == "validate") return cmdMesh(args, /*validateOnly=*/true);
+        if (cmd == "signature-compare") return cmdSignatureCompare(args);
         if (cmd == "sweep") return cmdSweep(args);
         usage();
         return 2;

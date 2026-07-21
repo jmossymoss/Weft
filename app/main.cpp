@@ -4,7 +4,7 @@
 // B-rep with feature colouring, click faces to select, drag density controls
 // and watch the topology regenerate live. Orbit/pan/zoom like Blender.
 //
-//   weft_app [model.step] [--fixture demo] [--screenshot out.png]
+//   weft_app [model.step] [--fixture demo] [--screenshot out.png] [--finalize]
 
 // windows.h + commdlg.h must come FIRST: OCCT's headers include windows.h
 // themselves with slimmed-down defines, and a later re-include is a no-op
@@ -783,6 +783,9 @@ struct App {
     int openEdgeCount = 0, multiEdgeCount = 0;
     int foldedPolyCount = 0;
     bool meshFinalized = false;
+    // Screenshot / visual-QA path: force the production finalize pass so
+    // headless captures match CLI export (preview leaves seams open).
+    bool forceFinalize = false;
     bool gpuProxyPending = false;
     int gpuProxyFace = 0;
     bool showProblems = true;
@@ -1295,8 +1298,9 @@ static void startGenerate(App& app) {
     app.genSettings = app.recipe.settings;
     // The viewport needs connected vertices for editing, but not the costly
     // whole-model conformation/stitch/cleanup pass. Export regenerates from
-    // these cached face parts with finalization enabled.
-    app.genSettings.finalizeMesh = false;
+    // these cached face parts with finalization enabled. Screenshot /
+    // visual-QA runs set forceFinalize so captures match CLI export.
+    app.genSettings.finalizeMesh = app.forceFinalize;
     // Ops frozen like settings: the UI thread mutates them mid-run
     // (weld, undo, grab drags) and a live read is a use-after-free
     // in the worker.
@@ -5112,7 +5116,7 @@ int main(int argc, char** argv) {
     bool startQuality = false, startMatcap = false, startSmooth = false;
     bool startProxy = false;
     float startYaw = 0.9f, startPitch = 0.5f;
-    bool demoLoopCut = false, startStitch = false;
+    bool demoLoopCut = false, startStitch = false, startFinalize = false;
     std::vector<std::pair<int, std::string>> startFaceOverrides;  // FID:spec
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -5123,6 +5127,7 @@ int main(int argc, char** argv) {
         else if (a == "--pitch" && i + 1 < argc) startPitch = std::stof(argv[++i]);
         else if (a == "--loopcut") demoLoopCut = true;  // screenshot testing
         else if (a == "--stitch") startStitch = true;   // screenshot testing
+        else if (a == "--finalize") startFinalize = true;  // visual QA = export mesh
         else if (a == "--quality") startQuality = true;
         else if (a == "--matcap") startMatcap = true;
         else if (a == "--smooth") startSmooth = true;
@@ -5229,10 +5234,12 @@ int main(int argc, char** argv) {
     bool startupLoadPending = !startModel.empty();
     if (startupLoadPending) loadModel(app, startModel, false);
     else loadFixture(app, startFixture);
-    if (startStitch && app.hasModel) {
-        // After the load (which resets the recipe): flip the experiment
-        // on and rebuild synchronously so the screenshot shows it.
-        app.recipe.settings.decoupleSeams = true;
+    if (startFinalize) app.forceFinalize = true;
+    if ((startStitch || startFinalize) && app.hasModel) {
+        // After the load (which resets the recipe): apply screenshot
+        // experiment flags and rebuild synchronously so the capture shows
+        // the intended mesh (finalize = production export path).
+        if (startStitch) app.recipe.settings.decoupleSeams = true;
         regenerate(app);
     }
     app.cam.yaw = startYaw;
