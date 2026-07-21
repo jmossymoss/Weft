@@ -79,8 +79,26 @@ contract-floor needle soup — worse visually).
 1. **Residual opens** — ~1.1k remain; #1805 family still leads.
 2. **Fillet coons** — corner mismatch, fanning, demote-to-floor on torus blends.
 3. **Freeform expected quad flow** — grip/optic/fluted compares still sliver fans.
-4. **Adaptive radial floors** — verify cylinder “≥12” against boolean neighbors.
+4. **Adaptive radial floors** — `minCurvedSegments` / `--min-curve` / recipe
+   `mincurve=` now sets the closed-ring adaptive lower bound (default 6;
+   raise to 12 for CAD/relative-deviation rings that looked faceted).
 5. **Full Plasticity side-by-side** — artist sign-off on expected meshes.
+
+## Adaptive curved-ring floor (2026-07-21)
+
+`FaceMeshSettings::minCurvedSegments` (default 6) floors adaptive counts on
+closed curved edges only (cylinders, spheres, torus/fillet rings). Insertion
+points: `adaptiveCount` clamps and `proposeSet` densityScale survival in
+`solveDensity`. Straight edges and open arcs are unchanged.
+
+| Surface | Default |
+| --- | --- |
+| Recipe | `mincurve=N` |
+| CLI | `--min-curve N` |
+| App | "min curved segments" under adaptive (per-face + global) |
+
+Regression: `testAdaptiveDensity` asserts CAD/`relativeDeviation` +
+`minCurvedSegments=12` + `densityScale=0.5` still yields rim ≥ 12.
 
 ## Next leverage order
 
