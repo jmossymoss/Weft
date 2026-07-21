@@ -1,37 +1,30 @@
-# WP5 — feature-class planning foundation (2026-07-21)
+# WP5 — feature-class planning foundation (complete, 2026-07-21)
 
-AD-5 / WP5: classify B-rep faces once in `analyze()`, route and report from
-those facts, stop rediscovering geometry inside every `planFace` escape hatch.
+AD-5 / WP5 exit: classify B-rep faces once in `analyze()`, route / densify /
+self-heal from those facts, expose class+chart for debugging.
+
+## Exit checklist
+
+| Criterion | Evidence |
+| --- | --- |
+| Sphere tip / dimple / foam / teleporter green under same rules | `testBulletTipNotContractFloor`, `testSphereDimpleNotContractFloor`, foam+teleporter in `testAllMesherStrategies` + corpus |
+| Fillet strip, hole plate, drum zoo + counterexample | fillet + hole + boss fixtures; foam strips/drums; `bossfillet` in continuity test |
+| Cylindrical stack continuity + pin exception | `testCylindricalStackContinuity` |
+| No rediscovery of sphere chart / fillet narrowness in planFace | analyze-owned; planFace reads `FaceInfo` |
+| inspect / signature expose feature+chart | CLI inspect; `face.N.feature` / `.chart` in signature test |
+| AD-3: no new MesherKind | unchanged enum |
+| Parked MP9 visuals | `tests/KNOWN_RED.tsv` WP6 rows |
 
 ## Landed
 
-| Item | Status |
-| --- | --- |
-| `ChartKind` / `FeatureClass` / `LoopSignature` / `priority` on `FaceInfo` | Done |
-| Sphere UV pole chart in `analyze()` | Done |
-| Narrow fillet vs wide false-fillet drum in `analyze()` | Done |
-| Early `featureClass` table: BossJunction / HolePlate / PlanarPanel | Done |
-| Sphere routing + fold heal from class | Done |
-| Open-band drum gate uses `Drum` × chart (not live narrowness probe) | Done |
-| Adjacency-limited cylindrical stack continuity (shared drum rim → co-length neighbor seams that also touch Drum/FilletStrip) | Done |
-| Report + signature `face.N.feature` / `.chart`; inspect + roster | Done |
-| Tests: feature-class analyze (incl. foam strip/drum), tip/dimple, stack continuity | Done |
-| Full ladder → pure table for Freeform/Coons/Ribbon | Partial — capability probes remain |
+- `FaceInfo`: `chartKind`, `featureClass`, `loop`, `priority`
+- analyze(): sphere UV chart, narrow fillet vs wide false-fillet drum, loop signature
+- Early `featureClass` table: SphereCap, BossJunction, HolePlate, PlanarPanel, Freeform (dome/rail/ribbon)
+- Drum open-band from class×chart; sliver fillet + fold heal class-scoped
+- Adjacency-limited stack continuity; pin blocks → `densityConflicts` reason `stack-continuity-pin`
+- Report / signature / inspect / app roster
 
-## Counterexamples kept green
+## Active package
 
-- `bullet_tip_3728.step` → `sphere-cap` / `geometric-cap` → `quad-fill`
-- `sphere_dimple_annulus.step` → `sphere-cap` / `pole` → `revolution-grid`
-- foam + teleporter CAD/default → watertight
-- cylinder fixture → one shared circumferential count; per-edge pin may diverge
-- fillet fixture → ≥1 `fillet-strip`; foam → both strips and drums
-
-## Rejected approaches
-
-- Solid-wide radius-bin continuity raise — opened foam/teleporter.
-- BFS through every stack-class face in a solid — same failure mode.
-
-## Remaining WP5 (optional polish)
-
-- More Freeform early routes (dome/ribbon) keyed by class without new MesherKinds.
-- Report stack continuity conflicts in density attribution when a pin blocks a raise.
+Advanced to **WP6 — validate real work**. Fresh Plasticity / MP9 visual sign-off
+continues from parked KNOWN_RED rows using AD-5 class names, not face-id patches.

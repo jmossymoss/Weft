@@ -5,13 +5,11 @@ session handoffs are not authoritative. If code, comments, issues, or old
 branches disagree with this document, follow this document or revise it with
 new test evidence before changing direction.
 
-Active work package: WP5 — feature-class planning foundation.
+Active work package: WP6 — validate real work.
 
-Progress (2026-07-21): classify-once `FaceInfo` (chart/feature/priority),
-analyze-owned sphere chart + narrow-fillet vs drum, early class table for
-boss/hole/planar, adjacency-limited cylindrical continuity, inspect/signature/
-roster, zoo tests. Optional polish: freeform early routes. Evidence:
-`docs/evidence/wp5-feature-class-foundation-2026-07-21.md`.
+WP5 (feature-class planning foundation) exit criteria met 2026-07-21 — see
+`docs/evidence/wp5-feature-class-foundation-2026-07-21.md`. Parked MP9 visual
+classes are WP6 rows in `tests/KNOWN_RED.tsv`.
 
 Change the active package only when its exit criteria pass at one revision. If
 a later failure invalidates an earlier gate, reopen the earliest affected

@@ -8288,6 +8288,31 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // AD-5 early table: class-keyed tries before the long ladder. Planners
     // still prove capability; failure falls through unchanged.
     switch (info.featureClass) {
+        case FeatureClass::SphereCap: {
+            const bool poleChart = info.chartKind == ChartKind::Pole ||
+                                   info.chartKind == ChartKind::FullPeriod;
+            if (poleChart && (isClosedRevolution(surf) || geomRev())) {
+                std::vector<std::vector<int>> inserts;
+                if (edgesHugRimsOrInserts(face, surf, model, inserts)) {
+                    plan.insertWires = std::move(inserts);
+                }
+                finishRevolution();
+                dbg("plan face %d: sphere-cap %s -> revolution grid", fid,
+                    chartKindName(info.chartKind));
+                return plan;
+            }
+            if (info.chartKind == ChartKind::GeometricCap) {
+                FacePlan qf;
+                if (planQuadFill(face, surf, model, qf)) {
+                    plan = std::move(qf);
+                    dbg("plan face %d: sphere-cap geometric-cap -> "
+                        "quad-fill/disk-cap",
+                        fid);
+                    return plan;
+                }
+            }
+            break;
+        }
         case FeatureClass::BossJunction:
             if (planRingJunction(face, model, plan)) {
                 dbg("plan face %d: boss-junction -> ring-junction", fid);
@@ -8320,10 +8345,20 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 return plan;
             }
             break;
-        case FeatureClass::FilletStrip:
-        case FeatureClass::Drum:
-        case FeatureClass::SphereCap:
         case FeatureClass::Freeform:
+            // DomeCap is tightly gated — safe to claim early. Rail ladder /
+            // ribbon stay later in the ladder: promoting them here yanked
+            // foam freeform panels off coons and opened seams (87 ribbons).
+            if (planDomeCap(face, surf, model, plan)) {
+                dbg("plan face %d: freeform -> dome-cap", fid);
+                return plan;
+            }
+            break;
+        case FeatureClass::FilletStrip:
+            // Coons / rail capability probes stay in the ladder; class only
+            // skips drum open-band (below) and owns sliver demote (above).
+            break;
+        case FeatureClass::Drum:
             break;
     }
 
@@ -8338,10 +8373,6 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // ear-clip can't build (e.g. a periodic seam self-crosses) it returns
     // false and the face falls through to its normal route untouched.
     if (s.minimal) {
-        int wireCount = 0;
-        for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
-            ++wireCount;
-        }
         // A CYLINDER wall that actually wraps must NOT flatten to an n-gon
         // (the user's primitive-first order: a slotted barrel is a cylinder
         // with a local cutout, not a flat panel) — it keeps its curvature on
@@ -8352,76 +8383,34 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         // they need ring-junction / plate-web collars (section 7) and are
         // handled after AnnulusCRing below. Swallowing them here produced
         // one fan n-gon per bored flat under the CAD profile.
-        const bool curvedCyl =
-            surf.GetType() == GeomAbs_Cylinder &&
+        const bool curvedDrum =
+            info.featureClass == FeatureClass::Drum &&
             !isGeometricallyFlat(face, surf, /*flatFrac=*/0.08);
-        const bool truePlane = surf.GetType() == GeomAbs_Plane;
-        if (wireCount > 1 && !curvedCyl && !truePlane &&
+        const bool planarClass =
+            info.featureClass == FeatureClass::PlanarPanel ||
+            info.featureClass == FeatureClass::HolePlate ||
+            info.featureClass == FeatureClass::BossJunction;
+        if (info.loop.wireCount > 1 && !curvedDrum && !planarClass &&
             planMinimalPlanar(face, surf, model, plan, /*requirePlane=*/false)) {
             dbg("plan face %d: curved cutout -> minimal n-gon (%d wires, "
                 "local holes)",
-                fid, wireCount);
+                fid, info.loop.wireCount);
             return plan;
         }
     }
 
-    // AD-5: prefer analyze() chart/feature facts over rediscovering the
-    // sphere UV pole chart. Geometric caps → disk rings; pole / full-
-    // period charts → revolution.
-    const bool spherePoleChart =
-        info.featureClass == FeatureClass::SphereCap &&
-        (info.chartKind == ChartKind::Pole ||
-         info.chartKind == ChartKind::FullPeriod);
-    const bool sphereGeometricCap =
-        info.featureClass == FeatureClass::SphereCap &&
-        info.chartKind == ChartKind::GeometricCap;
-    if (std::getenv("WEFT_SPHERE_CHART") &&
-        info.featureClass == FeatureClass::SphereCap) {
-        std::fprintf(stderr,
-                     "[sphere-cap] face %d feature=%s chart=%s "
-                     "loop real=%d deg=%d\n",
-                     fid, featureClassName(info.featureClass),
-                     chartKindName(info.chartKind), info.loop.realEdgeCount,
-                     info.loop.degEdgeCount);
-    }
-
+    // SphereCap handled in the early featureClass table above. Remaining
+    // closed-revolution faces (drums, geometric revolves) still loft here.
     // revCovers is NOT required: a pipe-saddle band legitimately fails
     // fixed-v coverage — edgesHugRimsOrInserts checks between-chain
     // coverage itself, so wavy-rim bands loft instead of falling to a
     // coons patch (which degenerates on a full-period chart).
-    if (isClosedRevolution(surf) || geomRev()) {
+    if (info.featureClass != FeatureClass::SphereCap &&
+        (isClosedRevolution(surf) || geomRev())) {
         std::vector<std::vector<int>> inserts;
-        // Sphere single-rim hugs always succeed (one chain), but a
-        // geometric cap without a UV pole chart must not take revolution
-        // (MP9 bullet tips loft a fake U-wrap → tip soup). Dimples /
-        // bowls with a real pole chart still hug and finish.
-        const bool sphereOk =
-            surf.GetType() != GeomAbs_Sphere || spherePoleChart;
-        if (sphereOk &&
-            edgesHugRimsOrInserts(face, surf, model, inserts)) {
+        if (edgesHugRimsOrInserts(face, surf, model, inserts)) {
             plan.insertWires = std::move(inserts);
             finishRevolution();
-            return plan;
-        }
-        // Bounded sphere patches with a real UV pole / full-turn chart
-        // when rim-hug still fails (odd trims): keep revolution.
-        if (surf.GetType() == GeomAbs_Sphere && sphereOk) {
-            finishRevolution();
-            dbg("plan face %d: sphere UV-pole chart -> revolution grid",
-                fid);
-            return plan;
-        }
-    }
-
-    // Geometric sphere caps (no UV pole chart): claim BEFORE coons /
-    // freeform so a multi-edge circular trim cannot spiral as a coons
-    // patch. QuadFill → meshDiskCap emits concentric rings + centre n-gon.
-    if (sphereGeometricCap) {
-        FacePlan qf;
-        if (planQuadFill(face, surf, model, qf)) {
-            plan = std::move(qf);
-            dbg("plan face %d: geometric sphere cap -> quad-fill/disk-cap",
-                fid);
             return plan;
         }
     }
@@ -8777,20 +8766,15 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // thin freeform ribbon we still reuse its boundary analysis to seed the
     // specialized rail sweep; all other unclaimed faces take the local
     // exact-border fallback below.
-    const bool planarHere = surf.GetType() == GeomAbs_Plane;
-    if (!planarHere) {
-        // A long thin bent ribbon (grip / trigger-guard rails) may sweep its
-        // two rails into regular rows. Failure demotes to the contract floor,
-        // never back to Quad Fill.
-        const GeomAbs_SurfaceType st = surf.GetType();
-        const bool analyticDrum =
-            st == GeomAbs_Cylinder || st == GeomAbs_Cone ||
-            st == GeomAbs_SurfaceOfRevolution;
-        if (!analyticDrum && ribbonDetect(face, model) &&
-            planQuadFill(face, surf, model, plan)) {
-            plan.kind = MesherKind::RibbonSweep;
-            return plan;
-        }
+    if (info.featureClass != FeatureClass::Drum &&
+        info.featureClass != FeatureClass::FilletStrip &&
+        info.featureClass != FeatureClass::PlanarPanel &&
+        info.featureClass != FeatureClass::HolePlate &&
+        info.featureClass != FeatureClass::BossJunction &&
+        ribbonDetect(face, model) &&
+        planQuadFill(face, surf, model, plan)) {
+        plan.kind = MesherKind::RibbonSweep;
+        return plan;
     }
 
     // A shallow conical cap nothing else claimed would tri-fan; a single
@@ -18764,19 +18748,24 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
 
     // AD-5 cylindrical stack continuity (adjacency-limited): raise
     // co-length circular seams on FilletStrip / Freeform / planar neighbors
-    // that share a Drum rim edge, and only when a short path through
-    // FilletStrip connects them. Never bin by radius across the whole solid.
+    // that share a Drum rim edge. Pins that block a raise are recorded for
+    // densityConflicts (reason stack-continuity-pin).
+    std::vector<std::pair<int, int>> stackContinuityPinBlocks;  // eid, want
     {
-        auto raiseRootTo = [&](int root, int target) {
+        auto raiseRootTo = [&](int eid, int target) {
             target = std::clamp(target, 1, 256);
+            const int root = density.groups.find(eid);
             auto git = density.groupCount.find(root);
             if (git == density.groupCount.end() || git->second >= target) {
                 return;
             }
-            if (density.pinnedRoots.count(root)) return;
+            if (density.pinnedRoots.count(root) || settings.perEdge.count(eid)) {
+                stackContinuityPinBlocks.push_back({eid, target});
+                return;
+            }
             git->second = target;
-            for (int eid = 1; eid <= model.edgeCount(); ++eid) {
-                if (density.groups.find(eid) == root) solvedEdge[eid] = target;
+            for (int e = 1; e <= model.edgeCount(); ++e) {
+                if (density.groups.find(e) == root) solvedEdge[e] = target;
             }
         };
         auto edgeLen = [&](int eid) -> double {
@@ -18818,7 +18807,6 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     }
                     for (int eid : analysis.faces[nf - 1].edgeIds) {
                         if (eid == reid) continue;
-                        if (settings.perEdge.count(eid)) continue;
                         const double Le = edgeLen(eid);
                         if (!(Le > 1e-9) ||
                             std::abs(Le - L) > 0.02 * L) {
@@ -18838,7 +18826,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             }
                         }
                         if (!stackTouch) continue;
-                        raiseRootTo(density.groups.find(eid), want);
+                        raiseRootTo(eid, want);
                     }
                 }
             }
@@ -22068,6 +22056,16 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 c.solved = solved;
                 c.reason = owner;
                 c.faceProposals = std::move(faceProps);
+                report->densityConflicts.push_back(std::move(c));
+            }
+            for (const auto& [eid, want] : stackContinuityPinBlocks) {
+                if (eid < 1) continue;
+                GenerationReport::DensityConflict c;
+                c.edgeId = eid;
+                c.solved =
+                    eid < int(solvedEdge.size()) ? solvedEdge[eid] : 0;
+                c.reason = "stack-continuity-pin";
+                c.faceProposals[0] = want;  // desired stack circumferential
                 report->densityConflicts.push_back(std::move(c));
             }
             std::sort(report->densityConflicts.begin(),

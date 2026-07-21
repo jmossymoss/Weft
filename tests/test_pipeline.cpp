@@ -1355,6 +1355,27 @@ void testCylindricalStackContinuity() {
         CHECK_EQ(it->second, 24);
         std::printf("  pinned edge %d stays %d\n", pinEdge, it->second);
     }
+
+    // bossfillet: drum + fillet-strip classes both present (cross-model
+    // counterexample for FilletStrip vs Drum classify).
+    {
+        const std::string bf = tmpPath("weft_cyl_bossfillet.step");
+        weft::writeStep(weft::makeFixture("bossfillet"), bf);
+        const weft::Analysis ba = weft::analyze(weft::loadStep(bf));
+        int drums = 0, strips = 0;
+        for (const auto& f : ba.faces) {
+            if (f.featureClass == weft::FeatureClass::Drum) ++drums;
+            if (f.featureClass == weft::FeatureClass::FilletStrip) ++strips;
+        }
+        CHECK(drums >= 1);
+        CHECK(strips >= 1);
+        weft::GenerationReport br;
+        weft::PolyMesh bm =
+            weft::generate(weft::loadStep(bf), ba, gs, &br);
+        CHECK(isWatertight(bm));
+        std::printf("  bossfillet: drums=%d strips=%d watertight\n", drums,
+                    strips);
+    }
 }
 
 // MP9 freeformComb orthogonal trim can leave plane↔bspline seams open when
