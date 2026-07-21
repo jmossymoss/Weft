@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -954,6 +955,92 @@ void testPlateWeb() {
     weft::PolyMesh pinned = weft::generate(model, a, gs);
     CHECK(isWatertight(pinned));
     CHECK(pinned.countQuads() > mesh.countQuads());
+}
+
+// WP5: multi-hole planar plates under the CAD profile used to leave a
+// border-only CDT residual of hair-thin triangles between collars
+// (ABC notched-ring class). Quality refine + pairing on the residual
+// web must clear validation slivers on plate-web faces while staying
+// watertight — no filename specials.
+void testPlateWebSliverRefine() {
+    std::printf("-- plate web sliver refine --\n");
+    TopoDS_Shape plate = BRepPrimAPI_MakeBox(80.0, 80.0, 4.0).Shape();
+    // A dense bolt pattern: enough holes that the residual CDT between
+    // collars would otherwise needle (the ABC 00008536 plate-web class).
+    for (double y : {20.0, 40.0, 60.0}) {
+        for (double x : {20.0, 40.0, 60.0}) {
+            TopoDS_Shape bore = BRepPrimAPI_MakeCylinder(
+                                   gp_Ax2(gp_Pnt(x, y, -1.0), gp_Dir(0, 0, 1)),
+                                   4.0, 6.0)
+                                   .Shape();
+            plate = BRepAlgoAPI_Cut(plate, bore).Shape();
+        }
+    }
+    const std::string stepPath = tmpPath("weft_test_plate_sliver.step");
+    weft::writeStep(plate, stepPath);
+
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    gs.densityScale = 0.35;
+
+    weft::GenerationReport report;
+    weft::PolyMesh mesh =
+        weft::generate(model, analysis, gs, &report);
+    CHECK(isWatertight(mesh));
+
+    int plateWebs = 0;
+    for (const auto& [fid, kind] : report.faceMesher) {
+        if (kind == weft::MesherKind::PlateWeb) ++plateWebs;
+    }
+    CHECK(plateWebs >= 2);
+
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK(vr.watertight());
+    // Count slivers that land on plate-web faces only — other families
+    // are out of scope for this class fix.
+    auto minCornerDeg = [&](const std::vector<uint32_t>& poly) {
+        double best = 180.0;
+        const size_t n = poly.size();
+        if (n < 3) return 0.0;
+        for (size_t i = 0; i < n; ++i) {
+            const auto& A = mesh.vertices[poly[(i + n - 1) % n]];
+            const auto& B = mesh.vertices[poly[i]];
+            const auto& C = mesh.vertices[poly[(i + 1) % n]];
+            const double ux = A[0] - B[0], uy = A[1] - B[1], uz = A[2] - B[2];
+            const double vx = C[0] - B[0], vy = C[1] - B[1], vz = C[2] - B[2];
+            const double nu = std::sqrt(ux * ux + uy * uy + uz * uz);
+            const double nv = std::sqrt(vx * vx + vy * vy + vz * vz);
+            if (nu < 1e-18 || nv < 1e-18) return 0.0;
+            double cos = (ux * vx + uy * vy + uz * vz) / (nu * nv);
+            cos = std::max(-1.0, std::min(1.0, cos));
+            best = std::min(best, std::acos(cos) * 180.0 / 3.141592653589793);
+        }
+        return best;
+    };
+    int platePolys = 0, plateSlivers = 0;
+    for (size_t i = 0; i < mesh.polygons.size(); ++i) {
+        const int fid =
+            i < mesh.polygonFaceId.size() ? mesh.polygonFaceId[i] : 0;
+        auto kit = report.faceMesher.find(fid);
+        if (kit == report.faceMesher.end() ||
+            kit->second != weft::MesherKind::PlateWeb) {
+            continue;
+        }
+        ++platePolys;
+        if (minCornerDeg(mesh.polygons[i]) < vr.sliverAngleDeg) {
+            ++plateSlivers;
+        }
+    }
+    CHECK(platePolys > 0);
+    std::printf("  plate-web polys=%d slivers=%d (of %zu model-wide)\n",
+                platePolys, plateSlivers, vr.sliverPolygons);
+    // Residual needles must be gone (or vanishingly rare). Pre-fix ABC
+    // plate-web faces were >50% slivers; the refine clears them.
+    CHECK(plateSlivers * 20 <= platePolys);  // < 5%
 }
 
 // Auto-mesher gates: a plate with a slot has "two wires" but is NOT an
@@ -2898,6 +2985,7 @@ int main() {
     RUN(testFreeformBorderConformity);
     RUN(testUnlinkedRims);
     RUN(testPlateWeb);
+    RUN(testPlateWebSliverRefine);
     RUN(testNudgeVertex);
     RUN(testRecipeRemap);
     RUN(testAutoGates);

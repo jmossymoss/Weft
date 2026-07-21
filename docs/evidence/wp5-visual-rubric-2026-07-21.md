@@ -47,19 +47,32 @@ Screenshots: `docs/evidence/wp5-visual/` (release), `…/mambo/`, `…/abc/`.
 | ABC 00008536 | yes | 359 | Outer quads OK; notched inner ring sliver soup |
 | ABC 00002324 | yes | 224 | Sparse n-gon flats; high sliver count |
 
+## Follow-up (same day): plate-web residual needles
+
+Class fix for multi-hole planar plate-web CDT leftovers — see
+`docs/evidence/wp5-sliver-plateweb-2026-07-21.md`.
+
+| Model | After plate-web refine | Notes |
+| --- | --- | --- |
+| ABC 00008536 face 27 | 0 slivers (was 371 at dens 0.35) | collar + residual refine |
+| ABC 00008536 whole @ 0.35 | 438 (was 809) | remainder ≈ cylindrical floor 57 |
+| ABC 00008536 whole @ default | 359 | face 57 still ~235 needles |
+| teleporter @ 0.35 | 164 (was 166) | no regression |
+
+WP5 visual exit is still **not met**.
+
 ## Remaining failure classes (block WP5 exit)
 
-1. **Freeform / Coons sliver panels** — teleporter, foam, ABC notched rings.
-2. **Complex non-round planar cutouts** — still MinimalNGon fans when plate-web
-   rejects elongated holes.
-3. **Density transition artifacts** — adaptive CAD cliffs between features.
-4. **Fresh Plasticity Blender compare** — still needs artist Plasticity meshes.
+1. Notched / multi-feature revolution contract floors — ABC face 57 drum.
+2. Freeform demotions (rail-ladder / ribbon → floor) — teleporter, foam.
+3. Complex non-round planar cutouts — MinimalNGon when plate-web rejects slots.
+4. Density transition artifacts — adaptive CAD cliffs between features.
+5. Fresh Plasticity Blender compare — still needs artist Plasticity meshes.
 
 ## Next work
 
 Do not treat public-gate green as visual green. Next highest leverage:
 
-- freeform/Coons sliver reduction (or earlier structured routing for near-analytic
-  trimmed panels);
-- MinimalNGon ear-clip quality when it remains the residual flat;
+- structured routing (or curved-safe floor) for notched closed drums;
+- rail-ladder / ribbon border-contract demotion class on teleporter;
 - keep reducing shareable ABC/MAMBO defects into the deterministic zoo.

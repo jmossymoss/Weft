@@ -4588,11 +4588,15 @@ bool meshPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     }
     if (rings.size() < 2) return false;
 
-    // Boundary vertices (anchorless: they live on shared B-rep edges).
+    // Boundary vertices carry face UV anchors so residual-web quality
+    // refine can insert Steiner points without losing the chart (borders
+    // still evaluate on the shared B-rep edge positions).
     std::vector<std::vector<uint32_t>> ringVerts(rings.size());
     for (size_t r = 0; r < rings.size(); ++r) {
-        for (const gp_Pnt& p : rings[r].p) {
-            ringVerts[r].push_back(out.addVertex(p, {}));
+        for (size_t i = 0; i < rings[r].p.size(); ++i) {
+            ringVerts[r].push_back(out.addVertex(
+                rings[r].p[i],
+                {faceId, rings[r].uv[i].X(), rings[r].uv[i].Y()}));
         }
     }
 
@@ -6320,12 +6324,26 @@ void refineFloorWeb(PolyMesh& part, const TopoDS_Face& face, int faceId,
             part.anchors[i] = {faceId, uvOf[i].X(), uvOf[i].Y()};
         }
     }
+    // Preserve non-triangles (plate-web hole collars, zipper quads). Only
+    // the residual CDT / ear-clip triangles are refined; borders stay on
+    // the exact contract samples either way.
+    std::vector<std::vector<uint32_t>> keepPolys;
+    std::vector<int> keepFace;
     std::vector<std::array<uint32_t, 3>> tris;
     tris.reserve(part.polygons.size());
-    for (const auto& poly : part.polygons) {
-        if (poly.size() != 3) return;  // floor webs are all-tri
-        tris.push_back({poly[0], poly[1], poly[2]});
+    for (size_t pi = 0; pi < part.polygons.size(); ++pi) {
+        const auto& poly = part.polygons[pi];
+        const int pfid = pi < part.polygonFaceId.size()
+                             ? part.polygonFaceId[pi]
+                             : faceId;
+        if (poly.size() == 3) {
+            tris.push_back({poly[0], poly[1], poly[2]});
+        } else {
+            keepPolys.push_back(poly);
+            keepFace.push_back(pfid);
+        }
     }
+    if (tris.empty()) return;
     const double defl = faceDeflection(face, s);
     // Surface normal at a UV, for the facet-turn (angle) split criterion.
     auto surfNormal = [&](const gp_Pnt2d& uv) -> gp_Vec {
@@ -6343,6 +6361,12 @@ void refineFloorWeb(PolyMesh& part, const TopoDS_Face& face, int faceId,
         return (uint64_t(std::min(a, b)) << 32) | std::max(a, b);
     };
 
+    // Planar charts only for the sliver Steiner pass: on cylinders /
+    // freeform the surface midpoint of a long diagonal often births two
+    // worse needles (ABC notched drum floors exploded 10x). Planar
+    // multi-hole plate webs improve cleanly.
+    const bool planarChart =
+        BRepAdaptor_Surface(face).GetType() == GeomAbs_Plane;
     for (int round = 0; round < 8 && tris.size() < 20000; ++round) {
         std::map<uint64_t, std::array<int, 2>> etri;
         for (size_t t = 0; t < tris.size(); ++t) {
@@ -6384,6 +6408,33 @@ void refineFloorWeb(PolyMesh& part, const TopoDS_Face& face, int faceId,
             }
             return false;
         };
+        // Corner angle at vertex j of triangle (i,j,k).
+        auto cornerAngleDeg = [&](uint32_t i, uint32_t j, uint32_t k) {
+            const gp_Vec u(p3(j), p3(i)), v(p3(j), p3(k));
+            if (u.Magnitude() < 1e-18 || v.Magnitude() < 1e-18) return 0.0;
+            return u.Angle(v) * 180.0 / M_PI;
+        };
+        auto triMinAngleDeg = [&](const std::array<uint32_t, 3>& t) {
+            return std::min({cornerAngleDeg(t[2], t[0], t[1]),
+                             cornerAngleDeg(t[0], t[1], t[2]),
+                             cornerAngleDeg(t[1], t[2], t[0])});
+        };
+        // Border-only CDT needles on multi-hole planar plates often sit
+        // under the chord budget while reading as hair-thin soup. Split
+        // their longest INTERIOR edge so a Steiner point can open the
+        // needle — border edges stay on the contract samples. Gated on
+        // the residual web already being mostly needles; otherwise the
+        // pass densifies acceptable webs (torture plate-web) into more
+        // sliver counts.
+        constexpr double kSliverGuardDeg = 15.0;
+        constexpr double kValidationSliverDeg = 5.0;
+        int needleTris = 0;
+        for (const auto& t : tris) {
+            if (triMinAngleDeg(t) < kValidationSliverDeg) ++needleTris;
+        }
+        const bool qualityRefine =
+            planarChart && !s.pureTriFloor && !tris.empty() &&
+            double(needleTris) >= 0.35 * double(tris.size());
         std::set<uint64_t> marked;
         for (const auto& t : tris) {
             for (int i = 0; i < 3; ++i) {
@@ -6391,41 +6442,71 @@ void refineFloorWeb(PolyMesh& part, const TopoDS_Face& face, int faceId,
                 if (marked.count(ekey(a, b))) continue;
                 if (splittable(a, b)) marked.insert(ekey(a, b));
             }
+            if (!qualityRefine || triMinAngleDeg(t) >= kSliverGuardDeg) {
+                continue;
+            }
+            int best = -1;
+            double bestLen = -1.0;
+            for (int i = 0; i < 3; ++i) {
+                const uint32_t a = t[i], b = t[(i + 1) % 3];
+                const auto it = etri.find(ekey(a, b));
+                if (it == etri.end() || it->second[1] < 0) continue;
+                const double len = p3(a).Distance(p3(b));
+                if (s.minSize > 0 && len <= 2.0 * s.minSize) continue;
+                if (len > bestLen) {
+                    bestLen = len;
+                    best = i;
+                }
+            }
+            if (best >= 0) {
+                marked.insert(ekey(t[best], t[(best + 1) % 3]));
+            }
         }
-        if (marked.empty()) break;
+        // Even with no Steiner splits, planar border-only CDTs still get
+        // one UV Delaunay re-pair pass. Curved floors skip flips-only:
+        // UV Delaunay can raise 3D corner-angle sliver counts on drums.
+        if (marked.empty()) {
+            if (!planarChart) break;
+        }
+        const bool flipsOnly = marked.empty();
         // One split per triangle per round keeps the children sane.
-        std::vector<char> touched(tris.size(), 0);
-        for (uint64_t key : marked) {
-            const auto it = etri.find(key);
-            if (it == etri.end()) continue;
-            const int t1 = it->second[0], t2 = it->second[1];
-            if (t1 < 0 || t2 < 0 || touched[t1] || touched[t2]) continue;
-            const uint32_t a = uint32_t(key >> 32), b = uint32_t(key);
-            const gp_Pnt2d um(0.5 * (uvOf[a].X() + uvOf[b].X()),
-                              0.5 * (uvOf[a].Y() + uvOf[b].Y()));
-            const gp_Pnt pw = S->Value(um.X(), um.Y());
-            const uint32_t w = uint32_t(part.vertices.size());
-            part.vertices.push_back({pw.X(), pw.Y(), pw.Z()});
-            part.anchors.push_back({faceId, um.X(), um.Y()});
-            uvOf.push_back(um);
-            for (int t : {t1, t2}) {
-                touched[t] = 1;
-                std::array<uint32_t, 3> tri = tris[t];
-                for (int i = 0; i < 3; ++i) {
-                    uint32_t p = tri[i], q = tri[(i + 1) % 3];
-                    if ((p == a && q == b) || (p == b && q == a)) {
-                        const uint32_t r = tri[(i + 2) % 3];
-                        tris[t] = {p, w, r};
-                        tris.push_back({w, q, r});
-                        touched.push_back(1);
-                        break;
+        if (!flipsOnly) {
+            std::vector<char> touched(tris.size(), 0);
+            for (uint64_t key : marked) {
+                const auto it = etri.find(key);
+                if (it == etri.end()) continue;
+                const int t1 = it->second[0], t2 = it->second[1];
+                if (t1 < 0 || t2 < 0 || touched[t1] || touched[t2]) {
+                    continue;
+                }
+                const uint32_t a = uint32_t(key >> 32), b = uint32_t(key);
+                const gp_Pnt2d um(0.5 * (uvOf[a].X() + uvOf[b].X()),
+                                  0.5 * (uvOf[a].Y() + uvOf[b].Y()));
+                const gp_Pnt pw = S->Value(um.X(), um.Y());
+                const uint32_t w = uint32_t(part.vertices.size());
+                part.vertices.push_back({pw.X(), pw.Y(), pw.Z()});
+                part.anchors.push_back({faceId, um.X(), um.Y()});
+                uvOf.push_back(um);
+                for (int t : {t1, t2}) {
+                    touched[t] = 1;
+                    std::array<uint32_t, 3> tri = tris[t];
+                    for (int i = 0; i < 3; ++i) {
+                        uint32_t p = tri[i], q = tri[(i + 1) % 3];
+                        if ((p == a && q == b) || (p == b && q == a)) {
+                            const uint32_t r = tri[(i + 2) % 3];
+                            tris[t] = {p, w, r};
+                            tris.push_back({w, q, r});
+                            touched.push_back(1);
+                            break;
+                        }
                     }
                 }
             }
         }
         // Delaunay flips in (anisotropy-corrected) UV restore quality
-        // after the splits.
-        for (int sweep = 0; sweep < 2; ++sweep) {
+        // after the splits (or alone, when the face only needed re-pairing).
+        const int flipSweeps = flipsOnly ? 6 : 2;
+        for (int sweep = 0; sweep < flipSweeps; ++sweep) {
             std::map<uint64_t, std::array<int, 2>> em;
             for (size_t t = 0; t < tris.size(); ++t) {
                 for (int i = 0; i < 3; ++i) {
@@ -6510,15 +6591,21 @@ void refineFloorWeb(PolyMesh& part, const TopoDS_Face& face, int faceId,
             }
             if (!flipped) break;
         }
+        if (flipsOnly) break;
     }
 
     // Rebuild the part's polygons; pair into quads by default (greedy by
     // corner-angle cost, exactly the quad-dominant fallback's move) —
     // the refined web's triangles are grid-shaped already, so merging
-    // interior diagonals is free and borders never move.
-    std::vector<std::vector<uint32_t>> polys;
+    // interior diagonals is free and borders never move. Pre-existing
+    // non-triangles (collars) are kept verbatim ahead of the web.
+    std::vector<std::vector<uint32_t>> polys = std::move(keepPolys);
+    std::vector<int> polyFace = std::move(keepFace);
     if (s.pureTriFloor) {
-        for (const auto& t : tris) polys.push_back({t[0], t[1], t[2]});
+        for (const auto& t : tris) {
+            polys.push_back({t[0], t[1], t[2]});
+            polyFace.push_back(faceId);
+        }
     } else {
         std::map<uint64_t, std::array<int, 2>> em;
         for (size_t t = 0; t < tris.size(); ++t) {
@@ -6573,15 +6660,17 @@ void refineFloorWeb(PolyMesh& part, const TopoDS_Face& face, int faceId,
             used[cd.t1] = used[cd.t2] = 1;
             polys.push_back({cd.ring[0], cd.ring[1], cd.ring[2],
                              cd.ring[3]});
+            polyFace.push_back(faceId);
         }
         for (size_t t = 0; t < tris.size(); ++t) {
             if (!used[t]) {
                 polys.push_back({tris[t][0], tris[t][1], tris[t][2]});
+                polyFace.push_back(faceId);
             }
         }
     }
     part.polygons = std::move(polys);
-    part.polygonFaceId.assign(part.polygons.size(), faceId);
+    part.polygonFaceId = std::move(polyFace);
 }
 
 bool meshContractFallback(const TopoDS_Face& face, const Model& model,
@@ -20383,6 +20472,56 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             fid);
                     } else {
                         demote(fid, face, surf, s, "plate web failed");
+                    }
+                } else {
+                    // Collar quads stay put; residual CDT needles between
+                    // holes get the same quality Steiner refine the
+                    // contract floor uses (borders remain exact).
+                    PolyMesh& part = parts[fid];
+                    if (part.anchors.size() == part.vertices.size() &&
+                        !part.polygons.empty()) {
+                        std::vector<gp_Pnt2d> uvOf;
+                        uvOf.reserve(part.vertices.size());
+                        bool haveUv = true;
+                        for (size_t i = 0; i < part.vertices.size(); ++i) {
+                            if (part.anchors[i].faceId == 0) {
+                                haveUv = false;
+                                break;
+                            }
+                            uvOf.push_back(gp_Pnt2d(part.anchors[i].u,
+                                                    part.anchors[i].v));
+                        }
+                        if (haveUv) {
+                            double uScale = 1.0;
+                            try {
+                                const double um =
+                                    (surf.FirstUParameter() +
+                                     surf.LastUParameter()) /
+                                    2;
+                                const double vm =
+                                    (surf.FirstVParameter() +
+                                     surf.LastVParameter()) /
+                                    2;
+                                const double su = std::max(
+                                    1e-9,
+                                    surf.Value(um, vm).Distance(
+                                        surf.Value(um + 1e-3, vm)) /
+                                        1e-3);
+                                const double sv = std::max(
+                                    1e-9,
+                                    surf.Value(um, vm).Distance(
+                                        surf.Value(um, vm + 1e-3)) /
+                                        1e-3);
+                                uScale = su / sv;
+                            } catch (const Standard_Failure&) {
+                            }
+                            FaceMeshSettings fs = s;
+                            // Pair residual web tris into quads when the
+                            // face wasn't asked to stay pure-tri — collar
+                            // flow is already quad-dominant.
+                            refineFloorWeb(part, face, fid, fs, uScale,
+                                           std::move(uvOf), false);
+                        }
                     }
                 }
                 break;
