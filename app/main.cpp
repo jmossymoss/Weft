@@ -2082,7 +2082,7 @@ static std::array<float, 2> gpuProxyCounts(App& app) {
         case MK::RevolutionGrid:
         case MK::DomeCap: manual(s.radial, s.axial); break;
         case MK::DiskCap:
-        case MK::AnnulusRing: manual(s.radial, std::max(1, s.junctionRings)); break;
+        case MK::AnnulusRing: manual(s.radial, 1); break;
         case MK::RibbonSweep:
         case MK::RailLadder: manual(s.radial, std::max(1, s.filletLoops)); break;
         case MK::PlateWeb:
@@ -2279,10 +2279,17 @@ static std::string adjustFaceDensityOne(App& app, int fid,
     using MK = weft::MesherKind;
     switch (kind) {
         case MK::RevolutionGrid:
-        case MK::DiskCap:
         case MK::DomeCap:
             if (secondary) count(s.axial, 1, "axial", live[1]);
             else count(s.radial, 3, "radial", live[0]);
+            break;
+        case MK::DiskCap:
+            // DiskCap density is rim-only (radial). Axial is unused.
+            if (secondary) {
+                std::snprintf(hud, sizeof hud, "disk cap: radial only");
+            } else {
+                count(s.radial, 3, "radial", live[0]);
+            }
             break;
         case MK::RibbonSweep:
         case MK::RailLadder:
@@ -2291,8 +2298,10 @@ static std::string adjustFaceDensityOne(App& app, int fid,
             count(s.radial, 3, "rail density", live[0]);
             break;
         case MK::RingJunction:
-            if (secondary) count(s.junctionRings, 1, "junction rings", 0);
-            else count(s.gridU, 1, "around ring", live[0]);
+            // Rect sides size the outer and set hole samples n=2*(nu+nv).
+            // Concentric rings stay on the panel (junction rings).
+            if (secondary) count(s.gridV, 1, "rect v", live[1]);
+            else count(s.gridU, 1, "rect u", live[0]);
             break;
         case MK::AnnulusRing:
             count(s.radial, 3, "loop verts", live[0]);
@@ -3307,7 +3316,10 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
         }
         hover({kAllKinds});
     }
-    if (freeform || s.adaptive) {
+    // Freeform always; adaptive faces use these as curvature sizing;
+    // QuadFill reads deviation/angle for interior iso spacing even when
+    // adaptive is off (matches the wheel secondary).
+    if (freeform || s.adaptive || k == MK::QuadFill) {
         float dev = float(s.chordTolerance);
         if (ImGui::DragFloat("deviation", &dev, 0.01f, 0.0005f, 100.0f,
                              "%.4f", ImGuiSliderFlags_Logarithmic)) {
@@ -3354,7 +3366,10 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
         else if (k == MK::RibbonSweep || k == MK::RailLadder) {
             radialLabel = "rail density";
         } else if (k == MK::PlateWeb || k == MK::QuadFill) {
-            radialLabel = "loop share seed";
+            // Outer density is boundary verts when pinned; radial only
+            // seeds shares on loops the pin does not cover (holes).
+            radialLabel =
+                s.boundary > 0 ? "hole share seed" : "loop share seed";
         }
         int radialShown =
             s.adaptive && liveN[0] > 0 ? liveN[0] : s.radial;
@@ -3392,8 +3407,9 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
             hover({int(MK::DiskCap)});
         }
         if (k == MK::PlateWeb) {
-            // Concentric collar rings around each hole.
-            ch |= ImGui::DragInt("junction rings", &s.junctionRings, 0.2f,
+            // Concentric collar rings around each hole (same field the
+            // wheel labels "collar rings").
+            ch |= ImGui::DragInt("collar rings", &s.junctionRings, 0.2f,
                                  1, 32);
             hover({int(MK::RingJunction), int(MK::PlateWeb)});
             ch |= ImGui::Checkbox("square collars", &s.squareCollar);
@@ -3449,10 +3465,10 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
             }
         }
     } else if (grid) {
-        const char* uLabel =
-            k == MK::RingJunction ? "around ring" : "grid u";
-        const char* vLabel =
-            k == MK::RingJunction ? "along axis" : "grid v";
+        // RingJunction is a planar rectangle with a circular trim — both
+        // rect sides drive outer samples and hole angular count.
+        const char* uLabel = k == MK::RingJunction ? "rect u" : "grid u";
+        const char* vLabel = k == MK::RingJunction ? "rect v" : "grid v";
         int gridUShown = s.adaptive && liveN[0] > 0 ? liveN[0] : s.gridU;
         if (ImGui::DragInt(uLabel, &gridUShown, 0.2f, 1, 256)) {
             s.gridU = gridUShown;

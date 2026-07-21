@@ -2075,6 +2075,132 @@ void testRemapDropsLostOpsKeepsWeld() {
     CHECK_EQ(moved.ops[0].weldPoints.size(), 2);
 }
 
+// WP4 §3.3 end-to-end artist workflow (API-level): load STEP → selected-face
+// density → constrained correction → recipe save/reload → density regen →
+// undo last op → CAD remap reporting → finalized OBJ export. Also asserts
+// corrections cannot leave a release-tier fixture non-watertight.
+void testArtistCorrectionWorkflow() {
+    std::printf("-- artist correction workflow (§3.3) --\n");
+    std::string stepPath = tmpPath("weft_wp4_workflow.step");
+    weft::writeStep(weft::makeFixture("cylinder"), stepPath);
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis a = weft::analyze(model);
+
+    int side = 0;
+    for (const auto& f : a.faces) {
+        if (f.type == weft::SurfaceType::Cylinder) side = f.id;
+    }
+    CHECK(side > 0);
+
+    weft::Recipe recipe;
+    recipe.settings.defaults.minimal = false;
+    recipe.settings.defaults.radial = 12;
+    recipe.settings.defaults.axial = 2;
+    recipe.settings.perFace[side] = recipe.settings.defaults;
+    recipe.settings.perFace[side].radial = 14;  // selected-face control
+
+    weft::PolyMesh mesh =
+        weft::generate(model, a, recipe.settings);
+    CHECK(isWatertight(mesh));
+    const size_t verts0 = mesh.vertexCount();
+
+    weft::ManualOp loop{weft::ManualOp::Kind::LoopInsert, side, 0.0, 7.5,
+                       0.5};
+    CHECK(weft::insertLoop(mesh, model, loop) > 0);
+    size_t nudgeSrc = verts0;
+    for (size_t v = verts0; v < mesh.vertexCount(); ++v) {
+        if (mesh.anchors[v].faceId == side) {
+            nudgeSrc = v;
+            break;
+        }
+    }
+    CHECK(nudgeSrc < mesh.vertexCount());
+    weft::ManualOp nudge;
+    nudge.kind = weft::ManualOp::Kind::NudgeVertex;
+    nudge.faceId = side;
+    nudge.u = mesh.anchors[nudgeSrc].u;
+    nudge.v = mesh.anchors[nudgeSrc].v;
+    nudge.u2 = nudge.u + 0.15;
+    nudge.v2 = nudge.v;
+    CHECK_EQ(weft::nudgeVertex(mesh, model, nudge), 1);
+    recipe.ops.push_back(loop);
+    recipe.ops.push_back(nudge);
+
+    // Recipe persistence.
+    std::string recipePath = tmpPath("weft_wp4_workflow.recipe");
+    weft::saveRecipe(recipe, recipePath);
+    weft::Recipe loaded = weft::loadRecipe(recipePath);
+    CHECK_EQ(loaded.settings.perFace.at(side).radial, 14);
+    CHECK_EQ(loaded.ops.size(), 2);
+
+    // Density regen with reloaded recipe.
+    loaded.settings.perFace[side].radial = 18;
+    weft::PolyMesh denser =
+        weft::generate(model, a, loaded.settings);
+    weft::ApplyOpsReport denserOps =
+        weft::applyOps(denser, model, loaded.ops);
+    CHECK_EQ(denserOps.failed, 0);
+    CHECK(isWatertight(denser));
+
+    // Undo last correction: drop nudge, regenerate, still clean.
+    loaded.ops.pop_back();
+    weft::PolyMesh undid =
+        weft::generate(model, a, loaded.settings);
+    CHECK_EQ(weft::applyOps(undid, model, loaded.ops).failed, 0);
+    CHECK(isWatertight(undid));
+
+    // Identity remap reports no drops.
+    weft::RemapReport idRep;
+    weft::Recipe same =
+        weft::remapRecipe(loaded, model, a, model, a, &idRep);
+    CHECK_EQ(idRep.opsDropped, 0);
+    CHECK_EQ(same.ops.size(), 1);
+
+    // Finalized export path: generate+ops+validate+OBJ.
+    loaded.settings.finalizeMesh = true;
+    weft::PolyMesh exported =
+        weft::generate(model, a, loaded.settings);
+    CHECK_EQ(weft::applyOps(exported, model, loaded.ops).failed, 0);
+    auto vr = weft::validateMesh(exported, &model);
+    CHECK(vr.watertight());
+    CHECK_EQ(vr.nonManifoldEdges, 0);
+    CHECK_EQ(vr.windingConflicts, 0);
+    std::string objPath = tmpPath("weft_wp4_workflow.obj");
+    weft::writeObj(exported, objPath);
+    CHECK(std::filesystem::exists(objPath));
+    CHECK(std::filesystem::file_size(objPath) > 0);
+
+    // Release-tier fixture: density override + finalize must stay inside
+    // the geometry gate (corrections must not bypass it).
+    std::string bossPath = tmpPath("weft_wp4_boss.step");
+    weft::writeStep(weft::makeFixture("boss"), bossPath);
+    weft::Model boss = weft::loadStep(bossPath);
+    weft::Analysis ba = weft::analyze(boss);
+    weft::GenerationSettings bgs;
+    bgs.finalizeMesh = true;
+    bgs.defaults.minimal = false;
+    bgs.defaults.gridU = 4;
+    bgs.defaults.gridV = 4;
+    bgs.defaults.junctionRings = 2;
+    int junction = 0;
+    weft::GenerationReport br0;
+    (void)weft::generate(boss, ba, bgs, &br0);
+    for (const auto& [fid, kind] : br0.faceMesher) {
+        if (kind == weft::MesherKind::RingJunction) {
+            junction = fid;
+            break;
+        }
+    }
+    CHECK(junction > 0);
+    bgs.perFace[junction] = bgs.defaults;
+    bgs.perFace[junction].gridU = 5;
+    bgs.perFace[junction].gridV = 5;
+    weft::PolyMesh bossMesh = weft::generate(boss, ba, bgs);
+    auto bv = weft::validateMesh(bossMesh, &boss);
+    CHECK(bv.watertight());
+    CHECK_EQ(bv.nonManifoldEdges, 0);
+}
+
 // MP9 is tier=performance / layer=target-assets only. Do not run it in the
 // default CTest suite — use tools/corpus_gate.sh with performance rows or a
 // manual `weft mesh tests/STEP_Examples/MP9.stp` for workload timing.
@@ -2751,6 +2877,7 @@ int main() {
     RUN(testWeldVerts);
     RUN(testConstrainedEditSurvivesDensityChange);
     RUN(testRemapDropsLostOpsKeepsWeld);
+    RUN(testArtistCorrectionWorkflow);
     RUN(testGenerationCache);
     RUN(testConcurrentGenerationSettings);
     RUN(testCadConversionPreservesObjects);
