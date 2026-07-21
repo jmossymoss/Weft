@@ -1161,6 +1161,62 @@ void testSphereDimpleNotContractFloor() {
     // thin cells; that still beats a single planar n-gon.
 }
 
+// MP9 bullet tip: a geometric sphere cap with one circular (non-iso) rim
+// used to take RevolutionGrid, loft a fake U-wrap lattice, then fold
+// self-heal into contract-floor tip soup. CAD must route it to
+// quad-fill → disk-cap rings instead.
+void testBulletTipNotContractFloor() {
+    std::printf("-- bullet tip not contract-floor --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/bullet_tip_3728.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    gs.defaults.minCurvedSegments = 12;
+
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    CHECK(isWatertight(mesh));
+
+    int spheres = 0;
+    for (const auto& f : analysis.faces) {
+        if (f.type != weft::SurfaceType::Sphere) continue;
+        ++spheres;
+        auto kit = report.faceMesher.find(f.id);
+        CHECK(kit != report.faceMesher.end());
+        std::printf("  sphere face %d -> %s\n", f.id,
+                    weft::mesherKindName(kit->second));
+        CHECK(kit->second == weft::MesherKind::QuadFill);
+        auto bit = report.faceBuild.find(f.id);
+        CHECK(bit != report.faceBuild.end());
+        CHECK_EQ(bit->second, 0);
+        auto cit = report.faceBuildCause.find(f.id);
+        if (cit != report.faceBuildCause.end()) {
+            CHECK(cit->second.find("contract floor") == std::string::npos);
+        }
+    }
+    CHECK(spheres >= 1);
+
+    int tipTris = 0, tipQuads = 0;
+    for (size_t i = 0; i < mesh.polygons.size(); ++i) {
+        const int fid =
+            i < mesh.polygonFaceId.size() ? mesh.polygonFaceId[i] : 0;
+        auto kit = report.faceMesher.find(fid);
+        if (kit == report.faceMesher.end() ||
+            kit->second != weft::MesherKind::QuadFill) {
+            continue;
+        }
+        if (mesh.polygons[i].size() == 3) ++tipTris;
+        else if (mesh.polygons[i].size() == 4) ++tipQuads;
+    }
+    CHECK(tipQuads > 0);
+    CHECK_EQ(tipTris, 0);
+}
+
 // MP9 freeformComb orthogonal trim can leave plane↔bspline seams open when
 // clipped lattice verts drift off the shared 3D edge. The #1805-class
 // reducer must keep structured coons grids (not contract-floor) and stay
@@ -2155,7 +2211,7 @@ void testAllMesherStrategies() {
         weft::MesherKind::MinimalNGon,    weft::MesherKind::Fallback,
         weft::MesherKind::AnnulusRing,    weft::MesherKind::PlateWeb,
         weft::MesherKind::RailLadder,     weft::MesherKind::RibbonSweep,
-        weft::MesherKind::DomeCap,
+        weft::MesherKind::DomeCap,        weft::MesherKind::QuadFill,
     };
     for (weft::MesherKind kind : expected) {
         if (!observed.count(kind)) {
@@ -3226,6 +3282,7 @@ int main() {
     RUN(testPlateWebSliverRefine);
     RUN(testTorturePlateWebMinimalResidual);
     RUN(testSphereDimpleNotContractFloor);
+    RUN(testBulletTipNotContractFloor);
     RUN(testMp9CoonsPlaneSeamCanonicalize);
     RUN(testNudgeVertex);
     RUN(testRecipeRemap);

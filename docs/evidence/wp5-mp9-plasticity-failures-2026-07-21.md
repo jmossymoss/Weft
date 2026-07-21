@@ -79,13 +79,37 @@ contract-floor needle soup — worse visually).
 1. **Residual opens** — ~1.1k remain; #1805 family still leads.
 2. **Fillet coons** — corner mismatch, fanning, demote-to-floor on torus blends.
 3. **Freeform expected quad flow** — grip/optic/fluted compares still sliver fans.
-4. **Bullet tip soup (#3729)** — sphere `revolution-grid` fold self-heal still
-   swaps to contract-floor tip soup. Reducer:
-   `tests/regressions/mp9/bullet_tip_3728.step`. Keeping the lattice seals the
-   extract but opens foam/teleporter — needs a tip-specific path (dome-cap /
-   fold-local repair) that does not skip foam sphere heals.
-5. **Grip / capsule fillet spans** — uneven coons, open borders vs boolean.
+4. **Grip / capsule fillet spans** — uneven coons, open borders vs boolean.
+5. **Bullet body / transition (#3728)** — still coons with twisted spans.
 6. **Full Plasticity side-by-side** — artist sign-off on expected meshes.
+
+## Fix: bullet tip geometric sphere cap (#3729)
+
+MP9 tip `#3729` is a `GeomAbs_Sphere` with a circular rim that is **not** a
+UV pole chart (full model: 3 non-degenerate edges; no collapsing polar iso).
+Unconditional sphere→`RevolutionGrid` lofted a fake U-wrap lattice (~half
+inverted); fold self-heal then swapped to contract-floor tip soup. Blanket
+skip of sphere floor heals broke foam/teleporter watertightness.
+
+Changes in `core/src/meshers.cpp`:
+
+1. `sphereHasUvPoleChart` — revolution only when deg poles / full U period /
+   exactly one collapsing polar iso.
+2. Closed pcurves → `EdgeIso::Neither` (stops rim in both u/v edge lists).
+3. Non-chart spheres plan via a clean `planQuadFill` probe **before** coons
+   (writing into a fresh `FacePlan`, then move — leftover plan state was
+   enough for the tip to miss the route on full MP9).
+4. `sphereCapPole` requires geometric V-iso collapse.
+
+| Probe | Result |
+| --- | --- |
+| `bullet_tip_3728.step` | sphere → `quad-fill`, build=0, 0 tip tris, watertight |
+| Full MP9 `#3729` | `quad-fill`, build=0, 120 quads / 0 tris |
+| `sphere_dimple_annulus.step` | still `revolution-grid` |
+| foam / teleporter CAD | watertight (0 open edges) |
+
+Reducer: `tests/regressions/mp9/bullet_tip_3728.step`.
+Test: `testBulletTipNotContractFloor`. Debug: `WEFT_SPHERE_CHART=1`.
 
 ## CAD plate-web residual (2026-07-21)
 

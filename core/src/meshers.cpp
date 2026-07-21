@@ -848,6 +848,86 @@ bool isClosedRevolution(const BRepAdaptor_Surface& surf) {
     }
 }
 
+// True when a sphere face has a usable UV pole / full-turn chart for
+// RevolutionGrid (dimple with degenerate poles, foam bowls with U≈2π,
+// or exactly one collapsing polar iso). Single-loop geometric caps whose
+// circular rim is NOT an iso (MP9 bullet tips) return false — those need
+// disk-cap rings, not a fake U-wrap lattice.
+bool sphereHasUvPoleChart(const TopoDS_Face& face,
+                          const BRepAdaptor_Surface& surf) {
+    if (surf.GetType() != GeomAbs_Sphere) return false;
+    for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+        if (BRep_Tool::Degenerated(TopoDS::Edge(ex.Current()))) {
+            if (std::getenv("WEFT_SPHERE_CHART")) {
+                std::fprintf(stderr, "[sphere-chart] deg-pole -> true\n");
+            }
+            return true;
+        }
+    }
+    Handle(Geom_Surface) S = BRep_Tool::Surface(face);
+    double umin = 0, umax = 0, vmin = 0, vmax = 0;
+    BRepTools::UVBounds(face, umin, umax, vmin, vmax);
+    const double uspan = umax - umin, vspan = vmax - vmin;
+    if (S && !S.IsNull() && S->IsUPeriodic() &&
+        uspan >= 0.999 * S->UPeriod()) {
+        if (std::getenv("WEFT_SPHERE_CHART")) {
+            std::fprintf(stderr,
+                         "[sphere-chart] full UPeriod uspan=%.4f per=%.4f\n",
+                         uspan, S->UPeriod());
+        }
+        return true;
+    }
+    if (surf.IsUClosed() && uspan >= 0.999 * 2.0 * M_PI) {
+        if (std::getenv("WEFT_SPHERE_CHART")) {
+            std::fprintf(stderr, "[sphere-chart] IsUClosed full span\n");
+        }
+        return true;
+    }
+
+    Bnd_Box bb;
+    BRepBndLib::Add(face, bb);
+    if (bb.IsVoid()) return false;
+    double bx0, by0, bz0, bx1, by1, bz1;
+    bb.Get(bx0, by0, bz0, bx1, by1, bz1);
+    const double diag =
+        gp_Pnt(bx0, by0, bz0).Distance(gp_Pnt(bx1, by1, bz1));
+    if (!(diag > 1e-9)) return false;
+    const double collapseTol = 0.01 * diag;
+    auto isoExtent = [&](bool fixU, double fixed) {
+        gp_Pnt lo(1e300, 1e300, 1e300), hi(-1e300, -1e300, -1e300);
+        for (int k = 0; k <= 16; ++k) {
+            const double t = k / 16.0;
+            const gp_Pnt p =
+                fixU ? surf.Value(fixed, vmin + vspan * t)
+                     : surf.Value(umin + uspan * t, fixed);
+            lo.SetX(std::min(lo.X(), p.X()));
+            hi.SetX(std::max(hi.X(), p.X()));
+            lo.SetY(std::min(lo.Y(), p.Y()));
+            hi.SetY(std::max(hi.Y(), p.Y()));
+            lo.SetZ(std::min(lo.Z(), p.Z()));
+            hi.SetZ(std::max(hi.Z(), p.Z()));
+        }
+        return lo.Distance(hi);
+    };
+    const double eU0 = isoExtent(true, umin);
+    const double eU1 = isoExtent(true, umax);
+    const double eV0 = isoExtent(false, vmin);
+    const double eV1 = isoExtent(false, vmax);
+    const bool uPolar = (eU0 < collapseTol) != (eU1 < collapseTol) &&
+                        eV0 > collapseTol && eV1 > collapseTol;
+    const bool vPolar = (eV0 < collapseTol) != (eV1 < collapseTol) &&
+                        eU0 > collapseTol && eU1 > collapseTol;
+    const bool ok = (uPolar && !vPolar) || (vPolar && !uPolar);
+    if (std::getenv("WEFT_SPHERE_CHART")) {
+        std::fprintf(stderr,
+                     "[sphere-chart] UV=[%.3f,%.3f]x[%.3f,%.3f] "
+                     "eU=%.4f/%.4f eV=%.4f/%.4f uPolar=%d vPolar=%d -> %d\n",
+                     umin, umax, vmin, vmax, eU0, eU1, eV0, eV1,
+                     int(uPolar), int(vPolar), int(ok));
+    }
+    return ok;
+}
+
 // Adaptor-independent closed-revolution probe: OFFSET
 // surfaces report IsUClosed()=false even across a full 2-pi period
 // (foam's can body — 411 coons patches instead of columns), and geometry
@@ -1162,6 +1242,12 @@ EdgeIso edgeIsoDirection(const TopoDS_Edge& edge, const TopoDS_Face& face,
     if (pcurve.IsNull()) return EdgeIso::Neither;
     gp_Pnt2d a = pcurve->Value(f);
     gp_Pnt2d b = pcurve->Value(l);
+    // Closed pcurves (start≈end) used to classify from the mid-chord alone
+    // and falsely read as V-aligned — bullet sphere rims then landed in
+    // BOTH uEdges and vEdges and lofted a fake U-wrap lattice.
+    if (a.Distance(b) < 1e-9 * (1.0 + std::max(uRange, vRange))) {
+        return EdgeIso::Neither;
+    }
     gp_Pnt2d m = pcurve->Value(0.5 * (f + l));
     double du = std::max(std::abs(b.X() - a.X()), std::abs(m.X() - a.X())) /
                 std::max(uRange, 1e-12);
@@ -8319,18 +8405,53 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // coons patch (which degenerates on a full-period chart).
     if (isClosedRevolution(surf) || geomRev()) {
         std::vector<std::vector<int>> inserts;
-        if (edgesHugRimsOrInserts(face, surf, model, inserts)) {
+        // Sphere single-rim hugs always succeed (one chain), but a
+        // geometric cap without a UV pole chart must not take revolution
+        // (MP9 bullet tips loft a fake U-wrap → tip soup). Dimples /
+        // bowls with a real pole chart still hug and finish.
+        const bool sphereOk =
+            surf.GetType() != GeomAbs_Sphere ||
+            sphereHasUvPoleChart(face, surf);
+        if (sphereOk &&
+            edgesHugRimsOrInserts(face, surf, model, inserts)) {
             plan.insertWires = std::move(inserts);
             finishRevolution();
             return plan;
         }
-        // Bounded sphere patches (4-edge dimples): rim-hug often fails
-        // because the trim is a spherical rectangle, not a clean dual
-        // rim chain. The revolution lattice still owns the chart —
-        // without this, CAD adaptive lands them on the contract floor.
-        if (surf.GetType() == GeomAbs_Sphere) {
+        // Bounded sphere patches with a real UV pole / full-turn chart
+        // when rim-hug still fails (odd trims): keep revolution.
+        if (surf.GetType() == GeomAbs_Sphere && sphereOk) {
             finishRevolution();
-            dbg("plan face %d: sphere patch -> revolution grid (no rim-hug)",
+            dbg("plan face %d: sphere UV-pole chart -> revolution grid",
+                fid);
+            return plan;
+        }
+    }
+
+    // Geometric sphere caps (no UV pole chart): claim BEFORE coons /
+    // freeform so a multi-edge circular trim cannot spiral as a coons
+    // patch. QuadFill → meshDiskCap emits concentric rings + centre n-gon.
+    if (surf.GetType() == GeomAbs_Sphere) {
+        const bool chart = sphereHasUvPoleChart(face, surf);
+        FacePlan qf;
+        const bool qfOk = !chart && planQuadFill(face, surf, model, qf);
+        if (std::getenv("WEFT_SPHERE_CHART")) {
+            int nEdge = 0, nDeg = 0;
+            for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More();
+                 ex.Next()) {
+                ++nEdge;
+                if (BRep_Tool::Degenerated(TopoDS::Edge(ex.Current()))) {
+                    ++nDeg;
+                }
+            }
+            std::fprintf(stderr,
+                         "[sphere-cap] face %d chart=%d qf=%d "
+                         "edges=%d deg=%d\n",
+                         fid, int(chart), int(qfOk), nEdge, nDeg);
+        }
+        if (qfOk) {
+            plan = std::move(qf);
+            dbg("plan face %d: geometric sphere cap -> quad-fill/disk-cap",
                 fid);
             return plan;
         }
@@ -8720,6 +8841,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         plan.kind = MesherKind::MinimalNGon;
         return plan;
     }
+
     plan = FacePlan();
     plan.kind = MesherKind::Fallback;
     if (plan.forceFallbackQuads < 0) {
@@ -14070,13 +14192,37 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
     // smooth dome — Plasticity caps such a corner blend with one disk n-gon,
     // not a tri fan. So on this exact case suppress the pole vertex and close
     // the innermost real ring with a single n-gon (done in the emission below).
-    // Gated tightly: only GeomAbs_Sphere with exactly one usable rim (rim0ok
-    // XOR rim1ok). A cone's apex is a genuine SHARP tip (its fixture asserts
-    // the fan, and a flat cap would lose the point), and the rimless full
-    // sphere fixture (rims=0/0) has two poles and no single rim — both are
-    // excluded here and keep fanning byte-identically.
-    const bool sphereCapPole =
+    // Gated tightly: GeomAbs_Sphere, exactly one usable rim, AND the empty
+    // side's V iso must geometrically collapse (bullet tips with a circular
+    // non-iso rim used to pass rim0ok XOR rim1ok and mirror across a fake
+    // pole). Cones / rimless full spheres keep fanning byte-identically.
+    bool sphereCapPole =
         surf.GetType() == GeomAbs_Sphere && (rim0ok != rim1ok);
+    if (sphereCapPole) {
+        const double uu0 = surf.FirstUParameter();
+        const double uu1 = surf.LastUParameter();
+        const double vv = rim0ok ? v1 : v0;
+        gp_Pnt lo(1e300, 1e300, 1e300), hi(-1e300, -1e300, -1e300);
+        for (int k = 0; k <= 16; ++k) {
+            const gp_Pnt p =
+                surf.Value(uu0 + (uu1 - uu0) * k / 16.0, vv);
+            lo.SetX(std::min(lo.X(), p.X()));
+            hi.SetX(std::max(hi.X(), p.X()));
+            lo.SetY(std::min(lo.Y(), p.Y()));
+            hi.SetY(std::max(hi.Y(), p.Y()));
+            lo.SetZ(std::min(lo.Z(), p.Z()));
+            hi.SetZ(std::max(hi.Z(), p.Z()));
+        }
+        Bnd_Box bb;
+        BRepBndLib::Add(face, bb);
+        double bx0, by0, bz0, bx1, by1, bz1;
+        bb.Get(bx0, by0, bz0, bx1, by1, bz1);
+        const double diag =
+            gp_Pnt(bx0, by0, bz0).Distance(gp_Pnt(bx1, by1, bz1));
+        if (lo.Distance(hi) > 0.01 * std::max(diag, 1e-9)) {
+            sphereCapPole = false;
+        }
+    }
     // Mismatched-but-usable rims: rather than demote the whole face to the
     // contract floor (a tri soup), keep each rim's exact samples and absorb
     // the count difference in a transition strip. On an analytic revolution
