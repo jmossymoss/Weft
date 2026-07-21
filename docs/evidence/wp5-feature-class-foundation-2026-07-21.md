@@ -1,32 +1,37 @@
 # WP5 — feature-class planning foundation (2026-07-21)
 
-AD-5 / WP5 slice: classify B-rep faces once in `analyze()`, route and report
-from those facts, stop rediscovering sphere charts inside `planFace`.
+AD-5 / WP5: classify B-rep faces once in `analyze()`, route and report from
+those facts, stop rediscovering geometry inside every `planFace` escape hatch.
 
 ## Landed
 
 | Item | Status |
 | --- | --- |
 | `ChartKind` / `FeatureClass` / `LoopSignature` / `priority` on `FaceInfo` | Done |
-| Sphere UV pole chart moved into `analyze()` | Done |
-| `planFace` sphere path reads `SphereCap` × chart (pole/full-period vs geometric-cap) | Done |
-| Fold self-heal sphere rescue gated on pole/full-period `SphereCap` only | Done |
-| Report + topology signature `face.N.feature` / `face.N.chart` | Done |
-| CLI `inspect` + app selection roster show class/chart | Done |
-| Tests: `testFeatureClassAnalyze`, `testCylindricalStackContinuity`, tip/dimple asserts | Done |
-| Body-wide post-density continuity raise | Deferred — over-coupled foam/teleporter; keep AD-5 rule + existing drum/blend equalize |
-| Full `planFace` ladder → pure priority table | Partial — sphere class wired; other classes still use existing ladder reading `isFillet` / surface type |
+| Sphere UV pole chart in `analyze()` | Done |
+| Narrow fillet vs wide false-fillet drum in `analyze()` | Done |
+| Early `featureClass` table: BossJunction / HolePlate / PlanarPanel | Done |
+| Sphere routing + fold heal from class | Done |
+| Open-band drum gate uses `Drum` × chart (not live narrowness probe) | Done |
+| Adjacency-limited cylindrical stack continuity (shared drum rim → co-length neighbor seams that also touch Drum/FilletStrip) | Done |
+| Report + signature `face.N.feature` / `.chart`; inspect + roster | Done |
+| Tests: feature-class analyze (incl. foam strip/drum), tip/dimple, stack continuity | Done |
+| Full ladder → pure table for Freeform/Coons/Ribbon | Partial — capability probes remain |
 
 ## Counterexamples kept green
 
 - `bullet_tip_3728.step` → `sphere-cap` / `geometric-cap` → `quad-fill`
 - `sphere_dimple_annulus.step` → `sphere-cap` / `pole` → `revolution-grid`
 - foam + teleporter CAD/default → watertight
-- cylinder fixture → one shared circumferential rim count; per-edge pin may diverge
+- cylinder fixture → one shared circumferential count; per-edge pin may diverge
+- fillet fixture → ≥1 `fillet-strip`; foam → both strips and drums
 
-## Follow-up (same WP5)
+## Rejected approaches
 
-1. Class-keyed cylindrical continuity that does not open sealed corpus models.
-2. Replace remaining `planFace` rediscovery (fillet-strip narrowness, hole/boss)
-   with `FaceInfo` fields only.
-3. Shrink auto ladder toward `featureClass × chartKind → MesherKind` table.
+- Solid-wide radius-bin continuity raise — opened foam/teleporter.
+- BFS through every stack-class face in a solid — same failure mode.
+
+## Remaining WP5 (optional polish)
+
+- More Freeform early routes (dome/ribbon) keyed by class without new MesherKinds.
+- Report stack continuity conflicts in density attribution when a pin blocks a raise.

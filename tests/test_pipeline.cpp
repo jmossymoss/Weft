@@ -1273,11 +1273,29 @@ void testFeatureClassAnalyze() {
         int strips = 0;
         for (const auto& f : a.faces) {
             if (!f.isFillet) continue;
-            CHECK(f.featureClass == weft::FeatureClass::FilletStrip);
-            ++strips;
+            // Narrow blends are FilletStrip; wide false-fillets may be Drum.
+            CHECK(f.featureClass == weft::FeatureClass::FilletStrip ||
+                  f.featureClass == weft::FeatureClass::Drum);
+            if (f.featureClass == weft::FeatureClass::FilletStrip) ++strips;
         }
         CHECK(strips >= 1);
         std::printf("  fillet: strips=%d\n", strips);
+    }
+    // Foam: at least one narrow fillet-strip and one drum (not all tangent
+    // cylinders collapsed to FilletStrip).
+    {
+        const std::filesystem::path foam =
+            std::filesystem::path(__FILE__).parent_path() /
+            "STEP_Examples/foam.stp";
+        const weft::Analysis a = weft::analyze(weft::loadStep(foam.string()));
+        int strips = 0, drums = 0;
+        for (const auto& f : a.faces) {
+            if (f.featureClass == weft::FeatureClass::FilletStrip) ++strips;
+            if (f.featureClass == weft::FeatureClass::Drum) ++drums;
+        }
+        CHECK(strips >= 1);
+        CHECK(drums >= 1);
+        std::printf("  foam: strips=%d drums=%d\n", strips, drums);
     }
 }
 

@@ -290,17 +290,30 @@ static int priorityFor(FeatureClass fc, SurfaceType type) {
     return 10;
 }
 
-static FeatureClass classifyFeature(SurfaceType type, bool isFillet,
-                                    bool isHole, ChartKind chart,
+// Narrow constant-radius blend vs wide false-fillet drum (foam half-drums
+// are isFillet but must stay Drum × IsoBand for open-band columns).
+static bool isNarrowFilletStrip(const TopoDS_Face& face, double radius) {
+    BRepAdaptor_Surface surf(face);
+    const double vSpan =
+        surf.LastVParameter() - surf.FirstVParameter();
+    const double uSpan =
+        surf.LastUParameter() - surf.FirstUParameter();
+    if (radius <= 1e-9) return true;
+    return vSpan <= 1.8 * radius || uSpan <= 1.9;
+}
+
+static FeatureClass classifyFeature(const TopoDS_Face& face, SurfaceType type,
+                                    bool isFillet, bool isHole, ChartKind chart,
                                     const LoopSignature& loop,
-                                    const FaceInfo& /*self*/,
-                                    const Analysis& /*a*/) {
+                                    double radius) {
     if (type == SurfaceType::Sphere) return FeatureClass::SphereCap;
 
     if (isFillet && (type == SurfaceType::Cylinder ||
                      type == SurfaceType::Torus ||
                      type == SurfaceType::Cone)) {
-        return FeatureClass::FilletStrip;
+        if (isNarrowFilletStrip(face, radius)) return FeatureClass::FilletStrip;
+        // Wide tangent drum wrongly flagged as fillet — keep as Drum.
+        return FeatureClass::Drum;
     }
 
     if (type == SurfaceType::Cylinder || type == SurfaceType::Cone ||
@@ -311,7 +324,9 @@ static FeatureClass classifyFeature(SurfaceType type, bool isFillet,
     }
 
     if (type == SurfaceType::Torus) {
-        return isFillet ? FeatureClass::FilletStrip : FeatureClass::Freeform;
+        return isFillet && isNarrowFilletStrip(face, radius)
+                   ? FeatureClass::FilletStrip
+                   : FeatureClass::Freeform;
     }
 
     if (type == SurfaceType::Plane) {
@@ -482,9 +497,15 @@ Analysis analyze(const Model& model) {
     for (FaceInfo& f : a.faces) {
         const TopoDS_Face face = TopoDS::Face(model.faces(f.id));
         f.chartKind = classifyChart(face, f.type, f.loop);
-        f.featureClass =
-            classifyFeature(f.type, f.isFillet, f.isHole, f.chartKind, f.loop,
-                            f, a);
+        f.featureClass = classifyFeature(face, f.type, f.isFillet, f.isHole,
+                                         f.chartKind, f.loop, f.radius);
+        // Wide false-fillets reclassified as Drum keep an iso/full chart.
+        if (f.featureClass == FeatureClass::Drum &&
+            f.chartKind == ChartKind::FreeTrim &&
+            (f.type == SurfaceType::Cylinder || f.type == SurfaceType::Cone ||
+             f.type == SurfaceType::Revolution)) {
+            f.chartKind = classifyChart(face, f.type, f.loop);
+        }
         f.priority = priorityFor(f.featureClass, f.type);
     }
 

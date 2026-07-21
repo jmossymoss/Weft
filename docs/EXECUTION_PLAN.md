@@ -7,11 +7,11 @@ new test evidence before changing direction.
 
 Active work package: WP5 — feature-class planning foundation.
 
-Progress (2026-07-21): `FaceInfo` chart/feature/priority fields, analyze-owned
-sphere chart, sphere routing + fold heal from class, inspect/signature/roster
-exposure, zoo tests. Remaining WP5: class-keyed cylindrical continuity without
-opening foam/teleporter; finish table-driven `planFace` (see
-`docs/evidence/wp5-feature-class-foundation-2026-07-21.md`).
+Progress (2026-07-21): classify-once `FaceInfo` (chart/feature/priority),
+analyze-owned sphere chart + narrow-fillet vs drum, early class table for
+boss/hole/planar, adjacency-limited cylindrical continuity, inspect/signature/
+roster, zoo tests. Optional polish: freeform early routes. Evidence:
+`docs/evidence/wp5-feature-class-foundation-2026-07-21.md`.
 
 Change the active package only when its exit criteria pass at one revision. If
 a later failure invalidates an earlier gate, reopen the earliest affected

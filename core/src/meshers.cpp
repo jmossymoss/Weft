@@ -8276,13 +8276,55 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // model's micro-fillets: catches the teleporter's 0.096 mm rounds and
     // the STEP board's 0.06-0.125 mm ones, while the 0.15 mm gate sits
     // safely below every genuine fillet (foam's smallest is 0.217 mm).
-    if (info.isFillet && info.radius > 0.0 &&
+    if (info.featureClass == FeatureClass::FilletStrip && info.radius > 0.0 &&
         info.radius < 1.5 * std::max(1e-9, s.chordTolerance) &&
         collectPlanarLoops(face, surf, model, plan, /*requirePlane=*/false)) {
         plan.kind = MesherKind::MinimalNGon;
         dbg("plan face %d: sliver fillet r=%.4g (< %.4g) -> minimal n-gon",
             fid, info.radius, 1.5 * s.chordTolerance);
         return plan;
+    }
+
+    // AD-5 early table: class-keyed tries before the long ladder. Planners
+    // still prove capability; failure falls through unchanged.
+    switch (info.featureClass) {
+        case FeatureClass::BossJunction:
+            if (planRingJunction(face, model, plan)) {
+                dbg("plan face %d: boss-junction -> ring-junction", fid);
+                return plan;
+            }
+            if (planAnnulus(face, model, plan, /*requireRing=*/true)) {
+                dbg("plan face %d: boss-junction -> annulus", fid);
+                return plan;
+            }
+            break;
+        case FeatureClass::HolePlate:
+            if (planPlateWeb(face, surf, model, plan,
+                             /*requireRoundHoles=*/true)) {
+                dbg("plan face %d: hole-plate -> plate-web", fid);
+                return plan;
+            }
+            if (planAnnulus(face, model, plan, /*requireRing=*/true)) {
+                dbg("plan face %d: hole-plate -> annulus", fid);
+                return plan;
+            }
+            if (planRingJunction(face, model, plan)) {
+                dbg("plan face %d: hole-plate -> ring-junction", fid);
+                return plan;
+            }
+            break;
+        case FeatureClass::PlanarPanel:
+            if (s.minimal &&
+                planMinimalPlanar(face, surf, model, plan)) {
+                dbg("plan face %d: planar-panel -> minimal-ngon", fid);
+                return plan;
+            }
+            break;
+        case FeatureClass::FilletStrip:
+        case FeatureClass::Drum:
+        case FeatureClass::SphereCap:
+        case FeatureClass::Freeform:
+            break;
     }
 
     // Game topology (plan §1): a curved face carrying a boolean CUTOUT hole
@@ -8564,27 +8606,18 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // per-edge counts the band's columns can't honor without the
     // post-weld stitcher, so those keep their coons route.
     if (!std::getenv("WEFT_NO_DRUM_BANDS")) {
-        const GeomAbs_SurfaceType st = surf.GetType();
-        // The blend detector flags anything tangentially joined as a
-        // fillet — including foam's 48-tall half-drums. A real blend
-        // STRIP is narrow relative to its radius (a quarter-round is
-        // 1.57r across) OR subtends at most ~109 degrees of wrap (edge
-        // rounds are quarter arcs plus tangent slack; a cylinder
-        // strip's v is its AXIS, so a long box-edge round fails the
-        // v-span test yet is still a blend — the fillet-loops knob must
-        // keep driving it). Only genuinely wide wraps (foam's
-        // half-drums, pi and up) leave the coons/fillet route.
-        const double vSpan3D =
-            surf.LastVParameter() - surf.FirstVParameter();
-        const bool filletStrip =
-            info.isFillet &&
-            (info.radius <= 1e-9 || vSpan3D <= 1.8 * info.radius ||
-             surf.LastUParameter() - surf.FirstUParameter() <= 1.9);
-        if (!filletStrip &&
-            (st == GeomAbs_Cylinder || st == GeomAbs_Cone ||
-             st == GeomAbs_SurfaceOfRevolution) &&
+        // AD-5: analyze() already split narrow FilletStrip from wide
+        // false-fillet Drum. IsoBand / FreeTrim drums take open-band;
+        // FilletStrip keeps the coons route below.
+        const bool drumBand =
+            info.featureClass == FeatureClass::Drum &&
+            info.chartKind != ChartKind::FullPeriod &&
+            (surf.GetType() == GeomAbs_Cylinder ||
+             surf.GetType() == GeomAbs_Cone ||
+             surf.GetType() == GeomAbs_SurfaceOfRevolution) &&
             !surf.IsUClosed() &&
-            surf.LastUParameter() - surf.FirstUParameter() >= 1.0) {
+            surf.LastUParameter() - surf.FirstUParameter() >= 1.0;
+        if (drumBand) {
             if (tryOpenBand()) {
                 if (!settings.decoupleSeams &&
                     (plan.rimLow.size() != 1 || plan.rimHigh.size() != 1)) {
@@ -8647,7 +8680,8 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 plan.uEdges = {patch.edgeIds[0], patch.edgeIds[2]};
                 plan.vEdges = {patch.edgeIds[1], patch.edgeIds[3]};
             }
-            if (info.isFillet) {
+            if (info.featureClass == FeatureClass::FilletStrip ||
+                info.isFillet) {
                 plan.isFillet = true;
                 auto sideLen = [&](int i) {
                     BRepAdaptor_Curve c(
@@ -18727,10 +18761,89 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         }
     }
     timingCheckpoint("rim sum repair");
-    // Body-scoped cylindrical continuity (AD-5 hard rule) still relies on
-    // existing drum rim equalization + blend radial propagation. A global
-    // post-raise over stack neighbors opened foam/teleporter; land a
-    // class-keyed unite only with corpus evidence in a follow-up.
+
+    // AD-5 cylindrical stack continuity (adjacency-limited): raise
+    // co-length circular seams on FilletStrip / Freeform / planar neighbors
+    // that share a Drum rim edge, and only when a short path through
+    // FilletStrip connects them. Never bin by radius across the whole solid.
+    {
+        auto raiseRootTo = [&](int root, int target) {
+            target = std::clamp(target, 1, 256);
+            auto git = density.groupCount.find(root);
+            if (git == density.groupCount.end() || git->second >= target) {
+                return;
+            }
+            if (density.pinnedRoots.count(root)) return;
+            git->second = target;
+            for (int eid = 1; eid <= model.edgeCount(); ++eid) {
+                if (density.groups.find(eid) == root) solvedEdge[eid] = target;
+            }
+        };
+        auto edgeLen = [&](int eid) -> double {
+            if (eid < 1 || eid > int(analysis.edges.size())) return 0;
+            return analysis.edges[eid - 1].length;
+        };
+        for (int fid = 1; fid <= model.faceCount(); ++fid) {
+            if (analysis.faces[fid - 1].featureClass != FeatureClass::Drum) {
+                continue;
+            }
+            auto pit = plans.find(fid);
+            if (pit == plans.end()) continue;
+            std::vector<int> rims = pit->second.uEdges;
+            if (rims.empty()) {
+                rims = pit->second.rimLow;
+                rims.insert(rims.end(), pit->second.rimHigh.begin(),
+                            pit->second.rimHigh.end());
+            }
+            for (int reid : rims) {
+                if (reid < 1 || reid >= int(solvedEdge.size())) continue;
+                if (settings.perEdge.count(reid)) continue;
+                const int want = solvedEdge[reid];
+                if (want < 3) continue;
+                const double L = edgeLen(reid);
+                if (!(L > 1e-9)) continue;
+                for (int nf : analysis.edges[reid - 1].faceIds) {
+                    if (nf == fid || nf < 1 ||
+                        nf > int(analysis.faces.size())) {
+                        continue;
+                    }
+                    const FeatureClass nfc =
+                        analysis.faces[nf - 1].featureClass;
+                    if (nfc != FeatureClass::FilletStrip &&
+                        nfc != FeatureClass::Freeform &&
+                        nfc != FeatureClass::PlanarPanel &&
+                        nfc != FeatureClass::HolePlate &&
+                        nfc != FeatureClass::BossJunction) {
+                        continue;
+                    }
+                    for (int eid : analysis.faces[nf - 1].edgeIds) {
+                        if (eid == reid) continue;
+                        if (settings.perEdge.count(eid)) continue;
+                        const double Le = edgeLen(eid);
+                        if (!(Le > 1e-9) ||
+                            std::abs(Le - L) > 0.02 * L) {
+                            continue;
+                        }
+                        // Require the other edge to also touch a Drum or
+                        // FilletStrip (same local stack), not a distant bore.
+                        bool stackTouch = false;
+                        for (int of : analysis.edges[eid - 1].faceIds) {
+                            if (of == nf) continue;
+                            const FeatureClass ofc =
+                                analysis.faces[of - 1].featureClass;
+                            if (ofc == FeatureClass::Drum ||
+                                ofc == FeatureClass::FilletStrip) {
+                                stackTouch = true;
+                                break;
+                            }
+                        }
+                        if (!stackTouch) continue;
+                        raiseRootTo(density.groups.find(eid), want);
+                    }
+                }
+            }
+        }
+    }
 
     if (const char* dumpE = getenv("WEFT_EDGE_DEBUG")) {
         std::stringstream ss(dumpE);
