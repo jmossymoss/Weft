@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Strict release gate — CAD_CORPUS.tsv release-tier cases only.
-# Never consumes tests/KNOWN_RED.tsv. Expected red until WP3.
+# Never consumes tests/KNOWN_RED.tsv.
 
 set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

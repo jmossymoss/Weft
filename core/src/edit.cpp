@@ -734,23 +734,38 @@ int weldVerts(PolyMesh& mesh, const ManualOp& op) {
     return int(uniq.size());
 }
 
-void applyOps(PolyMesh& mesh, const Model& model,
-              const std::vector<ManualOp>& ops) {
+ApplyOpsReport applyOps(PolyMesh& mesh, const Model& model,
+                        const std::vector<ManualOp>& ops) {
+    ApplyOpsReport report;
     for (const ManualOp& op : ops) {
+        int n = 0;
         switch (op.kind) {
-            case ManualOp::Kind::LoopInsert: insertLoop(mesh, model, op); break;
+            case ManualOp::Kind::LoopInsert:
+                n = insertLoop(mesh, model, op);
+                break;
             case ManualOp::Kind::DissolveLoop:
-                dissolveLoop(mesh, model, op);
+                n = dissolveLoop(mesh, model, op);
                 break;
-            case ManualOp::Kind::Bridge: bridgeLoops(mesh, model, op); break;
+            case ManualOp::Kind::Bridge:
+                n = bridgeLoops(mesh, model, op);
+                break;
             case ManualOp::Kind::NudgeVertex:
-                nudgeVertex(mesh, model, op);
+                n = nudgeVertex(mesh, model, op);
                 break;
-            case ManualOp::Kind::FillLoop: fillLoop(mesh, model, op); break;
-            case ManualOp::Kind::DeletePoly: deletePoly(mesh, op); break;
-            case ManualOp::Kind::WeldVerts: weldVerts(mesh, op); break;
+            case ManualOp::Kind::FillLoop:
+                n = fillLoop(mesh, model, op);
+                break;
+            case ManualOp::Kind::DeletePoly:
+                n = deletePoly(mesh, op);
+                break;
+            case ManualOp::Kind::WeldVerts:
+                n = weldVerts(mesh, op);
+                break;
         }
+        if (n > 0) ++report.applied;
+        else ++report.failed;
     }
+    return report;
 }
 
 std::vector<std::pair<uint32_t, uint32_t>> walkEdgeLoop(const PolyMesh& mesh,

@@ -1955,6 +1955,126 @@ void testWeldVerts() {
     CHECK(std::abs(loaded.ops[0].weldPoints[1][0] - lastPos[0]) < 1e-9);
 }
 
+// WP4 §3.3: a constrained loop insert + vertex nudge must survive a density
+// bump. Regenerate at the new radial, re-apply ops, keep watertightness and
+// surface anchors.
+void testConstrainedEditSurvivesDensityChange() {
+    std::printf("-- constrained edit survives density change --\n");
+    std::string stepPath = tmpPath("weft_test_edit_density.step");
+    weft::writeStep(weft::makeFixture("cylinder"), stepPath);
+    weft::Model model = weft::loadStep(stepPath);
+    weft::Analysis a = weft::analyze(model);
+
+    int sideFaceId = 0;
+    for (const auto& f : a.faces) {
+        if (f.type == weft::SurfaceType::Cylinder) sideFaceId = f.id;
+    }
+    CHECK(sideFaceId > 0);
+
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = false;
+    gs.defaults.radial = 12;
+    gs.defaults.axial = 2;
+    weft::PolyMesh mesh = weft::generate(model, a, gs);
+    CHECK(isWatertight(mesh));
+    const size_t vertsBefore = mesh.vertexCount();
+
+    weft::ManualOp loop{weft::ManualOp::Kind::LoopInsert, sideFaceId, 0.0,
+                        7.5, 0.5};
+    CHECK_EQ(weft::insertLoop(mesh, model, loop), 12);
+
+    size_t nudgeIdx = vertsBefore;
+    for (size_t v = vertsBefore; v < mesh.vertexCount(); ++v) {
+        if (mesh.anchors[v].faceId == sideFaceId) {
+            nudgeIdx = v;
+            break;
+        }
+    }
+    CHECK(nudgeIdx < mesh.vertexCount());
+    weft::ManualOp nudge;
+    nudge.kind = weft::ManualOp::Kind::NudgeVertex;
+    nudge.faceId = sideFaceId;
+    nudge.u = mesh.anchors[nudgeIdx].u;
+    nudge.v = mesh.anchors[nudgeIdx].v;
+    nudge.u2 = nudge.u + 0.2;
+    nudge.v2 = nudge.v;
+    CHECK_EQ(weft::nudgeVertex(mesh, model, nudge), 1);
+
+    weft::Recipe recipe;
+    recipe.settings = gs;
+    recipe.ops.push_back(loop);
+    recipe.ops.push_back(nudge);
+
+    // Density change: bump radial, regenerate, replay ops.
+    recipe.settings.defaults.radial = 16;
+    weft::PolyMesh denser =
+        weft::generate(model, a, recipe.settings);
+    weft::ApplyOpsReport ops = weft::applyOps(denser, model, recipe.ops);
+    CHECK_EQ(ops.applied, 2);
+    CHECK_EQ(ops.failed, 0);
+    CHECK(isWatertight(denser));
+    auto vr = weft::validateMesh(denser, &model);
+    CHECK_EQ(vr.openEdges, 0);
+    CHECK_EQ(vr.nonManifoldEdges, 0);
+
+    auto radiusOf = [](const std::array<double, 3>& p) {
+        return std::sqrt(p[0] * p[0] + p[1] * p[1]);
+    };
+    int onSide = 0;
+    for (size_t v = 0; v < denser.vertexCount(); ++v) {
+        if (denser.anchors[v].faceId != sideFaceId) continue;
+        CHECK(std::abs(radiusOf(denser.vertices[v]) - 10.0) < 1e-6);
+        ++onSide;
+    }
+    CHECK(onSide > 0);
+
+    // Finalized export after ops stays bake-clean.
+    recipe.settings.finalizeMesh = true;
+    weft::PolyMesh exported =
+        weft::generate(model, a, recipe.settings);
+    CHECK_EQ(weft::applyOps(exported, model, recipe.ops).failed, 0);
+    auto ev = weft::validateMesh(exported, &model);
+    CHECK(ev.watertight());
+    CHECK_EQ(ev.windingConflicts, 0);
+}
+
+// WP4: remap must report dropped face-anchored ops and keep world-space
+// WeldVerts (faceId is 0 by design).
+void testRemapDropsLostOpsKeepsWeld() {
+    std::printf("-- remap drops lost ops, keeps weld --\n");
+    std::string pathA = tmpPath("weft_test_remap_drop_a.step");
+    std::string pathB = tmpPath("weft_test_remap_drop_b.step");
+    weft::writeStep(weft::makeFixture("box"), pathA);
+    weft::writeStep(weft::makeFixture("cylinder"), pathB);
+    weft::Model modelA = weft::loadStep(pathA);
+    weft::Model modelB = weft::loadStep(pathB);
+    weft::Analysis aA = weft::analyze(modelA);
+    weft::Analysis aB = weft::analyze(modelB);
+
+    weft::Recipe recipe;
+    weft::ManualOp lost;
+    lost.kind = weft::ManualOp::Kind::NudgeVertex;
+    lost.faceId = aA.faces.front().id;  // box face — no match on cylinder
+    lost.u = 0.1;
+    lost.v = 0.2;
+    recipe.ops.push_back(lost);
+
+    weft::ManualOp weld;
+    weld.kind = weft::ManualOp::Kind::WeldVerts;
+    weld.weldMode = 0;
+    weld.weldPoints.push_back({0.0, 0.0, 0.0});
+    weld.weldPoints.push_back({1.0, 0.0, 0.0});
+    recipe.ops.push_back(weld);
+
+    weft::RemapReport rep;
+    weft::Recipe moved =
+        weft::remapRecipe(recipe, modelA, aA, modelB, aB, &rep);
+    CHECK(rep.opsDropped >= 1);
+    CHECK_EQ(moved.ops.size(), 1);
+    CHECK(moved.ops[0].kind == weft::ManualOp::Kind::WeldVerts);
+    CHECK_EQ(moved.ops[0].weldPoints.size(), 2);
+}
+
 // MP9 is tier=performance / layer=target-assets only. Do not run it in the
 // default CTest suite — use tools/corpus_gate.sh with performance rows or a
 // manual `weft mesh tests/STEP_Examples/MP9.stp` for workload timing.
@@ -2629,6 +2749,8 @@ int main() {
     RUN(testSameLoopBridgeAndFill);
     RUN(testWeldTolerance);
     RUN(testWeldVerts);
+    RUN(testConstrainedEditSurvivesDensityChange);
+    RUN(testRemapDropsLostOpsKeepsWeld);
     RUN(testGenerationCache);
     RUN(testConcurrentGenerationSettings);
     RUN(testCadConversionPreservesObjects);

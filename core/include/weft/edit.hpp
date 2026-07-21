@@ -134,8 +134,15 @@ int weldVerts(PolyMesh& mesh, const ManualOp& op);
 // used by exactly one polygon. Exposed for interactive tools (hover/pick).
 std::vector<std::vector<uint32_t>> boundaryLoops(const PolyMesh& mesh);
 
+// Result of replaying recorded ops. Failed ops stay in the recipe (so the
+// artist can undo or edit them) but are reported rather than silent.
+struct ApplyOpsReport {
+    int applied = 0;  // ops whose primitive returned a positive count
+    int failed = 0;   // ops that were no-ops on this mesh
+};
+
 // Re-apply recorded ops after (re)generation, in order.
-void applyOps(PolyMesh& mesh, const Model& model,
-              const std::vector<ManualOp>& ops);
+ApplyOpsReport applyOps(PolyMesh& mesh, const Model& model,
+                        const std::vector<ManualOp>& ops);
 
 }  // namespace weft

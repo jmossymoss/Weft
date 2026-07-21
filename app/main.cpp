@@ -761,6 +761,8 @@ struct App {
     std::vector<weft::ManualOp> genOps;  // worker's frozen ops snapshot
     weft::PolyMesh genMesh;
     weft::GenerationReport genReport;
+    int genOpsApplied = 0;
+    int genOpsFailed = 0;
     std::string genError;
     // A defaults control being hovered highlights the faces it drives —
     // the live "which parts does this knob change" map.
@@ -1300,7 +1302,9 @@ static void startGenerate(App& app) {
     // whole-model conformation/stitch/cleanup pass. Export regenerates from
     // these cached face parts with finalization enabled. Screenshot /
     // visual-QA runs set forceFinalize so captures match CLI export.
-    app.genSettings.finalizeMesh = app.forceFinalize;
+    // Live-link OBJ is a delivery path (§3.3): write the finalized mesh,
+    // not the reduced interactive preview.
+    app.genSettings.finalizeMesh = app.forceFinalize || app.liveLink;
     // Ops frozen like settings: the UI thread mutates them mid-run
     // (weld, undo, grab drags) and a live read is a use-after-free
     // in the worker.
@@ -1323,7 +1327,10 @@ static void startGenerate(App& app) {
             weft::PolyMesh mesh =
                 weft::generate(a->model, a->analysis, a->genSettings,
                                &report, &a->genCache);
-            weft::applyOps(mesh, a->model, a->genOps);
+            weft::ApplyOpsReport ops =
+                weft::applyOps(mesh, a->model, a->genOps);
+            a->genOpsApplied = ops.applied;
+            a->genOpsFailed = ops.failed;
             a->genMesh = std::move(mesh);
             a->genReport = std::move(report);
         } catch (const std::exception& e) {
@@ -1375,7 +1382,12 @@ static void finishGenerate(App& app) {
             }
         }
     }
-    logLine("regenerate: ops applied, rebuilding buffers");
+    logLine("regenerate: ops applied (%d ok, %d failed), rebuilding buffers",
+            app.genOpsApplied, app.genOpsFailed);
+    if (app.genOpsFailed > 0) {
+        app.status = "regen: " + std::to_string(app.genOpsFailed) +
+                     " correction(s) did not apply — check recipe / undo";
+    }
     updateProblems(app);
 
     // Resample the B-rep edge overlay at the solved divisions so its
@@ -2280,7 +2292,7 @@ static std::string adjustFaceDensityOne(App& app, int fid,
             break;
         case MK::RingJunction:
             if (secondary) count(s.junctionRings, 1, "junction rings", 0);
-            else count(s.gridU, 1, "grid u", live[0]);
+            else count(s.gridU, 1, "around ring", live[0]);
             break;
         case MK::AnnulusRing:
             count(s.radial, 3, "loop verts", live[0]);
@@ -3428,8 +3440,12 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
             }
         }
     } else if (grid) {
+        const char* uLabel =
+            k == MK::RingJunction ? "around ring" : "grid u";
+        const char* vLabel =
+            k == MK::RingJunction ? "along axis" : "grid v";
         int gridUShown = s.adaptive && liveN[0] > 0 ? liveN[0] : s.gridU;
-        if (ImGui::DragInt("grid u", &gridUShown, 0.2f, 1, 256)) {
+        if (ImGui::DragInt(uLabel, &gridUShown, 0.2f, 1, 256)) {
             s.gridU = gridUShown;
             ch = true;
             // Coons floors coexist with adaptive borders — no flip.
@@ -3440,7 +3456,7 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
         hover({int(MK::PlanarGrid), int(MK::CoonsGrid),
                int(MK::RingJunction)});
         int gridVShown = s.adaptive && liveN[1] > 0 ? liveN[1] : s.gridV;
-        if (ImGui::DragInt("grid v", &gridVShown, 0.2f, 1, 256)) {
+        if (ImGui::DragInt(vLabel, &gridVShown, 0.2f, 1, 256)) {
             s.gridV = gridVShown;
             ch = true;
             if (k == MK::PlanarGrid || k == MK::RingJunction) {
@@ -4196,6 +4212,12 @@ static void drawWeldPopup(App& app) {
                 op.weldPoints.push_back({q[0], q[1], q[2]});
             }
             size_t n = op.weldPoints.size();
+            weft::PolyMesh probe = app.mesh;
+            if (weft::weldVerts(probe, op) < 2) {
+                app.status = "weld failed: could not merge those verts";
+                ImGui::CloseCurrentPopup();
+                return;
+            }
             app.recipe.ops.push_back(std::move(op));
             app.selVerts.clear();
             app.selVertOrder.clear();
@@ -5470,23 +5492,39 @@ int main(int argc, char** argv) {
                     weft::ManualOp op;
                     op.kind = weft::ManualOp::Kind::FillLoop;
                     op.edgeA = app.bLoopEdge[app.hoverLoop];
-                    app.recipe.ops.push_back(op);
-                    markDirty(app);
-                    app.status = "boundary filled (ctrl+Z undoes)";
+                    weft::PolyMesh probe = app.mesh;
+                    if (weft::fillLoop(probe, app.model, op) == 0) {
+                        app.status = "fill failed: no open boundary there";
+                    } else {
+                        app.recipe.ops.push_back(op);
+                        markDirty(app);
+                        app.status = "boundary filled (ctrl+Z undoes)";
+                    }
                 } else if (app.selectMode == SelectMode::Edge &&
                            !app.selEdges.empty() && !app.bLoops.empty()) {
                     // Fill from edge mode: cap the open loop nearest each
-                    // selected edge (filling an already-closed loop is a
-                    // harmless no-op on replay).
+                    // selected edge. Probe first so unsupported fills do
+                    // not corrupt the recipe.
+                    int filled = 0;
                     for (int eid : app.selEdges) {
                         weft::ManualOp op;
                         op.kind = weft::ManualOp::Kind::FillLoop;
                         op.edgeA = eid;
+                        weft::PolyMesh probe = app.mesh;
+                        if (weft::fillLoop(probe, app.model, op) == 0) {
+                            continue;
+                        }
                         app.recipe.ops.push_back(op);
+                        ++filled;
                     }
-                    markDirty(app);
-                    app.status = "boundary filled near selected edge(s) "
-                                 "(ctrl+Z undoes)";
+                    if (filled == 0) {
+                        app.status = "fill failed: no open boundary near "
+                                     "selected edge(s)";
+                    } else {
+                        markDirty(app);
+                        app.status = "boundary filled near selected edge(s) "
+                                     "(ctrl+Z undoes)";
+                    }
                 } else {
                     frameModel(app);
                 }
@@ -5503,12 +5541,20 @@ int main(int argc, char** argv) {
                     op.kind = weft::ManualOp::Kind::Bridge;
                     op.edgeA = *it++;
                     op.edgeB = *it;
-                    app.recipe.ops.push_back(op);
-                    markDirty(app);
-                    app.status = app.bLoops.empty()
-                                     ? "bridge recorded (needs open "
-                                       "boundaries - X deletes faces)"
-                                     : "bridge committed (ctrl+Z undoes)";
+                    if (app.bLoops.empty()) {
+                        app.status = "bridge needs open boundaries "
+                                     "(X deletes faces first)";
+                    } else {
+                        weft::PolyMesh probe = app.mesh;
+                        if (weft::bridgeLoops(probe, app.model, op) == 0) {
+                            app.status = "bridge failed: loops not "
+                                         "bridgeable";
+                        } else {
+                            app.recipe.ops.push_back(op);
+                            markDirty(app);
+                            app.status = "bridge committed (ctrl+Z undoes)";
+                        }
+                    }
                 } else {
                     toggleBridgeMode(app);
                 }
@@ -5729,13 +5775,21 @@ int main(int argc, char** argv) {
                         op.u = 0.5 * (A[0] + B[0]);
                         op.v = 0.5 * (A[1] + B[1]);
                         op.t = 0.5 * (A[2] + B[2]);
+                        weft::PolyMesh probe = app.mesh;
+                        if (weft::dissolveLoop(probe, app.model, op) == 0) {
+                            continue;
+                        }
                         app.recipe.ops.push_back(op);
                         ++nLoops;
                     }
                     app.selMeshEdges.clear();
-                    markDirty(app);
-                    app.status = std::to_string(nLoops) +
-                                 " loop(s) dissolved (ctrl+Z undoes)";
+                    if (nLoops == 0) {
+                        app.status = "dissolve failed: no edge loop there";
+                    } else {
+                        markDirty(app);
+                        app.status = std::to_string(nLoops) +
+                                     " loop(s) dissolved (ctrl+Z undoes)";
+                    }
                 } else if (!io.KeyCtrl) {
                     deleteSelection(app);
                 }
@@ -5753,10 +5807,15 @@ int main(int argc, char** argv) {
                 op.kind = weft::ManualOp::Kind::Bridge;
                 op.edgeA = *it++;
                 op.edgeB = *it;
-                app.recipe.ops.push_back(op);
-                markDirty(app);
-                app.status = "bridged ([ ] twist, shift+[ ] spans, "
-                             "ctrl+Z undoes)";
+                weft::PolyMesh probe = app.mesh;
+                if (weft::bridgeLoops(probe, app.model, op) == 0) {
+                    app.status = "bridge failed: loops not bridgeable";
+                } else {
+                    app.recipe.ops.push_back(op);
+                    markDirty(app);
+                    app.status = "bridged ([ ] twist, shift+[ ] spans, "
+                                 "ctrl+Z undoes)";
+                }
             }
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false) &&
                 app.hasModel && !app.recipePath.empty()) {
@@ -6016,10 +6075,15 @@ int main(int argc, char** argv) {
                     op.kind = weft::ManualOp::Kind::Bridge;
                     op.edgeA = app.bridgeFirstEdge;
                     op.edgeB = eid;
-                    app.recipe.ops.push_back(op);
-                    app.bridgeFirstEdge = 0;
-                    markDirty(app);
-                    app.status = "bridge committed (ctrl+z undoes)";
+                    weft::PolyMesh probe = app.mesh;
+                    if (weft::bridgeLoops(probe, app.model, op) == 0) {
+                        app.status = "bridge failed: loops not bridgeable";
+                    } else {
+                        app.recipe.ops.push_back(op);
+                        app.bridgeFirstEdge = 0;
+                        markDirty(app);
+                        app.status = "bridge committed (ctrl+z undoes)";
+                    }
                 }
             }
         } else if (boxReleased && app.hasModel) {

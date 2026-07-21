@@ -22,6 +22,7 @@ routing inside that call, not alternate product pipelines.
 | Surface | Calls `weft::generate()`? | Notes |
 | --- | --- | --- |
 | App interactive regen | Yes | `finalizeMesh = false` for responsive preview |
+| App live-link OBJ | Yes | `finalizeMesh = true` while live-link is on (§3.3) |
 | App export / finalized mesh | Yes | `finalizeMesh = true` (authoritative mesh) |
 | CLI `mesh` / `validate` / `sweep` / `cache-check` | Yes | Default `finalizeMesh = true` |
 | Corpus / release / public gates | Yes | Via `build/cli/weft mesh` (no `--stitch`) |

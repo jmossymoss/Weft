@@ -178,8 +178,11 @@ Recipe remapRecipe(const Recipe& recipe, const Model& oldModel,
             }
             op.edgeA = a;
         } else if (op.kind == ManualOp::Kind::DeletePoly ||
-                   op.kind == ManualOp::Kind::DissolveLoop) {
-            // World-space anchor: no B-rep reference to remap.
+                   op.kind == ManualOp::Kind::DissolveLoop ||
+                   op.kind == ManualOp::Kind::WeldVerts) {
+            // World-space anchors (centroid / edge midpoint / weld picks):
+            // no B-rep face or edge id to remap. A lost faceId of 0 must
+            // not drop these — that used to discard every WeldVerts op.
         } else {  // LoopInsert / NudgeVertex anchor to a face
             int n = faceFor(op.faceId);
             if (!n) {
