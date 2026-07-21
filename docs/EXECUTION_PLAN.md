@@ -5,7 +5,7 @@ session handoffs are not authoritative. If code, comments, issues, or old
 branches disagree with this document, follow this document or revise it with
 new test evidence before changing direction.
 
-Active work package: WP5 — validate real work.
+Active work package: WP5 — feature-class planning foundation.
 
 Change the active package only when its exit criteria pass at one revision. If
 a later failure invalidates an earlier gate, reopen the earliest affected
@@ -412,8 +412,10 @@ an MVP milestone.
 
 ### AD-5: classify once, route from class
 
-Stabilization after WP5 residual Plasticity classes uses feature recognition
-style predicates, not more meshers and not face-id / filename specials.
+Feature-class planning (WP5) lands before validating real Plasticity work
+(WP6). Fresh-model visual chasing without shared `FaceInfo` facts is how fixes
+transfer to one export and miss the next. Use feature-recognition style
+predicates, not more meshers and not face-id / filename specials.
 
 `analyze()` owns geometry facts once per face. `planFace` / density / self-heal
 consume those facts. Do not rediscover chart validity, hole/fillet/drum shape,
@@ -449,7 +451,7 @@ Density and self-heal are class-scoped:
 - fold / contract-floor demotion may not apply a policy from another
   `featureClass` (sphere tip ≠ foam bowl).
 
-Fix gate for WP5 leftovers and all of WP6:
+Fix gate for WP5 and WP6:
 
 1. Name the `featureClass` + `chartKind` the bug violates.
 2. One positive reducer in the deterministic zoo.
@@ -461,9 +463,11 @@ Steal recognition ideas from B-rep feature / blend literature (graph +
 convexity + radius + surface type). Do not import FEA “suppress fillets”
 pipelines; Weft keeps blend and primitive flow for game topology.
 
-Evidence of the tip-class application of this rule:
+Early tip-class evidence (still applies under this AD):
 `docs/evidence/wp5-mp9-plasticity-failures-2026-07-21.md` (geometric sphere
-cap → quad-fill/disk rings; pole-chart spheres stay revolution).
+cap → quad-fill/disk rings; pole-chart spheres stay revolution). Parked MP9
+visual residuals from the former validate attempt feed WP5 class work and WP6
+sign-off, not ad hoc `planFace` branches.
 
 ## 7. Visual acceptance rubric
 
@@ -611,43 +615,17 @@ Exit:
   save it, regenerate, and export using documented controls.
 - Correction operations cannot bypass the release geometry gate.
 
-### WP5: validate real work
-
-Goal: demonstrate that fixture success transfers to the target asset class.
-
-Tasks:
-
-- Run ABC, NIST/CAx-IF, and MAMBO smoke subsets (optional Fusion sample allowed).
-- Run the fresh Plasticity set.
-- Classify every failure by input validity and topology class.
-- Reduce shareable failures and add them to the appropriate deterministic tier.
-- Compare Weft and Plasticity output in Blender with section 7.
-- Measure completion without engineering intervention, not just batch success.
-- For each residual Plasticity visual class still open (fillet/capsule spans,
-  grip freeform, bullet body `#3728`, residual opens), prefer a class-level
-  predicate fix under AD-5 over another `planFace` special case. If the fix
-  needs new `FaceInfo` fields, land the smallest analyze-side fact and continue
-  the structural move in WP6 rather than growing the monolith ladder.
-
-Exit:
-
-- Public smoke subsets meet their declared validity-specific expectations.
-- Fresh Plasticity samples pass the release geometry and workflow gates.
-- Visual comparison demonstrates a useful advantage or a materially faster
-  path to an acceptable editable result.
-- No new common failure class remains unrepresented in the deterministic zoo.
-- Remaining systematic routing debt is listed as WP6 work (not left as
-  undocumented `planFace` folklore).
-
-### WP6: feature-class planning foundation
+### WP5: feature-class planning foundation
 
 Goal: make automatic routing stable across models by classifying B-rep faces
 once, then planning, densifying, and self-healing from that class (AD-5).
 
-Do this package after WP5’s current Plasticity visual residuals are either
-fixed at class level or explicitly parked with reducers. Do not start WP7
-ship packaging while routing still depends on rediscovering geometry inside
-mesher demotion paths.
+Do this before WP6 (validate real work). Do not treat fresh Plasticity
+screenshot passes as the primary exit while routing still rediscovers geometry
+inside mesher demotion paths. Parked MP9 classes (fillet/capsule spans, grip
+freeform, bullet body transition, residual opens) are inputs to this package:
+encode them as `featureClass` / `chartKind` rules and zoo reducers, not as
+one-off `planFace` branches.
 
 Tasks:
 
@@ -664,7 +642,7 @@ Tasks:
   class’s policy.
 - Per AD-4, extract classify / density / plan-from-class phases behind tests;
   do not rewrite `generate()` or add a second architecture (AD-1).
-- Keep the WP5 fix gate: class name + positive reducer + other-model
+- Keep the AD-5 fix gate: class name + positive reducer + other-model
   counterexample; no filename or face-id specials.
 - Report `featureClass` / `chartKind` in inspect, topology signature, and the
   selection roster so artists and agents debug classes, not only meshers.
@@ -680,6 +658,34 @@ Exit:
 - Topology signature or inspect exposes `featureClass` and `chartKind` for
   release and Plasticity samples.
 - AD-3 holds: no new `MesherKind` added for this package.
+- Parked MP9 visual classes either have class-level reducers or an explicit
+  WP6 follow-up row in `KNOWN_RED` / corpus notes (not silent folklore).
+
+### WP6: validate real work
+
+Goal: demonstrate that fixture success transfers to the target asset class,
+on top of the WP5 feature-class foundation.
+
+Tasks:
+
+- Run ABC, NIST/CAx-IF, and MAMBO smoke subsets (optional Fusion sample allowed).
+- Run the fresh Plasticity set.
+- Classify every failure by input validity and `featureClass` / `chartKind`
+  (AD-5), not only by mesher name.
+- Reduce shareable failures and add them to the appropriate deterministic tier.
+- Compare Weft and Plasticity output in Blender with section 7.
+- Measure completion without engineering intervention, not just batch success.
+- If a fresh-model failure needs new analyze facts or routing-table rows, fix
+  them as WP5 reopen work (earliest affected package), not as WP6 special cases.
+
+Exit:
+
+- Public smoke subsets meet their declared validity-specific expectations.
+- Fresh Plasticity samples pass the release geometry and workflow gates.
+- Visual comparison demonstrates a useful advantage or a materially faster
+  path to an acceptable editable result.
+- No new common failure class remains unrepresented in the deterministic zoo.
+- Failures reopen WP5 when they expose missing class facts or table gaps.
 
 ### WP7: ship readiness
 
@@ -729,8 +735,9 @@ The agent must not:
 - treat compile success, application startup, or polygon counts alone as proof;
 - append session diaries, speculative directions, or stale pass claims here;
 - begin deferred work before WP7 passes;
-- land face-id / filename specials or a new `MesherKind` to clear a WP5
-  screenshot when AD-5 / WP6 class routing would address the class.
+- land face-id / filename specials or a new `MesherKind` to clear a Plasticity
+  screenshot when AD-5 / WP5 class routing would address the class;
+- start WP6 fresh-model sign-off while WP5 class/table exit criteria are open.
 
 ## 10. Verification commands
 
