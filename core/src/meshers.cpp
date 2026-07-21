@@ -223,7 +223,9 @@ bool sameFaceSettings(const FaceMeshSettings& a,
            a.weldTolerance == b.weldTolerance &&
            a.squareCollar == b.squareCollar &&
            a.coonsRotate == b.coonsRotate && a.boundary == b.boundary &&
-           a.adaptive == b.adaptive && a.cellCap == b.cellCap;
+           a.adaptive == b.adaptive &&
+           a.minCurvedSegments == b.minCurvedSegments &&
+           a.cellCap == b.cellCap;
 }
 
 struct CachedFacePlan {
@@ -9208,16 +9210,29 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
         }
         return adDiag;
     };
-    std::map<std::array<long long, 4>, int> localAdCache;
+    std::map<std::array<long long, 5>, int> localAdCache;
     auto& adCache = cache ? cache->adaptiveEdgeCounts : localAdCache;
+    auto closedCurvedEdge = [&](int eid) -> bool {
+        if (eid < 1 || eid > model.edgeCount()) return false;
+        const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+        if (BRep_Tool::Degenerated(edge)) return false;
+        double f = 0, l = 0;
+        Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, f, l);
+        if (c3.IsNull()) return false;
+        GeomAdaptor_Curve gc(c3, f, l);
+        if (gc.GetType() == GeomAbs_Line) return false;
+        return c3->Value(f).Distance(c3->Value(l)) < 1e-9;
+    };
     auto adaptiveCount = [&](int eid, const FaceMeshSettings& s) {
-        const std::array<long long, 4> key = {
+        const int ringFloor = std::clamp(s.minCurvedSegments, 1, 256);
+        const std::array<long long, 5> key = {
             eid,
             static_cast<long long>(s.chordTolerance * 1e9) * 2 +
                 (s.relativeDeviation ? 1 : 0),
             static_cast<long long>(s.angleToleranceDeg * 1e6),
             static_cast<long long>(settings.defaults.angleToleranceDeg *
-                                   1e6)};
+                                   1e6),
+            static_cast<long long>(ringFloor)};
         auto it = adCache.find(key);
         if (it != adCache.end()) return it->second;
         int n = 1;
@@ -9286,15 +9301,18 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                         n = std::max(n, int(std::ceil(2.0 * M_PI / ang -
                                                       1e-9)));
                     }
-                    n = std::clamp(n, 6, 256);
+                    n = std::clamp(n, ringFloor, 256);
                 } else {
                     try {
                         n = std::clamp(stableDeflectionCount(c, ang, chord),
                                        1, 256);
                     } catch (const Standard_Failure&) {
                     }
-                    // Closed edges (full circles) keep a sane ring floor.
-                    if (closedLoop) n = std::max(n, 6);
+                    // Closed curved rings keep the adaptive lower floor
+                    // (cylinders, spheres, torus/fillet circles, …).
+                    if (closedLoop && c.GetType() != GeomAbs_Line) {
+                        n = std::max(n, ringFloor);
+                    }
                 }
             }
         }
@@ -9321,8 +9339,14 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
         }
         for (int eid : edges) {
             // Floor applies AFTER scaling (propose scales): a ring floor
-            // of 6 must survive a 0.5x budget.
-            propose({eid}, std::max(int(std::lround(floorA / dScale)),
+            // must survive a 0.5x budget. Closed curved edges also raise
+            // the floor to minCurvedSegments so densityScale cannot drop
+            // a cylinder/sphere/fillet rim below the artist setting.
+            int flo = floorA;
+            if (closedCurvedEdge(eid)) {
+                flo = std::max(flo, std::clamp(s.minCurvedSegments, 1, 256));
+            }
+            propose({eid}, std::max(int(std::lround(flo / dScale)),
                                     adaptiveCount(eid, s)),
                     overridden, faceId);
         }

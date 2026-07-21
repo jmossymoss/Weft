@@ -2170,6 +2170,9 @@ static void applyChangedFields(const weft::FaceMeshSettings& before,
     }
     if (after.boundary != before.boundary) t.boundary = after.boundary;
     if (after.adaptive != before.adaptive) t.adaptive = after.adaptive;
+    if (after.minCurvedSegments != before.minCurvedSegments) {
+        t.minCurvedSegments = after.minCurvedSegments;
+    }
     if (after.cellCap != before.cellCap) t.cellCap = after.cellCap;
 }
 
@@ -3301,6 +3304,19 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
             s.gridV = std::max(s.gridV, live[1]);
         }
     }
+    if (s.adaptive) {
+        if (ImGui::DragInt("min curved segments", &s.minCurvedSegments, 0.2f,
+                           1, 256)) {
+            s.minCurvedSegments = std::clamp(s.minCurvedSegments, 1, 256);
+            ch = true;
+        }
+        hover({kAllKinds});
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Lower floor for closed curved rings (cylinders, spheres,\n"
+                "fillets). Adaptive never resolves those below this count.");
+        }
+    }
     // Per-face weld tolerance (mm, 0 = inherit the global). Governs how
     // loosely this face's boundary welds onto its neighbours; a shared
     // edge welds at the looser of the two faces (and the global), so
@@ -3761,6 +3777,19 @@ static void drawMesherDefaultTabs(App& app) {
         if (live[1] > 0) {
             d.axial = std::max(d.axial, live[1]);
             d.gridV = std::max(d.gridV, live[1]);
+        }
+    }
+    if (d.adaptive) {
+        if (ImGui::DragInt("min curved segments", &d.minCurvedSegments, 0.2f,
+                           1, 256)) {
+            d.minCurvedSegments = std::clamp(d.minCurvedSegments, 1, 256);
+            ch = true;
+        }
+        hover({kAllKinds});
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Lower floor for closed curved rings (cylinders, spheres,\n"
+                "fillets). Adaptive never resolves those below this count.");
         }
     }
     if (!ImGui::BeginTabBar("##mesherdefaults",

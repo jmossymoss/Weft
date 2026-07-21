@@ -104,6 +104,14 @@ struct FaceMeshSettings {
     // Off by default in the core (recipes/tests keep exact counts) — the
     // app turns it on for new sessions.
     bool adaptive = false;
+    // Lower floor on adaptive counts for closed curved loops (cylinder /
+    // sphere / torus / fillet rings, annulus bores, …). Adaptive may raise
+    // the count for large features but never resolves a closed curved rim
+    // below this many segments. Default 6 matches the historic hard floor;
+    // raise it (e.g. 12) when CAD/relative-deviation's 60° gate would
+    // otherwise leave rings looking faceted. Straight edges and open arcs
+    // are unaffected. Recipe/CLI: mincurve / --min-curve.
+    int minCurvedSegments = 6;
     // Per-face pathology guard: a hard ceiling on this face's total cell
     // count (0 = no ceiling). A face's mesh should scale with its surface
     // area; a face carrying vastly more cells than its area-share of the
@@ -332,7 +340,7 @@ struct GenerationCache {
     std::map<int, double> edgeLengths;
     double modelArea = -1.0;
     // Geometry/tolerance memos used by the global density solve.
-    std::map<std::array<long long, 4>, int> adaptiveEdgeCounts;
+    std::map<std::array<long long, 5>, int> adaptiveEdgeCounts;
     std::map<int, int> curvatureFloors;
     double modelDiagonal = -1.0;
     // Type-erased internal cache of geometry classification plans. FacePlan

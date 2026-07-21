@@ -1277,6 +1277,36 @@ void testAdaptiveDensity() {
     CHECK(largeCount > smallCount);  // curvature drives the count up with size
     CHECK(largeCount <= 256);        // ...within the cap
 
+    // Artist floor: CAD/relativeDeviation's 60° gate would otherwise leave
+    // small rings near 6; minCurvedSegments raises that floor, and
+    // densityScale cannot undercut it on closed curved edges.
+    {
+        TopoDS_Shape cyl =
+            BRepPrimAPI_MakeCylinder(
+                gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)), 4.0, 8.0)
+                .Shape();
+        std::string path = tmpPath("weft_test_mincurve.step");
+        weft::writeStep(cyl, path);
+        weft::Model model = weft::loadStep(path);
+        weft::Analysis a = weft::analyze(model);
+        weft::GenerationSettings gs;
+        gs.defaults.adaptive = true;
+        gs.defaults.relativeDeviation = true;
+        gs.defaults.minCurvedSegments = 12;
+        gs.densityScale = 0.5;
+        weft::GenerationReport report;
+        weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
+        CHECK(isWatertight(mesh));
+        int side = 0;
+        for (const auto& f : a.faces) {
+            if (f.type == weft::SurfaceType::Cylinder) side = f.id;
+        }
+        auto rims = report.faceRims.find(side);
+        CHECK(rims != report.faceRims.end());
+        const int n = report.edgeDivisions.at(rims->second[0]);
+        CHECK(n >= 12);
+    }
+
     // A per-edge pin still beats the adaptive proposal.
     weft::Analysis a = weft::analyze(largeModel);
     weft::GenerationSettings gs;
