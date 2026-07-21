@@ -10,6 +10,7 @@
 #   tools/topology_signature.sh compare <a.sig> <b.sig>
 #   tools/topology_signature.sh self-check   # cylinder/box/torture twice
 #   tools/topology_signature.sh fixture-set -o <dir>   # small CI fixture set
+#   tools/topology_signature.sh release-set -o <dir>   # five release models
 #
 # Env:
 #   WEFT   path to weft binary (default: build/cli/weft)
@@ -83,6 +84,15 @@ cmd_compare() {
 
 # Fast fixtures for same-platform determinism (not a golden corpus).
 FIXTURE_SET=(cylinder box torture)
+
+# Release models (EXECUTION_PLAN §4.3). Paths relative to repo root.
+RELEASE_SET=(
+    "flaregun:tests/STEP_Examples/flaregun.stp"
+    "foam:tests/STEP_Examples/foam.stp"
+    "teleporter:tests/STEP_Examples/teleporter.stp"
+    "iso14649-demo:tests/STEP_Examples/iso14649-demo.stp"
+    "torture:tests/fixtures/torture.step"
+)
 
 ensure_steps() {
     local name step
@@ -170,6 +180,45 @@ cmd_fixture_set() {
     echo "wrote signatures under $out"
 }
 
+cmd_release_set() {
+    local out=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -o|--output) out="$2"; shift 2 ;;
+            *) usage ;;
+        esac
+    done
+    if [[ -z "$out" ]]; then
+        echo "release-set needs -o <dir>" >&2
+        exit 2
+    fi
+    if [[ ! -x "$WEFT" ]]; then
+        echo "weft binary not found (WEFT=$WEFT)" >&2
+        exit 2
+    fi
+    mkdir -p "$out"
+    # Ensure generated torture fixture exists.
+    if [[ ! -f tests/fixtures/torture.step ]]; then
+        mkdir -p tests/fixtures
+        "$WEFT" fixture tests/fixtures/torture.step --shape torture >/dev/null
+    fi
+    local entry name step
+    for entry in "${RELEASE_SET[@]}"; do
+        name="${entry%%:*}"
+        step="${entry#*:}"
+        if [[ ! -f "$step" ]]; then
+            echo "FAIL missing release STEP $step" >&2
+            exit 1
+        fi
+        echo "== release-set $name (default) =="
+        "$WEFT" mesh "$step" --validate --signature "$out/${name}-default.sig"
+        echo "== release-set $name (cad) =="
+        "$WEFT" mesh "$step" --profile cad --validate \
+            --signature "$out/${name}-cad.sig"
+    done
+    echo "wrote release signatures under $out"
+}
+
 if [[ $# -lt 1 ]]; then usage; fi
 cmd="$1"
 shift
@@ -178,6 +227,7 @@ case "$cmd" in
     compare) cmd_compare "$@" ;;
     self-check) cmd_self_check "$@" ;;
     fixture-set) cmd_fixture_set "$@" ;;
+    release-set) cmd_release_set "$@" ;;
     -h|--help|help) usage ;;
     *) echo "unknown command: $cmd" >&2; usage ;;
 esac

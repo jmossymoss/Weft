@@ -51,10 +51,15 @@ No release-model rows remain. Residual allowances are stress/dirty only:
 - tan_slit (dirty-step max_raw)
 - tork (broken / open-shell source)
 
-## Still open for full WP3 exit
+## Visual + cross-platform
 
-- Visual rubric evidence (section 7) with saved region reviews.
-- Windows cross-platform confirmation of §3.2 policy (topology signature
-  artifact exists; Windows CI run still required).
+- Section 7 viewport review: `docs/evidence/wp3-visual-rubric-2026-07-20.md`
+  and `docs/evidence/wp3-visual/`.
+- Cross-platform: CI emits Linux release signatures
+  (`tools/topology_signature.sh release-set`) and Windows compares them
+  with `weft signature-compare` (job `windows` needs `linux`).
 
-Active package remains WP3 until those exit items land at one revision.
+## Active package
+
+WP3 exit criteria pass on this revision train. Active work package advanced
+to WP4 — complete the artist correction loop.

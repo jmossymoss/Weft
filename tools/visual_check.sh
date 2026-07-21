@@ -40,7 +40,7 @@ for f in "$SRC"/*.step "$SRC"/*.stp; do
     i=0
     for view in "0.9 0.5" "2.4 0.4" "4.0 -0.6"; do
         set -- $view
-        $RUNNER "$APP" "$f" --yaw "$1" --pitch "$2" \
+        $RUNNER "$APP" "$f" --yaw "$1" --pitch "$2" --finalize \
             --screenshot "$OUT/${base}_v$i.png" >/dev/null 2>&1
         i=$((i+1))
     done

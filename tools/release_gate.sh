@@ -44,7 +44,7 @@ run_one() {
     fi
 }
 
-echo "strict release gate (KNOWN_RED ignored; expected red until WP3)"
+echo "strict release gate (KNOWN_RED ignored)"
 while IFS= read -r row; do
     name=$(corpus_field "$row" 1)
     tier=$(corpus_field "$row" 2)
