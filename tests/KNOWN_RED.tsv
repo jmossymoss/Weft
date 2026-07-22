@@ -1,3 +1,2 @@
 name	profile	metric	ceiling	reproducer	owning_wp	removal_condition
-MP9	cad	max_open_edges	450	STEP_Examples/MP9.stp	WP6	residual #1805-family seam opens + bullet body coons transition; fillet capsule + grip freeform class reducers landed
-MP9_bullet_body	cad	visual_class	1	regressions/mp9/bullet_tip_3728.step	WP6	bullet body #3728 coons transition (tip sphere-cap done in WP5)
+MP9	cad	max_open_edges	450	STEP_Examples/MP9.stp	WP6	residual #1805-family seam opens (~380); fillet/grip/bullet class reducers landed

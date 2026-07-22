@@ -1230,6 +1230,66 @@ void testBulletTipNotContractFloor() {
     CHECK_EQ(tipTris, 0);
 }
 
+// Bullet body (#3728 class) shares a circular rim with the geometric tip
+// cap. After tip→quad-fill, the body must keep that rim's solved count
+// (no tip/body station mismatch) and stay fold-free / watertight on the
+// reducer — the coons/ring-lattice transition contract.
+void testBulletBodyTipRimContinuity() {
+    std::printf("-- bullet body tip rim continuity --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/bullet_tip_3728.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    gs.defaults.minCurvedSegments = 12;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    CHECK(isWatertight(mesh));
+    const auto folded = weft::foldedPolys(model, mesh);
+    CHECK(std::count(folded.begin(), folded.end(), uint8_t{1}) == 0);
+
+    int tipId = 0, bodyId = 0;
+    for (const auto& f : analysis.faces) {
+        auto kit = report.faceMesher.find(f.id);
+        if (kit == report.faceMesher.end()) continue;
+        if (f.featureClass == weft::FeatureClass::SphereCap &&
+            kit->second == weft::MesherKind::QuadFill) {
+            tipId = f.id;
+        }
+        if (f.featureClass == weft::FeatureClass::Freeform &&
+            kit->second == weft::MesherKind::CoonsGrid) {
+            bodyId = f.id;
+        }
+    }
+    CHECK(tipId > 0);
+    CHECK(bodyId > 0);
+
+    // Shared tip↔body edge must resolve to one count (max-proposal wins).
+    int shared = 0, tipN = 0, bodyN = 0;
+    for (const auto& e : analysis.edges) {
+        bool onTip = false, onBody = false;
+        for (int f : e.faceIds) {
+            if (f == tipId) onTip = true;
+            if (f == bodyId) onBody = true;
+        }
+        if (!onTip || !onBody) continue;
+        shared = e.id;
+        auto tit = report.edgeDivisions.find(e.id);
+        CHECK(tit != report.edgeDivisions.end());
+        tipN = bodyN = tit->second;
+        break;
+    }
+    CHECK(shared > 0);
+    CHECK(tipN >= 12);
+    CHECK_EQ(tipN, bodyN);
+    std::printf("  tip=%d body=%d shared edge #%d count=%d\n", tipId,
+                bodyId, shared, tipN);
+}
+
 // WP5 / AD-5: analyze() owns featureClass × chartKind once per face.
 void testFeatureClassAnalyze() {
     std::printf("-- feature class analyze --\n");
@@ -3670,6 +3730,7 @@ int main() {
     RUN(testTorturePlateWebMinimalResidual);
     RUN(testSphereDimpleNotContractFloor);
     RUN(testBulletTipNotContractFloor);
+    RUN(testBulletBodyTipRimContinuity);
     RUN(testFeatureClassAnalyze);
     RUN(testCylindricalStackContinuity);
     RUN(testMp9FilletCapsuleNotRevolution);
