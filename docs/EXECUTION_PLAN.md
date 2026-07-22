@@ -5,11 +5,12 @@ session handoffs are not authoritative. If code, comments, issues, or old
 branches disagree with this document, follow this document or revise it with
 new test evidence before changing direction.
 
-Active work package: WP6 — validate real work.
+Active work package: WP5 — feature-class planning foundation (reopened).
 
-WP5 (feature-class planning foundation) exit criteria met 2026-07-21 — see
-`docs/evidence/wp5-feature-class-foundation-2026-07-21.md`. Parked MP9 visual
-classes are WP6 rows in `tests/KNOWN_RED.tsv`.
+WP5 was advanced 2026-07-21 with a partial table; reopen after evidence that
+FilletStrip/Drum early rows, fillet authority, and drum+blend stack continuity
+tests were incomplete. Parked MP9 visual classes remain WP6 rows in
+`tests/KNOWN_RED.tsv` once WP5 exit criteria pass again.
 
 Change the active package only when its exit criteria pass at one revision. If
 a later failure invalidates an earlier gate, reopen the earliest affected

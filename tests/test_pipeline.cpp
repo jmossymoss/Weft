@@ -506,9 +506,14 @@ void testFillet() {
     // Curved fillet strips now take the Coons patch (border rows on
     // the 3D edge curves) instead of a surface-sampled grid.
     CHECK(report.faceMesher[filletFaceId] == weft::MesherKind::CoonsGrid);
+    CHECK(a.faces[filletFaceId - 1].featureClass ==
+          weft::FeatureClass::FilletStrip);
+    auto fcit = report.faceFeatureClass.find(filletFaceId);
+    CHECK(fcit != report.faceFeatureClass.end());
+    CHECK(fcit->second == weft::FeatureClass::FilletStrip);
     // Promoted from probe103: blend strips expose which patch axis the
-    // fillet-loops knob drives (faceAcross). Discover via isFillet — no
-    // hardcoded face-ID product routing.
+    // fillet-loops knob drives (faceAcross). Discover via FilletStrip —
+    // no hardcoded face-ID product routing.
     {
         auto ax = report.faceAcross.find(filletFaceId);
         CHECK(ax != report.faceAcross.end());
@@ -1337,7 +1342,9 @@ void testCylindricalStackContinuity() {
     CHECK_EQ(circCounts.size(), 1u);
     std::printf("  shared circumferential count=%d\n", *circCounts.begin());
 
-    // Deliberate per-edge pin may diverge — documents the allowed mismatch.
+    // Deliberate per-edge pin may diverge — documents the allowed mismatch
+    // and must surface as a stack-continuity-pin density conflict when the
+    // pin blocks a raise on the co-axial stack.
     {
         weft::GenerationSettings pinned = gs;
         int pinEdge = 0;
@@ -1356,25 +1363,52 @@ void testCylindricalStackContinuity() {
         std::printf("  pinned edge %d stays %d\n", pinEdge, it->second);
     }
 
-    // bossfillet: drum + fillet-strip classes both present (cross-model
-    // counterexample for FilletStrip vs Drum classify).
+    // bossfillet: drum + fillet-strip + boss/cap share one circumferential
+    // count; fillet-strip routes Coons (not RevolutionGrid).
     {
         const std::string bf = tmpPath("weft_cyl_bossfillet.step");
         weft::writeStep(weft::makeFixture("bossfillet"), bf);
-        const weft::Analysis ba = weft::analyze(weft::loadStep(bf));
+        weft::Model bmModel = weft::loadStep(bf);
+        const weft::Analysis ba = weft::analyze(bmModel);
         int drums = 0, strips = 0;
+        int stripFid = 0;
         for (const auto& f : ba.faces) {
             if (f.featureClass == weft::FeatureClass::Drum) ++drums;
-            if (f.featureClass == weft::FeatureClass::FilletStrip) ++strips;
+            if (f.featureClass == weft::FeatureClass::FilletStrip) {
+                ++strips;
+                stripFid = f.id;
+            }
         }
         CHECK(drums >= 1);
         CHECK(strips >= 1);
         weft::GenerationReport br;
-        weft::PolyMesh bm =
-            weft::generate(weft::loadStep(bf), ba, gs, &br);
+        weft::PolyMesh bm = weft::generate(bmModel, ba, gs, &br);
         CHECK(isWatertight(bm));
-        std::printf("  bossfillet: drums=%d strips=%d watertight\n", drums,
-                    strips);
+        CHECK(br.faceMesher[stripFid] == weft::MesherKind::CoonsGrid);
+        std::set<int> stackCounts;
+        for (const auto& f : ba.faces) {
+            if (f.featureClass != weft::FeatureClass::Drum &&
+                f.featureClass != weft::FeatureClass::FilletStrip &&
+                f.featureClass != weft::FeatureClass::BossJunction &&
+                f.featureClass != weft::FeatureClass::PlanarPanel) {
+                continue;
+            }
+            for (int eid : f.edgeIds) {
+                if (ba.edges[eid - 1].faceIds.size() < 2) continue;
+                // Circumferential rails are the longer shared smooth /
+                // concave edges on the boss stack (ring-derived 26).
+                auto it = br.edgeDivisions.find(eid);
+                if (it == br.edgeDivisions.end()) continue;
+                if (it->second >= gs.defaults.minCurvedSegments) {
+                    stackCounts.insert(it->second);
+                }
+            }
+        }
+        CHECK(!stackCounts.empty());
+        CHECK_EQ(stackCounts.size(), 1u);
+        std::printf(
+            "  bossfillet: drums=%d strips=%d strip->coons circ=%d\n",
+            drums, strips, *stackCounts.begin());
     }
 }
 

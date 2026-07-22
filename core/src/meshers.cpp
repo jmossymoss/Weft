@@ -8354,11 +8354,57 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 return plan;
             }
             break;
-        case FeatureClass::FilletStrip:
-            // Coons / rail capability probes stay in the ladder; class only
-            // skips drum open-band (below) and owns sliver demote (above).
+        case FeatureClass::FilletStrip: {
+            // Closed torus / cylinder fillets used to fall through to
+            // isClosedRevolution and become RevolutionGrid, losing blend
+            // across/along ownership. Claim Coons here from class×chart.
+            CoonsPatch patch;
+            if (coonsOk(patch) && coonsChainsCompatible(patch)) {
+                if (!(coonsReflex && s.quadDominant)) {
+                    plan.kind = MesherKind::CoonsGrid;
+                    plan.coonsRotate = coonsEffectiveRotate;
+                    plan.constrains = true;
+                    plan.isFillet = true;
+                    plan.insertWires = patch.holeWires;
+                    insertCountFloors(face, patch, plan.insertMinU,
+                                      plan.insertMinV);
+                    if (patch.chained()) {
+                        for (int i = 0; i < 4; ++i) {
+                            for (const auto& pce : patch.chain[i]) {
+                                plan.coonsSides[i].push_back(pce.edgeId);
+                            }
+                        }
+                    } else {
+                        plan.uEdges = {patch.edgeIds[0], patch.edgeIds[2]};
+                        plan.vEdges = {patch.edgeIds[1], patch.edgeIds[3]};
+                    }
+                    auto sideLen = [&](int i) {
+                        BRepAdaptor_Curve c(
+                            TopoDS::Edge(model.edges(patch.edgeIds[i])));
+                        return GCPnts_AbscissaPoint::Length(c);
+                    };
+                    const double pairU = sideLen(0) + sideLen(2);
+                    const double pairV = sideLen(1) + sideLen(3);
+                    plan.acrossIsU = pairU < pairV;
+                    dbg("plan face %d: fillet-strip %s -> coons-grid", fid,
+                        chartKindName(info.chartKind));
+                    return plan;
+                }
+            }
             break;
+        }
         case FeatureClass::Drum:
+            if (info.chartKind == ChartKind::FullPeriod &&
+                (isClosedRevolution(surf) || geomRev())) {
+                std::vector<std::vector<int>> inserts;
+                if (edgesHugRimsOrInserts(face, surf, model, inserts)) {
+                    plan.insertWires = std::move(inserts);
+                }
+                finishRevolution();
+                dbg("plan face %d: drum full-period -> revolution grid",
+                    fid);
+                return plan;
+            }
             break;
     }
 
@@ -8399,13 +8445,17 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         }
     }
 
-    // SphereCap handled in the early featureClass table above. Remaining
-    // closed-revolution faces (drums, geometric revolves) still loft here.
-    // revCovers is NOT required: a pipe-saddle band legitimately fails
-    // fixed-v coverage — edgesHugRimsOrInserts checks between-chain
-    // coverage itself, so wavy-rim bands loft instead of falling to a
-    // coons patch (which degenerates on a full-period chart).
+    // SphereCap / FilletStrip handled in the early featureClass table
+    // above. Remaining closed-revolution faces (drums that missed the
+    // FullPeriod early row, geometric revolves) still loft here.
+    // FilletStrip must not take RevolutionGrid — blend across/along
+    // ownership lives on Coons. revCovers is NOT required: a pipe-saddle
+    // band legitimately fails fixed-v coverage — edgesHugRimsOrInserts
+    // checks between-chain coverage itself, so wavy-rim bands loft
+    // instead of falling to a coons patch (which degenerates on a
+    // full-period chart).
     if (info.featureClass != FeatureClass::SphereCap &&
+        info.featureClass != FeatureClass::FilletStrip &&
         (isClosedRevolution(surf) || geomRev())) {
         std::vector<std::vector<int>> inserts;
         if (edgesHugRimsOrInserts(face, surf, model, inserts)) {
@@ -8518,7 +8568,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         collectIsoEdges(face, model, info.edgeIds, plan);
         if (plan.uEdges.size() == 2 && plan.vEdges.size() == 2) {
             plan.kind = MesherKind::PlanarGrid;
-            if (info.isFillet) {
+            if (info.featureClass == FeatureClass::FilletStrip) {
                 plan.isFillet = true;
                 // The blend arc runs along u for a cylinder strip and along
                 // the minor circle (v) for a toroidal corner patch.
@@ -8669,8 +8719,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 plan.uEdges = {patch.edgeIds[0], patch.edgeIds[2]};
                 plan.vEdges = {patch.edgeIds[1], patch.edgeIds[3]};
             }
-            if (info.featureClass == FeatureClass::FilletStrip ||
-                info.isFillet) {
+            if (info.featureClass == FeatureClass::FilletStrip) {
                 plan.isFillet = true;
                 auto sideLen = [&](int i) {
                     BRepAdaptor_Curve c(
@@ -8697,7 +8746,8 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             // it. Flag the plan so the dispatch first tries the rail sweep's
             // clean notch cut, keeping the Coons plan intact as the fallback
             // when the solve is too coarse for the cut to weld.
-            if (!info.isFillet && plan.insertWires.empty() &&
+            if (info.featureClass != FeatureClass::FilletStrip &&
+                plan.insertWires.empty() &&
                 ribbonEndNotchDetect(face, model)) {
                 plan.tryRibbonNotch = true;
                 dbg("plan face %d: coons + end-notch ribbon -> try sweep cut",
