@@ -1291,6 +1291,77 @@ void testBulletBodyTipRimContinuity() {
 }
 
 // WP5 / AD-5: analyze() owns featureClass × chartKind once per face.
+// Sparse fold self-heal must not trade Drum×FullPeriod×RevolutionGrid for
+// a contract-floor web. Foam's tall body annulus-body build carries one
+// inverted cell; the floor tournament used to win and turn cylinder spans
+// into triangle soup. SphereCap / FilletStrip stay on the floor-heal path
+// (skipping those heals reopens seams or ships dense folded coons).
+void testSparseFoldKeepsStructuredCharts() {
+    std::printf("-- sparse fold keeps structured charts --\n");
+    auto cadSettings = []() {
+        weft::GenerationSettings gs;
+        gs.defaults.minimal = true;
+        gs.defaults.adaptive = true;
+        gs.defaults.relativeDeviation = true;
+        gs.defaults.minCurvedSegments = 6;
+        return gs;
+    };
+    auto assertProtectedDrums = [](const weft::Analysis& analysis,
+                                   const weft::GenerationReport& report,
+                                   const char* label) {
+        int protectedFaces = 0;
+        for (const auto& f : analysis.faces) {
+            if (f.featureClass != weft::FeatureClass::Drum ||
+                f.chartKind != weft::ChartKind::FullPeriod) {
+                continue;
+            }
+            auto kit = report.faceMesher.find(f.id);
+            if (kit == report.faceMesher.end() ||
+                kit->second != weft::MesherKind::RevolutionGrid) {
+                continue;  // coons/open-band drums use other heal paths
+            }
+            ++protectedFaces;
+            auto bit = report.faceBuild.find(f.id);
+            CHECK(bit != report.faceBuild.end());
+            if (bit->second != 0) {
+                auto cit = report.faceBuildCause.find(f.id);
+                const std::string cause =
+                    cit != report.faceBuildCause.end() ? cit->second : "";
+                std::printf("  FAIL %s face %d drum/full-period build=%d "
+                            "cause=%s\n",
+                            label, f.id, bit->second, cause.c_str());
+            }
+            CHECK_EQ(bit->second, 0);
+        }
+        CHECK(protectedFaces >= 1);
+        std::printf("  %s: %d Drum×FullPeriod×RevolutionGrid kept\n", label,
+                    protectedFaces);
+    };
+
+    {
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "regressions/foam/drum_fillet_fullperiod_r1.step";
+        weft::Model model = weft::loadStep(stepPath.string());
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        weft::generate(model, analysis, cadSettings(), &report);
+        assertProtectedDrums(analysis, report, "foam drum extract");
+    }
+    {
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "STEP_Examples/foam.stp";
+        weft::Model model = weft::loadStep(stepPath.string());
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        weft::PolyMesh mesh =
+            weft::generate(model, analysis, cadSettings(), &report);
+        CHECK(isWatertight(mesh));
+        assertProtectedDrums(analysis, report, "foam CAD");
+    }
+}
+
 void testFeatureClassAnalyze() {
     std::printf("-- feature class analyze --\n");
     {
@@ -3731,6 +3802,7 @@ int main() {
     RUN(testSphereDimpleNotContractFloor);
     RUN(testBulletTipNotContractFloor);
     RUN(testBulletBodyTipRimContinuity);
+    RUN(testSparseFoldKeepsStructuredCharts);
     RUN(testFeatureClassAnalyze);
     RUN(testCylindricalStackContinuity);
     RUN(testMp9FilletCapsuleNotRevolution);

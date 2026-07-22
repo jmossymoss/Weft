@@ -21722,6 +21722,34 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         }
                     }
                     if (liveFolds > 0) {
+                        // Sparse folds on structured primitive charts must
+                        // not lose to a zero-fold floor web. Foam's tall
+                        // Drum×FullPeriod annulus-body build carries one
+                        // inverted cell; swapping it for contract-floor
+                        // turns cylinder spans into triangle soup. Same
+                        // for sphere bowls (hard-path already keeps
+                        // revolution) and full-period fillet coons.
+                        const FaceInfo& sparseInfo = analysis.faces[fid - 1];
+                        const int sparseN =
+                            int(parts[fid].polygons.size());
+                        // Align with the hard demote gate (inverted*4 >
+                        // tested): below ~25% folds AND an absolute cap,
+                        // keep Drum×RevolutionGrid columns. SphereCap /
+                        // FilletStrip are intentionally NOT protected —
+                        // skipping those floor heals reopens seams or
+                        // ships hundreds of folded coons cells
+                        // (teleporter FS×FullPeriod counterexample).
+                        const bool sparseProtect =
+                            sparseN >= 8 && liveFolds > 0 &&
+                            liveFolds <= 8 && liveFolds * 4 <= sparseN &&
+                            plan.kind == MesherKind::RevolutionGrid &&
+                            sparseInfo.featureClass == FeatureClass::Drum;
+                        if (sparseProtect) {
+                            dbg("mesh face %d: sparse fold keep %s "
+                                "(%d/%d) — refuse contract floor",
+                                fid, mesherKindName(plan.kind), liveFolds,
+                                sparseN);
+                        } else {
                         FaceMeshSettings fsT = s;
                         const double dscT =
                             std::clamp(settings.densityScale, 0.05, 20.0);
@@ -21753,6 +21781,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                     "fold self-heal → contract floor";
                             }
                         }
+                        }
                     }
                 }
             }
@@ -21772,6 +21801,23 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             if (liveFp > 0) {
                 repairFloorFolds(fid, face, parts[fid]);
                 liveFp = fpCount(parts[fid]);
+            }
+            if (liveFp > 0) {
+                // Same sparse-fold protect as the invertedCells tournament
+                // (Drum×RevolutionGrid only).
+                {
+                    const FaceInfo& sparseInfo = analysis.faces[fid - 1];
+                    const int sparseN = int(parts[fid].polygons.size());
+                    if (sparseN >= 8 && liveFp > 0 && liveFp <= 8 &&
+                        liveFp * 4 <= sparseN &&
+                        plan.kind == MesherKind::RevolutionGrid &&
+                        sparseInfo.featureClass == FeatureClass::Drum) {
+                        dbg("mesh face %d: sparse foldedPolys keep %s "
+                            "(%d/%d) — refuse contract floor",
+                            fid, mesherKindName(plan.kind), liveFp, sparseN);
+                        liveFp = 0;
+                    }
+                }
             }
             if (liveFp > 0) {
                 FaceMeshSettings fsT = s;
