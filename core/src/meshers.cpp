@@ -201,6 +201,10 @@ struct FacePlan {
     // is meshed by one global parameter lattice: every surviving cell is a
     // quad, so a notch cannot restart the cylinder spans or create a fan.
     bool orthogonalTrimGrid = false;
+    // Near-iso STEP splits on a non-analytic chart (#1805-class). Marks
+    // lattices whose borders need freeformComb seam repair in stitch/
+    // fuse — not a second MesherKind.
+    bool orthogonalFreeformComb = false;
     int orthogonalDriverU = 0;
     int orthogonalDriverV = 0;
     std::vector<int> orthogonalEdges;
@@ -726,6 +730,7 @@ bool planOrthogonalTrimGrid(const TopoDS_Face& face,
     }
 
     plan.orthogonalTrimGrid = true;
+    plan.orthogonalFreeformComb = freeformComb;
     plan.kind = drum ? MesherKind::RevolutionGrid : MesherKind::CoonsGrid;
     plan.uEdges = std::move(horizontal);
     plan.vEdges = std::move(vertical);
@@ -13832,6 +13837,46 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
             if (parity[i]) std::reverse(pm.polygons[i].begin(),
                                         pm.polygons[i].end());
     }
+    // Freeform-comb borders: clipped lattice verts can sit tens of microns
+    // off the shared 3D edge via surf.Value. Snap boundary verts onto the
+    // nearest exact contract sample within a tight band so weld/stitch
+    // share points with neighbours — without changing connectivity.
+    if (plan.orthogonalFreeformComb && !exactSamples.empty()) {
+        PolyMesh& pm = out.mesh();
+        std::map<std::pair<uint32_t, uint32_t>, int> useCount;
+        for (const auto& poly : pm.polygons) {
+            for (size_t k = 0; k < poly.size(); ++k) {
+                const uint32_t a = poly[k];
+                const uint32_t b = poly[(k + 1) % poly.size()];
+                if (a != b) ++useCount[std::minmax(a, b)];
+            }
+        }
+        std::set<uint32_t> boundaryVerts;
+        for (const auto& [edge, count] : useCount) {
+            if (count == 1) {
+                boundaryVerts.insert(edge.first);
+                boundaryVerts.insert(edge.second);
+            }
+        }
+        for (uint32_t id : boundaryVerts) {
+            const gp_Pnt p(pm.vertices[id][0], pm.vertices[id][1],
+                           pm.vertices[id][2]);
+            double best = 0.25;
+            const gp_Pnt* nearest = nullptr;
+            for (const auto& [uv, ep] : exactSamples) {
+                (void)uv;
+                const double d = p.Distance(ep);
+                if (d < best) {
+                    best = d;
+                    nearest = &ep;
+                }
+            }
+            if (nearest) {
+                pm.vertices[id] = {nearest->X(), nearest->Y(),
+                                   nearest->Z()};
+            }
+        }
+    }
     dbg("orthogonal grid face %d: %zux%zu stations, %d cells (%d tri, "
         "%d quad, %d ngon)", faceId, U.size(), V.size(), emitted, tris,
         quads, ngons);
@@ -16517,7 +16562,8 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
 // in param, and within a small fraction of the local pitch in both
 // param and 3D before they merge (union-find, lowest index wins).
 void fuseSeamTwins(PolyMesh& mesh, const Model& model, double weldTol,
-                   const std::vector<char>* fellBack = nullptr) {
+                   const std::vector<char>* fellBack = nullptr,
+                   const std::map<int, FacePlan>* plans = nullptr) {
     // Per-face boundary segments and vertex pitch (longest incident
     // boundary segment) — same qualification scaffolding as the
     // stitcher, rebuilt here because fusion must happen BEFORE the
@@ -16737,6 +16783,18 @@ void fuseSeamTwins(PolyMesh& mesh, const Model& model, double weldTol,
             }
             return best;
         };
+        // FreeformComb seams: lattice micro-edges shrink pitch-relative
+        // twin gates below real near-duplicates (#1805 f2↔f5). Use a
+        // tight absolute band when either owner is freeformComb.
+        const bool freeformCombSeam =
+            plans && [&]() {
+                auto pa = plans->find(fA);
+                auto pb = plans->find(fB);
+                return (pa != plans->end() &&
+                        pa->second.orthogonalFreeformComb) ||
+                       (pb != plans->end() &&
+                        pb->second.orthogonalFreeformComb);
+            }();
         for (const SideVert& a : side[0]) {
             const int jb = nearestIn(side[1], a.t);
             if (jb < 0) continue;
@@ -16745,13 +16803,24 @@ void fuseSeamTwins(PolyMesh& mesh, const Model& model, double weldTol,
             const int ja = nearestIn(side[0], b.t);
             if (ja < 0 || side[0][ja].v != a.v) continue;  // not mutual
             const double pMin = std::max(1e-12, std::min(a.pitch, b.pitch));
-            if (paramDist(a.t, b.t) > 0.15 * pMin) continue;
             const auto& P = mesh.vertices[find(a.v)];
             const auto& Q = mesh.vertices[find(b.v)];
             const double dx = P[0] - Q[0], dy = P[1] - Q[1],
                          dz = P[2] - Q[2];
-            if (dx * dx + dy * dy + dz * dz > 0.0625 * pMin * pMin) {
-                continue;  // > 25% of pitch apart: not the same point
+            const double d2 = dx * dx + dy * dy + dz * dz;
+            if (freeformCombSeam) {
+                // 0.15 mm matches the ortho border canonicalize band;
+                // param must still agree so distinct stations cannot
+                // collapse.
+                if (paramDist(a.t, b.t) > std::max(5e-4 * clen, 5e-4)) {
+                    continue;
+                }
+                if (d2 > 0.15 * 0.15) continue;
+            } else {
+                if (paramDist(a.t, b.t) > 0.15 * pMin) continue;
+                if (d2 > 0.0625 * pMin * pMin) {
+                    continue;  // > 25% of pitch apart: not the same point
+                }
             }
             // Prefer keeping a verified contract-floor sample's POSITION
             // when fusing twins: remapping a floor cell onto a neighbour's
@@ -17126,12 +17195,33 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
                 // (foam CAD face 525: 3 foldedPolys after stitch) —
                 // refuse to rewrite them; the neighbour may still stitch
                 // toward this face.
+                // Exception: freeformComb partner (#1805 f2↔f5) — a fold
+                // self-heal demotes one comb to the floor and the Coons
+                // skip below then deadlocks both sides. Allow the floor
+                // to accept freeformComb samples; fold guard reverts bad
+                // inserts without collapsing the partner.
                 if (okFb && (*fellBack)[fid] == 2) {
-                    continue;
+                    const int other = fids[1 - s2];
+                    auto oit = plans->find(other);
+                    if (!(oit != plans->end() &&
+                          oit->second.orthogonalFreeformComb)) {
+                        continue;
+                    }
                 }
                 if (pit != plans->end() && okFb &&
                     pit->second.kind == MesherKind::MinimalNGon) {
-                    continue;
+                    // Plane↔freeformComb: insert denser comb samples into
+                    // the planar n-gon (safe with fold guard). Coons
+                    // rewrite stays refused below for foam 829/837.
+                    const int other = fids[1 - s2];
+                    auto oit = plans->find(other);
+                    if (!(oit != plans->end() &&
+                          oit->second.orthogonalFreeformComb &&
+                          oit->second.kind == MesherKind::CoonsGrid &&
+                          other >= 0 && other < int(fellBack->size()) &&
+                          (*fellBack)[other] == 0)) {
+                        continue;
+                    }
                 }
                 if (pit != plans->end() && okFb &&
                     pit->second.kind == MesherKind::CoonsGrid) {
@@ -17140,13 +17230,18 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
                     // Coons strips fold when MinimalNGon / contract-floor
                     // verts are spliced into an exact border (foam CAD
                     // 829/837). Keep coons↔revolution stitches enabled.
+                    // FreeformComb may still accept floor samples when
+                    // the partner demoted after fold self-heal.
                     if (oit != plans->end() &&
                         other >= 0 && other < int(fellBack->size()) &&
                         ((*fellBack)[other] == 0 ||
                          (*fellBack)[other] == 2) &&
                         (oit->second.kind == MesherKind::MinimalNGon ||
                          (*fellBack)[other] == 2)) {
-                        continue;
+                        if (!(pit->second.orthogonalFreeformComb &&
+                              (*fellBack)[other] == 2)) {
+                            continue;
+                        }
                     }
                 }
             }
@@ -17372,6 +17467,30 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
                     // face onto chord a-b: delete the insert verts, then
                     // bridge a-b if the denser side carried them across
                     // multiple polygons (824: 6773-6669 / 6669-6774).
+                    //
+                    // Exception: freeformComb → MinimalNGon / contract
+                    // floor inserts use the comb's OWN border verts.
+                    // Collapsing the opposite would delete those lattice
+                    // verts from the comb and manufacture folds/opens.
+                    const bool freeformIntoAuthority =
+                        plans &&
+                        [&]() {
+                            auto oit = plans->find(fids[1 - s2]);
+                            if (oit == plans->end() ||
+                                !oit->second.orthogonalFreeformComb) {
+                                return false;
+                            }
+                            auto pit = plans->find(fids[s2]);
+                            if (pit != plans->end() &&
+                                pit->second.kind ==
+                                    MesherKind::MinimalNGon) {
+                                return true;
+                            }
+                            return fellBack &&
+                                   fids[s2] >= 0 &&
+                                   fids[s2] < int(fellBack->size()) &&
+                                   (*fellBack)[fids[s2]] == 2;
+                        }();
                     const std::vector<uint32_t> beforePoly = poly;
                     poly.insert(poly.begin() + i + 1, ins.begin(),
                                 ins.end());
@@ -17381,6 +17500,13 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
                             p < mask.size() && mask[p] != 0;
                         if (folded) {
                             poly = beforePoly;
+                            if (freeformIntoAuthority) {
+                                dbg("stitch: eid %d face %d seg v%u-v%u "
+                                    "fold reject — keep freeformComb "
+                                    "partner",
+                                    eid, fids[s2], a, b);
+                                continue;
+                            }
                             const int other = fids[1 - s2];
                             auto oit = facePolys.find(other);
                             std::set<uint32_t> drop(ins.begin(),
@@ -22438,7 +22564,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         // splice. WEFT_NO_STITCH / WEFT_NO_FUSE are the diagnosis
         // kill-switches.
         if (!std::getenv("WEFT_NO_FUSE")) {
-            fuseSeamTwins(mesh, model, weldGlobal, &fellBack);
+            fuseSeamTwins(mesh, model, weldGlobal, &fellBack, &plans);
         }
         stitchSeams(mesh, model, weldGlobal, &plans, &fellBack);
         if (std::getenv("WEFT_FOLD_PROBE")) {

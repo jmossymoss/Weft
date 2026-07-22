@@ -35,8 +35,10 @@ and the continuity test only proved drum+cap (not drum+blend).
 
 - Early Freeform ribbon/rail: opened foam (87 ribbons) — late ladder only
 - Body-wide radius-binned cylindrical continuity: broke foam/teleporter — adjacency-limited kept
-- FreeformComb exact-chain clip rewrite for residual #1805 cracks: demotions/folds —
-  residual stays in `KNOWN_RED` / WP6 until a reducer-safe contract repair lands
+- FreeformComb residual #1805 cracks: stitch deadlock repair landed (comb↔floor
+  + comb→MinimalNGon inserts, border sample snap). Reducer
+  `coons_plane_1805_r0.step` unexplained 83→75 with 0 folds; ~75 remain
+  (still f2↔f5-led) → `KNOWN_RED` / WP6 until a denser contract repair lands
 
 ## Active package
 

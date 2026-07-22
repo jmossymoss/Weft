@@ -72,11 +72,40 @@ Test: `testMp9CoonsPlaneSeamCanonicalize`.
 Tried and rejected on this class: raising `solvedEdge` to pin counts (opens
 exploded); skipping freeform `pinOrthogonalTrimGrids` (opens got worse);
 disabling freeformComb (zeros extract cracks but demotes panels to
-contract-floor needle soup — worse visually).
+contract-floor needle soup — worse visually); wide 3D curve projection of
+comb borders (folded cells by yanking notch verts onto the wrong edge);
+refusing fold self-heal demote on freeformComb (raised extract cracks and
+non-manifold edges).
+
+### FreeformComb stitch deadlock repair (2026-07-22)
+
+Dominant extract opens are face `#2`↔`#5` (shared edge `#41`), not only
+plane seams. A fold self-heal demotes `#5` to the contract floor; stitch
+then refused to rewrite *both* the floor and the Coons partner → deadlock.
+Also Coons↔MinimalNGon skipped both sides.
+
+Changes in `core/src/meshers.cpp`:
+
+1. `FacePlan::orthogonalFreeformComb` from `planOrthogonalTrimGrid`.
+2. Border sample snap (0.25 mm) after freeformComb lattice emission.
+3. `stitchSeams`: allow freeformComb samples into MinimalNGon and into a
+   partner contract floor; allow freeformComb Coons to accept floor
+   samples; fold guard reverts bad authority inserts without collapsing
+   the comb partner.
+4. `fuseSeamTwins`: absolute near-duplicate band on freeformComb seams
+   (lattice micro-edges otherwise refuse real twins).
+
+| | Before | After |
+| --- | --- | --- |
+| Extract unexplained cracks | 83 | 75 |
+| Folds / non-manifold | 2 / 0 | 0 / 0 |
+| Structured coons on big panels | yes | yes (one sibling may floor) |
+| foam / teleporter CAD | watertight | watertight |
 
 ## Still open on MP9 (block visual / Plasticity compare exit)
 
-1. **Residual opens** — ~1.1k remain; #1805 family still leads.
+1. **Residual opens** — ~1.1k remain; #1805 family still leads (~75 on the
+   extract, still f2↔f5-led after stitch deadlock repair).
 2. **Fillet coons** — corner mismatch, fanning, demote-to-floor on torus blends.
 3. **Freeform expected quad flow** — grip/optic/fluted compares still sliver fans.
 4. **Grip / capsule fillet spans** — uneven coons, open borders vs boolean.

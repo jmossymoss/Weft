@@ -1453,10 +1453,20 @@ void testMp9CoonsPlaneSeamCanonicalize() {
         vr.openEdges > vr.openEdgesOnInputBoundary
             ? vr.openEdges - vr.openEdgesOnInputBoundary
             : 0;
-    std::printf("  unexplained cracks=%zu (open=%zu onBoundary=%zu)\n",
-                unexplained, vr.openEdges, vr.openEdgesOnInputBoundary);
-    // Pre-fix floor on this extract was 131; keep a margin under that.
-    CHECK(unexplained < 110);
+    const auto folded = weft::foldedPolys(model, mesh);
+    const size_t foldCount =
+        static_cast<size_t>(std::count(folded.begin(), folded.end(),
+                                       uint8_t{1}));
+    std::printf("  unexplained cracks=%zu (open=%zu onBoundary=%zu) "
+                "folds=%zu nm=%zu\n",
+                unexplained, vr.openEdges, vr.openEdgesOnInputBoundary,
+                foldCount, vr.nonManifoldEdges);
+    // Pre-fix floor on this extract was 131; freeformComb stitch
+    // deadlock repair (floor↔comb + planar inserts) brings it under 80
+    // with no folds/non-manifold.
+    CHECK(unexplained < 80);
+    CHECK(foldCount == 0);
+    CHECK(vr.nonManifoldEdges == 0);
 }
 
 // Auto-mesher gates: a plate with a slot has "two wires" but is NOT an
