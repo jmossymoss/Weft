@@ -27,3 +27,13 @@
 ## Sanity
 
 foam / teleporter CAD remain watertight. No filename / face-ID specials.
+
+## Visual inspection
+
+Reviewed `tools/visual_check.sh` screenshots in `docs/evidence/wp6-visual/`
+(see that directory's README for the per-model rubric table).
+
+Cleared class reducers and release models look correct in-viewport
+(slitdrill / bullet tip watertight; fillet capsule + grip ribbons Coons;
+foam / teleporter editable and watertight). Residual `#1805` / MP9 open-edge
+highlights remain visible and match the remaining `KNOWN_RED` row.
