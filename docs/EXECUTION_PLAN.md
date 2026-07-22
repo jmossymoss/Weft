@@ -12,9 +12,9 @@ stack continuity (`testCylindricalStackContinuity` / bossfillet), sphere tip
 and dimple reducers, foam/teleporter CAD watertight, feature/chart in
 inspect/signature, no new MesherKind. FreeformComb #1805 stitch deadlock
 cut extract unexplained 83→73 with 0 folds. WP6 cleared slitdrill / tan_slit
-/ tork / fillet-capsule / grip-freeform KNOWN_RED rows; residual MP9 opens
-(~380) and bullet-body transition remain in `tests/KNOWN_RED.tsv`. Early
-Freeform ribbon/rail stays on the late ladder (foam counterexample).
+/ tork / fillet-capsule / grip-freeform / bullet-body KNOWN_RED rows;
+residual MP9 opens (~380, #1805 family) remain in `tests/KNOWN_RED.tsv`.
+Early Freeform ribbon/rail stays on the late ladder (foam counterexample).
 
 Change the active package only when its exit criteria pass at one revision. If
 a later failure invalidates an earlier gate, reopen the earliest affected
