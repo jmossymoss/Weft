@@ -12,11 +12,11 @@ and the continuity test only proved drum+cap (not drum+blend).
 | --- | --- |
 | Sphere tip / dimple / foam / teleporter green under same rules | `testBulletTipNotContractFloor`, `testSphereDimpleNotContractFloor`, foam+teleporter CAD validate |
 | Fillet strip, hole plate, drum zoo + counterexample | `testFillet` asserts FilletStrip→Coons; `bossfillet` strip→coons + shared circ |
-| Cylindrical stack continuity + pin exception | `testCylindricalStackContinuity` (cylinder drum+cap; bossfillet drum+fillet+boss) |
+| Cylindrical stack continuity + pin exception | `testCylindricalStackContinuity` (cylinder drum+cap; bossfillet drum+fillet+boss; pin sticks) |
 | No rediscovery of sphere chart / fillet narrowness in planFace | analyze-owned; planning uses `featureClass` for fillet authority |
 | inspect / signature expose feature+chart | CLI inspect; `face.N.feature` / `.chart` in signature test |
 | AD-3: no new MesherKind | unchanged enum |
-| Parked MP9 visuals | `tests/KNOWN_RED.tsv` WP6 rows (still open) |
+| Parked MP9 visuals | `tests/KNOWN_RED.tsv` WP6 rows; #1805 reducer 83→73 unexplained, 0 folds |
 
 ## Landed
 
@@ -36,9 +36,13 @@ and the continuity test only proved drum+cap (not drum+blend).
 - Early Freeform ribbon/rail: opened foam (87 ribbons) — late ladder only
 - Body-wide radius-binned cylindrical continuity: broke foam/teleporter — adjacency-limited kept
 - FreeformComb residual #1805 cracks: stitch deadlock repair landed (comb↔floor
-  + comb→MinimalNGon inserts, border sample snap). Reducer
-  `coons_plane_1805_r0.step` unexplained 83→75 with 0 folds; ~75 remain
-  (still f2↔f5-led) → `KNOWN_RED` / WP6 until a denser contract repair lands
+  + comb→MinimalNGon inserts, border sample snap, second fuse+stitch,
+  freer comb twin fuse). Reducer unexplained 83→73 with 0 folds; residual
+  T-junction topology on open-shell extracts stays `KNOWN_RED` / WP6
+- Early Freeform ribbon/rail: rejected (foam 87 ribbons) — late ladder +
+  `MP9_grip_freeform` WP6 park is enough for WP5 exit
+- Stack pin: drum↔fillet perEdge pin sticks (allowed mismatch); raise also
+  records `stack-continuity-pin` when a non-rim co-length edge is blocked
 
 ## Active package
 

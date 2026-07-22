@@ -137,10 +137,27 @@ ValidationReport validateMesh(const PolyMesh& mesh, const Model* model) {
             }
             return false;
         };
+        // Mesh-edge length alone collapses on micro open edges along a
+        // true open-shell boundary (tol → microns while polyline sample
+        // residual and freeform pcurve drift are larger). Floor by a
+        // fraction of the model diagonal — still far below typical
+        // inter-face crack gaps on shared 2-owner seams.
+        double lo[3] = {1e300, 1e300, 1e300}, hi[3] = {-1e300, -1e300, -1e300};
+        for (const auto& v : mesh.vertices) {
+            for (int c = 0; c < 3; ++c) {
+                lo[c] = std::min(lo[c], v[c]);
+                hi[c] = std::max(hi[c], v[c]);
+            }
+        }
+        const double diag = std::sqrt((hi[0] - lo[0]) * (hi[0] - lo[0]) +
+                                      (hi[1] - lo[1]) * (hi[1] - lo[1]) +
+                                      (hi[2] - lo[2]) * (hi[2] - lo[2]));
+        const double tolFloor = std::max(1e-3, 1e-4 * diag);
         for (size_t i = 0; i < openList.size(); ++i) {
             gp_Pnt a = at(mesh, openList[i].first);
             gp_Pnt b = at(mesh, openList[i].second);
-            const double tol = std::max(2.0 * a.Distance(b), 1e-6);
+            const double tol =
+                std::max({2.0 * a.Distance(b), 1e-6, tolFloor});
             if (nearBoundary(a, tol) && nearBoundary(b, tol)) {
                 ++r.openEdgesOnInputBoundary;
                 auto it = openPerFace.find(openFace[i]);

@@ -16737,13 +16737,27 @@ void fuseSeamTwins(PolyMesh& mesh, const Model& model, double weldTol,
         };
         std::array<std::vector<SideVert>, 2> side;
         const int fids[2] = {fA, fB};
+        const bool freeformCombSeam =
+            plans && [&]() {
+                auto pa = plans->find(fA);
+                auto pb = plans->find(fB);
+                return (pa != plans->end() &&
+                        pa->second.orthogonalFreeformComb) ||
+                       (pb != plans->end() &&
+                        pb->second.orthogonalFreeformComb);
+            }();
         for (int s2 = 0; s2 < 2; ++s2) {
             auto pit = facePitch.find(fids[s2]);
             if (pit == facePitch.end()) continue;
             const auto& home = faceHome[fids[s2]];
             for (const auto& [v, pv] : pit->second) {
-                const double tolV =
-                    std::max(weldTol * 4.0, std::min(tolCap, 0.25 * pv));
+                // FreeformComb lattices carry micro boundary edges; the
+                // shortest-pitch band otherwise rejects real on-curve
+                // twins that sit tens of microns off the polyline.
+                const double tolV = freeformCombSeam
+                    ? std::max(weldTol * 4.0,
+                               std::min(tolCap, std::max(0.25 * pv, 0.25)))
+                    : std::max(weldTol * 4.0, std::min(tolCap, 0.25 * pv));
                 double t;
                 if (!paramOf(mesh.vertices[find(v)], tolV, t)) continue;
                 // Home gate (same as the stitcher): this curve must be
@@ -16758,6 +16772,11 @@ void fuseSeamTwins(PolyMesh& mesh, const Model& model, double weldTol,
                     double slack =
                         std::max(weldTol * 4.0, 0.5 * hit->second);
                     if (nearEnd) slack = std::max(slack, 0.05 * pv);
+                    // Comb notches sit parallel to the shared seam; a
+                    // slightly larger home slack keeps true seam verts.
+                    if (freeformCombSeam) {
+                        slack = std::max(slack, 0.15);
+                    }
                     if (d > hit->second + slack) continue;
                 }
                 side[s2].push_back({v, t, pv});
@@ -16783,25 +16802,18 @@ void fuseSeamTwins(PolyMesh& mesh, const Model& model, double weldTol,
             }
             return best;
         };
-        // FreeformComb seams: lattice micro-edges shrink pitch-relative
-        // twin gates below real near-duplicates (#1805 f2↔f5). Use a
-        // tight absolute band when either owner is freeformComb.
-        const bool freeformCombSeam =
-            plans && [&]() {
-                auto pa = plans->find(fA);
-                auto pb = plans->find(fB);
-                return (pa != plans->end() &&
-                        pa->second.orthogonalFreeformComb) ||
-                       (pb != plans->end() &&
-                        pb->second.orthogonalFreeformComb);
-            }();
         for (const SideVert& a : side[0]) {
             const int jb = nearestIn(side[1], a.t);
             if (jb < 0) continue;
             const SideVert& b = side[1][jb];
             if (find(a.v) == find(b.v)) continue;  // already one vertex
             const int ja = nearestIn(side[0], b.t);
-            if (ja < 0 || side[0][ja].v != a.v) continue;  // not mutual
+            // FreeformComb: skip mutual-nearest. Duplicate stations on one
+            // side break mutual pairing while param+3D gates still identify
+            // true twins (#1805 f2↔f5).
+            if (!freeformCombSeam) {
+                if (ja < 0 || side[0][ja].v != a.v) continue;  // not mutual
+            }
             const double pMin = std::max(1e-12, std::min(a.pitch, b.pitch));
             const auto& P = mesh.vertices[find(a.v)];
             const auto& Q = mesh.vertices[find(b.v)];
@@ -16809,13 +16821,14 @@ void fuseSeamTwins(PolyMesh& mesh, const Model& model, double weldTol,
                          dz = P[2] - Q[2];
             const double d2 = dx * dx + dy * dy + dz * dz;
             if (freeformCombSeam) {
-                // 0.15 mm matches the ortho border canonicalize band;
-                // param must still agree so distinct stations cannot
-                // collapse.
-                if (paramDist(a.t, b.t) > std::max(5e-4 * clen, 5e-4)) {
+                // Independent UV lattices sample the shared curve at
+                // different stations; allow up to 2% of curve length (or
+                // 2 mm) in param so near-duplicates still fuse. Hard 3D
+                // cap keeps distinct stations from collapsing.
+                if (paramDist(a.t, b.t) > std::max(0.02 * clen, 2.0)) {
                     continue;
                 }
-                if (d2 > 0.15 * 0.15) continue;
+                if (d2 > 0.5 * 0.5) continue;
             } else {
                 if (paramDist(a.t, b.t) > 0.15 * pMin) continue;
                 if (d2 > 0.0625 * pMin * pMin) {
@@ -18962,7 +18975,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             }
             for (int reid : rims) {
                 if (reid < 1 || reid >= int(solvedEdge.size())) continue;
-                if (settings.perEdge.count(reid)) continue;
+                if (settings.perEdge.count(reid)) {
+                    // Pinned drum rim: continuity cannot redistribute.
+                    // Record the allowed mismatch for densityConflicts.
+                    stackContinuityPinBlocks.push_back(
+                        {reid, solvedEdge[reid]});
+                    continue;
+                }
                 const int want = solvedEdge[reid];
                 if (want < 3) continue;
                 const double L = edgeLen(reid);
@@ -18988,15 +19007,18 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             std::abs(Le - L) > 0.02 * L) {
                             continue;
                         }
-                        // Require the other edge to also touch a Drum or
-                        // FilletStrip (same local stack), not a distant bore.
+                        // Require the other edge to also touch the local
+                        // cylindrical stack (drum/blend/boss/planar cap),
+                        // not a distant bore of matching length.
                         bool stackTouch = false;
                         for (int of : analysis.edges[eid - 1].faceIds) {
                             if (of == nf) continue;
                             const FeatureClass ofc =
                                 analysis.faces[of - 1].featureClass;
                             if (ofc == FeatureClass::Drum ||
-                                ofc == FeatureClass::FilletStrip) {
+                                ofc == FeatureClass::FilletStrip ||
+                                ofc == FeatureClass::BossJunction ||
+                                ofc == FeatureClass::PlanarPanel) {
                                 stackTouch = true;
                                 break;
                             }
@@ -22554,6 +22576,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         plans.begin(), plans.end(), [](const auto& kv) {
             return kv.second.orthogonalTrimGrid;
         });
+    const bool hasFreeformComb = std::any_of(
+        plans.begin(), plans.end(), [](const auto& kv) {
+            return kv.second.orthogonalFreeformComb;
+        });
     if ((settings.decoupleSeams || hasOrthogonalTrim) &&
         !std::getenv("WEFT_NO_STITCH")) {
         // The curve-guided stitcher: every 2-owner B-rep edge's two sides
@@ -22567,6 +22593,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             fuseSeamTwins(mesh, model, weldGlobal, &fellBack, &plans);
         }
         stitchSeams(mesh, model, weldGlobal, &plans, &fellBack);
+        // FreeformComb lattices leave near-duplicate stations that only
+        // become mutual after the first splice. A second fuse+stitch
+        // pass closes the residual T-junctions (#1805 f2↔f5).
+        if (hasFreeformComb && !std::getenv("WEFT_NO_FUSE")) {
+            fuseSeamTwins(mesh, model, weldGlobal, &fellBack, &plans);
+            stitchSeams(mesh, model, weldGlobal, &plans, &fellBack);
+        }
         if (std::getenv("WEFT_FOLD_PROBE")) {
             const auto mask = foldedPolys(model, mesh);
             std::map<int, int> per;

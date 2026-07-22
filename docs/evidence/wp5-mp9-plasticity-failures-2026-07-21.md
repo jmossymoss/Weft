@@ -97,15 +97,20 @@ Changes in `core/src/meshers.cpp`:
 
 | | Before | After |
 | --- | --- | --- |
-| Extract unexplained cracks | 83 | 75 |
+| Extract unexplained cracks | 83 | 73 |
 | Folds / non-manifold | 2 / 0 | 0 / 0 |
 | Structured coons on big panels | yes | yes (one sibling may floor) |
 | foam / teleporter CAD | watertight | watertight |
 
+Follow-ups in the same revision: second fuse+stitch on freeformComb models,
+wider comb twin collection (pitch/home), stackTouch includes planar/boss
+caps, validate open-shell micro-edge tol floor, drum↔fillet pin documents
+allowed stack mismatch.
+
 ## Still open on MP9 (block visual / Plasticity compare exit)
 
-1. **Residual opens** — ~1.1k remain; #1805 family still leads (~75 on the
-   extract, still f2↔f5-led after stitch deadlock repair).
+1. **Residual opens** — ~1.1k remain; #1805 family still leads (~73 on the
+   extract after stitch deadlock repair; residual T-junction topology).
 2. **Fillet coons** — corner mismatch, fanning, demote-to-floor on torus blends.
 3. **Freeform expected quad flow** — grip/optic/fluted compares still sliver fans.
 4. **Grip / capsule fillet spans** — uneven coons, open borders vs boolean.
