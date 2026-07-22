@@ -5,12 +5,15 @@ session handoffs are not authoritative. If code, comments, issues, or old
 branches disagree with this document, follow this document or revise it with
 new test evidence before changing direction.
 
-Active work package: WP5 — feature-class planning foundation (reopened).
+Active work package: WP6 — validate real work.
 
-WP5 was advanced 2026-07-21 with a partial table; reopen after evidence that
-FilletStrip/Drum early rows, fillet authority, and drum+blend stack continuity
-tests were incomplete. Parked MP9 visual classes remain WP6 rows in
-`tests/KNOWN_RED.tsv` once WP5 exit criteria pass again.
+WP5 exit criteria re-pass at this revision: FilletStrip→Coons + drum+blend
+stack continuity (`testCylindricalStackContinuity` / bossfillet), sphere tip
+and dimple reducers, foam/teleporter CAD watertight, feature/chart in
+inspect/signature, no new MesherKind. FreeformComb #1805 stitch deadlock
+cut extract unexplained 83→73 with 0 folds; residual opens and grip/fillet
+visuals remain WP6 rows in `tests/KNOWN_RED.tsv`. Early Freeform ribbon/rail
+stays on the late ladder (foam counterexample).
 
 Change the active package only when its exit criteria pass at one revision. If
 a later failure invalidates an earlier gate, reopen the earliest affected

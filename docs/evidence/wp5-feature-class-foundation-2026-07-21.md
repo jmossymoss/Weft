@@ -46,5 +46,6 @@ and the continuity test only proved drum+cap (not drum+blend).
 
 ## Active package
 
-**WP5 (reopened)** until fillet/drum table + drum+blend continuity exit rows are
-green at one revision; then WP6.
+**WP5 exit re-met** at the freeformComb stitch-deadlock + stack pin revision;
+active package advances to WP6. Residual #1805 T-junctions and MP9 visuals
+stay in `tests/KNOWN_RED.tsv`.
