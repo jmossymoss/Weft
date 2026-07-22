@@ -1457,6 +1457,146 @@ void testCylindricalStackContinuity() {
 // clipped lattice verts drift off the shared 3D edge. The #1805-class
 // reducer must keep structured coons grids (not contract-floor) and stay
 // below the pre-fix unexplained-crack floor (~131 on this extract).
+// MP9 capsule / multi-edge FilletStrip iso-bands (#1973/#1980 class) used
+// to reject Coons at the 24-edge budget, fall through to orthogonal
+// RevolutionGrid, and dominate full-model open edges. Class gate: keep
+// Coons (or orthogonal Coons), never RevolutionGrid. Extract keeps one
+// ring of neighbors so analyze() still labels FilletStrip.
+void testMp9FilletCapsuleNotRevolution() {
+    std::printf("-- MP9 fillet-capsule iso-band not revolution --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/fillet_capsule_iso_band.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+
+    int filletFaces = 0, rev = 0, coons = 0;
+    for (const auto& f : analysis.faces) {
+        if (f.featureClass != weft::FeatureClass::FilletStrip) continue;
+        if (f.edgeIds.size() < 20) continue;  // capsule-scale iso-bands
+        ++filletFaces;
+        auto kit = report.faceMesher.find(f.id);
+        CHECK(kit != report.faceMesher.end());
+        std::printf("  fillet face %d edges=%zu -> %s\n", f.id,
+                    f.edgeIds.size(), weft::mesherKindName(kit->second));
+        if (kit->second == weft::MesherKind::RevolutionGrid) ++rev;
+        if (kit->second == weft::MesherKind::CoonsGrid) ++coons;
+    }
+    CHECK(filletFaces >= 2);
+    CHECK_EQ(rev, 0);
+    CHECK(coons >= 2);
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK_EQ(vr.nonManifoldEdges, 0);
+}
+
+// MP9 grip / optic freeform panels must keep Coons quad flow under CAD
+// rather than collapsing shallow bsplines to a single minimal n-gon.
+void testMp9GripFreeformCoons() {
+    std::printf("-- MP9 grip freeform coons --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/grip_freeform_panels.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    int freeform = 0, coons = 0, minimal = 0;
+    for (const auto& f : analysis.faces) {
+        if (f.featureClass != weft::FeatureClass::Freeform) continue;
+        ++freeform;
+        auto kit = report.faceMesher.find(f.id);
+        CHECK(kit != report.faceMesher.end());
+        std::printf("  freeform face %d -> %s\n", f.id,
+                    weft::mesherKindName(kit->second));
+        if (kit->second == weft::MesherKind::CoonsGrid) ++coons;
+        if (kit->second == weft::MesherKind::MinimalNGon) ++minimal;
+    }
+    CHECK(freeform >= 4);
+    CHECK(coons >= 4);
+    CHECK_EQ(minimal, 0);
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    const size_t unexplained =
+        vr.openEdges > vr.openEdgesOnInputBoundary
+            ? vr.openEdges - vr.openEdgesOnInputBoundary
+            : 0;
+    CHECK_EQ(unexplained, 0);
+}
+
+// Dirty-step tan_slit: tangent bore contact creates a multi-owner B-rep
+// edge. The drum on that generator must stay on a contract floor (or
+// structured mesh), never raw OCCT, once border contract skips input NM.
+void testTanSlitNoRawDemotion() {
+    std::printf("-- tan_slit no raw demotion --\n");
+    const std::string path = tmpPath("weft_tan_slit.step");
+    weft::writeStep(weft::makeFixture("tan_slit"), path);
+    weft::Model model = weft::loadStep(path);
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    int raw = 0, floor = 0;
+    for (const auto& [fid, build] : report.faceBuild) {
+        if (build == 1) ++raw;
+        if (build == 2) ++floor;
+        (void)fid;
+    }
+    std::printf("  raw=%d floor=%d\n", raw, floor);
+    CHECK_EQ(raw, 0);
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK(vr.inputNonManifoldEdges >= 1);
+}
+
+// Authored open-surface / broken solids report broken_source when ≥⅓ of
+// B-rep edges are open-shell (same gate as import capping).
+void testBrokenSourceDiagnostic() {
+    std::printf("-- broken_source diagnostic --\n");
+    {
+        const std::string path = tmpPath("weft_open_shell_diag.step");
+        weft::writeStep(weft::makeFixture("open_shell"), path);
+        weft::Model model = weft::loadStep(path);
+        weft::GenerationSettings gs;
+        weft::PolyMesh mesh =
+            weft::generate(model, weft::analyze(model), gs, nullptr);
+        const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+        CHECK(vr.brokenSource);
+        CHECK(vr.inputBoundaryEdges * 3 >= vr.inputEdges);
+        const std::string text = weft::formatReport(vr);
+        CHECK(text.find("broken_source") != std::string::npos);
+    }
+    {
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "STEP_Examples/tork.stp";
+        if (std::filesystem::exists(stepPath)) {
+            weft::Model model = weft::loadStep(stepPath.string());
+            weft::GenerationSettings gs;
+            gs.defaults.minimal = true;
+            weft::PolyMesh mesh =
+                weft::generate(model, weft::analyze(model), gs, nullptr);
+            const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+            CHECK(vr.brokenSource);
+            const std::string text = weft::formatReport(vr);
+            CHECK(text.find("broken_source") != std::string::npos);
+            std::printf("  tork: open-shell %zu / %zu edges\n",
+                        vr.inputBoundaryEdges, vr.inputEdges);
+        }
+    }
+}
+
 void testMp9CoonsPlaneSeamCanonicalize() {
     std::printf("-- MP9 coons/plane seam canonicalize --\n");
     const std::filesystem::path stepPath =
@@ -3532,6 +3672,10 @@ int main() {
     RUN(testBulletTipNotContractFloor);
     RUN(testFeatureClassAnalyze);
     RUN(testCylindricalStackContinuity);
+    RUN(testMp9FilletCapsuleNotRevolution);
+    RUN(testMp9GripFreeformCoons);
+    RUN(testTanSlitNoRawDemotion);
+    RUN(testBrokenSourceDiagnostic);
     RUN(testMp9CoonsPlaneSeamCanonicalize);
     RUN(testNudgeVertex);
     RUN(testRecipeRemap);

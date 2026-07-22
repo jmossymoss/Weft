@@ -1461,11 +1461,15 @@ struct CoonsPatch {
 bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
                     CoonsPatch& patch, int rotate = 0,
                     const char** why = nullptr,
-                    bool* reflexPlanar = nullptr) {
+                    bool* reflexPlanar = nullptr,
+                    int maxWireEdges = 24,
+                    int maxSideChain = 8) {
     auto reject = [&](const char* r) {
         if (why) *why = r;
         return false;
     };
+    if (maxWireEdges < 4) maxWireEdges = 4;
+    if (maxSideChain < 1) maxSideChain = 1;
     TopoDS_Wire outer = BRepTools::OuterWire(face);
     if (outer.IsNull()) return reject("no outer wire");
     // Extra wires are HOLES: fine on CURVED charts as long as each sits
@@ -1529,7 +1533,9 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
     };
     std::vector<WireEdge> all;
     for (BRepTools_WireExplorer wx(outer, face); wx.More(); wx.Next()) {
-        if (all.size() >= 24) return reject("more than 24 edges");
+        if (int(all.size()) >= maxWireEdges) {
+            return reject("more than wire-edge budget");
+        }
         const TopoDS_Edge edge = wx.Current();
         double f, l;
         Handle(Geom2d_Curve) pcurve =
@@ -1718,7 +1724,9 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
         // the face isn't four-cornered, and forcing a transfinite grid
         // through it slivers and folds (the flaregun underside panel:
         // one side chained ELEVEN edges). Quad-fill owns those.
-        if (patch.chain[sIdx].size() > 8) {
+        // FilletStrip capsule spans raise maxSideChain so long iso-band
+        // rails stay on Coons instead of falling to RevolutionGrid.
+        if (int(patch.chain[sIdx].size()) > maxSideChain) {
             return reject("side chains too many edges");
         }
         const auto& p0 = patch.chain[sIdx].front();
@@ -8363,11 +8371,23 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             // Closed torus / cylinder fillets used to fall through to
             // isClosedRevolution and become RevolutionGrid, losing blend
             // across/along ownership. Claim Coons here from class×chart.
+            // Capsule / multi-edge iso-bands exceed the default 24-edge
+            // Coons budget (MP9 #1973/#1980: 26 edges) — raise the wire
+            // and side-chain limits for this class only.
             CoonsPatch patch;
-            if (coonsOk(patch) && coonsChainsCompatible(patch)) {
-                if (!(coonsReflex && s.quadDominant)) {
+            const char* filletWhy = nullptr;
+            bool filletReflex = false;
+            bool filletCoons = makeCoonsPatch(
+                face, model, patch, s.coonsRotate, &filletWhy, &filletReflex,
+                /*maxWireEdges=*/48, /*maxSideChain=*/16);
+            if (filletCoons && cache) {
+                cache->coonsValid[fid] = true;
+                cache->coonsReflex[fid] = filletReflex;
+            }
+            if (filletCoons && coonsChainsCompatible(patch)) {
+                if (!(filletReflex && s.quadDominant)) {
                     plan.kind = MesherKind::CoonsGrid;
-                    plan.coonsRotate = coonsEffectiveRotate;
+                    plan.coonsRotate = s.coonsRotate;
                     plan.constrains = true;
                     plan.isFillet = true;
                     plan.insertWires = patch.holeWires;
@@ -8393,6 +8413,28 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                     plan.acrossIsU = pairU < pairV;
                     dbg("plan face %d: fillet-strip %s -> coons-grid", fid,
                         chartKindName(info.chartKind));
+                    return plan;
+                }
+            } else if (!filletCoons && filletWhy) {
+                dbg("coons: face %d fillet-strip rejected: %s", fid,
+                    filletWhy);
+            }
+            // Still refuse RevolutionGrid for this class: a clipped UV
+            // lattice is fine, but keep Coons ownership / filletHold.
+            // Mark orthogonalFreeformComb so border snap + comb seam
+            // fuse/stitch apply — capsule iso-bands share the same
+            // clipped-lattice drift class as freeform combs.
+            {
+                FacePlan orth;
+                if (planOrthogonalTrimGrid(face, surf, model, orth)) {
+                    orth.kind = MesherKind::CoonsGrid;
+                    orth.isFillet = true;
+                    orth.orthogonalFreeformComb = true;
+                    orth.acrossIsU = surf.GetType() == GeomAbs_Cylinder;
+                    dbg("plan face %d: fillet-strip %s -> orthogonal "
+                        "coons-grid (no revolution)",
+                        fid, chartKindName(info.chartKind));
+                    plan = std::move(orth);
                     return plan;
                 }
             }
@@ -8546,11 +8588,15 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     }
 
     // Residual flats under CAD/minimal: boundary n-gon. Dense / flat-quads
-    // (`minimal=false`) continue to PlanarGrid below.
-    if (s.minimal && planMinimalPlanar(face, surf, model, plan)) {
+    // (`minimal=false`) continue to PlanarGrid below. Freeform panels skip
+    // this grab: shallow bspline grips otherwise collapse to a single
+    // n-gon (MP9 grip/optic) instead of falling through to Coons quad
+    // flow. PlanarPanel already claimed minimal in the early table.
+    if (s.minimal && info.featureClass != FeatureClass::Freeform &&
+        planMinimalPlanar(face, surf, model, plan)) {
         if (getenv("WEFT_FLAT_DEBUG")) {
-            dbg("plan face %d: minimal-ngon (surf type %d)", fid,
-                (int)surf.GetType());
+            dbg("plan face %d: residual flat -> minimal-ngon (class %s)",
+                fid, featureClassName(info.featureClass));
         }
         return plan;
     }
@@ -8589,9 +8635,13 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // Coons: a many-piece side is CAD bookkeeping, not a request to pull
     // every piece toward a patch centre. One global UV lattice preserves
     // the primitive spans and clips only the cells outside the trim.
+    // FilletStrip never takes RevolutionGrid from this path — blend
+    // across/along ownership lives on Coons (early table already tried
+    // Coons + an orthogonal-coons fallback for the class).
     {
         FacePlan orth;
-        if (planOrthogonalTrimGrid(face, surf, model, orth)) {
+        if (planOrthogonalTrimGrid(face, surf, model, orth) &&
+            info.featureClass != FeatureClass::FilletStrip) {
             dbg("plan face %d: orthogonal trim grid u=%zu v=%zu", fid,
                 orth.uEdges.size(), orth.vEdges.size());
             plan = std::move(orth);
@@ -19494,6 +19544,15 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             if (cnt != 1) continue;  // seam: internal to this face
             const TopoDS_Edge E = TopoDS::Edge(model.edges(eid));
             if (BRep_Tool::Degenerated(E)) continue;
+            // Input non-manifold edges (tangent-contact generators with
+            // ≥3 face owners) cannot satisfy a two-sided border contract;
+            // the welded mesh mirrors that B-rep defect. Skip them so
+            // faces still prove a contract floor instead of demoting to
+            // raw OCCT (tan_slit drum / hole plates).
+            if (model.edgeToFaces.Contains(E) &&
+                model.edgeToFaces.FindFromKey(E).Extent() > 2) {
+                continue;
+            }
             const int n = eid < int(solvedEdge.size()) ? solvedEdge[eid]
                                                        : 0;
             if (n < 1) continue;
@@ -20484,8 +20543,24 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                                     &pinnedEdge);
             const int floorBad =
                 built ? borderContractViolation(fid, parts[fid]) : -1;
+            // Faces incident to input non-manifold edges (tangent-contact
+            // generators) cannot reliably prove a two-sided border
+            // contract; prefer a built exact-border floor over raw OCCT
+            // even when the oracle still flags a rim sample (tan_slit).
+            bool touchesInputNm = false;
+            if (built && floorBad != 0) {
+                for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More();
+                     ex.Next()) {
+                    if (!model.edgeToFaces.Contains(ex.Current())) continue;
+                    if (model.edgeToFaces.FindFromKey(ex.Current())
+                            .Extent() > 2) {
+                        touchesInputNm = true;
+                        break;
+                    }
+                }
+            }
             int floorFolds = 0;
-            if (built && floorBad == 0) {
+            if (built && (floorBad == 0 || touchesInputNm)) {
                 // Exact-border floors win over raw OCCT even when a few
                 // interior cells stay folded after repair: the floor keeps
                 // the seam contract (watertight authority), while OCCT

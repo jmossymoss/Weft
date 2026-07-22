@@ -194,16 +194,25 @@ ValidationReport validateMesh(const PolyMesh& mesh, const Model* model) {
     // the centroid of the corner UVs.
     if (model) {
         for (int eid = 1; eid <= model->edgeCount(); ++eid) {
+            if (BRep_Tool::Degenerated(TopoDS::Edge(model->edges(eid)))) {
+                continue;
+            }
+            ++r.inputEdges;
             const int adj = model->edgeToFaces.FindFromIndex(eid).Extent();
             if (adj < 2) {
                 // Degenerate edges (sphere poles, cone apexes) border one
                 // face but are points — not real open boundary.
-                if (!BRep_Tool::Degenerated(TopoDS::Edge(model->edges(eid)))) {
-                    ++r.inputBoundaryEdges;
-                }
+                ++r.inputBoundaryEdges;
             } else if (adj > 2) {
                 ++r.inputNonManifoldEdges;
             }
+        }
+        // Same gate as model.cpp::capDroppedFaces: shells with ≥⅓ edges
+        // open are authored sheets / broken sources, not nearly-closed
+        // solids missing a face.
+        if (r.inputEdges > 0 &&
+            r.inputBoundaryEdges * 3 >= r.inputEdges) {
+            r.brokenSource = true;
         }
         double sum = 0.0;
         std::map<int, BRepAdaptor_Surface> surfCache;
@@ -278,6 +287,14 @@ std::string formatReport(const ValidationReport& r) {
     std::snprintf(buf, sizeof buf, "  watertight:     %s (open edges: %zu, non-manifold: %zu)\n",
                   r.watertight() ? "yes" : "NO", r.openEdges, r.nonManifoldEdges);
     out += buf;
+    if (r.brokenSource) {
+        std::snprintf(buf, sizeof buf,
+                      "  source:         broken_source / open surface model "
+                      "(%zu of %zu B-rep edges are open-shell; ≥⅓ open — "
+                      "not a closed-solid watertight target)\n",
+                      r.inputBoundaryEdges, r.inputEdges);
+        out += buf;
+    }
     if (r.inputBoundaryEdges > 0 && r.openEdges > 0) {
         std::snprintf(buf, sizeof buf,
                       "                  (%zu of the open edges run along the input's "
