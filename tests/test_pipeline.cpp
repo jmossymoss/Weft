@@ -1855,8 +1855,10 @@ void testMp9CoonsPlaneSeamCanonicalize() {
                 unexplained, vr.openEdges, vr.openEdgesOnInputBoundary,
                 foldCount, vr.nonManifoldEdges);
     // Pre-fix floor on this extract was 131; freeformComb stitch
-    // deadlock repair brings it under 75 with no folds/non-manifold.
-    CHECK(unexplained < 75);
+    // deadlock repair brought it under 75. Widened comb on-curve band
+    // + shared-edge border snap brings residual cracks under 55 with
+    // no folds/non-manifold (foam/teleporter stay watertight).
+    CHECK(unexplained < 55);
     CHECK(foldCount == 0);
     CHECK(vr.nonManifoldEdges == 0);
 }

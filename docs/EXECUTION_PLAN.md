@@ -13,7 +13,7 @@ and dimple reducers, foam/teleporter CAD watertight, feature/chart in
 inspect/signature, no new MesherKind. FreeformComb #1805 stitch deadlock
 cut extract unexplained 83→73 with 0 folds. WP6 cleared slitdrill / tan_slit
 / tork / fillet-capsule / grip-freeform / bullet-body KNOWN_RED rows;
-residual MP9 opens (~380, #1805 family) remain in `tests/KNOWN_RED.tsv`.
+residual MP9 opens (~247 after freeformComb shared-edge snap; #1805 no longer dominates) remain in `tests/KNOWN_RED.tsv`.
 Early Freeform ribbon/rail stays on the late ladder (foam counterexample).
 
 Change the active package only when its exit criteria pass at one revision. If

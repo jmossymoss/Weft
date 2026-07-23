@@ -13967,10 +13967,12 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
                                         pm.polygons[i].end());
     }
     // Freeform-comb borders: clipped lattice verts can sit tens of microns
-    // off the shared 3D edge via surf.Value. Snap boundary verts onto the
-    // nearest exact contract sample within a tight band so weld/stitch
-    // share points with neighbours — without changing connectivity.
-    if (plan.orthogonalFreeformComb && !exactSamples.empty()) {
+    // to ~1 mm off the shared 3D edge via surf.Value (#1805). Snap
+    // boundary verts onto (1) exact contract samples within 0.25 mm for
+    // partner identity, else (2) the nearest point on a dense polyline of
+    // shared (2-owner) face edges within 1.0 mm. Shared-only avoids the
+    // notch-collapse folds from projecting onto every face edge.
+    if (plan.orthogonalFreeformComb) {
         PolyMesh& pm = out.mesh();
         std::map<std::pair<uint32_t, uint32_t>, int> useCount;
         for (const auto& poly : pm.polygons) {
@@ -13987,22 +13989,74 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
                 boundaryVerts.insert(edge.second);
             }
         }
-        for (uint32_t id : boundaryVerts) {
-            const gp_Pnt p(pm.vertices[id][0], pm.vertices[id][1],
-                           pm.vertices[id][2]);
-            double best = 0.25;
-            const gp_Pnt* nearest = nullptr;
-            for (const auto& [uv, ep] : exactSamples) {
-                (void)uv;
-                const double d = p.Distance(ep);
+        std::vector<std::array<gp_Pnt, 2>> sharedSegs;
+        for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+            const TopoDS_Edge e = TopoDS::Edge(ex.Current());
+            if (BRep_Tool::Degenerated(e)) continue;
+            if (!model.edgeToFaces.Contains(e) ||
+                model.edgeToFaces.FindFromKey(e).Extent() != 2) {
+                continue;
+            }
+            double f3 = 0, l3 = 0;
+            Handle(Geom_Curve) c3 = BRep_Tool::Curve(e, f3, l3);
+            if (c3.IsNull() || l3 - f3 <= 1e-14) continue;
+            gp_Pnt prev = c3->Value(f3);
+            constexpr int kSeg = 64;
+            for (int i = 1; i <= kSeg; ++i) {
+                gp_Pnt next = c3->Value(f3 + (l3 - f3) * i / double(kSeg));
+                sharedSegs.push_back({prev, next});
+                prev = next;
+            }
+        }
+        auto closestOnShared = [&](const gp_Pnt& p, gp_Pnt& out,
+                                   double& best) {
+            for (const auto& seg : sharedSegs) {
+                gp_Vec ab(seg[0], seg[1]), ap(seg[0], p);
+                const double len2 = ab.SquareMagnitude();
+                const double t =
+                    len2 < 1e-30
+                        ? 0.0
+                        : std::min(1.0, std::max(0.0, ap.Dot(ab) / len2));
+                gp_Pnt q(seg[0].X() + t * ab.X(), seg[0].Y() + t * ab.Y(),
+                         seg[0].Z() + t * ab.Z());
+                const double d = p.Distance(q);
                 if (d < best) {
                     best = d;
-                    nearest = &ep;
+                    out = q;
                 }
             }
-            if (nearest) {
-                pm.vertices[id] = {nearest->X(), nearest->Y(),
-                                   nearest->Z()};
+        };
+        for (uint32_t id : boundaryVerts) {
+            gp_Pnt p(pm.vertices[id][0], pm.vertices[id][1],
+                     pm.vertices[id][2]);
+            bool moved = false;
+            if (!exactSamples.empty()) {
+                double best = 0.25;
+                const gp_Pnt* nearest = nullptr;
+                for (const auto& [uv, ep] : exactSamples) {
+                    (void)uv;
+                    const double d = p.Distance(ep);
+                    if (d < best) {
+                        best = d;
+                        nearest = &ep;
+                    }
+                }
+                if (nearest) {
+                    p = *nearest;
+                    moved = true;
+                }
+            }
+            if (!moved && !sharedSegs.empty()) {
+                double best = 1.0;
+                gp_Pnt q = p;
+                closestOnShared(p, q, best);
+                if (best < 1.0 && best > 1e-9) {
+                    p = q;
+                    moved = true;
+                }
+            }
+            if (moved) {
+                pm.vertices[id] = {p.X(), p.Y(), p.Z()};
             }
         }
     }
