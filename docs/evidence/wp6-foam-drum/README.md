@@ -48,6 +48,7 @@ rebuild the same patch.
 | Residual floors | sphere bowls (fold heal), freeform 308/846, fillet iso-band 514 |
 | Teleporter CAD | watertight; floor count unchanged (28) |
 | `testSparseFoldKeepsStructuredCharts` | drum + fillet + wedge extracts + foam |
+| Golden | foam CAD 6869q / 816t / 313n (intentional: fillet keep + drum wedges) |
 
 Reducers: `tests/regressions/foam/{fillet_fullperiod,drum_isoband_bail,drum_freetrim_probe}_r1.step`.
 
