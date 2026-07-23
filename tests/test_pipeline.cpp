@@ -933,6 +933,7 @@ void testPlateWeb() {
     weft::GenerationSettings gs;
     gs.defaults.minimal = false;  // legacy dense-flat counts
     gs.defaults.radial = 12;
+    gs.defaults.junctionRings = 1;  // exercise collar path (default is off)
     weft::GenerationReport report;
     weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
 
@@ -960,6 +961,15 @@ void testPlateWeb() {
     weft::PolyMesh pinned = weft::generate(model, a, gs);
     CHECK(isWatertight(pinned));
     CHECK(pinned.countQuads() > mesh.countQuads());
+
+    // Default is no collar rim (junctionRings=0): still PlateWeb + watertight,
+    // with fewer quads than the collared mesh above.
+    weft::GenerationSettings bare = gs;
+    bare.defaults.junctionRings = 0;
+    bare.perFace.clear();
+    weft::PolyMesh noCollar = weft::generate(model, a, bare);
+    CHECK(isWatertight(noCollar));
+    CHECK(noCollar.countQuads() < mesh.countQuads());
 }
 
 // WP5: multi-hole planar plates under the CAD profile used to leave a
@@ -990,6 +1000,7 @@ void testPlateWebSliverRefine() {
     gs.defaults.minimal = true;
     gs.defaults.adaptive = true;
     gs.defaults.relativeDeviation = true;
+    gs.defaults.junctionRings = 1;  // collar class under test
     gs.densityScale = 0.35;
 
     weft::GenerationReport report;
@@ -1155,6 +1166,56 @@ void testSphereFilletFullPeriodNoFloor() {
 // faceAcross and honour semantic knobs: radial/gridU = along, filletLoops =
 // across — remapped onto patch U/V. Without this, cylinder fillets treated
 // radial as the short across arc (wrong GPU / wheel axis).
+// Demo notched/boolean drums: raising radial under CAD adaptive must NOT
+// pre-demote to "radial override → contract floor". Structured RevolutionGrid
+// stays unless a real neighbour-contract stress demote fires.
+void testDemoNotchedRadialKeepsStructured() {
+    std::printf("-- demo notched radial keeps structured --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() / "fixtures/demo.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+
+    // Discover multi-edge full-period drums (notched / boolean cuts) —
+    // no hardcoded face ids.
+    std::vector<int> targets;
+    for (const auto& f : analysis.faces) {
+        if (f.featureClass != weft::FeatureClass::Drum) continue;
+        if (f.chartKind != weft::ChartKind::FullPeriod) continue;
+        if (int(f.edgeIds.size()) < 5) continue;
+        targets.push_back(f.id);
+        gs.perFace[f.id] = gs.defaults;
+        gs.perFace[f.id].radial = 48;
+    }
+    CHECK(!targets.empty());
+
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    CHECK(isWatertight(mesh));
+    int structured = 0;
+    for (int fid : targets) {
+        auto kit = report.faceMesher.find(fid);
+        CHECK(kit != report.faceMesher.end());
+        CHECK(kit->second == weft::MesherKind::RevolutionGrid);
+        auto bit = report.faceBuild.find(fid);
+        CHECK(bit != report.faceBuild.end());
+        // Must not be the old preemptive demote. Stress demote (build==2
+        // with a different cause) is still allowed if neighbours fail.
+        auto cit = report.faceBuildCause.find(fid);
+        if (cit != report.faceBuildCause.end()) {
+            CHECK(cit->second.find("radial override → contract floor") ==
+                  std::string::npos);
+        }
+        if (bit->second == 0) ++structured;
+    }
+    CHECK(structured >= 1);
+    std::printf("  targets=%zu structured=%d\n", targets.size(), structured);
+}
+
 void testFilletDensityAxisOwnership() {
     std::printf("-- fillet density axis ownership --\n");
     auto cad = []() {
@@ -1306,6 +1367,7 @@ void testTorturePlateWebMinimalResidual() {
     gs.defaults.minimal = true;
     gs.defaults.adaptive = true;
     gs.defaults.relativeDeviation = true;
+    gs.defaults.junctionRings = 1;  // collars on for this class check
 
     weft::GenerationReport report;
     weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
@@ -2423,6 +2485,7 @@ void testDeletePolyAndCollarRings() {
     weft::GenerationSettings one;
     one.defaults.minimal = false;  // exercise the collar-ring pattern
     one.defaults.radial = 12;
+    one.defaults.junctionRings = 1;
     weft::PolyMesh oneRing = weft::generate(plateModel, plateA, one);
     weft::GenerationSettings three = one;
     three.defaults.junctionRings = 3;
@@ -4118,6 +4181,7 @@ int main() {
     RUN(testPlateWebSliverRefine);
     RUN(testSphereFilletFullPeriodNoFloor);
     RUN(testFilletDensityAxisOwnership);
+    RUN(testDemoNotchedRadialKeepsStructured);
     RUN(testNotchedDrumOpenBand);
     RUN(testTallFreeTrimDrum);
     RUN(testTorturePlateWebMinimalResidual);

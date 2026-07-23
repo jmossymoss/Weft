@@ -2424,7 +2424,7 @@ static std::string adjustFaceDensityOne(App& app, int fid,
             count(s.radial, 3, "loop verts", live[0]);
             break;
         case MK::PlateWeb:
-            if (secondary) count(s.junctionRings, 1, "collar rings", 0);
+            if (secondary) count(s.junctionRings, 0, "collar rings", 0);
             else total(s.boundary, "boundary verts");
             break;
         case MK::QuadFill:
@@ -2509,17 +2509,13 @@ static void adjustFaceDensity(App& app, bool secondary, int steps) {
             app.activeFace);
     std::string hud;
     if (app.selFaces.empty()) {
-        // No selection: nudge the global density scale. Nudging the
-        // DEFAULTS' counts here reads as harmless, but the count lambda
-        // flips adaptive off — so [ ] with nothing selected silently
-        // disabled curvature-adaptive density for the whole model.
-        app.recipe.settings.densityScale = std::clamp(
-            app.recipe.settings.densityScale * std::pow(1.06, double(steps)),
-            0.05, 20.0);
-        char buf[64];
-        std::snprintf(buf, sizeof buf, "density scale: %.2fx",
-                      app.recipe.settings.densityScale);
-        hud = buf;
+        // No selection: do not touch global density scale — wheel+modifier
+        // over empty space used to fight face density keybinds and silently
+        // rescale the whole model. Scale stays on the panel slider only.
+        std::snprintf(app.hudText, sizeof app.hudText,
+                      "select a face to edit density");
+        app.hudUntil = glfwGetTime() + 0.9;
+        return;
     } else {
         for (int fid : app.selFaces) {
             auto it = app.recipe.settings.perFace.find(fid);
@@ -2544,9 +2540,10 @@ static void adjustFaceDensity(App& app, bool secondary, int steps) {
 }
 
 // Fluid hover editing: with nothing selected, modifier+wheel edits the
-// face UNDER THE CURSOR directly (auto-creating its override), and over
-// empty space it edits the GLOBAL settings — no select, no panel:
-//   shift+wheel        face primary density   | global density scale
+// face UNDER THE CURSOR directly (auto-creating its override). Over empty
+// space it does NOT change global density scale (that fought face density
+// keybinds) — only angle / fillet-loop defaults:
+//   shift+wheel        face primary density   | (idle — select a face)
 //   ctrl+wheel         face secondary density | global angle tolerance
 //   ctrl+shift+wheel   face fillet loops      | global fillet loops
 static void adjustHovered(App& app, bool ctrl, bool shift, int steps) {
@@ -2581,7 +2578,7 @@ static void adjustHovered(App& app, bool ctrl, bool shift, int steps) {
         markDirty(app);
         return;
     }
-    // Background: the global knobs.
+    // Background: angle / fillet defaults only — never density scale.
     weft::FaceMeshSettings& d = app.recipe.settings.defaults;
     if (ctrl && shift) {
         d.filletLoops = std::max(1, d.filletLoops + steps);
@@ -2594,14 +2591,11 @@ static void adjustHovered(App& app, bool ctrl, bool shift, int steps) {
         std::snprintf(app.hudText, sizeof app.hudText, "angle: %.1f deg",
                       d.angleToleranceDeg);
     } else {
-        app.recipe.settings.densityScale = std::clamp(
-            app.recipe.settings.densityScale * std::pow(1.06, double(steps)),
-            0.05, 20.0);
-        std::snprintf(app.hudText, sizeof app.hudText, "density scale: %.2fx",
-                      app.recipe.settings.densityScale);
+        std::snprintf(app.hudText, sizeof app.hudText,
+                      "select a face to edit density");
     }
     app.hudUntil = glfwGetTime() + 0.9;
-    markDirty(app);
+    if (ctrl) markDirty(app);
 }
 
 // Shared verbs (key handlers + pie menus call the same code).
@@ -3587,13 +3581,24 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
             hover({int(MK::DiskCap)});
         }
         if (k == MK::PlateWeb) {
-            // Concentric collar rings around each hole (same field the
-            // wheel labels "collar rings").
-            ch |= ImGui::DragInt("collar rings", &s.junctionRings, 0.2f,
-                                 1, 32);
-            hover({int(MK::RingJunction), int(MK::PlateWeb)});
-            ch |= ImGui::Checkbox("square collars", &s.squareCollar);
-            hover({int(MK::PlateWeb)});
+            // Hole-plate collars: off by default (0); raise rings or tick
+            // the checkbox to turn the rim on.
+            {
+                bool collars = s.junctionRings > 0;
+                if (ImGui::Checkbox("hole collars", &collars)) {
+                    s.junctionRings = collars ? std::max(1, s.junctionRings)
+                                              : 0;
+                    ch = true;
+                }
+                hover({int(MK::PlateWeb)});
+            }
+            if (s.junctionRings > 0) {
+                ch |= ImGui::DragInt("collar rings", &s.junctionRings, 0.2f,
+                                     1, 32);
+                hover({int(MK::RingJunction), int(MK::PlateWeb)});
+                ch |= ImGui::Checkbox("square collars", &s.squareCollar);
+                hover({int(MK::PlateWeb)});
+            }
         }
     }
     // Boundary totals stand alone: MinimalNGon isn't in the revolved set
@@ -3664,7 +3669,7 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
         if (k == MK::RingJunction) {
             ch |= ImGui::DragInt("junction rings", &s.junctionRings, 0.2f, 1,
                                  32);
-            hover({int(MK::RingJunction), int(MK::PlateWeb)});
+            hover({int(MK::RingJunction)});
         }
         if (k == MK::CoonsGrid) {
             // Which corner anchors the grid; on triangular patches this
@@ -4049,12 +4054,24 @@ static void drawMesherDefaultTabs(App& app) {
     }
     if (tab("rings", {int(MK::RingJunction), int(MK::AnnulusRing),
                       int(MK::PlateWeb)})) {
-        ImGui::TextDisabled("hole collars, annuli, plate webs");
-        ch |= ImGui::DragInt("junction rings", &d.junctionRings, 0.2f, 1,
-                             32);
-        hover({int(MK::RingJunction), int(MK::PlateWeb)});
-        ch |= ImGui::Checkbox("square collars", &d.squareCollar);
-        hover({int(MK::PlateWeb)});
+        ImGui::TextDisabled("hole plates default to no collar rim");
+        {
+            bool collars = d.junctionRings > 0;
+            if (ImGui::Checkbox("hole collars", &collars)) {
+                d.junctionRings =
+                    collars ? std::max(1, d.junctionRings) : 0;
+                ch = true;
+            }
+            hover({int(MK::PlateWeb)});
+        }
+        if (d.junctionRings > 0) {
+            ch |= ImGui::DragInt("collar rings", &d.junctionRings, 0.2f, 1,
+                                 32);
+            hover({int(MK::RingJunction), int(MK::PlateWeb)});
+            ch |= ImGui::Checkbox("square collars", &d.squareCollar);
+            hover({int(MK::PlateWeb)});
+        }
+        ImGui::TextDisabled("ring-junction uses max(1, collar rings)");
         ImGui::EndTabItem();
     }
     if (tab("flat faces", {int(MK::MinimalNGon), int(MK::PlanarGrid),

@@ -4812,15 +4812,20 @@ bool meshPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         }
         // Several concentric rings ("junction rings") share the clearance
         // budget: an even radial fan around the hole instead of one thin
-        // band + a long web reach.
-        const int wantRings = std::max(1, collarRings);
-        double dStep =
-            std::min(d, 0.35 * clearance / double(wantRings));
-
+        // band + a long web reach. 0 = no collar — the web meets the hole
+        // rim directly (default for hole plates; artist can raise rings).
         std::vector<WebPoint> boundary;  // what the web sees for this hole
         for (size_t i = 0; i < n; ++i) {
             boundary.push_back({hole.uv[i], ringVerts[r][i]});
         }
+        if (collarRings <= 0) {
+            webHoles.push_back(std::move(boundary));
+            continue;
+        }
+        const int wantRings = collarRings;
+        double dStep =
+            std::min(d, 0.35 * clearance / double(wantRings));
+
         const double holeA = planarRingArea(hole);
 
         // Square collars collapse the ring to exactly FOUR corner verts:
@@ -21168,21 +21173,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             if (have1 && !have0) p0 = p1;
             return {p0, p1};
         };
-        // CAD/adaptive path: a raised per-face radial densifies shared
-        // column edges while orthogonal-trim / open-band lattices often
-        // cannot meet every neighbour. Demote the edited face to the
-        // fold-free contract floor; peers stay compatible via radial
-        // propagation (§3.2 sweeps). Legacy non-adaptive dense tests
-        // (cylinder radial 12→24) keep the structured lattice.
-        if (ovFace && settings.defaults.adaptive &&
-            s.radial > settings.defaults.radial &&
-            (plan.kind == MesherKind::RevolutionGrid ||
-             plan.kind == MesherKind::DomeCap ||
-             plan.kind == MesherKind::AnnulusRing ||
-             plan.kind == MesherKind::DiskCap)) {
-            demote(fid, face, surf, s, "radial override → contract floor");
-            return;
-        }
+        // Raised per-face radials used to pre-demote every RevolutionGrid
+        // under CAD adaptive ("radial override → contract floor"), which
+        // made notched/boolean drums uneditable — any wheel bump dumped
+        // the structured lattice. Try the structured mesher first; the
+        // post-mesh "radial override stress → contract floor" path still
+        // demotes when a neighbour contract actually fails.
         switch (plan.kind) {
             case MesherKind::RevolutionGrid:
                 if (plan.orthogonalTrimGrid) {
@@ -21562,8 +21558,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         model) > 0.0) {
                     a0 = ringAnchorAngle(plan.circ);
                 }
+                // RingJunction needs at least one collar ring between the
+                // bore and the rectangle; 0 means "off" only for PlateWeb.
                 meshRingJunction(face, surf, plan.circ, fid, nu, nv,
-                                 s.junctionRings, out, a0);
+                                 std::max(1, s.junctionRings), out, a0);
                 break;
             }
             case MesherKind::DomeCap:
