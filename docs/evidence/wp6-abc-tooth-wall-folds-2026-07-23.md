@@ -3,40 +3,35 @@
 ## Class
 
 Dense multi-tooth open-band drums (ABC `00008536` face 57 / reducer
-`notched_drum_iso_band_r0`): after mid-split / side-clamp, neighbouring
-notches share a kept column whose U sits past each tooth's true wall
-(`slotU0` / `slotU1`). Notch web outer rails on those columns UV-overlap
-the neighbour's opposite wall (and the inter-tooth land lattice). On
-REVERSED cylinders the left-wall ribbon winds opposite the lattice →
-~32 local Newell folds under sparse-fold protect.
+`notched_drum_iso_band_r0`): with only ~4 columns per tooth, mid-split
+parks neighbouring notches on a shared kept column past each tooth's
+true wall. Left-wall web ribbons then UV-overlap the neighbour wall /
+land lattice. On REVERSED cylinders that yields ~32 local Newell folds
+under sparse-fold protect.
 
 No filename / face-id specials. No new `MesherKind`. Authoritative path:
 `weft::generate()` / open-band RevolutionGrid.
 
 ## Fix
 
-In the open-band notch web ribbon:
-
-1. When `slotU0 < uk[colL]` (or `slotU1 > uk[colR]`), build the outer
-   vertical at the slot U iso-line instead of the bounding column so each
-   wall stays inside its own slot.
-2. Iso-U outer on an iso-U cut wall yields zero-UV-area spans. Fan those
-   cut edges to the notch's feature-row apex with lattice winding so
-   border contract keeps the wall edges and Newell stays non-folded.
-3. Any remaining positive-UV-area ribbon cell is reversed to match the
-   lattice hand.
+Raise multi-tooth open-band `nu` (and the plain `bandDriver` densify that
+keeps `passPlain`) from `4 * notches + 2` to `12 * notches + 2` so each
+inter-tooth land keeps its own column after pad / mid-split. Slot-U
+outer-rail experiments cleared folds on the open-shell reducer but opened
+~210 edges on the closed ABC solid — densify preserves watertightness.
 
 ## Metrics (CAD profile)
 
-| Asset | Before | After |
+| Asset | Before (4×) | After (12×) |
 | --- | --- | --- |
-| `notched_drum_iso_band_r0` | 385 polys, 32 folds, sparse-fold keep | 384 polys, 0 folds, build=0; slivers 12→33 |
+| `notched_drum_iso_band_r0` | 385 polys, 32 folds, nu=102 | 914 polys, 0 folds, nu=302; slivers 12→10 |
+| ABC `00008536` whole | WT, 32 folds face 57, 136 slivers | WT, 0 folds, 134 slivers; face 57 RevolutionGrid |
 | `testNotchedDrumOpenBand` | `nFolded < 50` | `nFolded == 0` |
 
-Sphere×fillet reducer / `testSphereFilletFullPeriodNoFloor` unchanged
-(0 floors, 0 folds).
+Sphere×fillet reducer / `testSphereFilletFullPeriodNoFloor` unchanged.
 
 ## Test
 
 `testNotchedDrumOpenBand` in `tests/test_pipeline.cpp`.
 Reducer: `tests/regressions/abc/notched_drum_iso_band_r0.step`.
+ABC nightly: `WEFT_RUN_PUBLIC=1 tools/public_corpus_gate.sh abc`.

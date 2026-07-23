@@ -1102,9 +1102,8 @@ void testNotchedDrumOpenBand() {
     // Open-shell extract: watertightness is not the target. Slivers must
     // drop far below the prior contract-floor needle count (~248).
     CHECK(vr.sliverPolygons < 40);
-    // Slot-wall outer rails (when mid-split parks colL past slotU0) stop
-    // tooth-wall UV double-cover; zero-area iso-U spans fan to the
-    // feature apex so Newell stays non-folded.
+    // ≥12 columns/tooth keeps inter-tooth land from sharing a U-gap
+    // with opposing walls (tooth-wall Newell double-cover class).
     const auto folded = weft::foldedPolys(model, mesh);
     const int nFolded =
         int(std::count(folded.begin(), folded.end(), uint8_t{1}));

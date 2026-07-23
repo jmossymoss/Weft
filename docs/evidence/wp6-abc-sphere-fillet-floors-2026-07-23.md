@@ -24,10 +24,10 @@ No filename / face-id specials. No new `MesherKind`.
 
 ## Multi-tooth densify (same change set)
 
-ABC `00008536` open-band: densify the plain `bandDriver` to
-`4 * estNotches + 2` so mesher `raise nu` keeps `passPlain` (avoids a
-zero-height plain-rim transition). Tooth-wall Newell folds cleared in a
-follow-up (`docs/evidence/wp6-abc-tooth-wall-folds-2026-07-23.md`).
+ABC `00008536` open-band: densify the plain `bandDriver` (now
+`12 * estNotches + 2` with the tooth-fold follow-up) so mesher `raise nu`
+keeps `passPlain` and inter-tooth land keeps a column. See
+`docs/evidence/wp6-abc-tooth-wall-folds-2026-07-23.md`.
 
 ## Metrics (CAD profile)
 
@@ -35,7 +35,7 @@ follow-up (`docs/evidence/wp6-abc-tooth-wall-folds-2026-07-23.md`).
 | --- | --- | --- |
 | `sphere_fillet_fullperiod_r1` | 2 floors, ~64 slivers | 0 floors, 0 folds, 0 slivers; all RevolutionGrid |
 | ABC `00006051` whole | 2 floors | 0 floors, WT, 0 folds, 0 slivers |
-| ABC `00008536` face 57 | RevolutionGrid, 32 folds | see tooth-wall-folds evidence (0 folds on reducer) |
+| ABC `00008536` face 57 | RevolutionGrid, 32 folds | see tooth-wall-folds evidence (0 folds, WT) |
 
 ## Visual
 

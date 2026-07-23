@@ -21,9 +21,9 @@ RevolutionGrid; reducer `tall_free_trim_drum_r0`). Early Freeform
 ribbon/rail stays on the late ladder (foam counterexample). ABC
 `00006051` sphere×fillet floors cleared (reducer
 `sphere_fillet_fullperiod_r1`). ABC `00008536` tooth-wall Newell folds
-cleared on the open-band reducer (`notched_drum_iso_band_r0`, 32→0)
-via slot-U outer rails when mid-split parks bounding columns past the
-true notch walls.
+cleared (32→0) by raising multi-tooth open-band densify to
+`12 * notches + 2` so inter-tooth land keeps a column (reducer
+`notched_drum_iso_band_r0`; ABC whole stays watertight).
 
 Change the active package only when its exit criteria pass at one revision. If
 a later failure invalidates an earlier gate, reopen the earliest affected
