@@ -8491,6 +8491,29 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             }
             break;
         case FeatureClass::FilletStrip: {
+            // Full-period closed analytic blends: RevolutionGrid keeps
+            // iso columns and avoids Coons period-wrap mass inversion on
+            // sphere–cylinder torus tubes (ABC 00006051). isFillet +
+            // acrossIsU preserve blend density ownership. Capsule /
+            // iso-band fillets keep the Coons path below.
+            if (info.chartKind == ChartKind::FullPeriod &&
+                (surf.GetType() == GeomAbs_Torus ||
+                 surf.GetType() == GeomAbs_Cylinder) &&
+                (isClosedRevolution(surf) || geomRev())) {
+                std::vector<std::vector<int>> inserts;
+                if (edgesHugRimsOrInserts(face, surf, model, inserts)) {
+                    plan.insertWires = std::move(inserts);
+                }
+                finishRevolution();
+                plan.isFillet = true;
+                // Across the blend: cylinder fillet arc is U; torus
+                // minor circle is V.
+                plan.acrossIsU = surf.GetType() == GeomAbs_Cylinder;
+                dbg("plan face %d: fillet-strip full-period -> "
+                    "revolution grid",
+                    fid);
+                return plan;
+            }
             // Closed torus / cylinder fillets used to fall through to
             // isClosedRevolution and become RevolutionGrid, losing blend
             // across/along ownership. Claim Coons here from class×chart.
@@ -14709,13 +14732,15 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
     // Mismatched-but-usable rims: rather than demote the whole face to the
     // contract floor (a tri soup), keep each rim's exact samples and absorb
     // the count difference in a transition strip. On an analytic revolution
-    // surface (cylinder/cone/torus) the interior is a straight-column grid
-    // whose columns are rulings and emitClosedStrip bridges each rim to it
-    // (the non-chained path below). This only holds where the band is tall
-    // enough that the strip cells stay convex; on a THIN tube the strip
-    // degenerates into folded lunes (the case this bail originally guarded),
-    // so measure the band height against the rim's azimuthal chord and fall
-    // back to the floor when too thin.
+    // surface (cylinder/cone/torus/sphere zone) the interior is a
+    // straight-column grid whose columns are rulings and emitClosedStrip
+    // bridges each rim to it (the non-chained path below). This only holds
+    // where the band is tall enough that the strip cells stay convex; on a
+    // THIN tube the strip degenerates into folded lunes (the case this bail
+    // originally guarded), so measure the band height against the rim's
+    // azimuthal chord and fall back to the floor when too thin. Spheres
+    // join here for two-rim zones (ABC 00006051 sphere–fillet junction);
+    // single-rim pole caps take sphereCapPole above and never reach this.
     bool stripReconcile = false;
     // Carried out of the reconcile test for the interior-row bump below.
     double reconBandH = 0;     // band height (v0->v1 chord)
@@ -14738,7 +14763,8 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
     if (rim0ok && rim1ok && nRim0 != nRim1) {
         const GeomAbs_SurfaceType st = surf.GetType();
         const bool analyticRev = st == GeomAbs_Cylinder ||
-                                 st == GeomAbs_Cone || st == GeomAbs_Torus;
+                                 st == GeomAbs_Cone || st == GeomAbs_Torus ||
+                                 st == GeomAbs_Sphere;
         if (analyticRev) {
             const double u0i = surf.FirstUParameter();
             double bandH = 0;
@@ -19608,6 +19634,24 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                 solvedEdge[eid] =
                                     std::max(solvedEdge[eid], nvB);
                             }
+                        }
+                        // Densify the plain driver so open-band passPlain
+                        // holds at ~4 columns per tooth. Raising nu alone
+                        // in the mesher left a plain-rim transition that
+                        // folded tooth webs (ABC 00008536).
+                        const size_t cutN = std::max(plan.rimLow.size(),
+                                                     plan.rimHigh.size());
+                        if (cutN >= 9 &&
+                            plan.bandDriver < int(solvedEdge.size())) {
+                            // ABC-style gear drums: ~15 edges per tooth
+                            // (walls + floor + fillets). Matches the
+                            // mesher's notchRuns count on the reducer.
+                            const int estNotches =
+                                std::max(3, int(cutN) / 15);
+                            const int want = 4 * estNotches + 2;
+                            solvedEdge[plan.bandDriver] = std::max(
+                                solvedEdge[plan.bandDriver], want);
+                            nuB = std::max(nuB, want);
                         }
                     }
                     counts[fid] = {nuB, nvB, 0};

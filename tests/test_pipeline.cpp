@@ -1102,8 +1102,54 @@ void testNotchedDrumOpenBand() {
     // Open-shell extract: watertightness is not the target. Slivers must
     // drop far below the prior contract-floor needle count (~248).
     CHECK(vr.sliverPolygons < 40);
-    std::printf("  polys=%zu slivers=%zu kind=revolution-grid\n",
-                mesh.polygons.size(), vr.sliverPolygons);
+    // Tooth-wall web ribbons still carry local Newell folds (~32) where
+    // one wall of the U-ribbon double-covers outward side/lattice UV;
+    // keep the structured lattice (sparse-fold protect) over a floor.
+    const auto folded = weft::foldedPolys(model, mesh);
+    const int nFolded =
+        int(std::count(folded.begin(), folded.end(), uint8_t{1}));
+    CHECK(nFolded < 50);
+    std::printf("  polys=%zu slivers=%zu folds=%d kind=revolution-grid\n",
+                mesh.polygons.size(), vr.sliverPolygons, nFolded);
+}
+
+// ABC 00006051 class: sphere-cap + torus fillet-strip full-period with
+// unequal rim totals used to demote both faces to contract floor
+// (revolution grid irreconcilable / Coons mass inversion).
+void testSphereFilletFullPeriodNoFloor() {
+    std::printf("-- sphere+fillet full-period no floor --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/abc/sphere_fillet_fullperiod_r1.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    CHECK_EQ(model.faceCount(), 3);
+
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    int floors = 0;
+    for (int fid = 1; fid <= 3; ++fid) {
+        auto bit = report.faceBuild.find(fid);
+        CHECK(bit != report.faceBuild.end());
+        if (bit->second == 2) ++floors;
+        auto kit = report.faceMesher.find(fid);
+        CHECK(kit != report.faceMesher.end());
+        CHECK(kit->second == weft::MesherKind::RevolutionGrid);
+    }
+    CHECK_EQ(floors, 0);
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    const auto folded = weft::foldedPolys(model, mesh);
+    const int nFolded =
+        int(std::count(folded.begin(), folded.end(), uint8_t{1}));
+    CHECK_EQ(nFolded, 0);
+    CHECK_EQ(vr.sliverPolygons, 0u);
+    std::printf("  polys=%zu floors=0 folds=0 slivers=0\n",
+                mesh.polygons.size());
 }
 
 // ABC FreeTrim drum walls (tall skinny cylinder segments) used to false-
@@ -1428,16 +1474,20 @@ void testSparseFoldKeepsStructuredCharts() {
                 continue;
             }
             auto kit = report.faceMesher.find(f.id);
+            // Full-period analytic fillets route RevolutionGrid (ABC
+            // sphere–cylinder class); older foam extracts may still be
+            // Coons. Either structured chart must stay off the floor.
             if (kit == report.faceMesher.end() ||
-                kit->second != weft::MesherKind::CoonsGrid) {
+                (kit->second != weft::MesherKind::CoonsGrid &&
+                 kit->second != weft::MesherKind::RevolutionGrid)) {
                 continue;
             }
             ++kept;
-            assertBuild0(report, f.id, weft::MesherKind::CoonsGrid, label);
+            assertBuild0(report, f.id, kit->second, label);
         }
         CHECK(kept >= 1);
-        std::printf("  %s: %d FilletStrip×FullPeriod×Coons kept\n", label,
-                    kept);
+        std::printf("  %s: %d FilletStrip×FullPeriod structured kept\n",
+                    label, kept);
     };
     auto assertDrumWedgeCoons = [&](const weft::Analysis& analysis,
                                     const weft::GenerationReport& report,
@@ -1670,7 +1720,10 @@ void testCylindricalStackContinuity() {
         weft::GenerationReport br;
         weft::PolyMesh bm = weft::generate(bmModel, ba, gs, &br);
         CHECK(isWatertight(bm));
-        CHECK(br.faceMesher[stripFid] == weft::MesherKind::CoonsGrid);
+        // Full-period analytic fillet-strips take RevolutionGrid (blend
+        // ownership via isFillet); capsules / iso-bands stay Coons.
+        CHECK(br.faceMesher[stripFid] == weft::MesherKind::RevolutionGrid ||
+              br.faceMesher[stripFid] == weft::MesherKind::CoonsGrid);
         std::set<int> stackCounts;
         std::vector<int> stackEdges;
         for (const auto& f : ba.faces) {
@@ -1696,8 +1749,12 @@ void testCylindricalStackContinuity() {
         CHECK_EQ(stackCounts.size(), 1u);
         const int stackCirc = *stackCounts.begin();
         std::printf(
-            "  bossfillet: drums=%d strips=%d strip->coons circ=%d\n",
-            drums, strips, stackCirc);
+            "  bossfillet: drums=%d strips=%d strip->%s circ=%d\n",
+            drums, strips,
+            br.faceMesher[stripFid] == weft::MesherKind::RevolutionGrid
+                ? "revolution"
+                : "coons",
+            stackCirc);
 
         // Deliberate pin on the drum↔fillet rim: allowed mismatch. The
         // pin sticks; stack continuity cannot override perEdge. When the
@@ -3955,6 +4012,7 @@ int main() {
     RUN(testUnlinkedRims);
     RUN(testPlateWeb);
     RUN(testPlateWebSliverRefine);
+    RUN(testSphereFilletFullPeriodNoFloor);
     RUN(testNotchedDrumOpenBand);
     RUN(testTallFreeTrimDrum);
     RUN(testTorturePlateWebMinimalResidual);

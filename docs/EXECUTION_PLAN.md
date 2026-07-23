@@ -15,10 +15,13 @@ cut extract unexplained 83→73 with 0 folds. WP6 cleared slitdrill / tan_slit
 / tork / fillet-capsule / grip-freeform / bullet-body KNOWN_RED rows;
 residual MP9 opens (~247 after freeformComb shared-edge snap; #1805 no longer dominates) remain in `tests/KNOWN_RED.tsv`.
 ABC nightly `00008536` multi-tooth open-band drum is off the contract floor
-(face 57 → RevolutionGrid; model slivers 359→136). ABC `00002324` tall
-FreeTrim drums are off MinimalNGon needles (16 faces → RevolutionGrid;
-reducer `tall_free_trim_drum_r0`). Early Freeform ribbon/rail stays on the
-late ladder (foam counterexample). Residual ABC floors on `00006051` remain.
+(face 57 → RevolutionGrid; model slivers 359→136; `passPlain` densify).
+ABC `00002324` tall FreeTrim drums are off MinimalNGon needles (16 faces →
+RevolutionGrid; reducer `tall_free_trim_drum_r0`). Early Freeform
+ribbon/rail stays on the late ladder (foam counterexample). ABC
+`00006051` sphere×fillet floors cleared (reducer
+`sphere_fillet_fullperiod_r1`). Residual: `00008536` local tooth-wall
+Newell folds (~32) under sparse-fold protect.
 
 Change the active package only when its exit criteria pass at one revision. If
 a later failure invalidates an earlier gate, reopen the earliest affected
