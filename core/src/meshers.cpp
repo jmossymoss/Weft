@@ -499,7 +499,10 @@ bool edgesHugRimsOrInserts(const TopoDS_Face& face,
     int plunges = 0;
     for (int i = 0; i < kBins; ++i) {
         if (loMax[i] > -1e300 && hiMin[i] < 1e300 && loMax[i] >= hiMin[i]) {
-            return false;
+            // Open bands boolean-cut multi-tooth castellation; chain
+            // cross at a tooth wall is expected and not a loft reject.
+            if (!bandSides) return false;
+            continue;
         }
         // Loftable rims are FUNCTIONS of u: a chain that doubles back
         // stacks several v's over one u and cannot drive a lofted row.
@@ -507,7 +510,8 @@ bool edgesHugRimsOrInserts(const TopoDS_Face& face,
         // (flaregun face 81): its walls drop the whole way at one u
         // each, and the loft handles them (rows never rise above the
         // notch floor inside the mouth). MANY deep bins are gear teeth
-        // and still reject.
+        // and still reject on the closed loft path. Open bands
+        // boolean-cut multi-tooth castellation, so they keep going.
         if (loMax[i] > -1e300 && loMax[i] - loMin[i] > 0.3 * vspan) {
             ++plunges;
         }
@@ -515,27 +519,31 @@ bool edgesHugRimsOrInserts(const TopoDS_Face& face,
             ++plunges;
         }
     }
-    if (plunges > std::max(2, kBins / 8)) return false;
+    if (!bandSides && plunges > std::max(2, kBins / 8)) return false;
     // Between-chain coverage: the loft region must actually belong to
     // the face — a band with a large un-modeled cutout (not an insert
     // wire) cannot loft. Insert-wire boxes are skipped: their cells are
-    // removed and webbed after the grid.
-    const double tolF = BRep_Tool::Tolerance(face);
-    for (int i = 0; i < kBins; i += 4) {
-        if (loMax[i] <= -1e300 || hiMin[i] >= 1e300) continue;
-        const double uu = u0 + (i + 0.5) * uspan / kBins;
-        const double vv = 0.5 * (loMax[i] + hiMin[i]);
-        bool inInsert = false;
-        for (const auto& b : insertBox) {
-            if (uu >= b[0] && uu <= b[1] && vv >= b[2] && vv <= b[3]) {
-                inInsert = true;
-                break;
+    // removed and webbed after the grid. Open bands with rim
+    // castellation also skip: tooth cavities sit between the chains and
+    // are boolean-cut at mesh time.
+    if (!bandSides) {
+        const double tolF = BRep_Tool::Tolerance(face);
+        for (int i = 0; i < kBins; i += 4) {
+            if (loMax[i] <= -1e300 || hiMin[i] >= 1e300) continue;
+            const double uu = u0 + (i + 0.5) * uspan / kBins;
+            const double vv = 0.5 * (loMax[i] + hiMin[i]);
+            bool inInsert = false;
+            for (const auto& b : insertBox) {
+                if (uu >= b[0] && uu <= b[1] && vv >= b[2] && vv <= b[3]) {
+                    inInsert = true;
+                    break;
+                }
             }
+            if (inInsert) continue;
+            BRepClass_FaceClassifier cls(const_cast<TopoDS_Face&>(face),
+                                         gp_Pnt2d(uu, vv), tolF);
+            if (cls.State() == TopAbs_OUT) return false;
         }
-        if (inInsert) continue;
-        BRepClass_FaceClassifier cls(const_cast<TopoDS_Face&>(face),
-                                     gp_Pnt2d(uu, vv), tolF);
-        if (cls.State() == TopAbs_OUT) return false;
     }
     return true;
 }
@@ -8792,8 +8800,15 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             surf.LastUParameter() - surf.FirstUParameter() >= 1.0;
         if (drumBand) {
             if (tryOpenBand()) {
-                if (!settings.decoupleSeams &&
-                    (plan.rimLow.size() != 1 || plan.rimHigh.size() != 1)) {
+                // Coupled seams need a single-edge plain driver so
+                // columns weld 1:1. A multi-piece opposite rim is fine
+                // when bandDriver is set — open-band boolean-cuts the
+                // castellation (ABC multi-tooth drums). Without a
+                // driver, multi-piece rims still fall through to coons.
+                const bool multi =
+                    plan.rimLow.size() != 1 || plan.rimHigh.size() != 1;
+                if (!settings.decoupleSeams && multi &&
+                    plan.bandDriver < 1) {
                     dbg("plan face %d: drum multi-piece rims -> coons",
                         fid);
                     plan = FacePlan();
@@ -10858,20 +10873,31 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
         !samplePieces(runs[1], chainP[1])) {
         return false;
     }
-    // Rim assignment by mean v (castellation pulls the mean inward but
-    // never past the middle on anything loftable).
+    // Rim assignment: a multi-tooth / castellated chain's MEAN v is
+    // pulled inward past mid-height by wall and floor samples (ABC
+    // notched drums), so mean-to-nearest-bound mislabels both chains as
+    // the same rim. Prefer the surface bound the chain actually touches.
     double rimV[2];
     for (int c = 0; c < 2; ++c) {
-        double mean = 0;
+        double cMin = 1e300, cMax = -1e300, mean = 0;
         int cnt = 0;
         for (const Piece& p : chainP[c]) {
             for (const BandPt& b : p.pts) {
+                cMin = std::min(cMin, b.v);
+                cMax = std::max(cMax, b.v);
                 mean += b.v;
                 ++cnt;
             }
         }
         mean /= std::max(1, cnt);
-        rimV[c] = std::abs(mean - v0) <= std::abs(mean - v1) ? v0 : v1;
+        const bool touchHi = std::abs(cMax - v1) < 0.05 * wspan;
+        const bool touchLo = std::abs(cMin - v0) < 0.05 * wspan;
+        if (touchHi != touchLo) {
+            rimV[c] = touchHi ? v1 : v0;
+        } else {
+            rimV[c] =
+                std::abs(mean - v0) <= std::abs(mean - v1) ? v0 : v1;
+        }
     }
     if (rimV[0] == rimV[1]) {
         dbg("openband face %d: chains claim one rim", faceId);
@@ -10924,6 +10950,35 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
     const double sign = vCut == v0 ? 1.0 : -1.0;
     auto wOf = [&](double v) { return sign * (v - vCut); };
     auto vOf = [&](double w) { return vCut + sign * w; };
+
+    // Multi-tooth open drums need ~3 columns per notch plus side
+    // margins; adaptive rim counts alone under-sample (ABC ~25 teeth
+    // at nu=32 collapsed notches into overlapping column spans and
+    // repeated directed edges). Raising nu here drops passPlain and
+    // uses a uniform lattice + plain-rim transition strip.
+    int notchRuns = 0;
+    if (feature[cutIdx]) {
+        for (size_t p = 0; p < chainP[cutIdx].size();) {
+            if (chainP[cutIdx][p].hug) {
+                ++p;
+                continue;
+            }
+            ++notchRuns;
+            while (p < chainP[cutIdx].size() && !chainP[cutIdx][p].hug) {
+                ++p;
+            }
+        }
+        if (notchRuns >= 3) {
+            // ≥4 columns per notch so neighbouring teeth keep a shared
+            // kept column between deleted spans after pad.
+            const int want = 4 * notchRuns + 2;
+            if (nu < want) {
+                dbg("openband face %d: raise nu %d -> %d for %d notches",
+                    faceId, nu, want, notchRuns);
+                nu = want;
+            }
+        }
+    }
 
     // Flatten each chain ascending in u, joints deduplicated.
     struct ChainFlat {
@@ -11012,16 +11067,25 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
                 ++p;
             }
             // Bounding kept columns, sliver cells pushed out with the
-            // notch (a wall grazing a column would web a needle).
+            // notch (a wall grazing a column would web a needle). Dense
+            // multi-tooth drums keep a tight pad so neighbouring notches
+            // do not steal each other's columns / invert strip gaps.
+            const double pad = notchRuns >= 3 ? 0.1 : 0.3;
             int cL = int(std::upper_bound(uk.begin(), uk.end(), bu0) -
                          uk.begin()) -
                      1;
             cL = std::clamp(cL, 0, nu - 1);
-            if (cL > 0 && bu0 - uk[cL] < 0.3 * (uk[cL + 1] - uk[cL])) --cL;
+            if (cL > 0 &&
+                bu0 - uk[cL] < pad * (uk[cL + 1] - uk[cL])) {
+                --cL;
+            }
             int cR = int(std::lower_bound(uk.begin(), uk.end(), bu1) -
                          uk.begin());
             cR = std::clamp(cR, 1, nu);
-            if (cR < nu && uk[cR] - bu1 < 0.3 * (uk[cR] - uk[cR - 1])) ++cR;
+            if (cR < nu &&
+                uk[cR] - bu1 < pad * (uk[cR] - uk[cR - 1])) {
+                ++cR;
+            }
             r.colL = cL;
             r.colR = cR;
             r.slotU0 = bu0;
@@ -11035,10 +11099,13 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
         // column stay separate — a merged web would ear-clip long
         // chords across the wrap (observed: a fold spanning a scallop
         // AND the next notch) — and the gap arc fans from the shared
-        // column instead of stripping.
+        // column instead of stripping. Require a shared deleted
+        // column (colL+1 .. colR-1), not just the next kept boundary
+        // sitting inside the previous span — dense multi-tooth drums
+        // otherwise collapse every notch into one wrap-wide cavity.
         std::vector<Region> merged;
         for (const Region& r : regions) {
-            if (!merged.empty() && r.colL < merged.back().colR) {
+            if (!merged.empty() && r.colL + 1 < merged.back().colR) {
                 merged.back().colR = std::max(merged.back().colR, r.colR);
                 merged.back().iB = r.iB;
                 merged.back().wTop = std::max(merged.back().wTop, r.wTop);
@@ -11048,18 +11115,67 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
             }
         }
         regions = std::move(merged);
-        for (const Region& r : regions) {
-            // A region may reach the first/last interior column (the
-            // flanking arc then fans from it) but never a side column:
-            // sides carry the row contract, not staircases. A coarse
-            // lattice that leaves no room falls back to WAVE mode.
-            if (r.colL < 1 || r.colR > nu - 1) {
-                dbg("openband face %d: regions crowd the sides -> wave",
-                    faceId);
-                regions.clear();
-                waveCut = true;
-                break;
+        // A region may reach the first/last interior column (the
+        // flanking arc then fans from it) but never a side column:
+        // sides carry the row contract, not staircases. Multi-tooth
+        // open drums (ABC notched bands) often put a tooth against the
+        // U-gap sides — clamp those regions off the side columns
+        // instead of dumping the whole lattice into WAVE mode (which
+        // cannot absorb 50%+ tooth depth).
+        std::vector<Region> kept;
+        kept.reserve(regions.size());
+        bool clamped = false;
+        for (Region r : regions) {
+            if (r.colL < 1) {
+                r.colL = 1;
+                clamped = true;
             }
+            if (r.colR > nu - 1) {
+                r.colR = nu - 1;
+                clamped = true;
+            }
+            if (r.colL + 1 < r.colR) {
+                kept.push_back(r);
+            } else {
+                clamped = true;  // tooth lives only on a side column
+            }
+        }
+        if (clamped) {
+            dbg("openband face %d: side-crowding notches clamped "
+                "(%zu -> %zu regions)",
+                faceId, regions.size(), kept.size());
+        }
+        regions = std::move(kept);
+        if (regions.empty() && feature[cutIdx] && !interior[cutIdx]) {
+            waveCut = true;
+        }
+        // Enforce non-overlapping column spans: dense teeth can still
+        // claim the same kept columns after pad. Overlap produces
+        // inverted strip gaps and repeated directed edges (self-check).
+        if (regions.size() > 1) {
+            std::sort(regions.begin(), regions.end(),
+                      [](const Region& a, const Region& b) {
+                          return a.colL < b.colL ||
+                                 (a.colL == b.colL && a.colR < b.colR);
+                      });
+            for (size_t i = 1; i < regions.size(); ++i) {
+                if (regions[i].colL < regions[i - 1].colR) {
+                    const int mid =
+                        (regions[i - 1].colR + regions[i].colL + 1) / 2;
+                    regions[i - 1].colR = mid;
+                    regions[i].colL = mid;
+                }
+            }
+            std::vector<Region> disjoint;
+            disjoint.reserve(regions.size());
+            for (const Region& r : regions) {
+                if (r.colL + 1 < r.colR) disjoint.push_back(r);
+            }
+            if (disjoint.size() != regions.size()) {
+                dbg("openband face %d: dropped %zu overlapping notches",
+                    faceId, regions.size() - disjoint.size());
+            }
+            regions = std::move(disjoint);
         }
     }
     if (waveCut && chainDev[cutIdx] > 0.35 * wspan) {
@@ -11547,9 +11663,19 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
         }
         gaps.push_back({i0, M, c0, nu - 1});
         for (const Gap& g : gaps) {
-            if (g.i1 <= g.i0 || g.c1 < g.c0) {
-                dbg("openband face %d: degenerate strip gap", faceId);
-                return false;
+            if (g.i1 < g.i0 || g.c1 < g.c0) {
+                dbg("openband face %d: skip inverted strip gap "
+                    "(i %d..%d c %d..%d)",
+                    faceId, g.i0, g.i1, g.c0, g.c1);
+                continue;
+            }
+            if (g.i1 == g.i0 && g.c1 == g.c0) {
+                continue;  // empty corner between touching notches
+            }
+            if (g.i1 <= g.i0) {
+                // No base-arc samples between notches — the webs already
+                // meet at the shared corner; nothing to strip.
+                continue;
             }
             if (g.c1 == g.c0) {
                 // Two regions touching at one column: only one strip-row
@@ -19334,7 +19460,23 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             solvedEdge[plan.bandDriver],
                             density.countFor(plan.bandDriver, radialWrap));
                     }
-                    counts[fid] = {nuB, solved(plan.vEdges, s.axial), 0};
+                    int nvB = solved(plan.vEdges, s.axial);
+                    // Multi-tooth / castellated cut rims need several
+                    // axial rows so notch floors sit on the lattice
+                    // instead of folding a single row (ABC drums).
+                    if (plan.bandDriver > 0 &&
+                        (plan.rimLow.size() > 1 ||
+                         plan.rimHigh.size() > 1)) {
+                        nvB = std::max(nvB, std::max(4, s.axial));
+                        for (int eid : plan.bandSides) {
+                            if (eid >= 1 &&
+                                eid < int(solvedEdge.size())) {
+                                solvedEdge[eid] =
+                                    std::max(solvedEdge[eid], nvB);
+                            }
+                        }
+                    }
+                    counts[fid] = {nuB, nvB, 0};
                     break;
                 }
                 int nuA = solved(plan.uEdges, s.radial);
@@ -21504,8 +21646,9 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     const Anchor& ab = parts[fid].anchors[repeatB];
                     dbg("orthogonal face %d repeated directed edge %u->%u "
                         "uv (%.8g,%.8g)->(%.8g,%.8g) at polygon %zu "
-                        "(first %zu)", fid, repeatA, repeatB, aa.u, aa.v,
-                        ab.u, ab.v, repeatPoly, seenAt[{repeatA,repeatB}]);
+                        "(first %zu)",
+                        fid, repeatA, repeatB, aa.u, aa.v, ab.u, ab.v,
+                        repeatPoly, seenAt[{repeatA, repeatB}]);
                 }
                 demote(fid, face, surf, s, "self-check failed");
             }
@@ -21881,9 +22024,18 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             sparseInfo.featureClass ==
                                 FeatureClass::FilletStrip &&
                             sparseInfo.chartKind == ChartKind::FullPeriod;
+                        // Open multi-tooth bands (ABC notched drums) carry
+                        // more local web folds than the closed-drum cap of
+                        // 8; still refuse a zero-fold floor that turns the
+                        // lattice into needle soup.
+                        const int foldCap =
+                            sparseDrum && !plan.bandSides.empty()
+                                ? std::max(8, sparseN / 8)
+                                : 8;
                         const bool sparseProtect =
                             sparseN >= 8 && liveFolds > 0 &&
-                            liveFolds <= 8 && liveFolds * 4 <= sparseN &&
+                            liveFolds <= foldCap &&
+                            liveFolds * 4 <= sparseN &&
                             (sparseDrum || sparseFilletFull);
                         if (sparseProtect) {
                             dbg("mesh face %d: sparse fold keep %s "
@@ -21957,7 +22109,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         sparseInfo.featureClass ==
                             FeatureClass::FilletStrip &&
                         sparseInfo.chartKind == ChartKind::FullPeriod;
-                    if (sparseN >= 8 && liveFp > 0 && liveFp <= 8 &&
+                    const int foldCap =
+                        sparseDrum && !plan.bandSides.empty()
+                            ? std::max(8, sparseN / 8)
+                            : 8;
+                    if (sparseN >= 8 && liveFp > 0 && liveFp <= foldCap &&
                         liveFp * 4 <= sparseN &&
                         (sparseDrum || sparseFilletFull)) {
                         dbg("mesh face %d: sparse foldedPolys keep %s "

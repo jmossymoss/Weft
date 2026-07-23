@@ -1070,6 +1070,42 @@ void testPlateWebSliverRefine() {
     CHECK(plateTris == 0);   // no CDT soup under minimal
 }
 
+// WP6: near-full analytic cylinder with a multi-tooth castellated rim
+// (ABC 00008536 drum class). Open-band must keep RevolutionGrid instead
+// of dumping the face on the contract floor as needle soup.
+void testNotchedDrumOpenBand() {
+    std::printf("-- notched drum open-band --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/abc/notched_drum_iso_band_r0.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    CHECK_EQ(model.faceCount(), 1);
+    CHECK(analysis.faces[0].featureClass == weft::FeatureClass::Drum);
+    CHECK(analysis.faces[0].chartKind == weft::ChartKind::IsoBand);
+
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    auto kit = report.faceMesher.find(1);
+    CHECK(kit != report.faceMesher.end());
+    CHECK(kit->second == weft::MesherKind::RevolutionGrid);
+    auto bit = report.faceBuild.find(1);
+    CHECK(bit != report.faceBuild.end());
+    CHECK_EQ(bit->second, 0);  // not demoted to contract floor
+
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    // Open-shell extract: watertightness is not the target. Slivers must
+    // drop far below the prior contract-floor needle count (~248).
+    CHECK(vr.sliverPolygons < 40);
+    std::printf("  polys=%zu slivers=%zu kind=revolution-grid\n",
+                mesh.polygons.size(), vr.sliverPolygons);
+}
+
 // Demo/torture vertical plate wall with a round bore: under CAD, plate-web
 // must keep collars but not fill the wall with CDT needles.
 void testTorturePlateWebMinimalResidual() {
@@ -3881,6 +3917,7 @@ int main() {
     RUN(testUnlinkedRims);
     RUN(testPlateWeb);
     RUN(testPlateWebSliverRefine);
+    RUN(testNotchedDrumOpenBand);
     RUN(testTorturePlateWebMinimalResidual);
     RUN(testSphereDimpleNotContractFloor);
     RUN(testBulletTipNotContractFloor);
