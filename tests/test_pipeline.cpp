@@ -1106,6 +1106,44 @@ void testNotchedDrumOpenBand() {
                 mesh.polygons.size(), vr.sliverPolygons);
 }
 
+// ABC FreeTrim drum walls (tall skinny cylinder segments) used to false-
+// pass isGeometricallyFlat and collapse to a single MinimalNGon needle
+// under CAD. They must take open-band RevolutionGrid with axial rows.
+void testTallFreeTrimDrum() {
+    std::printf("-- tall free-trim drum --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/abc/tall_free_trim_drum_r0.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    CHECK_EQ(model.faceCount(), 1);
+    CHECK(analysis.faces[0].featureClass == weft::FeatureClass::Drum);
+    CHECK(analysis.faces[0].chartKind == weft::ChartKind::FreeTrim);
+
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    auto kit = report.faceMesher.find(1);
+    CHECK(kit != report.faceMesher.end());
+    CHECK(kit->second == weft::MesherKind::RevolutionGrid);
+    auto bit = report.faceBuild.find(1);
+    CHECK(bit != report.faceBuild.end());
+    CHECK_EQ(bit->second, 0);
+
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK(vr.sliverPolygons == 0);
+    CHECK(mesh.polygons.size() >= 16);
+    // Reject the old single-ngon / two-tri needle.
+    CHECK(mesh.vertices.size() >= 20);
+    std::printf("  verts=%zu polys=%zu slivers=%zu kind=revolution-grid\n",
+                mesh.vertices.size(), mesh.polygons.size(),
+                vr.sliverPolygons);
+}
+
 // Demo/torture vertical plate wall with a round bore: under CAD, plate-web
 // must keep collars but not fill the wall with CDT needles.
 void testTorturePlateWebMinimalResidual() {
@@ -3918,6 +3956,7 @@ int main() {
     RUN(testPlateWeb);
     RUN(testPlateWebSliverRefine);
     RUN(testNotchedDrumOpenBand);
+    RUN(testTallFreeTrimDrum);
     RUN(testTorturePlateWebMinimalResidual);
     RUN(testSphereDimpleNotContractFloor);
     RUN(testBulletTipNotContractFloor);
