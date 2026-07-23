@@ -9801,13 +9801,16 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
             hasPerFace &&
             (s.gridU != dfl.gridU || s.gridV != dfl.gridV ||
              s.radial != dfl.radial || s.axial != dfl.axial);
-        // A radial-only LOWER must not PIN shared density groups below
-        // neighbours' adaptive proposals — the pin would outvote the ring
-        // and collapse peer fillets into digon overwelds (sweep radial 8).
-        // Still propose the lower count into max-resolve; peers can win.
+        // A radial-only LOWER under adaptive must not PIN shared density
+        // groups below neighbours' curvature floors — that outvoted rings
+        // and collapsed peer fillets into digon overwelds (sweep radial 8).
+        // Soft-propose so peers can win. Once the artist turns adaptive
+        // OFF (wheel / panel count edit), the typed radial IS the pin —
+        // otherwise notched drums look stuck at the annulus-floor (~15–19).
         bool overridden = hasPerFace;
-        if (hasPerFace && s.radial < dfl.radial && s.axial == dfl.axial &&
-            s.gridU == dfl.gridU && s.gridV == dfl.gridV) {
+        if (hasPerFace && s.adaptive && s.radial < dfl.radial &&
+            s.axial == dfl.axial && s.gridU == dfl.gridU &&
+            s.gridV == dfl.gridV) {
             overridden = false;
         }
         if (plan.orthogonalTrimGrid) {
@@ -12578,7 +12581,13 @@ bool meshRevolutionRimNotch(const TopoDS_Face& face,
         uk[colR] - nu1 < 0.3 * (uk[colR] - uk[colR - 1])) {
         ++colR;
     }
-    if (colL < 1 || colR > nu - 1 || colR <= colL) return false;
+    const bool boundOk =
+        colL >= 1 && colR <= nu - 1 && colR > colL;
+    // Coarse artist radials (demo notched drum at 8) can push the
+    // pre-bound to the seam even when the pinned boolean-cut still has
+    // an interior base-arc gap. Let basePinned try cleanCut first; the
+    // strip path still needs a strict interior bound.
+    if (!boundOk && !basePinned) return false;
 
     // ===== PINNED BOOLEAN-CUT NOTCH (the reframed model) =================
     // The end geometry is a perfect cylinder with a rectangular bite taken
@@ -12635,7 +12644,14 @@ bool meshRevolutionRimNotch(const TopoDS_Face& face,
         }
         colL = lo - 1;  // last non-notch column left of the notch
         colR = hi + 1;  // first non-notch column right of the notch
-        if (topCorner.size() != 2 || botCorner.size() != 2) return false;
+        // A rectangular notch has two corner pairs. At awkward nu a wall
+        // can land ON a lattice column (demo face #34 at radial 17: the
+        // right wall sits on col 4 within 0.02*pitch), so that side's
+        // "corners" snap into baseArcS/floorS and topCorner/botCorner
+        // undershoot 2. Allow 0–2 free corners per rim and synthesize
+        // the wall-on-column side below — requiring exactly 2 rejected
+        // every such count into "castellated insert failed".
+        if (topCorner.size() > 2 || botCorner.size() > 2) return false;
 
         // Corner azimuths sit in the two coverage gaps; pair top<->bottom
         // by azimuth and label left (colL..colL+1) / right (colR-1..colR).
@@ -12650,14 +12666,31 @@ bool meshRevolutionRimNotch(const TopoDS_Face& face,
             if (uu < lo2) uu += period;
             return uu > lo2 - 1e-9 && uu < hi2 + 1e-9;
         };
+        // Wall-on-column: both a base-arc and a floor sample snapped to
+        // the same lattice azimuth — the vertical notch wall.
+        auto isWallCol = [&](int c) {
+            return c >= 0 && c < nu && baseArcS[c] >= 0 && floorS[c] >= 0;
+        };
         int TL = -1, TR = -1, BL = -1, BR = -1;
         for (int i : topCorner) {
             if (inGap(S[i].u, colL, colL + 1)) TL = i;
             else if (inGap(S[i].u, colR - 1, colR)) TR = i;
+            else return false;  // free corner outside both cap gaps
         }
         for (int i : botCorner) {
             if (inGap(S[i].u, colL, colL + 1)) BL = i;
             else if (inGap(S[i].u, colR - 1, colR)) BR = i;
+            else return false;
+        }
+        // Synthesize missing corners from a wall-on-column boundary.
+        // Cap emit unique() collapses the duplicate topOf(wall) vertex.
+        if (TL < 0 && BL < 0 && isWallCol(colL)) {
+            TL = baseArcS[colL];
+            BL = floorS[colL];
+        }
+        if (TR < 0 && BR < 0 && isWallCol(colR)) {
+            TR = baseArcS[colR];
+            BR = floorS[colR];
         }
         if (TL < 0 || TR < 0 || BL < 0 || BR < 0) return false;
 
@@ -12797,6 +12830,7 @@ bool meshRevolutionRimNotch(const TopoDS_Face& face,
     // The strip path below cannot honor explicit interior levels — the
     // insert composition only rides the pinned boolean-cut lattice.
     if (levelsOpt) return false;
+    if (!boundOk) return false;
 
     // ---- Rows in w. Feature row just past the notch depth; a thin strip
     // row hugs the cut rim so the columns stay straight for (nearly) the
@@ -18744,14 +18778,17 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             if (BRep_Tool::Degenerated(e)) continue;
             const int eid = model.edges.FindIndex(e);
             if (eid < 1) continue;
-            // Unlike the other floors this one overrides pins too: an
-            // explicit count that makes the sampled hole protrude
-            // through the sampled outer boundary cannot be honoured —
-            // no web can triangulate that region, and the only escapes
-            // are raw triangulation or an open seam. Overrides are
-            // clamped before they can break a neighbour (the plan's
-            // override-safety rule); the raise is logged.
+            // Prefer not to raise past an artist face-pin (manual
+            // adapt-off radial): annulus sag used to clamp notched drums
+            // at ~16 so lowering radial below that did nothing on screen.
+            // Edge pins still win; face-pins from typed density win too.
+            // If the annulus then can't web, THAT face demotes — the
+            // drum keeps the count the artist asked for.
             const int root = density.groups.find(eid);
+            if (density.facePinnedRoots.count(root) ||
+                density.edgePinnedRoots.count(root)) {
+                continue;
+            }
             double f, l;
             Handle(Geom_Curve) c3 = BRep_Tool::Curve(e, f, l);
             if (c3.IsNull()) continue;

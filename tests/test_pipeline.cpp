@@ -1214,6 +1214,63 @@ void testDemoNotchedRadialKeepsStructured() {
     }
     CHECK(structured >= 1);
     std::printf("  targets=%zu structured=%d\n", targets.size(), structured);
+
+    // Artist report: radial 17 demoted ("castellated insert failed");
+    // lowering below ~15 did nothing (annulus-floor / soft-propose held
+    // the rim). Manual adapt-off must pin, and awkward nu values must
+    // stay structured — discover the notched full-wrap drum (many
+    // edges + castellated plan) rather than every multi-edge hole.
+    int notched = 0;
+    for (int fid : targets) {
+        // Prefer the tallest multi-edge drum (demo muzzle / notched
+        // barrel class): more edges than a simple bore wall.
+        if (int(analysis.faces[fid - 1].edgeIds.size()) >= 9) {
+            notched = fid;
+            break;
+        }
+    }
+    if (notched == 0 && !targets.empty()) notched = targets.front();
+
+    weft::GenerationReport baseRep;
+    {
+        weft::GenerationSettings base = gs;
+        base.perFace.clear();
+        weft::generate(model, analysis, base, &baseRep);
+    }
+    const int baseNu = baseRep.faceCounts.count(notched)
+                           ? baseRep.faceCounts[notched][0]
+                           : 0;
+
+    for (int r : {8, 17}) {
+        weft::GenerationSettings edit = gs;
+        edit.perFace.clear();
+        edit.perFace[notched] = edit.defaults;
+        edit.perFace[notched].adaptive = false;
+        edit.perFace[notched].radial = r;
+        weft::GenerationReport er;
+        weft::PolyMesh em = weft::generate(model, analysis, edit, &er);
+        CHECK(isWatertight(em));
+        auto bit = er.faceBuild.find(notched);
+        CHECK(bit != er.faceBuild.end());
+        CHECK_EQ(bit->second, 0);  // not contract floor
+        auto cit = er.faceBuildCause.find(notched);
+        if (cit != er.faceBuildCause.end()) {
+            CHECK(cit->second.find("castellated insert failed") ==
+                  std::string::npos);
+            CHECK(cit->second.find("border contract failed") ==
+                  std::string::npos);
+        }
+        auto cnt = er.faceCounts.find(notched);
+        CHECK(cnt != er.faceCounts.end());
+        if (r < baseNu) {
+            // Lowering must move the column count — not sit on the old
+            // annulus-floor clamp.
+            CHECK(cnt->second[0] < baseNu);
+            CHECK(cnt->second[0] <= r + 1);
+        }
+        std::printf("  face#%d manual radial=%d -> nu=%d (base %d) ok\n",
+                    notched, r, cnt->second[0], baseNu);
+    }
 }
 
 void testFilletDensityAxisOwnership() {
