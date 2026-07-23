@@ -8,8 +8,8 @@ rebuild required so screenshots match the linked core).
 | 00005908 | yes | 0 | 0 | Clean small solid |
 | 00004457 | yes | 42 | 0 | Acceptable hard-surface |
 | 00009645 | yes | 0 | 0 | Acceptable (slivers cleared vs prior 36) |
-| 00006051 | yes | 56 | 2 | Residual floors remain — next class |
-| 00008536 | yes | 136 | 0 | Inner drum RevolutionGrid; 32 local web folds at teeth |
+| 00006051 | yes | 0 | 0 | Sphere×fillet floors cleared (see sphere-fillet evidence) |
+| 00008536 | yes | 136 | 0 | Inner drum RevolutionGrid; tooth-wall folds cleared on reducer |
 | 00002324 | yes | 264 | 0 | Tall FreeTrim drums → RevolutionGrid (were MinimalNGon needles); source shape is tall towers |
 
 Regenerate:

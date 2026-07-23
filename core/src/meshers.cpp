@@ -11910,18 +11910,48 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
             outer.push_back(id);
             outerUW.push_back({u * rScale, w});
         };
-        for (int k : colKeys[r.colL]) {
-            if (rowW[k] <= rowW[r.rowKey] + 1e-12) {
-                pushOut(vid[r.colL][k], uk[r.colL], rowW[k]);
+        // When mid-split / side-clamp parks a bounding column past the
+        // true notch wall, a vertical outer rail on that column UV-
+        // overlaps the neighbouring tooth's opposite wall. Prefer an
+        // iso-U rail at the slot wall so each tooth's wall ribbon stays
+        // inside its own slot (no land / neighbour double-cover).
+        const bool leftOver = r.slotU0 < uk[r.colL] - 1e-12;
+        const bool rightOver = r.slotU1 > uk[r.colR] + 1e-12;
+        auto railVid = [&](double u, int key) -> uint32_t {
+            if (std::abs(u - uk[r.colL]) < 1e-12) return vid[r.colL][key];
+            if (std::abs(u - uk[r.colR]) < 1e-12) return vid[r.colR][key];
+            const double vv = vOf(rowW[key]);
+            return wb.addVertex(surf.Value(u, vv), {faceId, u, vv});
+        };
+        if (!leftOver) {
+            for (int k : colKeys[r.colL]) {
+                if (rowW[k] <= rowW[r.rowKey] + 1e-12) {
+                    pushOut(vid[r.colL][k], uk[r.colL], rowW[k]);
+                }
+            }
+        } else {
+            for (int k : colKeys[r.colL]) {
+                if (rowW[k] <= rowW[r.rowKey] + 1e-12) {
+                    pushOut(railVid(r.slotU0, k), r.slotU0, rowW[k]);
+                }
             }
         }
         for (int c = r.colL + 1; c <= r.colR - 1; ++c) {
             pushOut(vid[c][r.rowKey], uk[c], rowW[r.rowKey]);
         }
-        for (auto it = colKeys[r.colR].rbegin();
-             it != colKeys[r.colR].rend(); ++it) {
-            if (rowW[*it] <= rowW[r.rowKey] + 1e-12) {
-                pushOut(vid[r.colR][*it], uk[r.colR], rowW[*it]);
+        if (!rightOver) {
+            for (auto it = colKeys[r.colR].rbegin();
+                 it != colKeys[r.colR].rend(); ++it) {
+                if (rowW[*it] <= rowW[r.rowKey] + 1e-12) {
+                    pushOut(vid[r.colR][*it], uk[r.colR], rowW[*it]);
+                }
+            }
+        } else {
+            for (auto it = colKeys[r.colR].rbegin();
+                 it != colKeys[r.colR].rend(); ++it) {
+                if (rowW[*it] <= rowW[r.rowKey] + 1e-12) {
+                    pushOut(railVid(r.slotU1, *it), r.slotU1, rowW[*it]);
+                }
             }
         }
         std::vector<uint32_t> inner;
@@ -11962,11 +11992,54 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
                 if (mp[b] > mp[bp.back()]) bp.push_back(b);
             }
             if (bp.back() != m) bp.back() = m;
+            // Feature-row midpoint of this notch — used to fan zero-area
+            // wall spans (iso-U outer on iso-U cut) into positive-area
+            // triangles with lattice winding.
+            uint32_t fanApex = 0;
+            bool haveApex = false;
+            if ((leftOver || rightOver) && r.colL + 1 <= r.colR - 1) {
+                const int midC = (r.colL + r.colR) / 2;
+                fanApex = vid[midC][r.rowKey];
+                haveApex = true;
+            } else if (leftOver || rightOver) {
+                const double uu = 0.5 * (r.slotU0 + r.slotU1);
+                const double vv = vOf(rowW[r.rowKey]);
+                fanApex = wb.addVertex(surf.Value(uu, vv), {faceId, uu, vv});
+                haveApex = true;
+            }
             for (size_t g = 0; g + 1 < bp.size(); ++g) {
                 const int a = bp[g], b = bp[g + 1];
                 std::vector<uint32_t> ring;
                 for (int t = mp[a]; t <= mp[b]; ++t) ring.push_back(inner[t]);
                 for (int c = b; c >= a; --c) ring.push_back(outer[c]);
+                double uvA = 0.0;
+                for (size_t i = 0; i < ring.size(); ++i) {
+                    const Anchor& A = local.anchors[ring[i]];
+                    const Anchor& B =
+                        local.anchors[ring[(i + 1) % ring.size()]];
+                    uvA += A.u * B.v - B.u * A.v;
+                }
+                if (std::abs(uvA) < 1e-10 && haveApex &&
+                    mp[b] > mp[a]) {
+                    // Zero-area wall span: emit one triangle per cut edge
+                    // toward the feature apex. Order cut[t], cut[t+1],
+                    // apex gives negative uvArea with the lattice.
+                    for (int t = mp[a]; t < mp[b]; ++t) {
+                        std::vector<uint32_t> tri{inner[t], inner[t + 1],
+                                                  fanApex};
+                        double tA = 0.0;
+                        for (size_t i = 0; i < 3; ++i) {
+                            const Anchor& A = local.anchors[tri[i]];
+                            const Anchor& B =
+                                local.anchors[tri[(i + 1) % 3]];
+                            tA += A.u * B.v - B.u * A.v;
+                        }
+                        if (tA > 0.0) std::reverse(tri.begin(), tri.end());
+                        emitRing(std::move(tri));
+                    }
+                    continue;
+                }
+                if (uvA > 0.0) std::reverse(ring.begin(), ring.end());
                 emitRing(std::move(ring));
             }
             continue;

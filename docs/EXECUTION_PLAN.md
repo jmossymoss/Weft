@@ -20,8 +20,10 @@ ABC `00002324` tall FreeTrim drums are off MinimalNGon needles (16 faces →
 RevolutionGrid; reducer `tall_free_trim_drum_r0`). Early Freeform
 ribbon/rail stays on the late ladder (foam counterexample). ABC
 `00006051` sphere×fillet floors cleared (reducer
-`sphere_fillet_fullperiod_r1`). Residual: `00008536` local tooth-wall
-Newell folds (~32) under sparse-fold protect.
+`sphere_fillet_fullperiod_r1`). ABC `00008536` tooth-wall Newell folds
+cleared on the open-band reducer (`notched_drum_iso_band_r0`, 32→0)
+via slot-U outer rails when mid-split parks bounding columns past the
+true notch walls.
 
 Change the active package only when its exit criteria pass at one revision. If
 a later failure invalidates an earlier gate, reopen the earliest affected

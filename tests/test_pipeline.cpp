@@ -1102,13 +1102,13 @@ void testNotchedDrumOpenBand() {
     // Open-shell extract: watertightness is not the target. Slivers must
     // drop far below the prior contract-floor needle count (~248).
     CHECK(vr.sliverPolygons < 40);
-    // Tooth-wall web ribbons still carry local Newell folds (~32) where
-    // one wall of the U-ribbon double-covers outward side/lattice UV;
-    // keep the structured lattice (sparse-fold protect) over a floor.
+    // Slot-wall outer rails (when mid-split parks colL past slotU0) stop
+    // tooth-wall UV double-cover; zero-area iso-U spans fan to the
+    // feature apex so Newell stays non-folded.
     const auto folded = weft::foldedPolys(model, mesh);
     const int nFolded =
         int(std::count(folded.begin(), folded.end(), uint8_t{1}));
-    CHECK(nFolded < 50);
+    CHECK_EQ(nFolded, 0);
     std::printf("  polys=%zu slivers=%zu folds=%d kind=revolution-grid\n",
                 mesh.polygons.size(), vr.sliverPolygons, nFolded);
 }

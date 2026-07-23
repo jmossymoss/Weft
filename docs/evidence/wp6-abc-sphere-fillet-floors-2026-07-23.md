@@ -26,11 +26,8 @@ No filename / face-id specials. No new `MesherKind`.
 
 ABC `00008536` open-band: densify the plain `bandDriver` to
 `4 * estNotches + 2` so mesher `raise nu` keeps `passPlain` (avoids a
-zero-height plain-rim transition). Tooth-wall web ribbons still carry
-~32 local Newell folds where one U-ribbon wall double-covers outward
-side/lattice UV on REVERSED cylinders; sparse-fold protect keeps
-RevolutionGrid. Clearing those folds without border-contract / self-check
-failures is residual follow-up on the same class.
+zero-height plain-rim transition). Tooth-wall Newell folds cleared in a
+follow-up (`docs/evidence/wp6-abc-tooth-wall-folds-2026-07-23.md`).
 
 ## Metrics (CAD profile)
 
@@ -38,7 +35,7 @@ failures is residual follow-up on the same class.
 | --- | --- | --- |
 | `sphere_fillet_fullperiod_r1` | 2 floors, ~64 slivers | 0 floors, 0 folds, 0 slivers; all RevolutionGrid |
 | ABC `00006051` whole | 2 floors | 0 floors, WT, 0 folds, 0 slivers |
-| ABC `00008536` face 57 | RevolutionGrid, 32 folds | RevolutionGrid, ~32 folds; 0 floors; `passPlain=1` |
+| ABC `00008536` face 57 | RevolutionGrid, 32 folds | see tooth-wall-folds evidence (0 folds on reducer) |
 
 ## Visual
 
