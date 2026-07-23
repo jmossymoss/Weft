@@ -1306,9 +1306,25 @@ void testSparseFoldKeepsStructuredCharts() {
         gs.defaults.minCurvedSegments = 6;
         return gs;
     };
-    auto assertProtectedDrums = [](const weft::Analysis& analysis,
-                                   const weft::GenerationReport& report,
-                                   const char* label) {
+    auto assertBuild0 = [](const weft::GenerationReport& report, int fid,
+                           weft::MesherKind want, const char* label) {
+        auto kit = report.faceMesher.find(fid);
+        CHECK(kit != report.faceMesher.end());
+        CHECK(kit->second == want);
+        auto bit = report.faceBuild.find(fid);
+        CHECK(bit != report.faceBuild.end());
+        if (bit->second != 0) {
+            auto cit = report.faceBuildCause.find(fid);
+            const std::string cause =
+                cit != report.faceBuildCause.end() ? cit->second : "";
+            std::printf("  FAIL %s face %d build=%d cause=%s\n", label, fid,
+                        bit->second, cause.c_str());
+        }
+        CHECK_EQ(bit->second, 0);
+    };
+    auto assertProtectedDrums = [&](const weft::Analysis& analysis,
+                                    const weft::GenerationReport& report,
+                                    const char* label) {
         int protectedFaces = 0;
         for (const auto& f : analysis.faces) {
             if (f.featureClass != weft::FeatureClass::Drum ||
@@ -1321,21 +1337,55 @@ void testSparseFoldKeepsStructuredCharts() {
                 continue;  // coons/open-band drums use other heal paths
             }
             ++protectedFaces;
-            auto bit = report.faceBuild.find(f.id);
-            CHECK(bit != report.faceBuild.end());
-            if (bit->second != 0) {
-                auto cit = report.faceBuildCause.find(f.id);
-                const std::string cause =
-                    cit != report.faceBuildCause.end() ? cit->second : "";
-                std::printf("  FAIL %s face %d drum/full-period build=%d "
-                            "cause=%s\n",
-                            label, f.id, bit->second, cause.c_str());
-            }
-            CHECK_EQ(bit->second, 0);
+            assertBuild0(report, f.id, weft::MesherKind::RevolutionGrid,
+                         label);
         }
         CHECK(protectedFaces >= 1);
         std::printf("  %s: %d Drum×FullPeriod×RevolutionGrid kept\n", label,
                     protectedFaces);
+    };
+    auto assertProtectedFilletFull = [&](const weft::Analysis& analysis,
+                                         const weft::GenerationReport& report,
+                                         const char* label) {
+        int kept = 0;
+        for (const auto& f : analysis.faces) {
+            if (f.featureClass != weft::FeatureClass::FilletStrip ||
+                f.chartKind != weft::ChartKind::FullPeriod) {
+                continue;
+            }
+            auto kit = report.faceMesher.find(f.id);
+            if (kit == report.faceMesher.end() ||
+                kit->second != weft::MesherKind::CoonsGrid) {
+                continue;
+            }
+            ++kept;
+            assertBuild0(report, f.id, weft::MesherKind::CoonsGrid, label);
+        }
+        CHECK(kept >= 1);
+        std::printf("  %s: %d FilletStrip×FullPeriod×Coons kept\n", label,
+                    kept);
+    };
+    auto assertDrumWedgeCoons = [&](const weft::Analysis& analysis,
+                                    const weft::GenerationReport& report,
+                                    const char* label) {
+        int wedges = 0;
+        for (const auto& f : analysis.faces) {
+            if (f.featureClass != weft::FeatureClass::Drum ||
+                (f.chartKind != weft::ChartKind::IsoBand &&
+                 f.chartKind != weft::ChartKind::FreeTrim)) {
+                continue;
+            }
+            auto kit = report.faceMesher.find(f.id);
+            if (kit == report.faceMesher.end() ||
+                kit->second != weft::MesherKind::CoonsGrid) {
+                continue;
+            }
+            ++wedges;
+            assertBuild0(report, f.id, weft::MesherKind::CoonsGrid, label);
+        }
+        CHECK(wedges >= 1);
+        std::printf("  %s: %d Drum×IsoBand/FreeTrim×Coons kept\n", label,
+                    wedges);
     };
 
     {
@@ -1351,6 +1401,36 @@ void testSparseFoldKeepsStructuredCharts() {
     {
         const std::filesystem::path stepPath =
             std::filesystem::path(__FILE__).parent_path() /
+            "regressions/foam/fillet_fullperiod_r1.step";
+        weft::Model model = weft::loadStep(stepPath.string());
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        weft::generate(model, analysis, cadSettings(), &report);
+        assertProtectedFilletFull(analysis, report, "foam fillet extract");
+    }
+    {
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "regressions/foam/drum_isoband_bail_r1.step";
+        weft::Model model = weft::loadStep(stepPath.string());
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        weft::generate(model, analysis, cadSettings(), &report);
+        assertDrumWedgeCoons(analysis, report, "foam drum iso-band extract");
+    }
+    {
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "regressions/foam/drum_freetrim_probe_r1.step";
+        weft::Model model = weft::loadStep(stepPath.string());
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        weft::generate(model, analysis, cadSettings(), &report);
+        assertDrumWedgeCoons(analysis, report, "foam drum free-trim extract");
+    }
+    {
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
             "STEP_Examples/foam.stp";
         weft::Model model = weft::loadStep(stepPath.string());
         weft::Analysis analysis = weft::analyze(model);
@@ -1359,6 +1439,7 @@ void testSparseFoldKeepsStructuredCharts() {
             weft::generate(model, analysis, cadSettings(), &report);
         CHECK(isWatertight(mesh));
         assertProtectedDrums(analysis, report, "foam CAD");
+        assertProtectedFilletFull(analysis, report, "foam CAD");
     }
 }
 

@@ -1463,7 +1463,8 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
                     const char** why = nullptr,
                     bool* reflexPlanar = nullptr,
                     int maxWireEdges = 24,
-                    int maxSideChain = 8) {
+                    int maxSideChain = 8,
+                    bool allowDrumWedge = false) {
     auto reject = [&](const char* r) {
         if (why) *why = r;
         return false;
@@ -1624,6 +1625,9 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
     };
 
     std::vector<size_t> sideStart;  // indices into `order` that begin sides
+    // Analytic drum wedges (one meridian + two rails → UV apex) chain
+    // many edges into THREE sides with a collapsed apex, not four.
+    bool drumWedgeTri = false;
     if (nReal > 4) {
         // Joint k sits BEFORE order[k] (between order[k-1] and order[k]).
         // With a gap (pole/stub) joint 0 is FORCED to be a corner; on a
@@ -1640,9 +1644,69 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
         std::sort(byTurn.begin(), byTurn.end(),
                   [&](size_t x, size_t y) { return turn[x] > turn[y]; });
         // Need four clear corners; a fuzzy fourth means this isn't a
-        // four-sided patch.
-        if (turn[byTurn[3]] < 20.0 * M_PI / 180.0) return reject("no clear fourth corner");
-        sideStart = {byTurn[0], byTurn[1], byTurn[2], byTurn[3]};
+        // four-sided patch — unless it is an analytic drum wedge with
+        // three clear corners (one meridian + two rails meeting at a
+        // UV apex). Those take a collapsed-last triangle Coons instead
+        // of falling to the contract floor (foam 505/525 class).
+        const bool analyticDrumSurf =
+            signSurf.GetType() == GeomAbs_Cylinder ||
+            signSurf.GetType() == GeomAbs_Cone ||
+            signSurf.GetType() == GeomAbs_SurfaceOfRevolution;
+        const double cornerFloor = 20.0 * M_PI / 180.0;
+        // Exactly one full-height u-iso side marks a tapered drum wedge
+        // (meridian + two rails → UV apex). Prefer collapsed-last
+        // triangle Coons even when a weak fourth corner clears the
+        // angle floor — a four-sided bilinear patch probes outside
+        // those domains (foam 501/510 free-trim class).
+        int fullHeightUIso = 0;
+        if (analyticDrumSurf && gap < 0 && order.size() >= 3) {
+            const double uspanW = std::max(
+                1e-12, signSurf.LastUParameter() -
+                           signSurf.FirstUParameter());
+            const double vspanW = std::max(
+                1e-12, signSurf.LastVParameter() -
+                           signSurf.FirstVParameter());
+            for (int src : order) {
+                double f, l;
+                Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(
+                    all[src].edge, face, f, l);
+                if (pc.IsNull()) continue;
+                double umin = 1e300, umax = -1e300, vmin = 1e300,
+                       vmax = -1e300;
+                for (int k = 0; k <= 8; ++k) {
+                    gp_Pnt2d uv = pc->Value(f + (l - f) * k / 8.0);
+                    umin = std::min(umin, uv.X());
+                    umax = std::max(umax, uv.X());
+                    vmin = std::min(vmin, uv.Y());
+                    vmax = std::max(vmax, uv.Y());
+                }
+                if (umax - umin < 0.02 * uspanW &&
+                    vmax - vmin >= 0.9 * vspanW) {
+                    ++fullHeightUIso;
+                }
+            }
+        }
+        // Single-meridian analytic wedges:
+        //  - fuzzy 4th corner → always triangle Coons (foam 505/525)
+        //  - clear 4th but still a wedge → only when caller allows
+        //    (FeatureClass::Drum). FilletStrip cylinders share the
+        //    one-meridian signature and must stay four-sided
+        //    (teleporter face 208).
+        const bool fuzzyFourth = turn[byTurn[3]] < cornerFloor;
+        const bool wedgeGeom = analyticDrumSurf && gap < 0 &&
+                               fullHeightUIso == 1 &&
+                               turn[byTurn[2]] >= cornerFloor;
+        const bool wedgeCandidate =
+            wedgeGeom && (fuzzyFourth || allowDrumWedge);
+        if (fuzzyFourth && !wedgeCandidate) {
+            return reject("no clear fourth corner");
+        }
+        if (wedgeCandidate) {
+            drumWedgeTri = true;
+            sideStart = {byTurn[0], byTurn[1], byTurn[2]};
+        } else {
+            sideStart = {byTurn[0], byTurn[1], byTurn[2], byTurn[3]};
+        }
         std::sort(sideStart.begin(), sideStart.end());
         if (gap >= 0 && sideStart[0] != 0) return reject("gap not at a corner");
         // Reflex screening is DETECTION only, and PLANAR only: the
@@ -1710,7 +1774,8 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
         return pce;
     };
     // Fill the four sides (legacy arrays mirror each side's first piece).
-    const int nSides = nReal == 3 ? 3 : 4;
+    // Drum wedges chain >3 edges into three sides (collapsed apex).
+    const int nSides = (nReal == 3 || drumWedgeTri) ? 3 : 4;
     for (int sIdx = 0; sIdx < nSides; ++sIdx) {
         size_t from = sideStart[sIdx];
         size_t to = sIdx + 1 < int(sideStart.size())
@@ -1745,7 +1810,7 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
         patch.rev[slot] = edge.Orientation() == TopAbs_REVERSED;
         patch.edgeIds[slot] = model.edges.FindIndex(edge);
     };
-    if (nReal == 3) {
+    if (nReal == 3 || drumWedgeTri) {
         patch.collapsedLast = true;
         if (gap >= 0) {
             // Pole from a degenerate edge: its pcurve spans the UV gap.
@@ -1753,7 +1818,8 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
             patch.poleCurve = true;
             patch.edgeIds[3] = patch.edgeIds[1];  // density: v follows side 1
         } else {
-            // Plain triangle: side 3 is the sides-0/2 corner point.
+            // Plain triangle / drum wedge: side 3 is the sides-0/2
+            // corner point (the UV apex for a single-meridian drum).
             patch.edgeIds[3] = patch.edgeIds[2];
             patch.pc[3] = patch.pc[2];
             patch.first[3] = patch.last[3] = 0.0;
@@ -1884,9 +1950,13 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
                        const std::vector<double>* uScaffold = nullptr,
                        const std::vector<double>* vScaffold = nullptr,
                        const PinnedEdges* pins = nullptr,
-                       bool decoupleSeams = false) {
+                       bool decoupleSeams = false,
+                       bool allowDrumWedge = false) {
     CoonsPatch patch;
-    if (!makeCoonsPatch(face, model, patch, rotate)) return false;
+    if (!makeCoonsPatch(face, model, patch, rotate, nullptr, nullptr, 24, 8,
+                        allowDrumWedge)) {
+        return false;
+    }
     Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
 
     // Border vertices evaluate on the shared 3D edge curves, not through
@@ -3876,11 +3946,12 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
                    const std::vector<std::vector<int>>* inserts = nullptr,
                    int collarRings = 1,
                    const PinnedEdges* pins = nullptr, int cellCap = 0,
-                   bool decoupleSeams = false) {
+                   bool decoupleSeams = false,
+                   bool allowDrumWedge = false) {
     if (!inserts || inserts->empty()) {
         return meshCoonsGridBody(face, model, faceId, uParams, vParams,
                                  rotate, solvedEdge, out, nullptr, nullptr,
-                                 pins, decoupleSeams);
+                                 pins, decoupleSeams, allowDrumWedge);
     }
     dbg("coons cutout %d: %zu insert wire(s)", faceId, inserts->size());
     // Hole rings: 3D edge curves at solved counts (the bore wall's own
@@ -3973,7 +4044,10 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
     // sprouts rows with nothing to follow; escalation midpoints the
     // hole band first and only then doubles everything.
     CoonsPatch cpatch;
-    if (!makeCoonsPatch(face, model, cpatch, rotate)) return false;
+    if (!makeCoonsPatch(face, model, cpatch, rotate, nullptr, nullptr, 24, 8,
+                        allowDrumWedge)) {
+        return false;
+    }
     auto sideCount = [&](int i) {
         const auto& ch = cpatch.chain[i];
         if (ch.size() > 1) {
@@ -4094,7 +4168,7 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
             MeshBuilder tmp(grid);
             if (!meshCoonsGridBody(face, model, faceId, uParams, vParams,
                                    rotate, solvedEdge, tmp, uSc, vSc, pins,
-                                   decoupleSeams)) {
+                                   decoupleSeams, allowDrumWedge)) {
                 dbg("coons cutout %d: body failed (attempt %d)", faceId,
                     attempt);
                 return false;
@@ -7928,8 +8002,11 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         }
         const char* why = nullptr;
         bool reflex = false;
+        const bool drumWedge =
+            info.featureClass == FeatureClass::Drum;
         bool v = makeCoonsPatch(face, model, patch, s.coonsRotate, &why,
-                                &reflex);
+                                &reflex, /*maxWireEdges=*/24,
+                                /*maxSideChain=*/8, drumWedge);
         // Four-sided trims on analytic drums often cannot use the strict
         // open-band mesher (their side curves are not full-height isos), but
         // they still need the primitive's semantic axes. Wire start order is
@@ -7961,7 +8038,9 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 const char* canonicalWhy = nullptr;
                 bool canonicalReflex = false;
                 if (makeCoonsPatch(face, model, canonical, 1,
-                                   &canonicalWhy, &canonicalReflex)) {
+                                   &canonicalWhy, &canonicalReflex,
+                                   /*maxWireEdges=*/24, /*maxSideChain=*/8,
+                                   drumWedge)) {
                     patch = std::move(canonical);
                     reflex = canonicalReflex;
                     coonsEffectiveRotate = 1;
@@ -21025,7 +21104,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         plan.insertWires.empty() ? nullptr
                                                  : &plan.insertWires,
                         std::max(0, s.junctionRings), &pinnedEdge,
-                        s.cellCap, settings.decoupleSeams)) {
+                        s.cellCap, settings.decoupleSeams,
+                        /*allowDrumWedge=*/
+                        analysis.faces[fid - 1].featureClass ==
+                            FeatureClass::Drum)) {
                     demote(fid, face, surf, s, "coons failed");
                 }
                 break;
@@ -21726,24 +21808,29 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         // not lose to a zero-fold floor web. Foam's tall
                         // Drum×FullPeriod annulus-body build carries one
                         // inverted cell; swapping it for contract-floor
-                        // turns cylinder spans into triangle soup. Same
-                        // for sphere bowls (hard-path already keeps
-                        // revolution) and full-period fillet coons.
+                        // turns cylinder spans into triangle soup.
+                        // FilletStrip×FullPeriod coons share the sparse
+                        // pattern (foam top strip ~5 folds). Absolute
+                        // fold cap (≤8) keeps teleporter's heavily-folded
+                        // FS×FullPeriod faces on the floor (74–139 folds).
+                        // SphereCap is intentionally NOT protected —
+                        // keeping soft-path folded bowls reopens foam
+                        // seams (WP5 / measured on foam 314/315/322).
                         const FaceInfo& sparseInfo = analysis.faces[fid - 1];
                         const int sparseN =
                             int(parts[fid].polygons.size());
-                        // Align with the hard demote gate (inverted*4 >
-                        // tested): below ~25% folds AND an absolute cap,
-                        // keep Drum×RevolutionGrid columns. SphereCap /
-                        // FilletStrip are intentionally NOT protected —
-                        // skipping those floor heals reopens seams or
-                        // ships hundreds of folded coons cells
-                        // (teleporter FS×FullPeriod counterexample).
+                        const bool sparseDrum =
+                            plan.kind == MesherKind::RevolutionGrid &&
+                            sparseInfo.featureClass == FeatureClass::Drum;
+                        const bool sparseFilletFull =
+                            plan.kind == MesherKind::CoonsGrid &&
+                            sparseInfo.featureClass ==
+                                FeatureClass::FilletStrip &&
+                            sparseInfo.chartKind == ChartKind::FullPeriod;
                         const bool sparseProtect =
                             sparseN >= 8 && liveFolds > 0 &&
                             liveFolds <= 8 && liveFolds * 4 <= sparseN &&
-                            plan.kind == MesherKind::RevolutionGrid &&
-                            sparseInfo.featureClass == FeatureClass::Drum;
+                            (sparseDrum || sparseFilletFull);
                         if (sparseProtect) {
                             dbg("mesh face %d: sparse fold keep %s "
                                 "(%d/%d) — refuse contract floor",
@@ -21804,14 +21891,21 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             }
             if (liveFp > 0) {
                 // Same sparse-fold protect as the invertedCells tournament
-                // (Drum×RevolutionGrid only).
+                // (Drum×RevolutionGrid + FilletStrip×FullPeriod×Coons).
                 {
                     const FaceInfo& sparseInfo = analysis.faces[fid - 1];
                     const int sparseN = int(parts[fid].polygons.size());
+                    const bool sparseDrum =
+                        plan.kind == MesherKind::RevolutionGrid &&
+                        sparseInfo.featureClass == FeatureClass::Drum;
+                    const bool sparseFilletFull =
+                        plan.kind == MesherKind::CoonsGrid &&
+                        sparseInfo.featureClass ==
+                            FeatureClass::FilletStrip &&
+                        sparseInfo.chartKind == ChartKind::FullPeriod;
                     if (sparseN >= 8 && liveFp > 0 && liveFp <= 8 &&
                         liveFp * 4 <= sparseN &&
-                        plan.kind == MesherKind::RevolutionGrid &&
-                        sparseInfo.featureClass == FeatureClass::Drum) {
+                        (sparseDrum || sparseFilletFull)) {
                         dbg("mesh face %d: sparse foldedPolys keep %s "
                             "(%d/%d) — refuse contract floor",
                             fid, mesherKindName(plan.kind), liveFp, sparseN);
