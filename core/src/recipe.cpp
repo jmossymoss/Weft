@@ -1,5 +1,6 @@
 #include "weft/recipe.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
@@ -28,6 +29,9 @@ void applySetting(FaceMeshSettings& s, const std::string& key,
     else if (key == "weld") s.weldTolerance = std::stod(value);
     else if (key == "reldev") s.relativeDeviation = std::stoi(value) != 0;
     else if (key == "adapt") s.adaptive = std::stoi(value) != 0;
+    else if (key == "mincurve") {
+        s.minCurvedSegments = std::clamp(std::stoi(value), 1, 256);
+    }
     else if (key == "boundary") s.boundary = std::stoi(value);
     else if (key == "sqcollar") s.squareCollar = std::stoi(value) != 0;
     else if (key == "crot") s.coonsRotate = std::stoi(value);
@@ -55,21 +59,22 @@ void applySettingsList(FaceMeshSettings& s, const std::string& list) {
 }
 
 static std::string settingsToString(const FaceMeshSettings& s) {
-    char buf[448];
+    char buf[512];
     std::snprintf(buf, sizeof buf,
                   "radial=%d,axial=%d,gridu=%d,gridv=%d,cap=%s,chord=%g,"
                   "angle=%g,loops=%d,hold=%g,rings=%d,quads=%d,minimal=%d,"
                   "skip=%d,mesher=%d,linkrims=%d,minsize=%g,reldev=%d,"
-                  "adapt=%d,boundary=%d,sqcollar=%d,crot=%d,puretris=%d,"
-                  "weld=%g",
+                  "adapt=%d,mincurve=%d,boundary=%d,sqcollar=%d,crot=%d,"
+                  "puretris=%d,weld=%g",
                   s.radial, s.axial, s.gridU, s.gridV,
                   s.cap == CapStyle::Fan ? "fan" : "ngon", s.chordTolerance,
                   s.angleToleranceDeg, s.filletLoops, s.filletHold,
                   s.junctionRings, s.quadDominant ? 1 : 0, s.minimal ? 1 : 0,
                   s.exclude ? 1 : 0, s.forceMesher, s.linkRims ? 1 : 0,
                   s.minSize, s.relativeDeviation ? 1 : 0,
-                  s.adaptive ? 1 : 0, s.boundary, s.squareCollar ? 1 : 0,
-                  s.coonsRotate, s.pureTriFloor ? 1 : 0, s.weldTolerance);
+                  s.adaptive ? 1 : 0, s.minCurvedSegments, s.boundary,
+                  s.squareCollar ? 1 : 0, s.coonsRotate,
+                  s.pureTriFloor ? 1 : 0, s.weldTolerance);
     return buf;
 }
 

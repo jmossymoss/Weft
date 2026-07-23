@@ -1,7 +1,2 @@
 name	profile	metric	ceiling	reproducer	owning_wp	removal_condition
-slitdrill	cad	require_watertight	0	fixtures/slitdrill.step	WP3	tangent-contact pocket/bore non-manifold edges fixed by topology class
-slitdrill	default	require_watertight	0	fixtures/slitdrill.step	WP3	tangent-contact pocket/bore non-manifold edges fixed by topology class
-tan_slit	cad	max_raw	1	fixtures/generated/tan_slit.step	WP3	dirty-step tangent bore raw demotion bounded/cleared
-tan_slit	default	max_raw	1	fixtures/generated/tan_slit.step	WP3	dirty-step tangent bore raw demotion bounded/cleared
-tork	cad	require_watertight	0	STEP_Examples/tork.stp	WP3	broken source; replace or heal with explicit diagnostic, then enforce watertight
-tork	default	require_watertight	0	STEP_Examples/tork.stp	WP3	broken source; replace or heal with explicit diagnostic, then enforce watertight
+MP9	cad	max_open_edges	450	STEP_Examples/MP9.stp	WP6	residual #1805-family seam opens (~380); fillet/grip/bullet class reducers landed

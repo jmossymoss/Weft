@@ -401,11 +401,12 @@ TopoDS_Shape makeFixture(const std::string& name) {
             BRepPrimAPI_MakeCylinder(axX, 6.0, 42.0).Shape();
         TopoDS_Shape cut = BRepAlgoAPI_Cut(block, boreZ).Shape();
         cut = BRepAlgoAPI_Cut(cut, boreX).Shape();
-        // Pocket whose wall passes exactly through the Z bore's surface
-        // (x = 26 = 20 + r): the intersection leaves a line edge running
-        // the length of the bore wall.
+        // Pocket wall cuts INTO the Z bore (x = 25.5 < 20 + r): a real
+        // slit intersection, not a zero-width tangent contact that leaves
+        // a 3-face non-manifold generator on the bore wall. tan_slit owns
+        // the intentional dirty tangent-contact class.
         TopoDS_Shape pocket =
-            BRepPrimAPI_MakeBox(gp_Pnt(26.0, 10.0, -1.0),
+            BRepPrimAPI_MakeBox(gp_Pnt(25.5, 10.0, -1.0),
                                 gp_Pnt(41.0, 30.0, 31.0))
                 .Shape();
         return BRepAlgoAPI_Cut(cut, pocket).Shape();

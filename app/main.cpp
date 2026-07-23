@@ -73,6 +73,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <thread>
 #include <cmath>
 #include <cstdio>
@@ -2058,7 +2059,7 @@ static std::array<int, 2> faceSolvedCounts(App& app, int faceId) {
 // (the count-style nudge default). Every UI surface that lists or edits
 // kind-specific parameters resolves through this one helper so they can
 // never disagree with each other.
-static weft::MesherKind effectiveKind(App& app, int fid) {
+static weft::MesherKind effectiveKind(const App& app, int fid) {
     if (app.hasModel && fid > 0) {
         const weft::FaceMeshSettings& s = app.recipe.settings.forFace(fid);
         if (s.forceMesher > 0) return weft::MesherKind(s.forceMesher - 1);
@@ -2066,6 +2067,58 @@ static weft::MesherKind effectiveKind(App& app, int fid) {
         if (it != app.report.faceMesher.end()) return it->second;
     }
     return weft::MesherKind::RevolutionGrid;
+}
+
+// One-line face identity for multi-select rosters and topology debugging:
+// "#1446  bspline  [coons-grid]  contract-floor".
+static std::string faceDebugLabel(const App& app, int fid) {
+    char buf[256];
+    if (fid < 1 || fid > int(app.analysis.faces.size())) {
+        std::snprintf(buf, sizeof buf, "#%d  (stale id)", fid);
+        return buf;
+    }
+    const weft::FaceInfo& f = app.analysis.faces[fid - 1];
+    const char* build = "";
+    auto bit = app.report.faceBuild.find(fid);
+    if (bit != app.report.faceBuild.end()) {
+        if (bit->second == -1) build = "  EMPTY";
+        else if (bit->second == 1) build = "  raw-fallback";
+        else if (bit->second == 2) build = "  contract-floor";
+    }
+    std::snprintf(buf, sizeof buf, "#%d  %s%s%s  %s/%s  [%s]%s", f.id,
+                  weft::surfaceTypeName(f.type),
+                  f.isFillet ? " [fillet]" : "", f.isHole ? " [hole]" : "",
+                  weft::featureClassName(f.featureClass),
+                  weft::chartKindName(f.chartKind),
+                  weft::mesherKindName(effectiveKind(app, fid)), build);
+    return buf;
+}
+
+// Scrollable list of every selected B-rep face. Click a row to make it
+// active (knobs below edit that face) without shrinking the selection —
+// shift-clicks in the viewport still extend the set.
+static void drawSelectedFacesRoster(App& app) {
+    if (app.selFaces.size() <= 1) return;
+    ImGui::TextDisabled("%zu selected — click a row to edit that face",
+                        app.selFaces.size());
+    const float rowH = ImGui::GetTextLineHeightWithSpacing();
+    const float h = std::min(rowH * 8.5f, rowH * float(app.selFaces.size() + 1));
+    if (!ImGui::BeginChild("##selfaces", ImVec2(0.0f, h), true)) {
+        ImGui::EndChild();
+        return;
+    }
+    for (int fid : app.selFaces) {
+        const bool active = fid == app.activeFace;
+        ImGui::PushID(fid);
+        if (ImGui::Selectable(faceDebugLabel(app, fid).c_str(), active)) {
+            app.activeFace = fid;
+        }
+        if (active && ImGui::IsWindowAppearing()) {
+            ImGui::SetScrollHereY(0.25f);
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
 }
 
 static std::array<float, 2> gpuProxyCounts(App& app) {
@@ -2170,6 +2223,9 @@ static void applyChangedFields(const weft::FaceMeshSettings& before,
     }
     if (after.boundary != before.boundary) t.boundary = after.boundary;
     if (after.adaptive != before.adaptive) t.adaptive = after.adaptive;
+    if (after.minCurvedSegments != before.minCurvedSegments) {
+        t.minCurvedSegments = after.minCurvedSegments;
+    }
     if (after.cellCap != before.cellCap) t.cellCap = after.cellCap;
 }
 
@@ -2507,6 +2563,28 @@ static void setSelectMode(App& app, SelectMode next) {
                  : next == SelectMode::Edge     ? "feature edge mode"
                  : next == SelectMode::Face     ? "element mode"
                                                 : "object mode";
+}
+
+// Replace the face selection with every id matching `keep`, switch to
+// element (B-rep face) mode, and make the lowest id active so the
+// Selection roster + knobs open on a real face.
+static void selectFacesMatching(App& app,
+                                const std::function<bool(int)>& keep) {
+    setSelectMode(app, SelectMode::Face);  // clears prior selection
+    app.selFaces.clear();
+    for (const auto& fi : app.analysis.faces) {
+        if (fi.id >= 1 && fi.id <= app.model.faceCount() && keep(fi.id)) {
+            app.selFaces.insert(fi.id);
+        }
+    }
+    app.activeFace = app.selFaces.empty() ? 0 : *app.selFaces.begin();
+    rebuildBuffers(app);
+    if (!app.selFaces.empty()) {
+        char buf[96];
+        std::snprintf(buf, sizeof buf, "selected %zu face(s)",
+                      app.selFaces.size());
+        app.status = buf;
+    }
 }
 
 // Object mode: a click selects the whole solid the face belongs to, so
@@ -3301,6 +3379,19 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
             s.gridV = std::max(s.gridV, live[1]);
         }
     }
+    if (s.adaptive) {
+        if (ImGui::DragInt("min curved segments", &s.minCurvedSegments, 0.2f,
+                           1, 256)) {
+            s.minCurvedSegments = std::clamp(s.minCurvedSegments, 1, 256);
+            ch = true;
+        }
+        hover({kAllKinds});
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Lower floor for closed curved rings (cylinders, spheres,\n"
+                "fillets). Adaptive never resolves those below this count.");
+        }
+    }
     // Per-face weld tolerance (mm, 0 = inherit the global). Governs how
     // loosely this face's boundary welds onto its neighbours; a shared
     // edge welds at the looser of the two faces (and the global), so
@@ -3643,6 +3734,10 @@ static void drawActiveFaceSettings(App& app) {
                 ImGui::TextDisabled("contract floor (exact borders)");
             }
         }
+        auto cit = app.report.faceBuildCause.find(app.activeFace);
+        if (cit != app.report.faceBuildCause.end() && !cit->second.empty()) {
+            ImGui::TextWrapped("cause: %s", cit->second.c_str());
+        }
     }
     // Editing auto-overrides: the editor works on a copy of the ACTIVE
     // face's settings; only the fields that changed land on the other
@@ -3761,6 +3856,19 @@ static void drawMesherDefaultTabs(App& app) {
         if (live[1] > 0) {
             d.axial = std::max(d.axial, live[1]);
             d.gridV = std::max(d.gridV, live[1]);
+        }
+    }
+    if (d.adaptive) {
+        if (ImGui::DragInt("min curved segments", &d.minCurvedSegments, 0.2f,
+                           1, 256)) {
+            d.minCurvedSegments = std::clamp(d.minCurvedSegments, 1, 256);
+            ch = true;
+        }
+        hover({kAllKinds});
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Lower floor for closed curved rings (cylinders, spheres,\n"
+                "fillets). Adaptive never resolves those below this count.");
         }
     }
     if (!ImGui::BeginTabBar("##mesherdefaults",
@@ -4273,12 +4381,11 @@ static void drawFacePopup(App& app) {
     }
     const weft::FaceInfo& f = app.analysis.faces[app.activeFace - 1];
     if (app.selFaces.size() > 1) {
-        ImGui::Text("%zu faces (active #%d %s)", app.selFaces.size(), f.id,
-                    weft::surfaceTypeName(f.type));
-    } else {
-        ImGui::Text("face #%d  %s%s%s", f.id, weft::surfaceTypeName(f.type),
-                    f.isFillet ? "  [fillet]" : "", f.isHole ? "  [hole]" : "");
+        ImGui::Text("%zu faces (active #%d)", app.selFaces.size(), f.id);
+        drawSelectedFacesRoster(app);
+        ImGui::TextDisabled("editing active:");
     }
+    ImGui::Text("%s", faceDebugLabel(app, f.id).c_str());
     ImGui::Separator();
     ImGui::PushID("ctx");
     ImGui::PushItemWidth(150 * gUiScale);
@@ -4798,6 +4905,24 @@ static void drawUi(App& app) {
                 ImGui::SameLine();
                 ImGui::Checkbox("show##problems", &app.showProblems);
             }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("select##foldedfaces")) {
+                const std::vector<uint8_t> folded =
+                    weft::foldedPolys(app.model, app.mesh);
+                std::set<int> owners;
+                for (size_t p = 0; p < folded.size(); ++p) {
+                    if (!folded[p] || p >= app.mesh.polygonFaceId.size()) {
+                        continue;
+                    }
+                    const int fid = app.mesh.polygonFaceId[p];
+                    if (fid >= 1 && fid <= app.model.faceCount()) {
+                        owners.insert(fid);
+                    }
+                }
+                selectFacesMatching(app, [&](int fid) {
+                    return owners.count(fid) > 0;
+                });
+            }
         }
         if (!app.bLoops.empty()) {
             ImGui::TextColored({1.0f, 0.6f, 0.3f, 1.0f},
@@ -4805,42 +4930,84 @@ static void drawUi(App& app) {
                                app.bLoops.size());
             ImGui::SameLine();
             ImGui::TextDisabled("(J bridges, deleted faces expected)");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("select##openloopfaces")) {
+                // Faces that own any polygon touching a boundary-loop
+                // vertex — the usual owners of unexplained open seams.
+                std::vector<uint8_t> onLoop(app.mesh.vertexCount(), 0);
+                for (const auto& loop : app.bLoops) {
+                    for (uint32_t v : loop) {
+                        if (v < onLoop.size()) onLoop[v] = 1;
+                    }
+                }
+                std::set<int> owners;
+                for (size_t p = 0; p < app.mesh.polygons.size(); ++p) {
+                    if (p >= app.mesh.polygonFaceId.size()) continue;
+                    bool hit = false;
+                    for (uint32_t v : app.mesh.polygons[p]) {
+                        if (v < onLoop.size() && onLoop[v]) {
+                            hit = true;
+                            break;
+                        }
+                    }
+                    if (!hit) continue;
+                    const int fid = app.mesh.polygonFaceId[p];
+                    if (fid >= 1 && fid <= app.model.faceCount()) {
+                        owners.insert(fid);
+                    }
+                }
+                selectFacesMatching(app, [&](int fid) {
+                    return owners.count(fid) > 0;
+                });
+            }
         }
         // Build health from the report: a face that emitted nothing is a
         // hole in the output with nothing to click in the viewport — the
         // select button routes it back into the Selection panel where its
         // override can be cleared (and ctrl+Z now rebuilds reliably).
         {
-            int emptyFaces = 0, rawFaces = 0;
+            int emptyFaces = 0, rawFaces = 0, floorFaces = 0;
             for (const auto& [fid, b] : app.report.faceBuild) {
                 if (b == -1) ++emptyFaces;
                 else if (b == 1) ++rawFaces;
+                else if (b == 2) ++floorFaces;
             }
             if (emptyFaces > 0) {
                 ImGui::TextColored({1.0f, 0.35f, 0.3f, 1.0f},
                                    "%d face(s) emitted nothing", emptyFaces);
                 ImGui::SameLine();
                 if (ImGui::SmallButton("select##emptyfaces")) {
-                    setSelectMode(app, SelectMode::Face);  // clears sel
-                    app.selFaces.clear();
-                    for (const auto& [fid, b] : app.report.faceBuild) {
-                        // Ids must belong to the CURRENT model — the
-                        // report can briefly be the previous model's
-                        // while its first async run is still meshing.
-                        if (b == -1 && fid >= 1 &&
-                            fid <= app.model.faceCount()) {
-                            app.selFaces.insert(fid);
-                        }
-                    }
-                    if (!app.selFaces.empty()) {
-                        app.activeFace = *app.selFaces.begin();
-                    }
-                    rebuildBuffers(app);
+                    selectFacesMatching(app, [&](int fid) {
+                        auto it = app.report.faceBuild.find(fid);
+                        return it != app.report.faceBuild.end() &&
+                               it->second == -1;
+                    });
                 }
             }
             if (rawFaces > 0) {
                 ImGui::TextColored({1.0f, 0.6f, 0.3f, 1.0f},
                                    "%d face(s) on raw fallback", rawFaces);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("select##rawfaces")) {
+                    selectFacesMatching(app, [&](int fid) {
+                        auto it = app.report.faceBuild.find(fid);
+                        return it != app.report.faceBuild.end() &&
+                               it->second == 1;
+                    });
+                }
+            }
+            if (floorFaces > 0) {
+                ImGui::TextColored({1.0f, 0.7f, 0.35f, 1.0f},
+                                   "%d face(s) on contract floor",
+                                   floorFaces);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("select##floorfaces")) {
+                    selectFacesMatching(app, [&](int fid) {
+                        auto it = app.report.faceBuild.find(fid);
+                        return it != app.report.faceBuild.end() &&
+                               it->second == 2;
+                    });
+                }
             }
         }
         ImGui::Separator();
@@ -4989,10 +5156,11 @@ static void drawUi(App& app) {
             if (app.selFaces.size() > 1) {
                 ImGui::Text("%zu faces (active #%d)", app.selFaces.size(),
                             f.id);
+                drawSelectedFacesRoster(app);
+                ImGui::Separator();
+                ImGui::TextDisabled("editing active face:");
             }
-            ImGui::Text("face #%d  %s%s%s", f.id, weft::surfaceTypeName(f.type),
-                        f.isFillet ? "  [fillet]" : "",
-                        f.isHole ? "  [hole]" : "");
+            ImGui::Text("%s", faceDebugLabel(app, f.id).c_str());
             if (f.radius > 0) ImGui::Text("radius %.3f", f.radius);
             ImGui::PushID("perface");
             drawActiveFaceSettings(app);

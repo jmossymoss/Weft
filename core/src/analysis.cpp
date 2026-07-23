@@ -2,15 +2,20 @@
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepBndLib.hxx>
 #include <BRepGProp_Face.hxx>
-#include <GCPnts_AbscissaPoint.hxx>
+#include <BRepTools.hxx>
 #include <BRep_Tool.hxx>
+#include <Bnd_Box.hxx>
+#include <GCPnts_AbscissaPoint.hxx>
 #include <Geom2d_Curve.hxx>
 #include <Geom_Curve.hxx>
+#include <Geom_Surface.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
+#include <TopoDS_Wire.hxx>
 #include <gp_Dir.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Pnt2d.hxx>
@@ -46,6 +51,30 @@ const char* edgeConvexityName(EdgeConvexity c) {
         case EdgeConvexity::Boundary: return "boundary";
     }
     return "boundary";
+}
+
+const char* chartKindName(ChartKind k) {
+    switch (k) {
+        case ChartKind::FreeTrim: return "free-trim";
+        case ChartKind::Pole: return "pole";
+        case ChartKind::FullPeriod: return "full-period";
+        case ChartKind::IsoBand: return "iso-band";
+        case ChartKind::GeometricCap: return "geometric-cap";
+    }
+    return "free-trim";
+}
+
+const char* featureClassName(FeatureClass c) {
+    switch (c) {
+        case FeatureClass::Freeform: return "freeform";
+        case FeatureClass::Drum: return "drum";
+        case FeatureClass::SphereCap: return "sphere-cap";
+        case FeatureClass::FilletStrip: return "fillet-strip";
+        case FeatureClass::HolePlate: return "hole-plate";
+        case FeatureClass::BossJunction: return "boss-junction";
+        case FeatureClass::PlanarPanel: return "planar-panel";
+    }
+    return "freeform";
 }
 
 static SurfaceType classifySurface(const TopoDS_Face& face, double& radiusOut) {
@@ -105,6 +134,218 @@ static bool faceNormalAtEdgeMid(const TopoDS_Edge& edge, const TopoDS_Face& face
 
 static constexpr double kSmoothToleranceDeg = 0.5;
 
+static LoopSignature classifyLoop(const TopoDS_Face& face) {
+    LoopSignature sig;
+    TopoDS_Wire outer = BRepTools::OuterWire(face);
+    std::vector<gp_Pnt> outerPts;
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        ++sig.wireCount;
+        const TopoDS_Wire wire = TopoDS::Wire(wx.Current());
+        const bool isOuter = !outer.IsNull() && wire.IsSame(outer);
+        for (TopExp_Explorer ex(wire, TopAbs_EDGE); ex.More(); ex.Next()) {
+            const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+            if (BRep_Tool::Degenerated(edge)) {
+                ++sig.degEdgeCount;
+                continue;
+            }
+            ++sig.realEdgeCount;
+            if (!isOuter) continue;
+            double f = 0, l = 0;
+            Handle(Geom_Curve) c = BRep_Tool::Curve(edge, f, l);
+            if (c.IsNull()) continue;
+            for (int i = 0; i < 8; ++i) {
+                outerPts.push_back(
+                    c->Value(f + (l - f) * (i + 0.5) / 8.0));
+            }
+        }
+    }
+    if (outerPts.size() >= 4) {
+        gp_XYZ c(0, 0, 0);
+        for (const gp_Pnt& p : outerPts) c += p.XYZ();
+        c /= double(outerPts.size());
+        double rMin = 1e300, rMax = 0;
+        for (const gp_Pnt& p : outerPts) {
+            const double r = p.XYZ().Subtracted(c).Modulus();
+            rMin = std::min(rMin, r);
+            rMax = std::max(rMax, r);
+        }
+        if (rMin > 1e-12) sig.outerRoundness = rMax / rMin;
+    }
+    return sig;
+}
+
+// Mirror of the mesher sphere chart probe: true when RevolutionGrid owns the
+// UV chart; false for geometric caps (bullet tips) that need disk rings.
+static bool sphereHasUvPoleChart(const TopoDS_Face& face,
+                                 const BRepAdaptor_Surface& surf) {
+    if (surf.GetType() != GeomAbs_Sphere) return false;
+    for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+        if (BRep_Tool::Degenerated(TopoDS::Edge(ex.Current()))) return true;
+    }
+    Handle(Geom_Surface) S = BRep_Tool::Surface(face);
+    double umin = 0, umax = 0, vmin = 0, vmax = 0;
+    BRepTools::UVBounds(face, umin, umax, vmin, vmax);
+    const double uspan = umax - umin, vspan = vmax - vmin;
+    if (S && !S.IsNull() && S->IsUPeriodic() &&
+        uspan >= 0.999 * S->UPeriod()) {
+        return true;
+    }
+    if (surf.IsUClosed() && uspan >= 0.999 * 2.0 * M_PI) return true;
+
+    Bnd_Box bb;
+    BRepBndLib::Add(face, bb);
+    if (bb.IsVoid()) return false;
+    double bx0, by0, bz0, bx1, by1, bz1;
+    bb.Get(bx0, by0, bz0, bx1, by1, bz1);
+    const double diag =
+        gp_Pnt(bx0, by0, bz0).Distance(gp_Pnt(bx1, by1, bz1));
+    if (!(diag > 1e-9)) return false;
+    const double collapseTol = 0.01 * diag;
+    auto isoExtent = [&](bool fixU, double fixed) {
+        gp_Pnt lo(1e300, 1e300, 1e300), hi(-1e300, -1e300, -1e300);
+        for (int k = 0; k <= 16; ++k) {
+            const double t = k / 16.0;
+            const gp_Pnt p =
+                fixU ? surf.Value(fixed, vmin + vspan * t)
+                     : surf.Value(umin + uspan * t, fixed);
+            lo.SetX(std::min(lo.X(), p.X()));
+            hi.SetX(std::max(hi.X(), p.X()));
+            lo.SetY(std::min(lo.Y(), p.Y()));
+            hi.SetY(std::max(hi.Y(), p.Y()));
+            lo.SetZ(std::min(lo.Z(), p.Z()));
+            hi.SetZ(std::max(hi.Z(), p.Z()));
+        }
+        return lo.Distance(hi);
+    };
+    const double eU0 = isoExtent(true, umin);
+    const double eU1 = isoExtent(true, umax);
+    const double eV0 = isoExtent(false, vmin);
+    const double eV1 = isoExtent(false, vmax);
+    const bool uPolar = (eU0 < collapseTol) != (eU1 < collapseTol) &&
+                        eV0 > collapseTol && eV1 > collapseTol;
+    const bool vPolar = (eV0 < collapseTol) != (eV1 < collapseTol) &&
+                        eU0 > collapseTol && eU1 > collapseTol;
+    return (uPolar && !vPolar) || (vPolar && !uPolar);
+}
+
+static ChartKind classifyChart(const TopoDS_Face& face, SurfaceType type,
+                               const LoopSignature& loop) {
+    BRepAdaptor_Surface surf(face);
+    double umin = 0, umax = 0, vmin = 0, vmax = 0;
+    BRepTools::UVBounds(face, umin, umax, vmin, vmax);
+    const double uspan = umax - umin;
+    Handle(Geom_Surface) S = BRep_Tool::Surface(face);
+
+    if (type == SurfaceType::Sphere) {
+        if (!sphereHasUvPoleChart(face, surf)) return ChartKind::GeometricCap;
+        if (loop.degEdgeCount > 0) return ChartKind::Pole;
+        if (S && !S.IsNull() && S->IsUPeriodic() &&
+            uspan >= 0.999 * S->UPeriod()) {
+            return ChartKind::FullPeriod;
+        }
+        if (surf.IsUClosed() && uspan >= 0.999 * 2.0 * M_PI) {
+            return ChartKind::FullPeriod;
+        }
+        return ChartKind::Pole;
+    }
+
+    const bool analyticDrum = type == SurfaceType::Cylinder ||
+                              type == SurfaceType::Cone ||
+                              type == SurfaceType::Revolution ||
+                              type == SurfaceType::Torus;
+    if (analyticDrum) {
+        if ((S && !S.IsNull() && S->IsUPeriodic() &&
+             uspan >= 0.999 * S->UPeriod()) ||
+            (surf.IsUClosed() && uspan >= 0.999 * 2.0 * M_PI) ||
+            (type == SurfaceType::Sphere)) {
+            return ChartKind::FullPeriod;
+        }
+        if (uspan >= 1.0) return ChartKind::IsoBand;
+        return ChartKind::FreeTrim;
+    }
+    return ChartKind::FreeTrim;
+}
+
+static int priorityFor(FeatureClass fc, SurfaceType type) {
+    // Product order: cylinder → sphere → hemisphere → box → torus → curves →
+    // cuts. Hemisphere shares sphere-cap priority.
+    switch (fc) {
+        case FeatureClass::Drum:
+            return type == SurfaceType::Cylinder ? 100 : 95;
+        case FeatureClass::SphereCap:
+            return 90;
+        case FeatureClass::FilletStrip:
+            return 70;
+        case FeatureClass::BossJunction:
+            return 60;
+        case FeatureClass::HolePlate:
+            return 50;
+        case FeatureClass::PlanarPanel:
+            return 40;
+        case FeatureClass::Freeform:
+            return type == SurfaceType::BSpline || type == SurfaceType::Bezier
+                       ? 20
+                       : 10;
+    }
+    return 10;
+}
+
+// Narrow constant-radius blend vs wide false-fillet drum (foam half-drums
+// are isFillet but must stay Drum × IsoBand for open-band columns).
+static bool isNarrowFilletStrip(const TopoDS_Face& face, double radius) {
+    BRepAdaptor_Surface surf(face);
+    const double vSpan =
+        surf.LastVParameter() - surf.FirstVParameter();
+    const double uSpan =
+        surf.LastUParameter() - surf.FirstUParameter();
+    if (radius <= 1e-9) return true;
+    return vSpan <= 1.8 * radius || uSpan <= 1.9;
+}
+
+static FeatureClass classifyFeature(const TopoDS_Face& face, SurfaceType type,
+                                    bool isFillet, bool isHole, ChartKind chart,
+                                    const LoopSignature& loop,
+                                    double radius) {
+    if (type == SurfaceType::Sphere) return FeatureClass::SphereCap;
+
+    if (isFillet && (type == SurfaceType::Cylinder ||
+                     type == SurfaceType::Torus ||
+                     type == SurfaceType::Cone)) {
+        if (isNarrowFilletStrip(face, radius)) return FeatureClass::FilletStrip;
+        // Wide tangent drum wrongly flagged as fillet — keep as Drum.
+        return FeatureClass::Drum;
+    }
+
+    if (type == SurfaceType::Cylinder || type == SurfaceType::Cone ||
+        type == SurfaceType::Revolution) {
+        (void)isHole;
+        (void)chart;
+        return FeatureClass::Drum;
+    }
+
+    if (type == SurfaceType::Torus) {
+        return isFillet && isNarrowFilletStrip(face, radius)
+                   ? FeatureClass::FilletStrip
+                   : FeatureClass::Freeform;
+    }
+
+    if (type == SurfaceType::Plane) {
+        if (loop.wireCount >= 2) {
+            // Roundish outer + inner wires → hole plate; a single compact
+            // annular web with a cylindrical neighbor is often a boss
+            // junction — treat multi-wire planes with round outer as
+            // boss-junction when outerRoundness is circle-like.
+            if (loop.outerRoundness <= 1.35 && loop.wireCount == 2) {
+                return FeatureClass::BossJunction;
+            }
+            return FeatureClass::HolePlate;
+        }
+        return FeatureClass::PlanarPanel;
+    }
+
+    return FeatureClass::Freeform;
+}
+
 Analysis analyze(const Model& model) {
     Analysis a;
     a.faces.resize(model.faceCount());
@@ -145,6 +386,7 @@ Analysis analyze(const Model& model) {
         FaceInfo& info = a.faces[fid - 1];
         info.id = fid;
         info.type = classifySurface(face, info.radius);
+        info.loop = classifyLoop(face);
         for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
             int eid = model.edges.FindIndex(ex.Current());
             if (eid > 0 &&
@@ -249,6 +491,22 @@ Analysis analyze(const Model& model) {
                 }
             }
         }
+    }
+
+    // AD-5: chart + feature class + priority (once per face).
+    for (FaceInfo& f : a.faces) {
+        const TopoDS_Face face = TopoDS::Face(model.faces(f.id));
+        f.chartKind = classifyChart(face, f.type, f.loop);
+        f.featureClass = classifyFeature(face, f.type, f.isFillet, f.isHole,
+                                         f.chartKind, f.loop, f.radius);
+        // Wide false-fillets reclassified as Drum keep an iso/full chart.
+        if (f.featureClass == FeatureClass::Drum &&
+            f.chartKind == ChartKind::FreeTrim &&
+            (f.type == SurfaceType::Cylinder || f.type == SurfaceType::Cone ||
+             f.type == SurfaceType::Revolution)) {
+            f.chartKind = classifyChart(face, f.type, f.loop);
+        }
+        f.priority = priorityFor(f.featureClass, f.type);
     }
 
     return a;

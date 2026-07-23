@@ -96,7 +96,9 @@ void usage() {
         "                      collars ('dense' restores grid flats)\n"
         "    --adaptive        curvature-driven border counts (the CAD profile;\n"
         "                      big arcs get more segments, straights get 1)\n"
-"    --flat-quads      dense grids on flat faces too (default: flats\n"
+        "    --min-curve N     lower floor on adaptive counts for closed curved\n"
+        "                      rings (cylinders/spheres/fillets); default 6\n"
+        "    --flat-quads      dense grids on flat faces too (default: flats\n"
         "                      are boundary n-gons/webs; quads go to curves)\n"
         "    --quads           pair exact-border fallback triangles into quads\n"
         "    --pure-tris       keep fallback floors as raw triangles\n"
@@ -108,7 +110,8 @@ void usage() {
         "                      fallback borders (per-face: --face ID:weld=MM)\n"
         "    --face ID:k=v[,k=v...]\n"
         "                      per-face override, e.g. --face 1:radial=24,axial=2\n"
-        "                      keys: radial, axial, gridu, gridv, cap, chord\n"
+        "                      keys: radial, axial, gridu, gridv, cap, chord,\n"
+        "                      adapt, mincurve, reldev, minsize, …\n"
         "    --edge ID:N       pin an edge (and its density-matched group) to\n"
         "                      exactly N subdivisions\n"
         "    --op-loop ID:u,v,t\n"
@@ -163,6 +166,8 @@ int cmdInspect(const std::vector<std::string>& args) {
         else std::printf("           ");
         std::printf("%s", f.isFillet ? " fillet " : f.isHole ? " hole   "
                                                             : "        ");
+        std::printf(" %s/%s", weft::featureClassName(f.featureClass),
+                    weft::chartKindName(f.chartKind));
         std::printf(" edges=%zu neighbors=[", f.edgeIds.size());
         for (size_t i = 0; i < f.neighborFaceIds.size(); ++i) {
             std::printf("%s%d", i ? "," : "", f.neighborFaceIds[i]);
@@ -311,6 +316,10 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         else if (a == "--quads") gs.defaults.quadDominant = true;
         else if (a == "--flat-quads") gs.defaults.minimal = false;
         else if (a == "--adaptive") gs.defaults.adaptive = true;
+        else if (a == "--min-curve") {
+            gs.defaults.minCurvedSegments =
+                std::clamp(std::stoi(next()), 1, 256);
+        }
         else if (a == "--density") {
             // One dial re-budgets the whole model: scales every
             // solved count (adaptive ones too) before the group

@@ -5,7 +5,16 @@ session handoffs are not authoritative. If code, comments, issues, or old
 branches disagree with this document, follow this document or revise it with
 new test evidence before changing direction.
 
-Active work package: WP5 — validate real work.
+Active work package: WP6 — validate real work.
+
+WP5 exit criteria re-pass at this revision: FilletStrip→Coons + drum+blend
+stack continuity (`testCylindricalStackContinuity` / bossfillet), sphere tip
+and dimple reducers, foam/teleporter CAD watertight, feature/chart in
+inspect/signature, no new MesherKind. FreeformComb #1805 stitch deadlock
+cut extract unexplained 83→73 with 0 folds. WP6 cleared slitdrill / tan_slit
+/ tork / fillet-capsule / grip-freeform / bullet-body KNOWN_RED rows;
+residual MP9 opens (~380, #1805 family) remain in `tests/KNOWN_RED.tsv`.
+Early Freeform ribbon/rail stays on the late ladder (foam counterexample).
 
 Change the active package only when its exit criteria pass at one revision. If
 a later failure invalidates an earlier gate, reopen the earliest affected
@@ -85,7 +94,7 @@ completion gate is deferred.
 - Asset-class presets and broad pipeline APIs.
 - Making every stress or research model release-perfect.
 
-Deferred work may be reconsidered only after work package 6 passes. It must not
+Deferred work may be reconsidered only after work package 7 passes. It must not
 be inserted into an active package merely because adjacent code is being
 changed.
 
@@ -410,6 +419,83 @@ Split `core/src/meshers.cpp` only with behavior locked by tests. Keep mechanical
 extraction and topology changes in separate commits. Refactoring is not itself
 an MVP milestone.
 
+### AD-5: classify once, route from class
+
+Feature-class planning (WP5) lands before validating real Plasticity work
+(WP6). Fresh-model visual chasing without shared `FaceInfo` facts is how fixes
+transfer to one export and miss the next. Use feature-recognition style
+predicates, not more meshers and not face-id / filename specials.
+
+`analyze()` owns geometry facts once per face. `planFace` / density / self-heal
+consume those facts. Do not rediscover chart validity, hole/fillet/drum shape,
+or loop signatures inside every mesher escape hatch.
+
+Required face facts (names may vary; fields must be explicit on `FaceInfo` or a
+sidecar filled by `analyze()`):
+
+| Field | Meaning |
+| --- | --- |
+| `surfaceType` | Existing typed surface (plane/cylinder/sphere/…) |
+| `chartKind` | `pole` / `fullPeriod` / `isoBand` / `geometricCap` / `freeTrim` |
+| `loopSignature` | Wire count, real vs degenerate edges, roundness hints |
+| `featureClass` | `drum` / `sphereCap` / `filletStrip` / `holePlate` / `bossJunction` / `planarPanel` / `freeform` |
+| `priority` | Product order: cylinder → sphere → hemisphere → box → torus → curves → cuts |
+
+Routing rule:
+
+```text
+featureClass × chartKind → existing MesherKind
+```
+
+Keep AD-3: no new `MesherKind` families for screenshot classes. Reuse
+revolution, disk/cap, coons/ladder, plate-web/annulus, minimal-ngon, and the
+border-exact floor.
+
+Density and self-heal are class-scoped:
+
+- closed curved rings share `minCurvedSegments`;
+- fillet opposite rails share station fractions;
+- plate/boss bores are not crushed by sparse plate `nu`/`nv`;
+- primitive neighbors adapt to the primitive, not the reverse;
+- fold / contract-floor demotion may not apply a policy from another
+  `featureClass` (sphere tip ≠ foam bowl).
+
+Body-scoped cylindrical continuity (hard rule):
+
+- Within one solid/body, circumferential segment counts stay continuous along
+  a cylindrical stack: the same column count through every surface that
+  participates in that stack — analytic drums, fillets/blends on those
+  rails, planar caps/annuli, bosses/holes, and freeform/bspline walls that
+  inherit the same circular or co-axial seams.
+- Continuity means shared solved edge-group counts (and matching station
+  totals on split co-circular arcs), not “similar looking” densities per
+  face. Grids, coons, ribbons, and floors on that body must honor the same
+  circumferential contract on those seams.
+- A local override may raise a stack’s common count; it must not leave one
+  face on the stack at a different circumferential total than its co-axial
+  neighbors unless the artist explicitly decouples that seam (`linkRims` /
+  unlinked rims / per-edge pin with documented intent).
+- Axial / across-blend counts remain free to differ; this rule is about the
+  around-the-cylinder direction that carries silhouette continuity.
+
+Fix gate for WP5 and WP6:
+
+1. Name the `featureClass` + `chartKind` the bug violates.
+2. One positive reducer in the deterministic zoo.
+3. One counterexample from another corpus model (foam, teleporter, dimple, or
+   equivalent).
+4. Reject patches that only work on an extract or a hard-coded face id.
+
+Steal recognition ideas from B-rep feature / blend literature (graph +
+convexity + radius + surface type). Do not import FEA “suppress fillets”
+pipelines; Weft keeps blend and primitive flow for game topology.
+
+Early tip-class evidence (still applies under this AD):
+`docs/evidence/wp5-mp9-plasticity-failures-2026-07-21.md` (geometric sphere
+cap → quad-fill/disk rings; pole-chart spheres stay revolution). Parked MP9
+visual residuals from the former validate attempt feed WP5 class work and WP6
+sign-off, not ad hoc `planFace` branches.
+
 ## 7. Visual acceptance rubric
 
 Numeric validity is necessary but insufficient. Review release and fresh
@@ -417,6 +503,8 @@ Plasticity models in the Weft viewport and Blender:
 
 - primitive silhouette follows the exact CAD shape at the selected density;
 - cylinder and revolution columns are straight and intentional;
+- within one body, co-axial / cylindrical stacks keep one circumferential
+  segment count across drums, blends, caps, and freeform faces on those seams;
 - fillet strips run across and along the blend in understandable directions;
 - holes and slots receive local collars without global triangle fans;
 - flat regions remain sparse;
@@ -556,18 +644,75 @@ Exit:
   save it, regenerate, and export using documented controls.
 - Correction operations cannot bypass the release geometry gate.
 
-### WP5: validate real work
+### WP5: feature-class planning foundation
 
-Goal: demonstrate that fixture success transfers to the target asset class.
+Goal: make automatic routing stable across models by classifying B-rep faces
+once, then planning, densifying, and self-healing from that class (AD-5).
+
+Do this before WP6 (validate real work). Do not treat fresh Plasticity
+screenshot passes as the primary exit while routing still rediscovers geometry
+inside mesher demotion paths. Parked MP9 classes (fillet/capsule spans, grip
+freeform, bullet body transition, residual opens) are inputs to this package:
+encode them as `featureClass` / `chartKind` rules and zoo reducers, not as
+one-off `planFace` branches.
+
+Tasks:
+
+- Extend `FaceInfo` (or an analyze-owned sidecar) with `chartKind`,
+  `loopSignature`, `featureClass`, and `priority` as in AD-5.
+- Move existing probes into `analyze()` where they are pure geometry:
+  sphere UV pole chart, geometric closed revolution, fillet-strip narrowness,
+  hole/boss bore hints, outer-wire roundness. `planFace` reads fields.
+- Replace the long auto ladder with a priority table:
+  `featureClass × chartKind → MesherKind` using only existing backends (AD-3).
+- Tie density solve rules to `featureClass` (mincurve rings, fillet stations,
+  plate/boss bore ownership, primitive-neighbor adaptation).
+- Enforce body-scoped cylindrical continuity (AD-5): one circumferential
+  count along each co-axial stack across analytic, blend, planar, and
+  bspline/freeform faces that share those circular seams; cover grids and
+  floors on the same contract, not only revolution rims.
+- Constrain fold / contract-floor self-heal so demotion cannot apply another
+  class’s policy.
+- Per AD-4, extract classify / density / plan-from-class phases behind tests;
+  do not rewrite `generate()` or add a second architecture (AD-1).
+- Keep the AD-5 fix gate: class name + positive reducer + other-model
+  counterexample; no filename or face-id specials.
+- Report `featureClass` / `chartKind` in inspect, topology signature, and the
+  selection roster so artists and agents debug classes, not only meshers.
+
+Exit:
+
+- Sphere tip, sphere dimple, foam bowls, and teleporter stay green under the
+  same chart/feature rules (no model-specific branches).
+- Fillet strip, hole plate, and drum classes each have at least one zoo reducer
+  and one cross-model counterexample in tests.
+- A cylindrical-stack continuity test proves equal circumferential seam
+  counts across at least drum + blend + cap (or bspline wall) faces in one
+  body; a deliberate unlink/pin case documents the only allowed mismatch.
+- `planFace` no longer re-implements chart or fillet detection that `analyze()`
+  already provides (duplicated probes removed or thin wrappers).
+- Topology signature or inspect exposes `featureClass` and `chartKind` for
+  release and Plasticity samples.
+- AD-3 holds: no new `MesherKind` added for this package.
+- Parked MP9 visual classes either have class-level reducers or an explicit
+  WP6 follow-up row in `KNOWN_RED` / corpus notes (not silent folklore).
+
+### WP6: validate real work
+
+Goal: demonstrate that fixture success transfers to the target asset class,
+on top of the WP5 feature-class foundation.
 
 Tasks:
 
 - Run ABC, NIST/CAx-IF, and MAMBO smoke subsets (optional Fusion sample allowed).
 - Run the fresh Plasticity set.
-- Classify every failure by input validity and topology class.
+- Classify every failure by input validity and `featureClass` / `chartKind`
+  (AD-5), not only by mesher name.
 - Reduce shareable failures and add them to the appropriate deterministic tier.
 - Compare Weft and Plasticity output in Blender with section 7.
 - Measure completion without engineering intervention, not just batch success.
+- If a fresh-model failure needs new analyze facts or routing-table rows, fix
+  them as WP5 reopen work (earliest affected package), not as WP6 special cases.
 
 Exit:
 
@@ -576,8 +721,9 @@ Exit:
 - Visual comparison demonstrates a useful advantage or a materially faster
   path to an acceptable editable result.
 - No new common failure class remains unrepresented in the deterministic zoo.
+- Failures reopen WP5 when they expose missing class facts or table gaps.
 
-### WP6: ship readiness
+### WP7: ship readiness
 
 Goal: produce a reproducible MVP release.
 
@@ -624,7 +770,10 @@ The agent must not:
 - weaken a gate, exempt a valid model, or update goldens simply to make CI pass;
 - treat compile success, application startup, or polygon counts alone as proof;
 - append session diaries, speculative directions, or stale pass claims here;
-- begin deferred work before WP6 passes.
+- begin deferred work before WP7 passes;
+- land face-id / filename specials or a new `MesherKind` to clear a Plasticity
+  screenshot when AD-5 / WP5 class routing would address the class;
+- start WP6 fresh-model sign-off while WP5 class/table exit criteria are open.
 
 ## 10. Verification commands
 

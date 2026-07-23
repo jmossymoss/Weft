@@ -33,7 +33,7 @@ ribbon	fixture	fixtures/generated/ribbon.step	1	0	0	1	-	closed_solid	interaction
 ribbonnotch	fixture	fixtures/generated/ribbonnotch.step	1	0	0	1	visual_baselines/generated/ribbonnotch.png	closed_solid	interaction-zoo	extrusion,plane	line	ribbon,notch	ribbon with end notch; sealed after exact-border floor-over-raw (folds remain on default)
 filletslot	fixture	fixtures/filletslot.step	1	0	0	1	-	closed_solid	interaction-zoo	cylinder,plane	circle,line	fillet,slot	fillet band around slot
 hairline	fixture	fixtures/hairline.step	1	0	0	1	-	closed_solid	interaction-zoo	plane,cylinder	circle,line	hairline_spacing	hairline feature spacing
-slitdrill	fixture	fixtures/slitdrill.step	1	0	0	0	visual_baselines/generated/slitdrill.png	closed_solid	interaction-zoo	plane,cylinder	circle,line	tangent_contact,bore	slit plus bore; known-red
+slitdrill	fixture	fixtures/slitdrill.step	1	0	0	0	visual_baselines/generated/slitdrill.png	closed_solid	interaction-zoo	plane,cylinder	circle,line	tangent_contact,bore	slit plus bore; pocket cuts into bore (manifold)
 compound2	fixture	fixtures/generated/compound2.step	1	0	0	0	-	closed_solid	interaction-zoo	cylinder,plane	circle,line	compound,multi_solid	two solids in one compound; multi-body watertight deferred
 demo	fixture	fixtures/demo.step	1	0	0	1	-	closed_solid	interaction-zoo	plane,cylinder,torus	circle,line	combined	alias of torture
 torture	release	fixtures/torture.step	1	0	0	1	visual_baselines/generated/torture.png	closed_solid	release	plane,cylinder,torus	circle,line	combined_features	release synthetic combined scene
@@ -60,5 +60,5 @@ foam_plane_fillet_bspline	regression	regressions/release/foam_plane_fillet_bspli
 foam_fillet_bspline	regression	regressions/release/foam_fillet_bspline_r1.step	1	0	0	0	-	open	release	cylinder,plane,bspline	circle,line,bspline	fillet_bspline_junction	open-shell neighborhood diagnostic for foam fillet/bspline CAD cluster; not a closed-solid watertight repro
 teleporter_planar_ngon	regression	regressions/release/teleporter_planar_ngon_r1.step	1	0	0	0	-	open	release	plane	line	planar_ngon_border_contract	open-shell neighborhood diagnostic for teleporter planar n-gon class; not a closed-solid watertight repro
 nasty_cheese	stress	STEP_Examples/nasty_cheese.stp	0	0	0	0	-	closed_solid	target-assets	-	-	stress	manual/scheduled stress
-tork	stress	STEP_Examples/tork.stp	0	0	0	0	-	invalid	target-assets	-	-	broken_source	broken source; mesh without crash
+tork	stress	STEP_Examples/tork.stp	0	0	0	0	-	invalid	target-assets	-	-	broken_source	broken_source open surface; validate emits diagnostic; mesh without crash
 MP9	performance	STEP_Examples/MP9.stp	0	6	2	0	-	closed_solid	target-assets	-	-	performance,workload	performance/integration only — not geometry coverage

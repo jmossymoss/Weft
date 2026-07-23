@@ -506,9 +506,14 @@ void testFillet() {
     // Curved fillet strips now take the Coons patch (border rows on
     // the 3D edge curves) instead of a surface-sampled grid.
     CHECK(report.faceMesher[filletFaceId] == weft::MesherKind::CoonsGrid);
+    CHECK(a.faces[filletFaceId - 1].featureClass ==
+          weft::FeatureClass::FilletStrip);
+    auto fcit = report.faceFeatureClass.find(filletFaceId);
+    CHECK(fcit != report.faceFeatureClass.end());
+    CHECK(fcit->second == weft::FeatureClass::FilletStrip);
     // Promoted from probe103: blend strips expose which patch axis the
-    // fillet-loops knob drives (faceAcross). Discover via isFillet — no
-    // hardcoded face-ID product routing.
+    // fillet-loops knob drives (faceAcross). Discover via FilletStrip —
+    // no hardcoded face-ID product routing.
     {
         auto ax = report.faceAcross.find(filletFaceId);
         CHECK(ax != report.faceAcross.end());
@@ -1041,6 +1046,819 @@ void testPlateWebSliverRefine() {
     // Residual needles must be gone (or vanishingly rare). Pre-fix ABC
     // plate-web faces were >50% slivers; the refine clears them.
     CHECK(plateSlivers * 20 <= platePolys);  // < 5%
+
+    // CAD/minimal residual must stay bridged n-gons (+ collar quads), not
+    // a CDT triangle soup. Count tris attributed to plate-web faces.
+    int plateTris = 0, plateNgons = 0, plateQuads = 0;
+    for (size_t i = 0; i < mesh.polygons.size(); ++i) {
+        const int fid =
+            i < mesh.polygonFaceId.size() ? mesh.polygonFaceId[i] : 0;
+        auto kit = report.faceMesher.find(fid);
+        if (kit == report.faceMesher.end() ||
+            kit->second != weft::MesherKind::PlateWeb) {
+            continue;
+        }
+        const size_t n = mesh.polygons[i].size();
+        if (n == 3) ++plateTris;
+        else if (n == 4) ++plateQuads;
+        else if (n > 4) ++plateNgons;
+    }
+    std::printf("  plate-web quads=%d tris=%d ngons=%d\n", plateQuads,
+                plateTris, plateNgons);
+    CHECK(plateQuads > 0);   // collars survive
+    CHECK(plateNgons > 0);   // residual is bridged simple n-gons
+    CHECK(plateTris == 0);   // no CDT soup under minimal
+}
+
+// Demo/torture vertical plate wall with a round bore: under CAD, plate-web
+// must keep collars but not fill the wall with CDT needles.
+void testTorturePlateWebMinimalResidual() {
+    std::printf("-- torture plate-web minimal residual --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() / "fixtures/torture.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    CHECK(isWatertight(mesh));
+
+    int plateWebs = 0, plateTris = 0, plateNgons = 0;
+    for (const auto& [fid, kind] : report.faceMesher) {
+        if (kind != weft::MesherKind::PlateWeb) continue;
+        ++plateWebs;
+        for (size_t i = 0; i < mesh.polygons.size(); ++i) {
+            if (i >= mesh.polygonFaceId.size() ||
+                mesh.polygonFaceId[i] != fid) {
+                continue;
+            }
+            const size_t n = mesh.polygons[i].size();
+            if (n == 3) ++plateTris;
+            else if (n > 4) ++plateNgons;
+        }
+    }
+    CHECK(plateWebs >= 1);
+    CHECK(plateNgons > 0);
+    CHECK(plateTris == 0);
+}
+
+// WP5 / MP9: a spherical dimple through a planar annulus used to miss
+// RevolutionGrid (adaptor IsUClosed=false on the trim), fall to the
+// contract floor, then ship hundreds of needle tris after fold demotion.
+// CAD adaptive must keep the sphere off contract-floor (minimal n-gon
+// rescue is OK) and stay watertight with the annulus.
+void testSphereDimpleNotContractFloor() {
+    std::printf("-- sphere dimple not contract-floor --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/sphere_dimple_annulus.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+
+    weft::GenerationReport report;
+    weft::PolyMesh mesh =
+        weft::generate(model, analysis, gs, &report);
+    CHECK(isWatertight(mesh));
+
+    int spheres = 0, sphereFloor = 0, sphereFlat = 0;
+    for (const auto& f : analysis.faces) {
+        if (f.type != weft::SurfaceType::Sphere) continue;
+        ++spheres;
+        auto kit = report.faceMesher.find(f.id);
+        CHECK(kit != report.faceMesher.end());
+        if (kit != report.faceMesher.end()) {
+            CHECK(kit->second != weft::MesherKind::Fallback);
+            CHECK(kit->second != weft::MesherKind::QuadDominant);
+            // A healthy rim must keep a curved mesher — flattening to a
+            // planar n-gon is the "hemisphere became a plane" failure.
+            CHECK(kit->second != weft::MesherKind::MinimalNGon);
+            if (kit->second == weft::MesherKind::Fallback ||
+                kit->second == weft::MesherKind::QuadDominant) {
+                ++sphereFloor;
+            }
+            if (kit->second == weft::MesherKind::MinimalNGon) {
+                ++sphereFlat;
+            }
+            std::printf("  sphere face %d -> %s\n", f.id,
+                        weft::mesherKindName(kit->second));
+        }
+        auto bit = report.faceBuild.find(f.id);
+        // Not a demoted contract-floor soup.
+        if (bit != report.faceBuild.end()) {
+            CHECK(bit->second != 2);
+        }
+    }
+    CHECK(spheres >= 1);
+    CHECK_EQ(sphereFloor, 0);
+    CHECK_EQ(sphereFlat, 0);
+
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK(vr.watertight());
+    // Keeping revolution-grid after a UV fold census can leave a few
+    // thin cells; that still beats a single planar n-gon.
+}
+
+// MP9 bullet tip: a geometric sphere cap with one circular (non-iso) rim
+// used to take RevolutionGrid, loft a fake U-wrap lattice, then fold
+// self-heal into contract-floor tip soup. CAD must route it to
+// quad-fill → disk-cap rings instead.
+void testBulletTipNotContractFloor() {
+    std::printf("-- bullet tip not contract-floor --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/bullet_tip_3728.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    gs.defaults.minCurvedSegments = 12;
+
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    CHECK(isWatertight(mesh));
+
+    int spheres = 0;
+    for (const auto& f : analysis.faces) {
+        if (f.type != weft::SurfaceType::Sphere) continue;
+        ++spheres;
+        auto kit = report.faceMesher.find(f.id);
+        CHECK(kit != report.faceMesher.end());
+        std::printf("  sphere face %d -> %s\n", f.id,
+                    weft::mesherKindName(kit->second));
+        CHECK(kit->second == weft::MesherKind::QuadFill);
+        auto bit = report.faceBuild.find(f.id);
+        CHECK(bit != report.faceBuild.end());
+        CHECK_EQ(bit->second, 0);
+        auto cit = report.faceBuildCause.find(f.id);
+        if (cit != report.faceBuildCause.end()) {
+            CHECK(cit->second.find("contract floor") == std::string::npos);
+        }
+    }
+    CHECK(spheres >= 1);
+    for (const auto& f : analysis.faces) {
+        if (f.type != weft::SurfaceType::Sphere) continue;
+        CHECK(f.featureClass == weft::FeatureClass::SphereCap);
+        CHECK(f.chartKind == weft::ChartKind::GeometricCap);
+        auto fcit = report.faceFeatureClass.find(f.id);
+        CHECK(fcit != report.faceFeatureClass.end());
+        CHECK(fcit->second == weft::FeatureClass::SphereCap);
+    }
+
+    int tipTris = 0, tipQuads = 0;
+    for (size_t i = 0; i < mesh.polygons.size(); ++i) {
+        const int fid =
+            i < mesh.polygonFaceId.size() ? mesh.polygonFaceId[i] : 0;
+        auto kit = report.faceMesher.find(fid);
+        if (kit == report.faceMesher.end() ||
+            kit->second != weft::MesherKind::QuadFill) {
+            continue;
+        }
+        if (mesh.polygons[i].size() == 3) ++tipTris;
+        else if (mesh.polygons[i].size() == 4) ++tipQuads;
+    }
+    CHECK(tipQuads > 0);
+    CHECK_EQ(tipTris, 0);
+}
+
+// Bullet body (#3728 class) shares a circular rim with the geometric tip
+// cap. After tip→quad-fill, the body must keep that rim's solved count
+// (no tip/body station mismatch) and stay fold-free / watertight on the
+// reducer — the coons/ring-lattice transition contract.
+void testBulletBodyTipRimContinuity() {
+    std::printf("-- bullet body tip rim continuity --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/bullet_tip_3728.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    gs.defaults.minCurvedSegments = 12;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    CHECK(isWatertight(mesh));
+    const auto folded = weft::foldedPolys(model, mesh);
+    CHECK(std::count(folded.begin(), folded.end(), uint8_t{1}) == 0);
+
+    int tipId = 0, bodyId = 0;
+    for (const auto& f : analysis.faces) {
+        auto kit = report.faceMesher.find(f.id);
+        if (kit == report.faceMesher.end()) continue;
+        if (f.featureClass == weft::FeatureClass::SphereCap &&
+            kit->second == weft::MesherKind::QuadFill) {
+            tipId = f.id;
+        }
+        if (f.featureClass == weft::FeatureClass::Freeform &&
+            kit->second == weft::MesherKind::CoonsGrid) {
+            bodyId = f.id;
+        }
+    }
+    CHECK(tipId > 0);
+    CHECK(bodyId > 0);
+
+    // Shared tip↔body edge must resolve to one count (max-proposal wins).
+    int shared = 0, tipN = 0, bodyN = 0;
+    for (const auto& e : analysis.edges) {
+        bool onTip = false, onBody = false;
+        for (int f : e.faceIds) {
+            if (f == tipId) onTip = true;
+            if (f == bodyId) onBody = true;
+        }
+        if (!onTip || !onBody) continue;
+        shared = e.id;
+        auto tit = report.edgeDivisions.find(e.id);
+        CHECK(tit != report.edgeDivisions.end());
+        tipN = bodyN = tit->second;
+        break;
+    }
+    CHECK(shared > 0);
+    CHECK(tipN >= 12);
+    CHECK_EQ(tipN, bodyN);
+    std::printf("  tip=%d body=%d shared edge #%d count=%d\n", tipId,
+                bodyId, shared, tipN);
+}
+
+// WP5 / AD-5: analyze() owns featureClass × chartKind once per face.
+// Sparse fold self-heal must not trade Drum×FullPeriod×RevolutionGrid for
+// a contract-floor web. Foam's tall body annulus-body build carries one
+// inverted cell; the floor tournament used to win and turn cylinder spans
+// into triangle soup. SphereCap / FilletStrip stay on the floor-heal path
+// (skipping those heals reopens seams or ships dense folded coons).
+void testSparseFoldKeepsStructuredCharts() {
+    std::printf("-- sparse fold keeps structured charts --\n");
+    auto cadSettings = []() {
+        weft::GenerationSettings gs;
+        gs.defaults.minimal = true;
+        gs.defaults.adaptive = true;
+        gs.defaults.relativeDeviation = true;
+        gs.defaults.minCurvedSegments = 6;
+        return gs;
+    };
+    auto assertBuild0 = [](const weft::GenerationReport& report, int fid,
+                           weft::MesherKind want, const char* label) {
+        auto kit = report.faceMesher.find(fid);
+        CHECK(kit != report.faceMesher.end());
+        CHECK(kit->second == want);
+        auto bit = report.faceBuild.find(fid);
+        CHECK(bit != report.faceBuild.end());
+        if (bit->second != 0) {
+            auto cit = report.faceBuildCause.find(fid);
+            const std::string cause =
+                cit != report.faceBuildCause.end() ? cit->second : "";
+            std::printf("  FAIL %s face %d build=%d cause=%s\n", label, fid,
+                        bit->second, cause.c_str());
+        }
+        CHECK_EQ(bit->second, 0);
+    };
+    auto assertProtectedDrums = [&](const weft::Analysis& analysis,
+                                    const weft::GenerationReport& report,
+                                    const char* label) {
+        int protectedFaces = 0;
+        for (const auto& f : analysis.faces) {
+            if (f.featureClass != weft::FeatureClass::Drum ||
+                f.chartKind != weft::ChartKind::FullPeriod) {
+                continue;
+            }
+            auto kit = report.faceMesher.find(f.id);
+            if (kit == report.faceMesher.end() ||
+                kit->second != weft::MesherKind::RevolutionGrid) {
+                continue;  // coons/open-band drums use other heal paths
+            }
+            ++protectedFaces;
+            assertBuild0(report, f.id, weft::MesherKind::RevolutionGrid,
+                         label);
+        }
+        CHECK(protectedFaces >= 1);
+        std::printf("  %s: %d Drum×FullPeriod×RevolutionGrid kept\n", label,
+                    protectedFaces);
+    };
+    auto assertProtectedFilletFull = [&](const weft::Analysis& analysis,
+                                         const weft::GenerationReport& report,
+                                         const char* label) {
+        int kept = 0;
+        for (const auto& f : analysis.faces) {
+            if (f.featureClass != weft::FeatureClass::FilletStrip ||
+                f.chartKind != weft::ChartKind::FullPeriod) {
+                continue;
+            }
+            auto kit = report.faceMesher.find(f.id);
+            if (kit == report.faceMesher.end() ||
+                kit->second != weft::MesherKind::CoonsGrid) {
+                continue;
+            }
+            ++kept;
+            assertBuild0(report, f.id, weft::MesherKind::CoonsGrid, label);
+        }
+        CHECK(kept >= 1);
+        std::printf("  %s: %d FilletStrip×FullPeriod×Coons kept\n", label,
+                    kept);
+    };
+    auto assertDrumWedgeCoons = [&](const weft::Analysis& analysis,
+                                    const weft::GenerationReport& report,
+                                    const char* label) {
+        int wedges = 0;
+        for (const auto& f : analysis.faces) {
+            if (f.featureClass != weft::FeatureClass::Drum ||
+                (f.chartKind != weft::ChartKind::IsoBand &&
+                 f.chartKind != weft::ChartKind::FreeTrim)) {
+                continue;
+            }
+            auto kit = report.faceMesher.find(f.id);
+            if (kit == report.faceMesher.end() ||
+                kit->second != weft::MesherKind::CoonsGrid) {
+                continue;
+            }
+            ++wedges;
+            assertBuild0(report, f.id, weft::MesherKind::CoonsGrid, label);
+        }
+        CHECK(wedges >= 1);
+        std::printf("  %s: %d Drum×IsoBand/FreeTrim×Coons kept\n", label,
+                    wedges);
+    };
+
+    {
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "regressions/foam/drum_fillet_fullperiod_r1.step";
+        weft::Model model = weft::loadStep(stepPath.string());
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        weft::generate(model, analysis, cadSettings(), &report);
+        assertProtectedDrums(analysis, report, "foam drum extract");
+    }
+    {
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "regressions/foam/fillet_fullperiod_r1.step";
+        weft::Model model = weft::loadStep(stepPath.string());
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        weft::generate(model, analysis, cadSettings(), &report);
+        assertProtectedFilletFull(analysis, report, "foam fillet extract");
+    }
+    {
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "regressions/foam/drum_isoband_bail_r1.step";
+        weft::Model model = weft::loadStep(stepPath.string());
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        weft::generate(model, analysis, cadSettings(), &report);
+        assertDrumWedgeCoons(analysis, report, "foam drum iso-band extract");
+    }
+    {
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "regressions/foam/drum_freetrim_probe_r1.step";
+        weft::Model model = weft::loadStep(stepPath.string());
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        weft::generate(model, analysis, cadSettings(), &report);
+        assertDrumWedgeCoons(analysis, report, "foam drum free-trim extract");
+    }
+    {
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "STEP_Examples/foam.stp";
+        weft::Model model = weft::loadStep(stepPath.string());
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        weft::PolyMesh mesh =
+            weft::generate(model, analysis, cadSettings(), &report);
+        CHECK(isWatertight(mesh));
+        assertProtectedDrums(analysis, report, "foam CAD");
+        assertProtectedFilletFull(analysis, report, "foam CAD");
+    }
+}
+
+void testFeatureClassAnalyze() {
+    std::printf("-- feature class analyze --\n");
+    {
+        const std::string path = tmpPath("weft_fc_cyl.step");
+        weft::writeStep(weft::makeFixture("cylinder"), path);
+        const weft::Analysis a = weft::analyze(weft::loadStep(path));
+        int drums = 0;
+        for (const auto& f : a.faces) {
+            if (f.type == weft::SurfaceType::Cylinder) {
+                CHECK(f.featureClass == weft::FeatureClass::Drum);
+                CHECK(f.chartKind == weft::ChartKind::FullPeriod ||
+                      f.chartKind == weft::ChartKind::IsoBand);
+                CHECK(f.priority >= 95);
+                ++drums;
+            }
+            if (f.type == weft::SurfaceType::Plane) {
+                CHECK(f.featureClass == weft::FeatureClass::PlanarPanel ||
+                      f.featureClass == weft::FeatureClass::HolePlate ||
+                      f.featureClass == weft::FeatureClass::BossJunction);
+            }
+        }
+        CHECK(drums >= 1);
+        std::printf("  cylinder: drums=%d\n", drums);
+    }
+    {
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "regressions/mp9/sphere_dimple_annulus.step";
+        const weft::Analysis a = weft::analyze(weft::loadStep(stepPath.string()));
+        int poleCaps = 0;
+        for (const auto& f : a.faces) {
+            if (f.type != weft::SurfaceType::Sphere) continue;
+            CHECK(f.featureClass == weft::FeatureClass::SphereCap);
+            CHECK(f.chartKind == weft::ChartKind::Pole ||
+                  f.chartKind == weft::ChartKind::FullPeriod);
+            ++poleCaps;
+        }
+        CHECK(poleCaps >= 1);
+        std::printf("  dimple: pole-chart spheres=%d\n", poleCaps);
+    }
+    {
+        const std::string path = tmpPath("weft_fc_fillet.step");
+        weft::writeStep(weft::makeFixture("fillet"), path);
+        const weft::Analysis a = weft::analyze(weft::loadStep(path));
+        int strips = 0;
+        for (const auto& f : a.faces) {
+            if (!f.isFillet) continue;
+            // Narrow blends are FilletStrip; wide false-fillets may be Drum.
+            CHECK(f.featureClass == weft::FeatureClass::FilletStrip ||
+                  f.featureClass == weft::FeatureClass::Drum);
+            if (f.featureClass == weft::FeatureClass::FilletStrip) ++strips;
+        }
+        CHECK(strips >= 1);
+        std::printf("  fillet: strips=%d\n", strips);
+    }
+    // Foam: at least one narrow fillet-strip and one drum (not all tangent
+    // cylinders collapsed to FilletStrip).
+    {
+        const std::filesystem::path foam =
+            std::filesystem::path(__FILE__).parent_path() /
+            "STEP_Examples/foam.stp";
+        const weft::Analysis a = weft::analyze(weft::loadStep(foam.string()));
+        int strips = 0, drums = 0;
+        for (const auto& f : a.faces) {
+            if (f.featureClass == weft::FeatureClass::FilletStrip) ++strips;
+            if (f.featureClass == weft::FeatureClass::Drum) ++drums;
+        }
+        CHECK(strips >= 1);
+        CHECK(drums >= 1);
+        std::printf("  foam: strips=%d drums=%d\n", strips, drums);
+    }
+}
+
+// WP5: body-scoped cylindrical continuity — circumferential seam counts
+// match across drum + cap faces in one solid (unless explicitly pinned).
+void testCylindricalStackContinuity() {
+    std::printf("-- cylindrical stack continuity --\n");
+    const std::string path = tmpPath("weft_cyl_stack.step");
+    weft::writeStep(weft::makeFixture("cylinder"), path);
+    weft::Model model = weft::loadStep(path);
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    gs.defaults.minCurvedSegments = 12;
+    gs.defaults.radial = 16;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    CHECK(isWatertight(mesh));
+
+    std::set<int> circCounts;
+    for (const auto& f : analysis.faces) {
+        if (f.featureClass != weft::FeatureClass::Drum &&
+            f.featureClass != weft::FeatureClass::PlanarPanel) {
+            continue;
+        }
+        for (int eid : f.edgeIds) {
+            auto it = report.edgeDivisions.find(eid);
+            if (it == report.edgeDivisions.end()) continue;
+            // Caps and drum share the circular rims; collect those divisions.
+            if (analysis.edges[eid - 1].faceIds.size() >= 2) {
+                circCounts.insert(it->second);
+            }
+        }
+    }
+    CHECK(!circCounts.empty());
+    // One circumferential total on the stack (allow a single shared count).
+    CHECK_EQ(circCounts.size(), 1u);
+    std::printf("  shared circumferential count=%d\n", *circCounts.begin());
+
+    // Deliberate per-edge pin may diverge — documents the allowed mismatch.
+    {
+        weft::GenerationSettings pinned = gs;
+        int pinEdge = 0;
+        for (const auto& [eid, div] : report.edgeDivisions) {
+            pinEdge = eid;
+            break;
+        }
+        CHECK(pinEdge > 0);
+        pinned.perEdge[pinEdge] = 24;
+        weft::GenerationReport pr;
+        weft::PolyMesh pm = weft::generate(model, analysis, pinned, &pr);
+        CHECK(isWatertight(pm));
+        auto it = pr.edgeDivisions.find(pinEdge);
+        CHECK(it != pr.edgeDivisions.end());
+        CHECK_EQ(it->second, 24);
+        std::printf("  pinned edge %d stays %d\n", pinEdge, it->second);
+    }
+
+    // bossfillet: drum + fillet-strip + boss/cap share one circumferential
+    // count; fillet-strip routes Coons (not RevolutionGrid). A pin below
+    // the stack count on a non-drum stack edge must surface as
+    // stack-continuity-pin.
+    {
+        const std::string bf = tmpPath("weft_cyl_bossfillet.step");
+        weft::writeStep(weft::makeFixture("bossfillet"), bf);
+        weft::Model bmModel = weft::loadStep(bf);
+        const weft::Analysis ba = weft::analyze(bmModel);
+        int drums = 0, strips = 0;
+        int stripFid = 0;
+        for (const auto& f : ba.faces) {
+            if (f.featureClass == weft::FeatureClass::Drum) ++drums;
+            if (f.featureClass == weft::FeatureClass::FilletStrip) {
+                ++strips;
+                stripFid = f.id;
+            }
+        }
+        CHECK(drums >= 1);
+        CHECK(strips >= 1);
+        weft::GenerationReport br;
+        weft::PolyMesh bm = weft::generate(bmModel, ba, gs, &br);
+        CHECK(isWatertight(bm));
+        CHECK(br.faceMesher[stripFid] == weft::MesherKind::CoonsGrid);
+        std::set<int> stackCounts;
+        std::vector<int> stackEdges;
+        for (const auto& f : ba.faces) {
+            if (f.featureClass != weft::FeatureClass::Drum &&
+                f.featureClass != weft::FeatureClass::FilletStrip &&
+                f.featureClass != weft::FeatureClass::BossJunction &&
+                f.featureClass != weft::FeatureClass::PlanarPanel) {
+                continue;
+            }
+            for (int eid : f.edgeIds) {
+                if (ba.edges[eid - 1].faceIds.size() < 2) continue;
+                // Circumferential rails are the longer shared smooth /
+                // concave edges on the boss stack (ring-derived 26).
+                auto it = br.edgeDivisions.find(eid);
+                if (it == br.edgeDivisions.end()) continue;
+                if (it->second >= gs.defaults.minCurvedSegments) {
+                    stackCounts.insert(it->second);
+                    stackEdges.push_back(eid);
+                }
+            }
+        }
+        CHECK(!stackCounts.empty());
+        CHECK_EQ(stackCounts.size(), 1u);
+        const int stackCirc = *stackCounts.begin();
+        std::printf(
+            "  bossfillet: drums=%d strips=%d strip->coons circ=%d\n",
+            drums, strips, stackCirc);
+
+        // Deliberate pin on the drum↔fillet rim: allowed mismatch. The
+        // pin sticks; stack continuity cannot override perEdge. When the
+        // raise path is blocked it also records stack-continuity-pin —
+        // accept either the conflict reason or a solved count that stays
+        // at the pin while the unpinned stack remains watertight.
+        int pinEdge = 0;
+        for (int eid : stackEdges) {
+            bool drum = false, strip = false;
+            for (int of : ba.edges[eid - 1].faceIds) {
+                const auto fc = ba.faces[of - 1].featureClass;
+                if (fc == weft::FeatureClass::Drum) drum = true;
+                if (fc == weft::FeatureClass::FilletStrip) strip = true;
+            }
+            if (drum && strip) {
+                pinEdge = eid;
+                break;
+            }
+        }
+        CHECK(pinEdge > 0);
+        const int pinCount = std::max(3, stackCirc / 2);
+        weft::GenerationSettings pinned = gs;
+        pinned.perEdge[pinEdge] = pinCount;
+        weft::GenerationReport pr;
+        weft::PolyMesh pm = weft::generate(bmModel, ba, pinned, &pr);
+        CHECK(isWatertight(pm));
+        auto pit = pr.edgeDivisions.find(pinEdge);
+        CHECK(pit != pr.edgeDivisions.end());
+        CHECK_EQ(pit->second, pinCount);
+        bool sawPin = false;
+        for (const auto& c : pr.densityConflicts) {
+            if (c.reason == "stack-continuity-pin" && c.edgeId == pinEdge) {
+                sawPin = true;
+                break;
+            }
+        }
+        std::printf("  pinned drum↔fillet edge %d stays %d (conflict=%d)\n",
+                    pinEdge, pit->second, sawPin ? 1 : 0);
+    }
+}
+
+// MP9 freeformComb orthogonal trim can leave plane↔bspline seams open when
+// clipped lattice verts drift off the shared 3D edge. The #1805-class
+// reducer must keep structured coons grids (not contract-floor) and stay
+// below the pre-fix unexplained-crack floor (~131 on this extract).
+// MP9 capsule / multi-edge FilletStrip iso-bands (#1973/#1980 class) used
+// to reject Coons at the 24-edge budget, fall through to orthogonal
+// RevolutionGrid, and dominate full-model open edges. Class gate: keep
+// Coons (or orthogonal Coons), never RevolutionGrid. Extract keeps one
+// ring of neighbors so analyze() still labels FilletStrip.
+void testMp9FilletCapsuleNotRevolution() {
+    std::printf("-- MP9 fillet-capsule iso-band not revolution --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/fillet_capsule_iso_band.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+
+    int filletFaces = 0, rev = 0, coons = 0;
+    for (const auto& f : analysis.faces) {
+        if (f.featureClass != weft::FeatureClass::FilletStrip) continue;
+        if (f.edgeIds.size() < 20) continue;  // capsule-scale iso-bands
+        ++filletFaces;
+        auto kit = report.faceMesher.find(f.id);
+        CHECK(kit != report.faceMesher.end());
+        std::printf("  fillet face %d edges=%zu -> %s\n", f.id,
+                    f.edgeIds.size(), weft::mesherKindName(kit->second));
+        if (kit->second == weft::MesherKind::RevolutionGrid) ++rev;
+        if (kit->second == weft::MesherKind::CoonsGrid) ++coons;
+    }
+    CHECK(filletFaces >= 2);
+    CHECK_EQ(rev, 0);
+    CHECK(coons >= 2);
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK_EQ(vr.nonManifoldEdges, 0);
+}
+
+// MP9 grip / optic freeform panels must keep Coons quad flow under CAD
+// rather than collapsing shallow bsplines to a single minimal n-gon.
+void testMp9GripFreeformCoons() {
+    std::printf("-- MP9 grip freeform coons --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/grip_freeform_panels.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    int freeform = 0, coons = 0, minimal = 0;
+    for (const auto& f : analysis.faces) {
+        if (f.featureClass != weft::FeatureClass::Freeform) continue;
+        ++freeform;
+        auto kit = report.faceMesher.find(f.id);
+        CHECK(kit != report.faceMesher.end());
+        std::printf("  freeform face %d -> %s\n", f.id,
+                    weft::mesherKindName(kit->second));
+        if (kit->second == weft::MesherKind::CoonsGrid) ++coons;
+        if (kit->second == weft::MesherKind::MinimalNGon) ++minimal;
+    }
+    CHECK(freeform >= 4);
+    CHECK(coons >= 4);
+    CHECK_EQ(minimal, 0);
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    const size_t unexplained =
+        vr.openEdges > vr.openEdgesOnInputBoundary
+            ? vr.openEdges - vr.openEdgesOnInputBoundary
+            : 0;
+    CHECK_EQ(unexplained, 0);
+}
+
+// Dirty-step tan_slit: tangent bore contact creates a multi-owner B-rep
+// edge. The drum on that generator must stay on a contract floor (or
+// structured mesh), never raw OCCT, once border contract skips input NM.
+void testTanSlitNoRawDemotion() {
+    std::printf("-- tan_slit no raw demotion --\n");
+    const std::string path = tmpPath("weft_tan_slit.step");
+    weft::writeStep(weft::makeFixture("tan_slit"), path);
+    weft::Model model = weft::loadStep(path);
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    int raw = 0, floor = 0;
+    for (const auto& [fid, build] : report.faceBuild) {
+        if (build == 1) ++raw;
+        if (build == 2) ++floor;
+        (void)fid;
+    }
+    std::printf("  raw=%d floor=%d\n", raw, floor);
+    CHECK_EQ(raw, 0);
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK(vr.inputNonManifoldEdges >= 1);
+}
+
+// Authored open-surface / broken solids report broken_source when ≥⅓ of
+// B-rep edges are open-shell (same gate as import capping).
+void testBrokenSourceDiagnostic() {
+    std::printf("-- broken_source diagnostic --\n");
+    {
+        const std::string path = tmpPath("weft_open_shell_diag.step");
+        weft::writeStep(weft::makeFixture("open_shell"), path);
+        weft::Model model = weft::loadStep(path);
+        weft::GenerationSettings gs;
+        weft::PolyMesh mesh =
+            weft::generate(model, weft::analyze(model), gs, nullptr);
+        const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+        CHECK(vr.brokenSource);
+        CHECK(vr.inputBoundaryEdges * 3 >= vr.inputEdges);
+        const std::string text = weft::formatReport(vr);
+        CHECK(text.find("broken_source") != std::string::npos);
+    }
+    {
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "STEP_Examples/tork.stp";
+        if (std::filesystem::exists(stepPath)) {
+            weft::Model model = weft::loadStep(stepPath.string());
+            weft::GenerationSettings gs;
+            gs.defaults.minimal = true;
+            weft::PolyMesh mesh =
+                weft::generate(model, weft::analyze(model), gs, nullptr);
+            const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+            CHECK(vr.brokenSource);
+            const std::string text = weft::formatReport(vr);
+            CHECK(text.find("broken_source") != std::string::npos);
+            std::printf("  tork: open-shell %zu / %zu edges\n",
+                        vr.inputBoundaryEdges, vr.inputEdges);
+        }
+    }
+}
+
+void testMp9CoonsPlaneSeamCanonicalize() {
+    std::printf("-- MP9 coons/plane seam canonicalize --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/coons_plane_1805_r0.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+
+    int coons = 0, floors = 0;
+    for (const auto& f : analysis.faces) {
+        if (f.type != weft::SurfaceType::BSpline) continue;
+        auto kit = report.faceMesher.find(f.id);
+        if (kit == report.faceMesher.end()) continue;
+        if (kit->second == weft::MesherKind::CoonsGrid) ++coons;
+        auto bit = report.faceBuild.find(f.id);
+        if (bit != report.faceBuild.end() && bit->second == 2) ++floors;
+        std::printf("  bspline face %d -> %s build=%d\n", f.id,
+                    weft::mesherKindName(kit->second),
+                    bit != report.faceBuild.end() ? bit->second : -1);
+    }
+    CHECK(coons >= 3);
+    // One fold self-heal → floor on a sibling panel is acceptable; the
+    // class gate is "not a blanket contract-floor demotion of the stack".
+    CHECK(floors <= 1);
+
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    const size_t unexplained =
+        vr.openEdges > vr.openEdgesOnInputBoundary
+            ? vr.openEdges - vr.openEdgesOnInputBoundary
+            : 0;
+    const auto folded = weft::foldedPolys(model, mesh);
+    const size_t foldCount =
+        static_cast<size_t>(std::count(folded.begin(), folded.end(),
+                                       uint8_t{1}));
+    std::printf("  unexplained cracks=%zu (open=%zu onBoundary=%zu) "
+                "folds=%zu nm=%zu\n",
+                unexplained, vr.openEdges, vr.openEdgesOnInputBoundary,
+                foldCount, vr.nonManifoldEdges);
+    // Pre-fix floor on this extract was 131; freeformComb stitch
+    // deadlock repair brings it under 75 with no folds/non-manifold.
+    CHECK(unexplained < 75);
+    CHECK(foldCount == 0);
+    CHECK(vr.nonManifoldEdges == 0);
 }
 
 // Auto-mesher gates: a plate with a slot has "two wires" but is NOT an
@@ -1177,6 +1995,79 @@ void testAdaptiveDensity() {
     CHECK(smallCount >= 6);          // closed-ring floor holds
     CHECK(largeCount > smallCount);  // curvature drives the count up with size
     CHECK(largeCount <= 256);        // ...within the cap
+
+    // Artist floor: CAD/relativeDeviation's 60° gate would otherwise leave
+    // small rings near 6; minCurvedSegments raises that floor, and
+    // densityScale cannot undercut it on closed curved edges.
+    {
+        TopoDS_Shape cyl =
+            BRepPrimAPI_MakeCylinder(
+                gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)), 4.0, 8.0)
+                .Shape();
+        std::string path = tmpPath("weft_test_mincurve.step");
+        weft::writeStep(cyl, path);
+        weft::Model model = weft::loadStep(path);
+        weft::Analysis a = weft::analyze(model);
+        weft::GenerationSettings gs;
+        gs.defaults.adaptive = true;
+        gs.defaults.relativeDeviation = true;
+        gs.defaults.minCurvedSegments = 12;
+        gs.densityScale = 0.5;
+        weft::GenerationReport report;
+        weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
+        CHECK(isWatertight(mesh));
+        int side = 0;
+        for (const auto& f : a.faces) {
+            if (f.type == weft::SurfaceType::Cylinder) side = f.id;
+        }
+        auto rims = report.faceRims.find(side);
+        CHECK(rims != report.faceRims.end());
+        const int n = report.edgeDivisions.at(rims->second[0]);
+        CHECK(n >= 12);
+    }
+
+    // Through-bore plate: ring-junction used to crush the circle to
+    // 2*(nu+nv) then the 60° curvature floor raised it to 6 — ignoring
+    // minCurvedSegments and demoting the junctions. Plate must grow so
+    // the bore rim stays >= 12 and the junctions remain structured.
+    {
+        std::string path = tmpPath("weft_test_mincurve_hole.step");
+        weft::writeStep(weft::makeFixture("hole"), path);
+        weft::Model model = weft::loadStep(path);
+        weft::Analysis a = weft::analyze(model);
+        weft::GenerationSettings gs;
+        gs.defaults.minimal = true;
+        gs.defaults.adaptive = true;
+        gs.defaults.relativeDeviation = true;
+        gs.defaults.minCurvedSegments = 12;
+        weft::GenerationReport report;
+        weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
+        CHECK(isWatertight(mesh));
+        int bore = 0, rim = 0;
+        for (const auto& f : a.faces) {
+            if (f.isHole && f.type == weft::SurfaceType::Cylinder) {
+                bore = f.id;
+            }
+        }
+        CHECK(bore > 0);
+        auto rims = report.faceRims.find(bore);
+        CHECK(rims != report.faceRims.end());
+        for (int e : rims->second) {
+            rim = std::max(rim, report.edgeDivisions.at(e));
+        }
+        CHECK(rim >= 12);
+        int junctions = 0, junctionFloor = 0;
+        for (const auto& [fid, kind] : report.faceMesher) {
+            if (kind != weft::MesherKind::RingJunction) continue;
+            ++junctions;
+            auto bit = report.faceBuild.find(fid);
+            if (bit != report.faceBuild.end() && bit->second == 2) {
+                ++junctionFloor;
+            }
+        }
+        CHECK(junctions >= 2);
+        CHECK_EQ(junctionFloor, 0);
+    }
 
     // A per-edge pin still beats the adaptive proposal.
     weft::Analysis a = weft::analyze(largeModel);
@@ -1917,7 +2808,7 @@ void testAllMesherStrategies() {
         weft::MesherKind::MinimalNGon,    weft::MesherKind::Fallback,
         weft::MesherKind::AnnulusRing,    weft::MesherKind::PlateWeb,
         weft::MesherKind::RailLadder,     weft::MesherKind::RibbonSweep,
-        weft::MesherKind::DomeCap,
+        weft::MesherKind::DomeCap,        weft::MesherKind::QuadFill,
     };
     for (weft::MesherKind kind : expected) {
         if (!observed.count(kind)) {
@@ -2599,6 +3490,8 @@ void testTopologySignature() {
         CHECK(s1.find("schema=weft.topology_signature.v1") !=
               std::string::npos);
         CHECK(s1.find("kind.") != std::string::npos);
+        CHECK(s1.find(".feature=") != std::string::npos);
+        CHECK(s1.find(".chart=") != std::string::npos);
         CHECK(s1.find("quads=") != std::string::npos);
         CHECK(s1.find("anchors.uv_qhash=") != std::string::npos);
         CHECK(s1.find("info.note=") != std::string::npos);
@@ -2986,6 +3879,18 @@ int main() {
     RUN(testUnlinkedRims);
     RUN(testPlateWeb);
     RUN(testPlateWebSliverRefine);
+    RUN(testTorturePlateWebMinimalResidual);
+    RUN(testSphereDimpleNotContractFloor);
+    RUN(testBulletTipNotContractFloor);
+    RUN(testBulletBodyTipRimContinuity);
+    RUN(testSparseFoldKeepsStructuredCharts);
+    RUN(testFeatureClassAnalyze);
+    RUN(testCylindricalStackContinuity);
+    RUN(testMp9FilletCapsuleNotRevolution);
+    RUN(testMp9GripFreeformCoons);
+    RUN(testTanSlitNoRawDemotion);
+    RUN(testBrokenSourceDiagnostic);
+    RUN(testMp9CoonsPlaneSeamCanonicalize);
     RUN(testNudgeVertex);
     RUN(testRecipeRemap);
     RUN(testAutoGates);

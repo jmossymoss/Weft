@@ -201,6 +201,10 @@ struct FacePlan {
     // is meshed by one global parameter lattice: every surviving cell is a
     // quad, so a notch cannot restart the cylinder spans or create a fan.
     bool orthogonalTrimGrid = false;
+    // Near-iso STEP splits on a non-analytic chart (#1805-class). Marks
+    // lattices whose borders need freeformComb seam repair in stitch/
+    // fuse — not a second MesherKind.
+    bool orthogonalFreeformComb = false;
     int orthogonalDriverU = 0;
     int orthogonalDriverV = 0;
     std::vector<int> orthogonalEdges;
@@ -223,7 +227,9 @@ bool sameFaceSettings(const FaceMeshSettings& a,
            a.weldTolerance == b.weldTolerance &&
            a.squareCollar == b.squareCollar &&
            a.coonsRotate == b.coonsRotate && a.boundary == b.boundary &&
-           a.adaptive == b.adaptive && a.cellCap == b.cellCap;
+           a.adaptive == b.adaptive &&
+           a.minCurvedSegments == b.minCurvedSegments &&
+           a.cellCap == b.cellCap;
 }
 
 struct CachedFacePlan {
@@ -724,6 +730,7 @@ bool planOrthogonalTrimGrid(const TopoDS_Face& face,
     }
 
     plan.orthogonalTrimGrid = true;
+    plan.orthogonalFreeformComb = freeformComb;
     plan.kind = drum ? MesherKind::RevolutionGrid : MesherKind::CoonsGrid;
     plan.uEdges = std::move(horizontal);
     plan.vEdges = std::move(vertical);
@@ -831,9 +838,13 @@ bool isClosedRevolution(const BRepAdaptor_Surface& surf) {
     switch (surf.GetType()) {
         case GeomAbs_Cylinder:
         case GeomAbs_Cone:
-        case GeomAbs_Sphere:
         case GeomAbs_Torus:
         case GeomAbs_SurfaceOfRevolution: return surf.IsUClosed();
+        // Geometric spheres are always U-periodic. Trimmed dimple / bowl
+        // patches (MP9 boolean spheres) often report IsUClosed()=false on
+        // the adaptor, which used to skip RevolutionGrid and dump them on
+        // the contract floor (needle soup). Trust the surface type.
+        case GeomAbs_Sphere: return true;
         case GeomAbs_BSplineSurface:
         case GeomAbs_BezierSurface:
         case GeomAbs_OffsetSurface:
@@ -841,6 +852,10 @@ bool isClosedRevolution(const BRepAdaptor_Surface& surf) {
         default: return false;
     }
 }
+
+// Sphere UV pole chart lives in analyze() → FaceInfo::chartKind (AD-5).
+// planFace reads SphereCap × Pole/FullPeriod vs GeometricCap; do not
+// rediscover the probe here.
 
 // Adaptor-independent closed-revolution probe: OFFSET
 // surfaces report IsUClosed()=false even across a full 2-pi period
@@ -1156,6 +1171,12 @@ EdgeIso edgeIsoDirection(const TopoDS_Edge& edge, const TopoDS_Face& face,
     if (pcurve.IsNull()) return EdgeIso::Neither;
     gp_Pnt2d a = pcurve->Value(f);
     gp_Pnt2d b = pcurve->Value(l);
+    // Closed pcurves (start≈end) used to classify from the mid-chord alone
+    // and falsely read as V-aligned — bullet sphere rims then landed in
+    // BOTH uEdges and vEdges and lofted a fake U-wrap lattice.
+    if (a.Distance(b) < 1e-9 * (1.0 + std::max(uRange, vRange))) {
+        return EdgeIso::Neither;
+    }
     gp_Pnt2d m = pcurve->Value(0.5 * (f + l));
     double du = std::max(std::abs(b.X() - a.X()), std::abs(m.X() - a.X())) /
                 std::max(uRange, 1e-12);
@@ -1440,11 +1461,16 @@ struct CoonsPatch {
 bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
                     CoonsPatch& patch, int rotate = 0,
                     const char** why = nullptr,
-                    bool* reflexPlanar = nullptr) {
+                    bool* reflexPlanar = nullptr,
+                    int maxWireEdges = 24,
+                    int maxSideChain = 8,
+                    bool allowDrumWedge = false) {
     auto reject = [&](const char* r) {
         if (why) *why = r;
         return false;
     };
+    if (maxWireEdges < 4) maxWireEdges = 4;
+    if (maxSideChain < 1) maxSideChain = 1;
     TopoDS_Wire outer = BRepTools::OuterWire(face);
     if (outer.IsNull()) return reject("no outer wire");
     // Extra wires are HOLES: fine on CURVED charts as long as each sits
@@ -1508,7 +1534,9 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
     };
     std::vector<WireEdge> all;
     for (BRepTools_WireExplorer wx(outer, face); wx.More(); wx.Next()) {
-        if (all.size() >= 24) return reject("more than 24 edges");
+        if (int(all.size()) >= maxWireEdges) {
+            return reject("more than wire-edge budget");
+        }
         const TopoDS_Edge edge = wx.Current();
         double f, l;
         Handle(Geom2d_Curve) pcurve =
@@ -1597,6 +1625,9 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
     };
 
     std::vector<size_t> sideStart;  // indices into `order` that begin sides
+    // Analytic drum wedges (one meridian + two rails → UV apex) chain
+    // many edges into THREE sides with a collapsed apex, not four.
+    bool drumWedgeTri = false;
     if (nReal > 4) {
         // Joint k sits BEFORE order[k] (between order[k-1] and order[k]).
         // With a gap (pole/stub) joint 0 is FORCED to be a corner; on a
@@ -1613,9 +1644,69 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
         std::sort(byTurn.begin(), byTurn.end(),
                   [&](size_t x, size_t y) { return turn[x] > turn[y]; });
         // Need four clear corners; a fuzzy fourth means this isn't a
-        // four-sided patch.
-        if (turn[byTurn[3]] < 20.0 * M_PI / 180.0) return reject("no clear fourth corner");
-        sideStart = {byTurn[0], byTurn[1], byTurn[2], byTurn[3]};
+        // four-sided patch — unless it is an analytic drum wedge with
+        // three clear corners (one meridian + two rails meeting at a
+        // UV apex). Those take a collapsed-last triangle Coons instead
+        // of falling to the contract floor (foam 505/525 class).
+        const bool analyticDrumSurf =
+            signSurf.GetType() == GeomAbs_Cylinder ||
+            signSurf.GetType() == GeomAbs_Cone ||
+            signSurf.GetType() == GeomAbs_SurfaceOfRevolution;
+        const double cornerFloor = 20.0 * M_PI / 180.0;
+        // Exactly one full-height u-iso side marks a tapered drum wedge
+        // (meridian + two rails → UV apex). Prefer collapsed-last
+        // triangle Coons even when a weak fourth corner clears the
+        // angle floor — a four-sided bilinear patch probes outside
+        // those domains (foam 501/510 free-trim class).
+        int fullHeightUIso = 0;
+        if (analyticDrumSurf && gap < 0 && order.size() >= 3) {
+            const double uspanW = std::max(
+                1e-12, signSurf.LastUParameter() -
+                           signSurf.FirstUParameter());
+            const double vspanW = std::max(
+                1e-12, signSurf.LastVParameter() -
+                           signSurf.FirstVParameter());
+            for (int src : order) {
+                double f, l;
+                Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(
+                    all[src].edge, face, f, l);
+                if (pc.IsNull()) continue;
+                double umin = 1e300, umax = -1e300, vmin = 1e300,
+                       vmax = -1e300;
+                for (int k = 0; k <= 8; ++k) {
+                    gp_Pnt2d uv = pc->Value(f + (l - f) * k / 8.0);
+                    umin = std::min(umin, uv.X());
+                    umax = std::max(umax, uv.X());
+                    vmin = std::min(vmin, uv.Y());
+                    vmax = std::max(vmax, uv.Y());
+                }
+                if (umax - umin < 0.02 * uspanW &&
+                    vmax - vmin >= 0.9 * vspanW) {
+                    ++fullHeightUIso;
+                }
+            }
+        }
+        // Single-meridian analytic wedges:
+        //  - fuzzy 4th corner → always triangle Coons (foam 505/525)
+        //  - clear 4th but still a wedge → only when caller allows
+        //    (FeatureClass::Drum). FilletStrip cylinders share the
+        //    one-meridian signature and must stay four-sided
+        //    (teleporter face 208).
+        const bool fuzzyFourth = turn[byTurn[3]] < cornerFloor;
+        const bool wedgeGeom = analyticDrumSurf && gap < 0 &&
+                               fullHeightUIso == 1 &&
+                               turn[byTurn[2]] >= cornerFloor;
+        const bool wedgeCandidate =
+            wedgeGeom && (fuzzyFourth || allowDrumWedge);
+        if (fuzzyFourth && !wedgeCandidate) {
+            return reject("no clear fourth corner");
+        }
+        if (wedgeCandidate) {
+            drumWedgeTri = true;
+            sideStart = {byTurn[0], byTurn[1], byTurn[2]};
+        } else {
+            sideStart = {byTurn[0], byTurn[1], byTurn[2], byTurn[3]};
+        }
         std::sort(sideStart.begin(), sideStart.end());
         if (gap >= 0 && sideStart[0] != 0) return reject("gap not at a corner");
         // Reflex screening is DETECTION only, and PLANAR only: the
@@ -1683,7 +1774,8 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
         return pce;
     };
     // Fill the four sides (legacy arrays mirror each side's first piece).
-    const int nSides = nReal == 3 ? 3 : 4;
+    // Drum wedges chain >3 edges into three sides (collapsed apex).
+    const int nSides = (nReal == 3 || drumWedgeTri) ? 3 : 4;
     for (int sIdx = 0; sIdx < nSides; ++sIdx) {
         size_t from = sideStart[sIdx];
         size_t to = sIdx + 1 < int(sideStart.size())
@@ -1697,7 +1789,9 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
         // the face isn't four-cornered, and forcing a transfinite grid
         // through it slivers and folds (the flaregun underside panel:
         // one side chained ELEVEN edges). Quad-fill owns those.
-        if (patch.chain[sIdx].size() > 8) {
+        // FilletStrip capsule spans raise maxSideChain so long iso-band
+        // rails stay on Coons instead of falling to RevolutionGrid.
+        if (int(patch.chain[sIdx].size()) > maxSideChain) {
             return reject("side chains too many edges");
         }
         const auto& p0 = patch.chain[sIdx].front();
@@ -1716,7 +1810,7 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
         patch.rev[slot] = edge.Orientation() == TopAbs_REVERSED;
         patch.edgeIds[slot] = model.edges.FindIndex(edge);
     };
-    if (nReal == 3) {
+    if (nReal == 3 || drumWedgeTri) {
         patch.collapsedLast = true;
         if (gap >= 0) {
             // Pole from a degenerate edge: its pcurve spans the UV gap.
@@ -1724,7 +1818,8 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
             patch.poleCurve = true;
             patch.edgeIds[3] = patch.edgeIds[1];  // density: v follows side 1
         } else {
-            // Plain triangle: side 3 is the sides-0/2 corner point.
+            // Plain triangle / drum wedge: side 3 is the sides-0/2
+            // corner point (the UV apex for a single-meridian drum).
             patch.edgeIds[3] = patch.edgeIds[2];
             patch.pc[3] = patch.pc[2];
             patch.first[3] = patch.last[3] = 0.0;
@@ -1855,9 +1950,13 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
                        const std::vector<double>* uScaffold = nullptr,
                        const std::vector<double>* vScaffold = nullptr,
                        const PinnedEdges* pins = nullptr,
-                       bool decoupleSeams = false) {
+                       bool decoupleSeams = false,
+                       bool allowDrumWedge = false) {
     CoonsPatch patch;
-    if (!makeCoonsPatch(face, model, patch, rotate)) return false;
+    if (!makeCoonsPatch(face, model, patch, rotate, nullptr, nullptr, 24, 8,
+                        allowDrumWedge)) {
+        return false;
+    }
     Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
 
     // Border vertices evaluate on the shared 3D edge curves, not through
@@ -3478,6 +3577,10 @@ struct WebPoint {
     uint32_t vert;  // index in the MeshBuilder
 };
 
+bool splitIntoSimplePolys(std::vector<WebPoint> outer,
+                          std::vector<std::vector<WebPoint>> holes,
+                          std::vector<std::vector<WebPoint>>& polysOut);
+
 double loopSignedArea(const std::vector<WebPoint>& pts) {
     double a = 0;
     for (size_t i = 0; i < pts.size(); ++i) {
@@ -3843,11 +3946,12 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
                    const std::vector<std::vector<int>>* inserts = nullptr,
                    int collarRings = 1,
                    const PinnedEdges* pins = nullptr, int cellCap = 0,
-                   bool decoupleSeams = false) {
+                   bool decoupleSeams = false,
+                   bool allowDrumWedge = false) {
     if (!inserts || inserts->empty()) {
         return meshCoonsGridBody(face, model, faceId, uParams, vParams,
                                  rotate, solvedEdge, out, nullptr, nullptr,
-                                 pins, decoupleSeams);
+                                 pins, decoupleSeams, allowDrumWedge);
     }
     dbg("coons cutout %d: %zu insert wire(s)", faceId, inserts->size());
     // Hole rings: 3D edge curves at solved counts (the bore wall's own
@@ -3940,7 +4044,10 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
     // sprouts rows with nothing to follow; escalation midpoints the
     // hole band first and only then doubles everything.
     CoonsPatch cpatch;
-    if (!makeCoonsPatch(face, model, cpatch, rotate)) return false;
+    if (!makeCoonsPatch(face, model, cpatch, rotate, nullptr, nullptr, 24, 8,
+                        allowDrumWedge)) {
+        return false;
+    }
     auto sideCount = [&](int i) {
         const auto& ch = cpatch.chain[i];
         if (ch.size() > 1) {
@@ -4061,7 +4168,7 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
             MeshBuilder tmp(grid);
             if (!meshCoonsGridBody(face, model, faceId, uParams, vParams,
                                    rotate, solvedEdge, tmp, uSc, vSc, pins,
-                                   decoupleSeams)) {
+                                   decoupleSeams, allowDrumWedge)) {
                 dbg("coons cutout %d: body failed (attempt %d)", faceId,
                     attempt);
                 return false;
@@ -4581,7 +4688,8 @@ bool samplePlanarRings(const TopoDS_Face& face, const Model& model,
 bool meshPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                   const Model& model, int faceId,
                   const std::vector<int>& solvedEdge, int radialDefault,
-                  int collarRings, bool squareCollar, MeshBuilder& out) {
+                  int collarRings, bool squareCollar, MeshBuilder& out,
+                  bool minimalResidual = false) {
     std::vector<PlanarRing> rings;
     if (!samplePlanarRings(face, model, solvedEdge, radialDefault, rings)) {
         return false;
@@ -4836,6 +4944,27 @@ bool meshPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
             dStep /= 2;  // even the first ring didn't fit: pull in, retry
         }
         webHoles.push_back(std::move(boundary));
+    }
+
+    // CAD / minimal: keep the hole collars (section 7) but fill the
+    // residual with bridged simple n-gons instead of a dense CDT soup.
+    // Artists report the CDT residual as "tonnes of unnecessary geometry"
+    // on bored plate walls even with "minimal n-gon" checked — that flag
+    // never reached this path before.
+    if (minimalResidual) {
+        std::vector<std::vector<WebPoint>> simple;
+        if (splitIntoSimplePolys(webOuter, webHoles, simple)) {
+            for (const auto& ring : simple) {
+                std::vector<uint32_t> poly;
+                poly.reserve(ring.size());
+                for (const WebPoint& w : ring) poly.push_back(w.vert);
+                if (poly.size() >= 3) {
+                    out.addPolygon(std::move(poly), faceId, flip);
+                }
+            }
+            return true;
+        }
+        // Visibility failure: fall through to CDT rather than emit nothing.
     }
 
     return triangulateWeb(std::move(webOuter), std::move(webHoles), faceId,
@@ -7873,8 +8002,11 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         }
         const char* why = nullptr;
         bool reflex = false;
+        const bool drumWedge =
+            info.featureClass == FeatureClass::Drum;
         bool v = makeCoonsPatch(face, model, patch, s.coonsRotate, &why,
-                                &reflex);
+                                &reflex, /*maxWireEdges=*/24,
+                                /*maxSideChain=*/8, drumWedge);
         // Four-sided trims on analytic drums often cannot use the strict
         // open-band mesher (their side curves are not full-height isos), but
         // they still need the primitive's semantic axes. Wire start order is
@@ -7906,7 +8038,9 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 const char* canonicalWhy = nullptr;
                 bool canonicalReflex = false;
                 if (makeCoonsPatch(face, model, canonical, 1,
-                                   &canonicalWhy, &canonicalReflex)) {
+                                   &canonicalWhy, &canonicalReflex,
+                                   /*maxWireEdges=*/24, /*maxSideChain=*/8,
+                                   drumWedge)) {
                     patch = std::move(canonical);
                     reflex = canonicalReflex;
                     coonsEffectiveRotate = 1;
@@ -8234,13 +8368,170 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // model's micro-fillets: catches the teleporter's 0.096 mm rounds and
     // the STEP board's 0.06-0.125 mm ones, while the 0.15 mm gate sits
     // safely below every genuine fillet (foam's smallest is 0.217 mm).
-    if (info.isFillet && info.radius > 0.0 &&
+    if (info.featureClass == FeatureClass::FilletStrip && info.radius > 0.0 &&
         info.radius < 1.5 * std::max(1e-9, s.chordTolerance) &&
         collectPlanarLoops(face, surf, model, plan, /*requirePlane=*/false)) {
         plan.kind = MesherKind::MinimalNGon;
         dbg("plan face %d: sliver fillet r=%.4g (< %.4g) -> minimal n-gon",
             fid, info.radius, 1.5 * s.chordTolerance);
         return plan;
+    }
+
+    // AD-5 early table: class-keyed tries before the long ladder. Planners
+    // still prove capability; failure falls through unchanged.
+    switch (info.featureClass) {
+        case FeatureClass::SphereCap: {
+            const bool poleChart = info.chartKind == ChartKind::Pole ||
+                                   info.chartKind == ChartKind::FullPeriod;
+            if (poleChart && (isClosedRevolution(surf) || geomRev())) {
+                std::vector<std::vector<int>> inserts;
+                if (edgesHugRimsOrInserts(face, surf, model, inserts)) {
+                    plan.insertWires = std::move(inserts);
+                }
+                finishRevolution();
+                dbg("plan face %d: sphere-cap %s -> revolution grid", fid,
+                    chartKindName(info.chartKind));
+                return plan;
+            }
+            if (info.chartKind == ChartKind::GeometricCap) {
+                FacePlan qf;
+                if (planQuadFill(face, surf, model, qf)) {
+                    plan = std::move(qf);
+                    dbg("plan face %d: sphere-cap geometric-cap -> "
+                        "quad-fill/disk-cap",
+                        fid);
+                    return plan;
+                }
+            }
+            break;
+        }
+        case FeatureClass::BossJunction:
+            if (planRingJunction(face, model, plan)) {
+                dbg("plan face %d: boss-junction -> ring-junction", fid);
+                return plan;
+            }
+            if (planAnnulus(face, model, plan, /*requireRing=*/true)) {
+                dbg("plan face %d: boss-junction -> annulus", fid);
+                return plan;
+            }
+            break;
+        case FeatureClass::HolePlate:
+            if (planPlateWeb(face, surf, model, plan,
+                             /*requireRoundHoles=*/true)) {
+                dbg("plan face %d: hole-plate -> plate-web", fid);
+                return plan;
+            }
+            if (planAnnulus(face, model, plan, /*requireRing=*/true)) {
+                dbg("plan face %d: hole-plate -> annulus", fid);
+                return plan;
+            }
+            if (planRingJunction(face, model, plan)) {
+                dbg("plan face %d: hole-plate -> ring-junction", fid);
+                return plan;
+            }
+            break;
+        case FeatureClass::PlanarPanel:
+            if (s.minimal &&
+                planMinimalPlanar(face, surf, model, plan)) {
+                dbg("plan face %d: planar-panel -> minimal-ngon", fid);
+                return plan;
+            }
+            break;
+        case FeatureClass::Freeform:
+            // DomeCap is tightly gated — safe to claim early. Rail ladder /
+            // ribbon stay later in the ladder: promoting them here yanked
+            // foam freeform panels off coons and opened seams (87 ribbons).
+            if (planDomeCap(face, surf, model, plan)) {
+                dbg("plan face %d: freeform -> dome-cap", fid);
+                return plan;
+            }
+            break;
+        case FeatureClass::FilletStrip: {
+            // Closed torus / cylinder fillets used to fall through to
+            // isClosedRevolution and become RevolutionGrid, losing blend
+            // across/along ownership. Claim Coons here from class×chart.
+            // Capsule / multi-edge iso-bands exceed the default 24-edge
+            // Coons budget (MP9 #1973/#1980: 26 edges) — raise the wire
+            // and side-chain limits for this class only.
+            CoonsPatch patch;
+            const char* filletWhy = nullptr;
+            bool filletReflex = false;
+            bool filletCoons = makeCoonsPatch(
+                face, model, patch, s.coonsRotate, &filletWhy, &filletReflex,
+                /*maxWireEdges=*/48, /*maxSideChain=*/16);
+            if (filletCoons && cache) {
+                cache->coonsValid[fid] = true;
+                cache->coonsReflex[fid] = filletReflex;
+            }
+            if (filletCoons && coonsChainsCompatible(patch)) {
+                if (!(filletReflex && s.quadDominant)) {
+                    plan.kind = MesherKind::CoonsGrid;
+                    plan.coonsRotate = s.coonsRotate;
+                    plan.constrains = true;
+                    plan.isFillet = true;
+                    plan.insertWires = patch.holeWires;
+                    insertCountFloors(face, patch, plan.insertMinU,
+                                      plan.insertMinV);
+                    if (patch.chained()) {
+                        for (int i = 0; i < 4; ++i) {
+                            for (const auto& pce : patch.chain[i]) {
+                                plan.coonsSides[i].push_back(pce.edgeId);
+                            }
+                        }
+                    } else {
+                        plan.uEdges = {patch.edgeIds[0], patch.edgeIds[2]};
+                        plan.vEdges = {patch.edgeIds[1], patch.edgeIds[3]};
+                    }
+                    auto sideLen = [&](int i) {
+                        BRepAdaptor_Curve c(
+                            TopoDS::Edge(model.edges(patch.edgeIds[i])));
+                        return GCPnts_AbscissaPoint::Length(c);
+                    };
+                    const double pairU = sideLen(0) + sideLen(2);
+                    const double pairV = sideLen(1) + sideLen(3);
+                    plan.acrossIsU = pairU < pairV;
+                    dbg("plan face %d: fillet-strip %s -> coons-grid", fid,
+                        chartKindName(info.chartKind));
+                    return plan;
+                }
+            } else if (!filletCoons && filletWhy) {
+                dbg("coons: face %d fillet-strip rejected: %s", fid,
+                    filletWhy);
+            }
+            // Still refuse RevolutionGrid for this class: a clipped UV
+            // lattice is fine, but keep Coons ownership / filletHold.
+            // Mark orthogonalFreeformComb so border snap + comb seam
+            // fuse/stitch apply — capsule iso-bands share the same
+            // clipped-lattice drift class as freeform combs.
+            {
+                FacePlan orth;
+                if (planOrthogonalTrimGrid(face, surf, model, orth)) {
+                    orth.kind = MesherKind::CoonsGrid;
+                    orth.isFillet = true;
+                    orth.orthogonalFreeformComb = true;
+                    orth.acrossIsU = surf.GetType() == GeomAbs_Cylinder;
+                    dbg("plan face %d: fillet-strip %s -> orthogonal "
+                        "coons-grid (no revolution)",
+                        fid, chartKindName(info.chartKind));
+                    plan = std::move(orth);
+                    return plan;
+                }
+            }
+            break;
+        }
+        case FeatureClass::Drum:
+            if (info.chartKind == ChartKind::FullPeriod &&
+                (isClosedRevolution(surf) || geomRev())) {
+                std::vector<std::vector<int>> inserts;
+                if (edgesHugRimsOrInserts(face, surf, model, inserts)) {
+                    plan.insertWires = std::move(inserts);
+                }
+                finishRevolution();
+                dbg("plan face %d: drum full-period -> revolution grid",
+                    fid);
+                return plan;
+            }
+            break;
     }
 
     // Game topology (plan §1): a curved face carrying a boolean CUTOUT hole
@@ -8254,10 +8545,6 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // ear-clip can't build (e.g. a periodic seam self-crosses) it returns
     // false and the face falls through to its normal route untouched.
     if (s.minimal) {
-        int wireCount = 0;
-        for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
-            ++wireCount;
-        }
         // A CYLINDER wall that actually wraps must NOT flatten to an n-gon
         // (the user's primitive-first order: a slotted barrel is a cylinder
         // with a local cutout, not a flat panel) — it keeps its curvature on
@@ -8268,24 +8555,34 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         // they need ring-junction / plate-web collars (section 7) and are
         // handled after AnnulusCRing below. Swallowing them here produced
         // one fan n-gon per bored flat under the CAD profile.
-        const bool curvedCyl =
-            surf.GetType() == GeomAbs_Cylinder &&
+        const bool curvedDrum =
+            info.featureClass == FeatureClass::Drum &&
             !isGeometricallyFlat(face, surf, /*flatFrac=*/0.08);
-        const bool truePlane = surf.GetType() == GeomAbs_Plane;
-        if (wireCount > 1 && !curvedCyl && !truePlane &&
+        const bool planarClass =
+            info.featureClass == FeatureClass::PlanarPanel ||
+            info.featureClass == FeatureClass::HolePlate ||
+            info.featureClass == FeatureClass::BossJunction;
+        if (info.loop.wireCount > 1 && !curvedDrum && !planarClass &&
             planMinimalPlanar(face, surf, model, plan, /*requirePlane=*/false)) {
             dbg("plan face %d: curved cutout -> minimal n-gon (%d wires, "
                 "local holes)",
-                fid, wireCount);
+                fid, info.loop.wireCount);
             return plan;
         }
     }
 
-    // revCovers is NOT required: a pipe-saddle band legitimately fails
-    // fixed-v coverage — edgesHugRimsOrInserts checks between-chain
-    // coverage itself, so wavy-rim bands loft instead of falling to a
-    // coons patch (which degenerates on a full-period chart).
-    if (isClosedRevolution(surf) || geomRev()) {
+    // SphereCap / FilletStrip handled in the early featureClass table
+    // above. Remaining closed-revolution faces (drums that missed the
+    // FullPeriod early row, geometric revolves) still loft here.
+    // FilletStrip must not take RevolutionGrid — blend across/along
+    // ownership lives on Coons. revCovers is NOT required: a pipe-saddle
+    // band legitimately fails fixed-v coverage — edgesHugRimsOrInserts
+    // checks between-chain coverage itself, so wavy-rim bands loft
+    // instead of falling to a coons patch (which degenerates on a
+    // full-period chart).
+    if (info.featureClass != FeatureClass::SphereCap &&
+        info.featureClass != FeatureClass::FilletStrip &&
+        (isClosedRevolution(surf) || geomRev())) {
         std::vector<std::vector<int>> inserts;
         if (edgesHugRimsOrInserts(face, surf, model, inserts)) {
             plan.insertWires = std::move(inserts);
@@ -8370,11 +8667,15 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     }
 
     // Residual flats under CAD/minimal: boundary n-gon. Dense / flat-quads
-    // (`minimal=false`) continue to PlanarGrid below.
-    if (s.minimal && planMinimalPlanar(face, surf, model, plan)) {
+    // (`minimal=false`) continue to PlanarGrid below. Freeform panels skip
+    // this grab: shallow bspline grips otherwise collapse to a single
+    // n-gon (MP9 grip/optic) instead of falling through to Coons quad
+    // flow. PlanarPanel already claimed minimal in the early table.
+    if (s.minimal && info.featureClass != FeatureClass::Freeform &&
+        planMinimalPlanar(face, surf, model, plan)) {
         if (getenv("WEFT_FLAT_DEBUG")) {
-            dbg("plan face %d: minimal-ngon (surf type %d)", fid,
-                (int)surf.GetType());
+            dbg("plan face %d: residual flat -> minimal-ngon (class %s)",
+                fid, featureClassName(info.featureClass));
         }
         return plan;
     }
@@ -8397,7 +8698,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         collectIsoEdges(face, model, info.edgeIds, plan);
         if (plan.uEdges.size() == 2 && plan.vEdges.size() == 2) {
             plan.kind = MesherKind::PlanarGrid;
-            if (info.isFillet) {
+            if (info.featureClass == FeatureClass::FilletStrip) {
                 plan.isFillet = true;
                 // The blend arc runs along u for a cylinder strip and along
                 // the minor circle (v) for a toroidal corner patch.
@@ -8413,9 +8714,13 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // Coons: a many-piece side is CAD bookkeeping, not a request to pull
     // every piece toward a patch centre. One global UV lattice preserves
     // the primitive spans and clips only the cells outside the trim.
+    // FilletStrip never takes RevolutionGrid from this path — blend
+    // across/along ownership lives on Coons (early table already tried
+    // Coons + an orthogonal-coons fallback for the class).
     {
         FacePlan orth;
-        if (planOrthogonalTrimGrid(face, surf, model, orth)) {
+        if (planOrthogonalTrimGrid(face, surf, model, orth) &&
+            info.featureClass != FeatureClass::FilletStrip) {
             dbg("plan face %d: orthogonal trim grid u=%zu v=%zu", fid,
                 orth.uEdges.size(), orth.vEdges.size());
             plan = std::move(orth);
@@ -8474,27 +8779,18 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // per-edge counts the band's columns can't honor without the
     // post-weld stitcher, so those keep their coons route.
     if (!std::getenv("WEFT_NO_DRUM_BANDS")) {
-        const GeomAbs_SurfaceType st = surf.GetType();
-        // The blend detector flags anything tangentially joined as a
-        // fillet — including foam's 48-tall half-drums. A real blend
-        // STRIP is narrow relative to its radius (a quarter-round is
-        // 1.57r across) OR subtends at most ~109 degrees of wrap (edge
-        // rounds are quarter arcs plus tangent slack; a cylinder
-        // strip's v is its AXIS, so a long box-edge round fails the
-        // v-span test yet is still a blend — the fillet-loops knob must
-        // keep driving it). Only genuinely wide wraps (foam's
-        // half-drums, pi and up) leave the coons/fillet route.
-        const double vSpan3D =
-            surf.LastVParameter() - surf.FirstVParameter();
-        const bool filletStrip =
-            info.isFillet &&
-            (info.radius <= 1e-9 || vSpan3D <= 1.8 * info.radius ||
-             surf.LastUParameter() - surf.FirstUParameter() <= 1.9);
-        if (!filletStrip &&
-            (st == GeomAbs_Cylinder || st == GeomAbs_Cone ||
-             st == GeomAbs_SurfaceOfRevolution) &&
+        // AD-5: analyze() already split narrow FilletStrip from wide
+        // false-fillet Drum. IsoBand / FreeTrim drums take open-band;
+        // FilletStrip keeps the coons route below.
+        const bool drumBand =
+            info.featureClass == FeatureClass::Drum &&
+            info.chartKind != ChartKind::FullPeriod &&
+            (surf.GetType() == GeomAbs_Cylinder ||
+             surf.GetType() == GeomAbs_Cone ||
+             surf.GetType() == GeomAbs_SurfaceOfRevolution) &&
             !surf.IsUClosed() &&
-            surf.LastUParameter() - surf.FirstUParameter() >= 1.0) {
+            surf.LastUParameter() - surf.FirstUParameter() >= 1.0;
+        if (drumBand) {
             if (tryOpenBand()) {
                 if (!settings.decoupleSeams &&
                     (plan.rimLow.size() != 1 || plan.rimHigh.size() != 1)) {
@@ -8557,7 +8853,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 plan.uEdges = {patch.edgeIds[0], patch.edgeIds[2]};
                 plan.vEdges = {patch.edgeIds[1], patch.edgeIds[3]};
             }
-            if (info.isFillet) {
+            if (info.featureClass == FeatureClass::FilletStrip) {
                 plan.isFillet = true;
                 auto sideLen = [&](int i) {
                     BRepAdaptor_Curve c(
@@ -8584,7 +8880,8 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             // it. Flag the plan so the dispatch first tries the rail sweep's
             // clean notch cut, keeping the Coons plan intact as the fallback
             // when the solve is too coarse for the cut to weld.
-            if (!info.isFillet && plan.insertWires.empty() &&
+            if (info.featureClass != FeatureClass::FilletStrip &&
+                plan.insertWires.empty() &&
                 ribbonEndNotchDetect(face, model)) {
                 plan.tryRibbonNotch = true;
                 dbg("plan face %d: coons + end-notch ribbon -> try sweep cut",
@@ -8653,20 +8950,15 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // thin freeform ribbon we still reuse its boundary analysis to seed the
     // specialized rail sweep; all other unclaimed faces take the local
     // exact-border fallback below.
-    const bool planarHere = surf.GetType() == GeomAbs_Plane;
-    if (!planarHere) {
-        // A long thin bent ribbon (grip / trigger-guard rails) may sweep its
-        // two rails into regular rows. Failure demotes to the contract floor,
-        // never back to Quad Fill.
-        const GeomAbs_SurfaceType st = surf.GetType();
-        const bool analyticDrum =
-            st == GeomAbs_Cylinder || st == GeomAbs_Cone ||
-            st == GeomAbs_SurfaceOfRevolution;
-        if (!analyticDrum && ribbonDetect(face, model) &&
-            planQuadFill(face, surf, model, plan)) {
-            plan.kind = MesherKind::RibbonSweep;
-            return plan;
-        }
+    if (info.featureClass != FeatureClass::Drum &&
+        info.featureClass != FeatureClass::FilletStrip &&
+        info.featureClass != FeatureClass::PlanarPanel &&
+        info.featureClass != FeatureClass::HolePlate &&
+        info.featureClass != FeatureClass::BossJunction &&
+        ribbonDetect(face, model) &&
+        planQuadFill(face, surf, model, plan)) {
+        plan.kind = MesherKind::RibbonSweep;
+        return plan;
     }
 
     // A shallow conical cap nothing else claimed would tri-fan; a single
@@ -8678,6 +8970,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         plan.kind = MesherKind::MinimalNGon;
         return plan;
     }
+
     plan = FacePlan();
     plan.kind = MesherKind::Fallback;
     if (plan.forceFallbackQuads < 0) {
@@ -9088,6 +9381,11 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
     // unite into one group — both halves then carry the same count and
     // their columns meet exactly at the seams. Proportional splits
     // (a quarter against a three-quarter arc) keep their own counts.
+    //
+    // Also record per-arc floors for closed rings (~2π total span):
+    // minCurvedSegments is a RING total, so a Plasticity-split semicircle
+    // pair must each carry ceil(N/2), not skip the floor as open arcs.
+    std::map<int, int> cocircArcFloor;  // eid -> per-arc share of ring floor
     {
         std::map<std::array<long long, 7>, std::vector<std::pair<int, double>>>
             rings;
@@ -9114,16 +9412,32 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
         }
         for (auto& [key, arcs] : rings) {
             if (arcs.size() < 2) continue;
-            double mn = 1e300, mx = 0.0;
+            double mn = 1e300, mx = 0.0, totalSpan = 0.0;
             for (const auto& [eid, span] : arcs) {
                 mn = std::min(mn, span);
                 mx = std::max(mx, span);
+                totalSpan += span;
             }
-            if (mx > 1.3 * mn) continue;
-            std::vector<int> ids;
-            ids.reserve(arcs.size());
-            for (const auto& [eid, span] : arcs) ids.push_back(eid);
-            sol.groups.unite(ids);
+            const bool fullRing = totalSpan >= 2.0 * M_PI - 1e-2;
+            if (mx <= 1.3 * mn) {
+                std::vector<int> ids;
+                ids.reserve(arcs.size());
+                for (const auto& [eid, span] : arcs) ids.push_back(eid);
+                sol.groups.unite(ids);
+            }
+            if (!fullRing) continue;
+            // Share the artist ring floor across arcs by span fraction.
+            // Equal semicircles with mincurve=12 each take 6 (visual 12).
+            const int ringFloor = std::clamp(
+                settings.defaults.minCurvedSegments, 1, 256);
+            for (const auto& [eid, span] : arcs) {
+                const double frac =
+                    totalSpan > 1e-12 ? span / totalSpan : 0.0;
+                const int share = std::max(
+                    1, int(std::ceil(ringFloor * frac - 1e-9)));
+                auto [it, inserted] = cocircArcFloor.try_emplace(eid, share);
+                if (!inserted) it->second = std::max(it->second, share);
+            }
         }
     }
 
@@ -9194,16 +9508,29 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
         }
         return adDiag;
     };
-    std::map<std::array<long long, 4>, int> localAdCache;
+    std::map<std::array<long long, 5>, int> localAdCache;
     auto& adCache = cache ? cache->adaptiveEdgeCounts : localAdCache;
+    auto closedCurvedEdge = [&](int eid) -> bool {
+        if (eid < 1 || eid > model.edgeCount()) return false;
+        const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+        if (BRep_Tool::Degenerated(edge)) return false;
+        double f = 0, l = 0;
+        Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, f, l);
+        if (c3.IsNull()) return false;
+        GeomAdaptor_Curve gc(c3, f, l);
+        if (gc.GetType() == GeomAbs_Line) return false;
+        return c3->Value(f).Distance(c3->Value(l)) < 1e-9;
+    };
     auto adaptiveCount = [&](int eid, const FaceMeshSettings& s) {
-        const std::array<long long, 4> key = {
+        const int ringFloor = std::clamp(s.minCurvedSegments, 1, 256);
+        const std::array<long long, 5> key = {
             eid,
             static_cast<long long>(s.chordTolerance * 1e9) * 2 +
                 (s.relativeDeviation ? 1 : 0),
             static_cast<long long>(s.angleToleranceDeg * 1e6),
             static_cast<long long>(settings.defaults.angleToleranceDeg *
-                                   1e6)};
+                                   1e6),
+            static_cast<long long>(ringFloor)};
         auto it = adCache.find(key);
         if (it != adCache.end()) return it->second;
         int n = 1;
@@ -9272,15 +9599,32 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                         n = std::max(n, int(std::ceil(2.0 * M_PI / ang -
                                                       1e-9)));
                     }
-                    n = std::clamp(n, 6, 256);
+                    n = std::clamp(n, ringFloor, 256);
                 } else {
                     try {
                         n = std::clamp(stableDeflectionCount(c, ang, chord),
                                        1, 256);
                     } catch (const Standard_Failure&) {
                     }
-                    // Closed edges (full circles) keep a sane ring floor.
-                    if (closedLoop) n = std::max(n, 6);
+                    // Closed curved rings keep the adaptive lower floor
+                    // (cylinders, spheres, torus/fillet circles, …).
+                    if (closedLoop && c.GetType() != GeomAbs_Line) {
+                        n = std::max(n, ringFloor);
+                    }
+                }
+                // Plasticity-split co-circular arcs: apply this edge's share
+                // of the closed-ring floor (ceil(N * span/2π)).
+                auto cit = cocircArcFloor.find(eid);
+                if (cit != cocircArcFloor.end()) {
+                    int share = cit->second;
+                    const int defFloor =
+                        std::max(1, settings.defaults.minCurvedSegments);
+                    if (ringFloor != defFloor) {
+                        share = std::max(
+                            1, int(std::ceil(double(share) * ringFloor /
+                                             defFloor)));
+                    }
+                    n = std::max(n, share);
                 }
             }
         }
@@ -9307,8 +9651,29 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
         }
         for (int eid : edges) {
             // Floor applies AFTER scaling (propose scales): a ring floor
-            // of 6 must survive a 0.5x budget.
-            propose({eid}, std::max(int(std::lround(floorA / dScale)),
+            // must survive a 0.5x budget. Closed curved edges also raise
+            // the floor to minCurvedSegments so densityScale cannot drop
+            // a cylinder/sphere/fillet rim below the artist setting.
+            // Split co-circular arcs use their span share of that floor.
+            int flo = floorA;
+            if (closedCurvedEdge(eid)) {
+                flo = std::max(flo, std::clamp(s.minCurvedSegments, 1, 256));
+            }
+            auto cit = cocircArcFloor.find(eid);
+            if (cit != cocircArcFloor.end()) {
+                int share = cit->second;
+                const int faceFloor =
+                    std::clamp(s.minCurvedSegments, 1, 256);
+                const int defFloor = std::max(
+                    1, settings.defaults.minCurvedSegments);
+                if (faceFloor != defFloor) {
+                    share = std::max(
+                        1, int(std::ceil(double(share) * faceFloor /
+                                         defFloor)));
+                }
+                flo = std::max(flo, share);
+            }
+            propose({eid}, std::max(int(std::lround(flo / dScale)),
                                     adaptiveCount(eid, s)),
                     overridden, faceId);
         }
@@ -9736,11 +10101,13 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
     }
 
     // Ring junctions close the loop: the circle must take exactly one ring
-    // vertex per boundary vertex, so its group count is DERIVED from the
-    // boundary — 2*(nu+nv) — and propagates through the group to whatever
-    // boss/bore shares that circle ("the plate drives the boss"). A face
-    // whose circle is pinned to an incompatible count can't form the
-    // pattern and demotes to fallback triangulation.
+    // vertex per boundary vertex, so its group count equals 2*(nu+nv) and
+    // propagates through the group to whatever boss/bore shares that circle.
+    // Under adaptive / minCurvedSegments the bore often wants MORE than the
+    // sparse plate boundary (CAD 60° floor → 6, artist mincurve → 12). Crushing
+    // the circle down to 2*(nu+nv) then letting the global curvature floor
+    // raise it again desyncs the junction and demotes it. Grow the plate
+    // edges so 2*(nu+nv) meets max(proposals, mincurve), then derive.
     for (auto& [fid, plan] : plans) {
         if (plan.kind != MesherKind::RingJunction) continue;
         int nu = sol.countFor(plan.uEdges[0], 1);
@@ -9748,11 +10115,58 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
         int derived = 2 * (nu + nv);
         int root = sol.groups.find(plan.circleEdgeId);
         auto pin = pinned.find(root);
+        const FaceMeshSettings& s = settings.forFace(fid);
+        // Always honor the artist closed-ring floor. Under adaptive CAD,
+        // also keep the bore's curvature/proposal count (plate grows to
+        // match). Manual non-adaptive mode keeps the historic "plate
+        // drives the boss" rule so typed gridU/gridV stay authoritative
+        // over a neighbour's radial default.
+        int want = std::max(derived, std::clamp(s.minCurvedSegments, 1, 256));
+        const bool adaptiveRing = s.adaptive || settings.defaults.adaptive;
+        if (adaptiveRing) {
+            auto git = sol.groupCount.find(root);
+            if (git != sol.groupCount.end()) {
+                want = std::max(want, git->second);
+            }
+        }
+        for (const auto& [pfid, pplan] : plans) {
+            if (pplan.circleEdgeId == plan.circleEdgeId ||
+                (std::find(pplan.uEdges.begin(), pplan.uEdges.end(),
+                           plan.circleEdgeId) != pplan.uEdges.end())) {
+                want = std::max(
+                    want, std::clamp(settings.forFace(pfid).minCurvedSegments,
+                                     1, 256));
+            }
+        }
+        if (pin != pinned.end()) {
+            // Explicit edge pin wins; junction must match or demote.
+            want = pin->second;
+        }
+        // Grow nu/nv (balanced) until 2*(nu+nv) >= want. Skip edges that
+        // carry an explicit pin — those stay exact.
+        auto uRoot = sol.groups.find(plan.uEdges[0]);
+        auto vRoot = sol.groups.find(plan.vEdges[0]);
+        const bool uPinned = pinned.count(uRoot) > 0;
+        const bool vPinned = pinned.count(vRoot) > 0;
+        while (2 * (nu + nv) < want) {
+            const bool growU =
+                !uPinned && (vPinned || (!uPinned && !vPinned && nu <= nv));
+            if (growU) {
+                ++nu;
+            } else if (!vPinned) {
+                ++nv;
+            } else {
+                break;  // both plate axes pinned short of want
+            }
+        }
+        derived = 2 * (nu + nv);
         if (pin != pinned.end() && pin->second != derived) {
             plan.kind = MesherKind::Fallback;
             plan.constrains = false;
             continue;
         }
+        if (!uPinned) sol.groupCount[uRoot] = nu;
+        if (!vPinned) sol.groupCount[vRoot] = nv;
         sol.groupCount[root] = derived;
         sol.ringDerivedRoots.insert(root);
         sol.proposalsByRoot[root].push_back(
@@ -13406,14 +13820,15 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
                     best = duv; p3 = ep;
                 }
             }
-            // Sloppy STEP pcurves can miss the shared 3D edge by several
-            // microns even at the same logical station. A cell vertex that
-            // is already within 0.02 mm of an exact pinned edge sample is
-            // that sample; canonicalize it now so the neighbouring face
-            // shares the identical point. The radius is well below the CAD
-            // profile's 0.1 mm deviation and only considers explicit pins.
-            gp_Pnt surfaceP = surf.Value(p.X(),p.Y());
-            double d3 = 0.02;
+            // Sloppy STEP pcurves / freeform UV clips can miss the shared
+            // 3D edge by tens of microns. Canonicalize any cell vertex that
+            // lands near an exact border sample onto that sample so the
+            // neighbouring face shares the identical point. 0.15 mm covers
+            // Plasticity freeform pcurve/clip drift on MP9 #1805-class
+            // seams (~0.03–0.12 mm) without swallowing distinct lattice
+            // stations on typical CAD chords (≥0.5 mm).
+            gp_Pnt surfaceP = surf.Value(p.X(), p.Y());
+            double d3 = 0.15;
             for (const auto& [uv,ep] : exactSamples) {
                 const double d = surfaceP.Distance(ep);
                 if (d < d3) { d3 = d; p3 = ep; }
@@ -13550,6 +13965,46 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
         for (size_t i = 0; i < parity.size(); ++i)
             if (parity[i]) std::reverse(pm.polygons[i].begin(),
                                         pm.polygons[i].end());
+    }
+    // Freeform-comb borders: clipped lattice verts can sit tens of microns
+    // off the shared 3D edge via surf.Value. Snap boundary verts onto the
+    // nearest exact contract sample within a tight band so weld/stitch
+    // share points with neighbours — without changing connectivity.
+    if (plan.orthogonalFreeformComb && !exactSamples.empty()) {
+        PolyMesh& pm = out.mesh();
+        std::map<std::pair<uint32_t, uint32_t>, int> useCount;
+        for (const auto& poly : pm.polygons) {
+            for (size_t k = 0; k < poly.size(); ++k) {
+                const uint32_t a = poly[k];
+                const uint32_t b = poly[(k + 1) % poly.size()];
+                if (a != b) ++useCount[std::minmax(a, b)];
+            }
+        }
+        std::set<uint32_t> boundaryVerts;
+        for (const auto& [edge, count] : useCount) {
+            if (count == 1) {
+                boundaryVerts.insert(edge.first);
+                boundaryVerts.insert(edge.second);
+            }
+        }
+        for (uint32_t id : boundaryVerts) {
+            const gp_Pnt p(pm.vertices[id][0], pm.vertices[id][1],
+                           pm.vertices[id][2]);
+            double best = 0.25;
+            const gp_Pnt* nearest = nullptr;
+            for (const auto& [uv, ep] : exactSamples) {
+                (void)uv;
+                const double d = p.Distance(ep);
+                if (d < best) {
+                    best = d;
+                    nearest = &ep;
+                }
+            }
+            if (nearest) {
+                pm.vertices[id] = {nearest->X(), nearest->Y(),
+                                   nearest->Z()};
+            }
+        }
     }
     dbg("orthogonal grid face %d: %zux%zu stations, %d cells (%d tri, "
         "%d quad, %d ngon)", faceId, U.size(), V.size(), emitted, tris,
@@ -13906,13 +14361,37 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
     // smooth dome — Plasticity caps such a corner blend with one disk n-gon,
     // not a tri fan. So on this exact case suppress the pole vertex and close
     // the innermost real ring with a single n-gon (done in the emission below).
-    // Gated tightly: only GeomAbs_Sphere with exactly one usable rim (rim0ok
-    // XOR rim1ok). A cone's apex is a genuine SHARP tip (its fixture asserts
-    // the fan, and a flat cap would lose the point), and the rimless full
-    // sphere fixture (rims=0/0) has two poles and no single rim — both are
-    // excluded here and keep fanning byte-identically.
-    const bool sphereCapPole =
+    // Gated tightly: GeomAbs_Sphere, exactly one usable rim, AND the empty
+    // side's V iso must geometrically collapse (bullet tips with a circular
+    // non-iso rim used to pass rim0ok XOR rim1ok and mirror across a fake
+    // pole). Cones / rimless full spheres keep fanning byte-identically.
+    bool sphereCapPole =
         surf.GetType() == GeomAbs_Sphere && (rim0ok != rim1ok);
+    if (sphereCapPole) {
+        const double uu0 = surf.FirstUParameter();
+        const double uu1 = surf.LastUParameter();
+        const double vv = rim0ok ? v1 : v0;
+        gp_Pnt lo(1e300, 1e300, 1e300), hi(-1e300, -1e300, -1e300);
+        for (int k = 0; k <= 16; ++k) {
+            const gp_Pnt p =
+                surf.Value(uu0 + (uu1 - uu0) * k / 16.0, vv);
+            lo.SetX(std::min(lo.X(), p.X()));
+            hi.SetX(std::max(hi.X(), p.X()));
+            lo.SetY(std::min(lo.Y(), p.Y()));
+            hi.SetY(std::max(hi.Y(), p.Y()));
+            lo.SetZ(std::min(lo.Z(), p.Z()));
+            hi.SetZ(std::max(hi.Z(), p.Z()));
+        }
+        Bnd_Box bb;
+        BRepBndLib::Add(face, bb);
+        double bx0, by0, bz0, bx1, by1, bz1;
+        bb.Get(bx0, by0, bz0, bx1, by1, bz1);
+        const double diag =
+            gp_Pnt(bx0, by0, bz0).Distance(gp_Pnt(bx1, by1, bz1));
+        if (lo.Distance(hi) > 0.01 * std::max(diag, 1e-9)) {
+            sphereCapPole = false;
+        }
+    }
     // Mismatched-but-usable rims: rather than demote the whole face to the
     // contract floor (a tri soup), keep each rim's exact samples and absorb
     // the count difference in a transition strip. On an analytic revolution
@@ -16212,7 +16691,8 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
 // in param, and within a small fraction of the local pitch in both
 // param and 3D before they merge (union-find, lowest index wins).
 void fuseSeamTwins(PolyMesh& mesh, const Model& model, double weldTol,
-                   const std::vector<char>* fellBack = nullptr) {
+                   const std::vector<char>* fellBack = nullptr,
+                   const std::map<int, FacePlan>* plans = nullptr) {
     // Per-face boundary segments and vertex pitch (longest incident
     // boundary segment) — same qualification scaffolding as the
     // stitcher, rebuilt here because fusion must happen BEFORE the
@@ -16386,13 +16866,27 @@ void fuseSeamTwins(PolyMesh& mesh, const Model& model, double weldTol,
         };
         std::array<std::vector<SideVert>, 2> side;
         const int fids[2] = {fA, fB};
+        const bool freeformCombSeam =
+            plans && [&]() {
+                auto pa = plans->find(fA);
+                auto pb = plans->find(fB);
+                return (pa != plans->end() &&
+                        pa->second.orthogonalFreeformComb) ||
+                       (pb != plans->end() &&
+                        pb->second.orthogonalFreeformComb);
+            }();
         for (int s2 = 0; s2 < 2; ++s2) {
             auto pit = facePitch.find(fids[s2]);
             if (pit == facePitch.end()) continue;
             const auto& home = faceHome[fids[s2]];
             for (const auto& [v, pv] : pit->second) {
-                const double tolV =
-                    std::max(weldTol * 4.0, std::min(tolCap, 0.25 * pv));
+                // FreeformComb lattices carry micro boundary edges; the
+                // shortest-pitch band otherwise rejects real on-curve
+                // twins that sit tens of microns off the polyline.
+                const double tolV = freeformCombSeam
+                    ? std::max(weldTol * 4.0,
+                               std::min(tolCap, std::max(0.25 * pv, 0.25)))
+                    : std::max(weldTol * 4.0, std::min(tolCap, 0.25 * pv));
                 double t;
                 if (!paramOf(mesh.vertices[find(v)], tolV, t)) continue;
                 // Home gate (same as the stitcher): this curve must be
@@ -16407,6 +16901,11 @@ void fuseSeamTwins(PolyMesh& mesh, const Model& model, double weldTol,
                     double slack =
                         std::max(weldTol * 4.0, 0.5 * hit->second);
                     if (nearEnd) slack = std::max(slack, 0.05 * pv);
+                    // Comb notches sit parallel to the shared seam; a
+                    // slightly larger home slack keeps true seam verts.
+                    if (freeformCombSeam) {
+                        slack = std::max(slack, 0.15);
+                    }
                     if (d > hit->second + slack) continue;
                 }
                 side[s2].push_back({v, t, pv});
@@ -16438,15 +16937,32 @@ void fuseSeamTwins(PolyMesh& mesh, const Model& model, double weldTol,
             const SideVert& b = side[1][jb];
             if (find(a.v) == find(b.v)) continue;  // already one vertex
             const int ja = nearestIn(side[0], b.t);
-            if (ja < 0 || side[0][ja].v != a.v) continue;  // not mutual
+            // FreeformComb: skip mutual-nearest. Duplicate stations on one
+            // side break mutual pairing while param+3D gates still identify
+            // true twins (#1805 f2↔f5).
+            if (!freeformCombSeam) {
+                if (ja < 0 || side[0][ja].v != a.v) continue;  // not mutual
+            }
             const double pMin = std::max(1e-12, std::min(a.pitch, b.pitch));
-            if (paramDist(a.t, b.t) > 0.15 * pMin) continue;
             const auto& P = mesh.vertices[find(a.v)];
             const auto& Q = mesh.vertices[find(b.v)];
             const double dx = P[0] - Q[0], dy = P[1] - Q[1],
                          dz = P[2] - Q[2];
-            if (dx * dx + dy * dy + dz * dz > 0.0625 * pMin * pMin) {
-                continue;  // > 25% of pitch apart: not the same point
+            const double d2 = dx * dx + dy * dy + dz * dz;
+            if (freeformCombSeam) {
+                // Independent UV lattices sample the shared curve at
+                // different stations; allow up to 2% of curve length (or
+                // 2 mm) in param so near-duplicates still fuse. Hard 3D
+                // cap keeps distinct stations from collapsing.
+                if (paramDist(a.t, b.t) > std::max(0.02 * clen, 2.0)) {
+                    continue;
+                }
+                if (d2 > 0.5 * 0.5) continue;
+            } else {
+                if (paramDist(a.t, b.t) > 0.15 * pMin) continue;
+                if (d2 > 0.0625 * pMin * pMin) {
+                    continue;  // > 25% of pitch apart: not the same point
+                }
             }
             // Prefer keeping a verified contract-floor sample's POSITION
             // when fusing twins: remapping a floor cell onto a neighbour's
@@ -16821,12 +17337,33 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
                 // (foam CAD face 525: 3 foldedPolys after stitch) —
                 // refuse to rewrite them; the neighbour may still stitch
                 // toward this face.
+                // Exception: freeformComb partner (#1805 f2↔f5) — a fold
+                // self-heal demotes one comb to the floor and the Coons
+                // skip below then deadlocks both sides. Allow the floor
+                // to accept freeformComb samples; fold guard reverts bad
+                // inserts without collapsing the partner.
                 if (okFb && (*fellBack)[fid] == 2) {
-                    continue;
+                    const int other = fids[1 - s2];
+                    auto oit = plans->find(other);
+                    if (!(oit != plans->end() &&
+                          oit->second.orthogonalFreeformComb)) {
+                        continue;
+                    }
                 }
                 if (pit != plans->end() && okFb &&
                     pit->second.kind == MesherKind::MinimalNGon) {
-                    continue;
+                    // Plane↔freeformComb: insert denser comb samples into
+                    // the planar n-gon (safe with fold guard). Coons
+                    // rewrite stays refused below for foam 829/837.
+                    const int other = fids[1 - s2];
+                    auto oit = plans->find(other);
+                    if (!(oit != plans->end() &&
+                          oit->second.orthogonalFreeformComb &&
+                          oit->second.kind == MesherKind::CoonsGrid &&
+                          other >= 0 && other < int(fellBack->size()) &&
+                          (*fellBack)[other] == 0)) {
+                        continue;
+                    }
                 }
                 if (pit != plans->end() && okFb &&
                     pit->second.kind == MesherKind::CoonsGrid) {
@@ -16835,13 +17372,18 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
                     // Coons strips fold when MinimalNGon / contract-floor
                     // verts are spliced into an exact border (foam CAD
                     // 829/837). Keep coons↔revolution stitches enabled.
+                    // FreeformComb may still accept floor samples when
+                    // the partner demoted after fold self-heal.
                     if (oit != plans->end() &&
                         other >= 0 && other < int(fellBack->size()) &&
                         ((*fellBack)[other] == 0 ||
                          (*fellBack)[other] == 2) &&
                         (oit->second.kind == MesherKind::MinimalNGon ||
                          (*fellBack)[other] == 2)) {
-                        continue;
+                        if (!(pit->second.orthogonalFreeformComb &&
+                              (*fellBack)[other] == 2)) {
+                            continue;
+                        }
                     }
                 }
             }
@@ -17067,6 +17609,30 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
                     // face onto chord a-b: delete the insert verts, then
                     // bridge a-b if the denser side carried them across
                     // multiple polygons (824: 6773-6669 / 6669-6774).
+                    //
+                    // Exception: freeformComb → MinimalNGon / contract
+                    // floor inserts use the comb's OWN border verts.
+                    // Collapsing the opposite would delete those lattice
+                    // verts from the comb and manufacture folds/opens.
+                    const bool freeformIntoAuthority =
+                        plans &&
+                        [&]() {
+                            auto oit = plans->find(fids[1 - s2]);
+                            if (oit == plans->end() ||
+                                !oit->second.orthogonalFreeformComb) {
+                                return false;
+                            }
+                            auto pit = plans->find(fids[s2]);
+                            if (pit != plans->end() &&
+                                pit->second.kind ==
+                                    MesherKind::MinimalNGon) {
+                                return true;
+                            }
+                            return fellBack &&
+                                   fids[s2] >= 0 &&
+                                   fids[s2] < int(fellBack->size()) &&
+                                   (*fellBack)[fids[s2]] == 2;
+                        }();
                     const std::vector<uint32_t> beforePoly = poly;
                     poly.insert(poly.begin() + i + 1, ins.begin(),
                                 ins.end());
@@ -17076,6 +17642,13 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
                             p < mask.size() && mask[p] != 0;
                         if (folded) {
                             poly = beforePoly;
+                            if (freeformIntoAuthority) {
+                                dbg("stitch: eid %d face %d seg v%u-v%u "
+                                    "fold reject — keep freeformComb "
+                                    "partner",
+                                    eid, fids[s2], a, b);
+                                continue;
+                            }
                             const int other = fids[1 - s2];
                             auto oit = facePolys.find(other);
                             std::set<uint32_t> drop(ins.begin(),
@@ -17500,6 +18073,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         if (settings.perEdge.count(eid)) continue;
         const int root = density.groups.find(eid);
         if (density.pinnedRoots.count(root)) continue;
+        // Ring-junction circles already grew the plate to satisfy
+        // minCurvedSegments + proposals. Raising them again here without
+        // growing nu/nv desyncs 2*(nu+nv) and demotes the junction.
+        if (density.ringDerivedRoots.count(root)) continue;
         const TopoDS_Edge E = TopoDS::Edge(model.edges(eid));
         if (BRep_Tool::Degenerated(E)) continue;
         double f, l;
@@ -17517,6 +18094,24 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 floorN = std::clamp(
                     stableDeflectionCount(gc, M_PI / 3.0, 1e6), 1, 32);
                 if (cache) cache->curvatureFloors[eid] = floorN;
+            }
+            // Artist closed-ring floor: a full circle (or near-full) never
+            // resolves below minCurvedSegments. Defaults cover edges with
+            // no proposing face in the attribution map.
+            const bool closedLoop =
+                c3->Value(f).Distance(c3->Value(l)) < 1e-9;
+            if (closedLoop) {
+                int artist = settings.defaults.minCurvedSegments;
+                auto own = density.proposalsByRoot.find(root);
+                if (own != density.proposalsByRoot.end()) {
+                    for (const auto& p : own->second) {
+                        if (p.faceId < 1) continue;
+                        artist = std::max(
+                            artist,
+                            settings.forFace(p.faceId).minCurvedSegments);
+                    }
+                }
+                floorN = std::max(floorN, std::clamp(artist, 1, 256));
             }
             auto [it, inserted] = floorOfRoot.try_emplace(root, floorN);
             if (!inserted && it->second < floorN) it->second = floorN;
@@ -18468,6 +19063,103 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         }
     }
     timingCheckpoint("rim sum repair");
+
+    // AD-5 cylindrical stack continuity (adjacency-limited): raise
+    // co-length circular seams on FilletStrip / Freeform / planar neighbors
+    // that share a Drum rim edge. Pins that block a raise are recorded for
+    // densityConflicts (reason stack-continuity-pin).
+    std::vector<std::pair<int, int>> stackContinuityPinBlocks;  // eid, want
+    {
+        auto raiseRootTo = [&](int eid, int target) {
+            target = std::clamp(target, 1, 256);
+            const int root = density.groups.find(eid);
+            auto git = density.groupCount.find(root);
+            if (git == density.groupCount.end() || git->second >= target) {
+                return;
+            }
+            if (density.pinnedRoots.count(root) || settings.perEdge.count(eid)) {
+                stackContinuityPinBlocks.push_back({eid, target});
+                return;
+            }
+            git->second = target;
+            for (int e = 1; e <= model.edgeCount(); ++e) {
+                if (density.groups.find(e) == root) solvedEdge[e] = target;
+            }
+        };
+        auto edgeLen = [&](int eid) -> double {
+            if (eid < 1 || eid > int(analysis.edges.size())) return 0;
+            return analysis.edges[eid - 1].length;
+        };
+        for (int fid = 1; fid <= model.faceCount(); ++fid) {
+            if (analysis.faces[fid - 1].featureClass != FeatureClass::Drum) {
+                continue;
+            }
+            auto pit = plans.find(fid);
+            if (pit == plans.end()) continue;
+            std::vector<int> rims = pit->second.uEdges;
+            if (rims.empty()) {
+                rims = pit->second.rimLow;
+                rims.insert(rims.end(), pit->second.rimHigh.begin(),
+                            pit->second.rimHigh.end());
+            }
+            for (int reid : rims) {
+                if (reid < 1 || reid >= int(solvedEdge.size())) continue;
+                if (settings.perEdge.count(reid)) {
+                    // Pinned drum rim: continuity cannot redistribute.
+                    // Record the allowed mismatch for densityConflicts.
+                    stackContinuityPinBlocks.push_back(
+                        {reid, solvedEdge[reid]});
+                    continue;
+                }
+                const int want = solvedEdge[reid];
+                if (want < 3) continue;
+                const double L = edgeLen(reid);
+                if (!(L > 1e-9)) continue;
+                for (int nf : analysis.edges[reid - 1].faceIds) {
+                    if (nf == fid || nf < 1 ||
+                        nf > int(analysis.faces.size())) {
+                        continue;
+                    }
+                    const FeatureClass nfc =
+                        analysis.faces[nf - 1].featureClass;
+                    if (nfc != FeatureClass::FilletStrip &&
+                        nfc != FeatureClass::Freeform &&
+                        nfc != FeatureClass::PlanarPanel &&
+                        nfc != FeatureClass::HolePlate &&
+                        nfc != FeatureClass::BossJunction) {
+                        continue;
+                    }
+                    for (int eid : analysis.faces[nf - 1].edgeIds) {
+                        if (eid == reid) continue;
+                        const double Le = edgeLen(eid);
+                        if (!(Le > 1e-9) ||
+                            std::abs(Le - L) > 0.02 * L) {
+                            continue;
+                        }
+                        // Require the other edge to also touch the local
+                        // cylindrical stack (drum/blend/boss/planar cap),
+                        // not a distant bore of matching length.
+                        bool stackTouch = false;
+                        for (int of : analysis.edges[eid - 1].faceIds) {
+                            if (of == nf) continue;
+                            const FeatureClass ofc =
+                                analysis.faces[of - 1].featureClass;
+                            if (ofc == FeatureClass::Drum ||
+                                ofc == FeatureClass::FilletStrip ||
+                                ofc == FeatureClass::BossJunction ||
+                                ofc == FeatureClass::PlanarPanel) {
+                                stackTouch = true;
+                                break;
+                            }
+                        }
+                        if (!stackTouch) continue;
+                        raiseRootTo(eid, want);
+                    }
+                }
+            }
+        }
+    }
+
     if (const char* dumpE = getenv("WEFT_EDGE_DEBUG")) {
         std::stringstream ss(dumpE);
         std::string tok;
@@ -18931,6 +19623,15 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             if (cnt != 1) continue;  // seam: internal to this face
             const TopoDS_Edge E = TopoDS::Edge(model.edges(eid));
             if (BRep_Tool::Degenerated(E)) continue;
+            // Input non-manifold edges (tangent-contact generators with
+            // ≥3 face owners) cannot satisfy a two-sided border contract;
+            // the welded mesh mirrors that B-rep defect. Skip them so
+            // faces still prove a contract floor instead of demoting to
+            // raw OCCT (tan_slit drum / hole plates).
+            if (model.edgeToFaces.Contains(E) &&
+                model.edgeToFaces.FindFromKey(E).Extent() > 2) {
+                continue;
+            }
             const int n = eid < int(solvedEdge.size()) ? solvedEdge[eid]
                                                        : 0;
             if (n < 1) continue;
@@ -19921,8 +20622,24 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                                     &pinnedEdge);
             const int floorBad =
                 built ? borderContractViolation(fid, parts[fid]) : -1;
+            // Faces incident to input non-manifold edges (tangent-contact
+            // generators) cannot reliably prove a two-sided border
+            // contract; prefer a built exact-border floor over raw OCCT
+            // even when the oracle still flags a rim sample (tan_slit).
+            bool touchesInputNm = false;
+            if (built && floorBad != 0) {
+                for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More();
+                     ex.Next()) {
+                    if (!model.edgeToFaces.Contains(ex.Current())) continue;
+                    if (model.edgeToFaces.FindFromKey(ex.Current())
+                            .Extent() > 2) {
+                        touchesInputNm = true;
+                        break;
+                    }
+                }
+            }
             int floorFolds = 0;
-            if (built && floorBad == 0) {
+            if (built && (floorBad == 0 || touchesInputNm)) {
                 // Exact-border floors win over raw OCCT even when a few
                 // interior cells stay folded after repair: the floor keeps
                 // the seam contract (watertight authority), while OCCT
@@ -20387,7 +21104,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         plan.insertWires.empty() ? nullptr
                                                  : &plan.insertWires,
                         std::max(0, s.junctionRings), &pinnedEdge,
-                        s.cellCap, settings.decoupleSeams)) {
+                        s.cellCap, settings.decoupleSeams,
+                        /*allowDrumWedge=*/
+                        analysis.faces[fid - 1].featureClass ==
+                            FeatureClass::Drum)) {
                     demote(fid, face, surf, s, "coons failed");
                 }
                 break;
@@ -20453,7 +21173,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     outerWireSolvedTotal(face, model, solvedEdge, s.radial), 0};
                 if (!meshPlateWeb(face, surf, model, fid, solvedEdge,
                                   s.radial, s.junctionRings, s.squareCollar,
-                                  out)) {
+                                  out, /*minimalResidual=*/s.minimal)) {
                     // Under CAD/minimal, prefer a boundary n-gon over raw
                     // OCCT when the structured web cannot build (slitdrill
                     // tangent contacts). Keeps the face editable and inside
@@ -20473,10 +21193,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     } else {
                         demote(fid, face, surf, s, "plate web failed");
                     }
-                } else {
-                    // Collar quads stay put; residual CDT needles between
-                    // holes get the same quality Steiner refine the
-                    // contract floor uses (borders remain exact).
+                } else if (!s.minimal) {
+                    // Dense mode only: collar quads stay put; residual CDT
+                    // needles between holes get the Steiner refine. Under
+                    // CAD/minimal the residual is already bridged n-gons —
+                    // refining densifies them back into soup.
                     PolyMesh& part = parts[fid];
                     if (part.anchors.size() == part.vertices.size() &&
                         !part.polygons.empty()) {
@@ -20885,7 +21606,68 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     dbg("mesh face %d: fold check failed (%d/%d inverted, "
                         "%s)",
                         fid, inverted, tested, mesherKindName(plan.kind));
-                    demote(fid, face, surf, s, "fold check failed");
+                    // Sphere dimple / bowl patches: the UV lattice often
+                    // fails this census near the trim, and demoting to the
+                    // contract floor ships hundreds of needles (MP9 face
+                    // 1224). Flattening to a single boundary n-gon used to
+                    // be the CAD rescue — but with a healthy rim count that
+                    // reads as "hemisphere became a plane". Only flatten
+                    // when the rim is still below the artist floor (the
+                    // old hexagonal cap); otherwise keep the revolution
+                    // lattice (a few UV folds beat a planar n-gon).
+                    // AD-5: class-scoped sphere rescue. Pole/full-period
+                    // sphere-caps keep revolution (foam bowls / dimples).
+                    // Geometric caps are planned as quad-fill and must not
+                    // inherit this "keep revolution" policy.
+                    bool sphereRescue = false;
+                    const FaceInfo& foldInfo = analysis.faces[fid - 1];
+                    const bool poleSphereCap =
+                        foldInfo.featureClass == FeatureClass::SphereCap &&
+                        (foldInfo.chartKind == ChartKind::Pole ||
+                         foldInfo.chartKind == ChartKind::FullPeriod);
+                    if (s.minimal &&
+                        plan.kind == MesherKind::RevolutionGrid &&
+                        poleSphereCap) {
+                        int rimN = 0;
+                        for (int e : plan.uEdges) {
+                            if (e > 0 && e < int(solvedEdge.size())) {
+                                rimN = std::max(rimN, solvedEdge[e]);
+                            }
+                        }
+                        const int floorN =
+                            std::clamp(s.minCurvedSegments, 1, 256);
+                        if (rimN > 0 && rimN < floorN) {
+                            PolyMesh ngon;
+                            MeshBuilder nb(ngon);
+                            if (meshMinimalPlanar(face, model, fid,
+                                                  solvedEdge, s.radial, nb,
+                                                  &pinnedEdge) &&
+                                borderContractViolation(fid, ngon) == 0 &&
+                                !ngon.polygons.empty()) {
+                                parts[fid] = std::move(ngon);
+                                plans[fid].kind = MesherKind::MinimalNGon;
+                                fellBack[fid] = 0;
+                                buildCause[fid] =
+                                    "sphere fold -> minimal n-gon";
+                                sphereRescue = true;
+                                dbg("mesh face %d: sphere fold -> minimal "
+                                    "n-gon (rim %d < floor %d)",
+                                    fid, rimN, floorN);
+                            }
+                        } else {
+                            // Keep the revolution mesh; skip contract-floor
+                            // demote that would needle-soup the dimple.
+                            sphereRescue = true;
+                            buildCause[fid] =
+                                "sphere fold kept revolution-grid";
+                            dbg("mesh face %d: sphere fold kept "
+                                "revolution-grid (rim %d)",
+                                fid, rimN);
+                        }
+                    }
+                    if (!sphereRescue) {
+                        demote(fid, face, surf, s, "fold check failed");
+                    }
                 } else if (inverted > 0 && tested >= 8) {
                     // Self-heal tournament: a FEW folded cells sit below
                     // the demote threshold, ship broken, and stay broken
@@ -21022,6 +21804,39 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         }
                     }
                     if (liveFolds > 0) {
+                        // Sparse folds on structured primitive charts must
+                        // not lose to a zero-fold floor web. Foam's tall
+                        // Drum×FullPeriod annulus-body build carries one
+                        // inverted cell; swapping it for contract-floor
+                        // turns cylinder spans into triangle soup.
+                        // FilletStrip×FullPeriod coons share the sparse
+                        // pattern (foam top strip ~5 folds). Absolute
+                        // fold cap (≤8) keeps teleporter's heavily-folded
+                        // FS×FullPeriod faces on the floor (74–139 folds).
+                        // SphereCap is intentionally NOT protected —
+                        // keeping soft-path folded bowls reopens foam
+                        // seams (WP5 / measured on foam 314/315/322).
+                        const FaceInfo& sparseInfo = analysis.faces[fid - 1];
+                        const int sparseN =
+                            int(parts[fid].polygons.size());
+                        const bool sparseDrum =
+                            plan.kind == MesherKind::RevolutionGrid &&
+                            sparseInfo.featureClass == FeatureClass::Drum;
+                        const bool sparseFilletFull =
+                            plan.kind == MesherKind::CoonsGrid &&
+                            sparseInfo.featureClass ==
+                                FeatureClass::FilletStrip &&
+                            sparseInfo.chartKind == ChartKind::FullPeriod;
+                        const bool sparseProtect =
+                            sparseN >= 8 && liveFolds > 0 &&
+                            liveFolds <= 8 && liveFolds * 4 <= sparseN &&
+                            (sparseDrum || sparseFilletFull);
+                        if (sparseProtect) {
+                            dbg("mesh face %d: sparse fold keep %s "
+                                "(%d/%d) — refuse contract floor",
+                                fid, mesherKindName(plan.kind), liveFolds,
+                                sparseN);
+                        } else {
                         FaceMeshSettings fsT = s;
                         const double dscT =
                             std::clamp(settings.densityScale, 0.05, 20.0);
@@ -21053,6 +21868,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                     "fold self-heal → contract floor";
                             }
                         }
+                        }
                     }
                 }
             }
@@ -21072,6 +21888,30 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             if (liveFp > 0) {
                 repairFloorFolds(fid, face, parts[fid]);
                 liveFp = fpCount(parts[fid]);
+            }
+            if (liveFp > 0) {
+                // Same sparse-fold protect as the invertedCells tournament
+                // (Drum×RevolutionGrid + FilletStrip×FullPeriod×Coons).
+                {
+                    const FaceInfo& sparseInfo = analysis.faces[fid - 1];
+                    const int sparseN = int(parts[fid].polygons.size());
+                    const bool sparseDrum =
+                        plan.kind == MesherKind::RevolutionGrid &&
+                        sparseInfo.featureClass == FeatureClass::Drum;
+                    const bool sparseFilletFull =
+                        plan.kind == MesherKind::CoonsGrid &&
+                        sparseInfo.featureClass ==
+                            FeatureClass::FilletStrip &&
+                        sparseInfo.chartKind == ChartKind::FullPeriod;
+                    if (sparseN >= 8 && liveFp > 0 && liveFp <= 8 &&
+                        liveFp * 4 <= sparseN &&
+                        (sparseDrum || sparseFilletFull)) {
+                        dbg("mesh face %d: sparse foldedPolys keep %s "
+                            "(%d/%d) — refuse contract floor",
+                            fid, mesherKindName(plan.kind), liveFp, sparseN);
+                        liveFp = 0;
+                    }
+                }
             }
             if (liveFp > 0) {
                 FaceMeshSettings fsT = s;
@@ -21516,6 +22356,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 plan.kind == MesherKind::Fallback && fallbackQuads
                     ? MesherKind::QuadDominant
                     : plan.kind;
+            if (fid >= 1 && fid <= int(analysis.faces.size())) {
+                report->faceFeatureClass[fid] =
+                    analysis.faces[fid - 1].featureClass;
+                report->faceChartKind[fid] = analysis.faces[fid - 1].chartKind;
+            }
             if (!s.exclude) {
                 report->faceBuild[fid] = parts[fid].polygons.empty()
                                              ? -1
@@ -21624,6 +22469,16 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 c.solved = solved;
                 c.reason = owner;
                 c.faceProposals = std::move(faceProps);
+                report->densityConflicts.push_back(std::move(c));
+            }
+            for (const auto& [eid, want] : stackContinuityPinBlocks) {
+                if (eid < 1) continue;
+                GenerationReport::DensityConflict c;
+                c.edgeId = eid;
+                c.solved =
+                    eid < int(solvedEdge.size()) ? solvedEdge[eid] : 0;
+                c.reason = "stack-continuity-pin";
+                c.faceProposals[0] = want;  // desired stack circumferential
                 report->densityConflicts.push_back(std::move(c));
             }
             std::sort(report->densityConflicts.begin(),
@@ -21936,6 +22791,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         plans.begin(), plans.end(), [](const auto& kv) {
             return kv.second.orthogonalTrimGrid;
         });
+    const bool hasFreeformComb = std::any_of(
+        plans.begin(), plans.end(), [](const auto& kv) {
+            return kv.second.orthogonalFreeformComb;
+        });
     if ((settings.decoupleSeams || hasOrthogonalTrim) &&
         !std::getenv("WEFT_NO_STITCH")) {
         // The curve-guided stitcher: every 2-owner B-rep edge's two sides
@@ -21946,9 +22805,16 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         // splice. WEFT_NO_STITCH / WEFT_NO_FUSE are the diagnosis
         // kill-switches.
         if (!std::getenv("WEFT_NO_FUSE")) {
-            fuseSeamTwins(mesh, model, weldGlobal, &fellBack);
+            fuseSeamTwins(mesh, model, weldGlobal, &fellBack, &plans);
         }
         stitchSeams(mesh, model, weldGlobal, &plans, &fellBack);
+        // FreeformComb lattices leave near-duplicate stations that only
+        // become mutual after the first splice. A second fuse+stitch
+        // pass closes the residual T-junctions (#1805 f2↔f5).
+        if (hasFreeformComb && !std::getenv("WEFT_NO_FUSE")) {
+            fuseSeamTwins(mesh, model, weldGlobal, &fellBack, &plans);
+            stitchSeams(mesh, model, weldGlobal, &plans, &fellBack);
+        }
         if (std::getenv("WEFT_FOLD_PROBE")) {
             const auto mask = foldedPolys(model, mesh);
             std::map<int, int> per;

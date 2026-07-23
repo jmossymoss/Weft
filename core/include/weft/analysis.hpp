@@ -32,6 +32,40 @@ enum class EdgeConvexity {
 
 const char* edgeConvexityName(EdgeConvexity c);
 
+// UV / trim chart kind (AD-5). Set by analyze(); planFace must not rediscover.
+enum class ChartKind {
+    FreeTrim = 0,     // arbitrary trim; no structured chart claim
+    Pole,             // degenerate or collapsing polar iso (sphere dimple)
+    FullPeriod,       // wraps a full U (or equivalent) period
+    IsoBand,          // partial drum/band with iso-ish rims
+    GeometricCap,     // sphere/disk cap whose rim is not a UV pole chart
+};
+
+const char* chartKindName(ChartKind k);
+
+// Feature class for priority routing (AD-5). planFace maps
+// featureClass × chartKind → existing MesherKind.
+enum class FeatureClass {
+    Freeform = 0,
+    Drum,           // cylinder / cone / revolution wall (incl. hole walls)
+    SphereCap,      // sphere patch (pole chart or geometric cap)
+    FilletStrip,    // constant-radius blend band
+    HolePlate,      // planar face with inner wires (holes / webs)
+    BossJunction,   // planar ring-junction style boss web
+    PlanarPanel,    // simple planar panel
+};
+
+const char* featureClassName(FeatureClass c);
+
+// Loop / wire bookkeeping filled by analyze().
+struct LoopSignature {
+    int wireCount = 0;
+    int realEdgeCount = 0;   // non-degenerate edges on the face
+    int degEdgeCount = 0;
+    // Max/min sample radius ratio of the outer wire (~1 = round).
+    double outerRoundness = 1.0;
+};
+
 struct FaceInfo {
     int id = 0;
     SurfaceType type = SurfaceType::Other;
@@ -43,6 +77,12 @@ struct FaceInfo {
     // A bore wall: closed cylindrical face whose material normal points
     // toward the axis. Bosses/shafts point away and stay false.
     bool isHole = false;
+    ChartKind chartKind = ChartKind::FreeTrim;
+    FeatureClass featureClass = FeatureClass::Freeform;
+    // Product priority: cylinder → sphere → hemisphere → box → torus →
+    // curves → cuts. Higher wins when neighbors disagree.
+    int priority = 0;
+    LoopSignature loop;
     std::vector<int> edgeIds;
     std::vector<int> neighborFaceIds;  // via shared edges (adjacency graph)
 };
@@ -65,6 +105,7 @@ struct Analysis {
 };
 
 // Classify every face and edge and build the face-adjacency graph.
+// Also fills chartKind / featureClass / priority / loop (AD-5).
 Analysis analyze(const Model& model);
 
 }  // namespace weft

@@ -48,6 +48,14 @@ struct ValidationReport {
     // B-rep edges bordering three or more faces: the INPUT is non-manifold
     // there, and the welded mesh necessarily is too.
     size_t inputNonManifoldEdges = 0;
+    // Non-degenerate B-rep edges in the indexed model (for open-shell
+    // fraction). Authored sheet bodies / broken sources often have
+    // ≥⅓ of edges on the open boundary.
+    size_t inputEdges = 0;
+    // True when the source is an open surface model / broken solid by
+    // the same ≥⅓ open-shell gate used in import capping — not a
+    // closed-solid watertightness target.
+    bool brokenSource = false;
 
     bool watertight() const { return openEdges == 0 && nonManifoldEdges == 0; }
     bool clean() const {

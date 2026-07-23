@@ -104,6 +104,16 @@ struct FaceMeshSettings {
     // Off by default in the core (recipes/tests keep exact counts) — the
     // app turns it on for new sessions.
     bool adaptive = false;
+    // Lower floor on adaptive counts for closed curved RINGS (cylinder /
+    // sphere / torus / fillet circles, annulus bores, …), as a TOTAL around
+    // the ring. Plasticity/STEP often splits one circle into open arcs —
+    // those arcs still share this floor by span (two semicircles at 12 →
+    // 6+6). Ring-junction plates grow their boundary so 2*(nu+nv) meets
+    // this floor instead of crushing the bore back to a hexagon. Default 6
+    // matches the historic hard floor; raise it (e.g. 12) when CAD/
+    // relative-deviation's 60° gate would otherwise leave rings faceted.
+    // Straight edges are unaffected. Recipe/CLI: mincurve / --min-curve.
+    int minCurvedSegments = 6;
     // Per-face pathology guard: a hard ceiling on this face's total cell
     // count (0 = no ceiling). A face's mesh should scale with its surface
     // area; a face carrying vastly more cells than its area-share of the
@@ -228,6 +238,10 @@ struct GenerationReport {
     std::vector<int> reusedFaces;
     std::vector<int> remeshedFaces;
     std::map<int, MesherKind> faceMesher;  // FaceId -> strategy used
+    // AD-5 analyze facts echoed into the report so signatures / CLI can
+    // show featureClass × chartKind without re-running probes.
+    std::map<int, FeatureClass> faceFeatureClass;
+    std::map<int, ChartKind> faceChartKind;
     // FaceId -> how the face was actually built: 0 = its planned mesher,
     // 1 = raw OCCT triangulation (the tri-soup last resort), 2 = the
     // contract floor (exact borders, quad-paired web), -1 = the face
@@ -332,7 +346,7 @@ struct GenerationCache {
     std::map<int, double> edgeLengths;
     double modelArea = -1.0;
     // Geometry/tolerance memos used by the global density solve.
-    std::map<std::array<long long, 4>, int> adaptiveEdgeCounts;
+    std::map<std::array<long long, 5>, int> adaptiveEdgeCounts;
     std::map<int, int> curvatureFloors;
     double modelDiagonal = -1.0;
     // Type-erased internal cache of geometry classification plans. FacePlan

@@ -137,10 +137,27 @@ ValidationReport validateMesh(const PolyMesh& mesh, const Model* model) {
             }
             return false;
         };
+        // Mesh-edge length alone collapses on micro open edges along a
+        // true open-shell boundary (tol → microns while polyline sample
+        // residual and freeform pcurve drift are larger). Floor by a
+        // fraction of the model diagonal — still far below typical
+        // inter-face crack gaps on shared 2-owner seams.
+        double lo[3] = {1e300, 1e300, 1e300}, hi[3] = {-1e300, -1e300, -1e300};
+        for (const auto& v : mesh.vertices) {
+            for (int c = 0; c < 3; ++c) {
+                lo[c] = std::min(lo[c], v[c]);
+                hi[c] = std::max(hi[c], v[c]);
+            }
+        }
+        const double diag = std::sqrt((hi[0] - lo[0]) * (hi[0] - lo[0]) +
+                                      (hi[1] - lo[1]) * (hi[1] - lo[1]) +
+                                      (hi[2] - lo[2]) * (hi[2] - lo[2]));
+        const double tolFloor = std::max(1e-3, 1e-4 * diag);
         for (size_t i = 0; i < openList.size(); ++i) {
             gp_Pnt a = at(mesh, openList[i].first);
             gp_Pnt b = at(mesh, openList[i].second);
-            const double tol = std::max(2.0 * a.Distance(b), 1e-6);
+            const double tol =
+                std::max({2.0 * a.Distance(b), 1e-6, tolFloor});
             if (nearBoundary(a, tol) && nearBoundary(b, tol)) {
                 ++r.openEdgesOnInputBoundary;
                 auto it = openPerFace.find(openFace[i]);
@@ -177,16 +194,25 @@ ValidationReport validateMesh(const PolyMesh& mesh, const Model* model) {
     // the centroid of the corner UVs.
     if (model) {
         for (int eid = 1; eid <= model->edgeCount(); ++eid) {
+            if (BRep_Tool::Degenerated(TopoDS::Edge(model->edges(eid)))) {
+                continue;
+            }
+            ++r.inputEdges;
             const int adj = model->edgeToFaces.FindFromIndex(eid).Extent();
             if (adj < 2) {
                 // Degenerate edges (sphere poles, cone apexes) border one
                 // face but are points — not real open boundary.
-                if (!BRep_Tool::Degenerated(TopoDS::Edge(model->edges(eid)))) {
-                    ++r.inputBoundaryEdges;
-                }
+                ++r.inputBoundaryEdges;
             } else if (adj > 2) {
                 ++r.inputNonManifoldEdges;
             }
+        }
+        // Same gate as model.cpp::capDroppedFaces: shells with ≥⅓ edges
+        // open are authored sheets / broken sources, not nearly-closed
+        // solids missing a face.
+        if (r.inputEdges > 0 &&
+            r.inputBoundaryEdges * 3 >= r.inputEdges) {
+            r.brokenSource = true;
         }
         double sum = 0.0;
         std::map<int, BRepAdaptor_Surface> surfCache;
@@ -261,6 +287,14 @@ std::string formatReport(const ValidationReport& r) {
     std::snprintf(buf, sizeof buf, "  watertight:     %s (open edges: %zu, non-manifold: %zu)\n",
                   r.watertight() ? "yes" : "NO", r.openEdges, r.nonManifoldEdges);
     out += buf;
+    if (r.brokenSource) {
+        std::snprintf(buf, sizeof buf,
+                      "  source:         broken_source / open surface model "
+                      "(%zu of %zu B-rep edges are open-shell; ≥⅓ open — "
+                      "not a closed-solid watertight target)\n",
+                      r.inputBoundaryEdges, r.inputEdges);
+        out += buf;
+    }
     if (r.inputBoundaryEdges > 0 && r.openEdges > 0) {
         std::snprintf(buf, sizeof buf,
                       "                  (%zu of the open edges run along the input's "
