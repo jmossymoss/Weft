@@ -5527,8 +5527,27 @@ int main(int argc, char** argv) {
     App app;
     app.livePath = gDataDir + "/weft_live.obj";
     bool startupLoadPending = !startModel.empty();
-    if (startupLoadPending) loadModel(app, startModel, false);
-    else loadFixture(app, startFixture);
+    // Fixture loads are async too: face overrides / select / proxy must
+    // wait until finishLoadModel lands, same as a path argument.
+    bool startupApplyPending =
+        !startFaceOverrides.empty() || startSelect > 0 || startProxy;
+    if (startupLoadPending) {
+        // Skip auto-generate: overrides apply first, then startGenerate.
+        loadModel(app, startModel, false);
+    } else if (startupApplyPending) {
+        // Same for fixtures that need select / density overrides / proxy.
+        std::string path =
+            tempDir() + "/weft_fixture_" + startFixture + ".step";
+        try {
+            weft::writeStep(weft::makeFixture(startFixture), path);
+            loadModel(app, path, false);
+            app.status = "fixture: " + startFixture;
+        } catch (const std::exception& e) {
+            app.status = std::string("fixture failed: ") + e.what();
+        }
+    } else {
+        loadFixture(app, startFixture);
+    }
     if (startFinalize) app.forceFinalize = true;
     if ((startStitch || startFinalize) && app.hasModel) {
         // After the load (which resets the recipe): apply screenshot
@@ -5551,20 +5570,25 @@ int main(int argc, char** argv) {
     if (startMode >= 1 && startMode <= 6) {
         setSelectMode(app, SelectMode(startMode - 1));
     }
-    if (!startFaceOverrides.empty() && app.hasModel) {
+    // Face overrides / select for an already-resident model (rare). The
+    // common async-load path applies them in the main loop once hasModel.
+    if (!startupApplyPending) {
+        // nothing
+    } else if (app.hasModel && !app.loadBusy) {
         for (const auto& [fid, spec] : startFaceOverrides) {
             weft::FaceMeshSettings s = app.recipe.settings.defaults;
             weft::applySettingsList(s, spec);
             app.recipe.settings.perFace[fid] = s;
         }
+        if (startSelect > 0 && startSelect <= app.model.faceCount()) {
+            app.selFaces = {startSelect};
+            app.activeFace = startSelect;
+            frameModel(app);
+        }
+        if (startProxy && app.activeFace > 0) app.gpuProxyPending = true;
         regenerate(app);
         rebuildBuffers(app);
-    }
-    if (startSelect > 0 && startSelect <= app.model.faceCount()) {
-        app.selFaces = {startSelect};
-        app.activeFace = startSelect;
-        rebuildBuffers(app);
-        frameModel(app);  // zoom to the face under inspection
+        startupApplyPending = false;
     }
 
     double lastX = 0, lastY = 0;
@@ -6195,7 +6219,8 @@ int main(int argc, char** argv) {
             }
         }
         if (app.loadReady && !app.genBusy) finishLoadModel(app);
-        if (startupLoadPending && app.hasModel && !app.loadBusy) {
+        if ((startupLoadPending || startupApplyPending) && app.hasModel &&
+            !app.loadBusy) {
             if (startStitch) app.recipe.settings.decoupleSeams = true;
             for (const auto& [fid, spec] : startFaceOverrides) {
                 weft::FaceMeshSettings s = app.recipe.settings.defaults;
@@ -6207,7 +6232,11 @@ int main(int argc, char** argv) {
                 app.activeFace = startSelect;
                 frameModel(app);
             }
+            if (startProxy && app.activeFace > 0) {
+                app.gpuProxyPending = true;
+            }
             startupLoadPending = false;
+            startupApplyPending = false;
             startGenerate(app);
         }
         // Slider drags and wheel bursts can emit dozens of mutations. Wait
