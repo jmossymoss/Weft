@@ -11217,7 +11217,31 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
     if (keyBot == keyTop) return false;
     std::vector<int> keyAx;
     for (int j = 1; j < nv; ++j) keyAx.push_back(addRow(j * wspan / nv));
-    for (Region& r : regions) r.rowKey = addRow(r.rowfW);
+    // Prefer merging each notch lip onto a nearby full-band axial when
+    // one exists (half-pitch). Otherwise addRow below still inserts the
+    // lip — and the per-column pass promotes every lip key onto ALL
+    // columns so it cannot remain a short mid-span ring (flaregun Ring B).
+    const double axPitch = wspan / std::max(1, nv);
+    for (Region& r : regions) {
+        int best = -1;
+        double bestD = 1e300;
+        for (int ki = 0; ki < int(rowW.size()); ++ki) {
+            if (ki == keyBot) continue;
+            if (rowW[ki] + 1e-12 < r.rowfW) continue;
+            if (rowW[ki] > wTopRow - 0.02 * wspan) continue;
+            const double d = rowW[ki] - r.rowfW;
+            if (d < bestD) {
+                bestD = d;
+                best = ki;
+            }
+        }
+        if (best >= 0 && bestD <= 0.55 * axPitch) {
+            r.rowKey = best;
+            r.rowfW = rowW[best];
+        } else {
+            r.rowKey = addRow(r.rowfW);
+        }
+    }
     // Interior cutouts: rows exactly at each box's v-extents (carried
     // only by the columns the box touches — no full-width band across
     // the primitive), and the kept columns bracketing the cut. The cut
@@ -11283,9 +11307,12 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
                 ks.push_back(k);
             }
         }
-        for (const Region& r : regions) {
-            if (c == r.colL || c == r.colR) ks.push_back(r.rowKey);
-        }
+        // Promote every notch lip onto EVERY column. A lip that only
+        // landed on the notch's bounding/interior columns was a short
+        // mid-span ring — the flaregun barrel edge that "isn't fully
+        // contained along the cylinder". Full-band lips stay quads
+        // away from the slot and still web locally at the mouth.
+        for (const Region& r : regions) ks.push_back(r.rowKey);
         // Columns touched by an interior cutout carry its extent rows;
         // the first column outside the cut absorbs them as n-gon
         // corners — the local collar.

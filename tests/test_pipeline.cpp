@@ -2838,6 +2838,67 @@ void testAllMesherStrategies() {
         }                                                     \
     } while (0)
 
+// Flaregun barrel open-band: notch lips must ride full-band axial rows.
+// A dedicated feature row only on the notch columns reads as an edge
+// that "isn't fully contained along the cylinder" (Ring B).
+void testFlaregunOpenBandNotchLipsFullSpan() {
+    std::printf("-- flaregun open-band notch lips full-span --\n");
+    const std::filesystem::path corpus =
+        std::filesystem::path(__FILE__).parent_path() / "STEP_Examples";
+    const weft::Model model =
+        weft::loadStep((corpus / "flaregun.stp").string());
+    const weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    CHECK(isWatertight(mesh));
+
+    int checked = 0;
+    for (const auto& f : analysis.faces) {
+        if (f.featureClass != weft::FeatureClass::Drum) continue;
+        if (f.chartKind != weft::ChartKind::IsoBand) continue;
+        if (int(f.edgeIds.size()) < 10) continue;
+        auto kit = report.faceMesher.find(f.id);
+        if (kit == report.faceMesher.end() ||
+            kit->second != weft::MesherKind::RevolutionGrid) {
+            continue;
+        }
+        auto bit = report.faceBuild.find(f.id);
+        if (bit == report.faceBuild.end() || bit->second != 0) continue;
+
+        double v0 = 1e300, v1 = -1e300;
+        std::map<int, int> bucket;
+        for (size_t i = 0; i < mesh.anchors.size(); ++i) {
+            const auto& a = mesh.anchors[i];
+            if (a.faceId != f.id) continue;
+            v0 = std::min(v0, a.v);
+            v1 = std::max(v1, a.v);
+            const int q = int(std::lround(a.v * 50.0));
+            ++bucket[q];
+        }
+        CHECK(v1 > v0);
+        const double vspan = v1 - v0;
+        int peak = 0;
+        for (const auto& [q, n] : bucket) peak = std::max(peak, n);
+        CHECK(peak >= 8);
+        int partial = 0;
+        for (const auto& [q, n] : bucket) {
+            const double v = q / 50.0;
+            if (v < v0 + 0.12 * vspan || v > v1 - 0.12 * vspan) continue;
+            // A notch-only lip is a handful of columns; a full-band row
+            // is near the face peak (plain-rim column count).
+            if (n >= 5 && n * 4 < peak * 3) ++partial;
+        }
+        CHECK_EQ(partial, 0);
+        ++checked;
+        std::printf("  face#%d peak=%d mid-partials=0\n", f.id, peak);
+    }
+    CHECK(checked >= 2);
+}
+
 // Weld: merge picked vertices into one (center/last/first), polygons
 // remap and degenerates drop; the op replays from world points and
 // round-trips through recipes.
@@ -3898,6 +3959,7 @@ int main() {
     RUN(testQuadFill);
     RUN(testDeletePolyAndCollarRings);
     RUN(testSameLoopBridgeAndFill);
+    RUN(testFlaregunOpenBandNotchLipsFullSpan);
     RUN(testWeldTolerance);
     RUN(testWeldVerts);
     RUN(testConstrainedEditSurvivesDensityChange);
