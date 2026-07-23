@@ -10056,6 +10056,32 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                        return true;
                    }()) {
             // proposals already emitted per arc share above
+        } else if (plan.kind == MesherKind::RevolutionGrid &&
+                   plan.isFillet) {
+            // Full-period analytic blends: radial drives ALONG, filletLoops
+            // drives ACROSS (Coons parity). acrossIsU remaps onto patch
+            // axes — without this, cylinder fillets treated radial as the
+            // short across arc and axial as the long direction.
+            const int along = std::max(3, s.radial);
+            const int across = std::max(1, s.filletLoops);
+            if (plan.acrossIsU) {
+                proposeSet(plan.uEdges, across, 1, false, s, overridden,
+                           fid);
+                proposeSet(plan.vEdges, along, 3, s.adaptive, s,
+                           overridden, fid);
+            } else {
+                if (!plan.linkRims && plan.uEdges.size() == 2) {
+                    proposeSet({plan.uEdges[0]}, along, 3, s.adaptive, s,
+                               overridden, fid);
+                    proposeSet({plan.uEdges[1]}, along, 3, s.adaptive, s,
+                               overridden, fid);
+                } else {
+                    proposeSet(plan.uEdges, along, 3, s.adaptive, s,
+                               overridden, fid);
+                }
+                proposeSet(plan.vEdges, across, 1, false, s, overridden,
+                           fid);
+            }
         } else {  // revolution sides and disk caps subdivide rings radially
             if (!plan.bandSides.empty()) {
                 // Open band: each rim edge proposes its own count and
@@ -19662,6 +19688,27 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     counts[fid] = {nuB, nvB, 0};
                     break;
                 }
+                // Analytic fillet strips: same semantic ownership as Coons
+                // — radial = along the blend, filletLoops = across — then
+                // remap onto patch U/V via acrossIsU (cylinder across=U,
+                // torus across=V). Plain drums keep radial/axial.
+                if (plan.isFillet) {
+                    const int alongDef = std::max(3, s.radial);
+                    const int acrossDef = std::max(1, s.filletLoops);
+                    const int defU =
+                        plan.acrossIsU ? acrossDef : alongDef;
+                    const int defV =
+                        plan.acrossIsU ? alongDef : acrossDef;
+                    int nuA = solved(plan.uEdges, defU);
+                    int nuB = nuA;
+                    if (!plan.linkRims && plan.uEdges.size() == 2) {
+                        nuB = std::max(
+                            solvedEdge[plan.uEdges[1]],
+                            density.countFor(plan.uEdges[1], defU));
+                    }
+                    counts[fid] = {nuA, solved(plan.vEdges, defV), nuB};
+                    break;
+                }
                 int nuA = solved(plan.uEdges, s.radial);
                 int nuB = nuA;
                 if (!plan.linkRims && plan.uEdges.size() == 2) {
@@ -22777,8 +22824,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             // (across-the-blend) drives, so the UI can label knobs
             // semantically instead of leaking the wire-start-dependent
             // u/v orientation (mirror twins rotate their sides).
+            // RevolutionGrid full-period analytic fillets (torus / cylinder)
+            // publish the same map — radial is along, filletLoops across.
             if (plan.isFillet && (plan.kind == MesherKind::CoonsGrid ||
-                                  plan.kind == MesherKind::PlanarGrid)) {
+                                  plan.kind == MesherKind::PlanarGrid ||
+                                  plan.kind == MesherKind::RevolutionGrid)) {
                 report->faceAcross[fid] = plan.acrossIsU ? 1 : 2;
             }
             // The solved primary/secondary counts, so a UI can seed its

@@ -1151,6 +1151,111 @@ void testSphereFilletFullPeriodNoFloor() {
                 mesh.polygons.size());
 }
 
+// Analytic FilletStrip×RevolutionGrid and Coons strips must publish
+// faceAcross and honour semantic knobs: radial/gridU = along, filletLoops =
+// across — remapped onto patch U/V. Without this, cylinder fillets treated
+// radial as the short across arc (wrong GPU / wheel axis).
+void testFilletDensityAxisOwnership() {
+    std::printf("-- fillet density axis ownership --\n");
+    auto cad = []() {
+        weft::GenerationSettings gs;
+        gs.defaults.minimal = true;
+        gs.defaults.adaptive = true;
+        gs.defaults.relativeDeviation = true;
+        return gs;
+    };
+
+    // bossfillet torus strip → RevolutionGrid, across = V (faceAcross=2).
+    {
+        const std::string path = tmpPath("weft_axis_bossfillet.step");
+        weft::writeStep(weft::makeFixture("bossfillet"), path);
+        weft::Model model = weft::loadStep(path);
+        const weft::Analysis a = weft::analyze(model);
+        int stripFid = 0;
+        for (const auto& f : a.faces) {
+            if (f.featureClass == weft::FeatureClass::FilletStrip &&
+                f.isFillet) {
+                stripFid = f.id;
+                break;
+            }
+        }
+        CHECK(stripFid > 0);
+
+        weft::GenerationReport baseRep;
+        weft::generate(model, a, cad(), &baseRep);
+        CHECK(baseRep.faceMesher[stripFid] ==
+              weft::MesherKind::RevolutionGrid);
+        auto ax = baseRep.faceAcross.find(stripFid);
+        CHECK(ax != baseRep.faceAcross.end());
+        CHECK_EQ(ax->second, 2);  // torus minor = V
+        const auto base = baseRep.faceCounts[stripFid];
+
+        weft::GenerationSettings alongGs = cad();
+        alongGs.perFace[stripFid] = alongGs.defaults;
+        alongGs.perFace[stripFid].adaptive = false;
+        alongGs.perFace[stripFid].radial = 40;
+        alongGs.perFace[stripFid].filletLoops = 3;
+        weft::GenerationReport alongRep;
+        weft::generate(model, a, alongGs, &alongRep);
+        const auto alongC = alongRep.faceCounts[stripFid];
+        // acrossIsU=false → along rides U (count[0]), across rides V.
+        CHECK(alongC[0] >= 40);
+        CHECK_EQ(alongC[1], 3);
+
+        weft::GenerationSettings acrossGs = cad();
+        acrossGs.perFace[stripFid] = acrossGs.defaults;
+        acrossGs.perFace[stripFid].adaptive = false;
+        acrossGs.perFace[stripFid].radial =
+            std::max(3, base[0]);  // keep along stable
+        acrossGs.perFace[stripFid].filletLoops = 8;
+        weft::GenerationReport acrossRep;
+        weft::generate(model, a, acrossGs, &acrossRep);
+        const auto acrossC = acrossRep.faceCounts[stripFid];
+        CHECK_EQ(acrossC[1], 8);
+        std::printf("  bossfillet strip#%d across=V along=%d loops→nv=%d\n",
+                    stripFid, alongC[0], acrossC[1]);
+        CHECK(isWatertight(weft::generate(model, a, acrossGs)));
+    }
+
+    // Open cylinder fillet → Coons; faceAcross published; loops = across.
+    {
+        const std::string path = tmpPath("weft_axis_fillet.step");
+        weft::writeStep(weft::makeFixture("fillet"), path);
+        weft::Model model = weft::loadStep(path);
+        const weft::Analysis a = weft::analyze(model);
+        int stripFid = 0;
+        for (const auto& f : a.faces) {
+            if (f.featureClass == weft::FeatureClass::FilletStrip) {
+                stripFid = f.id;
+                break;
+            }
+        }
+        CHECK(stripFid > 0);
+
+        weft::GenerationSettings gs = cad();
+        gs.defaults.adaptive = false;
+        gs.defaults.gridU = 6;
+        gs.defaults.filletLoops = 4;
+        weft::GenerationReport rep;
+        weft::generate(model, a, gs, &rep);
+        CHECK(rep.faceMesher[stripFid] == weft::MesherKind::CoonsGrid);
+        auto ax = rep.faceAcross.find(stripFid);
+        CHECK(ax != rep.faceAcross.end());
+        CHECK(ax->second == 1 || ax->second == 2);
+        const auto c = rep.faceCounts[stripFid];
+        if (ax->second == 1) {
+            CHECK_EQ(c[0], 4);  // across = U = loops
+            CHECK_EQ(c[1], 6);  // along = V = gridU
+        } else {
+            CHECK_EQ(c[0], 6);
+            CHECK_EQ(c[1], 4);
+        }
+        std::printf("  coons fillet#%d across=%s nu=%d nv=%d\n", stripFid,
+                    ax->second == 1 ? "U" : "V", c[0], c[1]);
+        CHECK(isWatertight(weft::generate(model, a, gs)));
+    }
+}
+
 // ABC FreeTrim drum walls (tall skinny cylinder segments) used to false-
 // pass isGeometricallyFlat and collapse to a single MinimalNGon needle
 // under CAD. They must take open-band RevolutionGrid with axial rows.
@@ -4012,6 +4117,7 @@ int main() {
     RUN(testPlateWeb);
     RUN(testPlateWebSliverRefine);
     RUN(testSphereFilletFullPeriodNoFloor);
+    RUN(testFilletDensityAxisOwnership);
     RUN(testNotchedDrumOpenBand);
     RUN(testTallFreeTrimDrum);
     RUN(testTorturePlateWebMinimalResidual);
