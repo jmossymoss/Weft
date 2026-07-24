@@ -225,6 +225,53 @@ enum class MesherKind {
 
 const char* mesherKindName(MesherKind k);
 
+// Why a face did or did not keep the structured topology its plan chose.
+//
+// `GenerationReport::faceBuild` says only 0/1/2/-1 and the cause is free text,
+// so failure classes could not be counted or ranked and fixes got picked by
+// whichever face an artist happened to point at. This is the countable view:
+// classifyFaceBuild() maps (build, cause) through one central table, and an
+// unregistered cause resolves to Unknown rather than being folded silently
+// into a healthy bucket.
+enum class FaceBuildClass {
+    Built,           // the planned mesher built the face
+    PlannedFloor,    // routed to the contract floor by design, not by failure
+    MesherFailed,    // a structured mesher gave up and the floor caught it
+    BorderContract,  // the build violated a shared-border contract
+    FoldHeal,        // the floor was taken to clear folded/inverted cells
+    SelfCheck,       // the face's own post-build self-check rejected it
+    DensityOverride, // demoted because of a per-face density edit
+    Raw,             // raw OCCT triangulation (the tri-soup last resort)
+    Empty,           // the face emitted no polygons
+    Unknown,         // cause string not registered — treated as debt
+};
+
+const char* faceBuildClassName(FaceBuildClass c);
+
+// build: GenerationReport::faceBuild value (0 planned, 1 raw, 2 floor,
+// -1 empty). cause: the matching GenerationReport::faceBuildCause entry.
+FaceBuildClass classifyFaceBuild(int build, const std::string& cause);
+
+// Structure retention for one generate() run. `failedFloor` is the artist-
+// visible debt: a face whose planned structure was lost to a failure rather
+// than to a deliberate routing decision.
+struct StructureSummary {
+    int total = 0;
+    int structured = 0;
+    int plannedFloor = 0;
+    int failedFloor = 0;
+    int raw = 0;
+    int empty = 0;
+    std::map<FaceBuildClass, int> byClass;
+    // Failed-floor faces grouped by their exact cause string, so the biggest
+    // class can be attacked first instead of the newest complaint.
+    std::map<std::string, int> failedByCause;
+
+    double retention() const {
+        return total ? double(structured) / double(total) : 1.0;
+    }
+};
+
 // n+1 monotonically increasing parameters in [0,1] splitting it into n
 // intervals. hold=0 is uniform; hold in (0,1) squeezes the intervals toward
 // both ends, which is how fillet support loops hug the creases.
@@ -299,6 +346,13 @@ struct GenerationReport {
 // Human-readable demotion attribution for CLI/validate: counts plus
 // per-face id and cause for contract-floor, raw OCCT, and empty faces.
 std::string formatBuildDemotions(const GenerationReport& report);
+
+StructureSummary summarizeStructure(const GenerationReport& report);
+
+// One-line machine-greppable summary for CLI/gate consumption:
+//   structure: faces=N structured=N planned-floor=N failed-floor=N raw=N
+//              empty=N retention=0.983
+std::string formatStructure(const GenerationReport& report);
 
 // Human-readable density-matching attribution for CLI/validate: matched
 // edge counts, ownership tags, and any proposal/pin/floor conflicts.

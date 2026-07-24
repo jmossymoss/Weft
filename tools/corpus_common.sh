@@ -87,6 +87,71 @@ corpus_merge_counts() {
     ' "$actual" "$golden" > "$out"
 }
 
+# Ratchet a structure-retention table (see weft::formatStructure): faces may
+# only move toward keeping their planned topology. Counts are NOT pinned like
+# golden polygon counts — an improvement must pass, a regression must not.
+# $1 = golden table, $2 = actual table. Prints verdicts; returns 1 on any
+# regression.
+corpus_ratchet_structure() {
+    local golden="$1" actual="$2"
+    awk '
+        function key(line,   a) { split(line, a, " "); return a[1] " " a[2] }
+        function field(line, name,   n, i, kv) {
+            n = split(line, a, " ")
+            for (i = 3; i <= n; ++i) {
+                split(a[i], kv, "=")
+                if (kv[1] == name) return kv[2] + 0
+            }
+            return -1
+        }
+        NR == FNR { if ($0 != "") { g[key($0)] = $0; gorder[++gn] = key($0) }; next }
+        {
+            if ($0 == "") next
+            k = key($0)
+            seen[k] = 1
+            if (!(k in g)) {
+                printf "  NEW      %s: %s\n", k, $0
+                improved = 1
+                next
+            }
+            split("", worse)
+            nworse = 0
+            # Debt metrics may only fall.
+            for (m = 1; m <= 3; ++m) {
+                name = (m == 1 ? "failed-floor" : (m == 2 ? "raw" : "empty"))
+                gv = field(g[k], name); av = field($0, name)
+                if (av > gv) { worse[++nworse] = sprintf("%s %d -> %d", name, gv, av) }
+                if (av < gv) { better = better sprintf("  BETTER   %s: %s %d -> %d\n", k, name, gv, av) }
+            }
+            # Structured faces may only rise, unless the face total changed
+            # (a different model revision) — then only debt metrics rule.
+            gt = field(g[k], "faces"); at = field($0, "faces")
+            gs = field(g[k], "structured"); as = field($0, "structured")
+            if (gt == at && as < gs) {
+                worse[++nworse] = sprintf("structured %d -> %d", gs, as)
+            }
+            if (gt == at && as > gs) {
+                better = better sprintf("  BETTER   %s: structured %d -> %d\n", k, gs, as)
+            }
+            if (nworse > 0) {
+                printf "  REGRESSED %s:", k
+                for (i = 1; i <= nworse; ++i) printf " %s;", worse[i]
+                printf "\n"
+                bad = 1
+            }
+        }
+        END {
+            for (i = 1; i <= gn; ++i) {
+                if (!(gorder[i] in seen)) {
+                    printf "  MISSING  %s (not produced by this run)\n", gorder[i]
+                }
+            }
+            printf "%s", better
+            exit bad ? 1 : 0
+        }
+    ' "$golden" "$actual"
+}
+
 ensure_fixture_step() {
     # $1 = weft binary, $2 = absolute step path, $3 = fixture name, $4 = tier
     local weft="$1" step="$2" name="$3" tier="$4"

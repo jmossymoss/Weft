@@ -560,6 +560,13 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         if (!demotions.empty()) std::printf("%s", demotions.c_str());
     }
     {
+        // Structure retention: how many faces kept the topology their plan
+        // chose, and which failure classes cost the rest. Watertightness says
+        // nothing about this, so gates read it separately.
+        const std::string structure = weft::formatStructure(report);
+        if (!structure.empty()) std::printf("%s", structure.c_str());
+    }
+    {
         // Density-matched edge counts, ownership tags, and proposal/pin/
         // floor conflicts (WP2 attribution — topology unchanged).
         const std::string density = weft::formatDensityOwnership(report);

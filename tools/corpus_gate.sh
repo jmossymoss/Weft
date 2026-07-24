@@ -33,6 +33,7 @@ fi
 MANIFEST=tests/CAD_CORPUS.tsv
 KNOWN_RED=tests/KNOWN_RED.tsv
 GOLDEN=tools/golden_counts.txt
+STRUCTURE=tools/golden_structure.txt
 OUT=${OUT:-$(mktemp -d)}
 mkdir -p "$OUT"
 UPDATE=0
@@ -49,6 +50,7 @@ done
 
 FAIL=0
 : > "$OUT/counts.txt"
+: > "$OUT/structure.txt"
 : > "$OUT/failures.txt"
 
 known_red_allows() {
@@ -98,6 +100,15 @@ run_one() {
     local stats
     stats=$(grep -Eo '[0-9]+ quads, [0-9]+ tris, [0-9]+ n-gons' "$log" | head -1 || true)
     echo "$name $tag ${stats:-0 quads, 0 tris, 0 n-gons}" >> "$OUT/counts.txt"
+
+    # Structure retention (weft::formatStructure): did faces keep the topology
+    # their plan chose? Watertightness cannot see this, so it is ratcheted
+    # separately from the pinned polygon counts.
+    local structure
+    structure=$(grep -Eo 'faces=[0-9]+ structured=[0-9]+ planned-floor=[0-9]+ failed-floor=[0-9]+ raw=[0-9]+ empty=[0-9]+' "$log" | head -1 || true)
+    if [[ -n "$structure" ]]; then
+        echo "$name $tag $structure" >> "$OUT/structure.txt"
+    fi
 
     local demo
     demo=$(grep "demoted:" "$log" || true)
@@ -163,6 +174,13 @@ if [[ "${UPDATE:-0}" == 1 ]]; then
         cp "$OUT/counts.txt" "$GOLDEN"
     fi
     echo "golden counts updated: $GOLDEN"
+    if [[ -f "$STRUCTURE" ]]; then
+        corpus_merge_counts "$STRUCTURE" "$OUT/structure.txt" "$OUT/structure.new"
+        cp "$OUT/structure.new" "$STRUCTURE"
+    else
+        cp "$OUT/structure.txt" "$STRUCTURE"
+    fi
+    echo "structure ratchet updated: $STRUCTURE"
 elif [[ "$CHECK_GOLDEN" == 0 ]]; then
     echo "golden count diff skipped (invariants-only run)"
 elif [[ -f "$GOLDEN" ]]; then
@@ -173,6 +191,20 @@ elif [[ -f "$GOLDEN" ]]; then
     fi
 else
     echo "note: no golden table yet — run with --update to create it"
+fi
+
+# Structure ratchet runs even on --no-golden: it is an invariant (planned
+# topology must not be lost), not a platform-dependent count.
+if [[ "${UPDATE:-0}" != 1 && -f "$STRUCTURE" && -s "$OUT/structure.txt" ]]; then
+    if ! corpus_ratchet_structure "$STRUCTURE" "$OUT/structure.txt" \
+            > "$OUT/structure.diff"; then
+        echo "FAIL structure retention regressed:"
+        cat "$OUT/structure.diff"
+        FAIL=1
+    elif [[ -s "$OUT/structure.diff" ]]; then
+        echo "structure ratchet notes (run --update to bank improvements):"
+        cat "$OUT/structure.diff"
+    fi
 fi
 
 if [[ "$FAIL" == 0 ]]; then

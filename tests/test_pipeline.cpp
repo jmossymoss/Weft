@@ -2838,6 +2838,98 @@ void testAllMesherStrategies() {
         }                                                     \
     } while (0)
 
+// Structure retention is the artist-facing invariant: did each face keep the
+// topology its plan chose? Every cause string must classify into a named
+// bucket — an unregistered one resolves to Unknown, which would silently hide
+// new debt from the gate ratchet.
+void testStructureRetentionClassification() {
+    std::printf("-- structure retention classification --\n");
+
+    // Direct mapping checks for the classes the gate ratchets on.
+    CHECK(weft::classifyFaceBuild(0, "") == weft::FaceBuildClass::Built);
+    CHECK(weft::classifyFaceBuild(1, "mesher threw") ==
+          weft::FaceBuildClass::Raw);
+    CHECK(weft::classifyFaceBuild(-1, "fallback threw") ==
+          weft::FaceBuildClass::Empty);
+    CHECK(weft::classifyFaceBuild(2, "planned contract floor") ==
+          weft::FaceBuildClass::PlannedFloor);
+    CHECK(weft::classifyFaceBuild(2, "revolution grid failed") ==
+          weft::FaceBuildClass::MesherFailed);
+    CHECK(weft::classifyFaceBuild(2, "border contract failed") ==
+          weft::FaceBuildClass::BorderContract);
+    CHECK(weft::classifyFaceBuild(2, "self-check failed") ==
+          weft::FaceBuildClass::SelfCheck);
+    CHECK(weft::classifyFaceBuild(2, "fold self-heal → contract floor") ==
+          weft::FaceBuildClass::FoldHeal);
+    CHECK(weft::classifyFaceBuild(2, "radial override → contract floor") ==
+          weft::FaceBuildClass::DensityOverride);
+    // A planned floor must never be counted as failure debt.
+    CHECK(weft::classifyFaceBuild(2, "planned contract floor") !=
+          weft::FaceBuildClass::MesherFailed);
+
+    // Every cause the corpus actually produces must be registered, and the
+    // buckets must partition the faces exactly.
+    const std::filesystem::path here =
+        std::filesystem::path(__FILE__).parent_path();
+    struct Case {
+        std::string label;
+        std::string path;
+    };
+    std::vector<Case> cases = {
+        {"demo", (here / "fixtures/demo.step").string()},
+        {"flaregun", (here / "STEP_Examples/flaregun.stp").string()},
+    };
+    for (const std::string& shape : {"torture", "barrel2", "ribbonnotch"}) {
+        const std::string p = tmpPath("weft_structure_" + shape + ".step");
+        weft::writeStep(weft::makeFixture(shape), p);
+        cases.push_back({shape, p});
+    }
+
+    int checked = 0;
+    for (const Case& c : cases) {
+        weft::Model model = weft::loadStep(c.path);
+        weft::Analysis analysis = weft::analyze(model);
+        for (int profile = 0; profile < 2; ++profile) {
+            weft::GenerationSettings gs;
+            gs.defaults.minimal = true;
+            if (profile == 1) {
+                gs.defaults.adaptive = true;
+                gs.defaults.relativeDeviation = true;
+            }
+            weft::GenerationReport report;
+            (void)weft::generate(model, analysis, gs, &report);
+
+            for (const auto& [fid, how] : report.faceBuild) {
+                std::string cause;
+                auto cit = report.faceBuildCause.find(fid);
+                if (cit != report.faceBuildCause.end()) cause = cit->second;
+                const weft::FaceBuildClass k =
+                    weft::classifyFaceBuild(how, cause);
+                if (k == weft::FaceBuildClass::Unknown) {
+                    std::printf(
+                        "  UNREGISTERED cause on %s face #%d: build=%d "
+                        "cause='%s'\n",
+                        c.label.c_str(), fid, how, cause.c_str());
+                }
+                CHECK(k != weft::FaceBuildClass::Unknown);
+            }
+
+            const weft::StructureSummary s =
+                weft::summarizeStructure(report);
+            CHECK_EQ(s.structured + s.plannedFloor + s.failedFloor + s.raw +
+                         s.empty,
+                     s.total);
+            CHECK(s.retention() >= 0.0 && s.retention() <= 1.0);
+            CHECK_EQ(int(s.failedByCause.size()) <= s.failedFloor, 1);
+            const std::string line = weft::formatStructure(report);
+            CHECK(line.find("structure: faces=") != std::string::npos);
+            CHECK(line.find("retention=") != std::string::npos);
+            ++checked;
+        }
+    }
+    std::printf("  %d model/profile runs, every cause registered\n", checked);
+}
+
 // Flaregun barrel open-band: notch lips must ride full-band axial rows.
 // A dedicated feature row only on the notch columns reads as an edge
 // that "isn't fully contained along the cylinder" (Ring B).
@@ -3959,6 +4051,7 @@ int main() {
     RUN(testQuadFill);
     RUN(testDeletePolyAndCollarRings);
     RUN(testSameLoopBridgeAndFill);
+    RUN(testStructureRetentionClassification);
     RUN(testFlaregunOpenBandNotchLipsFullSpan);
     RUN(testWeldTolerance);
     RUN(testWeldVerts);

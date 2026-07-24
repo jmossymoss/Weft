@@ -44,6 +44,96 @@ const char* mesherKindName(MesherKind kind) {
     return "fallback-tri";
 }
 
+const char* faceBuildClassName(FaceBuildClass c) {
+    switch (c) {
+        case FaceBuildClass::Built: return "built";
+        case FaceBuildClass::PlannedFloor: return "planned-floor";
+        case FaceBuildClass::MesherFailed: return "mesher-failed";
+        case FaceBuildClass::BorderContract: return "border-contract";
+        case FaceBuildClass::FoldHeal: return "fold-heal";
+        case FaceBuildClass::SelfCheck: return "self-check";
+        case FaceBuildClass::DensityOverride: return "density-override";
+        case FaceBuildClass::Raw: return "raw";
+        case FaceBuildClass::Empty: return "empty";
+        case FaceBuildClass::Unknown: return "unknown";
+    }
+    return "unknown";
+}
+
+FaceBuildClass classifyFaceBuild(int build, const std::string& cause) {
+    if (build == 0) return FaceBuildClass::Built;
+    if (build == 1) return FaceBuildClass::Raw;
+    if (build == -1) return FaceBuildClass::Empty;
+    auto has = [&](const char* needle) {
+        return cause.find(needle) != std::string::npos;
+    };
+    // Order matters: an override demote also mentions "contract floor", and a
+    // fold self-heal is a fold class even though it lands on the same floor.
+    if (has("planned contract floor")) return FaceBuildClass::PlannedFloor;
+    if (has("radial override")) return FaceBuildClass::DensityOverride;
+    if (has("fold")) return FaceBuildClass::FoldHeal;
+    if (has("self-check")) return FaceBuildClass::SelfCheck;
+    if (has("border contract")) return FaceBuildClass::BorderContract;
+    if (has("sphere fold")) return FaceBuildClass::FoldHeal;
+    if (has("contract floor unavailable") || has("threw")) {
+        return FaceBuildClass::MesherFailed;
+    }
+    if (has("failed")) return FaceBuildClass::MesherFailed;
+    return FaceBuildClass::Unknown;
+}
+
+StructureSummary summarizeStructure(const GenerationReport& report) {
+    StructureSummary s;
+    for (const auto& [fid, how] : report.faceBuild) {
+        ++s.total;
+        std::string cause;
+        auto cit = report.faceBuildCause.find(fid);
+        if (cit != report.faceBuildCause.end()) cause = cit->second;
+        const FaceBuildClass c = classifyFaceBuild(how, cause);
+        ++s.byClass[c];
+        switch (c) {
+            case FaceBuildClass::Built:
+                ++s.structured;
+                break;
+            case FaceBuildClass::PlannedFloor:
+                ++s.plannedFloor;
+                break;
+            case FaceBuildClass::Raw:
+                ++s.raw;
+                break;
+            case FaceBuildClass::Empty:
+                ++s.empty;
+                break;
+            default:
+                ++s.failedFloor;
+                ++s.failedByCause[cause.empty() ? "(no cause)" : cause];
+                break;
+        }
+    }
+    return s;
+}
+
+std::string formatStructure(const GenerationReport& report) {
+    const StructureSummary s = summarizeStructure(report);
+    if (!s.total) return {};
+    char line[256];
+    std::snprintf(line, sizeof(line),
+                  "  structure: faces=%d structured=%d planned-floor=%d "
+                  "failed-floor=%d raw=%d empty=%d retention=%.4f\n",
+                  s.total, s.structured, s.plannedFloor, s.failedFloor, s.raw,
+                  s.empty, s.retention());
+    std::string out = line;
+    if (!s.failedByCause.empty()) {
+        out += "    failed-floor by cause:";
+        for (const auto& [cause, n] : s.failedByCause) {
+            std::snprintf(line, sizeof(line), " %s=%d", cause.c_str(), n);
+            out += line;
+        }
+        out += '\n';
+    }
+    return out;
+}
+
 std::string formatBuildDemotions(const GenerationReport& report) {
     int floor = 0, raw = 0, empty = 0;
     std::vector<int> floorFaces, rawFaces, emptyFaces;
