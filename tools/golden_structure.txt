@@ -1,120 +1,120 @@
-cylinder cad faces=3 structured=3 planned-floor=0 failed-floor=0 raw=0 empty=0
-cylinder default faces=3 structured=3 planned-floor=0 failed-floor=0 raw=0 empty=0
-box cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-box default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-cone cad faces=2 structured=2 planned-floor=0 failed-floor=0 raw=0 empty=0
-cone default faces=2 structured=2 planned-floor=0 failed-floor=0 raw=0 empty=0
-sphere cad faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0
-sphere default faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0
-torus cad faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0
-torus default faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0
-extrusion cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-extrusion default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-canrev cad faces=5 structured=5 planned-floor=0 failed-floor=0 raw=0 empty=0
-canrev default faces=5 structured=5 planned-floor=0 failed-floor=0 raw=0 empty=0
-bspline_slab cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-bspline_slab default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-bezier_slab cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-bezier_slab default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-bezier_face cad faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0
-bezier_face default faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0
-offset_slab cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-offset_slab default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-ellipse_plate cad faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0
-ellipse_plate default faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0
-parabola_plate cad faces=4 structured=4 planned-floor=0 failed-floor=0 raw=0 empty=0
-parabola_plate default faces=4 structured=4 planned-floor=0 failed-floor=0 raw=0 empty=0
-hyperbola_plate cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-hyperbola_plate default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-bezier_curve cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-bezier_curve default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-bspline_curve cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-bspline_curve default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-offset_curve cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-offset_curve default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-rev_wire cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-rev_wire default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-unequal_rims cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-unequal_rims default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-fillet cad faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0
-fillet default faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0
-microedge cad faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0
-microedge default faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0
-hole cad faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0
-hole default faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0
-plate_holes cad faces=8 structured=8 planned-floor=0 failed-floor=0 raw=0 empty=0
-plate_holes default faces=8 structured=8 planned-floor=0 failed-floor=0 raw=0 empty=0
-slotted cad faces=8 structured=8 planned-floor=0 failed-floor=0 raw=0 empty=0
-slotted default faces=8 structured=8 planned-floor=0 failed-floor=0 raw=0 empty=0
-barrel cad faces=10 structured=10 planned-floor=0 failed-floor=0 raw=0 empty=0
-barrel default faces=10 structured=10 planned-floor=0 failed-floor=0 raw=0 empty=0
-barrel2 cad faces=14 structured=13 planned-floor=1 failed-floor=0 raw=0 empty=0
-barrel2 default faces=14 structured=12 planned-floor=1 failed-floor=1 raw=0 empty=0
-drilled cad faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0
-drilled default faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0
-notched cad faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0
-notched default faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0
-boss cad faces=8 structured=8 planned-floor=0 failed-floor=0 raw=0 empty=0
-boss default faces=8 structured=8 planned-floor=0 failed-floor=0 raw=0 empty=0
-bossfillet cad faces=9 structured=9 planned-floor=0 failed-floor=0 raw=0 empty=0
-bossfillet default faces=9 structured=9 planned-floor=0 failed-floor=0 raw=0 empty=0
-ribbon cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-ribbon default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-ribbonnotch cad faces=10 structured=8 planned-floor=0 failed-floor=2 raw=0 empty=0
-ribbonnotch default faces=10 structured=8 planned-floor=0 failed-floor=2 raw=0 empty=0
-filletslot cad faces=14 structured=14 planned-floor=0 failed-floor=0 raw=0 empty=0
-filletslot default faces=14 structured=14 planned-floor=0 failed-floor=0 raw=0 empty=0
-hairline cad faces=9 structured=9 planned-floor=0 failed-floor=0 raw=0 empty=0
-hairline default faces=9 structured=9 planned-floor=0 failed-floor=0 raw=0 empty=0
-slitdrill cad faces=16 structured=16 planned-floor=0 failed-floor=0 raw=0 empty=0
-slitdrill default faces=16 structured=16 planned-floor=0 failed-floor=0 raw=0 empty=0
-compound2 cad faces=9 structured=9 planned-floor=0 failed-floor=0 raw=0 empty=0
-compound2 default faces=9 structured=9 planned-floor=0 failed-floor=0 raw=0 empty=0
-demo cad faces=46 structured=46 planned-floor=0 failed-floor=0 raw=0 empty=0
-demo default faces=46 structured=46 planned-floor=0 failed-floor=0 raw=0 empty=0
-torture cad faces=46 structured=46 planned-floor=0 failed-floor=0 raw=0 empty=0
-torture default faces=46 structured=46 planned-floor=0 failed-floor=0 raw=0 empty=0
-open_shell cad faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0
-open_shell default faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0
-dirty_gap cad faces=2 structured=2 planned-floor=0 failed-floor=0 raw=0 empty=0
-dirty_gap default faces=2 structured=2 planned-floor=0 failed-floor=0 raw=0 empty=0
-gap_lo cad faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0
-gap_lo default faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0
-gap_at cad faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0
-gap_at default faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0
-sliver cad faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0
-sliver default faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0
-near_dup cad faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0
-near_dup default faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0
-rev_orient cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-rev_orient default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0
-dup_trim cad faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0
-dup_trim default faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0
-bowtie cad faces=2 structured=2 planned-floor=0 failed-floor=0 raw=0 empty=0
-bowtie default faces=2 structured=2 planned-floor=0 failed-floor=0 raw=0 empty=0
-tan_slit cad faces=9 structured=6 planned-floor=0 failed-floor=3 raw=0 empty=0
-tan_slit default faces=9 structured=6 planned-floor=0 failed-floor=3 raw=0 empty=0
-seam_cut cad faces=8 structured=7 planned-floor=0 failed-floor=1 raw=0 empty=0
-seam_cut default faces=8 structured=7 planned-floor=0 failed-floor=1 raw=0 empty=0
-hi_aspect cad faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0
-hi_aspect default faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0
-tiny_big cad faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0
-tiny_big default faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0
-flaregun cad faces=334 structured=327 planned-floor=0 failed-floor=7 raw=0 empty=0
-flaregun default faces=334 structured=326 planned-floor=0 failed-floor=8 raw=0 empty=0
-iso14649-demo cad faces=143 structured=143 planned-floor=0 failed-floor=0 raw=0 empty=0
-iso14649-demo default faces=143 structured=143 planned-floor=0 failed-floor=0 raw=0 empty=0
-foam cad faces=846 structured=839 planned-floor=3 failed-floor=4 raw=0 empty=0
-foam default faces=846 structured=833 planned-floor=3 failed-floor=10 raw=0 empty=0
-teleporter cad faces=660 structured=632 planned-floor=14 failed-floor=14 raw=0 empty=0
-teleporter default faces=660 structured=628 planned-floor=14 failed-floor=18 raw=0 empty=0
-foam_wt_open_nm cad faces=846 structured=839 planned-floor=3 failed-floor=4 raw=0 empty=0
-foam_wt_open_nm default faces=846 structured=833 planned-floor=3 failed-floor=10 raw=0 empty=0
-teleporter_wt_open cad faces=660 structured=632 planned-floor=14 failed-floor=14 raw=0 empty=0
-teleporter_wt_open default faces=660 structured=628 planned-floor=14 failed-floor=18 raw=0 empty=0
-foam_plane_fillet_bspline cad faces=11 structured=11 planned-floor=0 failed-floor=0 raw=0 empty=0
-foam_plane_fillet_bspline default faces=11 structured=11 planned-floor=0 failed-floor=0 raw=0 empty=0
-foam_fillet_bspline cad faces=11 structured=11 planned-floor=0 failed-floor=0 raw=0 empty=0
-foam_fillet_bspline default faces=11 structured=11 planned-floor=0 failed-floor=0 raw=0 empty=0
-teleporter_planar_ngon cad faces=25 structured=25 planned-floor=0 failed-floor=0 raw=0 empty=0
-teleporter_planar_ngon default faces=25 structured=25 planned-floor=0 failed-floor=0 raw=0 empty=0
+cylinder cad faces=3 structured=3 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+cylinder default faces=3 structured=3 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+box cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+box default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+cone cad faces=2 structured=2 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+cone default faces=2 structured=2 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+sphere cad faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+sphere default faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+torus cad faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+torus default faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+extrusion cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+extrusion default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+canrev cad faces=5 structured=5 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+canrev default faces=5 structured=5 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+bspline_slab cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+bspline_slab default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+bezier_slab cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+bezier_slab default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+bezier_face cad faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+bezier_face default faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+offset_slab cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+offset_slab default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+ellipse_plate cad faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+ellipse_plate default faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+parabola_plate cad faces=4 structured=4 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+parabola_plate default faces=4 structured=4 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+hyperbola_plate cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+hyperbola_plate default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+bezier_curve cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+bezier_curve default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+bspline_curve cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+bspline_curve default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+offset_curve cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+offset_curve default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+rev_wire cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+rev_wire default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+unequal_rims cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+unequal_rims default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+fillet cad faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+fillet default faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+microedge cad faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+microedge default faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+hole cad faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+hole default faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+plate_holes cad faces=8 structured=8 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+plate_holes default faces=8 structured=8 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+slotted cad faces=8 structured=8 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+slotted default faces=8 structured=8 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+barrel cad faces=10 structured=10 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+barrel default faces=10 structured=10 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+barrel2 cad faces=14 structured=13 planned-floor=1 failed-floor=0 raw=0 empty=0 winding=0
+barrel2 default faces=14 structured=12 planned-floor=1 failed-floor=1 raw=0 empty=0 winding=0
+drilled cad faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+drilled default faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+notched cad faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+notched default faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+boss cad faces=8 structured=8 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+boss default faces=8 structured=8 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+bossfillet cad faces=9 structured=9 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+bossfillet default faces=9 structured=9 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+ribbon cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+ribbon default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+ribbonnotch cad faces=10 structured=8 planned-floor=0 failed-floor=2 raw=0 empty=0 winding=0
+ribbonnotch default faces=10 structured=8 planned-floor=0 failed-floor=2 raw=0 empty=0 winding=0
+filletslot cad faces=14 structured=14 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+filletslot default faces=14 structured=14 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+hairline cad faces=9 structured=9 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+hairline default faces=9 structured=9 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+slitdrill cad faces=16 structured=16 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+slitdrill default faces=16 structured=16 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+compound2 cad faces=9 structured=9 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+compound2 default faces=9 structured=9 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+demo cad faces=46 structured=46 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+demo default faces=46 structured=46 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+torture cad faces=46 structured=46 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+torture default faces=46 structured=46 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+open_shell cad faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+open_shell default faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+dirty_gap cad faces=2 structured=2 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+dirty_gap default faces=2 structured=2 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+gap_lo cad faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+gap_lo default faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+gap_at cad faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+gap_at default faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+sliver cad faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+sliver default faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+near_dup cad faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+near_dup default faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+rev_orient cad faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+rev_orient default faces=6 structured=6 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+dup_trim cad faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=25
+dup_trim default faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=16
+bowtie cad faces=2 structured=2 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+bowtie default faces=2 structured=2 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+tan_slit cad faces=9 structured=6 planned-floor=0 failed-floor=3 raw=0 empty=0 winding=0
+tan_slit default faces=9 structured=6 planned-floor=0 failed-floor=3 raw=0 empty=0 winding=0
+seam_cut cad faces=8 structured=7 planned-floor=0 failed-floor=1 raw=0 empty=0 winding=0
+seam_cut default faces=8 structured=7 planned-floor=0 failed-floor=1 raw=0 empty=0 winding=0
+hi_aspect cad faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+hi_aspect default faces=1 structured=1 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+tiny_big cad faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+tiny_big default faces=7 structured=7 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+flaregun cad faces=334 structured=327 planned-floor=0 failed-floor=7 raw=0 empty=0 winding=0
+flaregun default faces=334 structured=326 planned-floor=0 failed-floor=8 raw=0 empty=0 winding=0
+iso14649-demo cad faces=143 structured=143 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+iso14649-demo default faces=143 structured=143 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+foam cad faces=846 structured=839 planned-floor=3 failed-floor=4 raw=0 empty=0 winding=0
+foam default faces=846 structured=833 planned-floor=3 failed-floor=10 raw=0 empty=0 winding=0
+teleporter cad faces=660 structured=632 planned-floor=14 failed-floor=14 raw=0 empty=0 winding=0
+teleporter default faces=660 structured=628 planned-floor=14 failed-floor=18 raw=0 empty=0 winding=0
+foam_wt_open_nm cad faces=846 structured=839 planned-floor=3 failed-floor=4 raw=0 empty=0 winding=0
+foam_wt_open_nm default faces=846 structured=833 planned-floor=3 failed-floor=10 raw=0 empty=0 winding=0
+teleporter_wt_open cad faces=660 structured=632 planned-floor=14 failed-floor=14 raw=0 empty=0 winding=0
+teleporter_wt_open default faces=660 structured=628 planned-floor=14 failed-floor=18 raw=0 empty=0 winding=0
+foam_plane_fillet_bspline cad faces=11 structured=11 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+foam_plane_fillet_bspline default faces=11 structured=11 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+foam_fillet_bspline cad faces=11 structured=11 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+foam_fillet_bspline default faces=11 structured=11 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+teleporter_planar_ngon cad faces=25 structured=25 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
+teleporter_planar_ngon default faces=25 structured=25 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0

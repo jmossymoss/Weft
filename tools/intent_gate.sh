@@ -80,7 +80,7 @@ while IFS= read -r row; do
     log="$OUT/$name-intent.log"
     "$WEFT" intent-sweep "$step" --profile cad --range "$RANGE" \
         --stride "$STRIDE" --face-stride "$FACE_STRIDE" > "$log" 2>&1
-    line=$(grep -Eo 'faces=[0-9]+ runs=[0-9]+ self-lost=[0-9]+ neighbour-lost=[0-9]+ leaks=[0-9]+ throws=[0-9]+' "$log" | head -1 || true)
+    line=$(grep -Eo 'faces=[0-9]+ runs=[0-9]+ self-lost=[0-9]+ neighbour-lost=[0-9]+ leaks=[0-9]+ winding=[0-9]+ throws=[0-9]+' "$log" | head -1 || true)
     if [[ -z "$line" ]]; then
         echo "FAIL $name: intent-sweep produced no summary (see $log)"
         FAIL=1
