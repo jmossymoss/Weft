@@ -106,8 +106,10 @@ run_one() {
     # separately from the pinned polygon counts.
     local structure
     structure=$(grep -Eo 'faces=[0-9]+ structured=[0-9]+ planned-floor=[0-9]+ failed-floor=[0-9]+ raw=[0-9]+ empty=[0-9]+' "$log" | head -1 || true)
+    local winding
+    winding=$(grep -Eo 'winding: +[A-Za-z]+ \(([0-9]+) conflicting' "$log" | grep -Eo '[0-9]+' | head -1 || true)
     if [[ -n "$structure" ]]; then
-        echo "$name $tag $structure" >> "$OUT/structure.txt"
+        echo "$name $tag $structure winding=${winding:-0}" >> "$OUT/structure.txt"
     fi
 
     local demo

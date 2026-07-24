@@ -117,8 +117,9 @@ corpus_ratchet_structure() {
             split("", worse)
             nworse = 0
             # Debt metrics may only fall.
-            for (m = 1; m <= 3; ++m) {
-                name = (m == 1 ? "failed-floor" : (m == 2 ? "raw" : "empty"))
+            for (m = 1; m <= 4; ++m) {
+                name = (m == 1 ? "failed-floor" : (m == 2 ? "raw" : \
+                       (m == 3 ? "empty" : "winding")))
                 gv = field(g[k], name); av = field($0, name)
                 if (av > gv) { worse[++nworse] = sprintf("%s %d -> %d", name, gv, av) }
                 if (av < gv) { better = better sprintf("  BETTER   %s: %s %d -> %d\n", k, name, gv, av) }
@@ -149,6 +150,52 @@ corpus_ratchet_structure() {
             printf "%s", better
             exit bad ? 1 : 0
         }
+    ' "$golden" "$actual"
+}
+
+# Ratchet the artist-intent ledger: every metric is debt, so all of them may
+# only fall. `runs` is context, not a verdict (sampling settings change it).
+corpus_ratchet_intent() {
+    local golden="$1" actual="$2"
+    awk '
+        function key(line,   a) { split(line, a, " "); return a[1] " " a[2] }
+        function field(line, name,   n, i, a, kv) {
+            n = split(line, a, " ")
+            for (i = 3; i <= n; ++i) {
+                split(a[i], kv, "=")
+                if (kv[1] == name) return kv[2] + 0
+            }
+            return -1
+        }
+        NR == FNR { if ($0 != "") { g[key($0)] = $0 }; next }
+        {
+            if ($0 == "") next
+            k = key($0)
+            if (!(k in g)) { printf "  NEW      %s: %s\n", k, $0; next }
+            # Sampling must match or the comparison is meaningless.
+            if (field(g[k], "runs") != field($0, "runs")) {
+                printf "  SKIPPED  %s: runs %d -> %d (different sampling)\n",
+                       k, field(g[k], "runs"), field($0, "runs")
+                next
+            }
+            nworse = 0
+            split("", worse)
+            for (m = 1; m <= 5; ++m) {
+                name = (m == 1 ? "self-lost" : \
+                       (m == 2 ? "neighbour-lost" : \
+                       (m == 3 ? "leaks" : (m == 4 ? "winding" : "throws"))))
+                gv = field(g[k], name); av = field($0, name)
+                if (av > gv) worse[++nworse] = sprintf("%s %d -> %d", name, gv, av)
+                else if (av < gv) better = better sprintf("  BETTER   %s: %s %d -> %d\n", k, name, gv, av)
+            }
+            if (nworse > 0) {
+                printf "  REGRESSED %s:", k
+                for (i = 1; i <= nworse; ++i) printf " %s;", worse[i]
+                printf "\n"
+                bad = 1
+            }
+        }
+        END { printf "%s", better; exit bad ? 1 : 0 }
     ' "$golden" "$actual"
 }
 
