@@ -94,6 +94,9 @@ void usage() {
         "    --rings N         concentric quad loops around holes/bosses in\n"
         "                      planar faces (default 2)\n"
         "    --validate        run bake-ready checks after meshing\n"
+        "    --why             print the mesher's own trace for every demoted\n"
+        "                      face (--why-face ID for one) — the reasoning\n"
+        "                      behind a contract-floor or raw demotion\n"
         "    --signature FILE  write cross-platform topology signature\n"
         "                      (implies --validate; see tools/topology_signature.sh)\n"
         "    --no-normals      skip exact CAD vertex normals in exports\n"
@@ -298,6 +301,9 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     std::string recipeOut;
     std::string signatureOut;
     bool validate = validateOnly;
+    // --why prints the mesher's own trace for every demoted face (or one), so
+    // a floor/raw demotion explains itself without instrumenting the core.
+    int whyFace = -1;
     bool noNormals = false;
     std::vector<double> lods;
     weft::ObjExportOptions objOpts;
@@ -358,6 +364,8 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
             }
         }
         else if (a == "--validate") validate = true;
+        else if (a == "--why") whyFace = 0;
+        else if (a == "--why-face") whyFace = std::stoi(next());
         else if (a == "--signature") {
             signatureOut = next();
             validate = true;  // signature needs ValidationReport
@@ -575,6 +583,11 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         // nothing about this, so gates read it separately.
         const std::string structure = weft::formatStructure(report);
         if (!structure.empty()) std::printf("%s", structure.c_str());
+    }
+    if (whyFace >= 0) {
+        const std::string why = weft::formatFaceTrace(report, whyFace);
+        if (why.empty()) std::printf("  no traced demotions\n");
+        else std::printf("%s", why.c_str());
     }
     {
         // Density-matched edge counts, ownership tags, and proposal/pin/

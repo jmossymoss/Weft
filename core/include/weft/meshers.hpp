@@ -341,6 +341,13 @@ struct GenerationReport {
     // semantically), so UIs should present loops/along, not raw u/v.
     // Absent for faces without across semantics.
     std::map<int, int> faceAcross;
+    // FaceId -> the mesher's own trace lines for faces that did NOT build
+    // cleanly. A bail returns false through one of hundreds of internal
+    // guards and the cause string names only the outermost failure, so this
+    // is the evidence that used to require adding temporary dbg() calls and
+    // rebuilding the core. Populated only for faceBuild != 0 (and only when
+    // capture is on, which generate() enables), so healthy runs pay nothing.
+    std::map<int, std::vector<std::string>> faceTrace;
 };
 
 // Human-readable demotion attribution for CLI/validate: counts plus
@@ -348,6 +355,10 @@ struct GenerationReport {
 std::string formatBuildDemotions(const GenerationReport& report);
 
 StructureSummary summarizeStructure(const GenerationReport& report);
+
+// The mesher's own trace for demoted faces (GenerationReport::faceTrace).
+// faceId > 0 selects one face; 0 formats every traced face.
+std::string formatFaceTrace(const GenerationReport& report, int faceId = 0);
 
 // One-line machine-greppable summary for CLI/gate consumption:
 //   structure: faces=N structured=N planned-floor=N failed-floor=N raw=N

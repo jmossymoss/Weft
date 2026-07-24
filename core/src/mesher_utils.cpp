@@ -182,6 +182,30 @@ std::string formatBuildDemotions(const GenerationReport& report) {
     return out;
 }
 
+std::string formatFaceTrace(const GenerationReport& report, int faceId) {
+    std::string out;
+    char line[320];
+    auto emit = [&](int fid, const std::vector<std::string>& lines) {
+        auto cit = report.faceBuildCause.find(fid);
+        std::snprintf(line, sizeof(line), "  why face %d (%s):\n", fid,
+                      cit == report.faceBuildCause.end()
+                          ? "?"
+                          : cit->second.c_str());
+        out += line;
+        for (const std::string& l : lines) {
+            std::snprintf(line, sizeof(line), "      %s\n", l.c_str());
+            out += line;
+        }
+    };
+    if (faceId > 0) {
+        auto it = report.faceTrace.find(faceId);
+        if (it != report.faceTrace.end()) emit(faceId, it->second);
+        return out;
+    }
+    for (const auto& [fid, lines] : report.faceTrace) emit(fid, lines);
+    return out;
+}
+
 std::string formatDensityOwnership(const GenerationReport& report) {
     if (report.edgeDivisions.empty() && report.densityConflicts.empty()) {
         return {};

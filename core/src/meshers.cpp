@@ -18088,6 +18088,22 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                      static_cast<long long>(total));
         timingLast = now;
     };
+    // Per-face trace capture, on only when a caller wants a report: the
+    // demotion attribution then carries the mesher's own reasoning instead of
+    // requiring temporary dbg() calls and a core rebuild to recover it.
+    struct TraceCaptureGuard {
+        bool on;
+        explicit TraceCaptureGuard(bool enable) : on(enable) {
+            if (!on) return;
+            mesher_detail::clearFaceTraces();
+            mesher_detail::setFaceTraceEnabled(true);
+        }
+        ~TraceCaptureGuard() {
+            if (!on) return;
+            mesher_detail::setFaceTraceEnabled(false);
+            mesher_detail::clearFaceTraces();
+        }
+    } traceCapture(report != nullptr);
     // Local mutable copy: a per-face radial override on a revolution band is
     // propagated across its connected blend group (below) so the whole barrel
     // densifies as one unit instead of stranding a neighbour at the old count.
@@ -20816,6 +20832,9 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     };
 
     auto meshFace = [&](int fid) {
+        // Capture this face's trace lines so a demotion can explain itself
+        // without a rebuild (see mesher_trace.hpp).
+        mesher_detail::FaceTraceScope traceScope(fid);
         // Copy (not ref): inject this face's pathology-guard cell ceiling,
         // computed from area vs. the model above. Downstream qs/fsD copies
         // inherit it, so every interior densifier sees the same budget.
@@ -22490,6 +22509,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         else if (how == 2) cause = "contract floor";
                     }
                     report->faceBuildCause[fid] = std::move(cause);
+                    // Attach the mesher's own trace for exactly the faces
+                    // that need explaining.
+                    std::vector<std::string> trace =
+                        mesher_detail::takeFaceTrace(fid);
+                    if (!trace.empty()) {
+                        report->faceTrace[fid] = std::move(trace);
+                    }
                 }
             }
             if (plan.kind == MesherKind::RevolutionGrid &&
