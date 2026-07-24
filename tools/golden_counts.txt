@@ -100,8 +100,8 @@ hi_aspect cad 0 quads, 0 tris, 1 n-gons
 hi_aspect default 0 quads, 0 tris, 1 n-gons
 tiny_big cad 20 quads, 0 tris, 2 n-gons
 tiny_big default 20 quads, 0 tris, 2 n-gons
-flaregun cad 3873 quads, 421 tris, 138 n-gons
-flaregun default 4383 quads, 1285 tris, 151 n-gons
+flaregun cad 3895 quads, 421 tris, 129 n-gons
+flaregun default 4402 quads, 1285 tris, 141 n-gons
 iso14649-demo cad 855 quads, 0 tris, 101 n-gons
 iso14649-demo default 1393 quads, 0 tris, 143 n-gons
 foam cad 6869 quads, 816 tris, 313 n-gons

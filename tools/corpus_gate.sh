@@ -156,13 +156,18 @@ while IFS= read -r row; do
 done < <(corpus_rows "$MANIFEST")
 
 if [[ "${UPDATE:-0}" == 1 ]]; then
-    cp "$OUT/counts.txt" "$GOLDEN"
+    if [[ -f "$GOLDEN" ]]; then
+        corpus_merge_counts "$GOLDEN" "$OUT/counts.txt" "$OUT/golden.new"
+        cp "$OUT/golden.new" "$GOLDEN"
+    else
+        cp "$OUT/counts.txt" "$GOLDEN"
+    fi
     echo "golden counts updated: $GOLDEN"
 elif [[ "$CHECK_GOLDEN" == 0 ]]; then
     echo "golden count diff skipped (invariants-only run)"
 elif [[ -f "$GOLDEN" ]]; then
-    if ! diff -u "$GOLDEN" "$OUT/counts.txt" > "$OUT/counts.diff"; then
-        echo "FAIL golden counts moved:"
+    if ! corpus_diff_counts "$GOLDEN" "$OUT/counts.txt" > "$OUT/counts.diff"; then
+        echo "FAIL golden counts moved (compared by case key):"
         cat "$OUT/counts.diff"
         FAIL=1
     fi
