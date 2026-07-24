@@ -55,12 +55,47 @@ manifests select external files; they do not replace the zoo.
 `tests/KNOWN_RED.tsv` holds temporary release/regression allowances. The strict
 release gate never consumes them.
 
+## Ledgers: pinned counts vs ratchets
+
+Three tables record different kinds of truth, and they fail differently.
+
+| Table | Semantics | Failure |
+| --- | --- | --- |
+| `tools/golden_counts.txt` | pinned polygon arity per case/profile | any change, up or down |
+| `tools/golden_structure.txt` | structure retention + winding per case | debt may only fall |
+| `tools/golden_intent.txt` | what a typed density edit costs per case | debt may only fall |
+
+Counts are compared BY CASE KEY, never positionally: a positional `diff -u`
+aligns unrelated rows once several drift and then prints golden values for the
+wrong case, which has already misdirected one investigation.
+
+Structure retention (`weft::formatStructure`, printed by `weft mesh`) counts
+faces that kept the topology their plan chose. It separates a deliberate
+`planned-floor` from `failed-floor` debt, because a face can sit on the
+contract floor while every watertightness check passes — that is what an artist
+reports as "it still triangulates". `winding` is the §3.1 consistent-winding
+requirement, which the validator has always measured and no gate read.
+
+The intent ledger is the artist-facing one: for every density-editable face it
+turns that family's SEMANTIC knob (radial / fillet loops / grid u) across a
+count range with adaptive OFF — the wheel and panel path — and records how
+often the edited face or a NEIGHBOUR loses its planned topology. It starts
+non-zero by design; the numbers are the debt, and they may only fall.
+
+Bank an improvement with `--update` on the owning gate, and explain any
+intentional count movement (root cause plus rendered before/after, see
+`tools/render_obj_wireframe.py`) in `docs/evidence/`.
+
 ## Runners
 
 ```sh
 ctest --test-dir build --output-on-failure
 tools/coverage_report.sh
 tools/corpus_gate.sh --no-golden
+tools/intent_gate.sh                  # artist-intent ratchet (fast sampling)
+tools/intent_gate.sh --full           # every editable face, every count
+tools/intent_gate.sh --model=flaregun # one case
+build/cli/weft mesh M.step -o m.obj --profile cad --why   # why faces demoted
 tools/topology_signature.sh self-check   # §3.2 cross-platform signature smoke
 tools/release_gate.sh          # expected red until WP3
 tools/corpus_scoreboard.sh > build/scoreboard.tsv
