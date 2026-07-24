@@ -6843,8 +6843,11 @@ bool meshContractFallback(const TopoDS_Face& face, const Model& model,
     std::vector<WebPoint> outer;
     std::vector<std::vector<WebPoint>> holes;
     std::vector<gp_Pnt2d> uvOf;  // per emitted vertex, UNSCALED uv
+    std::vector<gp_Pnt> outer3d;
+    std::vector<std::vector<gp_Pnt>> holes3d;
     for (PlanarRing& r : rings) {
         std::vector<WebPoint> ring;
+        std::vector<gp_Pnt> ring3d;
         for (size_t i = 0; i < r.uv.size(); ++i) {
             // Face UV anchors on the exact-border samples: fold repair and
             // foldedPolys both need them. Empty anchors made every
@@ -6854,16 +6857,102 @@ bool meshContractFallback(const TopoDS_Face& face, const Model& model,
                 {gp_Pnt2d(r.uv[i].X() * uScale, r.uv[i].Y()),
                  out.addVertex(r.p[i],
                                {faceId, r.uv[i].X(), r.uv[i].Y()})});
+            ring3d.push_back(r.p[i]);
             uvOf.push_back(r.uv[i]);
         }
-        if (r.isOuter) outer = std::move(ring);
-        else holes.push_back(std::move(ring));
+        if (r.isOuter) {
+            outer = std::move(ring);
+            outer3d = std::move(ring3d);
+        } else {
+            holes.push_back(std::move(ring));
+            holes3d.push_back(std::move(ring3d));
+        }
     }
     if (outer.size() < 3) return false;
-    if (!triangulateWeb(std::move(outer), std::move(holes), faceId, flip,
-                        out)) {
-        dbg("contract floor %d: web triangulation failed", faceId);
-        return false;
+    const size_t polysBefore = out.mesh().polygons.size();
+    auto rollback = [&]() {
+        out.mesh().polygons.resize(polysBefore);
+        out.mesh().polygonFaceId.resize(polysBefore);
+    };
+    if (!triangulateWeb(outer, holes, faceId, flip, out)) {
+        // The chart's own UV is not always a usable triangulation plane. On a
+        // sphere cap the pole/seam makes the sampled ring non-simple, the ear
+        // clip dead-ends, and the floor — the thing that guarantees exact
+        // borders — became unavailable, so the face fell to raw OCCT and its
+        // borders no longer matched its neighbours (flaregun face 192 opened
+        // 4 edges when the neighbouring patch was densified).
+        //
+        // The ring's own best-fit plane is a second chart with the same
+        // border samples: interior triangulation changes, the contract does
+        // not. Orientation is matched to UV by signed area so `flip` stays
+        // correct.
+        rollback();
+        gp_XYZ nrm(0, 0, 0);
+        for (size_t i = 0; i < outer3d.size(); ++i) {
+            const gp_Pnt& a = outer3d[i];
+            const gp_Pnt& b = outer3d[(i + 1) % outer3d.size()];
+            nrm += gp_XYZ((a.Y() - b.Y()) * (a.Z() + b.Z()),
+                          (a.Z() - b.Z()) * (a.X() + b.X()),
+                          (a.X() - b.X()) * (a.Y() + b.Y()));
+        }
+        const double nmod = nrm.Modulus();
+        if (nmod < 1e-12) {
+            dbg("contract floor %d: web triangulation failed (ring has no "
+                "plane)",
+                faceId);
+            return false;
+        }
+        const gp_Dir n(nrm / nmod);
+        gp_Dir e1 = std::abs(n.Z()) < 0.9 ? gp_Dir(0, 0, 1) : gp_Dir(1, 0, 0);
+        e1 = gp_Dir(gp_Vec(e1.XYZ()).Crossed(gp_Vec(n.XYZ())));
+        const gp_Dir e2(gp_Vec(n.XYZ()).Crossed(gp_Vec(e1.XYZ())));
+        auto signedArea = [](const std::vector<gp_Pnt2d>& p) {
+            double a = 0;
+            for (size_t i = 0; i < p.size(); ++i) {
+                const gp_Pnt2d& q = p[i];
+                const gp_Pnt2d& r2 = p[(i + 1) % p.size()];
+                a += q.X() * r2.Y() - r2.X() * q.Y();
+            }
+            return 0.5 * a;
+        };
+        auto projectRing = [&](const std::vector<gp_Pnt>& src, double mirror) {
+            std::vector<gp_Pnt2d> flat;
+            flat.reserve(src.size());
+            for (const gp_Pnt& p : src) {
+                const gp_Vec v(p.XYZ());
+                flat.emplace_back(v.Dot(gp_Vec(e1.XYZ())),
+                                  mirror * v.Dot(gp_Vec(e2.XYZ())));
+            }
+            return flat;
+        };
+        std::vector<gp_Pnt2d> uvOuter;
+        uvOuter.reserve(outer.size());
+        for (const WebPoint& w : outer) uvOuter.push_back(w.uv);
+        double mirror = 1.0;
+        if (signedArea(projectRing(outer3d, 1.0)) * signedArea(uvOuter) < 0) {
+            mirror = -1.0;
+        }
+        std::vector<WebPoint> pOuter = outer;
+        {
+            const std::vector<gp_Pnt2d> flat = projectRing(outer3d, mirror);
+            for (size_t i = 0; i < pOuter.size(); ++i) pOuter[i].uv = flat[i];
+        }
+        std::vector<std::vector<WebPoint>> pHoles = holes;
+        for (size_t h = 0; h < pHoles.size() && h < holes3d.size(); ++h) {
+            const std::vector<gp_Pnt2d> flat = projectRing(holes3d[h], mirror);
+            for (size_t i = 0; i < pHoles[h].size() && i < flat.size(); ++i) {
+                pHoles[h][i].uv = flat[i];
+            }
+        }
+        if (!triangulateWeb(std::move(pOuter), std::move(pHoles), faceId, flip,
+                            out)) {
+            rollback();
+            dbg("contract floor %d: web triangulation failed (uv and plane)",
+                faceId);
+            return false;
+        }
+        dbg("contract floor %d: uv web failed, best-fit-plane web built it",
+            faceId);
     }
     if (refine) {
         refineFloorWeb(out.mesh(), face, faceId, *refine, uScale,

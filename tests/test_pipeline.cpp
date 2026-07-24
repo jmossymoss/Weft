@@ -2838,6 +2838,89 @@ void testAllMesherStrategies() {
         }                                                     \
     } while (0)
 
+// A density edit must never push any face onto raw OCCT triangulation
+// (EXECUTION_PLAN §3.1). Found by `weft intent-sweep`: densifying a freeform
+// patch next to a geometric sphere cap raised the shared border past what the
+// cap's quad-fill could take; its UV ring was then non-simple, so even the
+// contract floor refused to build and the face fell to raw, whose borders do
+// not match the neighbours — 4 open edges on a closed solid.
+void testDensityEditNeverFallsToRaw() {
+    std::printf("-- density edit never falls to raw --\n");
+    const std::filesystem::path corpus =
+        std::filesystem::path(__FILE__).parent_path() / "STEP_Examples";
+    const weft::Model model =
+        weft::loadStep((corpus / "flaregun.stp").string());
+    const weft::Analysis analysis = weft::analyze(model);
+
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    weft::GenerationCache cache;
+    weft::GenerationReport base;
+    weft::PolyMesh baseMesh =
+        weft::generate(model, analysis, gs, &base, &cache);
+    CHECK(isWatertight(baseMesh));
+
+    // Discover the class, not the face id: a geometric sphere cap, plus the
+    // freeform/blend neighbours whose density edits reach its border.
+    std::set<int> targets;
+    for (const auto& f : analysis.faces) {
+        if (f.featureClass != weft::FeatureClass::SphereCap) continue;
+        if (f.chartKind != weft::ChartKind::GeometricCap) continue;
+        for (int eid : f.edgeIds) {
+            if (eid < 1 || eid > int(analysis.edges.size())) continue;
+            for (int nf : analysis.edges[eid - 1].faceIds) {
+                if (nf == f.id || nf < 1) continue;
+                auto kit = base.faceMesher.find(nf);
+                if (kit == base.faceMesher.end()) continue;
+                if (kit->second == weft::MesherKind::CoonsGrid ||
+                    kit->second == weft::MesherKind::PlanarGrid) {
+                    targets.insert(nf);
+                }
+            }
+        }
+    }
+    CHECK(!targets.empty());
+
+    int runs = 0;
+    for (int fid : targets) {
+        for (int r : {17, 21, 26}) {
+            weft::GenerationSettings s = gs;
+            weft::FaceMeshSettings f = gs.defaults;
+            f.adaptive = false;
+            f.radial = r;
+            s.perFace[fid] = f;
+            weft::GenerationReport rep;
+            weft::PolyMesh mesh =
+                weft::generate(model, analysis, s, &rep, &cache);
+            const weft::StructureSummary sum = weft::summarizeStructure(rep);
+            const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+            if (sum.raw || !vr.watertight()) {
+                std::printf("  face #%d radial=%d: raw=%d open=%zu nm=%zu\n",
+                            fid, r, sum.raw, vr.openEdges,
+                            vr.nonManifoldEdges);
+            }
+            CHECK_EQ(sum.raw, 0);
+            CHECK_EQ(sum.empty, 0);
+            CHECK(vr.watertight());
+            // Winding is asserted by the intent gate's ratchet, not here:
+            // flaregun still has a live winding regression on this edit
+            // (tests/KNOWN_RED.tsv row flaregun/cad/edit_winding_conflicts),
+            // and it spans 18 faces of a multi-solid — a separate class from
+            // the raw-demotion fix this test locks.
+            if (vr.windingConflicts) {
+                std::printf("  note: face #%d radial=%d winding conflicts=%zu"
+                            " (KNOWN_RED)\n",
+                            fid, r, vr.windingConflicts);
+            }
+            ++runs;
+        }
+    }
+    std::printf("  %zu neighbour face(s), %d edits, no raw, all watertight\n",
+                targets.size(), runs);
+}
+
 // Structure retention is the artist-facing invariant: did each face keep the
 // topology its plan chose? Every cause string must classify into a named
 // bucket — an unregistered one resolves to Unknown, which would silently hide
@@ -4052,6 +4135,7 @@ int main() {
     RUN(testDeletePolyAndCollarRings);
     RUN(testSameLoopBridgeAndFill);
     RUN(testStructureRetentionClassification);
+    RUN(testDensityEditNeverFallsToRaw);
     RUN(testFlaregunOpenBandNotchLipsFullSpan);
     RUN(testWeldTolerance);
     RUN(testWeldVerts);
