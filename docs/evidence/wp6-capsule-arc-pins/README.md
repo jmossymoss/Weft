@@ -135,3 +135,45 @@ arrangement: overlay the trim loop with the station grid and extract cells as
 faces of the arrangement, which can return several components per cell and
 handles a boundary that re-enters a row. That is a contained but real piece of
 work and it is the actual fix for both this and the leftover rings.
+
+## Tested: a row per arc sample (fills correctly, costs rings)
+
+The artist's algorithm is: "the cylinder spans go up till they find that arc,
+then stop at it and it becomes the vertex, and the inner boolean shape (half
+capsule) defines the vertex number."
+
+That is exactly right, and the cheap way to get it inside the current
+architecture is to give every curved-boundary sample its own V station, so a
+row edge lands on the arc vertex the wall already owns rather than on a chord.
+Measured on the muzzle extract:
+
+| | chord (current) | row per arc sample |
+| --- | --- | --- |
+| drum shares with end wall | 3 verts | 22 verts |
+| stations | 23 x 8 | 23 x 49 |
+| cells on the drum | 105 | 697 |
+| unexplained cracks | 0 | 0 |
+| winding | consistent | consistent |
+
+So it fills the arc, watertight, no cracks — but a V station is a full ring
+around the drum, so it cuts every lengthwise span into 49 pieces. That is the
+"long spans should maintain the full cylinder length, and not be broken up"
+requirement, violated. Reverted.
+
+![ring trade-off](../../../docs/evidence/wp6-capsule-arc-pins/arc_rows_tradeoff.png)
+
+## What the correct implementation needs
+
+The span must terminate at the arc LOCALLY — no global row. In the row-slab
+clipper a cell boundary can only be a chord between the crossings at the row's
+floor and ceiling, so "stop at the arc" is not expressible; the two ways to say
+it are a global row (rings, above) or following the boundary polyline through
+the row (tried twice, produces rings that wiggle in u which the per-cell
+half-plane clip mangles).
+
+The fix is to build cells per COLUMN instead: march each u-station line along v,
+terminate it at the nearest existing boundary sample, and close each cell with
+the boundary polyline between two adjacent columns' termination points. Only
+existing samples are used, so the wall's vertex count drives the arc exactly as
+the artist described, and nothing global is added. That is the same arrangement
+work the leftover rings need, so both collapse into one change.
