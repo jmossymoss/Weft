@@ -14343,7 +14343,8 @@ void pinOrthogonalTrimGrids(const Model& model,
 // caller on its previous path.
 bool columnTrimCells(const std::vector<gp_Pnt2d>& loop,
                      const std::vector<double>& U, double snapU,
-                     std::vector<std::vector<gp_Pnt2d>>& cells) {
+                     std::vector<std::vector<gp_Pnt2d>>& cells,
+                     const TopoDS_Face& face, double faceTol) {
     const int nLine = int(U.size());
     const size_t n = loop.size();
     if (n < 3 || nLine < 2) { dbg("colcells: bail tiny"); return false; }
@@ -14442,15 +14443,50 @@ bool columnTrimCells(const std::vector<gp_Pnt2d>& loop,
             if (int(ch.pts.size()) > pn) return false;
         }
         if (ch.pts.size() < 2) continue;
-        // Interior u decides the strip; a chain running along a line is skipped.
+        // Interior u decides the strip. A boundary chain exactly on an
+        // internal column needs its material side classified explicitly:
+        // inclusive interval lookup always chooses the lower strip, which can
+        // assign the chain to the outside and omit it from the real cell.
         double um = 0.0;
         for (const gp_Pnt2d& p : ch.pts) um += p.X();
         um /= double(ch.pts.size());
         int strip = -1;
-        for (int i = 0; i + 1 < nLine; ++i) {
-            if (um >= U[i] && um <= U[i + 1]) {
-                strip = i;
-                break;
+        const int line = ch.lineA == ch.lineB ? ch.lineA : -1;
+        bool followsLine = line >= 0;
+        if (followsLine) {
+            for (const gp_Pnt2d& p : ch.pts) {
+                if (std::abs(p.X() - U[line]) > exactU) {
+                    followsLine = false;
+                    break;
+                }
+            }
+        }
+        if (followsLine && line == 0) {
+            strip = 0;
+        } else if (followsLine && line == nLine - 1) {
+            strip = nLine - 2;
+        } else if (followsLine) {
+            double vm = 0.0;
+            for (const gp_Pnt2d& p : ch.pts) vm += p.Y();
+            vm /= double(ch.pts.size());
+            const double probeU =
+                1e-4 * std::min(U[line] - U[line - 1],
+                                U[line + 1] - U[line]);
+            auto materialAt = [&](double u) {
+                BRepClass_FaceClassifier cls(
+                    const_cast<TopoDS_Face&>(face), gp_Pnt2d(u, vm), faceTol);
+                return cls.State() != TopAbs_OUT;
+            };
+            const bool left = materialAt(U[line] - probeU);
+            const bool right = materialAt(U[line] + probeU);
+            if (left != right) strip = right ? line : line - 1;
+        }
+        if (strip < 0) {
+            for (int i = 0; i + 1 < nLine; ++i) {
+                if (um >= U[i] && um <= U[i + 1]) {
+                    strip = i;
+                    break;
+                }
             }
         }
         if (strip < 0) continue;
@@ -14769,7 +14805,7 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
     if (dropEndpointU) {
         std::vector<std::vector<gp_Pnt2d>> colCells;
         const double snapCol = 0.25 * std::abs(u1 - u0) / std::max(1, nu);
-        if (columnTrimCells(boundary, U, snapCol, colCells)) {
+        if (columnTrimCells(boundary, U, snapCol, colCells, face, tolF)) {
             std::vector<std::vector<gp_Pnt2d>> accepted;
             for (const std::vector<gp_Pnt2d>& raw : colCells) {
                 std::vector<gp_Pnt2d> clean;
