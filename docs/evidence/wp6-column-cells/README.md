@@ -1,4 +1,4 @@
-# Column cell builder (IN PROGRESS)
+# Column cell builder
 
 Artist model, stated 2026-07-25:
 
@@ -36,48 +36,75 @@ the artist rejected.
 4. Walk chain -> partner -> chain until the cycle closes; that cycle is the
    cell, an n-gon carrying every boundary sample it touches.
 
-## Current state (muzzle extract, pins + column cells)
+## Failure classes and fixes
 
-| | row clipper | column cells |
-| --- | --- | --- |
-| drum cells | 101 | 17 big n-gons |
-| end wall arc verts shared with drum | 3 | 12 |
-| unexplained cracks | 0 | 2 |
-| winding | consistent | 13 conflicting pairs |
+The first column implementation exposed four independent defects:
 
-![column cells](drum_column_cells_wip.png)
+1. Crossing snap compared a 2D UV distance with a u-only tolerance. Cylinder u
+   is angular while v is linear, so one sample could swallow crossings in
+   several strips. Crossing decisions now compare u only.
+2. A concave cell's vertex average can lie in the cut. Classification now uses
+   an interior ear centroid.
+3. A sparse decomposition could omit a boundary chain and still return some
+   valid-looking cells. Acceptance is transactional and requires every sampled
+   B-rep boundary segment to be present.
+4. A chain exactly on an internal column was always assigned to the lower
+   strip. The builder now probes the B-rep face on both sides and assigns the
+   chain to the material side.
 
-The shape is right — big n-gons that follow the arc, spans terminating on the
-wall's own vertices — and it is close, but not correct yet.
+One visual defect remained after all validity metrics passed. A v-dominant
+capsule arc was not pinned at its requested U-column crossings. The builder
+gave a nearby natural arc sample the logical column index without changing its
+actual U coordinate. Adjacent cells therefore shared a diagonal closure rather
+than a cylinder ruling. Revolution trim grids now U-pin every trim edge, so the
+same exact crossing is sampled by the drum and its neighbour.
 
-## Known defects, in the order to fix them
+![diagonal closure before and exact ruling after](muzzle_diagonal_before_after.png)
 
-1. **Chains still span several strips.** 22 spans produce only 17 cells, and
-   the render shows cells crossing each other. Splitting the loop at column
-   crossings should confine every chain to one strip, so a crossing is being
-   skipped. The quarter-pitch snap window is the first suspect (it may be
-   swallowing legitimate crossings); the second is `lineAt()` marking interior
-   nodes as on-line too generously.
-2. **Orientation.** 13 winding conflicts: cells are wound from the UV signed
-   area against `faceReversed`, which is right per cell but evidently not
-   consistent with the neighbours here.
-3. **Coverage.** 2 unexplained cracks, and one wall shares 5 arc vertices
-   where its twin shares 12 — so some region is still not being emitted.
+## Verified topology
 
-A units bug was already found and fixed here: the crossing-snap compared a UV
-distance against a u tolerance, and on a cylinder u is radians while v is
-millimetres, so crossings far along a span read as coincident with the sample.
+On both target muzzle drum faces:
+
+| Metric | Before complete fix | After |
+| --- | ---: | ---: |
+| requested spans | 22 | 22 |
+| emitted cells | 17 | 22 |
+| arc-following n-gons | 17 | 22 |
+| diagonal interior closures | 24 / 26 | 0 / 0 |
+| unexplained cracks | 2 | 0 |
+| non-manifold edges | 4 | 0 |
+| winding conflicts | 13 | 0 |
+| degenerate polygons | 4 | 0 |
+
+The maintained test also checks all 21 shared cell closures per target face in
+3D and rejects any closure that is not parallel to the cylinder axis. This
+closes the count-only blind spot that allowed the visible diagonal chord.
+
+The teleporter counterexample exercises sparse internal-column chains. Its two
+affected drums move from 35 quads + 2 triangles each to two complete n-gons
+each, while the model moves from 24 open mesh edges to watertight output and
+keeps its structure-retention baseline.
+
+![teleporter fragmented rows before and complete cells after](teleporter_cells_before_after.png)
+
+The pinning and cell changes intentionally move foam and teleporter polygon
+arity counts: curved shared edges retain their own samples, and sparse drums
+retain long n-gons instead of row fragments. The affected outputs were rendered
+and inspected for folds, overlaps, and unintended rings before banking the
+counts. Structure debt is unchanged; the corpus invariant gate and strict
+release gate pass.
 
 ## Scope
 
-Gated to `plan.kind == RevolutionGrid` trim grids and falls back to the row
-clipper whenever the decomposition declines, so nothing else can regress while
-this is in progress.
+The cell builder is gated to `plan.kind == RevolutionGrid` trim grids and falls
+back transactionally whenever the decomposition declines. Coons and planar
+trim grids retain the established row path.
 
-Reproducer, about one second:
+Reproducer:
 
 ```sh
 weft extract tests/STEP_Examples/MP9.stp --faces 3432 --rings 1 -o muzzle.step
 weft mesh muzzle.step -o muzzle.obj --profile cad --validate --debug
 python3 tools/render_obj_wireframe.py muzzle.obj drum.png --faces 21 --azim 95 --elev 8
+weft sweep tests/regressions/mp9/muzzle_column_cells.step
 ```
