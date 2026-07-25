@@ -44,23 +44,50 @@ Result on the muzzle extract:
 
 ![capsule ends](capsule_ends_before_after.png)
 
+## Progress on the fallout (2026-07-25, second pass)
+
+Ordering inside the pin is what matters. The first version appended the edge's
+own samples and then deduped at 1e-10, which left a station crossing sitting a
+micron from a natural sample as its own pin — a near-zero border segment that
+tears the weld on whichever neighbour reads the same edge. Deduping at a
+fraction of the sample spacing instead was worse: it dropped crossings, and a
+crossing is the whole reason the pin exists (MP9 then gained folds and
+non-manifold edges).
+
+The order that works: crossings are mandatory and go in first, then the edge's
+own samples are added only where they do not crowd one (0.35 of a sample
+spacing). That took the suite from 10 failures to 5:
+
+| | first pass | now |
+| --- | --- | --- |
+| foam (cad) | 3 open, 2 winding | clean |
+| flaregun, iso14649-demo | clean | clean |
+| MP9 coons/plane extract cracks | 26 | 24 (baseline 52) |
+| teleporter (cad) | 2 winding | 28 open, 2 winding |
+| capsule end wall | 11 polys | 11 polys |
+
+Two dead ends, both reverted: deriving cell orientation from the UV signed area
+instead of a 3D Newell normal (teleporter got worse, so the Newell cancellation
+theory was wrong), and skipping the station snap for pinned samples (no
+measurable effect).
+
 ## Why this is NOT merged
 
-It regresses release invariants, so it is parked here rather than landed:
+`teleporter` still regresses, so this stays parked:
 
-- `foam` (both profiles): 2 winding conflicts, 3 open edges
-- `teleporter` (cad): 2 winding conflicts
+- `teleporter` (cad): 28 open edges, 2 winding conflicts
 - `testMp9CoonsPlaneSeamCanonicalize`: `floors <= 1` exceeded
-- `testSparseFoldKeepsStructuredCharts` fails
 
-The winding conflicts sit on foam faces 508 (cone, drum/iso-band) and 525
-(cylinder, drum/iso-band), which share edges. Each face is internally oriented
-against its own surface normal — the trim grid already normalizes cell winding
-that way — so this is a CROSS-FACE disagreement that the denser shared sampling
-exposes, not a missing sign check. It needs its own investigation.
+The cracks are between trim-grid drums (faces 91, 302, 306, 384 — all
+`cylinder / drum/iso-band`, the same class as the muzzle) and their neighbours,
+which are `minimal-ngon` planes (96, 98, 443, 444) and bspline Coons faces
+(326, 329). So the drum reproduces the denser pin and at least one of those
+neighbour paths does not sample the shared edge at the pin's fractions. That is
+the next thing to check: whether `samplePlanarRings` and the Coons side sampler
+both consume pin fractions or only the pin's COUNT.
 
-Narrowing the seeding to curved edges, and then further to RevolutionGrid
-plans only, did not clear the fallout.
+Narrowing the seeding to curved edges, and then to RevolutionGrid plans only,
+does not help — teleporter's cracking faces are exactly that class.
 
 ## Reproducer
 

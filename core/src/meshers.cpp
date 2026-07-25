@@ -14258,10 +14258,10 @@ void pinOrthogonalTrimGrids(const Model& model,
                     curvedEdge = gc.GetType() != GeomAbs_Line;
                 }
             }
+            int naturalN = 0;
             if (curvedEdge && eid < int(solvedEdge.size()) &&
                 solvedEdge[eid] > 1) {
-                const int n = solvedEdge[eid];
-                for (int k = 1; k < n; ++k) fr.push_back(double(k) / double(n));
+                naturalN = solvedEdge[eid];
             }
             for (bool axis : {alongU}) {
                 const auto& stations = axis ? U : V;
@@ -14280,10 +14280,38 @@ void pinOrthogonalTrimGrids(const Model& model,
                     fr.push_back(0.5 * (L + R));
                 }
             }
-            std::sort(fr.begin(), fr.end());
-            fr.erase(std::unique(fr.begin(), fr.end(), [](double x, double y) {
-                         return std::abs(x-y) < 1e-10;
-                     }), fr.end());
+            auto dedupe = [](std::vector<double>& v, double tol) {
+                std::sort(v.begin(), v.end());
+                v.erase(std::unique(v.begin(), v.end(),
+                                    [tol](double x, double y) {
+                                        return std::abs(x - y) < tol;
+                                    }),
+                        v.end());
+            };
+            // Station crossings are mandatory — they are the whole reason this
+            // pin exists, so the clip never lands on an unsampled point.
+            dedupe(fr, 1e-10);
+            // The edge's own samples come SECOND and only where they do not
+            // crowd a crossing. A near-zero border segment tears the weld on
+            // whichever neighbour reads the same edge, and dropping a crossing
+            // instead breaks the clip (measured both ways on foam and MP9).
+            if (naturalN > 1) {
+                const double keepAway = 0.35 / double(naturalN);
+                std::vector<double> add;
+                for (int k = 1; k < naturalN; ++k) {
+                    const double t = double(k) / double(naturalN);
+                    bool crowded = false;
+                    for (double x : fr) {
+                        if (std::abs(x - t) < keepAway) {
+                            crowded = true;
+                            break;
+                        }
+                    }
+                    if (!crowded) add.push_back(t);
+                }
+                fr.insert(fr.end(), add.begin(), add.end());
+                dedupe(fr, 1e-10);
+            }
             pins[eid] = std::move(fr);
         };
         for (int e : plan.uEdges) pinEdge(e, true);
