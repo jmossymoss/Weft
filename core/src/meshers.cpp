@@ -15615,6 +15615,12 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
         const std::vector<uint32_t>& lo = ring[j];
         const std::vector<uint32_t>& hi = ring[(j + 1) % rows];
         if (lo.size() != hi.size()) continue;  // strip-bridged pair
+        // A suppressed pole row is CLEARED, not resized, so two adjacent
+        // cleared rows passed the equality guard above and then indexed an
+        // empty vector — a segfault, not a bad mesh (mp9_Edited.stp face 142,
+        // whose second rim sampled empty after its centre edges were removed).
+        // Nothing spans an empty row; the pole cap below closes it.
+        if (int(lo.size()) < nu || int(hi.size()) < nu) continue;
         for (int i = 0; i < nu; ++i) {
             int i2 = (i + 1) % nu;
             std::vector<uint32_t> quad{lo[i], lo[i2], hi[i2], hi[i]};
