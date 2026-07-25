@@ -14346,7 +14346,7 @@ bool columnTrimCells(const std::vector<gp_Pnt2d>& loop,
                      std::vector<std::vector<gp_Pnt2d>>& cells) {
     const int nLine = int(U.size());
     const size_t n = loop.size();
-    if (n < 3 || nLine < 2) return false;
+    if (n < 3 || nLine < 2) { dbg("colcells: bail tiny"); return false; }
 
     // Which column line a u sits on, or -1 for "between lines".
     auto lineAt = [&](double u) {
@@ -14375,8 +14375,14 @@ bool columnTrimCells(const std::vector<gp_Pnt2d>& loop,
         for (int i = 0; i < nLine; ++i) {
             const double t = (U[i] - a.X()) / du;
             if (t <= 1e-12 || t >= 1.0 - 1e-12) continue;
-            const gp_Pnt2d hit(a.X() + du * t, a.Y() + (b.Y() - a.Y()) * t);
-            if (hit.Distance(a) <= snapU || hit.Distance(b) <= snapU) continue;
+            // Compare in u ONLY. A UV distance mixes radians with millimetres
+            // on a cylinder, so a crossing far along the span read as "on top
+            // of" the sample and never got inserted — chains then spanned
+            // several strips and the cells came out crossing each other.
+            if (std::abs(U[i] - a.X()) <= snapU ||
+                std::abs(U[i] - b.X()) <= snapU) {
+                continue;
+            }
             xs.push_back({t, i});
         }
         std::sort(xs.begin(), xs.end());
@@ -14387,7 +14393,7 @@ bool columnTrimCells(const std::vector<gp_Pnt2d>& loop,
         }
     }
     const int pn = int(path.size());
-    if (pn < 3) return false;
+    if (pn < 3) { dbg("colcells: bail path %d", pn); return false; }
 
     // ---- 2. Cut the path into chains at nodes that sit on a column line.
     // Every chain then lies inside exactly one strip.
@@ -14395,7 +14401,7 @@ bool columnTrimCells(const std::vector<gp_Pnt2d>& loop,
     for (int i = 0; i < pn; ++i) {
         if (path[i].line >= 0) cut.push_back(i);
     }
-    if (cut.size() < 2) return false;
+    if (cut.size() < 2) { dbg("colcells: bail cuts %zu", cut.size()); return false; }
 
     struct Chain {
         std::vector<gp_Pnt2d> pts;  // start and end sit on column lines
@@ -14431,7 +14437,7 @@ bool columnTrimCells(const std::vector<gp_Pnt2d>& loop,
         ch.strip = strip;
         chains.push_back(std::move(ch));
     }
-    if (chains.empty()) return false;
+    if (chains.empty()) { dbg("colcells: bail no chains"); return false; }
 
     // ---- 3. Close each strip. On a strip's left and right line the chain
     // ends alternate "material starts" / "material ends" going up in v, so
@@ -14458,7 +14464,7 @@ bool columnTrimCells(const std::vector<gp_Pnt2d>& loop,
                       [](const EndRef& a, const EndRef& b) {
                           return a.v < b.v;
                       });
-            if (refs.size() % 2 != 0) return false;  // not vertically simple
+            if (refs.size() % 2 != 0) { dbg("colcells: strip %d line parity %zu", s, refs.size()); return false; }
         }
         // partner[chain][end] -> (chain, end)
         std::map<std::pair<int, bool>, std::pair<int, bool>> partner;
@@ -14501,7 +14507,14 @@ bool columnTrimCells(const std::vector<gp_Pnt2d>& loop,
                 cur = nextChain;
                 forward = nextForward;
             }
-            if (!closed || cell.size() < 3) return false;
+            if (!closed) {
+                dbg("colcells: strip %d walk open (cell %zu)", s, cell.size());
+                return false;
+            }
+            // A chain whose two ends pair on the same line can close on
+            // itself as a sliver; that is a real (empty) region, not a
+            // failure of the decomposition.
+            if (cell.size() < 3) continue;
             cells.push_back(std::move(cell));
         }
     }
