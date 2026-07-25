@@ -25,6 +25,7 @@
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
 #include <gp_Ax2.hxx>
+#include <gp_Vec.hxx>
 
 #include <algorithm>
 #include <atomic>
@@ -2102,6 +2103,7 @@ void testMp9MuzzleColumnCells() {
         }
 
         int polys = 0, tris = 0, ngons = 0;
+        std::map<std::pair<uint32_t, uint32_t>, int> faceEdgeUse;
         for (size_t p = 0; p < mesh.polygons.size(); ++p) {
             if (p >= mesh.polygonFaceId.size() ||
                 mesh.polygonFaceId[p] != f.id) {
@@ -2110,13 +2112,52 @@ void testMp9MuzzleColumnCells() {
             ++polys;
             if (mesh.polygons[p].size() == 3) ++tris;
             if (mesh.polygons[p].size() > 4) ++ngons;
+            for (size_t k = 0; k < mesh.polygons[p].size(); ++k) {
+                uint32_t a = mesh.polygons[p][k];
+                uint32_t b =
+                    mesh.polygons[p][(k + 1) % mesh.polygons[p].size()];
+                if (b < a) std::swap(a, b);
+                ++faceEdgeUse[{a, b}];
+            }
         }
         const int spans = cit->second[0];
         CHECK_EQ(polys, spans);
         CHECK_EQ(tris, 0);
         CHECK_EQ(ngons, polys);
-        std::printf("  face#%d: %d spans -> %d arc-following n-gons\n",
-                    f.id, spans, ngons);
+
+        // Count-only checks cannot distinguish a cylinder ruling from a
+        // diagonal chord. Every edge shared by two cells on this cylindrical
+        // chart is an interior column closure and must be parallel to the
+        // cylinder axis; trim-arc edges occur only once on this face.
+        const TopoDS_Face face = TopoDS::Face(model.faces(f.id));
+        const gp_Dir axis =
+            BRepAdaptor_Surface(face).Cylinder().Axis().Direction();
+        const gp_Vec axisVec(axis);
+        int columnClosures = 0, offAxisClosures = 0;
+        double maxOffAxis = 0.0;
+        for (const auto& [edge, use] : faceEdgeUse) {
+            if (use != 2) continue;
+            const auto& a = mesh.vertices[edge.first];
+            const auto& b = mesh.vertices[edge.second];
+            const gp_Vec d(gp_Pnt(a[0], a[1], a[2]),
+                           gp_Pnt(b[0], b[1], b[2]));
+            if (d.SquareMagnitude() <= 1e-24) continue;
+            const double offAxis =
+                d.Crossed(axisVec).Magnitude() / d.Magnitude();
+            maxOffAxis = std::max(maxOffAxis, offAxis);
+            // Border conformance/welding can move a shared trim vertex by
+            // roughly 1e-5 of the ruling length. The broken snap path was
+            // 3e-2..7e-2 off-axis, so 1e-4 rejects the visible chord while
+            // tolerating sub-pixel seam canonicalization.
+            if (offAxis > 1e-4) ++offAxisClosures;
+            ++columnClosures;
+        }
+        CHECK(columnClosures > 0);
+        CHECK_EQ(offAxisClosures, 0);
+        std::printf("  face#%d: %d spans -> %d arc-following n-gons; "
+                    "%d closures, %d off-axis (max %.6g)\n",
+                    f.id, spans, ngons, columnClosures, offAxisClosures,
+                    maxOffAxis);
         ++checked;
     }
     CHECK(checked >= 2);

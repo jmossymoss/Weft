@@ -14314,7 +14314,17 @@ void pinOrthogonalTrimGrids(const Model& model,
             }
             pins[eid] = std::move(fr);
         };
-        for (int e : plan.uEdges) pinEdge(e, true);
+        // Column cells close on constant-u rulings. Every trim edge that
+        // crosses a requested column therefore needs that exact crossing in
+        // the shared pin set, including curved edges classified as v-dominant.
+        // Otherwise columnTrimCells can only substitute a nearby natural arc
+        // sample, and two endpoints carrying the same logical column index
+        // retain different u coordinates (a diagonal chord in 3D).
+        if (plan.kind == MesherKind::RevolutionGrid) {
+            for (int e : plan.orthogonalEdges) pinEdge(e, true);
+        } else {
+            for (int e : plan.uEdges) pinEdge(e, true);
+        }
         for (int e : plan.vEdges) pinEdge(e, false);
     }
 }
