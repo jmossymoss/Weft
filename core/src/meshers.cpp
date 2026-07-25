@@ -14249,6 +14249,20 @@ void pinOrthogonalTrimGrids(const Model& model,
             if (!pins[eid].empty()) {
                 fr.insert(fr.end(), pins[eid].begin(), pins[eid].end());
             }
+            bool curvedEdge = false;
+            {
+                double cf, cl;
+                Handle(Geom_Curve) c3 = BRep_Tool::Curve(e, cf, cl);
+                if (!c3.IsNull()) {
+                    GeomAdaptor_Curve gc(c3, cf, cl);
+                    curvedEdge = gc.GetType() != GeomAbs_Line;
+                }
+            }
+            if (curvedEdge && eid < int(solvedEdge.size()) &&
+                solvedEdge[eid] > 1) {
+                const int n = solvedEdge[eid];
+                for (int k = 1; k < n; ++k) fr.push_back(double(k) / double(n));
+            }
             for (bool axis : {alongU}) {
                 const auto& stations = axis ? U : V;
                 const double a = coord(0, axis), b = coord(1, axis);
