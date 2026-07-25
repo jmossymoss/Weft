@@ -14770,7 +14770,7 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
         std::vector<std::vector<gp_Pnt2d>> colCells;
         const double snapCol = 0.25 * std::abs(u1 - u0) / std::max(1, nu);
         if (columnTrimCells(boundary, U, snapCol, colCells)) {
-            int good = 0;
+            std::vector<std::vector<gp_Pnt2d>> accepted;
             for (const std::vector<gp_Pnt2d>& raw : colCells) {
                 std::vector<gp_Pnt2d> clean;
                 std::set<std::pair<long long, long long>> seen;
@@ -14796,9 +14796,46 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
                 BRepClass_FaceClassifier cls(
                     const_cast<TopoDS_Face&>(face), seed, tolF);
                 if (cls.State() == TopAbs_OUT) continue;
+                accepted.push_back(std::move(clean));
+            }
+            // A locally closed cycle is not sufficient: sparse trim charts can
+            // produce one valid-looking cell while silently omitting another
+            // strip. Accept the column decomposition only when every sampled
+            // B-rep boundary segment survives in an accepted cell. If coverage
+            // is incomplete, decline this mesher before mutating `out`; the
+            // caller then rebuilds the face on the exact-border contract floor.
+            using UvKey = std::pair<long long, long long>;
+            std::set<std::pair<UvKey, UvKey>> cellEdges;
+            for (const auto& cell : accepted) {
+                for (size_t k = 0; k < cell.size(); ++k) {
+                    auto a = uvKey(cell[k]);
+                    auto b = uvKey(cell[(k + 1) % cell.size()]);
+                    if (b < a) std::swap(a, b);
+                    cellEdges.insert({a, b});
+                }
+            }
+            bool coversBoundary = !accepted.empty();
+            for (size_t k = 0; coversBoundary && k < boundary.size(); ++k) {
+                auto a = uvKey(boundary[k]);
+                auto b = uvKey(boundary[(k + 1) % boundary.size()]);
+                if (a == b) continue;
+                if (b < a) std::swap(a, b);
+                coversBoundary = cellEdges.count({a, b}) != 0;
+            }
+            if (!coversBoundary) return false;
+            int good = 0;
+            for (const auto& clean : accepted) {
                 std::vector<uint32_t> ids;
                 ids.reserve(clean.size());
-                for (const gp_Pnt2d& p : clean) ids.push_back(vertex(p));
+                for (const gp_Pnt2d& p : clean) {
+                    ids.push_back(vertex(p));
+                }
+                double area = 0.0;
+                for (size_t k = 0; k < clean.size(); ++k) {
+                    const gp_Pnt2d& a = clean[k];
+                    const gp_Pnt2d& b = clean[(k + 1) % clean.size()];
+                    area += a.X() * b.Y() - b.X() * a.Y();
+                }
                 if ((area > 0.0) == faceReversed) {
                     std::reverse(ids.begin(), ids.end());
                 }
@@ -14808,12 +14845,10 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
                 else ++ngons;
                 ++good;
             }
-            if (good > 0) {
-                dbg("orthogonal grid face %d: COLUMN cells %d (%d tri, %d "
-                    "quad, %d ngon) from %d spans",
-                    faceId, good, tris, quads, ngons, nu);
-                return true;
-            }
+            dbg("orthogonal grid face %d: COLUMN cells %d (%d tri, %d "
+                "quad, %d ngon) from %d spans",
+                faceId, good, tris, quads, ngons, nu);
+            return true;
         }
         dbg("orthogonal grid face %d: column cells declined, row clipper",
             faceId);
