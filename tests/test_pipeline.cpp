@@ -2326,6 +2326,7 @@ void testMp9CoonsPlaneSeamCanonicalize() {
     CHECK(unexplained < 55);
     CHECK(foldCount == 0);
     CHECK(vr.nonManifoldEdges == 0);
+    CHECK(vr.windingConflicts == 0);
 }
 
 // Auto-mesher gates: a plate with a slot has "two wires" but is NOT an
