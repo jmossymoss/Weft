@@ -2130,10 +2130,31 @@ static std::array<float, 2> gpuProxyCounts(App& app) {
     auto manual = [&](int u, int v) {
         n = {std::max(1, u), std::max(1, v)};
     };
+    // Blend strips: semantic knobs → parametric U/V for the isoline
+    // overlay. faceAcross 1 = loops ride U; 2 = loops ride V. Without
+    // this remap the proxy densifies the wrong GPU axis when the artist
+    // scrubs along / fillet-loops (adaptive-off path).
+    const bool filletFace =
+        fid <= int(app.analysis.faces.size()) &&
+        app.analysis.faces[fid - 1].isFillet;
+    const auto axIt = app.report.faceAcross.find(fid);
+    const int stripAcross =
+        filletFace && axIt != app.report.faceAcross.end() ? axIt->second
+                                                          : 0;
     using MK = weft::MesherKind;
     switch (kind) {
         case MK::RevolutionGrid:
-        case MK::DomeCap: manual(s.radial, s.axial); break;
+        case MK::DomeCap:
+            if (stripAcross && kind == MK::RevolutionGrid) {
+                if (stripAcross == 1) {
+                    manual(s.filletLoops, s.radial);
+                } else {
+                    manual(s.radial, s.filletLoops);
+                }
+            } else {
+                manual(s.radial, s.axial);
+            }
+            break;
         case MK::DiskCap:
         case MK::AnnulusRing: manual(s.radial, 1); break;
         case MK::RibbonSweep:
@@ -2145,7 +2166,17 @@ static std::array<float, 2> gpuProxyCounts(App& app) {
         case MK::MinimalNGon:
             manual(s.boundary > 0 ? s.boundary : 1, 1);
             break;
-        default: manual(s.gridU, s.gridV); break;
+        default:
+            if (stripAcross) {
+                if (stripAcross == 1) {
+                    manual(s.filletLoops, s.gridU);
+                } else {
+                    manual(s.gridU, s.filletLoops);
+                }
+            } else {
+                manual(s.gridU, s.gridV);
+            }
+            break;
     }
     if (s.adaptive) {
         const std::array<int, 2> live = faceSolvedCounts(app, fid);
@@ -2335,10 +2366,40 @@ static std::string adjustFaceDensityOne(App& app, int fid,
     using MK = weft::MesherKind;
     switch (kind) {
         case MK::RevolutionGrid:
-        case MK::DomeCap:
-            if (secondary) count(s.axial, 1, "axial", live[1]);
-            else count(s.radial, 3, "radial", live[0]);
+        case MK::DomeCap: {
+            // Analytic fillet strips: primary = along (radial), secondary =
+            // fillet loops across — not raw axial (which was the wrong
+            // parametric axis on cylinder fillets with acrossIsU).
+            const bool strip = fid <= int(app.analysis.faces.size()) &&
+                               app.analysis.faces[fid - 1].isFillet;
+            const auto ax = app.report.faceAcross.find(fid);
+            if (kind == MK::RevolutionGrid && strip &&
+                ax != app.report.faceAcross.end()) {
+                if (secondary) {
+                    const int liveAcross =
+                        ax->second == 1 ? live[0] : live[1];
+                    if (s.adaptive) {
+                        if (liveAcross > 0) {
+                            s.filletLoops =
+                                std::max(s.filletLoops, liveAcross);
+                        }
+                        s.adaptive = false;
+                    }
+                    s.filletLoops = std::max(1, s.filletLoops + steps);
+                    std::snprintf(hud, sizeof hud,
+                                  "fillet loops (across): %d",
+                                  s.filletLoops);
+                } else {
+                    count(s.radial, 3, "along the blend",
+                          ax->second == 1 ? live[1] : live[0]);
+                }
+            } else if (secondary) {
+                count(s.axial, 1, "axial", live[1]);
+            } else {
+                count(s.radial, 3, "radial", live[0]);
+            }
             break;
+        }
         case MK::DiskCap:
             // DiskCap density is rim-only (radial). Axial is unused.
             if (secondary) {
@@ -2363,7 +2424,7 @@ static std::string adjustFaceDensityOne(App& app, int fid,
             count(s.radial, 3, "loop verts", live[0]);
             break;
         case MK::PlateWeb:
-            if (secondary) count(s.junctionRings, 1, "collar rings", 0);
+            if (secondary) count(s.junctionRings, 0, "collar rings", 0);
             else total(s.boundary, "boundary verts");
             break;
         case MK::QuadFill:
@@ -2448,17 +2509,13 @@ static void adjustFaceDensity(App& app, bool secondary, int steps) {
             app.activeFace);
     std::string hud;
     if (app.selFaces.empty()) {
-        // No selection: nudge the global density scale. Nudging the
-        // DEFAULTS' counts here reads as harmless, but the count lambda
-        // flips adaptive off — so [ ] with nothing selected silently
-        // disabled curvature-adaptive density for the whole model.
-        app.recipe.settings.densityScale = std::clamp(
-            app.recipe.settings.densityScale * std::pow(1.06, double(steps)),
-            0.05, 20.0);
-        char buf[64];
-        std::snprintf(buf, sizeof buf, "density scale: %.2fx",
-                      app.recipe.settings.densityScale);
-        hud = buf;
+        // No selection: do not touch global density scale — wheel+modifier
+        // over empty space used to fight face density keybinds and silently
+        // rescale the whole model. Scale stays on the panel slider only.
+        std::snprintf(app.hudText, sizeof app.hudText,
+                      "select a face to edit density");
+        app.hudUntil = glfwGetTime() + 0.9;
+        return;
     } else {
         for (int fid : app.selFaces) {
             auto it = app.recipe.settings.perFace.find(fid);
@@ -2483,9 +2540,10 @@ static void adjustFaceDensity(App& app, bool secondary, int steps) {
 }
 
 // Fluid hover editing: with nothing selected, modifier+wheel edits the
-// face UNDER THE CURSOR directly (auto-creating its override), and over
-// empty space it edits the GLOBAL settings — no select, no panel:
-//   shift+wheel        face primary density   | global density scale
+// face UNDER THE CURSOR directly (auto-creating its override). Over empty
+// space it does NOT change global density scale (that fought face density
+// keybinds) — only angle / fillet-loop defaults:
+//   shift+wheel        face primary density   | (idle — select a face)
 //   ctrl+wheel         face secondary density | global angle tolerance
 //   ctrl+shift+wheel   face fillet loops      | global fillet loops
 static void adjustHovered(App& app, bool ctrl, bool shift, int steps) {
@@ -2501,14 +2559,15 @@ static void adjustHovered(App& app, bool ctrl, bool shift, int steps) {
         if (ctrl && shift) {
             it->second.filletLoops = std::max(1, it->second.filletLoops + steps);
             hud = "fillet loops: " + std::to_string(it->second.filletLoops);
-            // Honest HUD: fillet loops only feed the coons/planar fillet
+            // Honest HUD: fillet loops feed coons/planar/rev-grid fillet
             // meshers — flag the nudge when this face ignores it.
             const weft::MesherKind k = effectiveKind(app, fid);
             const bool used =
                 fid <= int(app.analysis.faces.size()) &&
                 app.analysis.faces[fid - 1].isFillet &&
                 (k == weft::MesherKind::CoonsGrid ||
-                 k == weft::MesherKind::PlanarGrid);
+                 k == weft::MesherKind::PlanarGrid ||
+                 k == weft::MesherKind::RevolutionGrid);
             if (!used) hud += " (no effect here)";
         } else {
             hud = adjustFaceDensityOne(app, fid, it->second, ctrl, steps);
@@ -2519,7 +2578,7 @@ static void adjustHovered(App& app, bool ctrl, bool shift, int steps) {
         markDirty(app);
         return;
     }
-    // Background: the global knobs.
+    // Background: angle / fillet defaults only — never density scale.
     weft::FaceMeshSettings& d = app.recipe.settings.defaults;
     if (ctrl && shift) {
         d.filletLoops = std::max(1, d.filletLoops + steps);
@@ -2532,14 +2591,11 @@ static void adjustHovered(App& app, bool ctrl, bool shift, int steps) {
         std::snprintf(app.hudText, sizeof app.hudText, "angle: %.1f deg",
                       d.angleToleranceDeg);
     } else {
-        app.recipe.settings.densityScale = std::clamp(
-            app.recipe.settings.densityScale * std::pow(1.06, double(steps)),
-            0.05, 20.0);
-        std::snprintf(app.hudText, sizeof app.hudText, "density scale: %.2fx",
-                      app.recipe.settings.densityScale);
+        std::snprintf(app.hudText, sizeof app.hudText,
+                      "select a face to edit density");
     }
     app.hudUntil = glfwGetTime() + 0.9;
-    markDirty(app);
+    if (ctrl) markDirty(app);
 }
 
 // Shared verbs (key handlers + pie menus call the same code).
@@ -3446,48 +3502,75 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
     const std::array<int, 2> liveN =
         s.adaptive ? faceSolvedCounts(app, app.activeFace)
                    : std::array<int, 2>{0, 0};
+    // Blend strips get SEMANTIC axis knobs: the raw u/v (or radial/axial)
+    // exposure leaks patch orientation. faceAcross says which axis the
+    // fillet-loops knob drives; along is gridU (Coons/Planar) or radial
+    // (RevolutionGrid analytic fillets).
+    int stripAcross = 0;  // 1 = loops ride the patch u axis, 2 = v
+    if (isFillet && (k == MK::CoonsGrid || k == MK::PlanarGrid ||
+                     k == MK::RevolutionGrid)) {
+        auto ax = app.report.faceAcross.find(app.activeFace);
+        if (ax != app.report.faceAcross.end()) stripAcross = ax->second;
+    }
     if (revolved) {
         // Typing a count IS choosing manual density for this face —
         // same rule as the wheel — otherwise the number displays while
         // adaptive keeps driving and they never match.
         // Labels match the wheel HUD so selected-face settings name the
         // same semantic axes the artist already scrolled.
-        const char* radialLabel = "radial";
-        if (k == MK::AnnulusRing) radialLabel = "loop verts";
-        else if (k == MK::RibbonSweep || k == MK::RailLadder) {
-            radialLabel = "rail density";
-        } else if (k == MK::PlateWeb || k == MK::QuadFill) {
-            // Outer density is boundary verts when pinned; radial only
-            // seeds shares on loops the pin does not cover (holes).
-            radialLabel =
-                s.boundary > 0 ? "hole share seed" : "loop share seed";
-        }
-        int radialShown =
-            s.adaptive && liveN[0] > 0 ? liveN[0] : s.radial;
-        if (ImGui::DragInt(radialLabel, &radialShown, 0.2f, 3, 256)) {
-            s.radial = radialShown;
-            ch = true;
-            // Manual only where radial IS the density; on plate-web /
-            // quad-fill it merely seeds loop shares and killing
-            // adaptive collapses the borders to flat pins.
-            if (k == MK::RevolutionGrid || k == MK::DiskCap ||
-                k == MK::AnnulusRing || k == MK::RibbonSweep ||
-                k == MK::RailLadder || k == MK::DomeCap) {
-                s.adaptive = false;
-            }
-        }
-        hover({int(MK::RevolutionGrid), int(MK::DiskCap),
-               int(MK::AnnulusRing), int(MK::PlateWeb), int(MK::QuadFill),
-               int(MK::RibbonSweep), int(MK::RailLadder), int(MK::DomeCap)});
-        if (k == MK::RevolutionGrid || k == MK::DomeCap) {
-            int axialShown =
-                s.adaptive && liveN[1] > 0 ? liveN[1] : s.axial;
-            if (ImGui::DragInt("axial", &axialShown, 0.2f, 1, 256)) {
-                s.axial = axialShown;
+        if (k == MK::RevolutionGrid && stripAcross) {
+            const int alongLive =
+                stripAcross == 1 ? liveN[1] : liveN[0];
+            int alongShown =
+                s.adaptive && alongLive > 0 ? alongLive : s.radial;
+            if (ImGui::DragInt("along the blend", &alongShown, 0.2f, 3,
+                               256)) {
+                s.radial = alongShown;
                 ch = true;
                 s.adaptive = false;
             }
-            hover({int(MK::RevolutionGrid), int(MK::DomeCap)});
+            hover({int(MK::RevolutionGrid)});
+            ImGui::TextDisabled("across = fillet loops (patch %s)",
+                                stripAcross == 1 ? "u" : "v");
+        } else {
+            const char* radialLabel = "radial";
+            if (k == MK::AnnulusRing) radialLabel = "loop verts";
+            else if (k == MK::RibbonSweep || k == MK::RailLadder) {
+                radialLabel = "rail density";
+            } else if (k == MK::PlateWeb || k == MK::QuadFill) {
+                // Outer density is boundary verts when pinned; radial only
+                // seeds shares on loops the pin does not cover (holes).
+                radialLabel =
+                    s.boundary > 0 ? "hole share seed" : "loop share seed";
+            }
+            int radialShown =
+                s.adaptive && liveN[0] > 0 ? liveN[0] : s.radial;
+            if (ImGui::DragInt(radialLabel, &radialShown, 0.2f, 3, 256)) {
+                s.radial = radialShown;
+                ch = true;
+                // Manual only where radial IS the density; on plate-web /
+                // quad-fill it merely seeds loop shares and killing
+                // adaptive collapses the borders to flat pins.
+                if (k == MK::RevolutionGrid || k == MK::DiskCap ||
+                    k == MK::AnnulusRing || k == MK::RibbonSweep ||
+                    k == MK::RailLadder || k == MK::DomeCap) {
+                    s.adaptive = false;
+                }
+            }
+            hover({int(MK::RevolutionGrid), int(MK::DiskCap),
+                   int(MK::AnnulusRing), int(MK::PlateWeb), int(MK::QuadFill),
+                   int(MK::RibbonSweep), int(MK::RailLadder),
+                   int(MK::DomeCap)});
+            if (k == MK::RevolutionGrid || k == MK::DomeCap) {
+                int axialShown =
+                    s.adaptive && liveN[1] > 0 ? liveN[1] : s.axial;
+                if (ImGui::DragInt("axial", &axialShown, 0.2f, 1, 256)) {
+                    s.axial = axialShown;
+                    ch = true;
+                    s.adaptive = false;
+                }
+                hover({int(MK::RevolutionGrid), int(MK::DomeCap)});
+            }
         }
         if (k == MK::DiskCap) {
             int cap = s.cap == weft::CapStyle::Fan ? 1 : 0;
@@ -3498,13 +3581,24 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
             hover({int(MK::DiskCap)});
         }
         if (k == MK::PlateWeb) {
-            // Concentric collar rings around each hole (same field the
-            // wheel labels "collar rings").
-            ch |= ImGui::DragInt("collar rings", &s.junctionRings, 0.2f,
-                                 1, 32);
-            hover({int(MK::RingJunction), int(MK::PlateWeb)});
-            ch |= ImGui::Checkbox("square collars", &s.squareCollar);
-            hover({int(MK::PlateWeb)});
+            // Hole-plate collars: off by default (0); raise rings or tick
+            // the checkbox to turn the rim on.
+            {
+                bool collars = s.junctionRings > 0;
+                if (ImGui::Checkbox("hole collars", &collars)) {
+                    s.junctionRings = collars ? std::max(1, s.junctionRings)
+                                              : 0;
+                    ch = true;
+                }
+                hover({int(MK::PlateWeb)});
+            }
+            if (s.junctionRings > 0) {
+                ch |= ImGui::DragInt("collar rings", &s.junctionRings, 0.2f,
+                                     1, 32);
+                hover({int(MK::RingJunction), int(MK::PlateWeb)});
+                ch |= ImGui::Checkbox("square collars", &s.squareCollar);
+                hover({int(MK::PlateWeb)});
+            }
         }
     }
     // Boundary totals stand alone: MinimalNGon isn't in the revolved set
@@ -3525,17 +3619,8 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
         }
         hover({int(MK::PlateWeb), int(MK::QuadFill), int(MK::MinimalNGon)});
     }
-    // Blend strips get SEMANTIC axis knobs: the raw u/v exposure leaks
-    // the wire-start-dependent patch orientation, so mirror-twin strips
-    // bound the same geometric direction to grid u on one and grid v on
-    // the other (artist report). The solve remaps: on strips, gridU is
-    // ALWAYS the along count, fillet loops ALWAYS the across count, and
-    // gridV is inert — so show along + the across mapping, not raw u/v.
-    int stripAcross = 0;  // 1 = loops ride the patch u axis, 2 = v
-    if (isFillet && (k == MK::CoonsGrid || k == MK::PlanarGrid)) {
-        auto ax = app.report.faceAcross.find(app.activeFace);
-        if (ax != app.report.faceAcross.end()) stripAcross = ax->second;
-    }
+    // Blend strips (Coons / Planar): remapped along via gridU. Revolution
+    // analytic fillets already showed along via radial above.
     if (grid && stripAcross) {
         const int alongLive = stripAcross == 1 ? liveN[1] : liveN[0];
         int alongShown =
@@ -3584,7 +3669,7 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
         if (k == MK::RingJunction) {
             ch |= ImGui::DragInt("junction rings", &s.junctionRings, 0.2f, 1,
                                  32);
-            hover({int(MK::RingJunction), int(MK::PlateWeb)});
+            hover({int(MK::RingJunction)});
         }
         if (k == MK::CoonsGrid) {
             // Which corner anchors the grid; on triangular patches this
@@ -3596,12 +3681,12 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
             }
         }
     }
-    // Fillet loops / hold only feed the CoonsGrid / PlanarGrid fillet
-    // meshers (they set the across-the-blend count and its crease
-    // clustering). A fillet that meshes as a revolution grid, ribbon, etc.
-    // ignores them — so only surface them where they actually do something,
-    // not on every face the classifier merely tagged [fillet].
-    if (isFillet && (k == MK::CoonsGrid || k == MK::PlanarGrid)) {
+    // Fillet loops / hold feed Coons / Planar / RevolutionGrid fillet
+    // meshers (across-the-blend count and crease clustering). Only
+    // surface them where they actually do something — not on every face
+    // the classifier merely tagged [fillet].
+    if (isFillet && (k == MK::CoonsGrid || k == MK::PlanarGrid ||
+                     k == MK::RevolutionGrid)) {
         ch |= ImGui::DragInt(stripAcross ? "fillet loops (across)"
                                          : "fillet loops",
                              &s.filletLoops, 0.2f, 1, 64);
@@ -3969,12 +4054,24 @@ static void drawMesherDefaultTabs(App& app) {
     }
     if (tab("rings", {int(MK::RingJunction), int(MK::AnnulusRing),
                       int(MK::PlateWeb)})) {
-        ImGui::TextDisabled("hole collars, annuli, plate webs");
-        ch |= ImGui::DragInt("junction rings", &d.junctionRings, 0.2f, 1,
-                             32);
-        hover({int(MK::RingJunction), int(MK::PlateWeb)});
-        ch |= ImGui::Checkbox("square collars", &d.squareCollar);
-        hover({int(MK::PlateWeb)});
+        ImGui::TextDisabled("hole plates default to no collar rim");
+        {
+            bool collars = d.junctionRings > 0;
+            if (ImGui::Checkbox("hole collars", &collars)) {
+                d.junctionRings =
+                    collars ? std::max(1, d.junctionRings) : 0;
+                ch = true;
+            }
+            hover({int(MK::PlateWeb)});
+        }
+        if (d.junctionRings > 0) {
+            ch |= ImGui::DragInt("collar rings", &d.junctionRings, 0.2f, 1,
+                                 32);
+            hover({int(MK::RingJunction), int(MK::PlateWeb)});
+            ch |= ImGui::Checkbox("square collars", &d.squareCollar);
+            hover({int(MK::PlateWeb)});
+        }
+        ImGui::TextDisabled("ring-junction uses max(1, collar rings)");
         ImGui::EndTabItem();
     }
     if (tab("flat faces", {int(MK::MinimalNGon), int(MK::PlanarGrid),
@@ -5447,8 +5544,27 @@ int main(int argc, char** argv) {
     App app;
     app.livePath = gDataDir + "/weft_live.obj";
     bool startupLoadPending = !startModel.empty();
-    if (startupLoadPending) loadModel(app, startModel, false);
-    else loadFixture(app, startFixture);
+    // Fixture loads are async too: face overrides / select / proxy must
+    // wait until finishLoadModel lands, same as a path argument.
+    bool startupApplyPending =
+        !startFaceOverrides.empty() || startSelect > 0 || startProxy;
+    if (startupLoadPending) {
+        // Skip auto-generate: overrides apply first, then startGenerate.
+        loadModel(app, startModel, false);
+    } else if (startupApplyPending) {
+        // Same for fixtures that need select / density overrides / proxy.
+        std::string path =
+            tempDir() + "/weft_fixture_" + startFixture + ".step";
+        try {
+            weft::writeStep(weft::makeFixture(startFixture), path);
+            loadModel(app, path, false);
+            app.status = "fixture: " + startFixture;
+        } catch (const std::exception& e) {
+            app.status = std::string("fixture failed: ") + e.what();
+        }
+    } else {
+        loadFixture(app, startFixture);
+    }
     if (startFinalize) app.forceFinalize = true;
     if ((startStitch || startFinalize) && app.hasModel) {
         // After the load (which resets the recipe): apply screenshot
@@ -5471,20 +5587,25 @@ int main(int argc, char** argv) {
     if (startMode >= 1 && startMode <= 6) {
         setSelectMode(app, SelectMode(startMode - 1));
     }
-    if (!startFaceOverrides.empty() && app.hasModel) {
+    // Face overrides / select for an already-resident model (rare). The
+    // common async-load path applies them in the main loop once hasModel.
+    if (!startupApplyPending) {
+        // nothing
+    } else if (app.hasModel && !app.loadBusy) {
         for (const auto& [fid, spec] : startFaceOverrides) {
             weft::FaceMeshSettings s = app.recipe.settings.defaults;
             weft::applySettingsList(s, spec);
             app.recipe.settings.perFace[fid] = s;
         }
+        if (startSelect > 0 && startSelect <= app.model.faceCount()) {
+            app.selFaces = {startSelect};
+            app.activeFace = startSelect;
+            frameModel(app);
+        }
+        if (startProxy && app.activeFace > 0) app.gpuProxyPending = true;
         regenerate(app);
         rebuildBuffers(app);
-    }
-    if (startSelect > 0 && startSelect <= app.model.faceCount()) {
-        app.selFaces = {startSelect};
-        app.activeFace = startSelect;
-        rebuildBuffers(app);
-        frameModel(app);  // zoom to the face under inspection
+        startupApplyPending = false;
     }
 
     double lastX = 0, lastY = 0;
@@ -5632,7 +5753,7 @@ int main(int argc, char** argv) {
                            !app.selFaces.empty()) {
                     // ctrl+shift+wheel: fillet support loops. Flag the
                     // nudge when the active face's mesher ignores them
-                    // (only coons/planar fillet meshers read the value).
+                    // (coons/planar/rev-grid fillet meshers read the value).
                     editSelected(app, [&](weft::FaceMeshSettings& s) {
                         s.filletLoops = std::max(1, s.filletLoops + steps);
                     });
@@ -5643,7 +5764,8 @@ int main(int argc, char** argv) {
                         app.activeFace <= int(app.analysis.faces.size()) &&
                         app.analysis.faces[app.activeFace - 1].isFillet &&
                         (k == weft::MesherKind::CoonsGrid ||
-                         k == weft::MesherKind::PlanarGrid);
+                         k == weft::MesherKind::PlanarGrid ||
+                         k == weft::MesherKind::RevolutionGrid);
                     std::snprintf(app.hudText, sizeof app.hudText,
                                   "fillet loops: %d%s",
                                   app.recipe.settings.forFace(app.activeFace)
@@ -6114,7 +6236,8 @@ int main(int argc, char** argv) {
             }
         }
         if (app.loadReady && !app.genBusy) finishLoadModel(app);
-        if (startupLoadPending && app.hasModel && !app.loadBusy) {
+        if ((startupLoadPending || startupApplyPending) && app.hasModel &&
+            !app.loadBusy) {
             if (startStitch) app.recipe.settings.decoupleSeams = true;
             for (const auto& [fid, spec] : startFaceOverrides) {
                 weft::FaceMeshSettings s = app.recipe.settings.defaults;
@@ -6126,7 +6249,11 @@ int main(int argc, char** argv) {
                 app.activeFace = startSelect;
                 frameModel(app);
             }
+            if (startProxy && app.activeFace > 0) {
+                app.gpuProxyPending = true;
+            }
             startupLoadPending = false;
+            startupApplyPending = false;
             startGenerate(app);
         }
         // Slider drags and wheel bursts can emit dozens of mutations. Wait

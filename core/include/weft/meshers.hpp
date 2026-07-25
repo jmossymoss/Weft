@@ -37,9 +37,11 @@ struct FaceMeshSettings {
     // ("hold" loops; 0 = uniform spacing, toward 1 = tight at the edges).
     int filletLoops = 3;
     double filletHold = 0.0;
-    // Ring junctions (a hole/boss circle inside a rectangular planar face):
-    // number of concentric quad loops between the circle and the boundary.
-    int junctionRings = 1;
+    // Hole-plate / ring-junction collar depth: concentric quad loops
+    // between each hole rim and the plate web. 0 = no collar (default for
+    // hole plates — the web meets the bore rim directly); raise to turn
+    // collars on. RingJunction still floors at 1 internally.
+    int junctionRings = 0;
     // Route flat plates (and reflex coons outlines) through the
     // structured quad-fill grid instead of minimal n-gons / transfinite
     // patches. Routing only — the fallback floor pairs its triangles

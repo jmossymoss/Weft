@@ -933,6 +933,7 @@ void testPlateWeb() {
     weft::GenerationSettings gs;
     gs.defaults.minimal = false;  // legacy dense-flat counts
     gs.defaults.radial = 12;
+    gs.defaults.junctionRings = 1;  // exercise collar path (default is off)
     weft::GenerationReport report;
     weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
 
@@ -960,6 +961,15 @@ void testPlateWeb() {
     weft::PolyMesh pinned = weft::generate(model, a, gs);
     CHECK(isWatertight(pinned));
     CHECK(pinned.countQuads() > mesh.countQuads());
+
+    // Default is no collar rim (junctionRings=0): still PlateWeb + watertight,
+    // with fewer quads than the collared mesh above.
+    weft::GenerationSettings bare = gs;
+    bare.defaults.junctionRings = 0;
+    bare.perFace.clear();
+    weft::PolyMesh noCollar = weft::generate(model, a, bare);
+    CHECK(isWatertight(noCollar));
+    CHECK(noCollar.countQuads() < mesh.countQuads());
 }
 
 // WP5: multi-hole planar plates under the CAD profile used to leave a
@@ -990,6 +1000,7 @@ void testPlateWebSliverRefine() {
     gs.defaults.minimal = true;
     gs.defaults.adaptive = true;
     gs.defaults.relativeDeviation = true;
+    gs.defaults.junctionRings = 1;  // collar class under test
     gs.densityScale = 0.35;
 
     weft::GenerationReport report;
@@ -1070,6 +1081,337 @@ void testPlateWebSliverRefine() {
     CHECK(plateTris == 0);   // no CDT soup under minimal
 }
 
+// WP6: near-full analytic cylinder with a multi-tooth castellated rim
+// (ABC 00008536 drum class). Open-band must keep RevolutionGrid instead
+// of dumping the face on the contract floor as needle soup.
+void testNotchedDrumOpenBand() {
+    std::printf("-- notched drum open-band --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/abc/notched_drum_iso_band_r0.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    CHECK_EQ(model.faceCount(), 1);
+    CHECK(analysis.faces[0].featureClass == weft::FeatureClass::Drum);
+    CHECK(analysis.faces[0].chartKind == weft::ChartKind::IsoBand);
+
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    auto kit = report.faceMesher.find(1);
+    CHECK(kit != report.faceMesher.end());
+    CHECK(kit->second == weft::MesherKind::RevolutionGrid);
+    auto bit = report.faceBuild.find(1);
+    CHECK(bit != report.faceBuild.end());
+    CHECK_EQ(bit->second, 0);  // not demoted to contract floor
+
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    // Open-shell extract: watertightness is not the target. Slivers must
+    // drop far below the prior contract-floor needle count (~248).
+    CHECK(vr.sliverPolygons < 40);
+    // ≥12 columns/tooth keeps inter-tooth land from sharing a U-gap
+    // with opposing walls (tooth-wall Newell double-cover class).
+    const auto folded = weft::foldedPolys(model, mesh);
+    const int nFolded =
+        int(std::count(folded.begin(), folded.end(), uint8_t{1}));
+    CHECK_EQ(nFolded, 0);
+    std::printf("  polys=%zu slivers=%zu folds=%d kind=revolution-grid\n",
+                mesh.polygons.size(), vr.sliverPolygons, nFolded);
+}
+
+// ABC 00006051 class: sphere-cap + torus fillet-strip full-period with
+// unequal rim totals used to demote both faces to contract floor
+// (revolution grid irreconcilable / Coons mass inversion).
+void testSphereFilletFullPeriodNoFloor() {
+    std::printf("-- sphere+fillet full-period no floor --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/abc/sphere_fillet_fullperiod_r1.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    CHECK_EQ(model.faceCount(), 3);
+
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    int floors = 0;
+    for (int fid = 1; fid <= 3; ++fid) {
+        auto bit = report.faceBuild.find(fid);
+        CHECK(bit != report.faceBuild.end());
+        if (bit->second == 2) ++floors;
+        auto kit = report.faceMesher.find(fid);
+        CHECK(kit != report.faceMesher.end());
+        CHECK(kit->second == weft::MesherKind::RevolutionGrid);
+    }
+    CHECK_EQ(floors, 0);
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    const auto folded = weft::foldedPolys(model, mesh);
+    const int nFolded =
+        int(std::count(folded.begin(), folded.end(), uint8_t{1}));
+    CHECK_EQ(nFolded, 0);
+    CHECK_EQ(vr.sliverPolygons, 0u);
+    std::printf("  polys=%zu floors=0 folds=0 slivers=0\n",
+                mesh.polygons.size());
+}
+
+// Analytic FilletStrip×RevolutionGrid and Coons strips must publish
+// faceAcross and honour semantic knobs: radial/gridU = along, filletLoops =
+// across — remapped onto patch U/V. Without this, cylinder fillets treated
+// radial as the short across arc (wrong GPU / wheel axis).
+// Demo notched/boolean drums: raising radial under CAD adaptive must NOT
+// pre-demote to "radial override → contract floor". Structured RevolutionGrid
+// stays unless a real neighbour-contract stress demote fires.
+void testDemoNotchedRadialKeepsStructured() {
+    std::printf("-- demo notched radial keeps structured --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() / "fixtures/demo.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+
+    // Discover multi-edge full-period drums (notched / boolean cuts) —
+    // no hardcoded face ids.
+    std::vector<int> targets;
+    for (const auto& f : analysis.faces) {
+        if (f.featureClass != weft::FeatureClass::Drum) continue;
+        if (f.chartKind != weft::ChartKind::FullPeriod) continue;
+        if (int(f.edgeIds.size()) < 5) continue;
+        targets.push_back(f.id);
+        gs.perFace[f.id] = gs.defaults;
+        gs.perFace[f.id].radial = 48;
+    }
+    CHECK(!targets.empty());
+
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    CHECK(isWatertight(mesh));
+    int structured = 0;
+    for (int fid : targets) {
+        auto kit = report.faceMesher.find(fid);
+        CHECK(kit != report.faceMesher.end());
+        CHECK(kit->second == weft::MesherKind::RevolutionGrid);
+        auto bit = report.faceBuild.find(fid);
+        CHECK(bit != report.faceBuild.end());
+        // Must not be the old preemptive demote. Stress demote (build==2
+        // with a different cause) is still allowed if neighbours fail.
+        auto cit = report.faceBuildCause.find(fid);
+        if (cit != report.faceBuildCause.end()) {
+            CHECK(cit->second.find("radial override → contract floor") ==
+                  std::string::npos);
+        }
+        if (bit->second == 0) ++structured;
+    }
+    CHECK(structured >= 1);
+    std::printf("  targets=%zu structured=%d\n", targets.size(), structured);
+
+    // Artist report: radial 17 demoted ("castellated insert failed");
+    // lowering below ~15 did nothing (annulus-floor / soft-propose held
+    // the rim). Manual adapt-off must pin, and awkward nu values must
+    // stay structured — discover the notched full-wrap drum (many
+    // edges + castellated plan) rather than every multi-edge hole.
+    int notched = 0;
+    for (int fid : targets) {
+        // Prefer the tallest multi-edge drum (demo muzzle / notched
+        // barrel class): more edges than a simple bore wall.
+        if (int(analysis.faces[fid - 1].edgeIds.size()) >= 9) {
+            notched = fid;
+            break;
+        }
+    }
+    if (notched == 0 && !targets.empty()) notched = targets.front();
+
+    weft::GenerationReport baseRep;
+    {
+        weft::GenerationSettings base = gs;
+        base.perFace.clear();
+        weft::generate(model, analysis, base, &baseRep);
+    }
+    const int baseNu = baseRep.faceCounts.count(notched)
+                           ? baseRep.faceCounts[notched][0]
+                           : 0;
+
+    for (int r : {8, 17}) {
+        weft::GenerationSettings edit = gs;
+        edit.perFace.clear();
+        edit.perFace[notched] = edit.defaults;
+        edit.perFace[notched].adaptive = false;
+        edit.perFace[notched].radial = r;
+        weft::GenerationReport er;
+        weft::PolyMesh em = weft::generate(model, analysis, edit, &er);
+        CHECK(isWatertight(em));
+        auto bit = er.faceBuild.find(notched);
+        CHECK(bit != er.faceBuild.end());
+        CHECK_EQ(bit->second, 0);  // not contract floor
+        auto cit = er.faceBuildCause.find(notched);
+        if (cit != er.faceBuildCause.end()) {
+            CHECK(cit->second.find("castellated insert failed") ==
+                  std::string::npos);
+            CHECK(cit->second.find("border contract failed") ==
+                  std::string::npos);
+        }
+        auto cnt = er.faceCounts.find(notched);
+        CHECK(cnt != er.faceCounts.end());
+        if (r < baseNu) {
+            // Lowering must move the column count — not sit on the old
+            // annulus-floor clamp.
+            CHECK(cnt->second[0] < baseNu);
+            CHECK(cnt->second[0] <= r + 1);
+        }
+        std::printf("  face#%d manual radial=%d -> nu=%d (base %d) ok\n",
+                    notched, r, cnt->second[0], baseNu);
+    }
+}
+
+void testFilletDensityAxisOwnership() {
+    std::printf("-- fillet density axis ownership --\n");
+    auto cad = []() {
+        weft::GenerationSettings gs;
+        gs.defaults.minimal = true;
+        gs.defaults.adaptive = true;
+        gs.defaults.relativeDeviation = true;
+        return gs;
+    };
+
+    // bossfillet torus strip → RevolutionGrid, across = V (faceAcross=2).
+    {
+        const std::string path = tmpPath("weft_axis_bossfillet.step");
+        weft::writeStep(weft::makeFixture("bossfillet"), path);
+        weft::Model model = weft::loadStep(path);
+        const weft::Analysis a = weft::analyze(model);
+        int stripFid = 0;
+        for (const auto& f : a.faces) {
+            if (f.featureClass == weft::FeatureClass::FilletStrip &&
+                f.isFillet) {
+                stripFid = f.id;
+                break;
+            }
+        }
+        CHECK(stripFid > 0);
+
+        weft::GenerationReport baseRep;
+        weft::generate(model, a, cad(), &baseRep);
+        CHECK(baseRep.faceMesher[stripFid] ==
+              weft::MesherKind::RevolutionGrid);
+        auto ax = baseRep.faceAcross.find(stripFid);
+        CHECK(ax != baseRep.faceAcross.end());
+        CHECK_EQ(ax->second, 2);  // torus minor = V
+        const auto base = baseRep.faceCounts[stripFid];
+
+        weft::GenerationSettings alongGs = cad();
+        alongGs.perFace[stripFid] = alongGs.defaults;
+        alongGs.perFace[stripFid].adaptive = false;
+        alongGs.perFace[stripFid].radial = 40;
+        alongGs.perFace[stripFid].filletLoops = 3;
+        weft::GenerationReport alongRep;
+        weft::generate(model, a, alongGs, &alongRep);
+        const auto alongC = alongRep.faceCounts[stripFid];
+        // acrossIsU=false → along rides U (count[0]), across rides V.
+        CHECK(alongC[0] >= 40);
+        CHECK_EQ(alongC[1], 3);
+
+        weft::GenerationSettings acrossGs = cad();
+        acrossGs.perFace[stripFid] = acrossGs.defaults;
+        acrossGs.perFace[stripFid].adaptive = false;
+        acrossGs.perFace[stripFid].radial =
+            std::max(3, base[0]);  // keep along stable
+        acrossGs.perFace[stripFid].filletLoops = 8;
+        weft::GenerationReport acrossRep;
+        weft::generate(model, a, acrossGs, &acrossRep);
+        const auto acrossC = acrossRep.faceCounts[stripFid];
+        CHECK_EQ(acrossC[1], 8);
+        std::printf("  bossfillet strip#%d across=V along=%d loops→nv=%d\n",
+                    stripFid, alongC[0], acrossC[1]);
+        CHECK(isWatertight(weft::generate(model, a, acrossGs)));
+    }
+
+    // Open cylinder fillet → Coons; faceAcross published; loops = across.
+    {
+        const std::string path = tmpPath("weft_axis_fillet.step");
+        weft::writeStep(weft::makeFixture("fillet"), path);
+        weft::Model model = weft::loadStep(path);
+        const weft::Analysis a = weft::analyze(model);
+        int stripFid = 0;
+        for (const auto& f : a.faces) {
+            if (f.featureClass == weft::FeatureClass::FilletStrip) {
+                stripFid = f.id;
+                break;
+            }
+        }
+        CHECK(stripFid > 0);
+
+        weft::GenerationSettings gs = cad();
+        gs.defaults.adaptive = false;
+        gs.defaults.gridU = 6;
+        gs.defaults.filletLoops = 4;
+        weft::GenerationReport rep;
+        weft::generate(model, a, gs, &rep);
+        CHECK(rep.faceMesher[stripFid] == weft::MesherKind::CoonsGrid);
+        auto ax = rep.faceAcross.find(stripFid);
+        CHECK(ax != rep.faceAcross.end());
+        CHECK(ax->second == 1 || ax->second == 2);
+        const auto c = rep.faceCounts[stripFid];
+        if (ax->second == 1) {
+            CHECK_EQ(c[0], 4);  // across = U = loops
+            CHECK_EQ(c[1], 6);  // along = V = gridU
+        } else {
+            CHECK_EQ(c[0], 6);
+            CHECK_EQ(c[1], 4);
+        }
+        std::printf("  coons fillet#%d across=%s nu=%d nv=%d\n", stripFid,
+                    ax->second == 1 ? "U" : "V", c[0], c[1]);
+        CHECK(isWatertight(weft::generate(model, a, gs)));
+    }
+}
+
+// ABC FreeTrim drum walls (tall skinny cylinder segments) used to false-
+// pass isGeometricallyFlat and collapse to a single MinimalNGon needle
+// under CAD. They must take open-band RevolutionGrid with axial rows.
+void testTallFreeTrimDrum() {
+    std::printf("-- tall free-trim drum --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/abc/tall_free_trim_drum_r0.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    CHECK_EQ(model.faceCount(), 1);
+    CHECK(analysis.faces[0].featureClass == weft::FeatureClass::Drum);
+    CHECK(analysis.faces[0].chartKind == weft::ChartKind::FreeTrim);
+
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    auto kit = report.faceMesher.find(1);
+    CHECK(kit != report.faceMesher.end());
+    CHECK(kit->second == weft::MesherKind::RevolutionGrid);
+    auto bit = report.faceBuild.find(1);
+    CHECK(bit != report.faceBuild.end());
+    CHECK_EQ(bit->second, 0);
+
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK(vr.sliverPolygons == 0);
+    CHECK(mesh.polygons.size() >= 16);
+    // Reject the old single-ngon / two-tri needle.
+    CHECK(mesh.vertices.size() >= 20);
+    std::printf("  verts=%zu polys=%zu slivers=%zu kind=revolution-grid\n",
+                mesh.vertices.size(), mesh.polygons.size(),
+                vr.sliverPolygons);
+}
+
 // Demo/torture vertical plate wall with a round bore: under CAD, plate-web
 // must keep collars but not fill the wall with CDT needles.
 void testTorturePlateWebMinimalResidual() {
@@ -1082,6 +1424,7 @@ void testTorturePlateWebMinimalResidual() {
     gs.defaults.minimal = true;
     gs.defaults.adaptive = true;
     gs.defaults.relativeDeviation = true;
+    gs.defaults.junctionRings = 1;  // collars on for this class check
 
     weft::GenerationReport report;
     weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
@@ -1354,16 +1697,20 @@ void testSparseFoldKeepsStructuredCharts() {
                 continue;
             }
             auto kit = report.faceMesher.find(f.id);
+            // Full-period analytic fillets route RevolutionGrid (ABC
+            // sphere–cylinder class); older foam extracts may still be
+            // Coons. Either structured chart must stay off the floor.
             if (kit == report.faceMesher.end() ||
-                kit->second != weft::MesherKind::CoonsGrid) {
+                (kit->second != weft::MesherKind::CoonsGrid &&
+                 kit->second != weft::MesherKind::RevolutionGrid)) {
                 continue;
             }
             ++kept;
-            assertBuild0(report, f.id, weft::MesherKind::CoonsGrid, label);
+            assertBuild0(report, f.id, kit->second, label);
         }
         CHECK(kept >= 1);
-        std::printf("  %s: %d FilletStrip×FullPeriod×Coons kept\n", label,
-                    kept);
+        std::printf("  %s: %d FilletStrip×FullPeriod structured kept\n",
+                    label, kept);
     };
     auto assertDrumWedgeCoons = [&](const weft::Analysis& analysis,
                                     const weft::GenerationReport& report,
@@ -1596,7 +1943,10 @@ void testCylindricalStackContinuity() {
         weft::GenerationReport br;
         weft::PolyMesh bm = weft::generate(bmModel, ba, gs, &br);
         CHECK(isWatertight(bm));
-        CHECK(br.faceMesher[stripFid] == weft::MesherKind::CoonsGrid);
+        // Full-period analytic fillet-strips take RevolutionGrid (blend
+        // ownership via isFillet); capsules / iso-bands stay Coons.
+        CHECK(br.faceMesher[stripFid] == weft::MesherKind::RevolutionGrid ||
+              br.faceMesher[stripFid] == weft::MesherKind::CoonsGrid);
         std::set<int> stackCounts;
         std::vector<int> stackEdges;
         for (const auto& f : ba.faces) {
@@ -1622,8 +1972,12 @@ void testCylindricalStackContinuity() {
         CHECK_EQ(stackCounts.size(), 1u);
         const int stackCirc = *stackCounts.begin();
         std::printf(
-            "  bossfillet: drums=%d strips=%d strip->coons circ=%d\n",
-            drums, strips, stackCirc);
+            "  bossfillet: drums=%d strips=%d strip->%s circ=%d\n",
+            drums, strips,
+            br.faceMesher[stripFid] == weft::MesherKind::RevolutionGrid
+                ? "revolution"
+                : "coons",
+            stackCirc);
 
         // Deliberate pin on the drum↔fillet rim: allowed mismatch. The
         // pin sticks; stack continuity cannot override perEdge. When the
@@ -1855,8 +2209,10 @@ void testMp9CoonsPlaneSeamCanonicalize() {
                 unexplained, vr.openEdges, vr.openEdgesOnInputBoundary,
                 foldCount, vr.nonManifoldEdges);
     // Pre-fix floor on this extract was 131; freeformComb stitch
-    // deadlock repair brings it under 75 with no folds/non-manifold.
-    CHECK(unexplained < 75);
+    // deadlock repair brought it under 75. Widened comb on-curve band
+    // + shared-edge border snap brings residual cracks under 55 with
+    // no folds/non-manifold (foam/teleporter stay watertight).
+    CHECK(unexplained < 55);
     CHECK(foldCount == 0);
     CHECK(vr.nonManifoldEdges == 0);
 }
@@ -2186,6 +2542,7 @@ void testDeletePolyAndCollarRings() {
     weft::GenerationSettings one;
     one.defaults.minimal = false;  // exercise the collar-ring pattern
     one.defaults.radial = 12;
+    one.defaults.junctionRings = 1;
     weft::PolyMesh oneRing = weft::generate(plateModel, plateA, one);
     weft::GenerationSettings three = one;
     three.defaults.junctionRings = 3;
@@ -4115,6 +4472,11 @@ int main() {
     RUN(testUnlinkedRims);
     RUN(testPlateWeb);
     RUN(testPlateWebSliverRefine);
+    RUN(testSphereFilletFullPeriodNoFloor);
+    RUN(testFilletDensityAxisOwnership);
+    RUN(testDemoNotchedRadialKeepsStructured);
+    RUN(testNotchedDrumOpenBand);
+    RUN(testTallFreeTrimDrum);
     RUN(testTorturePlateWebMinimalResidual);
     RUN(testSphereDimpleNotContractFloor);
     RUN(testBulletTipNotContractFloor);

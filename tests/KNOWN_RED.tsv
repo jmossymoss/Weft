@@ -1,3 +1,3 @@
 name	profile	metric	ceiling	reproducer	owning_wp	removal_condition
-MP9	cad	max_open_edges	450	STEP_Examples/MP9.stp	WP6	residual #1805-family seam opens (~380); fillet/grip/bullet class reducers landed
+MP9	cad	max_open_edges	300	STEP_Examples/MP9.stp	WP6	residual shared-seam opens (~247 after freeformComb shared-edge snap); #1805 no longer dominates
 flaregun	cad	edit_winding_conflicts	64	build/cli/weft mesh tests/STEP_Examples/flaregun.stp -o /tmp/f.obj --profile cad --face 150:radial=17,adapt=0 --validate	WP6	a per-face density edit flips winding on ~18 faces of the multi-solid (48 conflicting edge pairs at face 150 radial 17); base density is consistent. Found by `weft intent-sweep`; raw/open already fixed by the best-fit-plane contract floor
