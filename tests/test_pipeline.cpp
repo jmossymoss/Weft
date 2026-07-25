@@ -2324,6 +2324,49 @@ void testMp9CoonsPlaneSeamCanonicalize() {
     CHECK(vr.nonManifoldEdges == 0);
     CHECK(vr.windingConflicts == 0);
     CHECK(vr.degeneratePolygons == 0);
+
+    // Cell SHAPE, not only watertightness. Passing the counters above by
+    // demoting the reducer panels to the best-fit-plane web is not a pass:
+    // that web is a triangle fan, and the ribbon columns a raw endpoint
+    // lattice cuts are near-degenerate. Both are visible defects, so both
+    // are gated here on the trimmed B-spline panels only, where the
+    // orthogonal Coons grid runs.
+    std::set<int> panels;
+    for (const auto& f : analysis.faces) {
+        if (f.type == weft::SurfaceType::BSpline) panels.insert(f.id);
+    }
+    size_t tri = 0, quad = 0, ngon = 0, ribbon = 0;
+    for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+        if (!panels.count(mesh.polygonFaceId[p])) continue;
+        const auto& poly = mesh.polygons[p];
+        if (poly.size() == 3) ++tri;
+        else if (poly.size() == 4) ++quad;
+        else ++ngon;
+        double lo = 1e300, hi = 0.0;
+        for (size_t i = 0; i < poly.size(); ++i) {
+            const auto& a = mesh.vertices[poly[i]];
+            const auto& b = mesh.vertices[poly[(i + 1) % poly.size()]];
+            const double d = std::hypot(std::hypot(a[0] - b[0], a[1] - b[1]),
+                                        a[2] - b[2]);
+            lo = std::min(lo, d);
+            hi = std::max(hi, d);
+        }
+        if (lo > 1e-12 && hi / lo > 20.0) ++ribbon;
+    }
+    const size_t panelPolys = tri + quad + ngon;
+    std::printf("  panel cells: %zu (%zu quad, %zu tri, %zu n-gon), "
+                "%zu with aspect>20\n", panelPolys, quad, tri, ngon, ribbon);
+    CHECK(panelPolys > 0);
+    // Quad-dominant: measured 497 quads against 64 tris. The triangulated
+    // web this replaced ran 460 tris on one panel alone, and failed this
+    // ratio at both revisions the artist rejected (2202 against 563, and
+    // 1420 against 707 before them).
+    CHECK(quad > 4 * tri);
+    // Ribbons: 138 of 710 cells, 19.4%. Both rejected revisions cut a
+    // station per raw trim endpoint and sat at 29% (832 of 2851, and 633 of
+    // 2136), so a quarter is a ceiling this class clears only when the
+    // near-coincident stations are consolidated.
+    CHECK(ribbon * 4 < panelPolys);
 }
 
 // Auto-mesher gates: a plate with a slot has "two wires" but is NOT an

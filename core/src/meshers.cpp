@@ -14182,26 +14182,162 @@ bool meshRevolutionAnnulusBody(const BRepAdaptor_Surface& surf, int faceId,
     return true;
 }
 
+// Station lines of an orthogonal trim grid, in one place because the pin pass
+// and the mesher must agree exactly: if they disagree, a clip vertex lands
+// where the shared edge has no sample and the seam cracks.
+//
+// A trim endpoint contributes a station so the lattice resolves the trim, but
+// two lines closer than a fraction of the REQUESTED pitch resolve nothing and
+// cut a ribbon the artist never asked for. Measured on the MP9 #1805 comb
+// (coons_plane_1805_r0, 5x10 requested): raw endpoint collection produced
+// 43x52 stations with 35 of 42 u-gaps and 35 of 51 v-gaps below a quarter
+// pitch, the narrowest at 5.6e-4 (u) and 1.3e-5 (v) of pitch. Those cells are
+// 1 um wide in 3D — smaller than the 0.15 mm border canonicalization that runs
+// after them, so their corners get displaced by more than their own size and
+// they read as folded, which then demoted the whole face to the floor web.
+//
+// The two axes consolidate at different scales because their station lines do
+// different jobs:
+//   u — a half-plane clip. A trim crossing mid-cell is absorbed into that
+//       cell's polygon (this is why a revolution wall drops its u endpoints
+//       outright), so near-coincident u lines are pure ribbon.
+//   v — a row limit. The slab builder needs every trim corner ON a row limit,
+//       so v merges only numerically coincident corners.
+// Uniform stations are always droppable: one is skipped when a trim station
+// already stands within `kStationUniformFrac` of it.
+//
+// Parametric distance alone is not enough. The same #1805 chart runs 8 mm per
+// unit u against its u-min limit and 1037 mm per unit at the chart centre, so
+// a 0.03-pitch parametric gap there is 1.3 um of surface — a cell narrower
+// than the tolerances the border passes move vertices by, with a winding sign
+// that is pure noise. `kStationArcFrac` also merges lines that are negligible
+// by 3D arc length.
+constexpr double kStationHardFracU = 0.25;
+constexpr double kStationHardFracV = 0.01;
+constexpr double kStationUniformFrac = 0.35;
+constexpr double kStationArcFrac = 0.01;
+constexpr double kStationSnapFrac = 1e-3;
+// Two pinned crossings closer than this fraction of one edge sample spacing
+// are the same point on that edge, not two.
+constexpr double kPinFuseFrac = 1e-2;
+
+bool orthogonalTrimStations(const TopoDS_Face& face,
+                            const BRepAdaptor_Surface& surf,
+                            const Model& model, const FacePlan& plan, int nu,
+                            int nv, std::vector<double>& U,
+                            std::vector<double>& V) {
+    nu = std::max(1, nu);
+    nv = std::max(1, nv);
+    const double u0 = surf.FirstUParameter(), u1 = surf.LastUParameter();
+    const double v0 = surf.FirstVParameter(), v1 = surf.LastVParameter();
+    const double ut = 1e-9 * std::max(1.0, std::abs(u1 - u0));
+    const double vt = 1e-9 * std::max(1.0, std::abs(v1 - v0));
+    const bool dropEndpointU = plan.kind == MesherKind::RevolutionGrid;
+    std::vector<double> hardU, hardV;
+    for (int eid : plan.orthogonalEdges) {
+        const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+        double f, l;
+        Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(edge, face, f, l);
+        if (pc.IsNull()) return false;
+        const gp_Pnt2d a = pc->Value(f), b = pc->Value(l);
+        if (!dropEndpointU) {
+            hardU.push_back(a.X());
+            hardU.push_back(b.X());
+        }
+        hardV.push_back(a.Y());
+        hardV.push_back(b.Y());
+    }
+    // Cumulative surface length along one axis, sampled at three positions of
+    // the other one and kept at its LONGEST so a compressed corner can never
+    // hide a station pair that is well separated elsewhere on the chart.
+    auto arcTable = [&](bool alongU, double lo, double hi, double olo,
+                        double ohi) {
+        constexpr int kArcSteps = 256;
+        std::vector<double> cum(kArcSteps + 1, 0.0);
+        for (double frac : {0.05, 0.5, 0.95}) {
+            const double o = olo + (ohi - olo) * frac;
+            double run = 0.0;
+            gp_Pnt prev = alongU ? surf.Value(lo, o) : surf.Value(o, lo);
+            for (int i = 1; i <= kArcSteps; ++i) {
+                const double x = lo + (hi - lo) * i / kArcSteps;
+                const gp_Pnt p = alongU ? surf.Value(x, o) : surf.Value(o, x);
+                run += p.Distance(prev);
+                prev = p;
+                cum[i] = std::max(cum[i], run);
+            }
+        }
+        return cum;
+    };
+    auto build = [&](std::vector<double> hard, double lo, double hi, int n,
+                    double absTol, double hardFrac,
+                    const std::vector<double>& cum,
+                    std::vector<double>& out, const char* axis) {
+        const double pitch = std::abs(hi - lo) / std::max(1, n);
+        const double hardTol = std::max(absTol, hardFrac * pitch);
+        const double uniTol = std::max(absTol, kStationUniformFrac * pitch);
+        const double arcTol =
+            kStationArcFrac * cum.back() / std::max(1, n);
+        auto arcAt = [&](double x) {
+            const double t = std::clamp((x - lo) / (hi - lo), 0.0, 1.0) *
+                             double(cum.size() - 1);
+            const size_t i = std::min(cum.size() - 2, size_t(t));
+            return cum[i] + (cum[i + 1] - cum[i]) * (t - double(i));
+        };
+        auto negligible = [&](double a, double b) {
+            return std::abs(b - a) <= hardTol ||
+                   std::abs(arcAt(b) - arcAt(a)) <= arcTol;
+        };
+        std::sort(hard.begin(), hard.end());
+        // A trim station that is negligibly separated from a chart limit is
+        // that same geometric limit: absorb it instead of opening a ribbon
+        // against the domain edge.
+        out.assign(1, lo);
+        for (double x : hard) {
+            if (x <= lo || x >= hi) continue;
+            if (negligible(lo, x) || negligible(x, hi)) {
+                continue;
+            }
+            if (!negligible(out.back(), x)) out.push_back(x);
+        }
+        if (out.size() > 1 && negligible(out.back(), hi)) out.back() = hi;
+        else out.push_back(hi);
+        std::vector<double> uniform;
+        for (int i = 1; i < n; ++i) {
+            const double x = lo + (hi - lo) * i / n;
+            auto it = std::lower_bound(out.begin(), out.end(), x);
+            double gap = 1e300;
+            if (it != out.end()) gap = std::min(gap, *it - x);
+            if (it != out.begin()) gap = std::min(gap, x - *std::prev(it));
+            if (gap > uniTol) uniform.push_back(x);
+        }
+        out.insert(out.end(), uniform.begin(), uniform.end());
+        std::sort(out.begin(), out.end());
+    };
+    const double uLo = std::min(u0, u1), uHi = std::max(u0, u1);
+    const double vLo = std::min(v0, v1), vHi = std::max(v0, v1);
+    const std::vector<double> cumU = arcTable(true, uLo, uHi, vLo, vHi);
+    const std::vector<double> cumV = arcTable(false, vLo, vHi, uLo, uHi);
+    build(std::move(hardU), uLo, uHi, nu, ut, kStationHardFracU, cumU, U, "u");
+    build(std::move(hardV), vLo, vHi, nv, vt, kStationHardFracV, cumV, V, "v");
+    return U.size() >= 2 && V.size() >= 2;
+}
+
 void pinOrthogonalTrimGrids(const Model& model,
                             const std::map<int, FacePlan>& plans,
                             const GenerationSettings& settings,
                             const std::vector<int>& solvedEdge,
                             PinnedEdges& pins) {
-    auto uniqueStations = [](std::vector<double>& a, double tol) {
-        std::sort(a.begin(), a.end());
-        a.erase(std::unique(a.begin(), a.end(), [&](double x, double y) {
-                    return std::abs(x - y) <= tol;
-                }), a.end());
-    };
     for (const auto& [fid, plan] : plans) {
         if (!plan.orthogonalTrimGrid) continue;
         const TopoDS_Face face = TopoDS::Face(model.faces(fid));
         BRepAdaptor_Surface surf(face);
         const FaceMeshSettings& s = settings.forFace(fid);
-        const double u0 = surf.FirstUParameter(), u1 = surf.LastUParameter();
-        const double v0 = surf.FirstVParameter(), v1 = surf.LastVParameter();
-        const double ut = 1e-9 * std::max(1.0, std::abs(u1 - u0));
-        const double vt = 1e-9 * std::max(1.0, std::abs(v1 - v0));
+        const double ut =
+            1e-9 * std::max(1.0, std::abs(surf.LastUParameter() -
+                                          surf.FirstUParameter()));
+        const double vt =
+            1e-9 * std::max(1.0, std::abs(surf.LastVParameter() -
+                                          surf.FirstVParameter()));
         const int nu = plan.kind == MesherKind::RevolutionGrid
             ? std::max(1, plan.orthogonalDriverU > 0
                               ? solvedEdge[plan.orthogonalDriverU]
@@ -14214,29 +14350,9 @@ void pinOrthogonalTrimGrids(const Model& model,
                                       : (plan.kind == MesherKind::RevolutionGrid
                                              ? s.axial : s.gridV));
         std::vector<double> U, V;
-        for (int i = 0; i <= nu; ++i) U.push_back(u0 + (u1-u0)*i/nu);
-        for (int j = 0; j <= nv; ++j) V.push_back(v0 + (v1-v0)*j/nv);
-        // Must mirror meshOrthogonalTrimGrid exactly: v keeps trim endpoints
-        // (the slab builder needs them), u is the requested grid only. If the
-        // two disagree, a clip vertex lands where the shared edge has no
-        // sample and the seam cracks.
-        const bool dropEndpointU = plan.kind == MesherKind::RevolutionGrid;
-        auto collectEndpoints = [&](int eid) {
-            const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
-            double f, l;
-            Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(e, face, f, l);
-            if (pc.IsNull()) return;
-            const gp_Pnt2d a = pc->Value(f), b = pc->Value(l);
-            if (!dropEndpointU) {
-                U.push_back(a.X());
-                U.push_back(b.X());
-            }
-            V.push_back(a.Y());
-            V.push_back(b.Y());
-        };
-        for (int e : plan.orthogonalEdges) collectEndpoints(e);
-        uniqueStations(U, std::max(ut, 1e-4*std::abs(u1-u0)));
-        uniqueStations(V, std::max(vt, 1e-6*std::abs(v1-v0)));
+        if (!orthogonalTrimStations(face, surf, model, plan, nu, nv, U, V)) {
+            continue;
+        }
 
         auto pinEdge = [&](int eid, bool alongU) {
             const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
@@ -14265,6 +14381,11 @@ void pinOrthogonalTrimGrids(const Model& model,
                 solvedEdge[eid] > 1) {
                 naturalN = solvedEdge[eid];
             }
+            const int sampleN =
+                std::max(1, naturalN > 1
+                                ? naturalN
+                                : (eid < int(solvedEdge.size())
+                                       ? solvedEdge[eid] : 1));
             for (bool axis : {alongU}) {
                 const auto& stations = axis ? U : V;
                 const double a = coord(0, axis), b = coord(1, axis);
@@ -14292,7 +14413,22 @@ void pinOrthogonalTrimGrids(const Model& model,
             };
             // Station crossings are mandatory — they are the whole reason this
             // pin exists, so the clip never lands on an unsampled point.
-            dedupe(fr, 1e-10);
+            //
+            // Two crossings can still describe one point. A trim edge shared by
+            // two faces is pinned once per face, and each face solves for the
+            // crossing with ITS OWN station line; on the MP9 #1805 comb the two
+            // charts put the same row limit 1.4e-6 apart in v, so the shared
+            // edge collected pin pairs 1.6e-5 of its length apart — 1.3 um in
+            // 3D, a thousand times finer than the cells being built. Both
+            // faces then snapped both samples onto their row limit, and the row
+            // below ended its boundary side on one while the row above began on
+            // the other: the micro-segment between them belonged to no cell and
+            // each row's limit edge was left single-use (4 unexplained cracks
+            // per corner, 12 of 18 on #1805). Fusing them here rather than
+            // per-face is what keeps the two faces agreeing: the pin set is
+            // sorted ascending and shared, so both read the same survivor.
+            double fuseTol = kPinFuseFrac / double(sampleN);
+            dedupe(fr, fuseTol);
             // The edge's own samples come SECOND and only where they do not
             // crowd a crossing. A near-zero border segment tears the weld on
             // whichever neighbour reads the same edge, and dropping a crossing
@@ -14312,7 +14448,7 @@ void pinOrthogonalTrimGrids(const Model& model,
                     if (!crowded) add.push_back(t);
                 }
                 fr.insert(fr.end(), add.begin(), add.end());
-                dedupe(fr, 1e-10);
+                dedupe(fr, fuseTol);
             }
             pins[eid] = std::move(fr);
         };
@@ -14601,8 +14737,6 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
     const double ut = 1e-9 * std::max(1.0, std::abs(u1 - u0));
     const double vt = 1e-9 * std::max(1.0, std::abs(v1 - v0));
     std::vector<double> U, V;
-    for (int i = 0; i <= nu; ++i) U.push_back(u0 + (u1 - u0) * i / nu);
-    for (int j = 0; j <= nv; ++j) V.push_back(v0 + (v1 - v0) * j / nv);
     // A trim endpoint used to add a station line on BOTH axes. On a
     // boolean-cut drum (the MP9 muzzle carries 27 cut edges on one wall) that
     // turned a 23x2 request into a 36x8 lattice: 13 unrequested columns and 6
@@ -14621,39 +14755,29 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
     // the rings too needs a per-cell polygon clip that can return several
     // components; that is a separate change.
     // Scoped to revolution walls: that is where "the cylinder should keep the
-    // spans I asked for" applies. Coons/plane trim grids keep both axes'
-    // endpoint stations — dropping u there put 2 folds into the MP9
+    // spans I asked for" applies. Coons/plane trim grids keep a u station per
+    // consolidated trim cluster — dropping u outright put 2 folds into the MP9
     // coons/plane seam extract (testMp9CoonsPlaneSeamCanonicalize).
+    // orthogonalTrimStations owns the consolidation policy and is shared with
+    // the pin pass so the two can never disagree.
     const bool dropEndpointU = plan.kind == MesherKind::RevolutionGrid;
-    auto addEdgeEndpoints = [&](int eid) {
-        const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
-        double f, l;
-        Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(edge, face, f, l);
-        if (pc.IsNull()) return false;
-        const gp_Pnt2d a = pc->Value(f), b = pc->Value(l);
-        if (!dropEndpointU) {
-            U.push_back(a.X());
-            U.push_back(b.X());
-        }
-        V.push_back(a.Y());
-        V.push_back(b.Y());
-        return true;
-    };
-    for (int e : plan.orthogonalEdges) if (!addEdgeEndpoints(e)) return false;
-    auto normalize = [](std::vector<double>& a, double tol) {
-        std::sort(a.begin(), a.end());
-        std::vector<double> b;
-        for (double x : a) {
-            if (b.empty() || std::abs(x - b.back()) > tol) b.push_back(x);
-        }
-        a.swap(b);
-    };
-    const double stationTolU = std::max(ut, 1e-4*std::abs(u1-u0));
-    const double stationTolV = std::max(vt, 1e-6*std::abs(v1-v0));
-    normalize(U, stationTolU);
-    normalize(V, stationTolV);
-    if (U.size() < 2 || V.size() < 2 ||
-        (U.size() - 1) * (V.size() - 1) > 200000) return false;
+    if (!orthogonalTrimStations(face, surf, model, plan, nu, nv, U, V)) {
+        return false;
+    }
+    const double pitchU = std::abs(u1 - u0) / std::max(1, nu);
+    const double pitchV = std::abs(v1 - v0) / std::max(1, nv);
+    // Sample-to-station snap. This has to absorb the B-rep vertex tolerance:
+    // two trim edges meeting at one vertex report that corner from their own
+    // pcurve, and the disagreement (measured 1.8e-6 in v on #1805, 2e-5 of a
+    // station pitch) left one edge's sample a hair off the station the other
+    // edge's endpoint had created. The row tracer then carried that micro-step
+    // as a distinct point and cut a zero-area sliver triangle whose winding is
+    // noise. Pitch-relative and three orders below a cell, so it can only fuse
+    // samples that already share a 3D position. The station list merges any
+    // pair this close, so a sample within it is genuinely on that line.
+    const double stationTolU = std::max(ut, kStationSnapFrac * pitchU);
+    const double stationTolV = std::max(vt, kStationSnapFrac * pitchV);
+    if ((U.size() - 1) * (V.size() - 1) > 200000) return false;
 
     // Exact sampled trim polygon in wire order. Pins include every crossing
     // with the global station lines, so clipping creates no unsampled point
@@ -14665,6 +14789,8 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
     std::vector<gp_Pnt2d> boundary;
     std::map<std::pair<long long,long long>, gp_Pnt> exactBoundary;
     std::vector<std::pair<gp_Pnt2d,gp_Pnt>> exactSamples;
+    std::vector<gp_Pnt2d> rawBoundary;
+    std::vector<gp_Pnt> rawExact;
     for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
         for (BRepTools_WireExplorer we(TopoDS::Wire(wx.Current()), face);
              we.More(); we.Next()) {
@@ -14681,30 +14807,50 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
             const bool rev = edge.Orientation() == TopAbs_REVERSED;
             for (double t : edgeSampleFractions(eid, n, 0.0, rev, false,
                                                 pins, &model)) {
-                gp_Pnt2d uv = pc->Value(f + (l-f)*t);
-                auto snap = [](double x, const std::vector<double>& s,
-                               double tol) {
-                    auto it = std::lower_bound(s.begin(),s.end(),x);
-                    double best=x, d=tol;
-                    if (it!=s.end() && std::abs(*it-x)<=d) {
-                        d=std::abs(*it-x); best=*it;
-                    }
-                    if (it!=s.begin()) {
-                        --it;
-                        if (std::abs(*it-x)<=d) best=*it;
-                    }
-                    return best;
-                };
-                uv.SetX(snap(uv.X(),U,stationTolU));
-                uv.SetY(snap(uv.Y(),V,stationTolV));
-                const gp_Pnt ep = c3->Value(f3 + (l3-f3)*t);
-                auto key = uvKey(uv);
-                boundary.push_back(uv);
-                exactBoundary[key] = ep;
-                exactSamples.push_back({uv, ep});
+                rawBoundary.push_back(pc->Value(f + (l-f)*t));
+                rawExact.push_back(c3->Value(f3 + (l3-f3)*t));
             }
         }
         break;
+    }
+    if (rawBoundary.size() < 3) return false;
+    // A trim sample within a hair of a station line belongs ON it: the pin
+    // pass put a crossing there, and the two evaluations of one B-rep vertex
+    // (each trim edge reports the shared corner from its own pcurve) disagree
+    // by the vertex tolerance, measured 1.8e-6 in v on #1805. Every sample
+    // near a line moves onto it — the choice cannot be face-local, because a
+    // shared trim edge must yield the same point set on both of its faces or
+    // the seam has nothing to weld to. Redundant crossings are removed once,
+    // for both faces at a time, where the pins are built.
+    auto snapAxis = [](std::vector<double> raw, const std::vector<double>& s,
+                       double tol) {
+        for (double& x : raw) {
+            auto it = std::lower_bound(s.begin(), s.end(), x);
+            double d = tol, best = x;
+            if (it != s.end() && std::abs(*it - x) <= d) {
+                d = std::abs(*it - x);
+                best = *it;
+            }
+            if (it != s.begin()) {
+                --it;
+                if (std::abs(*it - x) <= d) best = *it;
+            }
+            x = best;
+        }
+        return raw;
+    };
+    std::vector<double> rawU(rawBoundary.size()), rawV(rawBoundary.size());
+    for (size_t i = 0; i < rawBoundary.size(); ++i) {
+        rawU[i] = rawBoundary[i].X();
+        rawV[i] = rawBoundary[i].Y();
+    }
+    const std::vector<double> snappedU = snapAxis(rawU, U, stationTolU);
+    const std::vector<double> snappedV = snapAxis(rawV, V, stationTolV);
+    for (size_t i = 0; i < rawBoundary.size(); ++i) {
+        const gp_Pnt2d uv(snappedU[i], snappedV[i]);
+        boundary.push_back(uv);
+        exactBoundary[uvKey(uv)] = rawExact[i];
+        exactSamples.push_back({uv, rawExact[i]});
     }
     if (boundary.size() < 3) return false;
     auto clipHalfPlane = [](const std::vector<gp_Pnt2d>& in, bool axisU,
@@ -14734,6 +14880,44 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
 
     const bool faceReversed = face.Orientation() == TopAbs_REVERSED;
     const double tolF = BRep_Tool::Tolerance(face);
+    // Border identity. A cell corner that lies ON the sampled trim polyline
+    // must take its 3D position from that polyline's exact samples rather than
+    // from surf.Value: sloppy freeform pcurves miss the shared 3D edge by tens
+    // of microns to ~1 mm (#1805) and the neighbouring face welds to the exact
+    // samples. Interpolating between the two exact samples of the segment the
+    // corner sits on is order preserving — it can neither fuse two distinct
+    // samples nor drag an INTERIOR lattice vertex onto the border. A blunt
+    // nearest-exact-sample search within 0.15 mm did both: it collapsed the
+    // 0.155 mm boundary columns of the #1805 comb to 1.3 um and inverted them,
+    // which demoted the face to the floor web.
+    constexpr double kOnBorderFrac = 1e-3;  // of a station pitch
+    auto borderExactPoint = [&](const gp_Pnt2d& p, gp_Pnt& hit) {
+        double best = kOnBorderFrac;
+        bool found = false;
+        for (size_t k = 0; k < boundary.size(); ++k) {
+            const size_t k2 = (k + 1) % boundary.size();
+            const double au = (boundary[k].X() - p.X()) / pitchU;
+            const double av = (boundary[k].Y() - p.Y()) / pitchV;
+            const double bu = (boundary[k2].X() - boundary[k].X()) / pitchU;
+            const double bv = (boundary[k2].Y() - boundary[k].Y()) / pitchV;
+            const double len2 = bu * bu + bv * bv;
+            const double t = len2 > 1e-30
+                                 ? std::clamp(-(au * bu + av * bv) / len2, 0.0,
+                                              1.0)
+                                 : 0.0;
+            const double du = au + bu * t, dv = av + bv * t;
+            const double d = std::sqrt(du * du + dv * dv);
+            if (d >= best) continue;
+            best = d;
+            const gp_Pnt& pa = exactSamples[k].second;
+            const gp_Pnt& pb = exactSamples[k2].second;
+            hit = gp_Pnt(pa.X() + (pb.X() - pa.X()) * t,
+                         pa.Y() + (pb.Y() - pa.Y()) * t,
+                         pa.Z() + (pb.Z() - pa.Z()) * t);
+            found = true;
+        }
+        return found;
+    };
     std::map<std::pair<long long, long long>, uint32_t> verts;
     auto vertex = [&](const gp_Pnt2d& p) {
         const auto key = uvKey(p);
@@ -14753,18 +14937,11 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
                     p3 = ep;
                 }
             }
-            // Sloppy STEP pcurves / freeform UV clips can miss the shared
-            // 3D edge by tens of microns. Canonicalize any cell vertex that
-            // lands near an exact border sample onto that sample so the
-            // neighbouring face shares the identical point. 0.15 mm covers
-            // Plasticity freeform pcurve/clip drift on MP9 #1805-class
-            // seams (~0.03–0.12 mm) without swallowing distinct lattice
-            // stations on typical CAD chords (≥0.5 mm).
-            gp_Pnt surfaceP = surf.Value(p.X(), p.Y());
-            double d3 = 0.15;
-            for (const auto& [uv,ep] : exactSamples) {
-                const double d = surfaceP.Distance(ep);
-                if (d < d3) { d3 = d; p3 = ep; }
+            if (best > 1e299) {
+                gp_Pnt hit;
+                if (borderExactPoint(p, hit)) {
+                    p3 = hit;
+                }
             }
         }
         const uint32_t id = out.addVertex(p3, {faceId, p.X(), p.Y()});
@@ -14904,7 +15081,6 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
             faceId);
     }
 
-    constexpr size_t kMinExactRowSidePoints = 5;
     for (int j = 0; j + 1 < int(V.size()); ++j) {
         if (V[j + 1] - V[j] <= vt) continue;
         const double vb = V[j], vt2 = V[j+1], vm = 0.5*(vb+vt2);
@@ -14940,14 +15116,25 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
                     const gp_Pnt2d q = boundary[index];
                     if (q.Y() < vb || q.Y() > vt2) {
                         const double row = q.Y() < vb ? vb : vt2;
-                        const double t = (row - p.Y()) / (q.Y() - p.Y());
+                        // Evaluated from the lower endpoint whichever way the
+                        // wire runs: the row above traverses this same segment
+                        // downwards, and the two must agree BIT for bit or the
+                        // shared corner becomes two vertices and the seam
+                        // between the rows opens.
+                        const gp_Pnt2d& lo = p.Y() <= q.Y() ? p : q;
+                        const gp_Pnt2d& hi = p.Y() <= q.Y() ? q : p;
+                        const double t = (row - lo.Y()) / (hi.Y() - lo.Y());
                         path.emplace_back(
-                            p.X() + (q.X() - p.X()) * t, row);
+                            lo.X() + (hi.X() - lo.X()) * t, row);
                         break;
                     }
                     path.push_back(q);
-                    if (std::abs(q.Y() - vb) <= stationTolV ||
-                        std::abs(q.Y() - vt2) <= stationTolV) {
+                    // Only a sample the station snap placed exactly ON the row
+                    // limit ends the side there. Accepting one merely NEAR it
+                    // (the old tolerance was a thousandth of a pitch) let the
+                    // two rows sharing this limit stop on different samples.
+                    if (std::abs(q.Y() - vb) <= vt ||
+                        std::abs(q.Y() - vt2) <= vt) {
                         break;
                     }
                     p = q;
@@ -14980,6 +15167,40 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
             }
             return clean;
         };
+        // Trim samples that lie ALONG a row limit, in the u order a ring
+        // traverses them. The row's floor and ceiling used to be bare chords
+        // between the two side corners, subdivided only where a u station
+        // happened to fall; the samples in between were represented by
+        // nothing. That was invisible while every trim endpoint still cut its
+        // own u station, because then a station stood on each of them. Once
+        // near-coincident stations consolidate (MP9 face 2720: 36 u stations
+        // down to 4) the run is one long chord — measured 13 unrepresented
+        // samples there, and the neighbour that samples the shared edge at
+        // every pin left 25 to 72 mm of it single-use.
+        //
+        // Inserting them cannot deform the slab: the limit is a horizontal
+        // line in uv and these points sit on it, so this only subdivides an
+        // edge the ring already has, which is exactly what the neighbour did.
+        auto rowLimitRun = [&](double row, double fromU, double toU) {
+            std::vector<double> us;
+            const double lo = std::min(fromU, toU), hi = std::max(fromU, toU);
+            for (const gp_Pnt2d& p : boundary) {
+                if (std::abs(p.Y() - row) > vt) continue;
+                if (p.X() <= lo + ut || p.X() >= hi - ut) continue;
+                us.push_back(p.X());
+            }
+            std::sort(us.begin(), us.end());
+            us.erase(std::unique(us.begin(), us.end(),
+                                 [&](double a, double b) {
+                                     return std::abs(a - b) <= ut;
+                                 }),
+                     us.end());
+            if (fromU > toU) std::reverse(us.begin(), us.end());
+            std::vector<gp_Pnt2d> run;
+            run.reserve(us.size());
+            for (double u : us) run.emplace_back(u, row);
+            return run;
+        };
         std::vector<std::vector<gp_Pnt2d>> slabs;
         for (size_t k = 0; k + 1 < cross.size(); ++k) {
             if (cross[k+1].u-cross[k].u <= ut) continue;
@@ -14990,22 +15211,23 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
                 sideAcrossRow(cross[k].seg);
             std::vector<gp_Pnt2d> right =
                 sideAcrossRow(cross[k + 1].seg);
-            // A side crossing four or more sampled trim segments cannot be
-            // represented by the old four-corner slab: flattening it onto the
-            // row limits leaves the curved boundary run uncovered. Preserve
-            // its exact intermediate samples. One-bend sides stay on the
-            // four-corner path because clipping that concavity can produce
-            // two overlapping components in an individual grid column.
-            if (left.size() >= kMinExactRowSidePoints ||
-                right.size() >= kMinExactRowSidePoints) {
-                left.insert(left.end(), right.rbegin(), right.rend());
-                slabs.push_back(std::move(left));
-            } else {
-                slabs.push_back({onSegAtV(cross[k].seg,vb),
-                                 onSegAtV(cross[k+1].seg,vb),
-                                 onSegAtV(cross[k+1].seg,vt2),
-                                 onSegAtV(cross[k].seg,vt2)});
-            }
+            // The slab is bounded by the sampled trim polyline on all four
+            // sides. Both sides used to collapse to their endpoints unless one
+            // of them crossed five or more trim segments, and the row limits
+            // were bare chords; every sample in between was represented by
+            // nothing but whichever u station happened to coincide with it.
+            // A neighbour that samples the same shared edge at every pin then
+            // has vertices this face lacks, and the seam between them is
+            // single-use. Preserving all four sides is byte-identical on every
+            // release model and closes 61 of MP9's open edges (214 -> 153).
+            const std::vector<gp_Pnt2d> ceil =
+                rowLimitRun(vt2, left.back().X(), right.back().X());
+            const std::vector<gp_Pnt2d> floor =
+                rowLimitRun(vb, right.front().X(), left.front().X());
+            left.insert(left.end(), ceil.begin(), ceil.end());
+            left.insert(left.end(), right.rbegin(), right.rend());
+            left.insert(left.end(), floor.begin(), floor.end());
+            slabs.push_back(std::move(left));
         }
         for (int i = 0; i + 1 < int(U.size()); ++i) {
             if (U[i + 1] - U[i] <= ut) continue;
@@ -15160,23 +15382,105 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
                 }
             }
         };
-        for (uint32_t id : boundaryVerts) {
+        // A heal that pulls two DISTINCT border samples onto one point does
+        // not close a seam, it deletes a cell: the polygon keeps two corners
+        // in the same place, its area collapses and its winding sign becomes
+        // noise, which the fold census then answers by demoting the face.
+        // Measured on #1805: two samples 0.18 mm apart both claimed the same
+        // exact sample and the quad spanning them read as folded. Each exact
+        // sample therefore accepts only its closest claimant; the rest fall
+        // through to the shared-edge projection below.
+        const std::vector<uint32_t> borderIds(boundaryVerts.begin(),
+                                              boundaryVerts.end());
+        std::vector<size_t> nearestSample(borderIds.size(),
+                                          exactSamples.size());
+        std::vector<double> nearestDist(borderIds.size(), 0.25);
+        for (size_t bi = 0; bi < borderIds.size(); ++bi) {
+            const auto& v = pm.vertices[borderIds[bi]];
+            const gp_Pnt p(v[0], v[1], v[2]);
+            for (size_t si = 0; si < exactSamples.size(); ++si) {
+                const double d = p.Distance(exactSamples[si].second);
+                if (d < nearestDist[bi]) {
+                    nearestDist[bi] = d;
+                    nearestSample[bi] = si;
+                }
+            }
+        }
+        std::map<size_t, size_t> sampleOwner;
+        for (size_t bi = 0; bi < borderIds.size(); ++bi) {
+            const size_t si = nearestSample[bi];
+            if (si >= exactSamples.size()) continue;
+            auto it = sampleOwner.find(si);
+            if (it == sampleOwner.end() ||
+                nearestDist[bi] < nearestDist[it->second]) {
+                sampleOwner[si] = bi;
+            }
+        }
+        // The heal is a repair, so it may not damage the cells it touches.
+        // Every candidate move is accepted only if no polygon on that vertex
+        // ends up opposing the CAD normal that did not already: a border
+        // vertex pulled up to 1 mm across a 0.2 mm cell turns it inside out,
+        // and one such cell demotes the whole face to the floor web.
+        std::map<uint32_t, std::vector<size_t>> vertPolys;
+        for (size_t pi = 0; pi < pm.polygons.size(); ++pi) {
+            for (uint32_t vi : pm.polygons[pi]) vertPolys[vi].push_back(pi);
+        }
+        auto cellOpposesNormal = [&](size_t pi) {
+            const auto& poly = pm.polygons[pi];
+            if (poly.size() < 3) return false;
+            gp_XYZ nw(0, 0, 0);
+            double au = 0.0, av = 0.0;
+            for (size_t k = 0; k < poly.size(); ++k) {
+                const auto& a = pm.vertices[poly[k]];
+                const auto& b = pm.vertices[poly[(k + 1) % poly.size()]];
+                nw += gp_XYZ(a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2],
+                             a[0]*b[1]-a[1]*b[0]);
+                au += pm.anchors[poly[k]].u;
+                av += pm.anchors[poly[k]].v;
+            }
+            if (nw.Modulus() < 1e-16) return false;
+            gp_Pnt sp;
+            gp_Vec du, dv;
+            surf.D1(au / double(poly.size()), av / double(poly.size()), sp, du,
+                    dv);
+            gp_Vec n = du.Crossed(dv);
+            if (n.Magnitude() < 1e-16) return false;
+            if (faceReversed) n.Reverse();
+            return gp_Vec(nw).Dot(n) < 0;
+        };
+        // The other way a heal can destroy a cell is by pulling two of its
+        // corners onto one point: the polygon keeps a repeated index after the
+        // global weld, its area is zero and it is a degenerate polygon. The
+        // exact-sample branch is injective, but the shared-edge projection is
+        // not — three corners of one #1805 face-3 quad landed on the same point
+        // on the seam polyline. Measured against the cell's own longest edge so
+        // the test means "this corner vanished", not a fixed length.
+        auto cellCollapses = [&](size_t pi) {
+            const auto& poly = pm.polygons[pi];
+            if (poly.size() < 3) return false;
+            double longest = 0.0, closest = 1e300;
+            for (size_t k = 0; k < poly.size(); ++k) {
+                const auto& a = pm.vertices[poly[k]];
+                for (size_t m = k + 1; m < poly.size(); ++m) {
+                    const auto& b = pm.vertices[poly[m]];
+                    const double d = gp_Pnt(a[0], a[1], a[2])
+                                         .Distance(gp_Pnt(b[0], b[1], b[2]));
+                    longest = std::max(longest, d);
+                    closest = std::min(closest, d);
+                }
+            }
+            return longest > 0.0 && closest <= 1e-3 * longest;
+        };
+        for (size_t bi = 0; bi < borderIds.size(); ++bi) {
+            const uint32_t id = borderIds[bi];
             gp_Pnt p(pm.vertices[id][0], pm.vertices[id][1],
                      pm.vertices[id][2]);
             bool moved = false;
-            if (!exactSamples.empty()) {
-                double best = 0.25;
-                const gp_Pnt* nearest = nullptr;
-                for (const auto& [uv, ep] : exactSamples) {
-                    (void)uv;
-                    const double d = p.Distance(ep);
-                    if (d < best) {
-                        best = d;
-                        nearest = &ep;
-                    }
-                }
-                if (nearest) {
-                    p = *nearest;
+            const size_t si = nearestSample[bi];
+            if (si < exactSamples.size()) {
+                auto it = sampleOwner.find(si);
+                if (it != sampleOwner.end() && it->second == bi) {
+                    p = exactSamples[si].second;
                     moved = true;
                 }
             }
@@ -15189,8 +15493,20 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
                     moved = true;
                 }
             }
-            if (moved) {
-                pm.vertices[id] = {p.X(), p.Y(), p.Z()};
+            if (!moved) continue;
+            const std::array<double, 3> keep = pm.vertices[id];
+            int before = 0;
+            for (size_t pi : vertPolys[id]) {
+                before += cellOpposesNormal(pi) || cellCollapses(pi);
+            }
+            pm.vertices[id] = {p.X(), p.Y(), p.Z()};
+            int after = 0;
+            for (size_t pi : vertPolys[id]) {
+                after += cellOpposesNormal(pi) || cellCollapses(pi);
+            }
+            if (after > before) {
+                pm.vertices[id] = keep;
+                continue;
             }
         }
     }
@@ -24169,138 +24485,6 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     };
 
     finish(mesh);
-    // Welding reveals exact adjacency between cells whose pre-weld border
-    // vertices were only geometrically coincident. A pinched trim can then
-    // leave a three-point, zero-area boundary cell with one same-face
-    // interior edge. Absorb that triangle into its same-face neighbour:
-    // removing their shared diagonal preserves every outer boundary edge.
-    {
-        size_t absorbed = 0;
-        for (size_t pass = 0; pass < mesh.polygons.size(); ++pass) {
-            struct EdgeUse {
-                size_t poly;
-                size_t edge;
-            };
-            std::map<std::pair<uint32_t, uint32_t>,
-                     std::vector<EdgeUse>>
-                use;
-            for (size_t pi = 0; pi < mesh.polygons.size(); ++pi) {
-                const auto& poly = mesh.polygons[pi];
-                for (size_t ei = 0; ei < poly.size(); ++ei) {
-                    const uint32_t a = poly[ei];
-                    const uint32_t b = poly[(ei + 1) % poly.size()];
-                    use[{std::min(a, b), std::max(a, b)}].push_back(
-                        {pi, ei});
-                }
-            }
-            bool changed = false;
-            for (size_t pi = 0; pi < mesh.polygons.size() && !changed; ++pi) {
-                const auto& tri = mesh.polygons[pi];
-                if (tri.size() != 3 || pi >= mesh.polygonFaceId.size()) {
-                    continue;
-                }
-                const int fid = mesh.polygonFaceId[pi];
-                auto plan = plans.find(fid);
-                if (fid < 1 || fid >= int(fellBack.size()) ||
-                    fellBack[fid] != 0 || plan == plans.end() ||
-                    !plan->second.orthogonalTrimGrid) {
-                    continue;
-                }
-                const auto& a = mesh.vertices[tri[0]];
-                const auto& b = mesh.vertices[tri[1]];
-                const auto& c = mesh.vertices[tri[2]];
-                auto distanceSquared = [](const auto& x, const auto& y) {
-                    const double dx = x[0] - y[0];
-                    const double dy = x[1] - y[1];
-                    const double dz = x[2] - y[2];
-                    return dx * dx + dy * dy + dz * dz;
-                };
-                const double ab2 = distanceSquared(a, b);
-                const double bc2 = distanceSquared(b, c);
-                const double ca2 = distanceSquared(c, a);
-                const double confusion = Precision::Confusion();
-                if (std::min({ab2, bc2, ca2}) <=
-                    confusion * confusion) {
-                    continue;
-                }
-                const gp_Vec ab(gp_Pnt(a[0], a[1], a[2]),
-                                gp_Pnt(b[0], b[1], b[2]));
-                const gp_Vec ac(gp_Pnt(a[0], a[1], a[2]),
-                                gp_Pnt(c[0], c[1], c[2]));
-                const double maxEdge2 = std::max({ab2, bc2, ca2});
-                if (ab.Crossed(ac).Magnitude() > 1e-12 * maxEdge2) {
-                    continue;
-                }
-                EdgeUse shared{mesh.polygons.size(), 0};
-                size_t triEdge = tri.size();
-                int sameFaceEdges = 0;
-                bool manifold = true;
-                for (size_t ei = 0; ei < tri.size(); ++ei) {
-                    const uint32_t u = tri[ei];
-                    const uint32_t v = tri[(ei + 1) % tri.size()];
-                    const auto& owners =
-                        use[{std::min(u, v), std::max(u, v)}];
-                    if (owners.empty() || owners.size() > 2) {
-                        manifold = false;
-                        break;
-                    }
-                    for (const EdgeUse& owner : owners) {
-                        if (owner.poly == pi) continue;
-                        if (owner.poly < mesh.polygonFaceId.size() &&
-                            mesh.polygonFaceId[owner.poly] == fid) {
-                            ++sameFaceEdges;
-                            triEdge = ei;
-                            shared = owner;
-                        }
-                    }
-                }
-                if (!manifold || sameFaceEdges != 1 ||
-                    shared.poly >= mesh.polygons.size()) {
-                    continue;
-                }
-                const uint32_t u = tri[triEdge];
-                const uint32_t v = tri[(triEdge + 1) % tri.size()];
-                const auto& neighbour = mesh.polygons[shared.poly];
-                if (neighbour.size() < 3 || neighbour[shared.edge] != v ||
-                    neighbour[(shared.edge + 1) % neighbour.size()] != u) {
-                    continue;
-                }
-                std::vector<uint32_t> merged;
-                merged.reserve(tri.size() + neighbour.size() - 2);
-                for (size_t k = 0; k < tri.size(); ++k) {
-                    merged.push_back(tri[(triEdge + 1 + k) % tri.size()]);
-                }
-                for (size_t k = 2; k < neighbour.size(); ++k) {
-                    merged.push_back(
-                        neighbour[(shared.edge + k) % neighbour.size()]);
-                }
-                if (std::set<uint32_t>(merged.begin(), merged.end()).size() !=
-                    merged.size()) {
-                    continue;
-                }
-                mesh.polygons[shared.poly] = std::move(merged);
-                mesh.polygons[pi].clear();
-                ++absorbed;
-                changed = true;
-            }
-            if (!changed) break;
-        }
-        if (absorbed > 0) {
-            std::vector<std::vector<uint32_t>> polygons;
-            std::vector<int> faces;
-            polygons.reserve(mesh.polygons.size() - absorbed);
-            faces.reserve(mesh.polygons.size() - absorbed);
-            for (size_t pi = 0; pi < mesh.polygons.size(); ++pi) {
-                if (mesh.polygons[pi].empty()) continue;
-                polygons.push_back(std::move(mesh.polygons[pi]));
-                faces.push_back(mesh.polygonFaceId[pi]);
-            }
-            mesh.polygons = std::move(polygons);
-            mesh.polygonFaceId = std::move(faces);
-            dbg("generate: absorbed %zu collapsed boundary triangle(s)",
-                absorbed);
-        }
-    }
     timingCheckpoint("corner repair + weld");
     if (std::getenv("WEFT_FOLD_PROBE")) {
         const auto mask = foldedPolys(model, mesh);

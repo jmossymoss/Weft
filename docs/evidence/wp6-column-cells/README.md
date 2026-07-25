@@ -94,11 +94,56 @@ and inspected for folds, overlaps, and unintended rings before banking the
 counts. Structure debt is unchanged; the corpus invariant gate and strict
 release gate pass.
 
+## Station consolidation on trimmed Coons panels
+
+Counters alone hid a quality defect on the neighbouring class. The reducer
+`coons_plane_1805_r0` passed watertightness, fold, and winding checks while
+producing a mesh the artist rejected on sight: one panel was a 460-triangle
+best-fit-plane web and the rest carried ribbon columns.
+
+The root cause was station collection, not the fold or seam logic. Every raw
+trim endpoint cut its own station line, so a 5x10 request became a 43x52
+lattice with 35 of 42 u-gaps under a quarter pitch. The narrowest cells are
+about 1 um across — smaller than the 0.15 mm border canonicalisation that runs
+after them, so their own corners moved further than their width and they
+inverted. Those inversions are what demoted the panel to the floor web.
+
+`orthogonalTrimStations()` now owns that policy for both the pin pass and the
+mesher, consolidating station lines at pitch-relative and 3D arc-length scales.
+Parametric distance alone is insufficient: the same chart runs 8 mm per unit u
+at one limit and 1037 mm per unit at its centre. The border heal became
+injective and is rejected per cell when it would invert or collapse one, and
+slabs now carry the sampled trim polyline on all four sides rather than bare
+chords on the row limits.
+
+Reducer, parent -> rejected revision -> now:
+
+| Metric | parent | rejected | now |
+| --- | ---: | ---: | ---: |
+| polygons | 2145 | 2860 | 719 |
+| triangles | 709 | 565 | 66 |
+| slivers < 5 deg | 454 | 377 | 63 |
+| cells with aspect > 20 | 636 | 836 | 141 |
+| contract floors | 2 | 1 | 0 |
+| unexplained cracks | 24 | 2 | 0 |
+
+![parent, rejected, and fixed panels](coons_panels_parent_rejected_fixed.png)
+
+Full `MP9.stp` improves on every axis against the parent: open edges 315 to
+153, folds 78 to 16, non-manifold 16 to 11, winding conflicts 10 to 8, slivers
+2682 to 2062. Foam and teleporter stay watertight with equal or fewer slivers;
+their small arity movements are spurious micro-corners (2.4 to 8 um) that the
+consolidation removes.
+
+`testMp9CoonsPlaneSeamCanonicalize` now gates cell SHAPE as well as validity:
+quad dominance and a ceiling on ribbon cells. Both revisions the artist
+rejected fail that gate.
+
 ## Scope
 
 The cell builder is gated to `plan.kind == RevolutionGrid` trim grids and falls
 back transactionally whenever the decomposition declines. Coons and planar
-trim grids retain the established row path.
+trim grids retain the established row path with consolidated stations.
 
 Reproducer:
 
