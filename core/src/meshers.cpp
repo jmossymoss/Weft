@@ -14218,15 +14218,21 @@ void pinOrthogonalTrimGrids(const Model& model,
         // (the slab builder needs them), u is the requested grid only. If the
         // two disagree, a clip vertex lands where the shared edge has no
         // sample and the seam cracks.
-        auto collectEndpointsV = [&](int eid) {
+        const bool dropEndpointU = plan.kind == MesherKind::RevolutionGrid;
+        auto collectEndpoints = [&](int eid) {
             const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
             double f, l;
             Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(e, face, f, l);
             if (pc.IsNull()) return;
-            V.push_back(pc->Value(f).Y());
-            V.push_back(pc->Value(l).Y());
+            const gp_Pnt2d a = pc->Value(f), b = pc->Value(l);
+            if (!dropEndpointU) {
+                U.push_back(a.X());
+                U.push_back(b.X());
+            }
+            V.push_back(a.Y());
+            V.push_back(b.Y());
         };
-        for (int e : plan.orthogonalEdges) collectEndpointsV(e);
+        for (int e : plan.orthogonalEdges) collectEndpoints(e);
         uniqueStations(U, std::max(ut, 1e-4*std::abs(u1-u0)));
         uniqueStations(V, std::max(vt, 1e-6*std::abs(v1-v0)));
 
@@ -14302,16 +14308,26 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
     // cells (measured: 8 unexplained cracks on the muzzle extract). Removing
     // the rings too needs a per-cell polygon clip that can return several
     // components; that is a separate change.
-    auto addEdgeEndpointsV = [&](int eid) {
+    // Scoped to revolution walls: that is where "the cylinder should keep the
+    // spans I asked for" applies. Coons/plane trim grids keep both axes'
+    // endpoint stations — dropping u there put 2 folds into the MP9
+    // coons/plane seam extract (testMp9CoonsPlaneSeamCanonicalize).
+    const bool dropEndpointU = plan.kind == MesherKind::RevolutionGrid;
+    auto addEdgeEndpoints = [&](int eid) {
         const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
         double f, l;
         Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(edge, face, f, l);
         if (pc.IsNull()) return false;
-        V.push_back(pc->Value(f).Y());
-        V.push_back(pc->Value(l).Y());
+        const gp_Pnt2d a = pc->Value(f), b = pc->Value(l);
+        if (!dropEndpointU) {
+            U.push_back(a.X());
+            U.push_back(b.X());
+        }
+        V.push_back(a.Y());
+        V.push_back(b.Y());
         return true;
     };
-    for (int e : plan.orthogonalEdges) if (!addEdgeEndpointsV(e)) return false;
+    for (int e : plan.orthogonalEdges) if (!addEdgeEndpoints(e)) return false;
     auto normalize = [](std::vector<double>& a, double tol) {
         std::sort(a.begin(), a.end());
         std::vector<double> b;
