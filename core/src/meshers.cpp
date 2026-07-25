@@ -24169,6 +24169,138 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     };
 
     finish(mesh);
+    // Welding reveals exact adjacency between cells whose pre-weld border
+    // vertices were only geometrically coincident. A pinched trim can then
+    // leave a three-point, zero-area boundary cell with one same-face
+    // interior edge. Absorb that triangle into its same-face neighbour:
+    // removing their shared diagonal preserves every outer boundary edge.
+    {
+        size_t absorbed = 0;
+        for (size_t pass = 0; pass < mesh.polygons.size(); ++pass) {
+            struct EdgeUse {
+                size_t poly;
+                size_t edge;
+            };
+            std::map<std::pair<uint32_t, uint32_t>,
+                     std::vector<EdgeUse>>
+                use;
+            for (size_t pi = 0; pi < mesh.polygons.size(); ++pi) {
+                const auto& poly = mesh.polygons[pi];
+                for (size_t ei = 0; ei < poly.size(); ++ei) {
+                    const uint32_t a = poly[ei];
+                    const uint32_t b = poly[(ei + 1) % poly.size()];
+                    use[{std::min(a, b), std::max(a, b)}].push_back(
+                        {pi, ei});
+                }
+            }
+            bool changed = false;
+            for (size_t pi = 0; pi < mesh.polygons.size() && !changed; ++pi) {
+                const auto& tri = mesh.polygons[pi];
+                if (tri.size() != 3 || pi >= mesh.polygonFaceId.size()) {
+                    continue;
+                }
+                const int fid = mesh.polygonFaceId[pi];
+                auto plan = plans.find(fid);
+                if (fid < 1 || fid >= int(fellBack.size()) ||
+                    fellBack[fid] != 0 || plan == plans.end() ||
+                    !plan->second.orthogonalTrimGrid) {
+                    continue;
+                }
+                const auto& a = mesh.vertices[tri[0]];
+                const auto& b = mesh.vertices[tri[1]];
+                const auto& c = mesh.vertices[tri[2]];
+                auto distanceSquared = [](const auto& x, const auto& y) {
+                    const double dx = x[0] - y[0];
+                    const double dy = x[1] - y[1];
+                    const double dz = x[2] - y[2];
+                    return dx * dx + dy * dy + dz * dz;
+                };
+                const double ab2 = distanceSquared(a, b);
+                const double bc2 = distanceSquared(b, c);
+                const double ca2 = distanceSquared(c, a);
+                const double confusion = Precision::Confusion();
+                if (std::min({ab2, bc2, ca2}) <=
+                    confusion * confusion) {
+                    continue;
+                }
+                const gp_Vec ab(gp_Pnt(a[0], a[1], a[2]),
+                                gp_Pnt(b[0], b[1], b[2]));
+                const gp_Vec ac(gp_Pnt(a[0], a[1], a[2]),
+                                gp_Pnt(c[0], c[1], c[2]));
+                const double maxEdge2 = std::max({ab2, bc2, ca2});
+                if (ab.Crossed(ac).Magnitude() > 1e-12 * maxEdge2) {
+                    continue;
+                }
+                EdgeUse shared{mesh.polygons.size(), 0};
+                size_t triEdge = tri.size();
+                int sameFaceEdges = 0;
+                bool manifold = true;
+                for (size_t ei = 0; ei < tri.size(); ++ei) {
+                    const uint32_t u = tri[ei];
+                    const uint32_t v = tri[(ei + 1) % tri.size()];
+                    const auto& owners =
+                        use[{std::min(u, v), std::max(u, v)}];
+                    if (owners.empty() || owners.size() > 2) {
+                        manifold = false;
+                        break;
+                    }
+                    for (const EdgeUse& owner : owners) {
+                        if (owner.poly == pi) continue;
+                        if (owner.poly < mesh.polygonFaceId.size() &&
+                            mesh.polygonFaceId[owner.poly] == fid) {
+                            ++sameFaceEdges;
+                            triEdge = ei;
+                            shared = owner;
+                        }
+                    }
+                }
+                if (!manifold || sameFaceEdges != 1 ||
+                    shared.poly >= mesh.polygons.size()) {
+                    continue;
+                }
+                const uint32_t u = tri[triEdge];
+                const uint32_t v = tri[(triEdge + 1) % tri.size()];
+                const auto& neighbour = mesh.polygons[shared.poly];
+                if (neighbour.size() < 3 || neighbour[shared.edge] != v ||
+                    neighbour[(shared.edge + 1) % neighbour.size()] != u) {
+                    continue;
+                }
+                std::vector<uint32_t> merged;
+                merged.reserve(tri.size() + neighbour.size() - 2);
+                for (size_t k = 0; k < tri.size(); ++k) {
+                    merged.push_back(tri[(triEdge + 1 + k) % tri.size()]);
+                }
+                for (size_t k = 2; k < neighbour.size(); ++k) {
+                    merged.push_back(
+                        neighbour[(shared.edge + k) % neighbour.size()]);
+                }
+                if (std::set<uint32_t>(merged.begin(), merged.end()).size() !=
+                    merged.size()) {
+                    continue;
+                }
+                mesh.polygons[shared.poly] = std::move(merged);
+                mesh.polygons[pi].clear();
+                ++absorbed;
+                changed = true;
+            }
+            if (!changed) break;
+        }
+        if (absorbed > 0) {
+            std::vector<std::vector<uint32_t>> polygons;
+            std::vector<int> faces;
+            polygons.reserve(mesh.polygons.size() - absorbed);
+            faces.reserve(mesh.polygons.size() - absorbed);
+            for (size_t pi = 0; pi < mesh.polygons.size(); ++pi) {
+                if (mesh.polygons[pi].empty()) continue;
+                polygons.push_back(std::move(mesh.polygons[pi]));
+                faces.push_back(mesh.polygonFaceId[pi]);
+            }
+            mesh.polygons = std::move(polygons);
+            mesh.polygonFaceId = std::move(faces);
+            dbg("generate: absorbed %zu collapsed boundary triangle(s)",
+                absorbed);
+        }
+    }
     timingCheckpoint("corner repair + weld");
     if (std::getenv("WEFT_FOLD_PROBE")) {
         const auto mask = foldedPolys(model, mesh);

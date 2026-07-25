@@ -2319,12 +2319,11 @@ void testMp9CoonsPlaneSeamCanonicalize() {
                 "folds=%zu nm=%zu\n",
                 unexplained, vr.openEdges, vr.openEdgesOnInputBoundary,
                 foldCount, vr.nonManifoldEdges);
-    // Parent c86fe5e has 24 unexplained opens with face 5 on the contract
-    // floor. Retaining its structured grid must not regress that seam budget.
-    CHECK(unexplained <= 24);
+    CHECK(unexplained <= 2);
     CHECK(foldCount == 0);
     CHECK(vr.nonManifoldEdges == 0);
     CHECK(vr.windingConflicts == 0);
+    CHECK(vr.degeneratePolygons == 0);
 }
 
 // Auto-mesher gates: a plate with a slot has "two wires" but is NOT an
