@@ -96,3 +96,42 @@ weft extract tests/STEP_Examples/MP9.stp --faces 3432 --rings 1 -o muzzle.step
 weft mesh muzzle.step -o muzzle.obj --profile cad     # ~1s
 python3 tools/render_obj_wireframe.py muzzle.obj ends.png --faces 6,7,10,11
 ```
+
+## The remaining gap is architectural (artist observation, 2026-07-25)
+
+> I can see the arc is being made, but the issue is the ngon isn't being filled
+> in from that edge.
+
+Correct, and measurable. On the muzzle extract the capsule end WALL now carries
+12 vertices along its arc, but the DRUM shares only 3 of them:
+
+```
+face_6:  25 verts, shares 3 with the drum
+face_7:  25 verts, shares 3 with the drum
+```
+
+So the wall is round while the drum still meshes to the chord, and the sliver
+between chord and arc is unfilled.
+
+The cause is the trim grid's row-slab clipper. For each row it takes the ONE
+boundary segment crossing the row's midpoint and evaluates it at the row's floor
+and ceiling — a chord. Every boundary sample between those two heights is
+discarded by construction, so cells can only follow a boundary that is monotone
+within a row.
+
+Two ways out, both rejected for now:
+
+1. Add V stations at the arc's sample points. Then each row's limit IS a single
+   boundary segment and the cells land exactly on the arc — but a V station is a
+   full ring around the drum, which is the "extra rings breaking the long spans"
+   the artist explicitly ruled out.
+2. Make the row follow the boundary polyline. Tried twice: the chain walk
+   produces rings that wiggle in u, the per-cell half-plane clip mangles them,
+   and the extract went to 6 unexplained cracks and 6 winding conflicts with
+   FEWER shared arc vertices (face_6 dropped 3 -> 2). Reverted.
+
+Doing this properly means replacing the row-slab clipper with a real polygon
+arrangement: overlay the trim loop with the station grid and extract cells as
+faces of the arrangement, which can return several components per cell and
+handles a boundary that re-enters a row. That is a contained but real piece of
+work and it is the actual fix for both this and the leftover rings.
