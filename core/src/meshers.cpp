@@ -14214,16 +14214,19 @@ void pinOrthogonalTrimGrids(const Model& model,
         std::vector<double> U, V;
         for (int i = 0; i <= nu; ++i) U.push_back(u0 + (u1-u0)*i/nu);
         for (int j = 0; j <= nv; ++j) V.push_back(v0 + (v1-v0)*j/nv);
-        auto collectEndpoints = [&](int eid) {
+        // Must mirror meshOrthogonalTrimGrid exactly: v keeps trim endpoints
+        // (the slab builder needs them), u is the requested grid only. If the
+        // two disagree, a clip vertex lands where the shared edge has no
+        // sample and the seam cracks.
+        auto collectEndpointsV = [&](int eid) {
             const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
             double f, l;
             Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(e, face, f, l);
             if (pc.IsNull()) return;
-            const gp_Pnt2d a = pc->Value(f), b = pc->Value(l);
-            U.push_back(a.X()); U.push_back(b.X());
-            V.push_back(a.Y()); V.push_back(b.Y());
+            V.push_back(pc->Value(f).Y());
+            V.push_back(pc->Value(l).Y());
         };
-        for (int e : plan.orthogonalEdges) collectEndpoints(e);
+        for (int e : plan.orthogonalEdges) collectEndpointsV(e);
         uniqueStations(U, std::max(ut, 1e-4*std::abs(u1-u0)));
         uniqueStations(V, std::max(vt, 1e-6*std::abs(v1-v0)));
 
@@ -14282,17 +14285,33 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
     std::vector<double> U, V;
     for (int i = 0; i <= nu; ++i) U.push_back(u0 + (u1 - u0) * i / nu);
     for (int j = 0; j <= nv; ++j) V.push_back(v0 + (v1 - v0) * j / nv);
-    auto addEdgeEndpoints = [&](int eid) {
+    // A trim endpoint used to add a station line on BOTH axes. On a
+    // boolean-cut drum (the MP9 muzzle carries 27 cut edges on one wall) that
+    // turned a 23x2 request into a 36x8 lattice: 13 unrequested columns and 6
+    // unrequested rings, and the artist asked for neither.
+    //
+    // The u endpoints are droppable. Clipping a slab against a column line is
+    // a half-plane clip that handles a cut crossing mid-cell and absorbs it
+    // into that cell's polygon, so a cut needs no column of its own and the
+    // wall keeps exactly the spans requested.
+    //
+    // The v endpoints are NOT droppable here: the slab builder below takes the
+    // boundary crossings at the row's MIDPOINT and reuses those same segments
+    // at the row's floor and ceiling, which is only valid while no trim corner
+    // lies strictly inside the row. Dropping them silently deletes partial
+    // cells (measured: 8 unexplained cracks on the muzzle extract). Removing
+    // the rings too needs a per-cell polygon clip that can return several
+    // components; that is a separate change.
+    auto addEdgeEndpointsV = [&](int eid) {
         const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
         double f, l;
         Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(edge, face, f, l);
         if (pc.IsNull()) return false;
-        const gp_Pnt2d a = pc->Value(f), b = pc->Value(l);
-        U.push_back(a.X()); U.push_back(b.X());
-        V.push_back(a.Y()); V.push_back(b.Y());
+        V.push_back(pc->Value(f).Y());
+        V.push_back(pc->Value(l).Y());
         return true;
     };
-    for (int e : plan.orthogonalEdges) if (!addEdgeEndpoints(e)) return false;
+    for (int e : plan.orthogonalEdges) if (!addEdgeEndpointsV(e)) return false;
     auto normalize = [](std::vector<double>& a, double tol) {
         std::sort(a.begin(), a.end());
         std::vector<double> b;

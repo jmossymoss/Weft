@@ -76,3 +76,33 @@ the request, the face keeps its planned mesher, the cut lands in an n-gon, and
 no triangles appear. `testFlaregunOpenBandNotchLipsFullSpan` now asserts the
 inverse of what it did before: mid-span full-band rings may not exceed the
 band's own solved axial count, so a cut can never add one.
+
+## Boolean cuts through the wall (MP9 muzzle)
+
+The muzzle drum (MP9 faces #3432 / #3434, r=21.453, 27 cut edges each) does not
+take the rim-notch path at all — it plans as an ORTHOGONAL TRIM GRID, which
+clips the trimmed chart against a station lattice. Every trim endpoint added a
+station line on both axes, so a 23x2 request became a 36x8 lattice: 13
+unrequested columns and 6 unrequested rings.
+
+The u endpoints are droppable. Clipping a slab against a column line is a
+half-plane clip that already absorbs a cut crossing mid-cell into that cell's
+polygon, so a cut needs no column of its own.
+
+The v endpoints are not, yet. The slab builder takes the boundary crossings at
+a row's MIDPOINT and reuses those segments at the row's floor and ceiling,
+which is only valid while no trim corner lies strictly inside the row.
+Dropping them measured 8 unexplained cracks on the extract. Removing the rings
+as well needs a per-cell polygon clip that can return several components.
+
+Reducer: `weft extract tests/STEP_Examples/MP9.stp --faces 3432 --rings 1`.
+
+| before (36x8) | after (23x8) |
+| --- | --- |
+| 156 cells, 0 n-gons | 105 cells, 9 n-gons |
+
+![muzzle columns](muzzle_columns_before_after.png)
+
+Corpus effect: foam and teleporter shift a few cells from quads/tris into
+n-gons (cuts absorbed rather than given their own column); no structure
+regression, no new cracks.
