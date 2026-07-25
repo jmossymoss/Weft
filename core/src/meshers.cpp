@@ -12590,8 +12590,123 @@ bool meshRevolutionRimNotch(const TopoDS_Face& face,
         if (cleanCut) return true;
         colL = colL0;
         colR = colR0;
-        dbg("rimnotch face %d: pinned cut misaligned at nu=%d, strip path",
+        dbg("rimnotch face %d: pinned cut misaligned at nu=%d, sector path",
             faceId, nu);
+    }
+
+    // ===== SECTOR ABSORPTION =============================================
+    // The artist's model of a cut cylinder: the wall keeps exactly the spans
+    // asked for, every column runs the full length, and where a notch eats
+    // into the wall the cell it touches simply becomes an n-gon following the
+    // cut. Nothing is "solved" — no feature row, no transition strip, no wall
+    // ladder, no boolean lattice the cut is required to align with.
+    //
+    // The clean-cut path above stays because it yields quads when the notch
+    // corners do land on column azimuths, but it REQUIRES that alignment: at
+    // 6 spans on a notched drum the corners fall mid-cell, it bails, and the
+    // strip path below answered with rows the artist never asked for (and
+    // further down the fallback chain, triangles).
+    //
+    // Alignment is irrelevant here. A column exists wherever the base arc
+    // already carries a sample at that azimuth; between two consecutive such
+    // columns the region is closed by the true outline, so a plain sector is
+    // a quad and the notch sector is one n-gon. Only existing border samples
+    // are used, so the contract with the rim and notch faces is untouched.
+    if (!levelsOpt) {
+        const double snapAbs = 0.02 * (period / nu);
+        std::vector<int> topAt(nu, -1);
+        for (int c = 0; c < nu; ++c) {
+            double best = snapAbs;
+            for (int i = 0; i < SN; ++i) {
+                if (!hug[i]) continue;
+                double d = S[i].u - uk[c];
+                d -= period * std::round(d / period);
+                if (std::abs(d) < best) {
+                    best = std::abs(d);
+                    topAt[c] = i;
+                }
+            }
+        }
+        std::vector<int> reach;
+        for (int c = 0; c < nu; ++c) {
+            if (topAt[c] >= 0) reach.push_back(c);
+        }
+        if (int(reach.size()) >= 3) {
+            PolyMesh local;
+            MeshBuilder wb(local);
+            const bool flipS =
+                (face.Orientation() == TopAbs_REVERSED) ^ (sign < 0);
+            std::vector<uint32_t> cutIds(SN);
+            for (int i = 0; i < SN; ++i) {
+                cutIds[i] = wb.addVertex(S[i].p, {faceId, S[i].u, S[i].v});
+            }
+            std::vector<uint32_t> plainIds(nu);
+            for (int c = 0; c < nu; ++c) {
+                plainIds[c] = wb.addVertex(
+                    plainS[c].p, {faceId, plainS[c].u, plainS[c].v});
+            }
+            bool ok = true;
+            size_t ngons = 0;
+            for (size_t k = 0; k < reach.size() && ok; ++k) {
+                const int cA = reach[k];
+                const int cB = reach[(k + 1) % reach.size()];
+                std::vector<uint32_t> ring;
+                // Along the plain rim, low u to high u (wrapping at the seam).
+                for (int c = cA, guard = 0; guard <= nu; ++guard) {
+                    ring.push_back(plainIds[c]);
+                    if (c == cB) break;
+                    c = (c + 1) % nu;
+                }
+                // Back along the true outline, high u to low u: one arc step
+                // between plain columns, the whole wall/floor/wall profile
+                // across the notch.
+                bool closed = false;
+                for (int i = topAt[cB], guard = 0; guard <= SN; ++guard) {
+                    ring.push_back(cutIds[i]);
+                    if (i == topAt[cA]) {
+                        closed = true;
+                        break;
+                    }
+                    i = (i - 1 + SN) % SN;
+                }
+                if (!closed) {
+                    ok = false;
+                    break;
+                }
+                ring.erase(std::unique(ring.begin(), ring.end()), ring.end());
+                while (ring.size() > 1 && ring.front() == ring.back()) {
+                    ring.pop_back();
+                }
+                if (ring.size() < 3) {
+                    ok = false;
+                    break;
+                }
+                if (ring.size() > 4) ++ngons;
+                wb.addPolygon(std::move(ring), faceId, flipS);
+            }
+            if (ok && local.polygons.size() == reach.size()) {
+                dbg("rimnotch face %d: SECTOR nu=%d spans=%zu ngons=%zu "
+                    "(cut absorbed, no added rows)",
+                    faceId, nu, reach.size(), ngons);
+                std::vector<uint32_t> outMap(local.vertices.size());
+                for (uint32_t i = 0; i < local.vertices.size(); ++i) {
+                    outMap[i] = out.addVertex(
+                        gp_Pnt(local.vertices[i][0], local.vertices[i][1],
+                               local.vertices[i][2]),
+                        local.anchors[i]);
+                }
+                for (const auto& poly : local.polygons) {
+                    std::vector<uint32_t> mapped;
+                    mapped.reserve(poly.size());
+                    for (uint32_t idx2 : poly) mapped.push_back(outMap[idx2]);
+                    out.addPolygon(std::move(mapped), faceId, false);
+                }
+                return true;
+            }
+            dbg("rimnotch face %d: sector rejected at nu=%d (reach=%zu "
+                "polys=%zu)",
+                faceId, nu, reach.size(), local.polygons.size());
+        }
     }
 
     // The strip path below cannot honor explicit interior levels — the
