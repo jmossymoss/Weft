@@ -11690,12 +11690,15 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
                 ks.push_back(k);
             }
         }
-        // Promote every notch lip onto EVERY column. A lip that only
-        // landed on the notch's bounding/interior columns was a short
-        // mid-span ring — the flaregun barrel edge that "isn't fully
-        // contained along the cylinder". Full-band lips stay quads
-        // away from the slot and still web locally at the mouth.
-        for (const Region& r : regions) ks.push_back(r.rowKey);
+        // A notch lip belongs to the notch, not to the whole band. Carrying
+        // it onto every column turns it into a ring that cuts every long
+        // span in two, which is the opposite of what a cut cylinder should
+        // look like; keeping it only on the notch's own bounding columns
+        // leaves it local, where the flanking cells absorb it as n-gon
+        // corners.
+        for (const Region& r : regions) {
+            if (c == r.colL || c == r.colR) ks.push_back(r.rowKey);
+        }
         // Columns touched by an interior cutout carry its extent rows;
         // the first column outside the cut absorbs them as n-gon
         // corners — the local collar.

@@ -3370,9 +3370,75 @@ void testStructureRetentionClassification() {
     std::printf("  %d model/profile runs, every cause registered\n", checked);
 }
 
-// Flaregun barrel open-band: notch lips must ride full-band axial rows.
-// A dedicated feature row only on the notch columns reads as an edge
-// that "isn't fully contained along the cylinder" (Ring B).
+// Artist model for a cut cylinder (2026-07-25): "if I set it to 6 spans the
+// cylinder retains exactly 6 spans and the cutout doesn't solve, it just
+// allows ngons". A notch must not buy extra rows, extra columns, or
+// triangles — the wall keeps the requested spans, every span runs the full
+// length, and the cut sits inside one n-gon.
+void testNotchedCylinderKeepsRequestedSpans() {
+    std::printf("-- notched cylinder keeps requested spans --\n");
+    const std::string path = tmpPath("weft_span_notched.step");
+    weft::writeStep(weft::makeFixture("notched"), path);
+    weft::Model model = weft::loadStep(path);
+    weft::Analysis analysis = weft::analyze(model);
+
+    // Discover the notched full-period wall rather than naming a face id.
+    int wall = 0;
+    for (const auto& f : analysis.faces) {
+        if (f.featureClass != weft::FeatureClass::Drum) continue;
+        if (f.chartKind != weft::ChartKind::FullPeriod) continue;
+        if (int(f.edgeIds.size()) < 5) continue;
+        if (wall == 0 || f.radius > analysis.faces[wall - 1].radius) {
+            wall = f.id;
+        }
+    }
+    CHECK(wall > 0);
+
+    for (int spans : {6, 8, 12}) {
+        weft::GenerationSettings gs;
+        gs.defaults.minimal = true;
+        gs.defaults.adaptive = true;
+        gs.defaults.relativeDeviation = true;
+        gs.perFace[wall] = gs.defaults;
+        gs.perFace[wall].adaptive = false;
+        gs.perFace[wall].radial = spans;
+
+        weft::GenerationReport rep;
+        weft::PolyMesh mesh = weft::generate(model, analysis, gs, &rep);
+        CHECK(isWatertight(mesh));
+
+        // The typed count is the count: no neighbour may outvote it.
+        auto cit = rep.faceCounts.find(wall);
+        CHECK(cit != rep.faceCounts.end());
+        CHECK_EQ(cit->second[0], spans);
+
+        // The wall keeps its planned mesher — no floor, no raw.
+        auto bit = rep.faceBuild.find(wall);
+        CHECK(bit != rep.faceBuild.end());
+        CHECK_EQ(bit->second, 0);
+
+        // One polygon per span, no triangles, and the cut absorbed as
+        // n-gons rather than solved into extra rows.
+        int polys = 0, tris = 0, ngons = 0;
+        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+            if (p >= mesh.polygonFaceId.size()) break;
+            if (mesh.polygonFaceId[p] != wall) continue;
+            ++polys;
+            if (mesh.polygons[p].size() == 3) ++tris;
+            if (mesh.polygons[p].size() > 4) ++ngons;
+        }
+        CHECK_EQ(tris, 0);
+        CHECK(ngons >= 1);          // the cut lives in an n-gon
+        CHECK(polys <= spans + 2);  // no lattice inflation around the cut
+        std::printf("  %2d spans -> %d polys on the wall (%d n-gon(s), 0 tris)\n",
+                    spans, polys, ngons);
+    }
+}
+
+// Flaregun barrel open-band: a notch lip must stay local to the notch.
+// Promoting it onto every column turns it into a full-band ring that cuts
+// every long span in two — the artist's "long spans should maintain the full
+// cylinder length, and not be broken up".
 void testFlaregunOpenBandNotchLipsFullSpan() {
     std::printf("-- flaregun open-band notch lips full-span --\n");
     const std::filesystem::path corpus =
@@ -3416,17 +3482,25 @@ void testFlaregunOpenBandNotchLipsFullSpan() {
         int peak = 0;
         for (const auto& [q, n] : bucket) peak = std::max(peak, n);
         CHECK(peak >= 8);
-        int partial = 0;
+        // Mid-span stations carrying (nearly) every column are full-band
+        // rings. The band's own solved axial count may produce them (nv rows
+        // leave nv-1 interior stations); a cut may not add any, or every long
+        // span gets cut in two.
+        auto nvit = report.faceCounts.find(f.id);
+        const int nv = nvit == report.faceCounts.end()
+                           ? 1
+                           : std::max(1, nvit->second[1]);
+        const int axialRows = std::max(0, nv - 1);
+        int fullBandRows = 0;
         for (const auto& [q, n] : bucket) {
             const double v = q / 50.0;
-            if (v < v0 + 0.12 * vspan || v > v1 - 0.12 * vspan) continue;
-            // A notch-only lip is a handful of columns; a full-band row
-            // is near the face peak (plain-rim column count).
-            if (n >= 5 && n * 4 < peak * 3) ++partial;
+            if (v < v0 + 0.05 * vspan || v > v1 - 0.05 * vspan) continue;
+            if (n * 4 >= peak * 3) ++fullBandRows;
         }
-        CHECK_EQ(partial, 0);
+        CHECK(fullBandRows <= axialRows);
         ++checked;
-        std::printf("  face#%d peak=%d mid-partials=0\n", f.id, peak);
+        std::printf("  face#%d peak=%d full-band mid rows=%d (allowed %d)\n",
+                    f.id, peak, fullBandRows, axialRows);
     }
     CHECK(checked >= 2);
 }
@@ -4498,6 +4572,7 @@ int main() {
     RUN(testSameLoopBridgeAndFill);
     RUN(testStructureRetentionClassification);
     RUN(testDensityEditNeverFallsToRaw);
+    RUN(testNotchedCylinderKeepsRequestedSpans);
     RUN(testFlaregunOpenBandNotchLipsFullSpan);
     RUN(testWeldTolerance);
     RUN(testWeldVerts);

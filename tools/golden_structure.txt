@@ -106,12 +106,12 @@ iso14649-demo cad faces=143 structured=143 planned-floor=0 failed-floor=0 raw=0 
 iso14649-demo default faces=143 structured=143 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
 foam cad faces=846 structured=839 planned-floor=3 failed-floor=4 raw=0 empty=0 winding=0
 foam default faces=846 structured=833 planned-floor=3 failed-floor=10 raw=0 empty=0 winding=0
-teleporter cad faces=660 structured=632 planned-floor=14 failed-floor=14 raw=0 empty=0 winding=0
-teleporter default faces=660 structured=628 planned-floor=14 failed-floor=18 raw=0 empty=0 winding=0
+teleporter cad faces=660 structured=637 planned-floor=13 failed-floor=10 raw=0 empty=0 winding=0
+teleporter default faces=660 structured=630 planned-floor=13 failed-floor=17 raw=0 empty=0 winding=0
 foam_wt_open_nm cad faces=846 structured=839 planned-floor=3 failed-floor=4 raw=0 empty=0 winding=0
 foam_wt_open_nm default faces=846 structured=833 planned-floor=3 failed-floor=10 raw=0 empty=0 winding=0
-teleporter_wt_open cad faces=660 structured=632 planned-floor=14 failed-floor=14 raw=0 empty=0 winding=0
-teleporter_wt_open default faces=660 structured=628 planned-floor=14 failed-floor=18 raw=0 empty=0 winding=0
+teleporter_wt_open cad faces=660 structured=637 planned-floor=13 failed-floor=10 raw=0 empty=0 winding=0
+teleporter_wt_open default faces=660 structured=630 planned-floor=13 failed-floor=17 raw=0 empty=0 winding=0
 foam_plane_fillet_bspline cad faces=11 structured=11 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
 foam_plane_fillet_bspline default faces=11 structured=11 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
 foam_fillet_bspline cad faces=11 structured=11 planned-floor=0 failed-floor=0 raw=0 empty=0 winding=0
