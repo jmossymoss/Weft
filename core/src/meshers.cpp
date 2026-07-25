@@ -14277,6 +14277,195 @@ void pinOrthogonalTrimGrids(const Model& model,
     }
 }
 
+// Column cells for a trimmed chart (artist model, 2026-07-25):
+//
+//   "The cylinder spans go up till they find that arc, then stop at it and it
+//    becomes the vertex. And the inner boolean shape defines the vertex
+//    number."
+//
+// A span runs along the chart until it meets the trim boundary, STOPS on a
+// vertex the boundary already owns, and the region between two adjacent spans
+// is closed by the boundary polyline itself — one big n-gon where a cut
+// intrudes, quads everywhere else. Nothing global is inserted: a cut never
+// buys a row, and the neighbouring face's sampling drives the cut's shape.
+//
+// The row-slab clipper this replaces could only ever put a CHORD across a
+// cell, because it evaluated one boundary segment at a row's floor and
+// ceiling. That is why a capsule slot's rounded end came out chamfered and the
+// sliver between chord and arc was left unfilled.
+//
+// `loop` is the trim boundary sampled in wire order (closed, not repeating the
+// first point). `U` are the column stations. `snapU` is how close a crossing
+// must be to an existing sample to terminate on it instead of splitting the
+// edge. Returns false when a strip is not vertically simple, leaving the
+// caller on its previous path.
+bool columnTrimCells(const std::vector<gp_Pnt2d>& loop,
+                     const std::vector<double>& U, double snapU,
+                     std::vector<std::vector<gp_Pnt2d>>& cells) {
+    const int nLine = int(U.size());
+    const size_t n = loop.size();
+    if (n < 3 || nLine < 2) return false;
+
+    // Which column line a u sits on, or -1 for "between lines".
+    auto lineAt = [&](double u) {
+        for (int i = 0; i < nLine; ++i) {
+            if (std::abs(u - U[i]) <= snapU) return i;
+        }
+        return -1;
+    };
+
+    // ---- 1. Walk the loop, splitting it at column crossings. A crossing
+    // within snapU of an existing sample is NOT inserted: that sample becomes
+    // the span's terminus, so no new point ever lands on a shared edge.
+    struct Node {
+        gp_Pnt2d p;
+        int line;  // column index this node sits on, else -1
+    };
+    std::vector<Node> path;
+    path.reserve(n * 2);
+    for (size_t k = 0; k < n; ++k) {
+        const gp_Pnt2d a = loop[k];
+        const gp_Pnt2d b = loop[(k + 1) % n];
+        path.push_back({a, lineAt(a.X())});
+        const double du = b.X() - a.X();
+        if (std::abs(du) < 1e-15) continue;
+        std::vector<std::pair<double, int>> xs;
+        for (int i = 0; i < nLine; ++i) {
+            const double t = (U[i] - a.X()) / du;
+            if (t <= 1e-12 || t >= 1.0 - 1e-12) continue;
+            const gp_Pnt2d hit(a.X() + du * t, a.Y() + (b.Y() - a.Y()) * t);
+            if (hit.Distance(a) <= snapU || hit.Distance(b) <= snapU) continue;
+            xs.push_back({t, i});
+        }
+        std::sort(xs.begin(), xs.end());
+        for (const auto& [t, li] : xs) {
+            path.push_back({gp_Pnt2d(a.X() + du * t,
+                                     a.Y() + (b.Y() - a.Y()) * t),
+                            li});
+        }
+    }
+    const int pn = int(path.size());
+    if (pn < 3) return false;
+
+    // ---- 2. Cut the path into chains at nodes that sit on a column line.
+    // Every chain then lies inside exactly one strip.
+    std::vector<int> cut;
+    for (int i = 0; i < pn; ++i) {
+        if (path[i].line >= 0) cut.push_back(i);
+    }
+    if (cut.size() < 2) return false;
+
+    struct Chain {
+        std::vector<gp_Pnt2d> pts;  // start and end sit on column lines
+        int lineA = -1, lineB = -1;  // their column indices
+        int strip = -1;              // strip the chain lives in
+        bool used = false;
+    };
+    std::vector<Chain> chains;
+    for (size_t c = 0; c < cut.size(); ++c) {
+        const int s = cut[c];
+        const int e = cut[(c + 1) % cut.size()];
+        Chain ch;
+        ch.lineA = path[s].line;
+        ch.lineB = path[e].line;
+        for (int i = s;; i = (i + 1) % pn) {
+            ch.pts.push_back(path[i].p);
+            if (i == e) break;
+            if (int(ch.pts.size()) > pn) return false;
+        }
+        if (ch.pts.size() < 2) continue;
+        // Interior u decides the strip; a chain running along a line is skipped.
+        double um = 0.0;
+        for (const gp_Pnt2d& p : ch.pts) um += p.X();
+        um /= double(ch.pts.size());
+        int strip = -1;
+        for (int i = 0; i + 1 < nLine; ++i) {
+            if (um >= U[i] - snapU && um <= U[i + 1] + snapU) {
+                strip = i;
+                break;
+            }
+        }
+        if (strip < 0) continue;
+        ch.strip = strip;
+        chains.push_back(std::move(ch));
+    }
+    if (chains.empty()) return false;
+
+    // ---- 3. Close each strip. On a strip's left and right line the chain
+    // ends alternate "material starts" / "material ends" going up in v, so
+    // consecutive pairs are the vertical segments that close the cells.
+    struct EndRef {
+        int chain;
+        bool atEnd;  // false = chain start, true = chain end
+        double v;
+    };
+    for (int s = 0; s + 1 < nLine; ++s) {
+        std::array<std::vector<EndRef>, 2> onLine;  // 0 = left, 1 = right
+        for (int ci = 0; ci < int(chains.size()); ++ci) {
+            const Chain& ch = chains[ci];
+            if (ch.strip != s) continue;
+            auto push = [&](int line, bool atEnd, double v) {
+                if (line == s) onLine[0].push_back({ci, atEnd, v});
+                else if (line == s + 1) onLine[1].push_back({ci, atEnd, v});
+            };
+            push(ch.lineA, false, ch.pts.front().Y());
+            push(ch.lineB, true, ch.pts.back().Y());
+        }
+        for (auto& refs : onLine) {
+            std::sort(refs.begin(), refs.end(),
+                      [](const EndRef& a, const EndRef& b) {
+                          return a.v < b.v;
+                      });
+            if (refs.size() % 2 != 0) return false;  // not vertically simple
+        }
+        // partner[chain][end] -> (chain, end)
+        std::map<std::pair<int, bool>, std::pair<int, bool>> partner;
+        for (auto& refs : onLine) {
+            for (size_t k = 0; k + 1 < refs.size(); k += 2) {
+                const auto a = std::make_pair(refs[k].chain, refs[k].atEnd);
+                const auto b =
+                    std::make_pair(refs[k + 1].chain, refs[k + 1].atEnd);
+                partner[a] = b;
+                partner[b] = a;
+            }
+        }
+
+        // ---- 4. Walk chain -> partner -> chain until the cycle closes.
+        for (int ci = 0; ci < int(chains.size()); ++ci) {
+            if (chains[ci].strip != s || chains[ci].used) continue;
+            std::vector<gp_Pnt2d> cell;
+            int cur = ci;
+            bool forward = true;
+            bool closed = false;
+            for (int guard = 0; guard <= int(chains.size()) * 2; ++guard) {
+                Chain& ch = chains[cur];
+                ch.used = true;
+                if (forward) {
+                    cell.insert(cell.end(), ch.pts.begin(), ch.pts.end());
+                } else {
+                    cell.insert(cell.end(), ch.pts.rbegin(), ch.pts.rend());
+                }
+                const auto key = std::make_pair(cur, forward);
+                auto it = partner.find(key);
+                if (it == partner.end()) break;
+                const int nextChain = it->second.first;
+                // Arriving at the partner's END means traversing it backwards.
+                const bool nextForward = !it->second.second;
+                if (nextChain == ci && nextForward) {
+                    closed = true;
+                    break;
+                }
+                if (chains[nextChain].used && nextChain != ci) break;
+                cur = nextChain;
+                forward = nextForward;
+            }
+            if (!closed || cell.size() < 3) return false;
+            cells.push_back(std::move(cell));
+        }
+    }
+    return !cells.empty();
+}
+
 bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
                             const BRepAdaptor_Surface& surf,
                             const Model& model, const FacePlan& plan,
@@ -14458,6 +14647,66 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
         return id;
     };
     int emitted = 0, tris = 0, quads = 0, ngons = 0;
+
+    // Column cells first on a revolution wall: spans that stop on the
+    // boundary's own vertices, with the region between two spans closed by the
+    // boundary polyline. Falls through to the row clipper below when the strip
+    // arrangement is not vertically simple.
+    if (dropEndpointU) {
+        std::vector<std::vector<gp_Pnt2d>> colCells;
+        const double snapCol = 0.25 * std::abs(u1 - u0) / std::max(1, nu);
+        if (columnTrimCells(boundary, U, snapCol, colCells)) {
+            int good = 0;
+            for (const std::vector<gp_Pnt2d>& raw : colCells) {
+                std::vector<gp_Pnt2d> clean;
+                std::set<std::pair<long long, long long>> seen;
+                for (const gp_Pnt2d& p : raw) {
+                    if (!clean.empty() && p.Distance(clean.back()) <= 1e-10) {
+                        continue;
+                    }
+                    if (seen.insert(uvKey(p)).second) clean.push_back(p);
+                }
+                while (clean.size() > 2 &&
+                       clean.front().Distance(clean.back()) < 1e-10) {
+                    clean.pop_back();
+                }
+                if (clean.size() < 3) continue;
+                double area = 0.0, cu2 = 0.0, cv2 = 0.0;
+                for (size_t k = 0; k < clean.size(); ++k) {
+                    const gp_Pnt2d& a = clean[k];
+                    const gp_Pnt2d& b = clean[(k + 1) % clean.size()];
+                    area += a.X() * b.Y() - b.X() * a.Y();
+                    cu2 += a.X();
+                    cv2 += a.Y();
+                }
+                if (std::abs(area) < 1e-14) continue;
+                BRepClass_FaceClassifier cls(
+                    const_cast<TopoDS_Face&>(face),
+                    gp_Pnt2d(cu2 / clean.size(), cv2 / clean.size()), tolF);
+                if (cls.State() == TopAbs_OUT) continue;
+                std::vector<uint32_t> ids;
+                ids.reserve(clean.size());
+                for (const gp_Pnt2d& p : clean) ids.push_back(vertex(p));
+                if ((area > 0.0) == faceReversed) {
+                    std::reverse(ids.begin(), ids.end());
+                }
+                out.addPolygon(std::move(ids), faceId, false);
+                if (clean.size() == 3) ++tris;
+                else if (clean.size() == 4) ++quads;
+                else ++ngons;
+                ++good;
+            }
+            if (good > 0) {
+                dbg("orthogonal grid face %d: COLUMN cells %d (%d tri, %d "
+                    "quad, %d ngon) from %d spans",
+                    faceId, good, tris, quads, ngons, nu);
+                return true;
+            }
+        }
+        dbg("orthogonal grid face %d: column cells declined, row clipper",
+            faceId);
+    }
+
     for (int j = 0; j + 1 < int(V.size()); ++j) {
         if (V[j + 1] - V[j] <= vt) continue;
         const double vb = V[j], vt2 = V[j+1], vm = 0.5*(vb+vt2);
