@@ -54,7 +54,6 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
-#include <fstream>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -69,22 +68,6 @@ using mesher_detail::dbg;
 using mesher_detail::stableDeflectionCount;
 
 namespace {
-
-// #region agent log
-void agentDebugLog(const char* hypothesisId, const char* location,
-                   const char* message, const std::string& data) {
-    static std::mutex mutex;
-    const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-                               std::chrono::system_clock::now()
-                                   .time_since_epoch())
-                               .count();
-    std::lock_guard<std::mutex> lock(mutex);
-    std::ofstream out("/opt/cursor/logs/debug.log", std::ios::app);
-    out << "{\"hypothesisId\":\"" << hypothesisId << "\",\"location\":\""
-        << location << "\",\"message\":\"" << message << "\",\"data\":"
-        << data << ",\"timestamp\":" << timestamp << "}\n";
-}
-// #endregion
 
 class MeshBuilder {
 public:
@@ -14255,21 +14238,6 @@ void pinOrthogonalTrimGrids(const Model& model,
         uniqueStations(U, std::max(ut, 1e-4*std::abs(u1-u0)));
         uniqueStations(V, std::max(vt, 1e-6*std::abs(v1-v0)));
 
-        // #region agent log
-        {
-            std::ostringstream data;
-            data << "{\"faceId\":" << fid << ",\"kind\":"
-                 << int(plan.kind) << ",\"nu\":" << nu << ",\"nv\":"
-                 << nv << ",\"uStations\":" << U.size()
-                 << ",\"vStations\":" << V.size() << ",\"uEdges\":"
-                 << plan.uEdges.size() << ",\"vEdges\":"
-                 << plan.vEdges.size() << ",\"orthogonalEdges\":"
-                 << plan.orthogonalEdges.size() << "}";
-            agentDebugLog("A,B", "meshers.cpp:pinOrthogonalTrimGrids",
-                          "trim-grid station setup", data.str());
-        }
-        // #endregion
-
         auto pinEdge = [&](int eid, bool alongU) {
             const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
             double f, l;
@@ -14280,7 +14248,6 @@ void pinOrthogonalTrimGrids(const Model& model,
                 return alongU ? p.X() : p.Y();
             };
             std::vector<double> fr{0.0, 1.0};
-            const size_t inheritedPinCount = pins[eid].size();
             if (!pins[eid].empty()) {
                 fr.insert(fr.end(), pins[eid].begin(), pins[eid].end());
             }
@@ -14326,14 +14293,11 @@ void pinOrthogonalTrimGrids(const Model& model,
             // Station crossings are mandatory — they are the whole reason this
             // pin exists, so the clip never lands on an unsampled point.
             dedupe(fr, 1e-10);
-            const size_t stationPinCount = fr.size();
             // The edge's own samples come SECOND and only where they do not
             // crowd a crossing. A near-zero border segment tears the weld on
             // whichever neighbour reads the same edge, and dropping a crossing
             // instead breaks the clip (measured both ways on foam and MP9).
-            const bool disableNaturalPins =
-                std::getenv("WEFT_AGENT_NO_NATURAL_PINS") != nullptr;
-            if (naturalN > 1 && !disableNaturalPins) {
+            if (naturalN > 1) {
                 const double keepAway = 0.35 / double(naturalN);
                 std::vector<double> add;
                 for (int k = 1; k < naturalN; ++k) {
@@ -14350,28 +14314,6 @@ void pinOrthogonalTrimGrids(const Model& model,
                 fr.insert(fr.end(), add.begin(), add.end());
                 dedupe(fr, 1e-10);
             }
-            // #region agent log
-            {
-                double minGap = 1.0;
-                for (size_t i = 1; i < fr.size(); ++i) {
-                    minGap = std::min(minGap, fr[i] - fr[i - 1]);
-                }
-                std::ostringstream data;
-                data << "{\"faceId\":" << fid << ",\"edgeId\":" << eid
-                     << ",\"axisU\":" << int(alongU) << ",\"curved\":"
-                     << int(curvedEdge) << ",\"naturalN\":" << naturalN
-                     << ",\"inheritedPins\":" << inheritedPinCount
-                     << ",\"stationPins\":" << stationPinCount
-                     << ",\"finalPins\":" << fr.size()
-                     << ",\"naturalAdded\":"
-                     << (fr.size() - stationPinCount)
-                     << ",\"naturalPinsDisabled\":"
-                     << int(disableNaturalPins) << ",\"minGap\":" << minGap
-                     << "}";
-                agentDebugLog("A,B", "meshers.cpp:pinOrthogonalTrimGrids",
-                              "trim-edge pin result", data.str());
-            }
-            // #endregion
             pins[eid] = std::move(fr);
         };
         // Column cells close on constant-u rulings. Every trim edge that
@@ -14723,8 +14665,6 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
     std::vector<gp_Pnt2d> boundary;
     std::map<std::pair<long long,long long>, gp_Pnt> exactBoundary;
     std::vector<std::pair<gp_Pnt2d,gp_Pnt>> exactSamples;
-    int exactKeyCollisions = 0;
-    double maxExactKeyCollisionDistance = 0.0;
     for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
         for (BRepTools_WireExplorer we(TopoDS::Wire(wx.Current()), face);
              we.More(); we.Next()) {
@@ -14759,14 +14699,6 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
                 uv.SetY(snap(uv.Y(),V,stationTolV));
                 const gp_Pnt ep = c3->Value(f3 + (l3-f3)*t);
                 auto key = uvKey(uv);
-                auto prior = exactBoundary.find(key);
-                if (prior != exactBoundary.end()) {
-                    ++exactKeyCollisions;
-                    const double collisionDistance =
-                        prior->second.Distance(ep);
-                    maxExactKeyCollisionDistance = std::max(
-                        maxExactKeyCollisionDistance, collisionDistance);
-                }
                 boundary.push_back(uv);
                 exactBoundary[key] = ep;
                 exactSamples.push_back({uv, ep});
@@ -14775,20 +14707,6 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
         break;
     }
     if (boundary.size() < 3) return false;
-    // #region agent log
-    {
-        std::ostringstream data;
-        data << "{\"faceId\":" << faceId << ",\"nu\":" << nu
-             << ",\"nv\":" << nv << ",\"uStations\":" << U.size()
-             << ",\"vStations\":" << V.size() << ",\"boundarySamples\":"
-             << boundary.size() << ",\"exactSamples\":"
-             << exactSamples.size() << ",\"exactKeyCollisions\":"
-             << exactKeyCollisions << ",\"maxCollisionDistance\":"
-             << maxExactKeyCollisionDistance << "}";
-        agentDebugLog("A,B,D", "meshers.cpp:meshOrthogonalTrimGrid",
-                      "trim-grid sampled boundary", data.str());
-    }
-    // #endregion
     auto clipHalfPlane = [](const std::vector<gp_Pnt2d>& in, bool axisU,
                             double bound, bool keepGreater) {
         std::vector<gp_Pnt2d> out;
@@ -14986,6 +14904,7 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
             faceId);
     }
 
+    constexpr size_t kMinExactRowSidePoints = 5;
     for (int j = 0; j + 1 < int(V.size()); ++j) {
         if (V[j + 1] - V[j] <= vt) continue;
         const double vb = V[j], vt2 = V[j+1], vm = 0.5*(vb+vt2);
@@ -15009,16 +14928,84 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
                 ? std::clamp((v-a.Y())/(b.Y()-a.Y()),0.0,1.0) : 0.0;
             return gp_Pnt2d(a.X()+(b.X()-a.X())*t,v);
         };
+        auto sideAcrossRow = [&](size_t k) {
+            const gp_Pnt2d& a = boundary[k];
+            const gp_Pnt2d& b = boundary[(k + 1) % boundary.size()];
+            const double tm = (vm - a.Y()) / (b.Y() - a.Y());
+            const gp_Pnt2d mid(a.X() + (b.X() - a.X()) * tm, vm);
+            auto trace = [&](size_t index, int step) {
+                std::vector<gp_Pnt2d> path;
+                gp_Pnt2d p = mid;
+                for (size_t n = 0; n <= boundary.size(); ++n) {
+                    const gp_Pnt2d q = boundary[index];
+                    if (q.Y() < vb || q.Y() > vt2) {
+                        const double row = q.Y() < vb ? vb : vt2;
+                        const double t = (row - p.Y()) / (q.Y() - p.Y());
+                        path.emplace_back(
+                            p.X() + (q.X() - p.X()) * t, row);
+                        break;
+                    }
+                    path.push_back(q);
+                    if (std::abs(q.Y() - vb) <= stationTolV ||
+                        std::abs(q.Y() - vt2) <= stationTolV) {
+                        break;
+                    }
+                    p = q;
+                    index = step > 0
+                                ? (index + 1) % boundary.size()
+                                : (index + boundary.size() - 1) %
+                                      boundary.size();
+                }
+                return path;
+            };
+            std::vector<gp_Pnt2d> backward = trace(k, -1);
+            std::vector<gp_Pnt2d> forward =
+                trace((k + 1) % boundary.size(), 1);
+            std::reverse(backward.begin(), backward.end());
+            backward.insert(backward.end(), forward.begin(), forward.end());
+            std::vector<gp_Pnt2d> clean;
+            for (const gp_Pnt2d& p : backward) {
+                if (clean.empty() || p.Distance(clean.back()) > 1e-10)
+                    clean.push_back(p);
+            }
+            if (clean.size() >= 2 &&
+                clean.front().Y() > clean.back().Y()) {
+                std::reverse(clean.begin(), clean.end());
+            }
+            if (clean.size() < 2 ||
+                std::abs(clean.front().Y() - vb) > stationTolV ||
+                std::abs(clean.back().Y() - vt2) > stationTolV) {
+                return std::vector<gp_Pnt2d>{
+                    onSegAtV(k, vb), onSegAtV(k, vt2)};
+            }
+            return clean;
+        };
         std::vector<std::vector<gp_Pnt2d>> slabs;
         for (size_t k = 0; k + 1 < cross.size(); ++k) {
             if (cross[k+1].u-cross[k].u <= ut) continue;
             BRepClass_FaceClassifier cc(const_cast<TopoDS_Face&>(face),
                 gp_Pnt2d(0.5*(cross[k].u+cross[k+1].u),vm),tolF);
             if (cc.State() == TopAbs_OUT) continue;
-            slabs.push_back({onSegAtV(cross[k].seg,vb),
-                             onSegAtV(cross[k+1].seg,vb),
-                             onSegAtV(cross[k+1].seg,vt2),
-                             onSegAtV(cross[k].seg,vt2)});
+            std::vector<gp_Pnt2d> left =
+                sideAcrossRow(cross[k].seg);
+            std::vector<gp_Pnt2d> right =
+                sideAcrossRow(cross[k + 1].seg);
+            // A side crossing four or more sampled trim segments cannot be
+            // represented by the old four-corner slab: flattening it onto the
+            // row limits leaves the curved boundary run uncovered. Preserve
+            // its exact intermediate samples. One-bend sides stay on the
+            // four-corner path because clipping that concavity can produce
+            // two overlapping components in an individual grid column.
+            if (left.size() >= kMinExactRowSidePoints ||
+                right.size() >= kMinExactRowSidePoints) {
+                left.insert(left.end(), right.rbegin(), right.rend());
+                slabs.push_back(std::move(left));
+            } else {
+                slabs.push_back({onSegAtV(cross[k].seg,vb),
+                                 onSegAtV(cross[k+1].seg,vb),
+                                 onSegAtV(cross[k+1].seg,vt2),
+                                 onSegAtV(cross[k].seg,vt2)});
+            }
         }
         for (int i = 0; i + 1 < int(U.size()); ++i) {
             if (U[i + 1] - U[i] <= ut) continue;
@@ -15121,12 +15108,6 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
     // notch-collapse folds from projecting onto every face edge.
     if (plan.orthogonalFreeformComb) {
         PolyMesh& pm = out.mesh();
-        int exactSnapCount = 0, sharedSnapCount = 0;
-        double maxExactSnapDistance = 0.0, maxSharedSnapDistance = 0.0;
-        const bool disableExactSnap =
-            std::getenv("WEFT_AGENT_NO_EXACT_SNAP") != nullptr;
-        const bool disableSharedSnap =
-            std::getenv("WEFT_AGENT_NO_SHARED_SNAP") != nullptr;
         std::map<std::pair<uint32_t, uint32_t>, int> useCount;
         for (const auto& poly : pm.polygons) {
             for (size_t k = 0; k < poly.size(); ++k) {
@@ -15182,9 +15163,8 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
         for (uint32_t id : boundaryVerts) {
             gp_Pnt p(pm.vertices[id][0], pm.vertices[id][1],
                      pm.vertices[id][2]);
-            const gp_Pnt before = p;
             bool moved = false;
-            if (!disableExactSnap && !exactSamples.empty()) {
+            if (!exactSamples.empty()) {
                 double best = 0.25;
                 const gp_Pnt* nearest = nullptr;
                 for (const auto& [uv, ep] : exactSamples) {
@@ -15198,44 +15178,21 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
                 if (nearest) {
                     p = *nearest;
                     moved = true;
-                    ++exactSnapCount;
-                    maxExactSnapDistance =
-                        std::max(maxExactSnapDistance, before.Distance(p));
                 }
             }
-            if (!moved && !disableSharedSnap && !sharedSegs.empty()) {
+            if (!moved && !sharedSegs.empty()) {
                 double best = 1.0;
                 gp_Pnt q = p;
                 closestOnShared(p, q, best);
                 if (best < 1.0 && best > 1e-9) {
                     p = q;
                     moved = true;
-                    ++sharedSnapCount;
-                    maxSharedSnapDistance =
-                        std::max(maxSharedSnapDistance, before.Distance(p));
                 }
             }
             if (moved) {
                 pm.vertices[id] = {p.X(), p.Y(), p.Z()};
             }
         }
-        // #region agent log
-        {
-            std::ostringstream data;
-            data << "{\"faceId\":" << faceId << ",\"boundaryVertices\":"
-                 << boundaryVerts.size() << ",\"exactSamples\":"
-                 << exactSamples.size() << ",\"sharedSegments\":"
-                 << sharedSegs.size() << ",\"exactSnaps\":"
-                 << exactSnapCount << ",\"sharedSnaps\":" << sharedSnapCount
-                 << ",\"maxExactSnapDistance\":" << maxExactSnapDistance
-                 << ",\"maxSharedSnapDistance\":" << maxSharedSnapDistance
-                 << ",\"exactSnapDisabled\":" << int(disableExactSnap)
-                 << ",\"sharedSnapDisabled\":" << int(disableSharedSnap)
-                 << "}";
-            agentDebugLog("C,D", "meshers.cpp:meshOrthogonalTrimGrid",
-                          "freeform border snap result", data.str());
-        }
-        // #endregion
     }
     dbg("orthogonal grid face %d: %zux%zu stations, %d cells (%d tri, "
         "%d quad, %d ngon)", faceId, U.size(), V.size(), emitted, tris,
@@ -18874,14 +18831,6 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
                                     topologyOrder.end());
                                 if (!topologyOrder.empty() &&
                                     topologySet == paramSet) {
-                                    if (topologyOrder != ins &&
-                                        std::getenv("WEFT_STITCH_DEBUG")) {
-                                        dbg("stitch: eid %d face %d seg "
-                                            "v%u-v%u topology-orders %zu "
-                                            "sample(s)",
-                                            eid, fids[s2], a, b,
-                                            topologyOrder.size());
-                                    }
                                     ins = std::move(topologyOrder);
                                 }
                             }
@@ -23022,10 +22971,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 }
                 return {tested, inverted};
                 };
-                std::vector<size_t> invertedWhich;
-                auto [tested, inverted] =
-                    invertedCells(parts[fid], &invertedWhich);
-                const int centroidInverted = inverted;
+                auto [tested, inverted] = invertedCells(parts[fid]);
                 // UV-clipped orthogonal cells can straddle enough B-spline
                 // curvature for one centroid normal to disagree even though
                 // every corner normal agrees with the polygon. Recheck only a
@@ -23038,49 +22984,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     inverted <= sparseFoldLimit) {
                     const auto validated = foldedPolys(model, parts[fid]);
                     inverted = 0;
-                    invertedWhich.clear();
                     for (size_t pi = 0; pi < validated.size(); ++pi) {
                         if (!validated[pi]) continue;
                         ++inverted;
-                        invertedWhich.push_back(pi);
                     }
-                    // #region agent log
-                    {
-                        std::ostringstream data;
-                        data << "{\"faceId\":" << fid
-                             << ",\"centroidInverted\":"
-                             << centroidInverted
-                             << ",\"sparseFoldLimit\":" << sparseFoldLimit
-                             << ",\"vertexVoteInverted\":" << inverted
-                             << "}";
-                        agentDebugLog("G", "meshers.cpp:invertedCells",
-                                      "orthogonal fold predicate comparison",
-                                      data.str());
-                    }
-                    // #endregion
                 }
-                // #region agent log
-                {
-                    std::ostringstream data;
-                    data << "{\"faceId\":" << fid << ",\"kind\":"
-                         << int(plan.kind) << ",\"orthogonalTrimGrid\":"
-                         << int(plan.orthogonalTrimGrid) << ",\"polygons\":"
-                         << parts[fid].polygons.size() << ",\"tested\":"
-                         << tested << ",\"inverted\":" << inverted
-                         << ",\"featureClass\":"
-                         << int(analysis.faces[fid - 1].featureClass)
-                         << ",\"chartKind\":"
-                         << int(analysis.faces[fid - 1].chartKind)
-                         << ",\"indices\":[";
-                    for (size_t i = 0; i < invertedWhich.size(); ++i) {
-                        if (i) data << ",";
-                        data << invertedWhich[i];
-                    }
-                    data << "]}";
-                    agentDebugLog("C,D,E", "meshers.cpp:invertedCells",
-                                  "structured face fold census", data.str());
-                }
-                // #endregion
                 if (tested >= 8 && inverted * 4 > tested) {
                     dbg("mesh face %d: fold check failed (%d/%d inverted, "
                         "%s)",
@@ -23319,26 +23227,6 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             liveFolds <= foldCap &&
                             liveFolds * 4 <= sparseN &&
                             (sparseDrum || sparseFilletFull);
-                        // #region agent log
-                        {
-                            std::ostringstream data;
-                            data << "{\"faceId\":" << fid
-                                 << ",\"liveFolds\":" << liveFolds
-                                 << ",\"polygons\":" << sparseN
-                                 << ",\"foldCap\":" << foldCap
-                                 << ",\"sparseDrum\":" << int(sparseDrum)
-                                 << ",\"sparseFilletFull\":"
-                                 << int(sparseFilletFull)
-                                 << ",\"sparseProtect\":"
-                                 << int(sparseProtect) << ",\"featureClass\":"
-                                 << int(sparseInfo.featureClass)
-                                 << ",\"chartKind\":"
-                                 << int(sparseInfo.chartKind) << "}";
-                            agentDebugLog("E", "meshers.cpp:foldSelfHeal",
-                                          "sparse-fold policy decision",
-                                          data.str());
-                        }
-                        // #endregion
                         if (sparseProtect) {
                             dbg("mesh face %d: sparse fold keep %s "
                                 "(%d/%d) — refuse contract floor",

@@ -2319,11 +2319,9 @@ void testMp9CoonsPlaneSeamCanonicalize() {
                 "folds=%zu nm=%zu\n",
                 unexplained, vr.openEdges, vr.openEdgesOnInputBoundary,
                 foldCount, vr.nonManifoldEdges);
-    // Pre-fix floor on this extract was 131; freeformComb stitch
-    // deadlock repair brought it under 75. Widened comb on-curve band
-    // + shared-edge border snap brings residual cracks under 55 with
-    // no folds/non-manifold (foam/teleporter stay watertight).
-    CHECK(unexplained < 55);
+    // Parent c86fe5e has 24 unexplained opens with face 5 on the contract
+    // floor. Retaining its structured grid must not regress that seam budget.
+    CHECK(unexplained <= 24);
     CHECK(foldCount == 0);
     CHECK(vr.nonManifoldEdges == 0);
     CHECK(vr.windingConflicts == 0);
