@@ -2062,6 +2062,76 @@ void testMp9FilletCapsuleNotRevolution() {
     CHECK_EQ(vr.nonManifoldEdges, 0);
 }
 
+// MP9 muzzle reducer: two Drum×IsoBand cylinder charts carry a repeated
+// capsule-cut comb in one outer wire. Each requested circumferential span
+// must remain one strip-local n-gon whose border follows the sampled capsule
+// arcs. A broad "near column" test used to label several arc samples as one
+// terminus, yielding 17 overlapping cells for 22 spans, 2 cracks, 4
+// non-manifold edges, 4 degenerate polygons, and 13 winding conflicts.
+void testMp9MuzzleColumnCells() {
+    std::printf("-- MP9 muzzle column cells --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/muzzle_column_cells.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+
+    int checked = 0;
+    for (const auto& f : analysis.faces) {
+        if (f.type != weft::SurfaceType::Cylinder ||
+            f.featureClass != weft::FeatureClass::Drum ||
+            f.chartKind != weft::ChartKind::IsoBand ||
+            f.edgeIds.size() < 20) {
+            continue;
+        }
+        auto kit = report.faceMesher.find(f.id);
+        auto bit = report.faceBuild.find(f.id);
+        auto cit = report.faceCounts.find(f.id);
+        if (kit == report.faceMesher.end() ||
+            kit->second != weft::MesherKind::RevolutionGrid ||
+            bit == report.faceBuild.end() || bit->second != 0 ||
+            cit == report.faceCounts.end()) {
+            continue;
+        }
+
+        int polys = 0, tris = 0, ngons = 0;
+        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+            if (p >= mesh.polygonFaceId.size() ||
+                mesh.polygonFaceId[p] != f.id) {
+                continue;
+            }
+            ++polys;
+            if (mesh.polygons[p].size() == 3) ++tris;
+            if (mesh.polygons[p].size() > 4) ++ngons;
+        }
+        const int spans = cit->second[0];
+        CHECK_EQ(polys, spans);
+        CHECK_EQ(tris, 0);
+        CHECK_EQ(ngons, polys);
+        std::printf("  face#%d: %d spans -> %d arc-following n-gons\n",
+                    f.id, spans, ngons);
+        ++checked;
+    }
+    CHECK(checked >= 2);
+
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    const size_t unexplained =
+        vr.openEdges > vr.openEdgesOnInputBoundary
+            ? vr.openEdges - vr.openEdgesOnInputBoundary
+            : 0;
+    CHECK_EQ(unexplained, 0);
+    CHECK_EQ(vr.nonManifoldEdges, 0);
+    CHECK_EQ(vr.windingConflicts, 0);
+    CHECK_EQ(vr.degeneratePolygons, 0);
+}
+
 // MP9 grip / optic freeform panels must keep Coons quad flow under CAD
 // rather than collapsing shallow bsplines to a single minimal n-gon.
 void testMp9GripFreeformCoons() {
@@ -4559,6 +4629,7 @@ int main() {
     RUN(testFeatureClassAnalyze);
     RUN(testCylindricalStackContinuity);
     RUN(testMp9FilletCapsuleNotRevolution);
+    RUN(testMp9MuzzleColumnCells);
     RUN(testMp9GripFreeformCoons);
     RUN(testTanSlitNoRawDemotion);
     RUN(testBrokenSourceDiagnostic);

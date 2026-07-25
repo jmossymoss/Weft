@@ -14348,45 +14348,65 @@ bool columnTrimCells(const std::vector<gp_Pnt2d>& loop,
     const size_t n = loop.size();
     if (n < 3 || nLine < 2) { dbg("colcells: bail tiny"); return false; }
 
-    // Which column line a u sits on, or -1 for "between lines".
-    auto lineAt = [&](double u) {
+    // Exact station samples already present in the boundary remain line
+    // vertices. Nearby samples are selected crossing-by-crossing below: a
+    // tolerance band is not itself a line.
+    const double exactU = std::max(1e-12, 1e-9 * snapU);
+    auto exactLineAt = [&](double u) {
         for (int i = 0; i < nLine; ++i) {
-            if (std::abs(u - U[i]) <= snapU) return i;
+            if (std::abs(u - U[i]) <= exactU) return i;
         }
         return -1;
     };
 
     // ---- 1. Walk the loop, splitting it at column crossings. A crossing
-    // within snapU of an existing sample is NOT inserted: that sample becomes
-    // the span's terminus, so no new point ever lands on a shared edge.
+    // within snapU of an existing sample is NOT inserted: the nearer endpoint
+    // becomes the span's sole terminus. Marking every sample in the snap band
+    // as on-line creates several false termini around one crossing.
     struct Node {
         gp_Pnt2d p;
         int line;  // column index this node sits on, else -1
     };
+    std::vector<int> nodeLine(n, -1);
+    for (size_t k = 0; k < n; ++k) {
+        nodeLine[k] = exactLineAt(loop[k].X());
+    }
+    std::vector<std::vector<std::pair<double, int>>> edgeSplits(n);
+    for (size_t k = 0; k < n; ++k) {
+        const gp_Pnt2d a = loop[k];
+        const gp_Pnt2d b = loop[(k + 1) % n];
+        const double du = b.X() - a.X();
+        if (std::abs(du) < 1e-15) continue;
+        for (int i = 0; i < nLine; ++i) {
+            const double t = (U[i] - a.X()) / du;
+            if (t <= 1e-12 || t >= 1.0 - 1e-12) continue;
+            const double deltaA = std::abs(U[i] - a.X());
+            const double deltaB = std::abs(U[i] - b.X());
+            const bool skipped = std::min(deltaA, deltaB) <= snapU;
+            if (skipped) {
+                const size_t endpoint =
+                    deltaA <= deltaB ? k : (k + 1) % n;
+                if (nodeLine[endpoint] < 0 ||
+                    std::abs(loop[endpoint].X() - U[i]) <
+                        std::abs(loop[endpoint].X() -
+                                 U[nodeLine[endpoint]])) {
+                    nodeLine[endpoint] = i;
+                }
+            } else {
+                edgeSplits[k].push_back({t, i});
+            }
+        }
+        std::sort(edgeSplits[k].begin(), edgeSplits[k].end());
+    }
+
     std::vector<Node> path;
     path.reserve(n * 2);
     for (size_t k = 0; k < n; ++k) {
         const gp_Pnt2d a = loop[k];
         const gp_Pnt2d b = loop[(k + 1) % n];
-        path.push_back({a, lineAt(a.X())});
+        path.push_back({a, nodeLine[k]});
         const double du = b.X() - a.X();
-        if (std::abs(du) < 1e-15) continue;
-        std::vector<std::pair<double, int>> xs;
-        for (int i = 0; i < nLine; ++i) {
-            const double t = (U[i] - a.X()) / du;
-            if (t <= 1e-12 || t >= 1.0 - 1e-12) continue;
-            // Compare in u ONLY. A UV distance mixes radians with millimetres
-            // on a cylinder, so a crossing far along the span read as "on top
-            // of" the sample and never got inserted — chains then spanned
-            // several strips and the cells came out crossing each other.
-            if (std::abs(U[i] - a.X()) <= snapU ||
-                std::abs(U[i] - b.X()) <= snapU) {
-                continue;
-            }
-            xs.push_back({t, i});
-        }
-        std::sort(xs.begin(), xs.end());
-        for (const auto& [t, li] : xs) {
+        for (const auto& [t, li] : edgeSplits[k]) {
             path.push_back({gp_Pnt2d(a.X() + du * t,
                                      a.Y() + (b.Y() - a.Y()) * t),
                             li});
@@ -14428,7 +14448,7 @@ bool columnTrimCells(const std::vector<gp_Pnt2d>& loop,
         um /= double(ch.pts.size());
         int strip = -1;
         for (int i = 0; i + 1 < nLine; ++i) {
-            if (um >= U[i] - snapU && um <= U[i + 1] + snapU) {
+            if (um >= U[i] && um <= U[i + 1]) {
                 strip = i;
                 break;
             }
@@ -14702,6 +14722,45 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
         return id;
     };
     int emitted = 0, tris = 0, quads = 0, ngons = 0;
+    // A vertex average can land in the notch of a concave cell. An ear
+    // centroid is guaranteed to lie inside a simple strip-local polygon.
+    auto interiorPoint = [](const std::vector<gp_Pnt2d>& poly,
+                            double area2) {
+        auto orient = [](const gp_Pnt2d& a, const gp_Pnt2d& b,
+                         const gp_Pnt2d& c) {
+            return (b.X() - a.X()) * (c.Y() - a.Y()) -
+                   (b.Y() - a.Y()) * (c.X() - a.X());
+        };
+        const double sign = area2 < 0.0 ? -1.0 : 1.0;
+        for (size_t i = 0; i < poly.size(); ++i) {
+            const size_t ip = (i + poly.size() - 1) % poly.size();
+            const size_t in = (i + 1) % poly.size();
+            const gp_Pnt2d& a = poly[ip];
+            const gp_Pnt2d& b = poly[i];
+            const gp_Pnt2d& c = poly[in];
+            if (sign * orient(a, b, c) <= 1e-14) continue;
+            bool contains = false;
+            for (size_t j = 0; j < poly.size(); ++j) {
+                if (j == ip || j == i || j == in) continue;
+                if (sign * orient(a, b, poly[j]) >= -1e-14 &&
+                    sign * orient(b, c, poly[j]) >= -1e-14 &&
+                    sign * orient(c, a, poly[j]) >= -1e-14) {
+                    contains = true;
+                    break;
+                }
+            }
+            if (!contains) {
+                return gp_Pnt2d((a.X() + b.X() + c.X()) / 3.0,
+                                (a.Y() + b.Y() + c.Y()) / 3.0);
+            }
+        }
+        double u = 0.0, v = 0.0;
+        for (const gp_Pnt2d& p : poly) {
+            u += p.X();
+            v += p.Y();
+        }
+        return gp_Pnt2d(u / poly.size(), v / poly.size());
+    };
 
     // Column cells first on a revolution wall: spans that stop on the
     // boundary's own vertices, with the region between two spans closed by the
@@ -14726,18 +14785,16 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
                     clean.pop_back();
                 }
                 if (clean.size() < 3) continue;
-                double area = 0.0, cu2 = 0.0, cv2 = 0.0;
+                double area = 0.0;
                 for (size_t k = 0; k < clean.size(); ++k) {
                     const gp_Pnt2d& a = clean[k];
                     const gp_Pnt2d& b = clean[(k + 1) % clean.size()];
                     area += a.X() * b.Y() - b.X() * a.Y();
-                    cu2 += a.X();
-                    cv2 += a.Y();
                 }
                 if (std::abs(area) < 1e-14) continue;
+                const gp_Pnt2d seed = interiorPoint(clean, area);
                 BRepClass_FaceClassifier cls(
-                    const_cast<TopoDS_Face&>(face),
-                    gp_Pnt2d(cu2 / clean.size(), cv2 / clean.size()), tolF);
+                    const_cast<TopoDS_Face&>(face), seed, tolF);
                 if (cls.State() == TopAbs_OUT) continue;
                 std::vector<uint32_t> ids;
                 ids.reserve(clean.size());
