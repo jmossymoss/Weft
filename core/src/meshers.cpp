@@ -9110,7 +9110,8 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             // iso columns and avoids Coons period-wrap mass inversion on
             // sphere–cylinder torus tubes (ABC 00006051). isFillet +
             // acrossIsU preserve blend density ownership. Capsule /
-            // iso-band fillets keep the Coons path below.
+            // iso-band fillets take orthogonal Coons when the trim is
+            // UV-aligned, else chained Coons below.
             if (info.chartKind == ChartKind::FullPeriod &&
                 (surf.GetType() == GeomAbs_Torus ||
                  surf.GetType() == GeomAbs_Cylinder) &&
@@ -9128,6 +9129,29 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                     "revolution grid",
                     fid);
                 return plan;
+            }
+            // IsoBand fillets with an axis-aligned UV trim: prefer the
+            // clipped orthogonal lattice BEFORE chained Coons. Corner-
+            // chained Coons on multi-edge iso-band blends pairs rails
+            // asymmetrically (mp9 #1891: sides 1/6/2/2) and leaves a
+            // ~25% UV-fold floor the untangler cannot clear; winding flip
+            // does not help (local folds, not global hand). Keep Coons
+            // ownership / filletHold / no RevolutionGrid — same as the
+            // coons-fail fallback below.
+            if (info.chartKind == ChartKind::IsoBand) {
+                FacePlan orthFirst;
+                if (planOrthogonalTrimGrid(face, surf, model, orthFirst)) {
+                    orthFirst.kind = MesherKind::CoonsGrid;
+                    orthFirst.isFillet = true;
+                    orthFirst.orthogonalFreeformComb = true;
+                    orthFirst.acrossIsU =
+                        surf.GetType() == GeomAbs_Cylinder;
+                    dbg("plan face %d: fillet-strip iso-band -> "
+                        "orthogonal coons-grid",
+                        fid);
+                    plan = std::move(orthFirst);
+                    return plan;
+                }
             }
             // Closed torus / cylinder fillets used to fall through to
             // isClosedRevolution and become RevolutionGrid, losing blend
