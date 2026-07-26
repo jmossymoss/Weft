@@ -6099,12 +6099,17 @@ bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
     const bool cap1Simple = (r.a0 == (r.b1 + 1) % N);
     const bool cap2Simple = (r.b0 == (r.a1 + 1) % N);
     const bool flip = face.Orientation() == TopAbs_REVERSED;
-    // Border vertices are anchorless (they live on shared B-rep edges and
-    // must weld to the neighbour's samples); the sweep adds no interior
-    // vertices, so the whole strip welds by construction.
+    // Border vertices still weld by XYZ (shared B-rep edge samples). They
+    // must also carry this face's UV: empty anchors made every ribbon cell
+    // opaque to the fold census, which then projected 3D centroids and
+    // false-demoted thin strips (mp9 freeform ribbons, teleporter grip
+    // straps — 25/25 "inverted" with a clean reverseAll pick).
     std::vector<uint32_t> vid(N, UINT32_MAX);
     auto pushUv = [&](int ring) {
-        if (vid[ring] == UINT32_MAX) vid[ring] = out.addVertex(P[ring], {});
+        if (vid[ring] == UINT32_MAX) {
+            vid[ring] = out.addVertex(
+                P[ring], Anchor{faceId, UV[ring].X(), UV[ring].Y()});
+        }
         return vid[ring];
     };
     Handle(Geom_Surface) S = BRep_Tool::Surface(face);
@@ -16741,8 +16746,6 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
             // was trading their 10 quads plus 2 transition triangles for a
             // 20-triangle contract floor, 24 times over.
             const bool levelRims = std::max(vr0, vr1) <= flatV;
-            stripReconcile =
-                levelRims || (bandH >= 0.35 * reach && stripVr <= flatV);
             const int driveCount =
                 driveSide >= 0 ? int(rim[driveSide].size())
                                : std::max(nRim0, nRim1);
@@ -16768,6 +16771,20 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
             // trip the bump, so gate on the step, not the total wander.
             const double driveStep = maxStep(driveRim);
             reconFrayStrip = driveStep > 0.25 * bandH;
+            // Both rims can wander from boolean cuts while the band is
+            // still tall enough for a body + transition strip (mp9 cone
+            // lead-ins: bandH≈3.9, rim wander≈2.6). Demanding a flat strip
+            // rim there traded structured columns for the contract floor.
+            // Refuse the same path when the drive rim itself has a steep
+            // v-jump — that class shears the strip and then fails the
+            // border contract (pinned revgrid / mp9 face 2020).
+            const double maxVr = std::max(vr0, vr1);
+            const bool tallVsWander =
+                maxVr > 1e-9 && bandH >= maxVr && maxVr <= 0.85 * bandH &&
+                driveStep <= 0.25 * bandH;
+            stripReconcile =
+                levelRims || (bandH >= 0.35 * reach && stripVr <= flatV) ||
+                tallVsWander;
             dbg("revgrid face %d: RECDIAG bandH=%g reach=%g stripVr=%g "
                 "vr0=%g vr1=%g drive=%d(%d) strip=%d driveStep=%g fray=%d",
                 faceId, bandH, reach, stripVr, vr0, vr1, driveSide,
@@ -24122,7 +24139,54 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         ++inverted;
                     }
                 }
-                if (tested >= 8 && inverted * 4 > tested) {
+                // Ribbon reverseAll is picked from one mid-strip rung. On a
+                // freeform strap that pick can disagree with the strip as a
+                // whole (teleporter grip: 25/25 inverted). Flip every cell
+                // once when a majority oppose the CAD normal; keep the flip
+                // only when the census improves.
+                if (plan.kind == MesherKind::RibbonSweep && tested >= 8 &&
+                    inverted * 2 >= tested) {
+                    for (auto& poly : parts[fid].polygons) {
+                        std::reverse(poly.begin(), poly.end());
+                    }
+                    const auto [tFlip, iFlip] = invertedCells(parts[fid]);
+                    if (iFlip < inverted) {
+                        dbg("mesh face %d: ribbon winding flip %d/%d -> "
+                            "%d/%d",
+                            fid, inverted, tested, iFlip, tFlip);
+                        tested = tFlip;
+                        inverted = iFlip;
+                    } else {
+                        for (auto& poly : parts[fid].polygons) {
+                            std::reverse(poly.begin(), poly.end());
+                        }
+                    }
+                }
+                // Ribbon cells near a sharp crease can still trip the UV
+                // centroid census while every corner normal agrees. Prefer
+                // foldedPolys before majority-demoting a strip.
+                if (plan.kind == MesherKind::RibbonSweep && inverted > 0) {
+                    const auto validated = foldedPolys(model, parts[fid]);
+                    int cornerInv = 0;
+                    for (uint8_t v : validated) {
+                        if (v) ++cornerInv;
+                    }
+                    if (cornerInv < inverted) {
+                        dbg("mesh face %d: ribbon fold revalidate %d -> %d "
+                            "by corner normals",
+                            fid, inverted, cornerInv);
+                        inverted = cornerInv;
+                    }
+                }
+                // Ribbon strips use a true majority before majority-demote:
+                // the shared 25% census (inverted*4 > tested) was trading
+                // flaregun's 8/29 strap for a floor web. Sparse folds then
+                // ride the protect path below.
+                const bool majorityFolded =
+                    plan.kind == MesherKind::RibbonSweep
+                        ? (inverted * 2 > tested)
+                        : (inverted * 4 > tested);
+                if (tested >= 8 && majorityFolded) {
                     dbg("mesh face %d: fold check failed (%d/%d inverted, "
                         "%s)",
                         fid, inverted, tested, mesherKindName(plan.kind));
@@ -24340,13 +24404,26 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         const int sparseN =
                             int(parts[fid].polygons.size());
                         const bool sparseDrum =
-                            plan.kind == MesherKind::RevolutionGrid &&
+                            (plan.kind == MesherKind::RevolutionGrid ||
+                             plan.kind == MesherKind::CoonsGrid) &&
                             sparseInfo.featureClass == FeatureClass::Drum;
                         const bool sparseFilletFull =
                             plan.kind == MesherKind::CoonsGrid &&
                             sparseInfo.featureClass ==
                                 FeatureClass::FilletStrip &&
                             sparseInfo.chartKind == ChartKind::FullPeriod;
+                        // Ribbon sweeps are exact-border strips; a couple of
+                        // inverted cells must not trade the whole ladder for
+                        // a triangulated floor web (mp9/teleporter straps).
+                        const bool sparseRibbon =
+                            plan.kind == MesherKind::RibbonSweep;
+                        // One residual Coons fold on a freeform panel
+                        // (teleporter 387/409) keeps the grid.
+                        const bool sparseCoonsOne =
+                            plan.kind == MesherKind::CoonsGrid &&
+                            liveFolds == 1 &&
+                            sparseInfo.featureClass !=
+                                FeatureClass::SphereCap;
                         // Open multi-tooth bands (ABC notched drums) carry
                         // more local web folds than the closed-drum cap of
                         // 8; still refuse a zero-fold floor that turns the
@@ -24355,11 +24432,16 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             sparseDrum && !plan.bandSides.empty()
                                 ? std::max(8, sparseN / 8)
                                 : 8;
+                        const int sparseMinN = sparseRibbon ? 4 : 8;
+                        const int sparseFoldBudget =
+                            sparseRibbon ? sparseN * 2 / 5 + 1
+                                         : sparseN / 4;
                         const bool sparseProtect =
-                            sparseN >= 8 && liveFolds > 0 &&
+                            sparseN >= sparseMinN && liveFolds > 0 &&
                             liveFolds <= foldCap &&
-                            liveFolds * 4 <= sparseN &&
-                            (sparseDrum || sparseFilletFull);
+                            liveFolds <= sparseFoldBudget &&
+                            (sparseDrum || sparseFilletFull ||
+                             sparseRibbon || sparseCoonsOne);
                         if (sparseProtect) {
                             dbg("mesh face %d: sparse fold keep %s "
                                 "(%d/%d) — refuse contract floor",
@@ -24420,12 +24502,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             }
             if (liveFp > 0) {
                 // Same sparse-fold protect as the invertedCells tournament
-                // (Drum×RevolutionGrid + FilletStrip×FullPeriod×Coons).
+                // (Drum×RevolutionGrid, FilletStrip×FullPeriod, RibbonSweep,
+                // non-sphere Coons).
                 {
                     const FaceInfo& sparseInfo = analysis.faces[fid - 1];
                     const int sparseN = int(parts[fid].polygons.size());
                     const bool sparseDrum =
-                        plan.kind == MesherKind::RevolutionGrid &&
+                        (plan.kind == MesherKind::RevolutionGrid ||
+                         plan.kind == MesherKind::CoonsGrid) &&
                         sparseInfo.featureClass == FeatureClass::Drum;
                     const bool sparseFilletFull =
                         plan.kind == MesherKind::CoonsGrid &&
@@ -24436,9 +24520,18 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         sparseDrum && !plan.bandSides.empty()
                             ? std::max(8, sparseN / 8)
                             : 8;
-                    if (sparseN >= 8 && liveFp > 0 && liveFp <= foldCap &&
-                        liveFp * 4 <= sparseN &&
-                        (sparseDrum || sparseFilletFull)) {
+                    const bool sparseRibbon =
+                        plan.kind == MesherKind::RibbonSweep;
+                    const bool sparseCoonsOne =
+                        plan.kind == MesherKind::CoonsGrid && liveFp == 1 &&
+                        sparseInfo.featureClass != FeatureClass::SphereCap;
+                    const int sparseMinN = sparseRibbon ? 4 : 8;
+                    const int sparseFoldBudget =
+                        sparseRibbon ? sparseN * 2 / 5 + 1 : sparseN / 4;
+                    if (sparseN >= sparseMinN && liveFp > 0 &&
+                        liveFp <= foldCap && liveFp <= sparseFoldBudget &&
+                        (sparseDrum || sparseFilletFull || sparseRibbon ||
+                         sparseCoonsOne)) {
                         dbg("mesh face %d: sparse foldedPolys keep %s "
                             "(%d/%d) — refuse contract floor",
                             fid, mesherKindName(plan.kind), liveFp, sparseN);

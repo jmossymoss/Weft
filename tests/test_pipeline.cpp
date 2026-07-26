@@ -2590,6 +2590,83 @@ void testSphereCornerOctantChart() {
 // next stop is the all-triangle contract floor, so handing back a strip that
 // was 11 triangles against 10 n-gons bought a worse mesh, not a better one.
 // Fifteen MP9 strips went that way.
+// Failed-floor classes: ribbon UV anchors + winding flip clear majority
+// "fold check failed" demotions, and tall analytic drums with wavy boolean
+// rims keep a transition strip instead of "rim totals irreconcilable".
+void testFailedFloorRibbonWindingAndTallRevgrid() {
+    std::printf("-- failed-floor: ribbon winding + tall wavy revgrid --\n");
+    auto cad = []() {
+        weft::GenerationSettings gs;
+        gs.defaults.minimal = true;
+        gs.defaults.adaptive = true;
+        gs.defaults.relativeDeviation = true;
+        gs.defaults.minCurvedSegments = 6;
+        return gs;
+    };
+    auto assertNoCause = [](const weft::GenerationReport& report,
+                            const char* banned, const char* label) {
+        for (const auto& [fid, cause] : report.faceBuildCause) {
+            if (cause == banned) {
+                std::printf("  FAIL %s face %d cause=%s\n", label, fid,
+                            cause.c_str());
+            }
+            CHECK(cause != banned);
+        }
+    };
+    auto assertStructuredKind = [](const weft::GenerationReport& report,
+                                   weft::MesherKind want, const char* label) {
+        int kept = 0;
+        for (const auto& [fid, kind] : report.faceMesher) {
+            if (kind != want) continue;
+            auto bit = report.faceBuild.find(fid);
+            CHECK(bit != report.faceBuild.end());
+            CHECK_EQ(bit->second, 0);
+            ++kept;
+        }
+        CHECK(kept >= 1);
+        std::printf("  %s: %d %s kept\n", label, kept,
+                    weft::mesherKindName(want));
+    };
+    {
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "regressions/mp9/revgrid_tall_wavy_rims.step";
+        weft::Model model = weft::loadStep(stepPath.string());
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        weft::generate(model, analysis, cad(), &report);
+        assertNoCause(report, "revolution grid failed", "mp9 tall revgrid");
+        assertStructuredKind(report, weft::MesherKind::RevolutionGrid,
+                             "mp9 tall revgrid");
+    }
+    {
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "regressions/flaregun/ribbon_fold_census_strap.step";
+        weft::Model model = weft::loadStep(stepPath.string());
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        weft::generate(model, analysis, cad(), &report);
+        // Majority-inverted census is the class under test; a later sparse
+        // fold self-heal on a sibling strip is a separate residual.
+        assertNoCause(report, "fold check failed", "flaregun strap");
+        assertStructuredKind(report, weft::MesherKind::RibbonSweep,
+                             "flaregun strap");
+    }
+    {
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "regressions/teleporter/ribbon_winding_flip_strap.step";
+        weft::Model model = weft::loadStep(stepPath.string());
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        weft::generate(model, analysis, cad(), &report);
+        assertNoCause(report, "fold check failed", "teleporter winding");
+        assertStructuredKind(report, weft::MesherKind::RibbonSweep,
+                             "teleporter winding");
+    }
+}
+
 void testRibbonCapWebKeepsStrip() {
     std::printf("-- ribbon cap web keeps the strip --\n");
     const std::filesystem::path stepPath =
@@ -3930,7 +4007,10 @@ void testAllMesherStrategies() {
         weft::loadStep((corpus / "foam.stp").string());
     const weft::Model teleporter =
         weft::loadStep((corpus / "teleporter.stp").string());
-    runModel("flaregun", flaregun, cad);  // rail ladder
+    // Flaregun may keep a sparse ribbon fold rather than demote the strip
+    // to a contract-floor web (WP6 failed-floor clearance). Still require
+    // watertightness below; skip the zero-fold gate used for small fixtures.
+    runModel("flaregun", flaregun, cad, false);  // rail ladder
     runModel("foam", foam, cad, false); // dome; closedness in KNOWN_RED/WP3
 
     // Release closed-solid class locks. Foam + teleporter (default and CAD)
@@ -3952,6 +4032,7 @@ void testAllMesherStrategies() {
         };
     weft::GenerationSettings def;
     def.defaults.minimal = true;
+    checkClosedSolidWatertight("flaregun CAD", flaregun, cad);
     checkClosedSolidWatertight("foam CAD", foam, cad);
     checkClosedSolidWatertight("foam default", foam, def);
     checkClosedSolidWatertight("teleporter CAD", teleporter, cad);
@@ -5435,6 +5516,7 @@ int main() {
     RUN(testCylinderWallFullLengthSpans);
     RUN(testFiveEdgeOrthogonalTrim);
     RUN(testSphereCornerOctantChart);
+    RUN(testFailedFloorRibbonWindingAndTallRevgrid);
     RUN(testRibbonCapWebKeepsStrip);
     RUN(testRibbonHonoursPinnedStations);
     RUN(testRibbonSingleSegmentRail);
