@@ -2707,6 +2707,20 @@ void testFailedFloorRibbonWindingAndTallRevgrid() {
         assertStructuredKind(report, weft::MesherKind::RibbonSweep,
                              "flaregun earclip cap");
     }
+    {
+        // Side-touching scallop taller than the old 35% wave budget: WAVE
+        // mode must still absorb it when strip rows fit (mp9 iso-band).
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "regressions/mp9/openband_tall_side_scallop.step";
+        weft::Model model = weft::loadStep(stepPath.string());
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        weft::generate(model, analysis, cad(), &report);
+        assertNoCause(report, "open band failed", "mp9 tall side scallop");
+        assertStructuredKind(report, weft::MesherKind::RevolutionGrid,
+                             "mp9 tall side scallop");
+    }
 }
 
 void testRibbonCapWebKeepsStrip() {

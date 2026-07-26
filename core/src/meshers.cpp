@@ -11667,11 +11667,10 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
             chainDev[c] = std::max({chainDev[c], std::abs(p.bv0 - rimV[c]),
                                     std::abs(p.bv1 - rimV[c])});
         }
-        // A wave the strip cannot clear without eating the band.
         if (feature[c] && chainTouch[c] && chainDev[c] > 0.35 * wspan) {
-            dbg("openband face %d: side-touching castellation too tall",
-                faceId);
-            return false;
+            dbg("openband face %d: side-touching castellation tall "
+                "(%.0f%% of band) — try WAVE",
+                faceId, 100.0 * chainDev[c] / wspan);
         }
     }
     if (interior[0] && interior[1]) {
@@ -11922,11 +11921,11 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
             regions = std::move(disjoint);
         }
     }
-    if (waveCut && chainDev[cutIdx] > 0.35 * wspan) {
-        dbg("openband face %d: wave too tall to absorb (%.0f%%)", faceId,
-            100.0 * chainDev[cutIdx] / wspan);
-        return false;
-    }
+    // Tall side-touching waves used to hard-reject at 35% of band height.
+    // Let the strip-row collision / rim-strip room gates below decide: a
+    // wave that still leaves a usable body height is absorbable (mp9
+    // iso-band with a tall end scallop), and one that eats the band fails
+    // with "strip rows collide" instead of a premature floor.
 
     // Sides: rows are their solved count, sampled at uniform curve
     // steps — the border contract with the faces across the band ends.
