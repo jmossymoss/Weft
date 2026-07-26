@@ -447,10 +447,19 @@ bool edgesHugRimsOrInserts(const TopoDS_Face& face,
         }
         if (!pcOk) return false;
         if (ids.empty()) continue;
-        const bool interior = wu0 > u0 + 0.03 * uspan &&
-                              wu1 < u1 - 0.03 * uspan &&
-                              wv0 > v0 + 0.03 * vspan &&
-                              wv1 < v1 - 0.03 * vspan;
+        const bool uInterior = wu0 > u0 + 0.03 * uspan &&
+                               wu1 < u1 - 0.03 * uspan;
+        const bool vInterior = wv0 > v0 + 0.03 * vspan &&
+                               wv1 < v1 - 0.03 * vspan;
+        // A local cutout on a U-closed band may sit against the periodic
+        // seam and fail the strict U pad even though its span is only a
+        // fraction of the period. Keep those as inserts so they never
+        // join a rim chain — otherwise a self-closing full-period rim
+        // edge is concatenated with the cutout walls and loses its wrap
+        // (multi-slot full-period drums).
+        const bool uLocalCut =
+            surf.IsUClosed() && (wu1 - wu0) < 0.5 * uspan;
+        const bool interior = vInterior && (uInterior || uLocalCut);
         if (interior) {
             wires.push_back(std::move(ids));
             insertBox.push_back({wu0, wu1, wv0, wv1});
@@ -15106,7 +15115,29 @@ void pinOrthogonalTrimGrids(const Model& model,
         // limit cuts became a border point no neighbour samples, which reads
         // as a crack rather than as a mesher failure (measured on
         // mp9_Edited face 742: 14 synthesized border points, 24 open edges).
-        for (int e : plan.orthogonalEdges) pinEdge(e, true, true);
+        //
+        // Skip edges that a neighbouring RevolutionGrid owns as a rim
+        // (uEdges): orthogonal pin inflation there makes the two rim
+        // totals disagree, and insert-band strip reconcile on that
+        // mismatch has failed self-check / staircase on multi-slot
+        // full-period drums. Both faces keep the shared solved count;
+        // stitch absorbs any residual station drift.
+        for (int e : plan.orthogonalEdges) {
+            bool revRim = false;
+            for (const auto& [ofid, opl] : plans) {
+                (void)ofid;
+                if (opl.kind != MesherKind::RevolutionGrid) continue;
+                for (int ue : opl.uEdges) {
+                    if (ue == e) {
+                        revRim = true;
+                        break;
+                    }
+                }
+                if (revRim) break;
+            }
+            if (revRim) continue;
+            pinEdge(e, true, true);
+        }
     }
 }
 
@@ -17653,33 +17684,76 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
         return false;
     }
     // Every wire must belong to a loop or its hole stays open.
+    // Prefer the tightest U-span staircase that contains the wire: a
+    // seam-crossing local staircase has a huge raw U bbox (verts on
+    // both sides of the period), and first-fit into that bbox steals
+    // every cutout from its real loop. Span is the continuously
+    // unwrapped walk along the loop — local seam holes stay ~wire-wide.
     std::vector<std::vector<size_t>> loopWires(loops.size());
     {
-        std::vector<char> assigned(boxes.size(), 0);
+        struct LoopBox { double u0, u1, v0, v1, uSpan; };
+        std::vector<LoopBox> lb(loops.size());
         for (size_t li = 0; li < loops.size(); ++li) {
-            double lu0 = 1e300, lu1 = -1e300, lv0 = 1e300, lv1 = -1e300;
-            for (uint32_t idx : loops[li]) {
-                lu0 = std::min(lu0, grid.anchors[idx].u);
-                lu1 = std::max(lu1, grid.anchors[idx].u);
-                lv0 = std::min(lv0, grid.anchors[idx].v);
-                lv1 = std::max(lv1, grid.anchors[idx].v);
+            lb[li] = {1e300, -1e300, 1e300, -1e300, 0};
+            double uCur = 0;
+            for (size_t k = 0; k < loops[li].size(); ++k) {
+                const Anchor& a = grid.anchors[loops[li][k]];
+                double u = a.u;
+                if (k == 0) {
+                    uCur = u;
+                } else {
+                    u -= period * std::round((u - uCur) / period);
+                    uCur = u;
+                }
+                lb[li].u0 = std::min(lb[li].u0, u);
+                lb[li].u1 = std::max(lb[li].u1, u);
+                lb[li].v0 = std::min(lb[li].v0, a.v);
+                lb[li].v1 = std::max(lb[li].v1, a.v);
             }
-            for (size_t w = 0; w < boxes.size(); ++w) {
-                if (assigned[w]) continue;
-                double cu = (boxes[w].u0 + boxes[w].u1) / 2;
-                double cv = (boxes[w].v0 + boxes[w].v1) / 2;
-                if (cu >= lu0 && cu <= lu1 && cv >= lv0 && cv <= lv1) {
-                    loopWires[li].push_back(w);
-                    assigned[w] = 1;
+            lb[li].uSpan = lb[li].u1 - lb[li].u0;
+        }
+        for (size_t w = 0; w < boxes.size(); ++w) {
+            const double cu0 = (boxes[w].u0 + boxes[w].u1) / 2;
+            const double cv = (boxes[w].v0 + boxes[w].v1) / 2;
+            size_t best = loops.size();
+            double bestSpan = 1e300;
+            for (size_t li = 0; li < loops.size(); ++li) {
+                if (cv < lb[li].v0 || cv > lb[li].v1) continue;
+                double cu = cu0;
+                // Seam-adjacent cutouts: unwrap the center into the
+                // loop's (already unwrapped) U frame.
+                cu -= period * std::round((cu - 0.5 * (lb[li].u0 + lb[li].u1)) /
+                                          period);
+                if (cu < lb[li].u0 || cu > lb[li].u1) continue;
+                if (lb[li].uSpan < bestSpan) {
+                    bestSpan = lb[li].uSpan;
+                    best = li;
                 }
             }
+            if (best >= loops.size()) {
+                dbg("insert face %d: wire %zu unassigned to staircase",
+                    faceId, w);
+                return false;
+            }
+            loopWires[best].push_back(w);
         }
-        for (char a : assigned) {
-            if (!a) return false;
-        }
-        // And every loop needs at least one wire, or it has no lid.
-        for (const auto& lw : loopWires) {
-            if (lw.empty()) return false;
+        // Drop empty staircase loops (spurious deletions at coarse nu can
+        // open a lidless pocket that no insert wire owns). Fail only when
+        // every loop is empty — that means the carve found nothing real.
+        {
+            std::vector<std::vector<uint32_t>> keepLoops;
+            std::vector<std::vector<size_t>> keepWires;
+            for (size_t li = 0; li < loops.size(); ++li) {
+                if (loopWires[li].empty()) continue;
+                keepLoops.push_back(std::move(loops[li]));
+                keepWires.push_back(std::move(loopWires[li]));
+            }
+            if (keepLoops.empty()) {
+                dbg("insert face %d: no wire-owned staircase loops", faceId);
+                return false;
+            }
+            loops = std::move(keepLoops);
+            loopWires = std::move(keepWires);
         }
     }
 
@@ -17720,15 +17794,24 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
         const std::vector<size_t>& inLoop = loopWires[li];
 
         // Working ring: reversed staircase (it bounds the remaining mesh)
-        // in synthetic planar coords + output vertex ids.
+        // in synthetic planar coords + output vertex ids. Continuously
+        // unwrap U along the walk so a seam-crossing local hole does not
+        // planarize as a period-spanning bowtie.
         std::vector<std::array<double, 3>> ringPts;
         std::vector<uint32_t> ringIds;
         {
             std::vector<uint32_t> outer(loop.rbegin(), loop.rend());
-            for (uint32_t idx : outer) {
-                ringPts.push_back({grid.anchors[idx].u * rScale,
-                                   grid.anchors[idx].v, 0.0});
-                ringIds.push_back(emitVert(idx));
+            double uCur = 0;
+            for (size_t k = 0; k < outer.size(); ++k) {
+                double u = grid.anchors[outer[k]].u;
+                if (k == 0) {
+                    uCur = u;
+                } else {
+                    u -= period * std::round((u - uCur) / period);
+                    uCur = u;
+                }
+                ringPts.push_back({u * rScale, grid.anchors[outer[k]].v, 0.0});
+                ringIds.push_back(emitVert(outer[k]));
             }
         }
         auto ringArea = [&]() {
@@ -17795,6 +17878,24 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
             }
             if (hole.size() < 3) continue;
 
+            // Continuously unwrap hole U, then shift by whole periods so
+            // it sits in the outer ring's unwrapped U frame (seam cutouts
+            // otherwise splice across a period jump).
+            for (size_t i = 1; i < hole.size(); ++i) {
+                hole[i].u -=
+                    period * std::round((hole[i].u - hole[i - 1].u) / period);
+            }
+            {
+                double rMid = 0, hMid = 0;
+                for (const auto& p : ringPts) rMid += p[0] / rScale;
+                rMid /= std::max<size_t>(1, ringPts.size());
+                for (const auto& p : hole) hMid += p.u;
+                hMid /= hole.size();
+                const double shift =
+                    period * std::round((rMid - hMid) / period);
+                for (auto& p : hole) p.u += shift;
+            }
+
             double aHole = 0;
             for (size_t i = 0; i < hole.size(); ++i) {
                 const WPt& p1 = hole[i];
@@ -17823,8 +17924,12 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
             std::vector<uint32_t> holeIds(h.size(), UINT32_MAX);
             auto holeId = [&](size_t j) {
                 if (holeIds[j] == UINT32_MAX) {
+                    // Planar splice may hold unwrapped U; anchors stay in
+                    // the surface period so border/self-check UV match.
+                    double uA = h[j].u;
+                    uA -= period * std::floor((uA - u0) / period);
                     holeIds[j] = wb.addVertex(
-                        h[j].p, Anchor{faceId, h[j].u, h[j].v});
+                        h[j].p, Anchor{faceId, uA, h[j].v});
                 }
                 return holeIds[j];
             };
@@ -23465,10 +23570,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 } else if (!plan.insertWires.empty()) {
                     // Before the taper branch: a taper never cuts the
                     // slots out, so insert bands go first regardless of
-                    // rim linkage.
+                    // rim linkage. Pins are model-wide border contract
+                    // stations — nullptr here skipped partner pin samples
+                    // on insert-band rims.
                     if (!meshRevolutionInsert(face, surf, model, plan,
                                               solvedEdge, fid, nu, nv,
-                                              out, nullptr,
+                                              out, &pinnedEdge,
                                               settings.decoupleSeams)) {
                         demote(fid, face, surf, s,
                                "revolution insert failed");
