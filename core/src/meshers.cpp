@@ -2173,10 +2173,18 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
                        const std::vector<double>* vScaffold = nullptr,
                        const PinnedEdges* pins = nullptr,
                        bool decoupleSeams = false,
-                       bool allowDrumWedge = false) {
+                       bool allowDrumWedge = false,
+                       int maxWireEdges = 24, int maxSideChain = 8) {
     CoonsPatch patch;
-    if (!makeCoonsPatch(face, model, patch, rotate, nullptr, nullptr, 24, 8,
-                        allowDrumWedge)) {
+    const char* coonsWhy = nullptr;
+    // Fillet-strip iso-bands raise the wire/side budget at PLAN time
+    // (48/16); mesh must use the same limits or makeCoonsPatch fails
+    // silently and the strip lands on the contract floor (mp9 capsule
+    // fillets).
+    if (!makeCoonsPatch(face, model, patch, rotate, &coonsWhy, nullptr,
+                        maxWireEdges, maxSideChain, allowDrumWedge)) {
+        dbg("coons face %d: patch failed (%s) wire/side %d/%d", faceId,
+            coonsWhy ? coonsWhy : "?", maxWireEdges, maxSideChain);
         return false;
     }
     Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
@@ -4219,11 +4227,13 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
                    int collarRings = 1,
                    const PinnedEdges* pins = nullptr, int cellCap = 0,
                    bool decoupleSeams = false,
-                   bool allowDrumWedge = false) {
+                   bool allowDrumWedge = false,
+                   int maxWireEdges = 24, int maxSideChain = 8) {
     if (!inserts || inserts->empty()) {
         return meshCoonsGridBody(face, model, faceId, uParams, vParams,
                                  rotate, solvedEdge, out, nullptr, nullptr,
-                                 pins, decoupleSeams, allowDrumWedge);
+                                 pins, decoupleSeams, allowDrumWedge,
+                                 maxWireEdges, maxSideChain);
     }
     dbg("coons cutout %d: %zu insert wire(s)", faceId, inserts->size());
     // Hole rings: 3D edge curves at solved counts (the bore wall's own
@@ -4316,8 +4326,8 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
     // sprouts rows with nothing to follow; escalation midpoints the
     // hole band first and only then doubles everything.
     CoonsPatch cpatch;
-    if (!makeCoonsPatch(face, model, cpatch, rotate, nullptr, nullptr, 24, 8,
-                        allowDrumWedge)) {
+    if (!makeCoonsPatch(face, model, cpatch, rotate, nullptr, nullptr,
+                        maxWireEdges, maxSideChain, allowDrumWedge)) {
         return false;
     }
     auto sideCount = [&](int i) {
@@ -4440,7 +4450,8 @@ bool meshCoonsGrid(const TopoDS_Face& face, const Model& model, int faceId,
             MeshBuilder tmp(grid);
             if (!meshCoonsGridBody(face, model, faceId, uParams, vParams,
                                    rotate, solvedEdge, tmp, uSc, vSc, pins,
-                                   decoupleSeams, allowDrumWedge)) {
+                                   decoupleSeams, allowDrumWedge,
+                                   maxWireEdges, maxSideChain)) {
                 dbg("coons cutout %d: body failed (attempt %d)", faceId,
                     attempt);
                 return false;
@@ -7663,6 +7674,83 @@ bool meshDiskCap(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         }
     }
     if (pos > 0 && neg > 0) return false;  // a cell folds -> quad-fill owns it
+
+    // Central n-gon: the ring-cell census above never sees it. A dished
+    // tip whose n-gon still spans most of the dome folds under foldedPolys
+    // even when every ring quad is clean (flaregun disk caps). Raise the
+    // radial count until the tip Newell agrees with the surface, or bail.
+    auto tipFolds = [&](int st) {
+        gp_XYZ nw(0, 0, 0);
+        for (size_t i = 0; i < n; ++i) {
+            const gp_XYZ& a = P[st - 1][i].XYZ();
+            const gp_XYZ& b = P[st - 1][(i + 1) % n].XYZ();
+            nw += gp_XYZ(a.Y() * b.Z() - a.Z() * b.Y(),
+                         a.Z() * b.X() - a.X() * b.Z(),
+                         a.X() * b.Y() - a.Y() * b.X());
+        }
+        if (nw.Modulus() < 1e-18) return true;
+        gp_Pnt sp;
+        gp_Vec sdu, sdv;
+        try {
+            surf.D1(cu, cv, sp, sdu, sdv);
+        } catch (const Standard_Failure&) {
+            return true;
+        }
+        gp_Vec sn = sdu.Crossed(sdv);
+        if (sn.Magnitude() < 1e-18) return true;
+        if (flip) sn.Reverse();
+        return gp_Vec(nw).Dot(sn) < 0;
+    };
+    while (tipFolds(steps) && steps < sagCap) {
+        ++steps;
+        P.assign(steps, std::vector<gp_Pnt>(n));
+        UV.assign(steps, std::vector<gp_Pnt2d>(n));
+        for (size_t i = 0; i < n; ++i) {
+            P[0][i] = r.p[i];
+            UV[0][i] = r.uv[i];
+        }
+        for (int k = 1; k < steps; ++k) {
+            const double f = double(steps - k) / double(steps);
+            for (size_t i = 0; i < n; ++i) {
+                const double uu = cu + f * (r.uv[i].X() - cu);
+                const double vv = cv + f * (r.uv[i].Y() - cv);
+                try {
+                    P[k][i] = surf.Value(uu, vv);
+                } catch (const Standard_Failure&) {
+                    return false;
+                }
+                UV[k][i] = gp_Pnt2d(uu, vv);
+            }
+        }
+        // Re-check ring cells at the new count.
+        pos = neg = 0;
+        for (int k = 0; k + 1 < steps; ++k) {
+            for (size_t i = 0; i < n; ++i) {
+                const size_t j = (i + 1) % n;
+                const gp_Vec cn = gp_Vec(P[k][i], P[k][j])
+                                      .Crossed(gp_Vec(P[k][i], P[k + 1][i]));
+                const double mu =
+                    0.25 * (UV[k][i].X() + UV[k][j].X() + UV[k + 1][j].X() +
+                            UV[k + 1][i].X());
+                const double mv =
+                    0.25 * (UV[k][i].Y() + UV[k][j].Y() + UV[k + 1][j].Y() +
+                            UV[k + 1][i].Y());
+                gp_Pnt sp;
+                gp_Vec sdu, sdv;
+                try {
+                    surf.D1(mu, mv, sp, sdu, sdv);
+                } catch (const Standard_Failure&) {
+                    return false;
+                }
+                const gp_Vec sn = sdu.Crossed(sdv);
+                if (cn.Magnitude() > 1e-18 && sn.Magnitude() > 1e-18) {
+                    (cn.Dot(sn) >= 0 ? pos : neg)++;
+                }
+            }
+        }
+        if (pos > 0 && neg > 0) return false;
+    }
+    if (tipFolds(steps)) return false;
 
     // Clean: commit the vertices and cells.
     std::vector<std::vector<uint32_t>> layer(steps);
@@ -16687,9 +16775,16 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
     int driveSide = -1;
     if (rim0ok && rim1ok && nRim0 != nRim1) {
         const GeomAbs_SurfaceType st = surf.GetType();
+        // BSpline / Bezier / SurfaceOfRevolution drums that planning
+        // classified as RevolutionGrid need the same rim-strip reconcile
+        // as analytic cylinders — otherwise mismatched rim totals always
+        // demote (mp9 geom-rev bands).
         const bool analyticRev = st == GeomAbs_Cylinder ||
                                  st == GeomAbs_Cone || st == GeomAbs_Torus ||
-                                 st == GeomAbs_Sphere;
+                                 st == GeomAbs_Sphere ||
+                                 st == GeomAbs_SurfaceOfRevolution ||
+                                 st == GeomAbs_BSplineSurface ||
+                                 st == GeomAbs_BezierSurface;
         if (analyticRev) {
             const double u0i = surf.FirstUParameter();
             double bandH = 0;
@@ -16797,9 +16892,14 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
             // v-jump — that class shears the strip and then fails the
             // border contract (pinned revgrid / mp9 face 2020).
             const double maxVr = std::max(vr0, vr1);
+            // Tall bands tolerate a steeper drive-rim jump when the body
+            // still has room for the fray-bump interior rows (mp9 full-
+            // period drums: bandH≈22, driveStep≈10). The 0.25 gate kept
+            // those irreconcilable and floored the face.
             const bool tallVsWander =
                 maxVr > 1e-9 && bandH >= maxVr && maxVr <= 0.85 * bandH &&
-                driveStep <= 0.25 * bandH;
+                (driveStep <= 0.25 * bandH ||
+                 (driveStep <= 0.55 * bandH && bandH >= 2.0 * reach));
             stripReconcile =
                 levelRims || (bandH >= 0.35 * reach && stripVr <= flatV) ||
                 tallVsWander;
@@ -23629,7 +23729,9 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         s.cellCap, settings.decoupleSeams,
                         /*allowDrumWedge=*/
                         analysis.faces[fid - 1].featureClass ==
-                            FeatureClass::Drum)) {
+                            FeatureClass::Drum,
+                        /*maxWireEdges=*/plan.isFillet ? 48 : 24,
+                        /*maxSideChain=*/plan.isFillet ? 16 : 8)) {
                     demote(fid, face, surf, s, "coons failed");
                 }
                 break;
@@ -24178,19 +24280,29 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 }
                 // Ribbon reverseAll is picked from one mid-strip rung. On a
                 // freeform strap that pick can disagree with the strip as a
-                // whole (teleporter grip: 25/25 inverted). Flip every cell
+                // whole (teleporter grip: 25/25 inverted). Fillet Coons
+                // charts can land with the same majority-inverted hand
+                // after untangle (mp9 capsule iso-bands). Flip every cell
                 // once when a majority oppose the CAD normal; keep the flip
                 // only when the census improves.
-                if (plan.kind == MesherKind::RibbonSweep && tested >= 8 &&
-                    inverted * 2 >= tested) {
+                // Ribbon: true majority. Fillet Coons: the shared 25%
+                // census already demotes, so try the flip at that same
+                // threshold (mp9 capsule iso-band: ~254/1016 inverted —
+                // short of a majority but enough to take the floor).
+                const bool tryWindingFlip =
+                    plan.kind == MesherKind::RibbonSweep
+                        ? (inverted * 2 >= tested)
+                        : (plan.kind == MesherKind::CoonsGrid &&
+                           plan.isFillet && inverted * 4 >= tested);
+                if (tryWindingFlip && tested >= 8) {
                     for (auto& poly : parts[fid].polygons) {
                         std::reverse(poly.begin(), poly.end());
                     }
                     const auto [tFlip, iFlip] = invertedCells(parts[fid]);
                     if (iFlip < inverted) {
-                        dbg("mesh face %d: ribbon winding flip %d/%d -> "
-                            "%d/%d",
-                            fid, inverted, tested, iFlip, tFlip);
+                        dbg("mesh face %d: %s winding flip %d/%d -> %d/%d",
+                            fid, mesherKindName(plan.kind), inverted, tested,
+                            iFlip, tFlip);
                         tested = tFlip;
                         inverted = iFlip;
                     } else {
@@ -24444,23 +24556,35 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             (plan.kind == MesherKind::RevolutionGrid ||
                              plan.kind == MesherKind::CoonsGrid) &&
                             sparseInfo.featureClass == FeatureClass::Drum;
+                        // Fillet strips — full-period OR iso-band capsules
+                        // — keep a sparse fold rather than a floor web
+                        // (mp9 iso-band fillets: a few inverted cells).
                         const bool sparseFilletFull =
                             plan.kind == MesherKind::CoonsGrid &&
                             sparseInfo.featureClass ==
                                 FeatureClass::FilletStrip &&
-                            sparseInfo.chartKind == ChartKind::FullPeriod;
+                            (sparseInfo.chartKind == ChartKind::FullPeriod ||
+                             sparseInfo.chartKind == ChartKind::IsoBand);
                         // Ribbon sweeps are exact-border strips; a couple of
                         // inverted cells must not trade the whole ladder for
                         // a triangulated floor web (mp9/teleporter straps).
                         const bool sparseRibbon =
                             plan.kind == MesherKind::RibbonSweep;
-                        // One residual Coons fold on a freeform panel
-                        // (teleporter 387/409) keeps the grid.
+                        // A few residual folds on a Coons / quad-fill chart
+                        // (teleporter panels, freeform coons with 2–3
+                        // tip folds, flaregun disk caps after local
+                        // repair) keep the structured mesh. Sphere-cap
+                        // disks are included only at a single residual
+                        // fold — mass sphere folds still take the floor.
                         const bool sparseCoonsOne =
-                            plan.kind == MesherKind::CoonsGrid &&
-                            liveFolds == 1 &&
-                            sparseInfo.featureClass !=
-                                FeatureClass::SphereCap;
+                            (plan.kind == MesherKind::CoonsGrid ||
+                             plan.kind == MesherKind::QuadFill) &&
+                            liveFolds > 0 &&
+                            liveFolds <=
+                                (sparseInfo.featureClass ==
+                                         FeatureClass::SphereCap
+                                     ? 1
+                                     : 3);
                         // Open multi-tooth bands (ABC notched drums) carry
                         // more local web folds than the closed-drum cap of
                         // 8; still refuse a zero-fold floor that turns the
@@ -24552,7 +24676,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         plan.kind == MesherKind::CoonsGrid &&
                         sparseInfo.featureClass ==
                             FeatureClass::FilletStrip &&
-                        sparseInfo.chartKind == ChartKind::FullPeriod;
+                        (sparseInfo.chartKind == ChartKind::FullPeriod ||
+                         sparseInfo.chartKind == ChartKind::IsoBand);
                     const int foldCap =
                         sparseDrum && !plan.bandSides.empty()
                             ? std::max(8, sparseN / 8)
@@ -24560,8 +24685,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     const bool sparseRibbon =
                         plan.kind == MesherKind::RibbonSweep;
                     const bool sparseCoonsOne =
-                        plan.kind == MesherKind::CoonsGrid && liveFp == 1 &&
-                        sparseInfo.featureClass != FeatureClass::SphereCap;
+                        (plan.kind == MesherKind::CoonsGrid ||
+                         plan.kind == MesherKind::QuadFill) &&
+                        liveFp > 0 &&
+                        liveFp <= (sparseInfo.featureClass ==
+                                           FeatureClass::SphereCap
+                                       ? 1
+                                       : 3);
                     const int sparseMinN = sparseRibbon ? 4 : 8;
                     const int sparseFoldBudget =
                         sparseRibbon ? sparseN * 2 / 5 + 1 : sparseN / 4;
