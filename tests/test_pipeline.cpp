@@ -3458,6 +3458,14 @@ void testStructureRetentionClassification() {
     // A planned floor must never be counted as failure debt.
     CHECK(weft::classifyFaceBuild(2, "planned contract floor") !=
           weft::FaceBuildClass::MesherFailed);
+    // A planned floor now names the ladder stage that exhausted; the
+    // classifier keys on the prefix, so the reason must not move the face
+    // out of its bucket.
+    CHECK(weft::classifyFaceBuild(
+              2,
+              "planned contract floor (coons: no clear fourth corner; "
+              "orthogonal: 3 diagonal edges)") ==
+          weft::FaceBuildClass::PlannedFloor);
 
     // Every cause the corpus actually produces must be registered, and the
     // buckets must partition the faces exactly.
@@ -3478,6 +3486,7 @@ void testStructureRetentionClassification() {
     }
 
     int checked = 0;
+    int plannedExplained = 0;
     for (const Case& c : cases) {
         weft::Model model = weft::loadStep(c.path);
         weft::Analysis analysis = weft::analyze(model);
@@ -3504,6 +3513,22 @@ void testStructureRetentionClassification() {
                         c.label.c_str(), fid, how, cause.c_str());
                 }
                 CHECK(k != weft::FaceBuildClass::Unknown);
+                if (k != weft::FaceBuildClass::PlannedFloor) continue;
+                // A planned floor is a routing decision, so it must say
+                // which ladder stage exhausted — "contract floor" alone
+                // cannot be triaged, and the trace must repeat it so
+                // --why-face answers without a rebuild.
+                if (cause.find("(coons: ") == std::string::npos) {
+                    std::printf(
+                        "  UNEXPLAINED planned floor on %s face #%d: '%s'\n",
+                        c.label.c_str(), fid, cause.c_str());
+                }
+                CHECK(cause.find("(coons: ") != std::string::npos);
+                CHECK(cause.find("orthogonal: ") != std::string::npos);
+                const std::string trace = weft::formatFaceTrace(report, fid);
+                CHECK(trace.find("coons: ") != std::string::npos);
+                CHECK(trace.find("wires=") != std::string::npos);
+                ++plannedExplained;
             }
 
             const weft::StructureSummary s =
@@ -3513,13 +3538,24 @@ void testStructureRetentionClassification() {
                      s.total);
             CHECK(s.retention() >= 0.0 && s.retention() <= 1.0);
             CHECK_EQ(int(s.failedByCause.size()) <= s.failedFloor, 1);
+            CHECK_EQ(int(s.plannedByCause.size()) <= s.plannedFloor, 1);
             const std::string line = weft::formatStructure(report);
             CHECK(line.find("structure: faces=") != std::string::npos);
             CHECK(line.find("retention=") != std::string::npos);
+            if (s.plannedFloor > 0) {
+                CHECK(line.find("planned-floor by cause:") !=
+                      std::string::npos);
+            }
             ++checked;
         }
     }
-    std::printf("  %d model/profile runs, every cause registered\n", checked);
+    // The corpus above must actually exercise the planned-floor path, or
+    // the assertions are vacuous.
+    CHECK(plannedExplained > 0);
+    std::printf(
+        "  %d model/profile runs, every cause registered, %d planned floors "
+        "explained\n",
+        checked, plannedExplained);
 }
 
 // Artist model for a cut cylinder (2026-07-25): "if I set it to 6 spans the

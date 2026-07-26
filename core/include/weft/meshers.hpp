@@ -268,6 +268,11 @@ struct StructureSummary {
     // Failed-floor faces grouped by their exact cause string, so the biggest
     // class can be attacked first instead of the newest complaint.
     std::map<std::string, int> failedByCause;
+    // Planned-floor faces grouped the same way. A planned floor is a routing
+    // gap rather than debt, but the gaps still need ranking: planFace
+    // records which ladder stage exhausted, so the census says which class
+    // of trim the ladder cannot express yet.
+    std::map<std::string, int> plannedByCause;
 
     double retention() const {
         return total ? double(structured) / double(total) : 1.0;
@@ -402,6 +407,9 @@ struct GenerationCache {
     std::map<int, bool> revolutionCovers;
     std::map<int, bool> geomRevolution;
     std::map<int, bool> coonsValid;
+    // Reject reason for the faces coonsValid memoized as false, so a replan
+    // that skips patch construction still explains a contract floor.
+    std::map<int, std::string> coonsReject;
     // Flat faces whose coons outline has a strong reflex bend (chevron
     // plates): geometry-only, planning may prefer quad-fill for them.
     std::map<int, bool> coonsReflex;
@@ -426,6 +434,7 @@ struct GenerationCache {
         revolutionCovers.clear();
         geomRevolution.clear();
         coonsValid.clear();
+        coonsReject.clear();
         coonsReflex.clear();
         faceAreas.clear();
         faceOuterPerimeters.clear();

@@ -97,6 +97,7 @@ StructureSummary summarizeStructure(const GenerationReport& report) {
                 break;
             case FaceBuildClass::PlannedFloor:
                 ++s.plannedFloor;
+                ++s.plannedByCause[cause.empty() ? "(no cause)" : cause];
                 break;
             case FaceBuildClass::Raw:
                 ++s.raw;
@@ -130,6 +131,18 @@ std::string formatStructure(const GenerationReport& report) {
             out += line;
         }
         out += '\n';
+    }
+    // Planned-floor reasons carry the whole ladder verdict, so they get one
+    // line each instead of the failed-floor tail's single run-on line.
+    if (!s.plannedByCause.empty()) {
+        out += "    planned-floor by cause:\n";
+        for (const auto& [cause, n] : s.plannedByCause) {
+            std::snprintf(line, sizeof(line), "%6d x ", n);
+            out += "      ";
+            out += line;
+            out += cause;
+            out += '\n';
+        }
     }
     return out;
 }

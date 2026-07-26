@@ -210,6 +210,15 @@ struct FacePlan {
     int orthogonalDriverU = 0;
     int orthogonalDriverV = 0;
     std::vector<int> orthogonalEdges;
+    // Planned contract floor only: why the ladder exhausted, and the trim
+    // facts behind it. `floorWhy` is short and low-cardinality — it becomes
+    // part of GenerationReport::faceBuildCause, so planned floors are
+    // countable by reason instead of all reading "contract floor".
+    // `floorFacts` is the wider one-line description the mesh trace replays
+    // for `--why-face`. Both stay empty on every face that keeps its
+    // structure, so a healthy plan pays nothing.
+    std::string floorWhy;
+    std::string floorFacts;
 };
 
 bool sameFaceSettings(const FaceMeshSettings& a,
@@ -612,20 +621,44 @@ bool openBandSides(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     return outerWires == 1 && sides.size() == 2;
 }
 
+// Which surface parameter one trimmed edge's pcurve travels along, judged
+// from its UV bounding-box extent. Shared by the orthogonal trim grid (which
+// also needs the drivers and the interior-step tests) and by the
+// planned-floor diagnostic, so a reject reason and the census it feeds never
+// disagree about what counts as diagonal.
+enum class UvEdgeDir { Point, U, V, Diagonal };
+
+UvEdgeDir uvEdgeDirection(double du, double dv, double us, double vs) {
+    const double ut = 2e-5 * us, vt = 2e-5 * vs;
+    const double nearU = 0.03 * us, nearV = 0.03 * vs;
+    if (du > ut && (dv <= nearV || du / us >= dv / vs)) return UvEdgeDir::U;
+    if (dv > vt && (du <= nearU || dv / vs > du / us)) return UvEdgeDir::V;
+    if (du > ut || dv > vt) return UvEdgeDir::Diagonal;
+    return UvEdgeDir::Point;
+}
+
 // Recognize one connected UV-orthogonal trim as a structured lattice, not
 // as a generic polygon to triangulate. STEP exporters commonly split a
 // perfectly regular side at every adjacent feature; counting B-rep edges
 // therefore says nothing about the patch topology. What matters is that all
 // non-degenerate pcurves run along one surface parameter and that horizontal
 // scanlines meet one connected interval.
+//
+// `why` receives a short reject reason (same role as makeCoonsPatch's), so a
+// face that ends on the contract floor can name the gate that refused it.
 bool planOrthogonalTrimGrid(const TopoDS_Face& face,
                             const BRepAdaptor_Surface& surf,
-                            const Model& model, FacePlan& plan) {
+                            const Model& model, FacePlan& plan,
+                            std::string* why = nullptr) {
     const int dbgFid = model.faces.FindIndex(face);
-    if (surf.IsUClosed() || surf.IsVClosed()) return false;
+    auto reject = [&](std::string r) {
+        if (why) *why = std::move(r);
+        return false;
+    };
+    if (surf.IsUClosed() || surf.IsVClosed()) return reject("closed chart");
     int wires = 0;
     for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) ++wires;
-    if (wires != 1) return false;
+    if (wires != 1) return reject(std::to_string(wires) + " wires, needs 1");
 
     const double u0 = surf.FirstUParameter(), u1 = surf.LastUParameter();
     const double v0 = surf.FirstVParameter(), v1 = surf.LastVParameter();
@@ -637,14 +670,14 @@ bool planOrthogonalTrimGrid(const TopoDS_Face& face,
     double bestU = -1.0, bestV = -1.0;
     bool hasInteriorStep = false;
     int fullHeightVertical = 0, insetVertical = 0;
-    int realEdges = 0;
+    int realEdges = 0, diagonalEdges = 0;
     for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
         const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
         if (BRep_Tool::Degenerated(edge)) continue;
         ++realEdges;
         double f, l;
         Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(edge, face, f, l);
-        if (pc.IsNull()) return false;
+        if (pc.IsNull()) return reject("pcurve missing");
         double eu0 = 1e300, eu1 = -1e300, ev0 = 1e300, ev1 = -1e300;
         for (int k = 0; k <= 12; ++k) {
             const gp_Pnt2d uv = pc->Value(f + (l - f) * k / 12.0);
@@ -653,29 +686,51 @@ bool planOrthogonalTrimGrid(const TopoDS_Face& face,
         }
         const double du = eu1 - eu0, dv = ev1 - ev0;
         const int eid = model.edges.FindIndex(edge);
-        if (eid < 1) return false;
+        if (eid < 1) return reject("edge not in model");
         plan.orthogonalEdges.push_back(eid);
-        if (du > ut && (dv <= nearV || du / us >= dv / vs)) {
-            horizontal.push_back(eid);
-            if (du > bestU) { bestU = du; plan.orthogonalDriverU = eid; }
-            const double vm = 0.5 * (ev0 + ev1);
-            hasInteriorStep |= vm > v0 + 0.05*vs && vm < v1 - 0.05*vs;
-        } else if (dv > vt && (du <= nearU || dv / vs > du / us)) {
-            vertical.push_back(eid);
-            if (dv > bestV) { bestV = dv; plan.orthogonalDriverV = eid; }
-            const double um = 0.5 * (eu0 + eu1);
-            if (dv >= 0.9*vs) ++fullHeightVertical;
-            if (um > u0 + 0.05*us && um < u1 - 0.05*us) ++insetVertical;
-            hasInteriorStep |= um > u0 + 0.05*us && um < u1 - 0.05*us;
-        } else if (du > ut || dv > vt) {
-            dbg("orthogonal face %d rejected: diagonal edge %d du %.6g "
-                "dv %.6g", dbgFid, eid, du/us, dv/vs);
-            return false; // a real diagonal/curved trim needs a local web
+        switch (uvEdgeDirection(du, dv, us, vs)) {
+            case UvEdgeDir::U: {
+                horizontal.push_back(eid);
+                if (du > bestU) { bestU = du; plan.orthogonalDriverU = eid; }
+                const double vm = 0.5 * (ev0 + ev1);
+                hasInteriorStep |= vm > v0 + 0.05*vs && vm < v1 - 0.05*vs;
+                break;
+            }
+            case UvEdgeDir::V: {
+                vertical.push_back(eid);
+                if (dv > bestV) { bestV = dv; plan.orthogonalDriverV = eid; }
+                const double um = 0.5 * (eu0 + eu1);
+                if (dv >= 0.9*vs) ++fullHeightVertical;
+                if (um > u0 + 0.05*us && um < u1 - 0.05*us) ++insetVertical;
+                hasInteriorStep |= um > u0 + 0.05*us && um < u1 - 0.05*us;
+                break;
+            }
+            case UvEdgeDir::Diagonal:
+                // A real diagonal/curved trim needs a local web. Finish the
+                // scan anyway so the reject reason carries HOW diagonal the
+                // trim is — the face is refused either way, and only faces
+                // that already failed pay the remaining pcurve samples.
+                if (!diagonalEdges) {
+                    dbg("orthogonal face %d rejected: diagonal edge %d du "
+                        "%.6g dv %.6g", dbgFid, eid, du/us, dv/vs);
+                }
+                ++diagonalEdges;
+                break;
+            case UvEdgeDir::Point:
+                break;
         }
     }
-    if (realEdges < 6 || horizontal.size() < 2 || vertical.size() < 2 ||
+    if (diagonalEdges) {
+        return reject(std::to_string(diagonalEdges) + " diagonal edges");
+    }
+    if (realEdges < 6) {
+        return reject(std::to_string(realEdges) + " real edges, needs 6");
+    }
+    if (horizontal.size() < 2 || vertical.size() < 2 ||
         plan.orthogonalDriverU == 0 || plan.orthogonalDriverV == 0) {
-        return false;
+        return reject(std::to_string(horizontal.size()) + "u/" +
+                      std::to_string(vertical.size()) +
+                      "v drivers, needs 2/2");
     }
     const GeomAbs_SurfaceType st = surf.GetType();
     const bool drum = st == GeomAbs_Cylinder || st == GeomAbs_Cone ||
@@ -695,12 +750,14 @@ bool planOrthogonalTrimGrid(const TopoDS_Face& face,
     // trim solver; drums are safe because U/V are angular/axial directions.
     if (drum && (fullHeightVertical != 1 ||
                  (insetVertical < 1 && horizontal.size() < 4))) {
-        return false;
+        return reject("drum needs one full-height side (" +
+                      std::to_string(fullHeightVertical) + " full, " +
+                      std::to_string(insetVertical) + " inset)");
     }
     if (!drum && !freeformComb &&
         (hasInteriorStep || horizontal.size() != 2)) {
         dbg("orthogonal face %d rejected: freeform interior step", dbgFid);
-        return false;
+        return reject("freeform interior step");
     }
 
     // Scan every V slab. A valid band has exactly one connected inside run;
@@ -735,7 +792,7 @@ bool planOrthogonalTrimGrid(const TopoDS_Face& face,
         if (runs != 1 && !drum && !freeformComb) {
             dbg("orthogonal face %d rejected: v slab %.6g has %d runs",
                 dbgFid, v, runs);
-            return false;
+            return reject("v slab has " + std::to_string(runs) + " runs");
         }
     }
 
@@ -8048,6 +8105,57 @@ bool planDomeCap(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     return true;
 }
 
+// One-line description of the face a planned contract floor gave up on: the
+// loop counts, the surface and its AD-5 class, and the UV direction split of
+// the trim — the shape every ladder stage measured before refusing. Recorded
+// on the plan and replayed as a trace line so `--why-face` answers "what IS
+// this face?" without a rebuild. Costs one pcurve scan, and only on the few
+// faces that actually reach the floor.
+std::string floorFaceFacts(const TopoDS_Face& face,
+                           const BRepAdaptor_Surface& surf,
+                           const FaceInfo& info) {
+    const double us =
+        std::max(1e-12, surf.LastUParameter() - surf.FirstUParameter());
+    const double vs =
+        std::max(1e-12, surf.LastVParameter() - surf.FirstVParameter());
+    int uDom = 0, vDom = 0, diag = 0, pointLike = 0, noPcurve = 0, degen = 0;
+    for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+        const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+        if (BRep_Tool::Degenerated(edge)) {
+            ++degen;
+            continue;
+        }
+        double f = 0.0, l = 0.0;
+        Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(edge, face, f, l);
+        if (pc.IsNull()) {
+            ++noPcurve;
+            continue;
+        }
+        double eu0 = 1e300, eu1 = -1e300, ev0 = 1e300, ev1 = -1e300;
+        for (int k = 0; k <= 12; ++k) {
+            const gp_Pnt2d uv = pc->Value(f + (l - f) * k / 12.0);
+            eu0 = std::min(eu0, uv.X()); eu1 = std::max(eu1, uv.X());
+            ev0 = std::min(ev0, uv.Y()); ev1 = std::max(ev1, uv.Y());
+        }
+        switch (uvEdgeDirection(eu1 - eu0, ev1 - ev0, us, vs)) {
+            case UvEdgeDir::U: ++uDom; break;
+            case UvEdgeDir::V: ++vDom; break;
+            case UvEdgeDir::Diagonal: ++diag; break;
+            case UvEdgeDir::Point: ++pointLike; break;
+        }
+    }
+    char line[320];
+    std::snprintf(line, sizeof(line),
+                  "wires=%d edges=%d degenerate=%d surface=%s class=%s/%s "
+                  "uv=[u %d, v %d, diagonal %d, point %d, no-pcurve %d]",
+                  info.loop.wireCount, int(info.edgeIds.size()), degen,
+                  surfaceTypeName(info.type),
+                  featureClassName(info.featureClass),
+                  chartKindName(info.chartKind), uDom, vDom, diag, pointLike,
+                  noPcurve);
+    return line;
+}
+
 FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                   const GenerationSettings& settings,
                   GenerationCache* cache) {
@@ -8131,6 +8239,11 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     };
     bool coonsReflex = false;  // flat outline with a strong reflex bend
     int coonsEffectiveRotate = s.coonsRotate;
+    // Ladder-exhaustion evidence: the reject strings from the two probes
+    // that own most of the routing. Read only if the ladder falls all the
+    // way through to the contract floor (see the tail of this function).
+    std::string coonsWhy;
+    std::string orthWhy;
     auto coonsOk = [&](CoonsPatch& patch) {
         // Patch construction is cheap; a memoized NEGATIVE skips it (and
         // the probes); a positive still rebuilds the (cheap) patch data.
@@ -8138,7 +8251,11 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         // face alone.
         if (cache) {
             auto it = cache->coonsValid.find(fid);
-            if (it != cache->coonsValid.end() && !it->second) return false;
+            if (it != cache->coonsValid.end() && !it->second) {
+                auto rit = cache->coonsReject.find(fid);
+                if (rit != cache->coonsReject.end()) coonsWhy = rit->second;
+                return false;
+            }
         }
         const char* why = nullptr;
         bool reflex = false;
@@ -8188,12 +8305,16 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 }
             }
         }
-        if (!v && why) dbg("coons: face %d rejected: %s", fid, why);
+        if (!v && why) {
+            coonsWhy = why;
+            dbg("coons: face %d rejected: %s", fid, why);
+        }
         if (v && reflex) dbg("coons: face %d has a reflex flat outline", fid);
         coonsReflex = v && reflex;
         if (cache) {
             cache->coonsValid[fid] = v;
             cache->coonsReflex[fid] = coonsReflex;
+            if (!v) cache->coonsReject[fid] = coonsWhy;
         }
         return v;
     };
@@ -8487,13 +8608,17 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             case MesherKind::QuadDominant:
                 plan.kind = MesherKind::Fallback;
                 plan.forceFallbackQuads = 1;
+                plan.floorWhy = "forced quad-dominant floor";
                 return plan;
             case MesherKind::Fallback:
                 plan.kind = MesherKind::Fallback;
                 plan.forceFallbackQuads = 0;
+                plan.floorWhy = "forced contract floor";
                 return plan;
         }
         plan.kind = MesherKind::Fallback;
+        plan.floorWhy =
+            std::string("forced ") + mesherKindName(want) + " cannot build";
         return plan;
     }
 
@@ -8886,13 +9011,16 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // Coons + an orthogonal-coons fallback for the class).
     {
         FacePlan orth;
-        if (planOrthogonalTrimGrid(face, surf, model, orth) &&
-            info.featureClass != FeatureClass::FilletStrip) {
+        std::string orthReject;
+        const bool orthOk =
+            planOrthogonalTrimGrid(face, surf, model, orth, &orthReject);
+        if (orthOk && info.featureClass != FeatureClass::FilletStrip) {
             dbg("plan face %d: orthogonal trim grid u=%zu v=%zu", fid,
                 orth.uEdges.size(), orth.vEdges.size());
             plan = std::move(orth);
             return plan;
         }
+        orthWhy = orthOk ? "held back for fillet coons" : orthReject;
     }
 
     // Spherical / dome cap (a single-wire revolution-like bspline that bulges
@@ -9009,7 +9137,8 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // is shorter in 3D.
     {
         CoonsPatch patch;
-        if (coonsOk(patch) && coonsChainsCompatible(patch)) {
+        const bool patchOk = coonsOk(patch);
+        if (patchOk && coonsChainsCompatible(patch)) {
             // A flat chevron (reflex outline) folds under any transfinite
             // grid. In quad-dominant mode quad-fill's grid + CDT rim is
             // strictly better and samples the same solved counts. In
@@ -9021,6 +9150,9 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 plan = FacePlan();
                 plan.kind = MesherKind::Fallback;
                 plan.forceFallbackQuads = 1;
+                plan.floorWhy = "coons: reflex flat outline under "
+                                "quad-dominant";
+                plan.floorFacts = floorFaceFacts(face, surf, info);
                 return plan;
             }
             plan.kind = MesherKind::CoonsGrid;
@@ -9127,6 +9259,10 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             }
             return plan;
         }
+        // A patch that BUILT but whose opposite sides cannot pair is a
+        // different routing gap from "no patch at all" — name it so the two
+        // do not merge into one floor bucket.
+        if (patchOk) coonsWhy = "opposite chain topology";
     }
 
     // Two-tip bands (crescents, lunes, tangent strips): coons wants four
@@ -9169,6 +9305,14 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
 
     plan = FacePlan();
     plan.kind = MesherKind::Fallback;
+    // The ladder ran out. Name the two probes that own most of the routing
+    // (and the trim they measured) so a planned floor is attributable to a
+    // class of shape rather than reading only "contract floor" — planned
+    // floors are a routing gap to close, not noise to count.
+    if (coonsWhy.empty()) coonsWhy = "no reject reason";
+    if (orthWhy.empty()) orthWhy = "not reached";
+    plan.floorWhy = "coons: " + coonsWhy + "; orthogonal: " + orthWhy;
+    plan.floorFacts = floorFaceFacts(face, surf, info);
     if (plan.forceFallbackQuads < 0) {
         // Automatic fallback stays triangulated: pairing unrelated floor
         // triangles can recreate the very long poles Quad Fill was removed
@@ -22388,6 +22532,16 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             why);
     };
 
+    // A planned floor is a routing decision, so it reports WHICH decision:
+    // the ladder-exhaustion reason planFace recorded rides along in the
+    // cause string. classifyFaceBuild keys on the prefix, so the face stays
+    // in the PlannedFloor class and out of the failure debt.
+    auto plannedFloorCause = [](const FacePlan& p) {
+        std::string cause = "planned contract floor";
+        if (!p.floorWhy.empty()) cause += " (" + p.floorWhy + ")";
+        return cause;
+    };
+
     auto meshFace = [&](int fid) {
         // Capture this face's trace lines so a demotion can explain itself
         // without a rebuild (see mesher_trace.hpp).
@@ -22401,6 +22555,15 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         const TopoDS_Face face = TopoDS::Face(model.faces(fid));
         const FacePlan& plan = plans.at(fid);
         dbg("mesh face %d: %s", fid, mesherKindName(plan.kind));
+        // Planning runs outside any face-trace scope, so replay its floor
+        // verdict here: without it `--why-face` on a planned floor shows
+        // only the mesher name.
+        if (!plan.floorWhy.empty()) {
+            dbg("plan face %d: %s", fid, plan.floorWhy.c_str());
+            if (!plan.floorFacts.empty()) {
+                dbg("plan face %d: %s", fid, plan.floorFacts.c_str());
+            }
+        }
         BRepAdaptor_Surface surf(face);
         MeshBuilder out(parts[fid]);
         const int nu = counts[fid][0], nv = counts[fid][1];
@@ -23011,7 +23174,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     borderContractViolation(fid, parts[fid]) == 0) {
                     if (repairFloorFolds(fid, face, parts[fid])) {
                         fellBack[fid] = 2;  // exact borders: authority
-                        buildCause[fid] = "planned contract floor";
+                        buildCause[fid] = plannedFloorCause(plan);
                         break;
                     }
                     // Fan borders are exact but folds remain — keep trying
@@ -23072,13 +23235,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             }
                         }
                         fellBack[fid] = 2;  // exact borders: authority
-                        buildCause[fid] = "planned contract floor";
+                        buildCause[fid] = plannedFloorCause(plan);
                         break;
                     }
                     if (haveFoldedFan) {
                         parts[fid] = std::move(fanKeep);
                         fellBack[fid] = 2;
-                        buildCause[fid] = "planned contract floor";
+                        buildCause[fid] = plannedFloorCause(plan);
                         break;
                     }
                 }
