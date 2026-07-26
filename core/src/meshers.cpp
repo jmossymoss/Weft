@@ -3877,6 +3877,15 @@ bool earClip(std::vector<WebPoint> poly, int faceId, bool flip,
              MeshBuilder& out) {
     const size_t n = poly.size();
     if (n < 3) return false;
+    // Rollback point: a numerical dead end used to leave clipped ears in
+    // `out` and return false. Callers such as ribbon webCap then append an
+    // n-gon fallback on top of those ears, repeating directed edges and
+    // demoting the whole strip (flaregun freeform ribbon self-check).
+    const size_t polysBefore = out.mesh().polygons.size();
+    auto rollback = [&]() {
+        out.mesh().polygons.resize(polysBefore);
+        out.mesh().polygonFaceId.resize(polysBefore);
+    };
     // Scale-free epsilon for convexity/containment decisions.
     double span = 0;
     for (const WebPoint& p : poly) {
@@ -3948,6 +3957,7 @@ bool earClip(std::vector<WebPoint> poly, int faceId, bool flip,
             // triangles across hole regions. Fail honestly — the caller
             // demotes the face and the contract floor (or OCCT) takes
             // over with the borders intact.
+            rollback();
             return false;
         }
     }
@@ -3955,6 +3965,9 @@ bool earClip(std::vector<WebPoint> poly, int faceId, bool flip,
         out.addPolygon({poly[idx[0]].vert, poly[idx[1]].vert,
                         poly[idx[2]].vert},
                        faceId, flip);
+    } else if (idx.size() > 3) {
+        rollback();
+        return false;
     }
     return true;
 }
@@ -6541,6 +6554,12 @@ bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
             minGap = std::min(minGap, g);
         }
         if (maxGap > 3.0 * std::max(1e-9, minGap)) return false;
+        // A body whose shorter rail is only one segment collapses to a
+        // single leftover n-gon that already owns the base rung. Zipping
+        // the hairpin from that same base repeats the directed chord and
+        // self-check demotes the strip (teleporter grip strap at sparse
+        // radial). Hand the cap to the web/n-gon path instead.
+        if (std::min(hiA - loA, hiB - loB) <= 1) return false;
         zipRailPair(R1, R2);
         dbg("ribbon face %d: folded cap %d pts, tip@%d", faceId, n, tIdx);
         return true;
@@ -22035,6 +22054,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 fellBack[fid] = it->second.fellBack;
                 builtCounts[fid] = it->second.builtCounts;
                 buildCause[fid] = it->second.buildCause;
+                borderExact[fid] = it->second.borderExact;
                 cached[fid] = true;
                 ++cacheHits;
             }
@@ -23965,12 +23985,30 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 const Anchor& ab = parts[fid].anchors[repeatB];
                 const auto& pa = parts[fid].vertices[repeatA];
                 const auto& pb = parts[fid].vertices[repeatB];
+                const size_t firstPoly = seenAt[{repeatA, repeatB}];
                 dbg("self-check face %d (%s): repeated directed edge %u->%u "
                     "uv (%.8g,%.8g)->(%.8g,%.8g) xyz (%.4f,%.4f,%.4f)->"
                     "(%.4f,%.4f,%.4f) at polygon %zu (first %zu)",
                     fid, mesherKindName(plan.kind), repeatA, repeatB, aa.u,
                     aa.v, ab.u, ab.v, pa[0], pa[1], pa[2], pb[0], pb[1],
-                    pb[2], repeatPoly, seenAt[{repeatA, repeatB}]);
+                    pb[2], repeatPoly, firstPoly);
+                auto dumpPoly = [&](size_t pi) {
+                    const auto& poly = parts[fid].polygons[pi];
+                    std::string s;
+                    for (size_t k = 0; k < poly.size(); ++k) {
+                        if (k) s += ' ';
+                        s += std::to_string(poly[k]);
+                    }
+                    dbg("self-check face %d: poly %zu (%zu verts): %s", fid,
+                        pi, poly.size(), s.c_str());
+                };
+                dumpPoly(firstPoly);
+                dumpPoly(repeatPoly);
+                if (firstPoly > 0) dumpPoly(firstPoly - 1);
+                if (repeatPoly + 1 < parts[fid].polygons.size())
+                    dumpPoly(repeatPoly + 1);
+                dbg("self-check face %d: part has %zu polygons", fid,
+                    parts[fid].polygons.size());
                 demote(fid, face, surf, s, "self-check failed");
             }
         }
@@ -24850,7 +24888,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             if (!cached[fid]) {
                 cache->faces[fid] = {cacheKey[fid], parts[fid],
                                      fellBack[fid], builtCounts[fid],
-                                     buildCause[fid]};
+                                     buildCause[fid], borderExact[fid]};
             }
         }
     }

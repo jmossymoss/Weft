@@ -2665,6 +2665,48 @@ void testFailedFloorRibbonWindingAndTallRevgrid() {
         assertStructuredKind(report, weft::MesherKind::RibbonSweep,
                              "teleporter winding");
     }
+    {
+        // Skinny opposite rail + hairpin folded cap: zipFoldedCap must not
+        // repeat the body's leftover base chord (self-check demote).
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "regressions/teleporter/ribbon_folded_cap_skinny_rail.step";
+        weft::Model model = weft::loadStep(stepPath.string());
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationSettings gs = cad();
+        weft::GenerationReport probe;
+        weft::generate(model, analysis, gs, &probe);
+        int ribbonFid = -1;
+        for (const auto& [fid, kind] : probe.faceMesher) {
+            if (kind == weft::MesherKind::RibbonSweep) {
+                ribbonFid = fid;
+                break;
+            }
+        }
+        CHECK(ribbonFid > 0);
+        gs.perFace[ribbonFid] = gs.defaults;
+        gs.perFace[ribbonFid].adaptive = false;
+        gs.perFace[ribbonFid].radial = 8;
+        weft::GenerationReport report;
+        weft::generate(model, analysis, gs, &report);
+        assertNoCause(report, "self-check failed", "teleporter skinny rail");
+        assertStructuredKind(report, weft::MesherKind::RibbonSweep,
+                             "teleporter skinny rail");
+    }
+    {
+        // Cap web ear-clip dead-end must roll back partial ears before the
+        // n-gon fallback; otherwise the strip self-checks (flaregun strap).
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "regressions/flaregun/ribbon_earclip_cap_ngon.step";
+        weft::Model model = weft::loadStep(stepPath.string());
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        weft::generate(model, analysis, cad(), &report);
+        assertNoCause(report, "self-check failed", "flaregun earclip cap");
+        assertStructuredKind(report, weft::MesherKind::RibbonSweep,
+                             "flaregun earclip cap");
+    }
 }
 
 void testRibbonCapWebKeepsStrip() {

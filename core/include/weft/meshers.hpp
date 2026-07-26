@@ -400,6 +400,11 @@ struct GenerationCache {
         // so a cache hit re-emits the same faceBuildCause a fresh mesh
         // would have written into GenerationReport.
         std::string buildCause;
+        // Border-contract oracle passed: conform treats this part as an
+        // exact-border authority. Must round-trip with the cache or a
+        // full hit rebuilds with every face freeform and can drop a
+        // weld-degenerate cell the cold path kept (teleporter +1 poly).
+        char borderExact = 0;
     };
     std::map<int, CachedFace> faces;
     // Geometry-only memos (settings-independent, per model): results of
