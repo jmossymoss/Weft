@@ -175,57 +175,31 @@ static LoopSignature classifyLoop(const TopoDS_Face& face) {
 }
 
 // Mirror of the mesher sphere chart probe: true when RevolutionGrid owns the
-// UV chart; false for geometric caps (bullet tips) that need disk rings.
+// UV chart; false for geometric caps (bullet tips, corner balls, half-domes)
+// that need disk rings or a four-sided patch instead.
+//
+// RevolutionGrid's lattice is periodic by construction: it wraps column
+// `nu - 1` back onto column `0` across its whole trimmed u range. So it owns
+// a sphere patch only where u genuinely CLOSES. A degenerate edge says the
+// chart TOUCHES a pole, and a collapsing iso says one side of it is a pole;
+// neither says the chart goes AROUND that pole, so neither can stand in for
+// closure. A patch trimmed to part of the period is bounded by meridians —
+// mp9_Edited's instanced rib corner balls are spherical octants (quarter
+// period, one pole edge, three real sides) and its half-domes are lunes
+// (half period, two pole edges). Wrapping either welds its own opposite
+// meridian onto itself, which is why the corner balls lost the border
+// contract on the meridian they never sampled, or folded.
 static bool sphereHasUvPoleChart(const TopoDS_Face& face,
                                  const BRepAdaptor_Surface& surf) {
     if (surf.GetType() != GeomAbs_Sphere) return false;
-    for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
-        if (BRep_Tool::Degenerated(TopoDS::Edge(ex.Current()))) return true;
-    }
     Handle(Geom_Surface) S = BRep_Tool::Surface(face);
     double umin = 0, umax = 0, vmin = 0, vmax = 0;
     BRepTools::UVBounds(face, umin, umax, vmin, vmax);
-    const double uspan = umax - umin, vspan = vmax - vmin;
-    if (S && !S.IsNull() && S->IsUPeriodic() &&
-        uspan >= 0.999 * S->UPeriod()) {
-        return true;
-    }
-    if (surf.IsUClosed() && uspan >= 0.999 * 2.0 * M_PI) return true;
-
-    Bnd_Box bb;
-    BRepBndLib::Add(face, bb);
-    if (bb.IsVoid()) return false;
-    double bx0, by0, bz0, bx1, by1, bz1;
-    bb.Get(bx0, by0, bz0, bx1, by1, bz1);
-    const double diag =
-        gp_Pnt(bx0, by0, bz0).Distance(gp_Pnt(bx1, by1, bz1));
-    if (!(diag > 1e-9)) return false;
-    const double collapseTol = 0.01 * diag;
-    auto isoExtent = [&](bool fixU, double fixed) {
-        gp_Pnt lo(1e300, 1e300, 1e300), hi(-1e300, -1e300, -1e300);
-        for (int k = 0; k <= 16; ++k) {
-            const double t = k / 16.0;
-            const gp_Pnt p =
-                fixU ? surf.Value(fixed, vmin + vspan * t)
-                     : surf.Value(umin + uspan * t, fixed);
-            lo.SetX(std::min(lo.X(), p.X()));
-            hi.SetX(std::max(hi.X(), p.X()));
-            lo.SetY(std::min(lo.Y(), p.Y()));
-            hi.SetY(std::max(hi.Y(), p.Y()));
-            lo.SetZ(std::min(lo.Z(), p.Z()));
-            hi.SetZ(std::max(hi.Z(), p.Z()));
-        }
-        return lo.Distance(hi);
-    };
-    const double eU0 = isoExtent(true, umin);
-    const double eU1 = isoExtent(true, umax);
-    const double eV0 = isoExtent(false, vmin);
-    const double eV1 = isoExtent(false, vmax);
-    const bool uPolar = (eU0 < collapseTol) != (eU1 < collapseTol) &&
-                        eV0 > collapseTol && eV1 > collapseTol;
-    const bool vPolar = (eV0 < collapseTol) != (eV1 < collapseTol) &&
-                        eU0 > collapseTol && eU1 > collapseTol;
-    return (uPolar && !vPolar) || (vPolar && !uPolar);
+    // Trimmed boolean spheres often report IsUClosed()=false on the adaptor,
+    // so the period comes from the geometry rather than from that flag.
+    const double period =
+        (S && !S.IsNull() && S->IsUPeriodic()) ? S->UPeriod() : 2.0 * M_PI;
+    return (umax - umin) >= 0.999 * period;
 }
 
 static ChartKind classifyChart(const TopoDS_Face& face, SurfaceType type,

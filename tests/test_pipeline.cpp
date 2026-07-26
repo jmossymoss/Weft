@@ -1815,11 +1815,12 @@ void testFeatureClassAnalyze() {
         CHECK(drums >= 1);
         std::printf("  cylinder: drums=%d\n", drums);
     }
+    // A pole chart is one the revolution lattice can WRAP, so it has to cover
+    // the whole u period. A full sphere does.
     {
-        const std::filesystem::path stepPath =
-            std::filesystem::path(__FILE__).parent_path() /
-            "regressions/mp9/sphere_dimple_annulus.step";
-        const weft::Analysis a = weft::analyze(weft::loadStep(stepPath.string()));
+        const std::string path = tmpPath("weft_fc_sphere.step");
+        weft::writeStep(weft::makeFixture("sphere"), path);
+        const weft::Analysis a = weft::analyze(weft::loadStep(path));
         int poleCaps = 0;
         for (const auto& f : a.faces) {
             if (f.type != weft::SurfaceType::Sphere) continue;
@@ -1829,7 +1830,25 @@ void testFeatureClassAnalyze() {
             ++poleCaps;
         }
         CHECK(poleCaps >= 1);
-        std::printf("  dimple: pole-chart spheres=%d\n", poleCaps);
+        std::printf("  full sphere: pole-chart spheres=%d\n", poleCaps);
+    }
+    // The dimple's half-dome does not: it is a lune between two pole edges,
+    // bounded by meridians and covering half the period. Wrapping it welds
+    // its two meridians together, so it is a geometric cap.
+    {
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "regressions/mp9/sphere_dimple_annulus.step";
+        const weft::Analysis a = weft::analyze(weft::loadStep(stepPath.string()));
+        int lunes = 0;
+        for (const auto& f : a.faces) {
+            if (f.type != weft::SurfaceType::Sphere) continue;
+            CHECK(f.featureClass == weft::FeatureClass::SphereCap);
+            CHECK(f.chartKind == weft::ChartKind::GeometricCap);
+            ++lunes;
+        }
+        CHECK(lunes >= 1);
+        std::printf("  dimple: geometric-cap lunes=%d\n", lunes);
     }
     {
         const std::string path = tmpPath("weft_fc_fillet.step");
@@ -2483,6 +2502,389 @@ void testFiveEdgeOrthogonalTrim() {
     const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
     CHECK_EQ(vr.nonManifoldEdges, 0);
     CHECK_EQ(vr.windingConflicts, 0);
+    CHECK_EQ(vr.degeneratePolygons, 0);
+    const auto folded = weft::foldedPolys(model, mesh);
+    CHECK_EQ(static_cast<size_t>(
+                 std::count(folded.begin(), folded.end(), uint8_t{1})),
+             0u);
+}
+
+// RevolutionGrid's lattice wraps its last column back onto its first, so it
+// can only own a sphere chart that covers the whole u period. A degenerate
+// pole edge used to be taken as proof of that, but it only says the chart
+// TOUCHES a pole. The rib corner balls of the MP9 pair are spherical octants
+// — a quarter of the period, one pole edge, three real sides — and wrapping
+// them welded each octant's two meridians into one: 28 faces per model lost
+// the border contract on the meridian they never sampled, or folded, and all
+// of them landed on the triangulated floor. They have to come back as
+// four-sided caps.
+void testSphereCornerOctantChart() {
+    std::printf("-- sphere corner octant chart --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/sphere_corner_octant.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+
+    int octants = 0;
+    for (const auto& f : analysis.faces) {
+        if (f.type != weft::SurfaceType::Sphere) continue;
+        CHECK(f.featureClass == weft::FeatureClass::SphereCap);
+        // Property, not id: a sphere patch trimmed to part of its period.
+        const TopoDS_Face face = TopoDS::Face(model.faces(f.id));
+        double umin = 0, umax = 0, vmin = 0, vmax = 0;
+        BRepTools::UVBounds(face, umin, umax, vmin, vmax);
+        if (umax - umin >= 0.999 * 2.0 * M_PI) continue;
+        ++octants;
+        CHECK(f.chartKind == weft::ChartKind::GeometricCap);
+        auto kit = report.faceMesher.find(f.id);
+        auto bit = report.faceBuild.find(f.id);
+        CHECK(kit != report.faceMesher.end());
+        CHECK(bit != report.faceBuild.end());
+        CHECK(kit->second != weft::MesherKind::RevolutionGrid);
+        CHECK(bit->second == 0);  // 0 = built by its planned mesher
+
+        size_t tris = 0, quads = 0, ngons = 0;
+        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+            if (p >= mesh.polygonFaceId.size() ||
+                mesh.polygonFaceId[p] != f.id) {
+                continue;
+            }
+            const size_t n = mesh.polygons[p].size();
+            if (n == 3) ++tris;
+            else if (n == 4) ++quads;
+            else ++ngons;
+        }
+        std::printf("  octant face#%d: %zu quads, %zu tris, %zu n-gons\n",
+                    f.id, quads, tris, ngons);
+        // A disk cap is rings of quads closed by one n-gon; the floor web it
+        // replaces was triangles, and the folded wrap before that was worse.
+        CHECK(quads > tris);
+        CHECK(ngons <= 2);
+    }
+    CHECK_EQ(octants, 2);
+
+    // The extract cuts the fillet neighbours open, so opens along those
+    // B-rep boundaries are expected; nothing may fold or double up.
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK_EQ(vr.openEdges - vr.openEdgesOnInputBoundary, 0u);
+    CHECK_EQ(vr.nonManifoldEdges, 0);
+    CHECK_EQ(vr.windingConflicts, 0);
+    CHECK_EQ(vr.degeneratePolygons, 0);
+    const auto folded = weft::foldedPolys(model, mesh);
+    CHECK_EQ(static_cast<size_t>(
+                 std::count(folded.begin(), folded.end(), uint8_t{1})),
+             0u);
+}
+
+// The rail sweep ends on a cap-ratio gate: when triangles outnumber the clean
+// cells the "rails" were spurious and the face is handed back. That is a
+// PREFERENCE between two structured results and it belongs only where one
+// follows — inside the Coons transaction. At the plain RibbonSweep route the
+// next stop is the all-triangle contract floor, so handing back a strip that
+// was 11 triangles against 10 n-gons bought a worse mesh, not a better one.
+// Fifteen MP9 strips went that way.
+void testRibbonCapWebKeepsStrip() {
+    std::printf("-- ribbon cap web keeps the strip --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/ribbon_cap_web_strip.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+
+    // Property, not id: no face may reach the floor because the sweep DECLINED
+    // it. The sweep's own correctness guards (border contract, self-check,
+    // folds) still demote a strip that is actually wrong, and one face here
+    // does exactly that both before and after — that is the guard working, not
+    // the preference misfiring, so those causes stay allowed.
+    int sweeps = 0, built = 0;
+    for (const auto& [fid, kind] : report.faceMesher) {
+        if (kind != weft::MesherKind::RibbonSweep) continue;
+        ++sweeps;
+        auto bit = report.faceBuild.find(fid);
+        CHECK(bit != report.faceBuild.end());
+        if (bit->second == 0) ++built;  // 0 = built by its planned mesher
+    }
+    CHECK(sweeps >= 1);
+    CHECK(built >= 1);
+    for (const auto& [fid, cause] : report.faceBuildCause) {
+        (void)fid;
+        CHECK(cause != "ribbon sweep failed");
+    }
+    std::printf("  rail sweeps: %d planned, %d built\n", sweeps, built);
+
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK_EQ(vr.openEdges - vr.openEdgesOnInputBoundary, 0u);
+    CHECK_EQ(vr.nonManifoldEdges, 0);
+    CHECK_EQ(vr.degeneratePolygons, 0);
+    const auto folded = weft::foldedPolys(model, mesh);
+    CHECK_EQ(static_cast<size_t>(
+                 std::count(folded.begin(), folded.end(), uint8_t{1})),
+             0u);
+}
+
+// Pins are a MODEL-WIDE contract: the neighbour that owns an orthogonal trim
+// propagates its station fractions onto the shared B-rep edges, and the
+// contract oracle checks for them. The rail sweep's ring sampler was the one
+// sampler that opted out, so a strip along a pinned edge laid its stations at
+// even arc length while every neighbour used the pinned fractions — off by up
+// to 0.16 mm here — and the strip was demoted for breaking a contract it had
+// never been told about. mp9_Edited/MP9 carried eight of these.
+void testRibbonHonoursPinnedStations() {
+    std::printf("-- ribbon sweep honours pinned stations --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/ribbon_pinned_trim_strip.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+
+    // The class, stated as a property: nothing here may reach the floor for
+    // failing the border contract, and the strip must be one of the faces
+    // that builds.
+    for (const auto& [fid, cause] : report.faceBuildCause) {
+        (void)fid;
+        CHECK(cause != "border contract failed");
+    }
+    int sweeps = 0;
+    for (const auto& [fid, kind] : report.faceMesher) {
+        if (kind != weft::MesherKind::RibbonSweep) continue;
+        ++sweeps;
+        auto bit = report.faceBuild.find(fid);
+        CHECK(bit != report.faceBuild.end());
+        CHECK_EQ(bit->second, 0);
+        size_t tris = 0, clean = 0;
+        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+            if (p >= mesh.polygonFaceId.size() ||
+                mesh.polygonFaceId[p] != fid) {
+                continue;
+            }
+            if (mesh.polygons[p].size() == 3) ++tris;
+            else ++clean;
+        }
+        std::printf("  strip face#%d: %zu clean, %zu tris\n", fid, clean,
+                    tris);
+        CHECK(clean > tris);
+    }
+    CHECK(sweeps >= 1);
+
+    // And the whole three-face patch stays quad-dominant: the floor this used
+    // to take was 127 quads / 69 tris where the strip now carries the span.
+    size_t tris = 0, quads = 0;
+    for (const auto& poly : mesh.polygons) {
+        if (poly.size() == 3) ++tris;
+        else if (poly.size() == 4) ++quads;
+    }
+    std::printf("  patch: %zu quads, %zu tris\n", quads, tris);
+    CHECK(quads > 8 * tris);
+
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK_EQ(vr.openEdges - vr.openEdgesOnInputBoundary, 0u);
+    CHECK_EQ(vr.nonManifoldEdges, 0);
+    CHECK_EQ(vr.degeneratePolygons, 0);
+    const auto folded = weft::foldedPolys(model, mesh);
+    CHECK_EQ(static_cast<size_t>(
+                 std::count(folded.begin(), folded.end(), uint8_t{1})),
+             0u);
+}
+
+// The sweep demanded two segments per rail. That was the reference-quad
+// picker's arithmetic, not geometry: `zipRailPair` pairs unequal rails by arc
+// fraction and batches the surplus into n-gons. Strips whose one rail is a
+// single straight edge the density solve leaves at one station — mp9_Edited
+// carries several, up to 113 x 5.3 at aspect 21 — were rejected and webbed
+// into slivers instead.
+void testRibbonSingleSegmentRail() {
+    std::printf("-- ribbon single-segment rail --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/ribbon_single_segment_rail.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+
+    int sweeps = 0;
+    for (const auto& [fid, kind] : report.faceMesher) {
+        if (kind != weft::MesherKind::RibbonSweep) continue;
+        ++sweeps;
+        auto bit = report.faceBuild.find(fid);
+        CHECK(bit != report.faceBuild.end());
+        CHECK(bit->second == 0);
+        size_t tris = 0, clean = 0;
+        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+            if (p >= mesh.polygonFaceId.size() ||
+                mesh.polygonFaceId[p] != fid) {
+                continue;
+            }
+            if (mesh.polygons[p].size() == 3) ++tris;
+            else ++clean;
+        }
+        std::printf("  strip face#%d: %zu clean cells, %zu tris\n", fid,
+                    clean, tris);
+        // The web it replaces was all triangles.
+        CHECK(clean > tris);
+    }
+    CHECK(sweeps >= 2);
+
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK_EQ(vr.openEdges - vr.openEdgesOnInputBoundary, 0u);
+    CHECK_EQ(vr.nonManifoldEdges, 0);
+    CHECK_EQ(vr.degeneratePolygons, 0);
+    const auto folded = weft::foldedPolys(model, mesh);
+    CHECK_EQ(static_cast<size_t>(
+                 std::count(folded.begin(), folded.end(), uint8_t{1})),
+             0u);
+}
+
+// Pinned stations are a model-wide border contract: an orthogonal trim or a
+// castellated rim propagates its crossings onto the shared B-rep edge so every
+// face that touches it emits the same points. Seven ring samplers passed
+// `pins = nullptr` and sampled those edges uniformly (or, for freeform curves,
+// by even arc length) instead, so their border missed stations their
+// neighbours emitted and the contract oracle demoted them. Both reducers carry
+// a pinned edge whose station count differs from its solved count; the meshers
+// here are the annulus ring and the revolution grid, but the fault was shared
+// by the rail ladder, quad fill, disk cap, cap fan and the insert-wire webs.
+void testPinnedStationsReachRingSamplers() {
+    std::printf("-- pinned stations reach the ring samplers --\n");
+    for (const char* name : {"regressions/mp9/pinned_station_annulus.step",
+                             "regressions/mp9/pinned_station_revgrid.step"}) {
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() / name;
+        weft::Model model = weft::loadStep(stepPath.string());
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationSettings gs;
+        gs.defaults.minimal = true;
+        gs.defaults.adaptive = true;
+        gs.defaults.relativeDeviation = true;
+        weft::GenerationReport report;
+        weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+
+        // Property, not id: no face anywhere may lose its planned mesher to a
+        // border it could have honoured. Other causes stay allowed — the
+        // revgrid reducer still carries an unrelated `revolution grid failed`.
+        int floored = 0;
+        for (const auto& [fid, cause] : report.faceBuildCause) {
+            (void)fid;
+            if (cause == "border contract failed") ++floored;
+        }
+        std::printf("  %s: %d border-contract demotions\n", name, floored);
+        CHECK_EQ(floored, 0);
+
+        const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+        CHECK_EQ(vr.openEdges - vr.openEdgesOnInputBoundary, 0u);
+        CHECK_EQ(vr.nonManifoldEdges, 0);
+        CHECK_EQ(vr.degeneratePolygons, 0);
+        const auto folded = weft::foldedPolys(model, mesh);
+        CHECK_EQ(static_cast<size_t>(
+                     std::count(folded.begin(), folded.end(), uint8_t{1})),
+                 0u);
+    }
+}
+
+// A lead-in chamfer is a SHORT band between two LEVEL rings. When its rims
+// carry different counts the revolution grid bridges them with a transition
+// strip, and the strip used to be refused unless the band was tall next to
+// half a rim chord. That height test guards the transition triangles against
+// folding, which needs a rim that wanders in v to fold across; between two
+// level rings the strip stays inside a constant-v slab of the parameter
+// rectangle and can only ever go thin. MP9 pays for the confusion 24 times:
+// one instanced chamfer per post, each trading a quad-dominant strip for a
+// contract-floor triangle web. Here the two rims are pinned apart so the
+// mismatch is genuine and survives the density repair.
+void testLevelRimChamferKeepsStrip() {
+    std::printf("-- level-rim chamfer keeps its transition strip --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/chamfer_level_rims.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+
+    // Locate the band by PROPERTY: the conical drum, 0.42 tall against rims
+    // of radius ~5.2. Its rims arrive split into arcs, which is what keeps
+    // the density solver from tying them to one count — the same shape MP9
+    // instances once per post.
+    int band = 0;
+    for (int fid = 1; fid <= model.faceCount(); ++fid) {
+        if (analysis.faces[fid - 1].type == weft::SurfaceType::Cone) {
+            CHECK_EQ(band, 0);
+            band = fid;
+        }
+    }
+    CHECK(band > 0);
+
+    // A rim is the set of arcs the band shares with ONE neighbour, so group
+    // its edges by the face on the other side, then pin the two rims to
+    // different counts. An edge pin is the one raise the density repair may
+    // not undo, so the mismatch reaches the mesher intact.
+    std::map<int, std::vector<int>> byNeighbour;
+    for (int eid : analysis.faces[band - 1].edgeIds) {
+        for (int nf : analysis.edges[eid - 1].faceIds) {
+            if (nf != band) byNeighbour[nf].push_back(eid);
+        }
+    }
+    CHECK_EQ(byNeighbour.size(), 2u);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    int perArc = 6;
+    for (const auto& [neighbour, edges] : byNeighbour) {
+        (void)neighbour;
+        for (int eid : edges) gs.perEdge[eid] = perArc;
+        perArc = 5;  // the far rim runs one station lighter per arc
+    }
+
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+
+    const auto cause = report.faceBuildCause.find(band);
+    const std::string why =
+        cause == report.faceBuildCause.end() ? "" : cause->second;
+    std::printf("  band face#%d: build=%d cause='%s'\n", band,
+                report.faceBuild[band], why.c_str());
+    CHECK(why != "revolution grid failed");
+    CHECK_EQ(report.faceBuild[band], 0);
+
+    // And it is a strip, not a fan: absorbing a difference of two costs at
+    // most a couple of triangles, so the band stays quad-dominant.
+    size_t tris = 0, clean = 0;
+    for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+        if (p >= mesh.polygonFaceId.size() ||
+            mesh.polygonFaceId[p] != band) {
+            continue;
+        }
+        if (mesh.polygons[p].size() == 3) ++tris;
+        else ++clean;
+    }
+    std::printf("  band cells: %zu clean, %zu tris\n", clean, tris);
+    CHECK(clean > tris);
+
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK_EQ(vr.openEdges - vr.openEdgesOnInputBoundary, 0u);
+    CHECK_EQ(vr.nonManifoldEdges, 0);
     CHECK_EQ(vr.degeneratePolygons, 0);
     const auto folded = weft::foldedPolys(model, mesh);
     CHECK_EQ(static_cast<size_t>(
@@ -5032,6 +5434,12 @@ int main() {
     RUN(testOrthogonalStaircaseInteriorStep);
     RUN(testCylinderWallFullLengthSpans);
     RUN(testFiveEdgeOrthogonalTrim);
+    RUN(testSphereCornerOctantChart);
+    RUN(testRibbonCapWebKeepsStrip);
+    RUN(testRibbonHonoursPinnedStations);
+    RUN(testRibbonSingleSegmentRail);
+    RUN(testPinnedStationsReachRingSamplers);
+    RUN(testLevelRimChamferKeepsStrip);
     RUN(testTanSlitNoRawDemotion);
     RUN(testBrokenSourceDiagnostic);
     RUN(testMp9CoonsPlaneSeamCanonicalize);
