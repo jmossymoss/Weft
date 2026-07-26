@@ -637,6 +637,52 @@ UvEdgeDir uvEdgeDirection(double du, double dv, double us, double vs) {
     return UvEdgeDir::Point;
 }
 
+// Can the row/column clipper decompose a trim made of pcurves like this one?
+//
+// The clipper's subject is usually described as an axis-aligned staircase,
+// but that is stronger than what it actually needs. A station stands on every
+// trim endpoint, so inside one row band the trim is only whole segments; the
+// row's two sides are then traced along the real polyline and its floor and
+// ceiling are the row limits. A segment that runs diagonally across a band is
+// fine — it is traced like any other and the cells it cuts become n-gons,
+// which is the intended result. What the clipper cannot represent is a
+// segment that DOUBLES BACK:
+//
+//   - a pcurve that reverses in v can cross a row's midline twice, and the
+//     crossings are what the row is built from — the pairing then describes a
+//     region the trim does not bound, and the side trace can leave the band
+//     through the limit it entered by;
+//   - a pcurve that reverses in u makes the two sides of a slab cross over
+//     each other, so the half-plane clip against a column returns a
+//     self-intersecting cell.
+//
+// Both are monotonicity, one per axis, and monotonicity is exactly what an
+// endpoint-only bounding box cannot see. `samples` is the pcurve polyline the
+// caller already took for that box, so this costs comparisons only.
+bool monotoneStep(const std::vector<gp_Pnt2d>& samples, double du, double dv,
+                  double us, double vs) {
+    // Numerical wobble on a spline pcurve is not a reversal; a curve that
+    // genuinely turns back covers a real fraction of its own extent. The
+    // chart floor under that is what makes the test usable on a near-iso
+    // step: its minor extent IS the wobble, so a purely relative slack asks
+    // a horizontal step to be monotone in v to its own noise, and the
+    // ordinary axis-aligned staircase this exists to admit fails. Below a
+    // thousandth of the chart no reversal can move a crossing off the
+    // station it belongs to.
+    const double slackU = std::max(1e-2 * du, 1e-3 * us);
+    const double slackV = std::max(1e-2 * dv, 1e-3 * vs);
+    bool upU = false, downU = false, upV = false, downV = false;
+    for (size_t k = 1; k < samples.size(); ++k) {
+        const double dU = samples[k].X() - samples[k - 1].X();
+        const double dV = samples[k].Y() - samples[k - 1].Y();
+        if (dU > slackU) upU = true;
+        if (-dU > slackU) downU = true;
+        if (dV > slackV) upV = true;
+        if (-dV > slackV) downV = true;
+    }
+    return !(upU && downU) && !(upV && downV);
+}
+
 // Recognize one connected UV-orthogonal trim as a structured lattice, not
 // as a generic polygon to triangulate. STEP exporters commonly split a
 // perfectly regular side at every adjacent feature; counting B-rep edges
@@ -646,10 +692,20 @@ UvEdgeDir uvEdgeDirection(double du, double dv, double us, double vs) {
 //
 // `why` receives a short reject reason (same role as makeCoonsPatch's), so a
 // face that ends on the contract floor can name the gate that refused it.
+//
+// `allowStaircase` widens the shape gate from "no interior step, exactly two
+// horizontal sides" to "every pcurve monotone in both parameters" — the
+// condition the row/column clipper actually needs (see monotoneStep). It is
+// off at this routing table's FIRST call because the lattice is not the right
+// answer for every shape a monotone trim can describe: a two-tip lune is a
+// rail ladder, a long thin ribbon is a sweep, and both sit after this call.
+// The plan flow turns it on again for faces the whole table declined, where
+// the alternative is a triangulated contract floor.
 bool planOrthogonalTrimGrid(const TopoDS_Face& face,
                             const BRepAdaptor_Surface& surf,
                             const Model& model, FacePlan& plan,
-                            std::string* why = nullptr) {
+                            std::string* why = nullptr,
+                            bool allowStaircase = false) {
     const int dbgFid = model.faces.FindIndex(face);
     auto reject = [&](std::string r) {
         if (why) *why = std::move(r);
@@ -671,6 +727,11 @@ bool planOrthogonalTrimGrid(const TopoDS_Face& face,
     bool hasInteriorStep = false;
     int fullHeightVertical = 0, insetVertical = 0;
     int realEdges = 0, diagonalEdges = 0;
+    // Can the row/column clipper decompose this trim? Every pcurve monotone
+    // in both parameters is what it needs — not an absence of interior steps.
+    // See monotoneStep.
+    bool staircase = true;
+    std::vector<gp_Pnt2d> samples;
     for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
         const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
         if (BRep_Tool::Degenerated(edge)) continue;
@@ -679,12 +740,15 @@ bool planOrthogonalTrimGrid(const TopoDS_Face& face,
         Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(edge, face, f, l);
         if (pc.IsNull()) return reject("pcurve missing");
         double eu0 = 1e300, eu1 = -1e300, ev0 = 1e300, ev1 = -1e300;
+        samples.clear();
         for (int k = 0; k <= 12; ++k) {
             const gp_Pnt2d uv = pc->Value(f + (l - f) * k / 12.0);
+            samples.push_back(uv);
             eu0 = std::min(eu0, uv.X()); eu1 = std::max(eu1, uv.X());
             ev0 = std::min(ev0, uv.Y()); ev1 = std::max(ev1, uv.Y());
         }
         const double du = eu1 - eu0, dv = ev1 - ev0;
+        staircase = staircase && monotoneStep(samples, du, dv, us, vs);
         const int eid = model.edges.FindIndex(edge);
         if (eid < 1) return reject("edge not in model");
         plan.orthogonalEdges.push_back(eid);
@@ -754,15 +818,31 @@ bool planOrthogonalTrimGrid(const TopoDS_Face& face,
                       std::to_string(fullHeightVertical) + " full, " +
                       std::to_string(insetVertical) + " inset)");
     }
-    if (!drum && !freeformComb &&
+    // An interior step IS the row/column clipper's subject: rows limited by
+    // the trim's own v stations, columns clipped as half-planes, each cut
+    // region absorbed into one n-gon. Refusing every interior step and every
+    // chart with more than two horizontal sides was a shape restriction, not
+    // a geometric impossibility — `freeformComb` was one narrow escape from
+    // it, and the same faces reappeared as triangulated floor webs
+    // everywhere else. The condition that actually decides is per-pcurve
+    // monotonicity (see monotoneStep), so gate on that when the caller has
+    // exhausted the specialized routes, and let the mesher decline
+    // transactionally (demote() rebuilds on the exact-border floor) when a
+    // monotone trim still defeats it.
+    const bool wideStep = allowStaircase && staircase;
+    if (!drum && !freeformComb && !wideStep &&
         (hasInteriorStep || horizontal.size() != 2)) {
-        dbg("orthogonal face %d rejected: freeform interior step", dbgFid);
-        return reject("freeform interior step");
+        dbg("orthogonal face %d rejected: freeform interior step%s", dbgFid,
+            staircase ? " (monotone; retried before the floor)" : "");
+        return reject(staircase ? "freeform interior step, staircase"
+                                : "freeform interior step");
     }
 
     // Scan every V slab. A valid band has exactly one connected inside run;
-    // this excludes disjoint combs even when all of their edges are axis
-    // aligned.
+    // a second run means the row's crossings may not describe the row. On a
+    // monotone trim they do: the row builder already emits one slab per
+    // inside crossing pair, which is how the freeformComb escape meshed its
+    // comb, so a second run there is a cut to absorb, not a refusal.
     std::vector<double> levels{v0, v1};
     for (int eid : vertical) {
         double f, l;
@@ -789,7 +869,7 @@ bool planOrthogonalTrimGrid(const TopoDS_Face& face,
             if (in && !wasIn) ++runs;
             wasIn = in;
         }
-        if (runs != 1 && !drum && !freeformComb) {
+        if (runs != 1 && !drum && !freeformComb && !wideStep) {
             dbg("orthogonal face %d rejected: v slab %.6g has %d runs",
                 dbgFid, v, runs);
             return reject("v slab has " + std::to_string(runs) + " runs");
@@ -4792,9 +4872,16 @@ bool meshPlateWeb(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                   const Model& model, int faceId,
                   const std::vector<int>& solvedEdge, int radialDefault,
                   int collarRings, bool squareCollar, MeshBuilder& out,
-                  bool minimalResidual = false) {
+                  bool minimalResidual = false,
+                  const PinnedEdges* pins = nullptr) {
+    // Pins are the shared reading of an edge, so the plate's outer ring has
+    // to take them exactly as the minimal-planar floor does. Without them a
+    // plate next to any pinning neighbour samples the shared edge at its own
+    // parameters, fails its border contract and webs the whole face
+    // (mp9_Edited #796/#1898/#1900, once #795 started pinning as a lattice).
     std::vector<PlanarRing> rings;
-    if (!samplePlanarRings(face, model, solvedEdge, radialDefault, rings)) {
+    if (!samplePlanarRings(face, model, solvedEdge, radialDefault, rings,
+                           pins)) {
         return false;
     }
     if (rings.size() < 2) return false;
@@ -9301,6 +9388,37 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         collectPlanarLoops(face, surf, model, plan, /*requirePlane=*/false)) {
         plan.kind = MesherKind::MinimalNGon;
         return plan;
+    }
+
+    // Every specialized route declined. Before webbing the face, ask the
+    // orthogonal lattice again with its shape gate widened to what the
+    // row/column clipper can actually decompose: a trim whose pcurves are
+    // each monotone in both parameters, interior steps and all. That is the
+    // single largest planned-floor class, and the alternative here is a
+    // triangulated web — so attempt and verify rather than refuse, since the
+    // mesher declines transactionally and demote() lands back on this floor.
+    {
+        FacePlan wide;
+        std::string wideReject;
+        if (planOrthogonalTrimGrid(face, surf, model, wide, &wideReject,
+                                   /*allowStaircase=*/true)) {
+            // A blend strip is held back from the lattice EARLIER so that
+            // across/along ownership and filletHold stay with Coons. Here
+            // Coons has already refused it, so the choice is the lattice or
+            // a web; take the lattice with the same fillet ownership the
+            // class's own orthogonal fallback sets.
+            if (info.featureClass == FeatureClass::FilletStrip) {
+                wide.kind = MesherKind::CoonsGrid;
+                wide.isFillet = true;
+                wide.orthogonalFreeformComb = true;
+                wide.acrossIsU = surf.GetType() == GeomAbs_Cylinder;
+            }
+            dbg("plan face %d: orthogonal staircase grid u=%zu v=%zu", fid,
+                wide.uEdges.size(), wide.vEdges.size());
+            plan = std::move(wide);
+            return plan;
+        }
+        orthWhy = wideReject;
     }
 
     plan = FacePlan();
@@ -14346,24 +14464,46 @@ bool meshRevolutionAnnulusBody(const BRepAdaptor_Surface& surf, int faceId,
 //       cell's polygon (this is why a revolution wall drops its u endpoints
 //       outright), so near-coincident u lines are pure ribbon.
 //   v — a row limit. The slab builder needs every trim corner ON a row limit,
-//       so v merges only numerically coincident corners.
+//       so v merges only corners the SAMPLE SNAP also moves onto the
+//       survivor.
+//
+// That last clause is a hard coupling, not a preference: `kStationSnapFracV`
+// must be at least `kStationHardFracV`. Merging two v corners keeps one
+// line, and the dropped corner's boundary samples only reach it through
+// `snapAxis`. Snap narrower than the merge and the corner stays where it
+// was — strictly inside a row — where the slab builder, which takes its
+// crossings at the row's MIDPOINT and reuses them at floor and ceiling,
+// cannot see it: the side collapses to a chord across the trim. Measured on
+// mp9_Edited face 742, which requests one row, so 1% of pitch was 1% of the
+// whole chart: three absorbed corners, eight collapsed sides, 18 open edges.
+// Snapping in uv costs nothing geometrically — a border sample keeps its
+// exact 3D position from `exactBoundary`; only its lattice identity rounds.
+//
 // Uniform stations are always droppable: one is skipped when a trim station
 // already stands within `kStationUniformFrac` of it.
 //
-// Parametric distance alone is not enough. The same #1805 chart runs 8 mm per
-// unit u against its u-min limit and 1037 mm per unit at the chart centre, so
-// a 0.03-pitch parametric gap there is 1.3 um of surface — a cell narrower
-// than the tolerances the border passes move vertices by, with a winding sign
-// that is pure noise. `kStationArcFrac` also merges lines that are negligible
-// by 3D arc length.
+// On u, parametric distance alone is not enough. The same #1805 chart runs
+// 8 mm per unit u against its u-min limit and 1037 mm per unit at the chart
+// centre, so a 0.03-pitch parametric gap there is 1.3 um of surface — a cell
+// narrower than the tolerances the border passes move vertices by, with a
+// winding sign that is pure noise. `kStationArcFrac` also merges u lines that
+// are negligible by 3D arc length. It does not apply to v: an arc-negligible
+// v gap can still be a wide PARAMETRIC gap, which no snap tolerance covers.
 constexpr double kStationHardFracU = 0.25;
 constexpr double kStationHardFracV = 0.01;
 constexpr double kStationUniformFrac = 0.35;
 constexpr double kStationArcFrac = 0.01;
-constexpr double kStationSnapFrac = 1e-3;
+constexpr double kStationSnapFracU = 1e-3;
+constexpr double kStationSnapFracV = kStationHardFracV;
+constexpr double kStationSnapLocalFrac = 0.05;
 // Two pinned crossings closer than this fraction of one edge sample spacing
-// are the same point on that edge, not two.
-constexpr double kPinFuseFrac = 1e-2;
+// are the same point on that edge, not two. The case this fuse exists for is
+// one row limit solved independently by two faces, measured 1.6e-5 of the
+// shared edge apart. A coarser tolerance fuses crossings that came from
+// genuinely DIFFERENT stations, and the clipper still cuts at both — leaving
+// a border point the pinned neighbour cannot have (mp9_Edited face 742 at the
+// old 1%: 32 fused crossings, 10 open edges).
+constexpr double kPinFuseFrac = 1e-3;
 
 bool orthogonalTrimStations(const TopoDS_Face& face,
                             const BRepAdaptor_Surface& surf,
@@ -14390,6 +14530,32 @@ bool orthogonalTrimStations(const TopoDS_Face& face,
         }
         hardV.push_back(a.Y());
         hardV.push_back(b.Y());
+        // A line must also stand where the trim TURNS, not only where one
+        // edge hands over to the next. A pcurve that bulges past the box its
+        // own endpoints span leaves trim strictly inside a band, and the row
+        // built there is bounded by the band's limit instead of by the trim —
+        // so its floor cells hang outside the face and the border they hand
+        // the neighbour is a chord (mp9_Edited face 577: one bottom pcurve
+        // 1.4% of the chart above its ends, 28 of 58 trim segments uncovered,
+        // 11 open edges). Endpoint extrema are already in hand; only a
+        // genuine interior turn adds anything here.
+        double lo2U = a.X(), hi2U = a.X(), lo2V = a.Y(), hi2V = a.Y();
+        lo2U = std::min(lo2U, b.X()); hi2U = std::max(hi2U, b.X());
+        lo2V = std::min(lo2V, b.Y()); hi2V = std::max(hi2V, b.Y());
+        double minU = lo2U, maxU = hi2U, minV = lo2V, maxV = hi2V;
+        constexpr int kTurnSamples = 16;
+        for (int k = 1; k < kTurnSamples; ++k) {
+            const gp_Pnt2d p = pc->Value(f + (l - f) * k / kTurnSamples);
+            minU = std::min(minU, p.X()); maxU = std::max(maxU, p.X());
+            minV = std::min(minV, p.Y()); maxV = std::max(maxV, p.Y());
+        }
+        if (getenv("WEFT_NOTURN")==nullptr) {
+        if (!dropEndpointU) {
+            if (minU < lo2U - ut) hardU.push_back(minU);
+            if (maxU > hi2U + ut) hardU.push_back(maxU);
+        }
+        if (minV < lo2V - vt) hardV.push_back(minV);
+        if (maxV > hi2V + vt) hardV.push_back(maxV); }
     }
     // Cumulative surface length along one axis, sampled at three positions of
     // the other one and kept at its LONGEST so a compressed corner can never
@@ -14413,14 +14579,13 @@ bool orthogonalTrimStations(const TopoDS_Face& face,
         return cum;
     };
     auto build = [&](std::vector<double> hard, double lo, double hi, int n,
-                    double absTol, double hardFrac,
+                    double absTol, double hardFrac, double arcFrac,
                     const std::vector<double>& cum,
                     std::vector<double>& out, const char* axis) {
         const double pitch = std::abs(hi - lo) / std::max(1, n);
         const double hardTol = std::max(absTol, hardFrac * pitch);
         const double uniTol = std::max(absTol, kStationUniformFrac * pitch);
-        const double arcTol =
-            kStationArcFrac * cum.back() / std::max(1, n);
+        const double arcTol = arcFrac * cum.back() / std::max(1, n);
         auto arcAt = [&](double x) {
             const double t = std::clamp((x - lo) / (hi - lo), 0.0, 1.0) *
                              double(cum.size() - 1);
@@ -14461,8 +14626,10 @@ bool orthogonalTrimStations(const TopoDS_Face& face,
     const double vLo = std::min(v0, v1), vHi = std::max(v0, v1);
     const std::vector<double> cumU = arcTable(true, uLo, uHi, vLo, vHi);
     const std::vector<double> cumV = arcTable(false, vLo, vHi, uLo, uHi);
-    build(std::move(hardU), uLo, uHi, nu, ut, kStationHardFracU, cumU, U, "u");
-    build(std::move(hardV), vLo, vHi, nv, vt, kStationHardFracV, cumV, V, "v");
+    build(std::move(hardU), uLo, uHi, nu, ut, kStationHardFracU,
+          kStationArcFrac, cumU, U, "u");
+    build(std::move(hardV), vLo, vHi, nv, vt, kStationHardFracV, 0.0, cumV, V,
+          "v");
     return U.size() >= 2 && V.size() >= 2;
 }
 
@@ -14498,7 +14665,7 @@ void pinOrthogonalTrimGrids(const Model& model,
             continue;
         }
 
-        auto pinEdge = [&](int eid, bool alongU) {
+        auto pinEdge = [&](int eid, bool axisU, bool axisV) {
             const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
             double f, l;
             Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(e, face, f, l);
@@ -14530,7 +14697,8 @@ void pinOrthogonalTrimGrids(const Model& model,
                                 ? naturalN
                                 : (eid < int(solvedEdge.size())
                                        ? solvedEdge[eid] : 1));
-            for (bool axis : {alongU}) {
+            for (bool axis : {true, false}) {
+                if (axis ? !axisU : !axisV) continue;
                 const auto& stations = axis ? U : V;
                 const double a = coord(0, axis), b = coord(1, axis);
                 const double lo = std::min(a,b), hi = std::max(a,b);
@@ -14596,18 +14764,19 @@ void pinOrthogonalTrimGrids(const Model& model,
             }
             pins[eid] = std::move(fr);
         };
-        // Column cells close on constant-u rulings. Every trim edge that
-        // crosses a requested column therefore needs that exact crossing in
-        // the shared pin set, including curved edges classified as v-dominant.
-        // Otherwise columnTrimCells can only substitute a nearby natural arc
-        // sample, and two endpoints carrying the same logical column index
-        // retain different u coordinates (a diagonal chord in 3D).
-        if (plan.kind == MesherKind::RevolutionGrid) {
-            for (int e : plan.orthogonalEdges) pinEdge(e, true);
-        } else {
-            for (int e : plan.uEdges) pinEdge(e, true);
-        }
-        for (int e : plan.vEdges) pinEdge(e, false);
+        // Both station families, on every trim edge. Column cells close on
+        // constant-u rulings, so every trim edge crossing a requested column
+        // needs that exact crossing in the shared pin set — including curved
+        // edges classified as v-dominant, or columnTrimCells substitutes a
+        // nearby natural arc sample and two endpoints carrying the same
+        // logical column index keep different u (a diagonal chord in 3D).
+        // The row clipper splits the same edges against the ROW limits for
+        // the same reason, and asking only the edge's own direction left
+        // the other family's crossings unshared: a u-running step that a row
+        // limit cuts became a border point no neighbour samples, which reads
+        // as a crack rather than as a mesher failure (measured on
+        // mp9_Edited face 742: 14 synthesized border points, 24 open edges).
+        for (int e : plan.orthogonalEdges) pinEdge(e, true, true);
     }
 }
 
@@ -14919,8 +15088,8 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
     // noise. Pitch-relative and three orders below a cell, so it can only fuse
     // samples that already share a 3D position. The station list merges any
     // pair this close, so a sample within it is genuinely on that line.
-    const double stationTolU = std::max(ut, kStationSnapFrac * pitchU);
-    const double stationTolV = std::max(vt, kStationSnapFrac * pitchV);
+    const double stationTolU = std::max(ut, kStationSnapFracU * pitchU);
+    const double stationTolV = std::max(vt, kStationSnapFracV * pitchV);
     if ((U.size() - 1) * (V.size() - 1) > 200000) return false;
 
     // Exact sampled trim polygon in wire order. Pins include every crossing
@@ -14935,6 +15104,9 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
     std::vector<std::pair<gp_Pnt2d,gp_Pnt>> exactSamples;
     std::vector<gp_Pnt2d> rawBoundary;
     std::vector<gp_Pnt> rawExact;
+    // Which B-rep edge each sample came from, so the coverage test below can
+    // ask whether a stretch the cells miss is shared with a neighbour.
+    std::vector<bool> sampleShared;
     for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
         for (BRepTools_WireExplorer we(TopoDS::Wire(wx.Current()), face);
              we.More(); we.Next()) {
@@ -14949,10 +15121,14 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
             if (pc.IsNull() || c3.IsNull()) return false;
             const int n = std::max(1, solvedEdge[eid]);
             const bool rev = edge.Orientation() == TopAbs_REVERSED;
+            const bool shared =
+                model.edgeToFaces.Contains(edge) &&
+                model.edgeToFaces.FindFromKey(edge).Extent() >= 2;
             for (double t : edgeSampleFractions(eid, n, 0.0, rev, false,
                                                 pins, &model)) {
                 rawBoundary.push_back(pc->Value(f + (l-f)*t));
                 rawExact.push_back(c3->Value(f3 + (l3-f3)*t));
+                sampleShared.push_back(shared);
             }
         }
         break;
@@ -14966,18 +15142,45 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
     // shared trim edge must yield the same point set on both of its faces or
     // the seam has nothing to weld to. Redundant crossings are removed once,
     // for both faces at a time, where the pins are built.
+    //
+    // The width is per STATION, not per chart. A uniform pitch describes the
+    // lattice the artist asked for, not the lattice a trim produces: 23 v
+    // stations over mp9_Edited #575 sit anywhere from 6e-4 to 3e-3 apart, so
+    // one pitch-relative width is far too wide against the close pairs and
+    // too narrow against the open ones. A sample five percent of the way to
+    // the next station is on this one — the bound cannot reorder anything,
+    // and it adapts to whatever spacing the trim actually left behind. (#575
+    // dips 1.4e-5 below a limit the rest of its edge runs along, which is
+    // 1.4% of the local gap but 1.4 pitch-thousandths; unsnapped, the row's
+    // ceiling jumped that sample and left 2% of the chart uncovered.)
+    auto snapWidths = [](const std::vector<double>& s, double tol,
+                         double localFrac) {
+        std::vector<double> w(s.size(), tol);
+        for (size_t i = 0; i < s.size(); ++i) {
+            double gap = 1e300;
+            if (i > 0) gap = std::min(gap, s[i] - s[i - 1]);
+            if (i + 1 < s.size()) gap = std::min(gap, s[i + 1] - s[i]);
+            if (gap < 1e299) w[i] = std::max(tol, localFrac * gap);
+        }
+        return w;
+    };
     auto snapAxis = [](std::vector<double> raw, const std::vector<double>& s,
-                       double tol) {
+                       const std::vector<double>& width) {
         for (double& x : raw) {
             auto it = std::lower_bound(s.begin(), s.end(), x);
-            double d = tol, best = x;
-            if (it != s.end() && std::abs(*it - x) <= d) {
-                d = std::abs(*it - x);
-                best = *it;
-            }
-            if (it != s.begin()) {
-                --it;
-                if (std::abs(*it - x) <= d) best = *it;
+            double d = 1e300, best = x;
+            for (int step = 0; step < 2; ++step) {
+                if (step == 1) {
+                    if (it == s.begin()) break;
+                    --it;
+                }
+                if (it == s.end()) continue;
+                const size_t i = size_t(it - s.begin());
+                const double e = std::abs(*it - x);
+                if (e <= width[i] && e < d) {
+                    d = e;
+                    best = *it;
+                }
             }
             x = best;
         }
@@ -14988,13 +15191,74 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
         rawU[i] = rawBoundary[i].X();
         rawV[i] = rawBoundary[i].Y();
     }
-    const std::vector<double> snappedU = snapAxis(rawU, U, stationTolU);
-    const std::vector<double> snappedV = snapAxis(rawV, V, stationTolV);
-    for (size_t i = 0; i < rawBoundary.size(); ++i) {
+    const std::vector<double> snappedU =
+        snapAxis(rawU, U, snapWidths(U, stationTolU, 0.0));
+    const std::vector<double> snappedV =
+        snapAxis(rawV, V, snapWidths(V, stationTolV,
+                                     kStationSnapLocalFrac));
+    // Snapping a trim that runs nearly ALONG a station is what puts it on
+    // that line at all — the row builder needs it there, and its exact 3D
+    // position is kept either way. But a curve that wanders across the line
+    // lands on it as a polyline that doubles back in u, and a reversal is
+    // not something the row's limit run can carry: it sorts, so the middle
+    // sample of the reversal belongs to no cell edge and the trim is left
+    // uncovered there (MP9 #1805 panels: two reversals of 2e-5 of the
+    // chart, four uncovered segments). The reversal is an artifact of the
+    // snap, so undo it here rather than letting it reach the clipper.
+    //
+    // The turn is read against the nearest DISTINCT samples on either side.
+    // A trim that touches a limit and comes straight back leaves the two
+    // evaluations of that touch as consecutive coincident samples, and
+    // reading immediate neighbours makes the turn look like a stop rather
+    // than a reversal (mp9_Edited #2139/#2143: a spike of 4e-4 of the chart,
+    // 14 uncovered segments each).
+    std::vector<size_t> keep;
+    keep.reserve(rawBoundary.size());
+    for (size_t i = 0; i < rawBoundary.size(); ++i) keep.push_back(i);
+    bool folded = true;
+    while (folded && keep.size() > 3) {
+        folded = false;
+        std::vector<size_t> next;
+        next.reserve(keep.size());
+        auto distinct = [&](size_t j, int step) {
+            const size_t b = keep[j];
+            for (size_t n = 1; n < keep.size(); ++n) {
+                const size_t i =
+                    keep[(j + (step > 0 ? n : keep.size() - n)) % keep.size()];
+                if (std::abs(snappedU[i] - snappedU[b]) > ut ||
+                    std::abs(snappedV[i] - snappedV[b]) > vt) {
+                    return i;
+                }
+            }
+            return b;
+        };
+        for (size_t j = 0; j < keep.size(); ++j) {
+            const size_t b = keep[j];
+            const size_t a = distinct(j, -1);
+            const size_t c = distinct(j, 1);
+            const bool flat = std::abs(snappedV[a] - snappedV[b]) <= vt &&
+                              std::abs(snappedV[c] - snappedV[b]) <= vt;
+            if (flat && (snappedU[b] - snappedU[a]) *
+                                (snappedU[c] - snappedU[b]) < 0.0) {
+                folded = true;
+                continue;
+            }
+            next.push_back(b);
+        }
+        if (next.size() < 3) break;
+        keep.swap(next);
+    }
+    for (size_t i : keep) {
         const gp_Pnt2d uv(snappedU[i], snappedV[i]);
         boundary.push_back(uv);
         exactBoundary[uvKey(uv)] = rawExact[i];
         exactSamples.push_back({uv, rawExact[i]});
+    }
+    {
+        std::vector<bool> keptShared;
+        keptShared.reserve(keep.size());
+        for (size_t i : keep) keptShared.push_back(sampleShared[i]);
+        sampleShared.swap(keptShared);
     }
     if (boundary.size() < 3) return false;
     auto clipHalfPlane = [](const std::vector<gp_Pnt2d>& in, bool axisU,
@@ -15093,16 +15357,29 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
         return id;
     };
     int emitted = 0, tris = 0, quads = 0, ngons = 0;
-    // A vertex average can land in the notch of a concave cell. An ear
-    // centroid is guaranteed to lie inside a simple strip-local polygon.
-    auto interiorPoint = [](const std::vector<gp_Pnt2d>& poly,
-                            double area2) {
+    // Where a cell lies relative to the trim has to be asked at a point that
+    // is unambiguously inside it. A vertex average lands in the notch of a
+    // concave cell, so this takes an ear centroid — but the FIRST convex ear
+    // is regularly a sliver whose long side is a trim chord, and the pcurve
+    // that chord stands in for bows off it by more than the sliver is wide.
+    // The classifier then answers for the real face, says OUT, and a covered
+    // cell disappears (mp9_Edited #1948: 7 cells, 14 open edges). Take the
+    // FATTEST ear instead — inradius-like, area over longest side — measured
+    // in chart-normalized uv, because a fillet chart can run two orders of
+    // magnitude longer in v than in u and raw area would then rank ears by
+    // their v extent alone.
+    const double spanU = std::max(1e-30, U.back() - U.front());
+    const double spanV = std::max(1e-30, V.back() - V.front());
+    auto interiorPoint = [&](const std::vector<gp_Pnt2d>& poly,
+                             double area2) {
         auto orient = [](const gp_Pnt2d& a, const gp_Pnt2d& b,
                          const gp_Pnt2d& c) {
             return (b.X() - a.X()) * (c.Y() - a.Y()) -
                    (b.Y() - a.Y()) * (c.X() - a.X());
         };
         const double sign = area2 < 0.0 ? -1.0 : 1.0;
+        gp_Pnt2d best;
+        double bestFat = -1.0;
         for (size_t i = 0; i < poly.size(); ++i) {
             const size_t ip = (i + poly.size() - 1) % poly.size();
             const size_t in = (i + 1) % poly.size();
@@ -15120,11 +15397,21 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
                     break;
                 }
             }
-            if (!contains) {
-                return gp_Pnt2d((a.X() + b.X() + c.X()) / 3.0,
+            if (contains) continue;
+            const gp_XY na((a.X() - b.X()) / spanU, (a.Y() - b.Y()) / spanV);
+            const gp_XY nc((c.X() - b.X()) / spanU, (c.Y() - b.Y()) / spanV);
+            const double twiceArea =
+                std::abs(na.X() * nc.Y() - na.Y() * nc.X());
+            const double side = std::max(
+                {na.Modulus(), nc.Modulus(), (nc - na).Modulus(), 1e-30});
+            const double fat = twiceArea / side;
+            if (fat > bestFat) {
+                bestFat = fat;
+                best = gp_Pnt2d((a.X() + b.X() + c.X()) / 3.0,
                                 (a.Y() + b.Y() + c.Y()) / 3.0);
             }
         }
+        if (bestFat >= 0.0) return best;
         double u = 0.0, v = 0.0;
         for (const gp_Pnt2d& p : poly) {
             u += p.X();
@@ -15225,6 +15512,7 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
             faceId);
     }
 
+    std::vector<std::vector<gp_Pnt2d>> rowCells;
     for (int j = 0; j + 1 < int(V.size()); ++j) {
         if (V[j + 1] - V[j] <= vt) continue;
         const double vb = V[j], vt2 = V[j+1], vm = 0.5*(vb+vt2);
@@ -15390,41 +15678,148 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
             if (clean.size() > 2 && clean.front().Distance(clean.back()) < 1e-10)
                 clean.pop_back();
             if (clean.size() < 3) continue;
-            double area = 0.0, cu = 0.0, cv = 0.0;
+            double area = 0.0;
             for (size_t k = 0; k < clean.size(); ++k) {
                 const gp_Pnt2d& a = clean[k];
                 const gp_Pnt2d& b = clean[(k+1)%clean.size()];
                 area += a.X()*b.Y() - b.X()*a.Y();
-                cu += a.X(); cv += a.Y();
             }
             if (std::abs(area) < 1e-14) continue;
+            // Where the cell lies relative to the trim has to be asked at a
+            // point that is actually IN the cell. Clipping a staircase slab
+            // against a column line leaves L-shaped and stepped cells, and a
+            // vertex average sits in the notch of one — often outside the
+            // face, which silently deletes a covered cell and leaves a hole
+            // the weld then reports as open edges (measured 39 such drops on
+            // mp9_Edited, 16 of them on one face). The column-cell path
+            // above already seeds its classifier from an ear centroid for
+            // exactly this reason; the two paths now agree.
+            const gp_Pnt2d seed = interiorPoint(clean, area);
             BRepClass_FaceClassifier cls(const_cast<TopoDS_Face&>(face),
-                gp_Pnt2d(cu/clean.size(), cv/clean.size()), tolF);
+                                         seed, tolF);
             if (cls.State() == TopAbs_OUT) continue;
-            std::vector<uint32_t> ids;
-            ids.reserve(clean.size());
-            for (const gp_Pnt2d& p : clean) ids.push_back(vertex(p));
-            gp_XYZ nw(0,0,0);
-            for (size_t k = 0; k < clean.size(); ++k) {
-                const gp_XYZ a = surf.Value(clean[k].X(), clean[k].Y()).XYZ();
-                const gp_XYZ b = surf.Value(clean[(k+1)%clean.size()].X(),
-                                             clean[(k+1)%clean.size()].Y()).XYZ();
-                nw += gp_XYZ(a.Y()*b.Z()-a.Z()*b.Y(),
-                             a.Z()*b.X()-a.X()*b.Z(),
-                             a.X()*b.Y()-a.Y()*b.X());
-            }
-            gp_Pnt sp; gp_Vec du, dv;
-            surf.D1(cu/clean.size(), cv/clean.size(), sp, du, dv);
-            gp_Vec expected = du.Crossed(dv);
-            if (faceReversed) expected.Reverse();
-            if (gp_Vec(nw).Dot(expected) < 0) std::reverse(ids.begin(), ids.end());
-            out.addPolygon(std::move(ids), faceId, false);
-            if (clean.size() == 3) ++tris;
-            else if (clean.size() == 4) ++quads;
-            else ++ngons;
-            ++emitted;
+            rowCells.push_back(std::move(clean));
             }
         }
+    }
+    // Same acceptance test the column decomposition above applies, and for
+    // the same reason: a row set that looks locally sound can still leave a
+    // stretch of the trim uncovered — a slab whose side collapsed to a
+    // chord, or a cell the interior test dropped — and the result is a crack
+    // along a shared B-rep edge that no later pass can attribute to this
+    // mesher.
+    //
+    // Covered means TILED, not survived whole. A boundary segment that
+    // crosses a station is cut there, and the cut is not a defect: the wire
+    // walk skips degenerate edges, so a patch that closes over a pole has
+    // one long segment standing in for the pole traverse and it crosses
+    // every column. Rebuild the cuts from the stations, keep the ones the
+    // cells actually made, and require the pieces between them to be cell
+    // edges. When they are not, decline before mutating `out` so demote()
+    // rebuilds the face on the exact-border contract floor — what a face
+    // this mesher cannot represent would have got anyway.
+    {
+        using UvKey = std::pair<long long, long long>;
+        std::set<std::pair<UvKey, UvKey>> cellEdges;
+        std::set<UvKey> cellPoints;
+        for (const auto& cell : rowCells) {
+            for (size_t k = 0; k < cell.size(); ++k) {
+                auto a = uvKey(cell[k]);
+                auto b = uvKey(cell[(k + 1) % cell.size()]);
+                cellPoints.insert(a);
+                if (b < a) std::swap(a, b);
+                cellEdges.insert({a, b});
+            }
+        }
+        auto tiled = [&](const gp_Pnt2d& A, const gp_Pnt2d& B) {
+            std::vector<double> cuts;
+            auto addCuts = [&](const std::vector<double>& lines, double a,
+                               double b) {
+                if (std::abs(b - a) < 1e-15) return;
+                for (double x : lines) {
+                    const double t = (x - a) / (b - a);
+                    if (t > 1e-12 && t < 1.0 - 1e-12) cuts.push_back(t);
+                }
+            };
+            addCuts(U, A.X(), B.X());
+            addCuts(V, A.Y(), B.Y());
+            std::sort(cuts.begin(), cuts.end());
+            UvKey prev = uvKey(A);
+            const UvKey last = uvKey(B);
+            for (double t : cuts) {
+                const gp_Pnt2d p(A.X() + (B.X() - A.X()) * t,
+                                 A.Y() + (B.Y() - A.Y()) * t);
+                const UvKey k = uvKey(p);
+                if (k == prev || k == last || !cellPoints.count(k)) continue;
+                auto s = prev, e = k;
+                if (e < s) std::swap(s, e);
+                if (!cellEdges.count({s, e})) return false;
+                prev = k;
+            }
+            if (prev == last) return true;
+            auto s = prev, e = last;
+            if (e < s) std::swap(s, e);
+            return cellEdges.count({s, e}) != 0;
+        };
+        // Walk the trim and measure how far the cells depart from it. A
+        // departure is a run of consecutive segments the cells do not tile;
+        // it is acceptable only when the cells still CLOSE across it with a
+        // chord and the run is a single skipped sample. One skipped sample
+        // is a sampling difference of the order the border canonicalization
+        // pass moves vertices by anyway, and the comb charts that share a
+        // trim edge skip it on both sides. A longer run is not: it is the
+        // border leaving the trim — a row whose floor sits on a station line
+        // while the trim runs above it, or a side that collapsed to a chord
+        // across several steps — and every one of those measured as a crack.
+        //
+        // Only shared B-rep edges are examined. A stretch the cells miss on
+        // an open-shell edge has nothing on the other side to disagree with.
+        bool coversBoundary = !rowCells.empty();
+        const size_t nb = boundary.size();
+        for (size_t k = 0; coversBoundary && k < nb; ++k) {
+            if (!sampleShared[k]) continue;
+            if (uvKey(boundary[k]) == uvKey(boundary[(k + 1) % nb])) continue;
+            if (tiled(boundary[k], boundary[(k + 1) % nb])) continue;
+            // Extend over the whole departure, then judge it once.
+            size_t end = k + 1;
+            while (end < nb && sampleShared[end] &&
+                   !tiled(boundary[end], boundary[(end + 1) % nb])) {
+                ++end;
+            }
+            coversBoundary = tiled(boundary[k], boundary[end % nb]);
+            k = end;
+        }
+        if (!coversBoundary) {
+            dbg("orthogonal grid face %d: row cells do not cover the trim",
+                faceId);
+            return false;
+        }
+    }
+    for (const std::vector<gp_Pnt2d>& clean : rowCells) {
+        double cu = 0.0, cv = 0.0;
+        for (const gp_Pnt2d& p : clean) { cu += p.X(); cv += p.Y(); }
+        std::vector<uint32_t> ids;
+        ids.reserve(clean.size());
+        for (const gp_Pnt2d& p : clean) ids.push_back(vertex(p));
+        gp_XYZ nw(0,0,0);
+        for (size_t k = 0; k < clean.size(); ++k) {
+            const gp_XYZ a = surf.Value(clean[k].X(), clean[k].Y()).XYZ();
+            const gp_XYZ b = surf.Value(clean[(k+1)%clean.size()].X(),
+                                         clean[(k+1)%clean.size()].Y()).XYZ();
+            nw += gp_XYZ(a.Y()*b.Z()-a.Z()*b.Y(),
+                         a.Z()*b.X()-a.X()*b.Z(),
+                         a.X()*b.Y()-a.Y()*b.X());
+        }
+        gp_Pnt sp; gp_Vec du, dv;
+        surf.D1(cu/clean.size(), cv/clean.size(), sp, du, dv);
+        gp_Vec expected = du.Crossed(dv);
+        if (faceReversed) expected.Reverse();
+        if (gp_Vec(nw).Dot(expected) < 0) std::reverse(ids.begin(), ids.end());
+        out.addPolygon(std::move(ids), faceId, false);
+        if (clean.size() == 3) ++tris;
+        else if (clean.size() == 4) ++quads;
+        else ++ngons;
+        ++emitted;
     }
     // Clipping a non-convex trim exactly on a station line can leave a
     // numerically tiny cell whose Newell test chooses the opposite hand.
@@ -23021,7 +23416,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     outerWireSolvedTotal(face, model, solvedEdge, s.radial), 0};
                 if (!meshPlateWeb(face, surf, model, fid, solvedEdge,
                                   s.radial, s.junctionRings, s.squareCollar,
-                                  out, /*minimalResidual=*/s.minimal)) {
+                                  out, /*minimalResidual=*/s.minimal,
+                                  &pinnedEdge)) {
                     // Under CAD/minimal, prefer a boundary n-gon over raw
                     // OCCT when the structured web cannot build (slitdrill
                     // tangent contacts). Keeps the face editable and inside

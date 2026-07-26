@@ -2210,6 +2210,114 @@ void testMp9GripFreeformCoons() {
     CHECK_EQ(unexplained, 0);
 }
 
+// A UV-axis-aligned trim with an INTERIOR STEP is the row/column clipper's
+// own subject, not a shape it has to refuse. The orthogonal gate used to
+// reject every such trim outright ("freeform interior step"), which was the
+// single largest planned-floor class on the MP9 / teleporter / foam family:
+// each rejected face left a triangulated web where the trim's steps read as
+// long thin fans. This reducer carries one of them (mp9_Edited #102 plus its
+// neighbour ring) — the gate now asks per-pcurve monotonicity instead, and
+// the face has to come back as a structured quad-dominant grid whose n-gons
+// only absorb the cut, with the neighbourhood still crack-free.
+void testOrthogonalStaircaseInteriorStep() {
+    std::printf("-- orthogonal staircase interior step --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/orthogonal_staircase_step.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+
+    // The stepped face is the one this neighbourhood was cut around, so it
+    // is the face adjacent to every other face here. Found by adjacency, not
+    // by id, so a re-extract of the same class still exercises it.
+    int stepped = 0;
+    for (const auto& f : analysis.faces) {
+        if (f.neighborFaceIds.size() + 1 == analysis.faces.size()) {
+            stepped = f.id;
+            break;
+        }
+    }
+    CHECK(stepped > 0);
+
+    // Planned AND built as a lattice. `demote()` would still leave the face
+    // valid, so a floor build is the regression this guards.
+    auto kit = report.faceMesher.find(stepped);
+    CHECK(kit != report.faceMesher.end());
+    CHECK(kit->second == weft::MesherKind::CoonsGrid);
+    auto bit = report.faceBuild.find(stepped);
+    CHECK(bit != report.faceBuild.end());
+    CHECK(bit->second == 0);  // 0 = built by its planned mesher
+
+    size_t tris = 0, quads = 0, ngons = 0, slivers = 0;
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    auto minCornerDeg = [&](const std::vector<uint32_t>& poly) {
+        double best = 180.0;
+        const size_t n = poly.size();
+        if (n < 3) return 0.0;
+        for (size_t i = 0; i < n; ++i) {
+            const auto& A = mesh.vertices[poly[(i + n - 1) % n]];
+            const auto& B = mesh.vertices[poly[i]];
+            const auto& C = mesh.vertices[poly[(i + 1) % n]];
+            const double ux = A[0] - B[0], uy = A[1] - B[1], uz = A[2] - B[2];
+            const double vx = C[0] - B[0], vy = C[1] - B[1], vz = C[2] - B[2];
+            const double nu = std::sqrt(ux * ux + uy * uy + uz * uz);
+            const double nv = std::sqrt(vx * vx + vy * vy + vz * vz);
+            if (nu < 1e-18 || nv < 1e-18) return 0.0;
+            double cos = (ux * vx + uy * vy + uz * vz) / (nu * nv);
+            cos = std::max(-1.0, std::min(1.0, cos));
+            best = std::min(best, std::acos(cos) * 180.0 / 3.141592653589793);
+        }
+        return best;
+    };
+    for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+        if (p >= mesh.polygonFaceId.size() ||
+            mesh.polygonFaceId[p] != stepped) {
+            continue;
+        }
+        const size_t n = mesh.polygons[p].size();
+        if (n == 3) ++tris;
+        else if (n == 4) ++quads;
+        else ++ngons;
+        if (minCornerDeg(mesh.polygons[p]) < vr.sliverAngleDeg) ++slivers;
+    }
+    std::printf("  face %d: %zu quads, %zu tris, %zu n-gons, %zu slivers\n",
+                stepped, quads, tris, ngons, slivers);
+    // Quad-dominant with the n-gons confined to the cut. The floor web this
+    // replaces was 45 triangles with 17 slivers on the whole neighbourhood.
+    CHECK(quads > 4 * tris);
+    CHECK(quads > 2 * ngons);
+    CHECK(slivers * 10 < quads + tris + ngons);
+
+    // Nothing in the neighbourhood may be paid for by a crack, a fold or a
+    // face pushed onto the floor to make room.
+    int floors = 0;
+    for (const auto& [fid, build] : report.faceBuild) {
+        (void)fid;
+        CHECK(build != 1);   // never raw OCCT triangulation
+        CHECK(build != -1);  // never an empty face
+        if (build == 2) ++floors;
+    }
+    CHECK_EQ(floors, 0);
+    const size_t unexplained =
+        vr.openEdges > vr.openEdgesOnInputBoundary
+            ? vr.openEdges - vr.openEdgesOnInputBoundary
+            : 0;
+    CHECK_EQ(unexplained, 0);
+    CHECK_EQ(vr.nonManifoldEdges, 0);
+    CHECK_EQ(vr.windingConflicts, 0);
+    CHECK_EQ(vr.degeneratePolygons, 0);
+    const auto folded = weft::foldedPolys(model, mesh);
+    CHECK_EQ(static_cast<size_t>(
+                 std::count(folded.begin(), folded.end(), uint8_t{1})),
+             0u);
+}
+
 // Dirty-step tan_slit: tangent bore contact creates a multi-owner B-rep
 // edge. The drum on that generator must stay on a contract floor (or
 // structured mesh), never raw OCCT, once border contract skips input NM.
@@ -4749,6 +4857,7 @@ int main() {
     RUN(testMp9FilletCapsuleNotRevolution);
     RUN(testMp9MuzzleColumnCells);
     RUN(testMp9GripFreeformCoons);
+    RUN(testOrthogonalStaircaseInteriorStep);
     RUN(testTanSlitNoRawDemotion);
     RUN(testBrokenSourceDiagnostic);
     RUN(testMp9CoonsPlaneSeamCanonicalize);
