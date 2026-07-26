@@ -2318,6 +2318,178 @@ void testOrthogonalStaircaseInteriorStep() {
              0u);
 }
 
+// An analytic cylinder WALL whose two sides run the full way between its end
+// caps still measured 0.77 of the trim bounding box, because caps that curve
+// in v travel the rest of it. The drum gate read that as "no full-height side
+// at all" and webbed the wall: on each MP9 variant nine walls became fans of
+// 30..135 triangles, more than half of them slivers. The gate now asks the
+// column builder's own precondition at the late retry, and the wall has to
+// come back as spans that each run the cylinder's full length, with n-gons
+// absorbing the cuts at their ends — never rows, never a fan.
+void testCylinderWallFullLengthSpans() {
+    std::printf("-- cylinder wall full-length spans --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/cylinder_wall_drum_span.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+
+    // The wall is the cylindrical drum chart this neighbourhood was cut
+    // around — the fillet strips beside it are Drum-adjacent but classed
+    // FilletStrip, so the class alone picks it out without an id.
+    int checked = 0;
+    for (const auto& f : analysis.faces) {
+        if (f.type != weft::SurfaceType::Cylinder ||
+            f.featureClass != weft::FeatureClass::Drum ||
+            f.chartKind != weft::ChartKind::IsoBand) {
+            continue;
+        }
+        auto kit = report.faceMesher.find(f.id);
+        auto bit = report.faceBuild.find(f.id);
+        CHECK(kit != report.faceMesher.end());
+        CHECK(bit != report.faceBuild.end());
+        CHECK(kit->second == weft::MesherKind::RevolutionGrid);
+        CHECK(bit->second == 0);  // 0 = built by its planned mesher
+
+        const TopoDS_Face face = TopoDS::Face(model.faces(f.id));
+        const gp_Vec axisVec(
+            BRepAdaptor_Surface(face).Cylinder().Axis().Direction());
+        auto alongAxis = [&](uint32_t v) {
+            const auto& p = mesh.vertices[v];
+            return p[0] * axisVec.X() + p[1] * axisVec.Y() +
+                   p[2] * axisVec.Z();
+        };
+        double faceLo = 1e300, faceHi = -1e300;
+        std::vector<size_t> own;
+        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+            if (p >= mesh.polygonFaceId.size() ||
+                mesh.polygonFaceId[p] != f.id) {
+                continue;
+            }
+            own.push_back(p);
+            for (uint32_t v : mesh.polygons[p]) {
+                faceLo = std::min(faceLo, alongAxis(v));
+                faceHi = std::max(faceHi, alongAxis(v));
+            }
+        }
+        CHECK(!own.empty());
+        const double length = faceHi - faceLo;
+        CHECK(length > 0.0);
+
+        // Every cell runs the wall end to end. This is what separates a
+        // column lattice from a row lattice and from a fan: a fragmented
+        // row covers a slice of the length, a fan covers a wedge of it.
+        size_t tris = 0, shortest = own.size();
+        double worst = 1.0;
+        for (size_t p : own) {
+            if (mesh.polygons[p].size() == 3) ++tris;
+            double lo = 1e300, hi = -1e300;
+            for (uint32_t v : mesh.polygons[p]) {
+                lo = std::min(lo, alongAxis(v));
+                hi = std::max(hi, alongAxis(v));
+            }
+            worst = std::min(worst, (hi - lo) / length);
+        }
+        (void)shortest;
+        std::printf("  wall face#%d: %zu cells, %zu tris, shortest span "
+                    "%.4f of length\n",
+                    f.id, own.size(), tris, worst);
+        CHECK_EQ(tris, 0u);
+        CHECK(worst > 0.9);
+        // One cell per requested circumferential span; the web it replaces
+        // was 98 polygons on this reducer.
+        CHECK(own.size() <= f.edgeIds.size());
+        ++checked;
+    }
+    CHECK_EQ(checked, 1);
+
+    // The wall's fillet neighbours are cut open by the extract, and two of
+    // their border pairs already disagreed on winding before this class was
+    // routed anywhere — so winding is not this reducer's to assert. What the
+    // lattice must not do is leak, fold, or double up an interior edge.
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    const size_t unexplained =
+        vr.openEdges > vr.openEdgesOnInputBoundary
+            ? vr.openEdges - vr.openEdgesOnInputBoundary
+            : 0;
+    std::printf("  unexplained opens %zu, nm %zu, degenerate %zu\n",
+                unexplained, vr.nonManifoldEdges, vr.degeneratePolygons);
+    CHECK_EQ(vr.nonManifoldEdges, 0);
+    CHECK_EQ(vr.degeneratePolygons, 0);
+}
+
+// The orthogonal lattice used to want six wire edges. Four of them is a plain
+// rectangle, which is already a grid patch, so the structural minimum is five
+// — one side split by an adjacent feature, the very shape the clipper exists
+// for. Six was a preference that deferred to Coons, and it survived past the
+// point where Coons had already declined: thirteen five-sided axis-aligned
+// trims across the MP9 pair reached the triangulated floor with "5 real
+// edges, needs 6". The late retry now asks for five, and these have to come
+// back quad-dominant.
+void testFiveEdgeOrthogonalTrim() {
+    std::printf("-- five-edge orthogonal trim --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/five_edge_orthogonal_trim.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+
+    int fiveEdged = 0, lattices = 0;
+    for (const auto& f : analysis.faces) {
+        if (f.edgeIds.size() != 5) continue;
+        ++fiveEdged;
+        auto bit = report.faceBuild.find(f.id);
+        CHECK(bit != report.faceBuild.end());
+        // 2 = contract floor. A five-edge trim reaching the web is the
+        // regression; which structured mesher takes it is routing's choice.
+        CHECK(bit->second == 0);
+
+        size_t tris = 0, quads = 0, ngons = 0;
+        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+            if (p >= mesh.polygonFaceId.size() ||
+                mesh.polygonFaceId[p] != f.id) {
+                continue;
+            }
+            const size_t n = mesh.polygons[p].size();
+            if (n == 3) ++tris;
+            else if (n == 4) ++quads;
+            else ++ngons;
+        }
+        std::printf("  face#%d (%s): %zu quads, %zu tris, %zu n-gons\n", f.id,
+                    weft::surfaceTypeName(f.type), quads, tris, ngons);
+        // The floor web for this class was all triangles; a lattice is
+        // quad-dominant apart from the cells the fifth edge cuts. Faces
+        // small enough to be a single cell have no quads to count.
+        if (quads + tris + ngons > 2) {
+            CHECK(quads > tris);
+            ++lattices;
+        }
+    }
+    CHECK(fiveEdged >= 4);
+    CHECK(lattices >= 2);
+
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK_EQ(vr.nonManifoldEdges, 0);
+    CHECK_EQ(vr.windingConflicts, 0);
+    CHECK_EQ(vr.degeneratePolygons, 0);
+    const auto folded = weft::foldedPolys(model, mesh);
+    CHECK_EQ(static_cast<size_t>(
+                 std::count(folded.begin(), folded.end(), uint8_t{1})),
+             0u);
+}
+
 // Dirty-step tan_slit: tangent bore contact creates a multi-owner B-rep
 // edge. The drum on that generator must stay on a contract floor (or
 // structured mesh), never raw OCCT, once border contract skips input NM.
@@ -4858,6 +5030,8 @@ int main() {
     RUN(testMp9MuzzleColumnCells);
     RUN(testMp9GripFreeformCoons);
     RUN(testOrthogonalStaircaseInteriorStep);
+    RUN(testCylinderWallFullLengthSpans);
+    RUN(testFiveEdgeOrthogonalTrim);
     RUN(testTanSlitNoRawDemotion);
     RUN(testBrokenSourceDiagnostic);
     RUN(testMp9CoonsPlaneSeamCanonicalize);

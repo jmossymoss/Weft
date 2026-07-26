@@ -659,8 +659,17 @@ UvEdgeDir uvEdgeDirection(double du, double dv, double us, double vs) {
 // Both are monotonicity, one per axis, and monotonicity is exactly what an
 // endpoint-only bounding box cannot see. `samples` is the pcurve polyline the
 // caller already took for that box, so this costs comparisons only.
-bool monotoneStep(const std::vector<gp_Pnt2d>& samples, double du, double dv,
-                  double us, double vs) {
+//
+// The two are reported separately because the two clippers do not need the
+// same one. The row builder needs `inV` from every pcurve; the column builder
+// closes its cells on constant-u rulings, so it needs `inU` and a v reversal
+// is just more of the boundary polyline inside one n-gon.
+struct UvMonotone {
+    bool inU;
+    bool inV;
+};
+UvMonotone monotoneStep(const std::vector<gp_Pnt2d>& samples, double du,
+                        double dv, double us, double vs) {
     // Numerical wobble on a spline pcurve is not a reversal; a curve that
     // genuinely turns back covers a real fraction of its own extent. The
     // chart floor under that is what makes the test usable on a near-iso
@@ -680,7 +689,7 @@ bool monotoneStep(const std::vector<gp_Pnt2d>& samples, double du, double dv,
         if (dV > slackV) upV = true;
         if (-dV > slackV) downV = true;
     }
-    return !(upU && downU) && !(upV && downV);
+    return {!(upU && downU), !(upV && downV)};
 }
 
 // Recognize one connected UV-orthogonal trim as a structured lattice, not
@@ -693,14 +702,17 @@ bool monotoneStep(const std::vector<gp_Pnt2d>& samples, double du, double dv,
 // `why` receives a short reject reason (same role as makeCoonsPatch's), so a
 // face that ends on the contract floor can name the gate that refused it.
 //
-// `allowStaircase` widens the shape gate from "no interior step, exactly two
-// horizontal sides" to "every pcurve monotone in both parameters" — the
-// condition the row/column clipper actually needs (see monotoneStep). It is
-// off at this routing table's FIRST call because the lattice is not the right
-// answer for every shape a monotone trim can describe: a two-tip lune is a
-// rail ladder, a long thin ribbon is a sweep, and both sit after this call.
-// The plan flow turns it on again for faces the whole table declined, where
-// the alternative is a triangulated contract floor.
+// `allowStaircase` swaps this function's SHAPE preferences for the clipper's
+// own CAPABILITY, in three places marked below: the freeform interior-step
+// test becomes per-pcurve monotonicity, the drum's "one full-height side"
+// becomes the u-monotonicity the column builder needs, and the edge-count
+// preference drops to the structural minimum of five. Each preference is
+// there because the lattice is not the best answer for every shape it could
+// decompose — a two-tip lune is a rail ladder, a thin ribbon is a sweep, a
+// five-edge trim reads well as a Coons patch — and all of those sit after
+// this call in the routing table. So it is off at the table's FIRST call and
+// on again for faces the whole table declined, where the alternative is a
+// triangulated contract floor rather than a better-suited mesher.
 bool planOrthogonalTrimGrid(const TopoDS_Face& face,
                             const BRepAdaptor_Surface& surf,
                             const Model& model, FacePlan& plan,
@@ -731,6 +743,10 @@ bool planOrthogonalTrimGrid(const TopoDS_Face& face,
     // in both parameters is what it needs — not an absence of interior steps.
     // See monotoneStep.
     bool staircase = true;
+    // The column builder's half of the same question, kept apart because a
+    // revolution wall reaches the clipper through it and a cap that curves in
+    // v is not a reversal it has to represent.
+    bool columnSafe = true;
     std::vector<gp_Pnt2d> samples;
     for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
         const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
@@ -748,7 +764,9 @@ bool planOrthogonalTrimGrid(const TopoDS_Face& face,
             ev0 = std::min(ev0, uv.Y()); ev1 = std::max(ev1, uv.Y());
         }
         const double du = eu1 - eu0, dv = ev1 - ev0;
-        staircase = staircase && monotoneStep(samples, du, dv, us, vs);
+        const UvMonotone mono = monotoneStep(samples, du, dv, us, vs);
+        staircase = staircase && mono.inU && mono.inV;
+        columnSafe = columnSafe && mono.inU;
         const int eid = model.edges.FindIndex(edge);
         if (eid < 1) return reject("edge not in model");
         plan.orthogonalEdges.push_back(eid);
@@ -787,8 +805,25 @@ bool planOrthogonalTrimGrid(const TopoDS_Face& face,
     if (diagonalEdges) {
         return reject(std::to_string(diagonalEdges) + " diagonal edges");
     }
-    if (realEdges < 6) {
-        return reject(std::to_string(realEdges) + " real edges, needs 6");
+    // What the clipper needs from the wire is a top, a bottom and two sides,
+    // and the driver test below states exactly that. An edge COUNT adds one
+    // thing on top: a four-edge 2u/2v trim is a plain rectangle, and a
+    // rectangle is already a grid patch — routing it here would reproduce the
+    // same cells by a longer path. The structural minimum is therefore FIVE,
+    // one side split by an adjacent feature, which is this lattice's subject.
+    //
+    // Six is a shape preference rather than a capability, and it belongs with
+    // the other preferences in this routing table: a five-edge trim is also
+    // the shape a Coons patch reads most reliably, and Coons owns across/along
+    // direction and fillet hold, so the early call keeps six and defers to it.
+    // By the late retry Coons has already declined and the alternative is a
+    // triangulated web, so the bound drops to the structural minimum. (Held
+    // to the retry on measurement too: five in the early table as well trades
+    // four folds for three open edges on MP9 and leaves mp9_Edited unmoved.)
+    const int minEdges = allowStaircase ? 5 : 6;
+    if (realEdges < minEdges) {
+        return reject(std::to_string(realEdges) + " real edges, needs " +
+                      std::to_string(minEdges));
     }
     if (horizontal.size() < 2 || vertical.size() < 2 ||
         plan.orthogonalDriverU == 0 || plan.orthogonalDriverV == 0) {
@@ -799,6 +834,9 @@ bool planOrthogonalTrimGrid(const TopoDS_Face& face,
     const GeomAbs_SurfaceType st = surf.GetType();
     const bool drum = st == GeomAbs_Cylinder || st == GeomAbs_Cone ||
                       st == GeomAbs_SurfaceOfRevolution;
+    // On a freeform surface only accept the split-sided rectangle case.
+    // Orthogonal interior steps on arbitrary UV charts need a more general
+    // trim solver; drums are safe because U/V are angular/axial directions.
     const bool freeformComb = !drum && realEdges >= 20 &&
                               fullHeightVertical == 1 &&
                               insetVertical >= 2 && horizontal.size() >= 8;
@@ -809,10 +847,40 @@ bool planOrthogonalTrimGrid(const TopoDS_Face& face,
             insetVertical, hasInteriorStep ? 1 : 0,
             freeformComb ? 1 : 0);
     }
-    // On a freeform surface only accept the split-sided rectangle case.
-    // Orthogonal interior steps on arbitrary UV charts need a more general
-    // trim solver; drums are safe because U/V are angular/axial directions.
-    if (drum && (fullHeightVertical != 1 ||
+    // The drum test below wants one side covering 0.9 of the chart's v
+    // extent, which reads the split-sided rectangle: a spine on one limit and
+    // the opposite side broken by an adjacent feature. It measures the side
+    // against the trim's BOUNDING BOX, and a cap that curves in v lives
+    // inside that box — mp9_Edited #1892's two sides run the entire way from
+    // the bottom cap to the top cap and still measure 0.77, because the caps
+    // travel the other 0.23 between them. So the count reads "no side at all"
+    // on a plain axis-aligned cylinder wall whose only irregularity is that
+    // other cylinders cut its ends, which is the face this lattice most
+    // wants: nine of them per MP9 variant went to a triangulated floor web.
+    //
+    // Correcting the measure would still leave a shape preference. State what
+    // the drum's mesher needs instead: a drum accepted here is planned as a
+    // RevolutionGrid, so it reaches the clipper through the COLUMN builder,
+    // whose cells are constant-u rulings running the chart's full v extent.
+    // That builder needs two things of the trim, and neither is a height.
+    //
+    // Its cells close on constant-u rulings, so only a pcurve that doubles
+    // back IN U can fold one; a v reversal is more boundary polyline inside
+    // the same n-gon, which is the cut the artist asked to see absorbed.
+    // And a column can only run end to end if nothing bounds it in the
+    // middle: every v-dominant side has to BE a u limit of the chart, which
+    // is what `insetVertical == 0` says. An inset side is a vertical wall
+    // partway across, and the column that meets it has to stop there — a
+    // row decomposition, not this builder's. foam #514 is that shape (five
+    // inset sides, no full-height one); admitting it built nothing and took
+    // two neighbours down on the border contract with it.
+    //
+    // Ask for both at the late retry, where every specialized route has
+    // declined and the alternative is the web. The column builder still
+    // declines transactionally when a trim that passes both defeats it, and
+    // the row clipper behind it is itself guarded.
+    const bool wideDrum = allowStaircase && columnSafe && insetVertical == 0;
+    if (drum && !wideDrum && (fullHeightVertical != 1 ||
                  (insetVertical < 1 && horizontal.size() < 4))) {
         return reject("drum needs one full-height side (" +
                       std::to_string(fullHeightVertical) + " full, " +
@@ -25127,6 +25195,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     // share a same-direction edge — the §3.1 gate uses foldedPolys, not
     // only topological flaps.
     {
+        std::set<size_t> drop;
         std::map<std::pair<uint32_t, uint32_t>, std::vector<size_t>> dir;
         for (size_t p = 0; p < mesh.polygons.size(); ++p) {
             const auto& poly = mesh.polygons[p];
@@ -25146,7 +25215,6 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             }
             return 0.5 * std::sqrt(nx * nx + ny * ny + nz * nz);
         };
-        std::set<size_t> drop;
         for (const auto& [e, ps] : dir) {
             if (ps.size() < 2) continue;
             bool sameFace = true;
@@ -25166,6 +25234,64 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             }
             for (size_t p : ps) {
                 if (p != keep) drop.insert(p);
+            }
+        }
+        // A polygon and its exact REVERSE share no directed edge, so the
+        // scan above cannot see the pair on its own — yet back-to-back
+        // coincident cells are the plainest flap there is. They bound
+        // nothing, and every edge they sit on is used twice by this face
+        // alone. Sweep for them once the scan above has finished, over
+        // what it left: a doubled SHEET is already covered, because each
+        // of its cells shares a same-direction edge with the reverse of
+        // its neighbour, and the scan resolves that by area. What is left
+        // is the isolated pair, with no forward neighbour to give it away.
+        //
+        // Those are residue of the micro-edge collapse in finish(): a
+        // fillet strip narrower than the stitch tolerance is MEANT to
+        // degenerate away there, and most of its cells do (the weld drops
+        // anything left with fewer than three distinct corners). A pair
+        // that collapses onto the same triangle from opposite sides keeps
+        // three corners each and survives. mp9_Edited #33 is 0.05 mm wide
+        // and left exactly one such pair lying on the #34/#47 seam, taking
+        // that shared edge to four uses. Drop BOTH — keeping the larger
+        // would leave a lone flap with two open edges and the seam still
+        // used three times.
+        {
+            std::map<std::pair<int, std::vector<uint32_t>>,
+                     std::vector<size_t>>
+                byRing;
+            for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+                if (drop.count(p) || mesh.polygons[p].size() < 3) continue;
+                std::vector<uint32_t> sorted = mesh.polygons[p];
+                std::sort(sorted.begin(), sorted.end());
+                byRing[{mesh.polygonFaceId[p], std::move(sorted)}].push_back(p);
+            }
+            auto reversed = [&](size_t a, size_t b) {
+                const auto& A = mesh.polygons[a];
+                const auto& B = mesh.polygons[b];
+                const size_t n = A.size();
+                if (B.size() != n) return false;
+                for (size_t off = 0; off < n; ++off) {
+                    bool ok = true;
+                    for (size_t i = 0; i < n && ok; ++i) {
+                        ok = A[i] == B[(off + n - i) % n];
+                    }
+                    if (ok) return true;
+                }
+                return false;
+            };
+            for (const auto& [key, ps] : byRing) {
+                if (ps.size() < 2) continue;
+                for (size_t i = 0; i < ps.size(); ++i) {
+                    if (drop.count(ps[i])) continue;
+                    for (size_t j = i + 1; j < ps.size(); ++j) {
+                        if (drop.count(ps[j])) continue;
+                        if (!reversed(ps[i], ps[j])) continue;
+                        drop.insert(ps[i]);
+                        drop.insert(ps[j]);
+                        break;
+                    }
+                }
             }
         }
         if (!drop.empty()) {
