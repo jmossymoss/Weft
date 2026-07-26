@@ -24,6 +24,7 @@
 #include <BRepGProp.hxx>
 #include <BRepTools.hxx>
 #include <Bnd_Box2d.hxx>
+#include <BndLib_Add2dCurve.hxx>
 #include <BRepTools_WireExplorer.hxx>
 #include <GProp_GProps.hxx>
 #include <BRep_Tool.hxx>
@@ -14848,7 +14849,8 @@ bool orthogonalTrimStations(const TopoDS_Face& face,
                             const BRepAdaptor_Surface& surf,
                             const Model& model, const FacePlan& plan, int nu,
                             int nv, std::vector<double>& U,
-                            std::vector<double>& V) {
+                            std::vector<double>& V, double* snapFloorU,
+                            double* snapFloorV) {
     nu = std::max(1, nu);
     nv = std::max(1, nv);
     const double u0 = surf.FirstUParameter(), u1 = surf.LastUParameter();
@@ -14857,6 +14859,28 @@ bool orthogonalTrimStations(const TopoDS_Face& face,
     const double vt = 1e-9 * std::max(1.0, std::abs(v1 - v0));
     const bool dropEndpointU = plan.kind == MesherKind::RevolutionGrid;
     std::vector<double> hardU, hardV;
+    // Turn envelope stations and the bulge that produced them. An endpoint
+    // (this edge or the neighbour that shares the corner) sitting inside that
+    // bulge must not keep its own station: the two lines open a sliver row
+    // the slab builder cannot populate, and the cover check correctly refuses
+    // (mp9_f577_r2 face 8 / mp9_Edited #577: endpoint at 0.353 and turn peak
+    // at 0.367, gap 1.2% of chart, just above kStationHardFracV*pitch when
+    // nv=1). Keep the envelope; snap the shadowed samples onto it.
+    std::vector<std::pair<double, double>> turnU, turnV;
+    double floorU = 0.0, floorV = 0.0;
+    // BndLib boxes are slightly conservative; a 1e-9 "bulge" is noise and
+    // must not open a turn station or widen snap (that demoted an adjacent
+    // coons face on mp9_f577_r2 when a 1e-9 u floor invited a pitch-fraction
+    // snap).
+    const double gateU = std::max(ut, 1e-5 * std::abs(u1 - u0));
+    const double gateV = std::max(vt, 1e-5 * std::abs(v1 - v0));
+    auto noteTurn = [&](std::vector<double>& hard,
+                        std::vector<std::pair<double, double>>& turns,
+                        double& floor, double at, double bulge) {
+        hard.push_back(at);
+        turns.push_back({at, bulge});
+        floor = std::max(floor, bulge);
+    };
     for (int eid : plan.orthogonalEdges) {
         const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
         double f, l;
@@ -14876,25 +14900,88 @@ bool orthogonalTrimStations(const TopoDS_Face& face,
         // so its floor cells hang outside the face and the border they hand
         // the neighbour is a chord (mp9_Edited face 577: one bottom pcurve
         // 1.4% of the chart above its ends, 28 of 58 trim segments uncovered,
-        // 11 open edges). Endpoint extrema are already in hand; only a
-        // genuine interior turn adds anything here.
+        // 11 open edges). Use the pcurve's 2d bbox — fixed-count samples can
+        // miss a local peak — and only a genuine interior turn adds a line.
         double lo2U = a.X(), hi2U = a.X(), lo2V = a.Y(), hi2V = a.Y();
         lo2U = std::min(lo2U, b.X()); hi2U = std::max(hi2U, b.X());
         lo2V = std::min(lo2V, b.Y()); hi2V = std::max(hi2V, b.Y());
         double minU = lo2U, maxU = hi2U, minV = lo2V, maxV = hi2V;
-        constexpr int kTurnSamples = 16;
-        for (int k = 1; k < kTurnSamples; ++k) {
-            const gp_Pnt2d p = pc->Value(f + (l - f) * k / kTurnSamples);
-            minU = std::min(minU, p.X()); maxU = std::max(maxU, p.X());
-            minV = std::min(minV, p.Y()); maxV = std::max(maxV, p.Y());
+        {
+            Bnd_Box2d box;
+            BndLib_Add2dCurve::Add(pc, f, l, Precision::PConfusion(), box);
+            if (!box.IsVoid()) {
+                box.Get(minU, minV, maxU, maxV);
+            } else {
+                constexpr int kTurnSamples = 64;
+                for (int k = 1; k < kTurnSamples; ++k) {
+                    const gp_Pnt2d p =
+                        pc->Value(f + (l - f) * k / double(kTurnSamples));
+                    minU = std::min(minU, p.X());
+                    maxU = std::max(maxU, p.X());
+                    minV = std::min(minV, p.Y());
+                    maxV = std::max(maxV, p.Y());
+                }
+            }
         }
-        if (getenv("WEFT_NOTURN")==nullptr) {
         if (!dropEndpointU) {
-            if (minU < lo2U - ut) hardU.push_back(minU);
-            if (maxU > hi2U + ut) hardU.push_back(maxU);
+            if (minU < lo2U - gateU)
+                noteTurn(hardU, turnU, floorU, minU, lo2U - minU);
+            if (maxU > hi2U + gateU)
+                noteTurn(hardU, turnU, floorU, maxU, maxU - hi2U);
         }
-        if (minV < lo2V - vt) hardV.push_back(minV);
-        if (maxV > hi2V + vt) hardV.push_back(maxV); }
+        if (minV < lo2V - gateV)
+            noteTurn(hardV, turnV, floorV, minV, lo2V - minV);
+        if (maxV > hi2V + gateV)
+            noteTurn(hardV, turnV, floorV, maxV, maxV - hi2V);
+    }
+    // Neighbour corners at a shared B-rep vertex disagree with this edge's
+    // endpoint by the vertex tolerance (measured 3e-6 on mp9_f577_r2 face 8),
+    // so the shadow radius is the bulge plus a chart-relative pad — not the
+    // bulge alone, which leaves the neighbour station standing and recreates
+    // the sliver. Snap must then reach the farthest suppressed station, which
+    // can sit a hair outside the recorded bulge.
+    const double padU = std::max(ut, 1e-4 * std::abs(u1 - u0));
+    const double padV = std::max(vt, 1e-4 * std::abs(v1 - v0));
+    auto suppressShadowed =
+        [](std::vector<double>& hard,
+           const std::vector<std::pair<double, double>>& turns, double pad,
+           double& floor) {
+            if (turns.empty() || hard.empty()) return;
+            std::vector<double> kept;
+            kept.reserve(hard.size());
+            for (double h : hard) {
+                bool shadow = false;
+                for (const auto& [at, bulge] : turns) {
+                    const double d = std::abs(h - at);
+                    if (d > pad * 1e-6 && d <= bulge + pad) {
+                        shadow = true;
+                        floor = std::max(floor, d);
+                        break;
+                    }
+                }
+                if (!shadow) kept.push_back(h);
+            }
+            hard.swap(kept);
+        };
+    suppressShadowed(hardV, turnV, padV, floorV);
+    if (!dropEndpointU) suppressShadowed(hardU, turnU, padU, floorU);
+    // Samples along a side edge near a suppressed corner can sit a little
+    // further outside the recorded bulge than the hard station itself
+    // (mp9_f577_r2 face 8: station gap 0.0142, sample gap 0.018). Widen by
+    // the v hard-merge pitch so those samples still land on the envelope;
+    // only applied when a turn actually contributed. Uses the v fraction on
+    // both axes — the u hard fraction (0.25) would over-widen u snap.
+    if (snapFloorU) {
+        *snapFloorU =
+            floorU > 0.0
+                ? floorU + kStationHardFracV * std::abs(u1 - u0) / std::max(1, nu)
+                : 0.0;
+    }
+    if (snapFloorV) {
+        *snapFloorV =
+            floorV > 0.0
+                ? floorV + kStationHardFracV * std::abs(v1 - v0) / std::max(1, nv)
+                : 0.0;
     }
     // Cumulative surface length along one axis, sampled at three positions of
     // the other one and kept at its LONGEST so a compressed corner can never
@@ -15000,7 +15087,8 @@ void pinOrthogonalTrimGrids(const Model& model,
                                       : (plan.kind == MesherKind::RevolutionGrid
                                              ? s.axial : s.gridV));
         std::vector<double> U, V;
-        if (!orthogonalTrimStations(face, surf, model, plan, nu, nv, U, V)) {
+        if (!orthogonalTrimStations(face, surf, model, plan, nu, nv, U, V,
+                                    nullptr, nullptr)) {
             continue;
         }
 
@@ -15438,7 +15526,9 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
     // orthogonalTrimStations owns the consolidation policy and is shared with
     // the pin pass so the two can never disagree.
     const bool dropEndpointU = plan.kind == MesherKind::RevolutionGrid;
-    if (!orthogonalTrimStations(face, surf, model, plan, nu, nv, U, V)) {
+    double turnSnapU = 0.0, turnSnapV = 0.0;
+    if (!orthogonalTrimStations(face, surf, model, plan, nu, nv, U, V,
+                                &turnSnapU, &turnSnapV)) {
         return false;
     }
     const double pitchU = std::abs(u1 - u0) / std::max(1, nu);
@@ -15452,8 +15542,14 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
     // noise. Pitch-relative and three orders below a cell, so it can only fuse
     // samples that already share a 3D position. The station list merges any
     // pair this close, so a sample within it is genuinely on that line.
-    const double stationTolU = std::max(ut, kStationSnapFracU * pitchU);
-    const double stationTolV = std::max(vt, kStationSnapFracV * pitchV);
+    //
+    // Turn-envelope suppression also drops the endpoint station that sat in a
+    // bulge's shadow, so the snap width must reach that bulge or the shadowed
+    // samples stay strictly inside a row and the side collapses to a chord.
+    const double stationTolU =
+        std::max({ut, kStationSnapFracU * pitchU, turnSnapU});
+    const double stationTolV =
+        std::max({vt, kStationSnapFracV * pitchV, turnSnapV});
     if ((U.size() - 1) * (V.size() - 1) > 200000) return false;
 
     // Exact sampled trim polygon in wire order. Pins include every crossing
