@@ -22259,10 +22259,20 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             // 1.4e-4 corner gap on an edge claiming 1e-6). Bound the
             // endpoint radius by the local sample spacing instead —
             // 40% of a step can never capture the wrong border sample.
-            const double eTol = std::max(
-                {q, BRep_Tool::Tolerance(E),
-                 0.4 * c3->Value(f).Distance(c3->Value(l)) /
-                     double(std::max(1, n))});
+            //
+            // Spacing MUST be arc length / n, not the endpoint chord:
+            // a nearly-closed rim edge (full-period seam cut) has
+            // chord ≈ CAD end-gap while the true step is arc/n. Using
+            // the chord collapses the 40% bound to ~0 and leaves eTol
+            // at a lying edgeTol just below the gap, so the closed-ring
+            // start vertex fails to stand in for sample t=1 (mp9
+            // reducer edge 2 / full-model face 3020 edge 8341).
+            GeomAdaptor_Curve gcTol(c3, f, l);
+            const double spacing =
+                GCPnts_AbscissaPoint::Length(gcTol) /
+                double(std::max(1, n));
+            const double eTol =
+                std::max({q, BRep_Tool::Tolerance(E), 0.4 * spacing});
             auto nearVertsEnd = [&](const gp_Pnt& p) {
                 // Always union the weld-quantum hits with the wider endpoint
                 // radius. Sloppy CAD puts the shared ring corner on the
