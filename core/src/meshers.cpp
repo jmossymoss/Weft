@@ -15116,26 +15116,29 @@ void pinOrthogonalTrimGrids(const Model& model,
         // as a crack rather than as a mesher failure (measured on
         // mp9_Edited face 742: 14 synthesized border points, 24 open edges).
         //
-        // Skip edges that a neighbouring RevolutionGrid owns as a rim
-        // (uEdges): orthogonal pin inflation there makes the two rim
-        // totals disagree, and insert-band strip reconcile on that
-        // mismatch has failed self-check / staircase on multi-slot
-        // full-period drums. Both faces keep the shared solved count;
+        // Keep pins on ordinary RevolutionGrid rims (foam/teleporter/mp9
+        // orth-rev floors). Skip only when the shared edge is a rim of a
+        // RevolutionGrid that also carries insert wires: pin inflation
+        // there breaks post-equalize rim totals, the insert base grid
+        // takes a transition strip, and the seam-keyhole ear-clip then
+        // emits repeated directed edges (mp9_f2020 / face 2020). Both
+        // faces keep the shared solved count on those insert rims;
         // stitch absorbs any residual station drift.
         for (int e : plan.orthogonalEdges) {
-            bool revRim = false;
+            bool insertRevRim = false;
             for (const auto& [ofid, opl] : plans) {
                 (void)ofid;
                 if (opl.kind != MesherKind::RevolutionGrid) continue;
+                if (opl.insertWires.empty()) continue;
                 for (int ue : opl.uEdges) {
                     if (ue == e) {
-                        revRim = true;
+                        insertRevRim = true;
                         break;
                     }
                 }
-                if (revRim) break;
+                if (insertRevRim) break;
             }
-            if (revRim) continue;
+            if (insertRevRim) continue;
             pinEdge(e, true, true);
         }
     }
