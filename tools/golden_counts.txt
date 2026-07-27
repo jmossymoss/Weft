@@ -44,8 +44,8 @@ hole cad 84 quads, 0 tris, 4 n-gons
 hole default 20 quads, 0 tris, 2 n-gons
 plate_holes cad 44 quads, 0 tris, 6 n-gons
 plate_holes default 32 quads, 0 tris, 10 n-gons
-slotted cad 672 quads, 8 tris, 40 n-gons
-slotted default 400 quads, 0 tris, 48 n-gons
+slotted cad 392 quads, 8 tris, 40 n-gons
+slotted default 240 quads, 0 tris, 48 n-gons
 barrel cad 122 quads, 0 tris, 26 n-gons
 barrel default 60 quads, 0 tris, 10 n-gons
 barrel2 cad 441 quads, 380 tris, 75 n-gons
@@ -70,10 +70,10 @@ slitdrill cad 718 quads, 0 tris, 14 n-gons
 slitdrill default 72 quads, 0 tris, 22 n-gons
 compound2 cad 34 quads, 0 tris, 2 n-gons
 compound2 default 22 quads, 0 tris, 2 n-gons
-demo cad 671 quads, 16 tris, 44 n-gons
-demo default 610 quads, 16 tris, 56 n-gons
-torture cad 671 quads, 16 tris, 44 n-gons
-torture default 610 quads, 16 tris, 56 n-gons
+demo cad 497 quads, 0 tris, 44 n-gons
+demo default 450 quads, 0 tris, 56 n-gons
+torture cad 497 quads, 0 tris, 44 n-gons
+torture default 450 quads, 0 tris, 56 n-gons
 open_shell cad 1 quads, 0 tris, 0 n-gons
 open_shell default 1 quads, 0 tris, 0 n-gons
 dirty_gap cad 2 quads, 0 tris, 0 n-gons
