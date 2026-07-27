@@ -17849,6 +17849,39 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
                                 return c - a < 1e-7 * vspan;
                             }),
                 vRows.end());
+    // Densify tall axial spans. A kept column beside an insert whose
+    // only rows are the cutout's v-extents becomes one full-height cell;
+    // its iso-v top/bottom edges then sit on the staircase with BOTH the
+    // lattice and the web on the same axial side, so any manifold web
+    // triangle across that edge is folded against the surface (cylinder
+    // Newell vs du×dv). Cap the span near one circumferential pitch.
+    {
+        const double r =
+            std::max(1e-6, surf.Value((u0 + u1) / 2, (v0 + v1) / 2)
+                               .Distance(surf.Value(
+                                   (u0 + u1) / 2 + 1e-3, (v0 + v1) / 2)) /
+                               1e-3);
+        const double maxDv = std::max(
+            0.25 * vspan / std::max(2, nv),
+            0.5 * r * ((u1 - u0) / std::max(3, nu)));
+        std::vector<double> dense = vRows;
+        for (size_t i = 0; i + 1 < vRows.size(); ++i) {
+            const double a = vRows[i], b = vRows[i + 1];
+            const double span = b - a;
+            if (span <= maxDv * 1.5) continue;
+            const int n = std::max(2, (int)std::ceil(span / maxDv));
+            for (int k = 1; k < n; ++k) {
+                dense.push_back(a + span * (double)k / n);
+            }
+        }
+        std::sort(dense.begin(), dense.end());
+        dense.erase(std::unique(dense.begin(), dense.end(),
+                                [&](double a, double c) {
+                                    return c - a < 1e-7 * vspan;
+                                }),
+                    dense.end());
+        vRows = std::move(dense);
+    }
     if (vRows.size() < 3 ||
         std::abs(vRows.back() - v1) > 1e-7 * vspan) {
         return false;
@@ -18084,8 +18117,90 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
                                                 (v0 + v1) / 2)) /
                            1e-3);
 
-    // One web per staircase loop, splicing in every wire assigned to it
-    // (nearby slots can merge into one staircase): keyhole ear-clip.
+    // One web per staircase loop. A single wire per loop uses the same
+    // polar collar ladder as open-band inserts: keyhole ear-clip dead-ends
+    // on collinear generator runs into zero-area fans and a lattice-
+    // overlapping folded ear (pinned_station_revgrid face 3). Multi-wire
+    // staircases still merge via keyhole ear-clip, dropping zero-area
+    // ears so they never ship as degeneratePolygons.
+    struct WPt { gp_Pnt p; double u, v; };
+    auto buildHole = [&](size_t w, const std::vector<std::array<double, 3>>& ringPts)
+        -> std::vector<WPt> {
+        std::vector<std::vector<WPt>> pieces;
+        for (int eid : plan.insertWires[w]) {
+            int n = eid > 0 && eid < (int)solvedEdge.size() &&
+                            solvedEdge[eid] > 0
+                        ? solvedEdge[eid]
+                        : 8;
+            const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+            double f, l;
+            Handle(Geom2d_Curve) pc =
+                BRep_Tool::CurveOnSurface(edge, face, f, l);
+            if (pc.IsNull()) continue;
+            BRepAdaptor_Curve c(edge);
+            const double f3 = c.FirstParameter(), l3 = c.LastParameter();
+            const double ph = closedEdgePhase(edge, model);
+            std::vector<WPt> piece;
+            for (double t : edgeSampleFractions(
+                     eid, n, ph, false, /*includeLast=*/true,
+                     pins, &model)) {
+                gp_Pnt2d uv = pc->Value(f + t * (l - f));
+                piece.push_back(
+                    {c.Value(f3 + t * (l3 - f3)), uv.X(), uv.Y()});
+            }
+            pieces.push_back(std::move(piece));
+        }
+        if (pieces.empty()) return {};
+        std::vector<WPt> hole = pieces[0];
+        std::vector<char> used(pieces.size(), 0);
+        used[0] = 1;
+        for (size_t step = 1; step < pieces.size(); ++step) {
+            double bd = 1e300; size_t bi = 0; bool rev = false;
+            for (size_t k = 0; k < pieces.size(); ++k) {
+                if (used[k]) continue;
+                double dF = hole.back().p.Distance(pieces[k].front().p);
+                double dB = hole.back().p.Distance(pieces[k].back().p);
+                if (dF < bd) { bd = dF; bi = k; rev = false; }
+                if (dB < bd) { bd = dB; bi = k; rev = true; }
+            }
+            used[bi] = 1;
+            std::vector<WPt> pc2 = pieces[bi];
+            if (rev) std::reverse(pc2.begin(), pc2.end());
+            hole.insert(hole.end(), pc2.begin() + 1, pc2.end());
+        }
+        if (hole.size() > 1 &&
+            hole.front().p.Distance(hole.back().p) < 1e-9) {
+            hole.pop_back();
+        }
+        if (hole.size() < 3) return {};
+        for (size_t i = 1; i < hole.size(); ++i) {
+            hole[i].u -=
+                period * std::round((hole[i].u - hole[i - 1].u) / period);
+        }
+        {
+            double rMid = 0, hMid = 0;
+            for (const auto& p : ringPts) rMid += p[0] / rScale;
+            rMid /= std::max<size_t>(1, ringPts.size());
+            for (const auto& p : hole) hMid += p.u;
+            hMid /= hole.size();
+            const double shift =
+                period * std::round((rMid - hMid) / period);
+            for (auto& p : hole) p.u += shift;
+        }
+        return hole;
+    };
+    auto polyArea3 = [&](const std::vector<uint32_t>& poly) {
+        double nx = 0, ny = 0, nz = 0;
+        for (size_t i = 0; i < poly.size(); ++i) {
+            const auto& a = webbedMesh.vertices[poly[i]];
+            const auto& b = webbedMesh.vertices[poly[(i + 1) % poly.size()]];
+            nx += (a[1] - b[1]) * (a[2] + b[2]);
+            ny += (a[2] - b[2]) * (a[0] + b[0]);
+            nz += (a[0] - b[0]) * (a[1] + b[1]);
+        }
+        return 0.5 * std::sqrt(nx * nx + ny * ny + nz * nz);
+    };
+
     for (size_t li = 0; li < loops.size(); ++li) {
         const std::vector<uint32_t>& loop = loops[li];
         const std::vector<size_t>& inLoop = loopWires[li];
@@ -18122,141 +18237,300 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
         };
         const double outerSign = ringArea();
 
+        std::vector<std::vector<WPt>> holes;
+        holes.reserve(inLoop.size());
         for (size_t w : inLoop) {
-            // Wire polyline: each edge sampled on its 3D curve at the
-            // solved count (the same contract its wall faces sample), uv
-            // through the pcurve; pieces chained by nearest endpoints.
-            struct WPt { gp_Pnt p; double u, v; };
-            std::vector<std::vector<WPt>> pieces;
-            for (int eid : plan.insertWires[w]) {
-                int n = eid > 0 && eid < (int)solvedEdge.size() &&
-                                solvedEdge[eid] > 0
-                            ? solvedEdge[eid]
-                            : 8;
-                const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
-                double f, l;
-                Handle(Geom2d_Curve) pc =
-                    BRep_Tool::CurveOnSurface(edge, face, f, l);
-                if (pc.IsNull()) continue;
-                BRepAdaptor_Curve c(edge);
-                const double f3 = c.FirstParameter(), l3 = c.LastParameter();
-                const double ph = closedEdgePhase(edge, model);
-                std::vector<WPt> piece;
-                for (double t : edgeSampleFractions(
-                         eid, n, ph, false, /*includeLast=*/true,
-                         pins, &model)) {
-                    gp_Pnt2d uv = pc->Value(f + t * (l - f));
-                    piece.push_back(
-                        {c.Value(f3 + t * (l3 - f3)), uv.X(), uv.Y()});
-                }
-                pieces.push_back(std::move(piece));
-            }
-            if (pieces.empty()) continue;
-            std::vector<WPt> hole = pieces[0];
-            std::vector<char> used(pieces.size(), 0);
-            used[0] = 1;
-            for (size_t step = 1; step < pieces.size(); ++step) {
-                double bd = 1e300; size_t bi = 0; bool rev = false;
-                for (size_t k = 0; k < pieces.size(); ++k) {
-                    if (used[k]) continue;
-                    double dF = hole.back().p.Distance(pieces[k].front().p);
-                    double dB = hole.back().p.Distance(pieces[k].back().p);
-                    if (dF < bd) { bd = dF; bi = k; rev = false; }
-                    if (dB < bd) { bd = dB; bi = k; rev = true; }
-                }
-                used[bi] = 1;
-                std::vector<WPt> pc2 = pieces[bi];
-                if (rev) std::reverse(pc2.begin(), pc2.end());
-                hole.insert(hole.end(), pc2.begin() + 1, pc2.end());
-            }
-            if (hole.size() > 1 &&
-                hole.front().p.Distance(hole.back().p) < 1e-9) {
-                hole.pop_back();
-            }
+            std::vector<WPt> hole = buildHole(w, ringPts);
             if (hole.size() < 3) continue;
+            holes.push_back(std::move(hole));
+        }
+        if (holes.empty()) {
+            dbg("insert face %d: loop %zu had no usable wires", faceId, li);
+            return false;
+        }
 
-            // Continuously unwrap hole U, then shift by whole periods so
-            // it sits in the outer ring's unwrapped U frame (seam cutouts
-            // otherwise splice across a period jump).
-            for (size_t i = 1; i < hole.size(); ++i) {
-                hole[i].u -=
-                    period * std::round((hole[i].u - hole[i - 1].u) / period);
-            }
-            {
-                double rMid = 0, hMid = 0;
-                for (const auto& p : ringPts) rMid += p[0] / rScale;
-                rMid /= std::max<size_t>(1, ringPts.size());
-                for (const auto& p : hole) hMid += p.u;
-                hMid /= hole.size();
-                const double shift =
-                    period * std::round((rMid - hMid) / period);
-                for (auto& p : hole) p.u += shift;
-            }
-
+        if (holes.size() == 1) {
+            // Polar collar ladder (open-band insert webs): both rings wind
+            // the SAME way so each cavity edge is opposed by a hole edge.
+            std::vector<WPt>& hole = holes[0];
+            size_t emitted = 0;
             double aHole = 0;
             for (size_t i = 0; i < hole.size(); ++i) {
                 const WPt& p1 = hole[i];
                 const WPt& p2 = hole[(i + 1) % hole.size()];
                 aHole += p1.u * rScale * p2.v - p2.u * rScale * p1.v;
             }
-            std::vector<WPt> h = hole;
-            if (outerSign * aHole > 0) std::reverse(h.begin(), h.end());
+            if (outerSign * aHole < 0) std::reverse(hole.begin(), hole.end());
 
-            // Splice this hole into the working ring at the nearest pair.
-            size_t bo = 0, bh = 0; double bd = 1e300;
-            for (size_t i = 0; i < ringPts.size(); ++i) {
-                for (size_t j = 0; j < h.size(); ++j) {
-                    double dx = ringPts[i][0] - h[j].u * rScale;
-                    double dy = ringPts[i][1] - h[j].v;
-                    double d = dx * dx + dy * dy;
-                    if (d < bd) { bd = d; bo = i; bh = j; }
+            std::vector<uint32_t> hid(hole.size());
+            for (size_t i = 0; i < hole.size(); ++i) {
+                double uA = hole[i].u;
+                uA -= period * std::floor((uA - u0) / period);
+                hid[i] = wb.addVertex(hole[i].p,
+                                      Anchor{faceId, uA, hole[i].v});
+            }
+            size_t ci = 0, hj = 0;
+            {
+                double best = 1e300;
+                for (size_t i = 0; i < ringIds.size(); ++i) {
+                    for (size_t j = 0; j < hole.size(); ++j) {
+                        const double dx = ringPts[i][0] - hole[j].u * rScale;
+                        const double dy = ringPts[i][1] - hole[j].v;
+                        const double d2 = dx * dx + dy * dy;
+                        if (d2 < best) {
+                            best = d2;
+                            ci = i;
+                            hj = j;
+                        }
+                    }
                 }
             }
-            std::vector<std::array<double, 3>> np;
-            std::vector<uint32_t> ni;
-            for (size_t i = 0; i <= bo; ++i) {
-                np.push_back(ringPts[i]);
-                ni.push_back(ringIds[i]);
+            const size_t nc = ringIds.size(), nh = hole.size();
+            auto C = [&](size_t k) { return ringIds[(ci + k) % nc]; };
+            auto H = [&](size_t k) { return hid[(hj + k) % nh]; };
+            double cx = 0, cy = 0;
+            for (const WPt& h : hole) {
+                cx += h.u * rScale;
+                cy += h.v;
             }
-            std::vector<uint32_t> holeIds(h.size(), UINT32_MAX);
-            auto holeId = [&](size_t j) {
-                if (holeIds[j] == UINT32_MAX) {
-                    // Planar splice may hold unwrapped U; anchors stay in
-                    // the surface period so border/self-check UV match.
-                    double uA = h[j].u;
-                    uA -= period * std::floor((uA - u0) / period);
-                    holeIds[j] = wb.addVertex(
-                        h[j].p, Anchor{faceId, uA, h[j].v});
+            cx /= double(nh);
+            cy /= double(nh);
+            auto unwrapAng = [&](std::vector<double>& a) {
+                for (size_t k = 1; k < a.size(); ++k) {
+                    while (a[k] - a[k - 1] > M_PI) a[k] -= 2.0 * M_PI;
+                    while (a[k] - a[k - 1] < -M_PI) a[k] += 2.0 * M_PI;
                 }
-                return holeIds[j];
             };
-            for (size_t j = 0; j <= h.size(); ++j) {
-                size_t k = (bh + j) % h.size();
-                np.push_back({h[k].u * rScale, h[k].v, 0.0});
-                ni.push_back(holeId(k));
+            std::vector<double> tc(nc + 1), th(nh + 1);
+            for (size_t k = 0; k <= nc; ++k) {
+                const auto& p = ringPts[(ci + k) % nc];
+                tc[k] = std::atan2(p[1] - cy, p[0] - cx);
             }
-            for (size_t i = bo; i < ringPts.size(); ++i) {
-                np.push_back(ringPts[i]);
-                ni.push_back(ringIds[i]);
+            for (size_t k = 0; k <= nh; ++k) {
+                const WPt& h = hole[(hj + k) % nh];
+                th[k] = std::atan2(h.v - cy, h.u * rScale - cx);
             }
-            ringPts = std::move(np);
-            ringIds = std::move(ni);
-        }
+            unwrapAng(tc);
+            unwrapAng(th);
+            if (std::abs(std::abs(tc[nc] - tc[0]) - 2.0 * M_PI) > 0.5 ||
+                std::abs(std::abs(th[nh] - th[0]) - 2.0 * M_PI) > 0.5 ||
+                (tc[nc] - tc[0]) * (th[nh] - th[0]) < 0) {
+                dbg("insert face %d: collar angle sweep failed", faceId);
+                return false;
+            }
+            const double dir = tc[nc] > tc[0] ? 1.0 : -1.0;
+            auto off = [&](double h, double c) {
+                double d = (h - c) * dir;
+                while (d > M_PI) d -= 2.0 * M_PI;
+                while (d < -M_PI) d += 2.0 * M_PI;
+                return std::abs(d);
+            };
+            std::vector<size_t> mp(nc + 1);
+            mp[0] = 0;
+            mp[nc] = nh;
+            for (size_t k = 1; k < nc; ++k) {
+                size_t j = mp[k - 1];
+                while (j + 1 < nh &&
+                       off(th[j + 1], tc[k]) <= off(th[j], tc[k])) {
+                    ++j;
+                }
+                mp[k] = j;
+            }
+            // Planar cross in the unwrapped (u*rScale, v) chart. Angle
+            // pairing can hand a sample on the lattice side of a cavity
+            // edge (folded overlapping ear). Keep only samples on the
+            // same side of the edge as the hole centroid — that is the
+            // web side whether the cavity ring runs CCW or CW.
+            const double holeCx = cx, holeCy = cy;
+            auto crossEdge = [&](size_t i0, size_t i1, double hx,
+                                 double hy) {
+                const auto& a = ringPts[(ci + i0) % nc];
+                const auto& b = ringPts[(ci + i1) % nc];
+                return (b[0] - a[0]) * (hy - a[1]) -
+                       (hx - a[0]) * (b[1] - a[1]);
+            };
+            auto onWebSide = [&](size_t i0, size_t i1, const WPt& h) {
+                const double cCross =
+                    crossEdge(i0, i1, holeCx, holeCy);
+                const double hCross =
+                    crossEdge(i0, i1, h.u * rScale, h.v);
+                // Require the same sign as the centroid (and non-zero).
+                return cCross * hCross > 1e-20;
+            };
+            for (size_t k = 0; k < nc; ++k) {
+                std::vector<size_t> span;
+                for (size_t j = mp[k]; j <= mp[k + 1]; ++j) {
+                    const WPt& h = hole[(hj + j) % nh];
+                    if (onWebSide(k, k + 1, h)) span.push_back(j);
+                }
+                if (span.empty()) {
+                    double best = 1e300;
+                    size_t bj = nh;
+                    const auto& a = ringPts[(ci + k) % nc];
+                    const auto& b = ringPts[(ci + k + 1) % nc];
+                    const double mx = 0.5 * (a[0] + b[0]);
+                    const double my = 0.5 * (a[1] + b[1]);
+                    for (size_t j = 0; j < nh; ++j) {
+                        const WPt& h = hole[(hj + j) % nh];
+                        if (!onWebSide(k, k + 1, h)) continue;
+                        const double dx = h.u * rScale - mx;
+                        const double dy = h.v - my;
+                        const double d2 = dx * dx + dy * dy;
+                        if (d2 < best) {
+                            best = d2;
+                            bj = j;
+                        }
+                    }
+                    if (bj >= nh) continue;
+                    span.push_back(bj);
+                }
+                // Cavity direction is fixed by the lattice (opposite
+                // traversal on the shared staircase edge). Only the hole
+                // span is filtered to the web side.
+                std::vector<uint32_t> cell{C(k), C(k + 1)};
+                for (size_t s = span.size(); s-- > 0;) {
+                    cell.push_back(H(span[s]));
+                }
+                cell.erase(std::unique(cell.begin(), cell.end()),
+                           cell.end());
+                while (cell.size() > 1 && cell.front() == cell.back()) {
+                    cell.pop_back();
+                }
+                if (cell.size() < 3) continue;
+                if (polyArea3(cell) < 1e-12) {
+                    continue;  // collinear generator span — no area to fill
+                }
+                wb.addPolygon(std::move(cell), faceId, false);
+                ++emitted;
+            }
+            if (emitted == 0) {
+                dbg("insert face %d: collar emitted nothing", faceId);
+                return false;
+            }
+        } else {
+            // Multi-wire staircase: keyhole merge + ear-clip.
+            for (std::vector<WPt>& hole : holes) {
+                double aHole = 0;
+                for (size_t i = 0; i < hole.size(); ++i) {
+                    const WPt& p1 = hole[i];
+                    const WPt& p2 = hole[(i + 1) % hole.size()];
+                    aHole += p1.u * rScale * p2.v - p2.u * rScale * p1.v;
+                }
+                std::vector<WPt> h = hole;
+                if (outerSign * aHole > 0) std::reverse(h.begin(), h.end());
 
-        std::vector<uint32_t> ringIdx(ringPts.size());
-        for (size_t i = 0; i < ringIdx.size(); ++i) ringIdx[i] = i;
-        size_t emitted = 0;
-        for (const auto& t : triangulatePoly(ringPts, ringIdx)) {
-            uint32_t a = ringIds[t[0]], b = ringIds[t[1]],
-                     c = ringIds[t[2]];
-            if (a == b || b == c || a == c) continue;
-            wb.addPolygon({a, b, c}, faceId, false);
-            ++emitted;
+                size_t bo = 0, bh = 0; double bd = 1e300;
+                for (size_t i = 0; i < ringPts.size(); ++i) {
+                    for (size_t j = 0; j < h.size(); ++j) {
+                        double dx = ringPts[i][0] - h[j].u * rScale;
+                        double dy = ringPts[i][1] - h[j].v;
+                        double d = dx * dx + dy * dy;
+                        if (d < bd) { bd = d; bo = i; bh = j; }
+                    }
+                }
+                std::vector<std::array<double, 3>> np;
+                std::vector<uint32_t> ni;
+                for (size_t i = 0; i <= bo; ++i) {
+                    np.push_back(ringPts[i]);
+                    ni.push_back(ringIds[i]);
+                }
+                std::vector<uint32_t> holeIds(h.size(), UINT32_MAX);
+                auto holeId = [&](size_t j) {
+                    if (holeIds[j] == UINT32_MAX) {
+                        double uA = h[j].u;
+                        uA -= period * std::floor((uA - u0) / period);
+                        holeIds[j] = wb.addVertex(
+                            h[j].p, Anchor{faceId, uA, h[j].v});
+                    }
+                    return holeIds[j];
+                };
+                for (size_t j = 0; j <= h.size(); ++j) {
+                    size_t k = (bh + j) % h.size();
+                    np.push_back({h[k].u * rScale, h[k].v, 0.0});
+                    ni.push_back(holeId(k));
+                }
+                for (size_t i = bo; i < ringPts.size(); ++i) {
+                    np.push_back(ringPts[i]);
+                    ni.push_back(ringIds[i]);
+                }
+                ringPts = std::move(np);
+                ringIds = std::move(ni);
+            }
+
+            std::vector<uint32_t> ringIdx(ringPts.size());
+            for (size_t i = 0; i < ringIdx.size(); ++i) ringIdx[i] = i;
+            size_t kept = 0;
+            for (const auto& t : triangulatePoly(ringPts, ringIdx)) {
+                uint32_t a = ringIds[t[0]], b = ringIds[t[1]],
+                         c = ringIds[t[2]];
+                if (a == b || b == c || a == c) continue;
+                ++kept;
+                if (polyArea3({a, b, c}) < 1e-12) continue;
+                wb.addPolygon({a, b, c}, faceId, false);
+            }
+            // Completeness uses every non-duplicate ear (including dropped
+            // zero-area ones): a shortfall means the web has a real hole.
+            if (kept + 2 < ringPts.size()) return false;
         }
-        // A complete ear-clip of a keyhole ring yields exactly V-2
-        // triangles (bridge duplicates included). Anything less means
-        // the web has an internal hole — fail the face un-emitted.
-        if (emitted + 2 < ringPts.size()) return false;
+    }
+
+    // Drop zero-area ears and web cells that fold against the surface.
+    // Collar/keyhole pairing can leave a lattice-overlapping ear on an
+    // iso-v staircase edge (both lattice and web on the same axial side);
+    // those cells fail §3.1 foldedPolys and are not needed for the border
+    // contract — the hole wire is already carried by neighbouring cells.
+    {
+        const double orient =
+            face.Orientation() == TopAbs_REVERSED ? -1.0 : 1.0;
+        double areaScale = 0;
+        for (const auto& poly : webbedMesh.polygons) {
+            areaScale = std::max(areaScale, polyArea3(poly));
+        }
+        const double areaEps = std::max(1e-30, areaScale * 1e-12);
+        std::vector<std::vector<uint32_t>> keptPolys;
+        keptPolys.reserve(webbedMesh.polygons.size());
+        for (const auto& poly : webbedMesh.polygons) {
+            if (poly.size() < 3) continue;
+            const double a3 = polyArea3(poly);
+            if (a3 < areaEps) continue;
+            double nx = 0, ny = 0, nz = 0;
+            for (size_t i = 0; i < poly.size(); ++i) {
+                const auto& a = webbedMesh.vertices[poly[i]];
+                const auto& b =
+                    webbedMesh.vertices[poly[(i + 1) % poly.size()]];
+                nx += (a[1] - b[1]) * (a[2] + b[2]);
+                ny += (a[2] - b[2]) * (a[0] + b[0]);
+                nz += (a[0] - b[0]) * (a[1] + b[1]);
+            }
+            const double nlen = std::sqrt(nx * nx + ny * ny + nz * nz);
+            if (nlen < 1e-14) continue;
+            int votes = 0;
+            for (uint32_t vi : poly) {
+                if (vi >= webbedMesh.anchors.size()) continue;
+                const Anchor& an = webbedMesh.anchors[vi];
+                if (an.faceId != faceId) continue;
+                gp_Pnt p;
+                gp_Vec du, dv;
+                surf.D1(an.u, an.v, p, du, dv);
+                const gp_Vec sn = du.Crossed(dv);
+                const double sl = sn.Magnitude();
+                if (sl < 1e-14) continue;
+                const double dot =
+                    orient *
+                    (sn.X() * nx + sn.Y() * ny + sn.Z() * nz) /
+                    (sl * nlen);
+                if (dot > 0.1) ++votes;
+                else if (dot < -0.1) --votes;
+            }
+            if (votes < 0) continue;
+            keptPolys.push_back(poly);
+        }
+        if (keptPolys.empty()) {
+            dbg("insert face %d: purge removed every cell", faceId);
+            return false;
+        }
+        webbedMesh.polygons = std::move(keptPolys);
+        webbedMesh.polygonFaceId.assign(webbedMesh.polygons.size(), faceId);
     }
 
     // Every web complete: splat the local result into the real builder.
