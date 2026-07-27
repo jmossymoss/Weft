@@ -2677,7 +2677,11 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
     const int i0 = natLeft.empty() ? 0 : 1;
     const int i1 = natRight.empty() ? nu : nu - 1;
 
-    std::vector<uint32_t> grid((nu + 1) * (nv + 1), 0);
+    // UINT32_MAX = unset. Vertex index 0 is valid (first addVertex on a
+    // fresh face part), so a 0-fill sentinel falsely skips emission when
+    // the lattice corner is that first vertex — the nu==1 + natRight stub
+    // path then never covers its corner edge (mp9_f579 face 2 / edge 6).
+    std::vector<uint32_t> grid((nu + 1) * (nv + 1), UINT32_MAX);
     for (int j = j0; j <= j1; ++j) {
         for (int i = i0; i <= i1; ++i) {
             const BPt& bp = gpts[j * (nu + 1) + i];
@@ -2928,12 +2932,20 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
             out.addPolygon(std::move(ring), faceId, flip);
         }
     };
+    // Corner cell (0,0) owns the stub when the lattice window still
+    // covers it. Shrink for a deficit rail (nu==1 + natRight, etc.) can
+    // zero that window — then neither cell nor a natLeft/natBottom strip
+    // can carry the stub.
+    const bool cornerCellEmitted =
+        (i0 == 0 && j0 == 0 && i0 < i1 && j0 < j1);
+    bool stubEmitted = stubVerts.empty() || cornerCellEmitted;
     if (!natBottom.empty()) {
         std::vector<uint32_t> high;
         for (int i = i0; i <= i1; ++i) high.push_back(grid[j0 * (nu + 1) + i]);
         emitStrip(railIds(natBottom), high,
                   stubVerts.empty() ? nullptr : &stubVerts, false,
                   UINT32_MAX);
+        if (!stubVerts.empty()) stubEmitted = true;
     }
     if (!natTop.empty()) {
         std::vector<uint32_t> low;
@@ -2955,11 +2967,56 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
         }
         emitStrip(low, railIds(natLeft),
                   stubHere ? &stubVerts : nullptr, true, corner00);
+        if (stubHere) stubEmitted = true;
     }
     if (!natRight.empty()) {
         std::vector<uint32_t> high;
         for (int j = j0; j <= j1; ++j) high.push_back(grid[j * (nu + 1) + i1]);
         emitStrip(railIds(natRight), high, nullptr, false, UINT32_MAX);
+    }
+    // Belt-and-suspenders: when the corner cell and the left/bottom
+    // strips did not absorb the stub (typical: nu==1 + natRight shrinks
+    // the window to a single column that never visits (0,0) as a cell),
+    // emit an explicit stub polygon through the lattice corner and the
+    // first interior point on the left column.
+    if (!stubEmitted && !stubVerts.empty()) {
+        const int jc = std::max(j0, 0);
+        const int ic = std::max(i0, 0);
+        if (jc <= j1 && ic <= i1 &&
+            grid[jc * (nu + 1) + ic] != UINT32_MAX) {
+            std::vector<uint32_t> stubPoly;
+            stubPoly.push_back(grid[jc * (nu + 1) + ic]);
+            // Prefer the next lattice point so the poly has area; fall
+            // back to re-emitting the corner alone with the stub chain.
+            if (jc < j1 &&
+                grid[(jc + 1) * (nu + 1) + ic] != UINT32_MAX) {
+                stubPoly.push_back(grid[(jc + 1) * (nu + 1) + ic]);
+            } else if (ic < i1 &&
+                       grid[jc * (nu + 1) + ic + 1] != UINT32_MAX) {
+                stubPoly.push_back(grid[jc * (nu + 1) + ic + 1]);
+            }
+            stubPoly.insert(stubPoly.end(), stubVerts.begin(),
+                            stubVerts.end());
+            stubPoly.erase(std::unique(stubPoly.begin(), stubPoly.end()),
+                           stubPoly.end());
+            if (stubPoly.size() > 1 && stubPoly.front() == stubPoly.back()) {
+                stubPoly.pop_back();
+            }
+            if (stubPoly.size() >= 3) {
+                out.addPolygon(std::move(stubPoly), faceId, flip);
+            } else if (stubPoly.size() == 2) {
+                // Degenerate: only corner + one stub sample. Fabricate a
+                // triangle through the stub's far corner already in
+                // gpts[0] if the lattice corner is a different vertex.
+                const BPt& c = gpts[0];
+                const uint32_t c00 =
+                    out.addVertex(c.p, {faceId, c.uv.X(), c.uv.Y()});
+                if (c00 != stubPoly[0] && c00 != stubPoly[1]) {
+                    out.addPolygon({stubPoly[0], stubPoly[1], c00}, faceId,
+                                   flip);
+                }
+            }
+        }
     }
     return true;
 }
