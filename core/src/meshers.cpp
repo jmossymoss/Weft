@@ -16121,6 +16121,79 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
             left.insert(left.end(), floor.begin(), floor.end());
             slabs.push_back(std::move(left));
         }
+        // Half-plane clip of a row slab against a column can leave a
+        // zero-area colinear spur when the trim re-hits the clip bound
+        // mid-row: the long station edge stays, then the polyline returns
+        // along the same line. That spur shares directed edges with the
+        // neighbour column (mp9 face 2730 / reducer mp9_f2730 face 4) and
+        // self-check demotes the whole coons/orthogonal face. Subdivide
+        // T-junctions onto each edge, then erase a→b→a spikes so only the
+        // real lobe remains — unique-key filtering alone cannot, because
+        // the spur's vertices are distinct on the first pass.
+        auto collapseClipSpurs = [&](std::vector<gp_Pnt2d>& ring) {
+            if (ring.size() < 3) return;
+            std::vector<gp_Pnt2d> next;
+            next.reserve(ring.size() * 2);
+            for (size_t i = 0; i < ring.size(); ++i) {
+                const gp_Pnt2d& a = ring[i];
+                const gp_Pnt2d& b = ring[(i + 1) % ring.size()];
+                next.push_back(a);
+                const double abx = b.X() - a.X(), aby = b.Y() - a.Y();
+                const double ab2 = abx * abx + aby * aby;
+                if (ab2 < 1e-30) continue;
+                struct Hit {
+                    double t;
+                    gp_Pnt2d p;
+                };
+                std::vector<Hit> hits;
+                for (size_t k = 0; k < ring.size(); ++k) {
+                    if (k == i || k == (i + 1) % ring.size()) continue;
+                    const gp_Pnt2d& p = ring[k];
+                    const double t =
+                        ((p.X() - a.X()) * abx + (p.Y() - a.Y()) * aby) /
+                        ab2;
+                    if (t <= 1e-12 || t >= 1.0 - 1e-12) continue;
+                    const gp_Pnt2d proj(a.X() + abx * t, a.Y() + aby * t);
+                    if (uvKey(p) != uvKey(proj) && p.Distance(proj) > 1e-10)
+                        continue;
+                    hits.push_back({t, p});
+                }
+                std::sort(hits.begin(), hits.end(),
+                          [](const Hit& x, const Hit& y) { return x.t < y.t; });
+                for (const Hit& h : hits) {
+                    if (uvKey(next.back()) != uvKey(h.p)) next.push_back(h.p);
+                }
+            }
+            ring.swap(next);
+            auto dedupeConsecutive = [&]() {
+                std::vector<gp_Pnt2d> d;
+                d.reserve(ring.size());
+                for (const gp_Pnt2d& p : ring) {
+                    if (!d.empty() && uvKey(d.back()) == uvKey(p)) continue;
+                    d.push_back(p);
+                }
+                if (d.size() > 2 && uvKey(d.front()) == uvKey(d.back()))
+                    d.pop_back();
+                ring.swap(d);
+            };
+            dedupeConsecutive();
+            bool changed = true;
+            while (changed && ring.size() >= 3) {
+                changed = false;
+                for (size_t i = 0; i < ring.size(); ++i) {
+                    const size_t j = (i + 1) % ring.size();
+                    const size_t k = (i + 2) % ring.size();
+                    if (uvKey(ring[i]) != uvKey(ring[k])) continue;
+                    // a→b→a zero-area spike: drop the tip (and the
+                    // duplicate return vertex collapses next).
+                    ring.erase(ring.begin() +
+                               static_cast<std::ptrdiff_t>(j));
+                    changed = true;
+                    break;
+                }
+                dedupeConsecutive();
+            }
+        };
         for (int i = 0; i + 1 < int(U.size()); ++i) {
             if (U[i + 1] - U[i] <= ut) continue;
             const double ul = U[i], ur = U[i+1];
@@ -16129,14 +16202,15 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
             poly = clipHalfPlane(poly,true,ur,false);
             if (poly.size() < 3) continue;
             std::vector<gp_Pnt2d> clean;
-            std::set<std::pair<long long,long long>> cleanKeys;
+            clean.reserve(poly.size());
             for (const gp_Pnt2d& p : poly) {
                 if (!clean.empty() && p.Distance(clean.back()) <= 1e-10)
                     continue;
-                if (cleanKeys.insert(uvKey(p)).second) clean.push_back(p);
+                clean.push_back(p);
             }
             if (clean.size() > 2 && clean.front().Distance(clean.back()) < 1e-10)
                 clean.pop_back();
+            collapseClipSpurs(clean);
             if (clean.size() < 3) continue;
             double area = 0.0;
             for (size_t k = 0; k < clean.size(); ++k) {
