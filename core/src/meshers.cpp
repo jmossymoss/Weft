@@ -17979,30 +17979,19 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
                                 return c - a < 1e-7 * vspan;
                             }),
                 vRows.end());
-    // Densify tall axial spans. A kept column beside an insert whose
-    // only rows are the cutout's v-extents becomes one full-height cell;
-    // its iso-v top/bottom edges then sit on the staircase with BOTH the
-    // lattice and the web on the same axial side, so any manifold web
-    // triangle across that edge is folded against the surface (cylinder
-    // Newell vs du×dv). Cap the span near one circumferential pitch.
+    // Honor artist axial on insert drums. Circ-pitch densify used to carve
+    // every tall gap down to ~½ circumferential pitch, which (a) ignored
+    // `--axial` / face axial so topology could not track the knob and
+    // (b) exploded tall cut cylinders into dozens of unrequested rings —
+    // and at higher axial the over-tessellated staircase lost the border
+    // contract. Collar webs + fold purge already keep a single tall cell
+    // beside an insert manifold; row count is therefore the artist span
+    // lattice merged with the insert band extents already in `vRows`.
     {
-        const double r =
-            std::max(1e-6, surf.Value((u0 + u1) / 2, (v0 + v1) / 2)
-                               .Distance(surf.Value(
-                                   (u0 + u1) / 2 + 1e-3, (v0 + v1) / 2)) /
-                               1e-3);
-        const double maxDv = std::max(
-            0.25 * vspan / std::max(2, nv),
-            0.5 * r * ((u1 - u0) / std::max(3, nu)));
         std::vector<double> dense = vRows;
-        for (size_t i = 0; i + 1 < vRows.size(); ++i) {
-            const double a = vRows[i], b = vRows[i + 1];
-            const double span = b - a;
-            if (span <= maxDv * 1.5) continue;
-            const int n = std::max(2, (int)std::ceil(span / maxDv));
-            for (int k = 1; k < n; ++k) {
-                dense.push_back(a + span * (double)k / n);
-            }
+        const int spans = std::max(1, nv);
+        for (int i = 1; i < spans; ++i) {
+            dense.push_back(v0 + vspan * (double)i / spans);
         }
         std::sort(dense.begin(), dense.end());
         dense.erase(std::unique(dense.begin(), dense.end(),

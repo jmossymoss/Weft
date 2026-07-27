@@ -3041,6 +3041,82 @@ void testPinnedStationsReachRingSamplers() {
     }
 }
 
+// Insert drums must honor artist axial. Circ-pitch densify after the collar
+// web fix ignored `--axial`, flooded tall cut cylinders with unrequested
+// rings, and demoted the face once axial rose past ~4. The lattice is the
+// artist span count merged with insert extents — topology tracks the knob
+// and the face stays off the contract floor.
+void testInsertDrumHonoursAxialSpans() {
+    std::printf("-- insert drum honours axial spans --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/pinned_station_revgrid.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+
+    // Multi-edge full-period drum — the insert-bearing wall, not a plain
+    // sleeve. Prefer the face with the most edges (most cutouts).
+    int wall = 0;
+    int wallEdges = 0;
+    for (const auto& f : analysis.faces) {
+        if (f.featureClass != weft::FeatureClass::Drum) continue;
+        if (f.chartKind != weft::ChartKind::FullPeriod) continue;
+        if (int(f.edgeIds.size()) < 8) continue;
+        if (int(f.edgeIds.size()) > wallEdges) {
+            wall = f.id;
+            wallEdges = int(f.edgeIds.size());
+        }
+    }
+    CHECK(wall > 0);
+
+    auto facePolys = [&](const weft::PolyMesh& mesh, int fid) {
+        int n = 0;
+        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+            if (p < mesh.polygonFaceId.size() &&
+                mesh.polygonFaceId[p] == fid) {
+                ++n;
+            }
+        }
+        return n;
+    };
+
+    weft::GenerationSettings baseGs;
+    baseGs.defaults.minimal = true;
+    baseGs.defaults.adaptive = true;
+    baseGs.defaults.relativeDeviation = true;
+    weft::GenerationReport baseRep;
+    weft::PolyMesh baseMesh =
+        weft::generate(model, analysis, baseGs, &baseRep);
+    CHECK_EQ(weft::summarizeStructure(baseRep).failedFloor, 0);
+    const int basePolys = facePolys(baseMesh, wall);
+    // Circ-pitch densify produced ~679 polys here; the artist lattice stays
+    // near the insert-extent row count (~360). Bound well below the blow-up.
+    CHECK(basePolys < 500);
+    CHECK(basePolys > 0);
+
+    int prevPolys = -1;
+    for (int ax : {2, 4, 8}) {
+        weft::GenerationSettings gs = baseGs;
+        gs.defaults.axial = ax;
+        weft::GenerationReport rep;
+        weft::PolyMesh mesh = weft::generate(model, analysis, gs, &rep);
+        CHECK_EQ(weft::summarizeStructure(rep).failedFloor, 0);
+        auto bit = rep.faceBuild.find(wall);
+        CHECK(bit != rep.faceBuild.end());
+        CHECK_EQ(bit->second, 0);  // still structured, not floored
+        const int n = facePolys(mesh, wall);
+        std::printf("  axial=%d -> %d polys on insert drum #%d\n", ax, n,
+                    wall);
+        CHECK(n > prevPolys);  // topology tracks the axial knob
+        prevPolys = n;
+
+        const auto folded = weft::foldedPolys(model, mesh);
+        CHECK_EQ(static_cast<size_t>(
+                     std::count(folded.begin(), folded.end(), uint8_t{1})),
+                 0u);
+    }
+}
+
 // A lead-in chamfer is a SHORT band between two LEVEL rings. When its rims
 // carry different counts the revolution grid bridges them with a transition
 // strip, and the strip used to be refused unless the band was tall next to
@@ -5722,6 +5798,7 @@ int main() {
     RUN(testRibbonHonoursPinnedStations);
     RUN(testRibbonSingleSegmentRail);
     RUN(testPinnedStationsReachRingSamplers);
+    RUN(testInsertDrumHonoursAxialSpans);
     RUN(testLevelRimChamferKeepsStrip);
     RUN(testTanSlitNoRawDemotion);
     RUN(testBrokenSourceDiagnostic);
