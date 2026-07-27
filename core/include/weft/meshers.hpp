@@ -317,7 +317,8 @@ struct GenerationReport {
     // EdgeId -> how the solved count was chosen for that edge's density
     // group. Short stable tags for CLI/validate attribution:
     // "sole-proposal", "max-proposal", "face-pin", "edge-pin",
-    // "ring-derived", "curvature-floor", "wire-floor", "annulus-floor".
+    // "ring-derived", "curvature-floor", "wire-floor", "annulus-floor",
+    // "rail-align".
     // Present for the same edges as edgeDivisions when attribution ran.
     std::map<int, std::string> edgeDivisionOwner;
     // Shared-group ownership conflicts: proposing faces disagreed, or a

@@ -2774,6 +2774,59 @@ void testFailedFloorRibbonWindingAndTallRevgrid() {
     }
 }
 
+void testRibbonRailStationAlignment() {
+    std::printf("-- ribbon rail station alignment --\n");
+    auto cad = []() {
+        weft::GenerationSettings gs;
+        gs.defaults.minimal = true;
+        gs.defaults.adaptive = true;
+        gs.defaults.relativeDeviation = true;
+        gs.defaults.minCurvedSegments = 6;
+        return gs;
+    };
+    {
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "regressions/flaregun/ribbon_rail_align_backstrap.step";
+        const weft::Model model = weft::loadStep(stepPath.string());
+        const weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        weft::generate(model, analysis, cad(), &report);
+        int ribbons = 0;
+        for (const auto& [fid, kind] : report.faceMesher) {
+            if (kind != weft::MesherKind::RibbonSweep) continue;
+            ++ribbons;
+            auto bit = report.faceBuild.find(fid);
+            CHECK(bit != report.faceBuild.end());
+            CHECK_EQ(bit->second, 0);
+        }
+        CHECK(ribbons >= 1);
+        const weft::StructureSummary sum = weft::summarizeStructure(report);
+        CHECK_EQ(sum.failedFloor, 0);
+    }
+    {
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "STEP_Examples/flaregun.stp";
+        const weft::Model model = weft::loadStep(stepPath.string());
+        const weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        const weft::PolyMesh mesh = weft::generate(model, analysis, cad(), &report);
+        CHECK(isWatertight(mesh));
+        const weft::StructureSummary sum = weft::summarizeStructure(report);
+        CHECK_EQ(sum.failedFloor, 0);
+        auto a = report.edgeDivisions.find(498);
+        auto b = report.edgeDivisions.find(295);
+        CHECK(a != report.edgeDivisions.end());
+        CHECK(b != report.edgeDivisions.end());
+        if (a != report.edgeDivisions.end() &&
+            b != report.edgeDivisions.end()) {
+            CHECK_EQ(a->second, b->second);
+            CHECK(a->second >= 11);
+        }
+    }
+}
+
 void testRibbonCapWebKeepsStrip() {
     std::printf("-- ribbon cap web keeps the strip --\n");
     const std::filesystem::path stepPath =
@@ -5624,6 +5677,7 @@ int main() {
     RUN(testFiveEdgeOrthogonalTrim);
     RUN(testSphereCornerOctantChart);
     RUN(testFailedFloorRibbonWindingAndTallRevgrid);
+    RUN(testRibbonRailStationAlignment);
     RUN(testRibbonCapWebKeepsStrip);
     RUN(testRibbonHonoursPinnedStations);
     RUN(testRibbonSingleSegmentRail);

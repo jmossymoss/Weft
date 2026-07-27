@@ -5570,19 +5570,32 @@ bool planRailLadder(const TopoDS_Face& face, const Model& model,
         if (rev) d.Reverse();
         return d;
     };
-    int sharp = 0;
+    std::vector<int> tips;
     for (size_t i = 0; i < order.size(); ++i) {
         gp_Vec a = wireTangent(order[i], true);
         gp_Vec b = wireTangent(order[(i + 1) % order.size()], false);
         if (a.Magnitude() < 1e-12 || b.Magnitude() < 1e-12) return false;
-        if (a.Angle(b) > M_PI / 4.0) ++sharp;
+        if (a.Angle(b) > M_PI / 4.0) {
+            tips.push_back(int((i + 1) % order.size()));
+        }
     }
-    if (sharp != 2) return false;
+    if (tips.size() != 2) return false;
     plan.kind = MesherKind::RailLadder;
     plan.constrains = true;
     for (const TopoDS_Edge& e : order) {
         plan.uEdges.push_back(model.edges.FindIndex(e));
     }
+    auto rail = [&](int start, int end) {
+        std::vector<int> out;
+        const int n = int(order.size());
+        for (int i = start, guard = 0; i != end && guard < n;
+             i = (i + 1) % n, ++guard) {
+            out.push_back(model.edges.FindIndex(order[i]));
+        }
+        return out;
+    };
+    plan.coonsSides[0] = rail(tips[0], tips[1]);
+    plan.coonsSides[2] = rail(tips[1], tips[0]);
     return true;
 }
 
@@ -5714,10 +5727,12 @@ bool sampleRibbonRing(const TopoDS_Face& face, const Model& model,
                       const std::vector<int>* solvedEdge, int radialDefault,
                       std::vector<gp_Pnt>& P, std::vector<gp_Pnt2d>& UV,
                       std::vector<int>& corners,
-                      const PinnedEdges* pins = nullptr) {
+                      const PinnedEdges* pins = nullptr,
+                      std::vector<int>* edgeIds = nullptr) {
     P.clear();
     UV.clear();
     corners.clear();
+    if (edgeIds) edgeIds->clear();
     TopoDS_Wire outer = BRepTools::OuterWire(face);
     if (outer.IsNull()) return false;
     int wireEdges = 0, rawEdges = 0;
@@ -5756,6 +5771,7 @@ bool sampleRibbonRing(const TopoDS_Face& face, const Model& model,
         const bool rev = edge.Orientation() == TopAbs_REVERSED;
         const double ph = closedEdgePhase(edge, model);
         corners.push_back(int(P.size()));
+        if (edgeIds) edgeIds->push_back(eid);
         for (double t : edgeSampleFractions(eid, n, ph, rev,
                                             /*includeLast=*/false, pins,
                                             &model)) {
@@ -6064,6 +6080,53 @@ bool ribbonEndNotchDetect(const TopoDS_Face& face, const Model& model) {
     }
     if (!findRibbonRails(P, corners).ok) return false;
     return findRibbonEndNotch(P, corners).ok;
+}
+
+bool populateRibbonRailChains(const TopoDS_Face& face, const Model& model,
+                              FacePlan& plan) {
+    std::vector<gp_Pnt> P;
+    std::vector<gp_Pnt2d> UV;
+    std::vector<int> corners;
+    std::vector<int> edgeIds;
+    if (!sampleRibbonRing(face, model, nullptr, 16, P, UV, corners, nullptr,
+                          &edgeIds)) {
+        return false;
+    }
+    if (corners.size() != edgeIds.size()) return false;
+    RibbonRails r = findRibbonRails(P, corners);
+    if (!r.ok) return false;
+    const RibbonEndNotch notch = findRibbonEndNotch(P, corners);
+    if (notch.ok) {
+        r.a0 = notch.a0;
+        r.a1 = notch.a1;
+        r.b0 = notch.b0;
+        r.b1 = notch.b1;
+    }
+    auto cornerPos = [&](int ringIdx) {
+        auto it = std::find(corners.begin(), corners.end(), ringIdx);
+        return it == corners.end() ? -1 : int(it - corners.begin());
+    };
+    auto forwardChain = [&](int startRing, int endRing) {
+        std::vector<int> chain;
+        const int start = cornerPos(startRing);
+        const int end = cornerPos(endRing);
+        const int n = int(edgeIds.size());
+        if (start < 0 || end < 0 || n == 0) return chain;
+        for (int i = start, guard = 0; i != end && guard < n;
+             i = (i + 1) % n, ++guard) {
+            chain.push_back(edgeIds[i]);
+        }
+        return chain;
+    };
+    std::vector<int> railA = forwardChain(r.a0, r.a1);
+    std::vector<int> railB = forwardChain(r.b0, r.b1);
+    if (railA.empty() || railB.empty()) return false;
+    // meshRibbonSweep pairs rail A (a0->a1) with the opposite rail walked
+    // backward (b1->b0), so store rail B in that station order.
+    std::reverse(railB.begin(), railB.end());
+    plan.coonsSides[0] = std::move(railA);
+    plan.coonsSides[2] = std::move(railB);
+    return true;
 }
 
 // Ribbon sweep mesher. Returns false (fall back to quad-fill) whenever the
@@ -9057,6 +9120,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 // back to quad-fill if the rails don't resolve.
                 if (planQuadFill(face, surf, model, plan)) {
                     plan.kind = MesherKind::RibbonSweep;
+                    populateRibbonRailChains(face, model, plan);
                     return plan;
                 }
                 break;
@@ -9775,6 +9839,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         ribbonDetect(face, model) &&
         planQuadFill(face, surf, model, plan)) {
         plan.kind = MesherKind::RibbonSweep;
+        populateRibbonRailChains(face, model, plan);
         return plan;
     }
 
@@ -21815,8 +21880,9 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             }
         }
     }
-    // Rail-station ALIGNMENT (adaptive coons strips): opposite chained
-    // sides match by SUM, but their stations sit at whatever arc
+    // Rail-station ALIGNMENT (adaptive strip families): opposite chained
+    // Coons sides, RibbonSweep rails, and RailLadder rails match by SUM,
+    // but their stations sit at whatever arc
     // fractions the per-piece counts imply — unequal piece densities put
     // station k at different fractions on the two rails, and since the
     // lattice connects station k to station k (the continuity the
@@ -21827,8 +21893,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     // common total N' (monotone raises only, so every floor and pin
     // survives; N' is capped so one dense curvy piece cannot explode
     // the strip; raises apply through the density groups so neighbours
-    // follow coherently). Rungs then come out straight and continuous
-    // with no mesher re-pairing at all.
+    // follow coherently). Coons keeps the strict proportional fit. Ribbon
+    // and ladder rails clamp short cap-adjacent pieces upward, then equalize
+    // the clamped sums on the longest rail piece so caps do not become a
+    // dense web. Rungs then come out straight and continuous with no mesher
+    // re-pairing at all.
     timingCheckpoint("strip pitch floors");
     bool railAlignAny = false;
     for (const auto& [fid2, plan2] : plans) {
@@ -21839,16 +21908,47 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         }
     }
     if (railAlignAny) {
+        int railAlignBrepOpen = 0;
+        int railAlignBrepEdges = 0;
+        for (int eid = 1; eid <= model.edgeCount(); ++eid) {
+            const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+            if (BRep_Tool::Degenerated(edge)) continue;
+            ++railAlignBrepEdges;
+            if (!model.edgeToFaces.Contains(edge) ||
+                model.edgeToFaces.FindFromKey(edge).Extent() < 2) {
+                ++railAlignBrepOpen;
+            }
+        }
+        const bool stripRailAlignEligible =
+            railAlignBrepEdges > 0 &&
+            railAlignBrepOpen * 3 < railAlignBrepEdges;
         std::set<int> alignedRoots;  // first-come: don't re-move a group
+        auto railAlignStripKind = [](MesherKind k) {
+            return k == MesherKind::CoonsGrid ||
+                   k == MesherKind::RibbonSweep ||
+                   k == MesherKind::RailLadder;
+        };
         for (const auto& [fid, plan] : plans) {
-            if (plan.kind != MesherKind::CoonsGrid) continue;
+            if (!railAlignStripKind(plan.kind)) continue;
+            if (plan.kind != MesherKind::CoonsGrid &&
+                !stripRailAlignEligible) {
+                continue;
+            }
             if (!settings.forFace(fid).adaptive) continue;
             if (settings.forFace(fid).exclude) continue;
             bool anyChain = false;
+            bool anyStoredPair = false;
             for (int i = 0; i < 4; ++i) {
                 if (plan.coonsSides[i].size() > 1) anyChain = true;
             }
-            if (!anyChain) continue;
+            for (int pr = 0; pr < 2; ++pr) {
+                if (!plan.coonsSides[pr].empty() &&
+                    !plan.coonsSides[pr + 2].empty()) {
+                    anyStoredPair = true;
+                }
+            }
+            if (plan.kind == MesherKind::CoonsGrid && !anyChain) continue;
+            if (plan.kind != MesherKind::CoonsGrid && !anyStoredPair) continue;
             auto sideEdges = [&](int i) {
                 std::vector<int> v = plan.coonsSides[i];
                 if (v.empty()) {
@@ -21865,7 +21965,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 std::vector<int> A = sideEdges(pr);
                 std::vector<int> C = sideEdges(pr + 2);
                 if (A.empty() || C.empty()) continue;
-                if (A.size() < 2 && C.size() < 2) continue;
+                if (plan.kind == MesherKind::CoonsGrid &&
+                    A.size() < 2 && C.size() < 2) {
+                    continue;
+                }
                 auto chainLens = [&](const std::vector<int>& ch,
                                      std::vector<double>& L) {
                     double total = 0;
@@ -21902,13 +22005,19 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 // arc-proportional total, which ALSO equalizes them (the
                 // SUM repair below then no-ops for this pair).
                 if (NA < 2 || NC < 2) continue;
+                if (plan.kind != MesherKind::CoonsGrid &&
+                    std::min(NA, NC) * 2 < std::max(NA, NC)) {
+                    continue;
+                }
                 const int N0 = std::max(NA, NC);
+                if (plan.kind != MesherKind::CoonsGrid && N0 < 64) continue;
                 bool blocked = false;
                 for (const std::vector<int>* ch : {&A, &C}) {
                     for (int eid : *ch) {
                         const int root = density.groups.find(eid);
                         if (density.pinnedRoots.count(root) ||
-                            alignedRoots.count(root)) {
+                            (plan.kind == MesherKind::CoonsGrid &&
+                             alignedRoots.count(root))) {
                             blocked = true;
                         }
                     }
@@ -21917,19 +22026,25 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 // Common total: every piece's current count must fit
                 // under the arc-proportional line, on both rails.
                 double need = N0;
-                auto needOf = [&](const std::vector<int>& ch,
-                                  const std::vector<double>& L,
-                                  double tot) {
-                    for (size_t i = 0; i < ch.size(); ++i) {
-                        need = std::max(
-                            need, solvedEdge[ch[i]] * tot / L[i]);
-                    }
-                };
-                needOf(A, LA, totA);
-                needOf(C, LC, totC);
+                if (plan.kind == MesherKind::CoonsGrid) {
+                    auto needOf = [&](const std::vector<int>& ch,
+                                      const std::vector<double>& L,
+                                      double tot) {
+                        for (size_t i = 0; i < ch.size(); ++i) {
+                            need = std::max(
+                                need, solvedEdge[ch[i]] * tot / L[i]);
+                        }
+                    };
+                    needOf(A, LA, totA);
+                    needOf(C, LC, totC);
+                }
                 int Np = int(std::ceil(need - 1e-9));
-                const int cap =
-                    std::min(64, std::max(N0 + 4, int(2.5 * N0)));
+                const int growthCap =
+                    std::max(N0 + 4, int(2.5 * N0));
+                const int absoluteCap =
+                    plan.kind == MesherKind::CoonsGrid ? 64
+                                                        : std::max(64, N0 + 64);
+                const int cap = std::min(absoluteCap, growthCap);
                 if (Np > cap) continue;  // one hot piece; not worth it
                 // Largest-remainder arc-proportional targets at Np,
                 // clamped up to current; iterate the common total until
@@ -21961,15 +22076,35 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 };
                 std::vector<int> tA, tC;
                 bool ok = false;
-                for (int iter = 0; iter < 4; ++iter) {
+                if (plan.kind != MesherKind::CoonsGrid) {
                     const int sA = targetsOf(A, LA, totA, Np, tA);
                     const int sC = targetsOf(C, LC, totC, Np, tC);
-                    if (sA == Np && sC == Np) {
-                        ok = true;
-                        break;
-                    }
                     Np = std::max(sA, sC);
-                    if (Np > cap) break;
+                    auto topUpLongest = [](const std::vector<double>& L,
+                                           std::vector<int>& t, int extra) {
+                        if (extra <= 0 || t.empty()) return;
+                        size_t best = 0;
+                        for (size_t i = 1; i < L.size(); ++i) {
+                            if (L[i] > L[best]) best = i;
+                        }
+                        t[best] += extra;
+                    };
+                    if (Np <= cap) {
+                        topUpLongest(LA, tA, Np - sA);
+                        topUpLongest(LC, tC, Np - sC);
+                        ok = true;
+                    }
+                } else {
+                    for (int iter = 0; iter < 4; ++iter) {
+                        const int sA = targetsOf(A, LA, totA, Np, tA);
+                        const int sC = targetsOf(C, LC, totC, Np, tC);
+                        if (sA == Np && sC == Np) {
+                            ok = true;
+                            break;
+                        }
+                        Np = std::max(sA, sC);
+                        if (Np > cap) break;
+                    }
                 }
                 if (!ok) continue;
                 // Apply through the groups (monotone raises only).
@@ -21982,18 +22117,20 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         if (git != density.groupCount.end() &&
                             git->second < t[i]) {
                             git->second = t[i];
+                            density.ownerByRoot[root] = "rail-align";
                         }
                         for (int e2 = 1; e2 <= model.edgeCount(); ++e2) {
                             if (density.groups.find(e2) == root &&
                                 solvedEdge[e2] < t[i]) {
                                 solvedEdge[e2] = t[i];
+                                density.ownerByRoot[root] = "rail-align";
                             }
                         }
                     }
                 };
-                dbg("density: face %d rail align pair %d: %d/%d -> %d "
+                dbg("density: face %d %s rail align pair %d: %d/%d -> %d "
                     "stations (arc-proportional)",
-                    fid, pr, NA, NC, Np);
+                    fid, mesherKindName(plan.kind), pr, NA, NC, Np);
                 raise(A, tA);
                 raise(C, tC);
             }
