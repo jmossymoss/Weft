@@ -14933,10 +14933,9 @@ bool orthogonalTrimStations(const TopoDS_Face& face,
     const double gateV = std::max(vt, 1e-5 * std::abs(v1 - v0));
     auto noteTurn = [&](std::vector<double>& hard,
                         std::vector<std::pair<double, double>>& turns,
-                        double& floor, double at, double bulge) {
+                        double at, double bulge) {
         hard.push_back(at);
         turns.push_back({at, bulge});
-        floor = std::max(floor, bulge);
     };
     for (int eid : plan.orthogonalEdges) {
         const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
@@ -14982,27 +14981,63 @@ bool orthogonalTrimStations(const TopoDS_Face& face,
         }
         if (!dropEndpointU) {
             if (minU < lo2U - gateU)
-                noteTurn(hardU, turnU, floorU, minU, lo2U - minU);
+                noteTurn(hardU, turnU, minU, lo2U - minU);
             if (maxU > hi2U + gateU)
-                noteTurn(hardU, turnU, floorU, maxU, maxU - hi2U);
+                noteTurn(hardU, turnU, maxU, maxU - hi2U);
         }
         if (minV < lo2V - gateV)
-            noteTurn(hardV, turnV, floorV, minV, lo2V - minV);
+            noteTurn(hardV, turnV, minV, lo2V - minV);
         if (maxV > hi2V + gateV)
-            noteTurn(hardV, turnV, floorV, maxV, maxV - hi2V);
+            noteTurn(hardV, turnV, maxV, maxV - hi2V);
     }
-    // Neighbour corners at a shared B-rep vertex disagree with this edge's
-    // endpoint by the vertex tolerance (measured 3e-6 on mp9_f577_r2 face 8),
-    // so the shadow radius is the bulge plus a chart-relative pad — not the
-    // bulge alone, which leaves the neighbour station standing and recreates
-    // the sliver. Snap must then reach the farthest suppressed station, which
-    // can sit a hair outside the recorded bulge.
+    // Two suppress radii, for two different failure modes:
+    //
+    // 1) Near-duplicate. build() merges hard stations closer than the axis
+    //    hard-merge pitch and keeps the FIRST in sorted order. A turn peak
+    //    sitting a hair past a trim corner then loses to that corner, and the
+    //    envelope never becomes a station line (mp9_f1886 / #1886: peak at
+    //    6.594 vs corner at 6.590, gap 0.003 << hardTolU 0.13). Suppress any
+    //    hard station inside one hard-merge pitch of EVERY turn so the
+    //    envelope survives consolidation.
+    //
+    // 2) Sliver row. A turn whose bulge sits just ABOVE the hard-merge pitch
+    //    keeps both lines and opens an unmeshable ribbon (mp9 #577: 1.2% of
+    //    chart vs 1% hardTolV). Only those sliver-scale envelopes also
+    //    suppress out to bulge+pad (neighbour corners disagree by the vertex
+    //    tolerance) and widen snap to the farthest suppressed sample.
+    //
+    // Structural turns with a large bulge must NOT use radius (2): that would
+    // erase real seam stations at distance ≈ bulge (mp9_f1886: 2π seam at
+    // 6.283 is 0.31 from the peak — a column, not a shadow).
     const double padU = std::max(ut, 1e-4 * std::abs(u1 - u0));
     const double padV = std::max(vt, 1e-4 * std::abs(v1 - v0));
+    const double hardPitchU =
+        kStationHardFracU * std::abs(u1 - u0) / std::max(1, nu);
+    const double hardPitchV =
+        kStationHardFracV * std::abs(v1 - v0) / std::max(1, nv);
+    constexpr double kTurnSliverHardMult = 2.0;
+    auto sliverTurns =
+        [&](const std::vector<std::pair<double, double>>& turns,
+            double hardPitch) {
+            std::vector<std::pair<double, double>> out;
+            out.reserve(turns.size());
+            for (const auto& t : turns) {
+                if (t.second <= kTurnSliverHardMult * hardPitch)
+                    out.push_back(t);
+            }
+            return out;
+        };
+    const auto sliverU = sliverTurns(turnU, hardPitchU);
+    const auto sliverV = sliverTurns(turnV, hardPitchV);
+    floorU = 0.0;
+    floorV = 0.0;
+    for (const auto& t : sliverU) floorU = std::max(floorU, t.second);
+    for (const auto& t : sliverV) floorV = std::max(floorV, t.second);
     auto suppressShadowed =
-        [](std::vector<double>& hard,
-           const std::vector<std::pair<double, double>>& turns, double pad,
-           double& floor) {
+        [&](std::vector<double>& hard,
+            const std::vector<std::pair<double, double>>& turns, double pad,
+            double radius, double& floor) {
+            // radius < 0 means "per-turn bulge+pad".
             if (turns.empty() || hard.empty()) return;
             std::vector<double> kept;
             kept.reserve(hard.size());
@@ -15010,7 +15045,13 @@ bool orthogonalTrimStations(const TopoDS_Face& face,
                 bool shadow = false;
                 for (const auto& [at, bulge] : turns) {
                     const double d = std::abs(h - at);
-                    if (d > pad * 1e-6 && d <= bulge + pad) {
+                    // Fixed-radius (near-dupe) never reaches past the bulge:
+                    // a noise-scale turn must not clear a whole hard-merge
+                    // pitch of unrelated stations.
+                    const double r = (radius < 0.0)
+                                         ? (bulge + pad)
+                                         : std::min(radius, bulge + pad);
+                    if (d > pad * 1e-6 && d <= r) {
                         shadow = true;
                         floor = std::max(floor, d);
                         break;
@@ -15020,25 +15061,37 @@ bool orthogonalTrimStations(const TopoDS_Face& face,
             }
             hard.swap(kept);
         };
-    suppressShadowed(hardV, turnV, padV, floorV);
-    if (!dropEndpointU) suppressShadowed(hardU, turnU, padU, floorU);
+    // Near-duplicate pass against every turn (fixed radius = hard pitch).
+    double nearFloorU = 0.0, nearFloorV = 0.0;
+    suppressShadowed(hardV, turnV, padV, hardPitchV, nearFloorV);
+    if (!dropEndpointU)
+        suppressShadowed(hardU, turnU, padU, hardPitchU, nearFloorU);
+    // Sliver pass: radius = bulge+pad per turn (encoded as radius < 0).
+    suppressShadowed(hardV, sliverV, padV, -1.0, floorV);
+    if (!dropEndpointU) suppressShadowed(hardU, sliverU, padU, -1.0, floorU);
     // Samples along a side edge near a suppressed corner can sit a little
     // further outside the recorded bulge than the hard station itself
     // (mp9_f577_r2 face 8: station gap 0.0142, sample gap 0.018). Widen by
-    // the v hard-merge pitch so those samples still land on the envelope;
-    // only applied when a turn actually contributed. Uses the v fraction on
-    // both axes — the u hard fraction (0.25) would over-widen u snap.
+    // the v hard-merge pitch so those samples still land on the envelope.
+    // Near-duplicate suppress only needs snap out to the suppressed gap —
+    // never the full structural bulge.
     if (snapFloorU) {
-        *snapFloorU =
-            floorU > 0.0
-                ? floorU + kStationHardFracV * std::abs(u1 - u0) / std::max(1, nu)
-                : 0.0;
+        double snap = 0.0;
+        if (floorU > 0.0)
+            snap = std::max(snap, floorU + kStationHardFracV *
+                                               std::abs(u1 - u0) /
+                                               std::max(1, nu));
+        if (nearFloorU > 0.0) snap = std::max(snap, nearFloorU);
+        *snapFloorU = snap;
     }
     if (snapFloorV) {
-        *snapFloorV =
-            floorV > 0.0
-                ? floorV + kStationHardFracV * std::abs(v1 - v0) / std::max(1, nv)
-                : 0.0;
+        double snap = 0.0;
+        if (floorV > 0.0)
+            snap = std::max(snap, floorV + kStationHardFracV *
+                                               std::abs(v1 - v0) /
+                                               std::max(1, nv));
+        if (nearFloorV > 0.0) snap = std::max(snap, nearFloorV);
+        *snapFloorV = snap;
     }
     // Cumulative surface length along one axis, sampled at three positions of
     // the other one and kept at its LONGEST so a compressed corner can never
@@ -16267,28 +16320,43 @@ bool meshOrthogonalTrimGrid(const TopoDS_Face& face,
             }
             if (clean.size() > 2 && clean.front().Distance(clean.back()) < 1e-10)
                 clean.pop_back();
+            // Spur collapse can turn a real lobe that only TOUCHES its
+            // envelope column into a self-touching digon (T-junction insert
+            // of the peak onto the station edge). The interior seed then
+            // lands outside and the cell is dropped, uncovering the trim
+            // (mp9_f1886 / #1886). Keep the pre-collapse ring when the
+            // collapsed one would be rejected — zero-area spurs still
+            // collapse successfully and pass these checks (mp9_f2730).
+            const std::vector<gp_Pnt2d> preSpur = clean;
             collapseClipSpurs(clean);
-            if (clean.size() < 3) continue;
-            double area = 0.0;
-            for (size_t k = 0; k < clean.size(); ++k) {
-                const gp_Pnt2d& a = clean[k];
-                const gp_Pnt2d& b = clean[(k+1)%clean.size()];
-                area += a.X()*b.Y() - b.X()*a.Y();
+            auto acceptCell = [&](std::vector<gp_Pnt2d>& ring) -> bool {
+                if (ring.size() < 3) return false;
+                double area = 0.0;
+                for (size_t k = 0; k < ring.size(); ++k) {
+                    const gp_Pnt2d& a = ring[k];
+                    const gp_Pnt2d& b = ring[(k + 1) % ring.size()];
+                    area += a.X() * b.Y() - b.X() * a.Y();
+                }
+                if (std::abs(area) < 1e-14) return false;
+                // Where the cell lies relative to the trim has to be asked
+                // at a point that is actually IN the cell. Clipping a
+                // staircase slab against a column line leaves L-shaped and
+                // stepped cells, and a vertex average sits in the notch of
+                // one — often outside the face, which silently deletes a
+                // covered cell and leaves a hole the weld then reports as
+                // open edges (measured 39 such drops on mp9_Edited, 16 of
+                // them on one face). The column-cell path above already
+                // seeds its classifier from an ear centroid for exactly
+                // this reason; the two paths now agree.
+                const gp_Pnt2d seed = interiorPoint(ring, area);
+                BRepClass_FaceClassifier cls(const_cast<TopoDS_Face&>(face),
+                                             seed, tolF);
+                return cls.State() != TopAbs_OUT;
+            };
+            if (!acceptCell(clean)) {
+                clean = preSpur;
+                if (!acceptCell(clean)) continue;
             }
-            if (std::abs(area) < 1e-14) continue;
-            // Where the cell lies relative to the trim has to be asked at a
-            // point that is actually IN the cell. Clipping a staircase slab
-            // against a column line leaves L-shaped and stepped cells, and a
-            // vertex average sits in the notch of one — often outside the
-            // face, which silently deletes a covered cell and leaves a hole
-            // the weld then reports as open edges (measured 39 such drops on
-            // mp9_Edited, 16 of them on one face). The column-cell path
-            // above already seeds its classifier from an ear centroid for
-            // exactly this reason; the two paths now agree.
-            const gp_Pnt2d seed = interiorPoint(clean, area);
-            BRepClass_FaceClassifier cls(const_cast<TopoDS_Face&>(face),
-                                         seed, tolF);
-            if (cls.State() == TopAbs_OUT) continue;
             rowCells.push_back(std::move(clean));
             }
         }
