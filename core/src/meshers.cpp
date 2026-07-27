@@ -14916,13 +14916,12 @@ bool orthogonalTrimStations(const TopoDS_Face& face,
     const double vt = 1e-9 * std::max(1.0, std::abs(v1 - v0));
     const bool dropEndpointU = plan.kind == MesherKind::RevolutionGrid;
     std::vector<double> hardU, hardV;
-    // Turn envelope stations and the bulge that produced them. An endpoint
-    // (this edge or the neighbour that shares the corner) sitting inside that
-    // bulge must not keep its own station: the two lines open a sliver row
-    // the slab builder cannot populate, and the cover check correctly refuses
-    // (mp9_f577_r2 face 8 / mp9_Edited #577: endpoint at 0.353 and turn peak
-    // at 0.367, gap 1.2% of chart, just above kStationHardFracV*pitch when
-    // nv=1). Keep the envelope; snap the shadowed samples onto it.
+    // Turn envelope stations and the bulge that produced them. Two distinct
+    // shadows must be handled separately (see suppress passes below): a
+    // near-duplicate corner that would steal the merge from the envelope
+    // under the axis hardTol (mp9_f1886 / #1886), and a sliver-scale
+    // endpoint just above hardTol that opens an unmeshable ribbon
+    // (mp9_f577_r2 face 8 / #577: gap 1.2% of chart vs 1% hardTolV).
     std::vector<std::pair<double, double>> turnU, turnV;
     double floorU = 0.0, floorV = 0.0;
     // BndLib boxes are slightly conservative; a 1e-9 "bulge" is noise and
