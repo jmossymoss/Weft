@@ -2721,6 +2721,57 @@ void testFailedFloorRibbonWindingAndTallRevgrid() {
         assertStructuredKind(report, weft::MesherKind::RevolutionGrid,
                              "mp9 tall side scallop");
     }
+    {
+        // nu==1 + natRight shrink zeros the (0,0) cell; the Coons stub must
+        // still emit a polygon edge (mp9 deficit-rail stub).
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "regressions/mp9/coons_stub_deficit_rail.step";
+        weft::Model model = weft::loadStep(stepPath.string());
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        weft::generate(model, analysis, cad(), &report);
+        assertNoCause(report, "border contract failed",
+                      "mp9 coons stub deficit rail");
+    }
+    {
+        // Orthogonal clip spur must collapse so neighbouring cells do not
+        // share a directed edge (mp9 freeform orth panel).
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "regressions/mp9/orthogonal_clip_spur.step";
+        weft::Model model = weft::loadStep(stepPath.string());
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        weft::generate(model, analysis, cad(), &report);
+        assertNoCause(report, "self-check failed", "mp9 orth clip spur");
+    }
+    {
+        // Structural U-turn bulges must keep a station (not only sliver
+        // envelopes); otherwise row cells miss the trim (mp9 fillet iso-band).
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "regressions/mp9/orthogonal_structural_bulge.step";
+        weft::Model model = weft::loadStep(stepPath.string());
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        weft::generate(model, analysis, cad(), &report);
+        assertNoCause(report, "orthogonal surface grid failed",
+                      "mp9 orth structural bulge");
+    }
+    {
+        // Turn-envelope + endpoint shadow must not open an unmeshable
+        // sliver row (mp9 freeform orth, 2-ring neighbourhood).
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "regressions/mp9/orthogonal_turn_envelope_r2.step";
+        weft::Model model = weft::loadStep(stepPath.string());
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        weft::generate(model, analysis, cad(), &report);
+        assertNoCause(report, "orthogonal surface grid failed",
+                      "mp9 orth turn envelope");
+    }
 }
 
 void testRibbonCapWebKeepsStrip() {
