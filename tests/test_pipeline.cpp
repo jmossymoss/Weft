@@ -3288,6 +3288,46 @@ void testMp9CoonsPlaneSeamCanonicalize() {
     CHECK(ribbon * 4 < panelPolys);
 }
 
+void testMp9UvDegeneratePlanarPanels() {
+    std::printf("-- MP9 UV-degenerate planar panels --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/uv_degenerate_planar_panels.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    int raw = 0, floor = 0, empty = 0, structured = 0;
+    for (const auto& [fid, build] : report.faceBuild) {
+        if (build == 1) ++raw;
+        else if (build == 2) ++floor;
+        else if (build == -1) ++empty;
+        else if (build == 0) ++structured;
+        (void)fid;
+    }
+    std::printf("  structured=%d floor=%d raw=%d empty=%d\n", structured,
+                floor, raw, empty);
+    CHECK_EQ(raw, 0);
+    CHECK_EQ(floor, 0);
+    CHECK_EQ(empty, 0);
+    CHECK_EQ(structured, model.faceCount());
+
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    const size_t unexplained =
+        vr.openEdges > vr.openEdgesOnInputBoundary
+            ? vr.openEdges - vr.openEdgesOnInputBoundary
+            : 0;
+    std::printf("  unexplained cracks=%zu (open=%zu onBoundary=%zu)\n",
+                unexplained, vr.openEdges, vr.openEdgesOnInputBoundary);
+    CHECK_EQ(unexplained, 0u);
+    CHECK_EQ(vr.windingConflicts, 0);
+}
+
 // Auto-mesher gates: a plate with a slot has "two wires" but is NOT an
 // annulus and its hole is NOT collar material — on auto it must stay with
 // the fallback, while forcing plate-web or minimal-ngon still builds.
@@ -5686,6 +5726,7 @@ int main() {
     RUN(testTanSlitNoRawDemotion);
     RUN(testBrokenSourceDiagnostic);
     RUN(testMp9CoonsPlaneSeamCanonicalize);
+    RUN(testMp9UvDegeneratePlanarPanels);
     RUN(testNudgeVertex);
     RUN(testRecipeRemap);
     RUN(testAutoGates);

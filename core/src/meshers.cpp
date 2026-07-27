@@ -4857,6 +4857,37 @@ double planarRingArea(const PlanarRing& r) {
     return a / 2;
 }
 
+double planarRingSurfaceAreaSign(const TopoDS_Face& face,
+                                 const PlanarRing& r) {
+    if (r.p.size() < 3 || r.uv.size() != r.p.size()) return 0.0;
+    gp_XYZ nw(0, 0, 0);
+    double u = 0.0, v = 0.0;
+    for (size_t i = 0; i < r.p.size(); ++i) {
+        const gp_XYZ& a = r.p[i].XYZ();
+        const gp_XYZ& b = r.p[(i + 1) % r.p.size()].XYZ();
+        nw += gp_XYZ((a.Y() - b.Y()) * (a.Z() + b.Z()),
+                     (a.Z() - b.Z()) * (a.X() + b.X()),
+                     (a.X() - b.X()) * (a.Y() + b.Y()));
+        u += r.uv[i].X();
+        v += r.uv[i].Y();
+    }
+    if (nw.Modulus() < 1e-14) return 0.0;
+    u /= double(r.uv.size());
+    v /= double(r.uv.size());
+    try {
+        Handle(Geom_Surface) S = BRep_Tool::Surface(face);
+        if (S.IsNull()) return 0.0;
+        gp_Pnt p;
+        gp_Vec du, dv;
+        S->D1(u, v, p, du, dv);
+        gp_Vec ns = du.Crossed(dv);
+        if (ns.Magnitude() < 1e-14) return 0.0;
+        return gp_Vec(nw).Dot(ns);
+    } catch (const Standard_Failure&) {
+        return 0.0;
+    }
+}
+
 // Sample every wire, then normalize the winding in UV: outer CCW, holes
 // CW — triangulation then emits CCW in UV, and one global flip against
 // the face orientation fixes 3D winding.
@@ -5023,9 +5054,15 @@ bool samplePlanarRings(const TopoDS_Face& face, const Model& model,
     for (PlanarRing& r : rings) {
         double a = planarRingArea(r);
         if (std::abs(a) < 1e-14) {
-            dbg("planar rings: ring area %.3g degenerate (%zu verts)", a,
-                r.uv.size());
-            return false;
+            const double s3 = planarRingSurfaceAreaSign(face, r);
+            if (std::abs(s3) < 1e-14) {
+                dbg("planar rings: ring area %.3g degenerate (%zu verts)", a,
+                    r.uv.size());
+                return false;
+            }
+            dbg("planar rings: uv area %.3g degenerate; using 3D sign %.3g",
+                a, s3);
+            a = s3;
         }
         if (r.isOuter != (a > 0)) {
             std::reverse(r.uv.begin(), r.uv.end());
@@ -7457,6 +7494,34 @@ bool meshContractFallback(const TopoDS_Face& face, const Model& model,
         if (!triangulateWeb(std::move(pOuter), std::move(pHoles), faceId, flip,
                             out)) {
             rollback();
+            bool flatSingleWire = false;
+            if (holes.empty() && outer.size() >= 3) {
+                try {
+                    BRepAdaptor_Surface surf(face);
+                    flatSingleWire = isGeometricallyFlat(face, surf);
+                } catch (const Standard_Failure&) {
+                    flatSingleWire = false;
+                }
+            }
+            if (flatSingleWire) {
+                std::vector<uint32_t> poly;
+                poly.reserve(outer.size());
+                for (const WebPoint& w : outer) {
+                    if (poly.empty() || poly.back() != w.vert) {
+                        poly.push_back(w.vert);
+                    }
+                }
+                while (poly.size() > 1 && poly.front() == poly.back()) {
+                    poly.pop_back();
+                }
+                if (poly.size() >= 3) {
+                    out.addPolygon(std::move(poly), faceId, flip);
+                    dbg("contract floor %d: simple boundary n-gon after web "
+                        "triangulation failed",
+                        faceId);
+                    return true;
+                }
+            }
             dbg("contract floor %d: web triangulation failed (uv and plane)",
                 faceId);
             return false;
