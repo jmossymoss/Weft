@@ -892,7 +892,13 @@ bool planOrthogonalTrimGrid(const TopoDS_Face& face,
     // declines transactionally when a trim that passes both defeats it, and
     // the row clipper behind it is itself guarded.
     const bool wideDrum = allowStaircase && columnSafe && insetVertical == 0;
-    if (drum && !wideDrum && (fullHeightVertical != 1 ||
+    // At least one full-height meridian is required; requiring EXACTLY one
+    // rejected the same capsule-cut muzzle class when BOTH side meridians
+    // measured full-height (mp9_Edited #374: 2 full + inset capsule walls),
+    // sending it to open-band ribbons with diagonal chord closures. MP9.stp
+    // #3432 passed only because one side measured short of 0.9*v. Inset
+    // walls or a multi-piece horizontal rim still gate the split-sided case.
+    if (drum && !wideDrum && (fullHeightVertical < 1 ||
                  (insetVertical < 1 && horizontal.size() < 4))) {
         return reject("drum needs one full-height side (" +
                       std::to_string(fullHeightVertical) + " full, " +

@@ -32,6 +32,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -2190,6 +2191,108 @@ void testMp9MuzzleColumnCells() {
     CHECK_EQ(vr.nonManifoldEdges, 0);
     CHECK_EQ(vr.windingConflicts, 0);
     CHECK_EQ(vr.degeneratePolygons, 0);
+}
+
+// mp9_Edited muzzle class: both side meridians measure full-height (≥0.9 of
+// the v span) while capsule walls sit as inset V edges. The early orthogonal
+// gate used to require EXACTLY one full-height side, so this face missed
+// column cells and fell to open-band ribbons with diagonal chord closures.
+// Discover the multi-edge IsoBand drum and require axis-parallel column
+// closures — same geometric claim as testMp9MuzzleColumnCells.
+void testMp9EditedMuzzleTwoFullHeightSides() {
+    std::printf("-- MP9 edited muzzle two full-height sides --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/muzzle_two_fullheight_sides.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+
+    int checked = 0;
+    for (const auto& f : analysis.faces) {
+        if (f.type != weft::SurfaceType::Cylinder ||
+            f.featureClass != weft::FeatureClass::Drum ||
+            f.chartKind != weft::ChartKind::IsoBand ||
+            f.edgeIds.size() < 20) {
+            continue;
+        }
+        auto kit = report.faceMesher.find(f.id);
+        auto bit = report.faceBuild.find(f.id);
+        auto cit = report.faceCounts.find(f.id);
+        if (kit == report.faceMesher.end() ||
+            kit->second != weft::MesherKind::RevolutionGrid ||
+            bit == report.faceBuild.end() || bit->second != 0 ||
+            cit == report.faceCounts.end()) {
+            continue;
+        }
+
+        int polys = 0, tris = 0, ngons = 0;
+        std::map<std::pair<uint32_t, uint32_t>, int> faceEdgeUse;
+        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+            if (p >= mesh.polygonFaceId.size() ||
+                mesh.polygonFaceId[p] != f.id) {
+                continue;
+            }
+            ++polys;
+            if (mesh.polygons[p].size() == 3) ++tris;
+            if (mesh.polygons[p].size() > 4) ++ngons;
+            for (size_t k = 0; k < mesh.polygons[p].size(); ++k) {
+                uint32_t a = mesh.polygons[p][k];
+                uint32_t b =
+                    mesh.polygons[p][(k + 1) % mesh.polygons[p].size()];
+                if (b < a) std::swap(a, b);
+                ++faceEdgeUse[{a, b}];
+            }
+        }
+        const int spans = cit->second[0];
+        CHECK_EQ(polys, spans);
+        CHECK_EQ(tris, 0);
+        CHECK(ngons >= spans / 2);
+
+        const TopoDS_Face face = TopoDS::Face(model.faces(f.id));
+        const gp_Dir axis =
+            BRepAdaptor_Surface(face).Cylinder().Axis().Direction();
+        const gp_Vec axisVec(axis);
+        int columnClosures = 0, offAxisClosures = 0;
+        double maxOffAxis = 0.0;
+        for (const auto& [edge, use] : faceEdgeUse) {
+            if (use != 2) continue;
+            const auto& a = mesh.vertices[edge.first];
+            const auto& b = mesh.vertices[edge.second];
+            const gp_Vec d(gp_Pnt(a[0], a[1], a[2]),
+                           gp_Pnt(b[0], b[1], b[2]));
+            if (d.SquareMagnitude() <= 1e-24) continue;
+            const double offAxis =
+                d.Crossed(axisVec).Magnitude() / d.Magnitude();
+            maxOffAxis = std::max(maxOffAxis, offAxis);
+            if (offAxis > 1e-4) ++offAxisClosures;
+            ++columnClosures;
+        }
+        CHECK(columnClosures > 0);
+        CHECK_EQ(offAxisClosures, 0);
+        std::printf("  face#%d: %d spans -> %d polys (%d n-gons); "
+                    "%d closures, %d off-axis (max %.6g)\n",
+                    f.id, spans, polys, ngons, columnClosures,
+                    offAxisClosures, maxOffAxis);
+        ++checked;
+    }
+    CHECK(checked >= 1);
+
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    const size_t unexplained =
+        vr.openEdges > vr.openEdgesOnInputBoundary
+            ? vr.openEdges - vr.openEdgesOnInputBoundary
+            : 0;
+    // Single-face extract is an open shell by construction; only cracks and
+    // non-manifold edges are regressions.
+    CHECK_EQ(unexplained, 0);
+    CHECK_EQ(vr.nonManifoldEdges, 0);
 }
 
 // MP9 grip / optic freeform panels must keep Coons quad flow under CAD
@@ -4372,6 +4475,9 @@ void testAllMesherStrategies() {
 // instead of a silent fail-fast crash (0xc0000409 on Windows).
 #define RUN(fn)                                               \
     do {                                                      \
+        if (const char* __only = std::getenv("WEFT_ONLY_TEST")) { \
+            if (std::strcmp(__only, #fn) != 0) break;         \
+        }                                                     \
         std::printf("%-32s", #fn);                            \
         std::fflush(stdout);                                  \
         try {                                                 \
@@ -5787,6 +5893,7 @@ int main() {
     RUN(testCylindricalStackContinuity);
     RUN(testMp9FilletCapsuleNotRevolution);
     RUN(testMp9MuzzleColumnCells);
+    RUN(testMp9EditedMuzzleTwoFullHeightSides);
     RUN(testMp9GripFreeformCoons);
     RUN(testOrthogonalStaircaseInteriorStep);
     RUN(testCylinderWallFullLengthSpans);
