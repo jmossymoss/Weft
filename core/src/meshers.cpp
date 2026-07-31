@@ -55,6 +55,7 @@
 #include <cmath>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <numeric>
 #include <set>
 #include <thread>
