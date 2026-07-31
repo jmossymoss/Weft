@@ -135,9 +135,9 @@ static std::string userDataDir() {
     return dir;
 }
 
-// UI scale from the monitor's content scale (Windows DPI setting). Fonts
-// and style metrics rebuild when it changes (e.g. dragging the window to
-// a monitor with a different scale).
+// UI scale from the monitor's content scale (HiDPI / fractional scaling).
+// Fonts and style metrics rebuild when it changes (e.g. dragging the
+// window to a monitor with a different scale).
 static float gUiScale = 1.0f;
 static GLuint gLogoBadgeTex = 0;   // Settings-panel logo badge (0 until GL up)
 static float gPendingUiScale = 0.0f;
@@ -5487,14 +5487,15 @@ int main(int argc, char** argv) {
         frameModel(app);  // zoom to the face under inspection
     }
 
-    double lastX = 0, lastY = 0;
+    double lastX = 0, lastY = 0;  // window-space cursor for orbit/pan feel
     bool navOrbit = false, navPan = false, navZoom = false, navSnap = false;
     bool navFromLmb = false;  // laptop scheme: this nav drag rode alt+LMB
-    double downX = 0, downY = 0, downRX = 0, downRY = 0;
+    double downX = 0, downY = 0, downRX = 0, downRY = 0;      // framebuffer
+    double downXWin = 0, downYWin = 0, downRXWin = 0, downRYWin = 0;  // window
     bool prevLmb = false, prevRmb = false;
     double lastClickTime = 0;  // double-click select-similar
     int lastClickFace = 0;
-    double hoverX = -1, hoverY = -1;  // last hover-picked cursor position
+    double hoverX = -1, hoverY = -1;  // last hover-picked cursor (framebuffer)
     int frame = 0;
 
     while (!glfwWindowShouldClose(window)) {
@@ -5518,14 +5519,26 @@ int main(int argc, char** argv) {
         app.preFrame = app.recipe;
         app.mutatedThisFrame = false;
 
-        int fbw, fbh;
+        int fbw, fbh, winW, winH;
         glfwGetFramebufferSize(window, &fbw, &fbh);
-        double mx, my;
-        glfwGetCursorPos(window, &mx, &my);
+        glfwGetWindowSize(window, &winW, &winH);
+        // GLFW cursor position is in window coordinates; glReadPixels /
+        // projectPoint / the pick buffer use framebuffer pixels. On HiDPI
+        // Linux (and macOS) these differ by the content scale — mixing them
+        // offsets selection from the cursor. Keep both spaces: mx/my for
+        // 3D picking, mxWin/myWin for ImGui overlays and orbit feel.
+        double mxWin = 0, myWin = 0;
+        glfwGetCursorPos(window, &mxWin, &myWin);
+        const double fbSX = winW > 0 ? double(fbw) / double(winW) : 1.0;
+        const double fbSY = winH > 0 ? double(fbh) / double(winH) : 1.0;
+        double mx = mxWin * fbSX;
+        double my = myWin * fbSY;
         if (demoLoopCut) {  // scripted screenshots: cursor at viewport center
             app.mode = Mode::LoopCut;
             mx = fbw * 0.42;
             my = fbh * 0.5;
+            mxWin = fbSX > 0 ? mx / fbSX : mx;
+            myWin = fbSY > 0 ? my / fbSY : my;
         }
 
         // Blender-standard navigation: MMB orbit, shift+MMB pan, ctrl+MMB
@@ -5557,8 +5570,8 @@ int main(int argc, char** argv) {
                 navOrbit = !navPan && !navZoom;
                 navSnap = alt && realMmb;  // axis snap needs a real MMB
                 navFromLmb = !realMmb;
-                lastX = mx;
-                lastY = my;
+                lastX = mxWin;
+                lastY = myWin;
             }
             if (!mmb) {
                 if (navOrbit && navSnap) {  // alt+MMB: nearest axis view
@@ -5572,8 +5585,8 @@ int main(int argc, char** argv) {
                 navFromLmb = false;
             }
             if (navOrbit) {
-                app.cam.yaw -= float(mx - lastX) * 0.008f;
-                app.cam.pitch += float(my - lastY) * 0.008f;
+                app.cam.yaw -= float(mxWin - lastX) * 0.008f;
+                app.cam.pitch += float(myWin - lastY) * 0.008f;
                 app.cam.pitch = std::clamp(app.cam.pitch, -1.55f, 1.55f);
             }
             if (navPan) {
@@ -5582,16 +5595,22 @@ int main(int argc, char** argv) {
                 Vec3 f = norm(sub(app.cam.target, eye));
                 Vec3 r = norm(cross(f, {0, 0, 1}));
                 Vec3 u = cross(r, f);
-                app.cam.target.x -= (float(mx - lastX) * r.x - float(my - lastY) * u.x) * k;
-                app.cam.target.y -= (float(mx - lastX) * r.y - float(my - lastY) * u.y) * k;
-                app.cam.target.z -= (float(mx - lastX) * r.z - float(my - lastY) * u.z) * k;
+                app.cam.target.x -=
+                    (float(mxWin - lastX) * r.x - float(myWin - lastY) * u.x) *
+                    k;
+                app.cam.target.y -=
+                    (float(mxWin - lastX) * r.y - float(myWin - lastY) * u.y) *
+                    k;
+                app.cam.target.z -=
+                    (float(mxWin - lastX) * r.z - float(myWin - lastY) * u.z) *
+                    k;
             }
             if (navZoom) {
-                app.cam.dist *= std::pow(1.006f, float(my - lastY));
+                app.cam.dist *= std::pow(1.006f, float(myWin - lastY));
                 app.cam.dist = std::clamp(app.cam.dist, 0.5f, 10000.0f);
             }
-            lastX = mx;
-            lastY = my;
+            lastX = mxWin;
+            lastY = myWin;
             if (gScroll != 0.0f) {
                 // Modal density: shift+wheel drives the primary axis
                 // (radial/grid-u), ctrl+wheel the secondary (axial/grid-v),
@@ -5865,8 +5884,8 @@ int main(int argc, char** argv) {
                 } else {
                     app.pieKind = want;
                     app.pieHold = true;
-                    app.pieCenter[0] = float(mx);
-                    app.pieCenter[1] = float(my);
+                    app.pieCenter[0] = float(mxWin);
+                    app.pieCenter[1] = float(myWin);
                 }
             }
             bool dec = ImGui::IsKeyPressed(ImGuiKey_LeftBracket);
@@ -6061,21 +6080,34 @@ int main(int argc, char** argv) {
                    glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) ==
                        GLFW_PRESS;
         bool lmbPressed = lmb && !prevLmb;
-        if (lmbPressed) { downX = mx; downY = my; }
-        bool clicked = prevLmb && !lmb && std::abs(mx - downX) < 4 &&
-                       std::abs(my - downY) < 4;
+        // Gesture thresholds stay in window pixels so click-vs-drag feel is
+        // stable across DPI; downX/Y stay in framebuffer pixels for picking.
+        if (lmbPressed) {
+            downX = mx;
+            downY = my;
+            downXWin = mxWin;
+            downYWin = myWin;
+        }
+        bool clicked = prevLmb && !lmb && std::abs(mxWin - downXWin) < 4 &&
+                       std::abs(myWin - downYWin) < 4;
         // Box select: an LMB drag in idle rubber-bands in EVERY mode.
         bool boxDrag = lmb && app.mode == Mode::Idle && app.pieKind < 0 &&
-                       (std::abs(mx - downX) > 6 || std::abs(my - downY) > 6);
+                       (std::abs(mxWin - downXWin) > 6 ||
+                        std::abs(myWin - downYWin) > 6);
         bool boxReleased = prevLmb && !lmb && !clicked &&
                            app.mode == Mode::Idle && app.pieKind < 0;
         prevLmb = lmb;
         bool rmb = !io.WantCaptureMouse &&
                    glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) ==
                        GLFW_PRESS;
-        if (rmb && !prevRmb) { downRX = mx; downRY = my; }
-        bool rClicked = prevRmb && !rmb && std::abs(mx - downRX) < 4 &&
-                        std::abs(my - downRY) < 4;
+        if (rmb && !prevRmb) {
+            downRX = mx;
+            downRY = my;
+            downRXWin = mxWin;
+            downRYWin = myWin;
+        }
+        bool rClicked = prevRmb && !rmb && std::abs(mxWin - downRXWin) < 4 &&
+                        std::abs(myWin - downRYWin) < 4;
         prevRmb = rmb;
         gScroll = 0.0f;
 
@@ -6661,7 +6693,8 @@ int main(int argc, char** argv) {
 #endif
         if (boxDrag) {
             ImGui::GetForegroundDrawList()->AddRect(
-                {float(downX), float(downY)}, {float(mx), float(my)},
+                {float(downXWin), float(downYWin)},
+                {float(mxWin), float(myWin)},
                 IM_COL32(255, 200, 80, 200), 0.0f, 0, 1.5f);
         }
         // Pie menus: sectors around the opening point, nearest-direction
@@ -6684,7 +6717,7 @@ int main(int argc, char** argv) {
             const int n = app.pieKind == 0 ? 6 : 8;
             const float cx = app.pieCenter[0], cy = app.pieCenter[1];
             const float radius = 92.0f * gUiScale;
-            float dx = float(mx) - cx, dy = float(my) - cy;
+            float dx = float(mxWin) - cx, dy = float(myWin) - cy;
             int hover = -1;
             if (std::hypot(dx, dy) > 18.0f * gUiScale) {
                 float ang = std::atan2(dy, dx);
@@ -6703,7 +6736,7 @@ int main(int argc, char** argv) {
             dl->AddCircleFilled({cx, cy}, 5.0f * gUiScale,
                                 IM_COL32(255, 196, 64, 255));
             if (hover >= 0) {
-                dl->AddLine({cx, cy}, {float(mx), float(my)},
+                dl->AddLine({cx, cy}, {float(mxWin), float(myWin)},
                             IM_COL32(255, 196, 64, 140), 2.0f * gUiScale);
             }
             for (int i = 0; i < n; ++i) {
@@ -6773,6 +6806,11 @@ int main(int argc, char** argv) {
         if (app.hasModel && (app.selectMode == SelectMode::Vert ||
                              app.selectMode == SelectMode::MeshEdge)) {
             ImDrawList* dl = ImGui::GetBackgroundDrawList();
+            // projectPoint is in framebuffer pixels; ImGui draw lists use
+            // window coordinates — convert before drawing on HiDPI.
+            auto toUi = [&](float x, float y) -> ImVec2 {
+                return {float(x / fbSX), float(y / fbSY)};
+            };
             auto projV = [&](uint32_t v, float* sp) {
                 projectPoint(mvp, app.mesh.vertices[v], fbw, fbh, sp);
                 return sp[2] > 0;
@@ -6783,8 +6821,9 @@ int main(int argc, char** argv) {
                     if (v >= app.mesh.vertexCount()) continue;
                     float sp[3];
                     if (projV(v, sp)) {
-                        dl->AddRectFilled({sp[0] - r, sp[1] - r},
-                                          {sp[0] + r, sp[1] + r},
+                        ImVec2 p = toUi(sp[0], sp[1]);
+                        dl->AddRectFilled({p.x - r, p.y - r},
+                                          {p.x + r, p.y + r},
                                           IM_COL32(255, 196, 64, 255));
                     }
                 }
@@ -6792,7 +6831,8 @@ int main(int argc, char** argv) {
                     app.hoverVert < int64_t(app.mesh.vertexCount())) {
                     float sp[3];
                     if (projV(uint32_t(app.hoverVert), sp)) {
-                        dl->AddCircle({sp[0], sp[1]}, 6.0f * gUiScale,
+                        ImVec2 p = toUi(sp[0], sp[1]);
+                        dl->AddCircle(p, 6.0f * gUiScale,
                                       IM_COL32(255, 255, 255, 220), 0,
                                       1.5f * gUiScale);
                     }
@@ -6807,7 +6847,8 @@ int main(int argc, char** argv) {
                     }
                     float sa[3], sb[3];
                     if (projV(a, sa) && projV(b, sb)) {
-                        dl->AddLine({sa[0], sa[1]}, {sb[0], sb[1]}, col, w);
+                        dl->AddLine(toUi(sa[0], sa[1]), toUi(sb[0], sb[1]),
+                                    col, w);
                     }
                 };
                 for (uint64_t e : app.selMeshEdges) {
