@@ -353,49 +353,163 @@ bool isPlanarFace(const TopoDS_Face& face) {
     return BRepAdaptor_Surface(face).GetType() == GeomAbs_Plane;
 }
 
+// 2D segment intersection (proper cross, not shared endpoints).
+bool segmentsCross2d(const gp_Pnt2d& a, const gp_Pnt2d& b, const gp_Pnt2d& c,
+                     const gp_Pnt2d& d) {
+    auto orient = [](const gp_Pnt2d& p, const gp_Pnt2d& q, const gp_Pnt2d& r) {
+        const double v = (q.X() - p.X()) * (r.Y() - p.Y()) -
+                         (q.Y() - p.Y()) * (r.X() - p.X());
+        if (std::abs(v) < 1e-14) return 0;
+        return v > 0.0 ? 1 : -1;
+    };
+    const int o1 = orient(a, b, c);
+    const int o2 = orient(a, b, d);
+    const int o3 = orient(c, d, a);
+    const int o4 = orient(c, d, b);
+    if (o1 == 0 || o2 == 0 || o3 == 0 || o4 == 0) return false;
+    return o1 != o2 && o3 != o4;
+}
+
+struct IndexedRingVert {
+    WireVert wv;
+    uint32_t idx = 0;
+    gp_Pnt2d uv;
+};
+
+std::vector<IndexedRingVert> indexRing(const std::vector<WireVert>& ring,
+                                       const TopoDS_Face& face, int faceId,
+                                       double weldTol, MeshBuilder& out) {
+    std::vector<IndexedRingVert> indexed;
+    indexed.reserve(ring.size());
+    for (const WireVert& wv : ring) {
+        IndexedRingVert ir;
+        ir.wv = wv;
+        const Anchor a = anchorOnFace(face, faceId, wv.p);
+        if (wv.edgeId > 0 && wv.sampleIndex >= 0) {
+            ir.idx = out.addEdgeSample(wv.edgeId, wv.sampleIndex, wv.p, a,
+                                       weldTol);
+        } else {
+            ir.idx = out.addVertex(wv.p, a, weldTol);
+        }
+        ir.uv = gp_Pnt2d(a.u, a.v);
+        indexed.push_back(ir);
+    }
+    return indexed;
+}
+
+// Merge holes into outer via non-crossing keyhole bridges (doubled verts).
+std::vector<IndexedRingVert> mergeHolesKeyhole(
+    std::vector<IndexedRingVert> outer,
+    std::vector<std::vector<IndexedRingVert>> holes) {
+    auto maxU = [](const std::vector<IndexedRingVert>& ring) {
+        size_t best = 0;
+        for (size_t i = 1; i < ring.size(); ++i) {
+            if (ring[i].uv.X() > ring[best].uv.X()) best = i;
+        }
+        return best;
+    };
+    std::sort(holes.begin(), holes.end(),
+              [&](const auto& a, const auto& b) {
+                  return a[maxU(a)].uv.X() > b[maxU(b)].uv.X();
+              });
+
+    for (size_t h = 0; h < holes.size(); ++h) {
+        const auto& hole = holes[h];
+        if (hole.size() < 3) continue;
+        const size_t m = maxU(hole);
+        const gp_Pnt2d& M = hole[m].uv;
+
+        auto crossesAny = [&](const gp_Pnt2d& from, const gp_Pnt2d& to) {
+            auto crossesRing = [&](const std::vector<IndexedRingVert>& ring) {
+                for (size_t i = 0; i < ring.size(); ++i) {
+                    if (segmentsCross2d(from, to, ring[i].uv,
+                                        ring[(i + 1) % ring.size()].uv)) {
+                        return true;
+                    }
+                }
+                return false;
+            };
+            if (crossesRing(outer) || crossesRing(hole)) return true;
+            for (size_t j = h + 1; j < holes.size(); ++j) {
+                if (crossesRing(holes[j])) return true;
+            }
+            return false;
+        };
+
+        size_t bestP = outer.size();
+        double bestD = 1e300;
+        for (size_t p = 0; p < outer.size(); ++p) {
+            const double d = M.SquareDistance(outer[p].uv);
+            if (d >= bestD) continue;
+            if (crossesAny(M, outer[p].uv)) continue;
+            bestD = d;
+            bestP = p;
+        }
+        if (bestP == outer.size()) {
+            // Pathological: leave hole unmerged (caller may emit separately).
+            continue;
+        }
+
+        std::vector<IndexedRingVert> merged;
+        merged.reserve(outer.size() + hole.size() + 2);
+        merged.insert(merged.end(), outer.begin(), outer.begin() + bestP + 1);
+        for (size_t k = 0; k <= hole.size(); ++k) {
+            merged.push_back(hole[(m + k) % hole.size()]);
+        }
+        merged.insert(merged.end(), outer.begin() + bestP, outer.end());
+        outer = std::move(merged);
+    }
+    return outer;
+}
+
 void meshPlanarFace(const TopoDS_Face& face, int faceId, const Model& model,
                     const EdgeSampleMap& edgeSamples, double weldTol,
                     MeshBuilder& out) {
-    TopoDS_Wire outer = BRepTools::OuterWire(face);
-    if (outer.IsNull()) return;
+    TopoDS_Wire outerWire = BRepTools::OuterWire(face);
+    if (outerWire.IsNull()) return;
 
-    auto emitRing = [&](const TopoDS_Wire& wire) {
-        auto ring = walkWire(wire, model, edgeSamples);
-        if (ring.size() < 3) return;
-        std::vector<uint32_t> idxs;
-        idxs.reserve(ring.size());
-        for (const WireVert& wv : ring) {
-            const Anchor a = anchorOnFace(face, faceId, wv.p);
-            if (wv.edgeId > 0 && wv.sampleIndex >= 0) {
-                idxs.push_back(out.addEdgeSample(wv.edgeId, wv.sampleIndex,
-                                                  wv.p, a, weldTol));
-            } else {
-                idxs.push_back(out.addVertex(wv.p, a, weldTol));
-            }
-        }
-        // Orient to plane normal (respecting face orientation).
-        BRepAdaptor_Surface surf(face);
-        gp_Dir n = surf.Plane().Axis().Direction();
-        if (face.Orientation() == TopAbs_REVERSED) n.Reverse();
-        if (idxs.size() >= 3) {
-            const auto& A = out.mesh.vertices[idxs[0]];
-            const auto& B = out.mesh.vertices[idxs[1]];
-            const auto& C = out.mesh.vertices[idxs[2]];
-            const gp_Vec ab(B[0] - A[0], B[1] - A[1], B[2] - A[2]);
-            const gp_Vec ac(C[0] - A[0], C[1] - A[1], C[2] - A[2]);
-            if (ab.Crossed(ac).Dot(gp_Vec(n)) < 0.0) {
-                std::reverse(idxs.begin(), idxs.end());
-            }
-        }
-        out.addPolygon(std::move(idxs), faceId);
-    };
+    auto outerRing = walkWire(outerWire, model, edgeSamples);
+    if (outerRing.size() < 3) return;
 
-    emitRing(outer);
+    std::vector<std::vector<WireVert>> holeRings;
     for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
         const TopoDS_Wire w = TopoDS::Wire(wx.Current());
-        if (w.IsSame(outer)) continue;
-        emitRing(w);
+        if (w.IsSame(outerWire)) continue;
+        auto hole = walkWire(w, model, edgeSamples);
+        if (hole.size() >= 3) holeRings.push_back(std::move(hole));
     }
+
+    auto indexedOuter = indexRing(outerRing, face, faceId, weldTol, out);
+    std::vector<std::vector<IndexedRingVert>> indexedHoles;
+    indexedHoles.reserve(holeRings.size());
+    for (const auto& h : holeRings) {
+        indexedHoles.push_back(indexRing(h, face, faceId, weldTol, out));
+    }
+
+    std::vector<IndexedRingVert> ring = indexedOuter;
+    if (!indexedHoles.empty()) {
+        ring = mergeHolesKeyhole(std::move(indexedOuter),
+                                 std::move(indexedHoles));
+    }
+
+    std::vector<uint32_t> idxs;
+    idxs.reserve(ring.size());
+    for (const auto& ir : ring) idxs.push_back(ir.idx);
+
+    BRepAdaptor_Surface surf(face);
+    gp_Dir n = surf.Plane().Axis().Direction();
+    if (face.Orientation() == TopAbs_REVERSED) n.Reverse();
+    if (idxs.size() >= 3) {
+        const auto& A = out.mesh.vertices[idxs[0]];
+        const auto& B = out.mesh.vertices[idxs[1]];
+        const auto& C = out.mesh.vertices[idxs[2]];
+        const gp_Vec ab(B[0] - A[0], B[1] - A[1], B[2] - A[2]);
+        const gp_Vec ac(C[0] - A[0], C[1] - A[1], C[2] - A[2]);
+        if (ab.Crossed(ac).Dot(gp_Vec(n)) < 0.0) {
+            std::reverse(idxs.begin(), idxs.end());
+        }
+    }
+    out.addPolygon(std::move(idxs), faceId);
 }
 
 // Closed cylinder / cone / sphere / torus revolution band as UV quads/tris.
@@ -414,42 +528,43 @@ bool meshAnalyticRevolution(const TopoDS_Face& face, int faceId, double sag,
     if (!(u1 > u0) || !(v1 > v0)) return false;
 
     // Radius for circumferential sag (U for cylinder/cone/sphere/torus).
-    double radius = 0.0;
+    double radiusU = 0.0;
+    double radiusV = 0.0;  // >0 ⇒ V is also curved (sphere/torus)
     try {
-        if (ty == GeomAbs_Cylinder) radius = surf.Cylinder().Radius();
-        else if (ty == GeomAbs_Cone) {
-            // Mid-span radius along V.
+        if (ty == GeomAbs_Cylinder) {
+            radiusU = surf.Cylinder().Radius();
+        } else if (ty == GeomAbs_Cone) {
             const double vm = 0.5 * (v0 + v1);
             gp_Pnt p;
             gp_Vec du, dv;
             surf.D1(u0, vm, p, du, dv);
-            radius = du.Magnitude();  // |∂r/∂u| ≈ radius at that V
-        } else if (ty == GeomAbs_Sphere) radius = surf.Sphere().Radius();
-        else if (ty == GeomAbs_Torus) {
-            // Minor radius drives fillet-like density; also check major.
-            radius = surf.Torus().MinorRadius();
+            radiusU = du.Magnitude();
+        } else if (ty == GeomAbs_Sphere) {
+            radiusU = surf.Sphere().Radius();
+            radiusV = radiusU;
+        } else if (ty == GeomAbs_Torus) {
             const double major = surf.Torus().MajorRadius();
-            // Circumferential around tube uses minor; around ring uses major.
-            // U is usually the major angle on OCCT tori.
-            (void)major;
+            const double minor = surf.Torus().MinorRadius();
+            // Conservative U radius (outer equator of the tube).
+            radiusU = major + minor;
+            radiusV = minor;
         }
     } catch (...) {
         return false;
     }
-    if (!(radius > 1e-12)) return false;
+    if (!(radiusU > 1e-12)) return false;
 
     const double uSpan = u1 - u0;
     const double vSpan = v1 - v0;
-    int nu = circleDivisions(radius, sag, angleDeg);
-    // Scale by partial period (open cylinder band / partial sphere).
+    int nu = circleDivisions(radiusU, sag, angleDeg);
     nu = std::max(3, int(std::ceil(nu * (uSpan / (2.0 * M_PI)))));
 
-    // Axial / polar: straight generators need 1; curved V uses sag on a
-    // mid-U isocurve sample.
     int nv = 1;
-    {
-        const double angleTol =
-            angleDeg > 0.0 ? angleDeg * M_PI / 180.0 : 1e9;
+    if (radiusV > 1e-12) {
+        nv = circleDivisions(radiusV, sag, angleDeg);
+        nv = std::max(1, int(std::ceil(nv * (std::abs(vSpan) / (2.0 * M_PI)))));
+    } else {
+        // Straight generators: sag along mid-U isocurve (usually 1).
         std::vector<gp_Pnt> probe;
         const int probeN = 32;
         for (int i = 0; i <= probeN; ++i) {
@@ -458,7 +573,6 @@ bool meshAnalyticRevolution(const TopoDS_Face& face, int faceId, double sag,
             surf.D0(0.5 * (u0 + u1), v, p);
             probe.push_back(p);
         }
-        // Count segments needed for sag along that polyline.
         nv = 1;
         for (int div = 1; div < 256; ++div) {
             bool ok = true;
@@ -482,7 +596,6 @@ bool meshAnalyticRevolution(const TopoDS_Face& face, int faceId, double sag,
                                       0.5 * (pa.Z() + pb.Z()));
                 if (pm.Distance(midChord) > sag) ok = false;
                 if (maxLength > 0.0 && pa.Distance(pb) > maxLength) ok = false;
-                (void)angleTol;
             }
             if (ok) {
                 nv = div;

@@ -130,12 +130,64 @@ static void testFilletFixture() {
                 mesh.vertexCount(), mesh.polygonCount());
 }
 
+static void testHolePlateKeyhole() {
+    std::printf("-- hole plate keyhole n-gon --\n");
+    weft::Model model = loadFixture("hole", "weft_acc_hole.step");
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    weft::applyQualityPreset(gs.defaults, weft::QualityPreset::Medium);
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    int planarNgons = 0;
+    for (const auto& [fid, kind] : report.faceMesher) {
+        if (kind != weft::MesherKind::MinimalNGon) continue;
+        int polys = 0;
+        for (size_t p = 0; p < mesh.polygonFaceId.size(); ++p) {
+            if (mesh.polygonFaceId[p] == fid) ++polys;
+        }
+        // One keyhole polygon per planar plate face (not outer+hole separate).
+        if (polys == 1) ++planarNgons;
+    }
+    CHECK(planarNgons >= 1);
+    CHECK(mesh.countNgons() >= 1);
+    std::printf("  planar-single-ngon faces=%d total-ngons=%zu polys=%zu\n",
+                planarNgons, mesh.countNgons(), mesh.polygonCount());
+}
+
+static void testCylinderSeamSharesRim() {
+    std::printf("-- cylinder cap/wall shared rim divisions --\n");
+    weft::Model model = loadFixture("cylinder", "weft_acc_seam.step");
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    weft::applyQualityPreset(gs.defaults, weft::QualityPreset::Medium);
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    // Both rim edges should carry the same solved division count.
+    std::vector<int> circ;
+    for (const auto& [eid, n] : report.edgeDivisions) {
+        if (n >= 3) circ.push_back(n);
+    }
+    CHECK(circ.size() >= 2);
+    CHECK(circ[0] == circ[1] ||
+          (circ.size() >= 2 && circ.front() == circ.back()));
+    // Caps should be n-gons with ~rim+ verts (keyhole not applicable).
+    size_t maxNgon = 0;
+    for (const auto& poly : mesh.polygons) {
+        if (poly.size() > 4) maxNgon = std::max(maxNgon, poly.size());
+    }
+    CHECK(maxNgon >= size_t(circ[0]));
+    std::printf("  rimDiv~%d maxNgon=%zu verts=%zu\n", circ[0], maxNgon,
+                mesh.vertexCount());
+}
+
 int main() {
     try {
         testBoxPlanarNgons();
         testCylinderMedium();
         testCylinderCapsAreNgons();
+        testCylinderSeamSharesRim();
         testPresetHonesDensity();
+        testHolePlateKeyhole();
         testFilletFixture();
     } catch (const std::exception& e) {
         std::printf("exception: %s\n", e.what());
