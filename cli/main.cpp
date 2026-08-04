@@ -350,18 +350,21 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         }
         else if (a == "--profile") {
             std::string prof = next();
-            if (prof == "cad") {
-                // Handoff step 3: minimal (default) + adaptive + strips.
-                gs.defaults.minimal = true;
-                gs.defaults.adaptive = true;
-                // Game topology: deviation relative to feature size, so
-                // ring counts follow the ANGLE criterion at every scale.
-                gs.defaults.relativeDeviation = true;
+            if (prof == "accuracy" || prof == "cad") {
+                // Pixyz-inspired Medium defaults (this branch's primary path).
+                weft::applyQualityPreset(gs.defaults, weft::QualityPreset::Medium);
+            } else if (prof == "high") {
+                weft::applyQualityPreset(gs.defaults, weft::QualityPreset::High);
+            } else if (prof == "low") {
+                weft::applyQualityPreset(gs.defaults, weft::QualityPreset::Low);
             } else if (prof == "dense") {
-                gs.defaults.minimal = false;
+                weft::applyQualityPreset(gs.defaults, weft::QualityPreset::VeryHigh);
             } else {
                 throw std::runtime_error("unknown profile: " + prof);
             }
+        }
+        else if (a == "--max-length") {
+            gs.defaults.maxLength = std::stod(next());
         }
         else if (a == "--validate") validate = true;
         else if (a == "--why") whyFace = 0;
@@ -717,10 +720,15 @@ int cmdSweep(const std::vector<std::string>& args) {
         const std::string& a = args[i];
         if (a == "--profile" && i + 1 < args.size()) {
             const std::string p = args[++i];
-            if (p == "cad") {
-                gs.defaults.adaptive = true;
-                gs.defaults.relativeDeviation = true;
-            } else if (p != "dense") {
+            if (p == "accuracy" || p == "cad") {
+                weft::applyQualityPreset(gs.defaults, weft::QualityPreset::Medium);
+            } else if (p == "high") {
+                weft::applyQualityPreset(gs.defaults, weft::QualityPreset::High);
+            } else if (p == "low") {
+                weft::applyQualityPreset(gs.defaults, weft::QualityPreset::Low);
+            } else if (p == "dense") {
+                weft::applyQualityPreset(gs.defaults, weft::QualityPreset::VeryHigh);
+            } else {
                 throw std::runtime_error("unknown profile: " + p);
             }
         } else if (a == "--radials" && i + 1 < args.size()) {
@@ -881,10 +889,15 @@ int cmdIntentSweep(const std::vector<std::string>& args) {
         };
         if (a == "--profile") {
             const std::string p = next();
-            if (p == "cad") {
-                gs.defaults.adaptive = true;
-                gs.defaults.relativeDeviation = true;
-            } else if (p != "dense") {
+            if (p == "accuracy" || p == "cad") {
+                weft::applyQualityPreset(gs.defaults, weft::QualityPreset::Medium);
+            } else if (p == "high") {
+                weft::applyQualityPreset(gs.defaults, weft::QualityPreset::High);
+            } else if (p == "low") {
+                weft::applyQualityPreset(gs.defaults, weft::QualityPreset::Low);
+            } else if (p == "dense") {
+                weft::applyQualityPreset(gs.defaults, weft::QualityPreset::VeryHigh);
+            } else {
                 throw std::runtime_error("unknown profile: " + p);
             }
         } else if (a == "--range") {

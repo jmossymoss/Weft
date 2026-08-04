@@ -18,6 +18,14 @@ enum class CapStyle {
     Fan,   // center vertex + triangle fan
 };
 
+// Pixyz-aligned quality presets (maxSag mm). Angle/length stay off (−1).
+enum class QualityPreset {
+    VeryHigh = 0,  // maxSag 0.01
+    High = 1,      // maxSag 0.1
+    Medium = 2,    // maxSag 0.2
+    Low = 3,       // maxSag 1.0
+};
+
 // Named, per-face density controls (the plan's §3.3). A face picks up the
 // defaults unless an override is present for its FaceId.
 struct FaceMeshSettings {
@@ -26,12 +34,11 @@ struct FaceMeshSettings {
     int gridU = 1;          // planar/parametric grid divisions — start
     int gridV = 1;          // minimal (game topology), densify on demand
     CapStyle cap = CapStyle::NGon;
-    // Freeform/trimmed faces (the fallback mesher) are driven by these two,
-    // Plasticity-style: max chordal deviation from the true surface, and max
-    // angle between adjacent facets. On an imported model most faces are
-    // freeform, so these ARE the global density controls.
-    double chordTolerance = 0.1;   // max deviation (model units)
-    double angleToleranceDeg = 28.0;  // max facet turn angle (degrees)
+    // Accuracy-path density (Pixyz-inspired): chordTolerance ≡ maxSag (mm).
+    // angleToleranceDeg < 0 means off (Pixyz default). maxLength < 0 means off.
+    double chordTolerance = 0.2;   // maxSag — Medium preset default
+    double angleToleranceDeg = -1; // maxAngle; −1 = unconstrained
+    double maxLength = -1;         // max edge length; −1 = unconstrained
     // Fillet/blend faces: divisions ACROSS the blend (support loops for
     // baking) and how strongly the loops cluster toward the creases
     // ("hold" loops; 0 = uniform spacing, toward 1 = tight at the edges).
@@ -74,8 +81,9 @@ struct FaceMeshSettings {
     // or let them differ — the band then meshes as a triangulated taper
     // between the rims (pin each rim's count per-edge / in the UI).
     bool linkRims = true;
-    // Freeform fallback extras: minimum element size (0 = no floor) and
-    // deviation measured relative to face size instead of absolute.
+    // Freeform extras: when relativeDeviation is set, minSize>0 is treated as
+    // Pixyz sagRatio (effectiveSag = min(maxSag, diag * sagRatio)); otherwise
+    // minSize is an optional minimum element size floor (0 = none).
     double minSize = 0.0;
     bool relativeDeviation = false;
     // Per-face weld tolerance override in mm (0 = inherit the global
@@ -458,6 +466,9 @@ struct GenerationCache {
 // each face meshed, conformity per edge, weld) to a stream; null disables.
 // Lines are flushed as written so a crash log ends at the crash site.
 void setGenerateDebugLog(std::FILE* f);
+
+// Apply a Pixyz-style quality preset onto face settings (maxSag; angle/length off).
+void applyQualityPreset(FaceMeshSettings& s, QualityPreset preset);
 
 // Generate topology for every face of the model, per-face controllable.
 //

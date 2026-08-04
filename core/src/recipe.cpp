@@ -14,8 +14,11 @@ void applySetting(FaceMeshSettings& s, const std::string& key,
     else if (key == "axial") s.axial = std::stoi(value);
     else if (key == "gridu") s.gridU = std::stoi(value);
     else if (key == "gridv") s.gridV = std::stoi(value);
-    else if (key == "chord") s.chordTolerance = std::stod(value);
-    else if (key == "angle") s.angleToleranceDeg = std::stod(value);
+    else if (key == "chord" || key == "maxsag" || key == "sag")
+        s.chordTolerance = std::stod(value);
+    else if (key == "angle" || key == "maxangle")
+        s.angleToleranceDeg = std::stod(value);
+    else if (key == "maxlength") s.maxLength = std::stod(value);
     else if (key == "loops") s.filletLoops = std::stoi(value);
     else if (key == "hold") s.filletHold = std::stod(value);
     else if (key == "rings") s.junctionRings = std::stoi(value);
@@ -62,13 +65,13 @@ static std::string settingsToString(const FaceMeshSettings& s) {
     char buf[512];
     std::snprintf(buf, sizeof buf,
                   "radial=%d,axial=%d,gridu=%d,gridv=%d,cap=%s,chord=%g,"
-                  "angle=%g,loops=%d,hold=%g,rings=%d,quads=%d,minimal=%d,"
-                  "skip=%d,mesher=%d,linkrims=%d,minsize=%g,reldev=%d,"
-                  "adapt=%d,mincurve=%d,boundary=%d,sqcollar=%d,crot=%d,"
-                  "puretris=%d,weld=%g",
+                  "angle=%g,maxlength=%g,loops=%d,hold=%g,rings=%d,quads=%d,"
+                  "minimal=%d,skip=%d,mesher=%d,linkrims=%d,minsize=%g,"
+                  "reldev=%d,adapt=%d,mincurve=%d,boundary=%d,sqcollar=%d,"
+                  "crot=%d,puretris=%d,weld=%g",
                   s.radial, s.axial, s.gridU, s.gridV,
                   s.cap == CapStyle::Fan ? "fan" : "ngon", s.chordTolerance,
-                  s.angleToleranceDeg, s.filletLoops, s.filletHold,
+                  s.angleToleranceDeg, s.maxLength, s.filletLoops, s.filletHold,
                   s.junctionRings, s.quadDominant ? 1 : 0, s.minimal ? 1 : 0,
                   s.exclude ? 1 : 0, s.forceMesher, s.linkRims ? 1 : 0,
                   s.minSize, s.relativeDeviation ? 1 : 0,

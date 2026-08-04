@@ -93,5 +93,10 @@ enable_testing()
 
 add_subdirectory(core)
 add_subdirectory(cli)
-add_subdirectory(app)
+# accuracy-tessellator branch: interactive app parked (MesherKind UI assumes
+# structured meshers). Re-enable when accuracy path has an app surface.
+option(WEFT_BUILD_APP "Build weft_app" OFF)
+if(WEFT_BUILD_APP)
+  add_subdirectory(app)
+endif()
 add_subdirectory(tests)

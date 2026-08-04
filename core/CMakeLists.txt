@@ -21,7 +21,7 @@ add_library(weft_core
   src/export_gltf.cpp
   src/viz.cpp
   src/fixture.cpp
-  # --- new io subsystem (Stage A: registry + probe + XCAF B-rep import) ---
+  # --- io subsystem ---
   src/io/format.cpp
   src/io/system.cpp
   src/io/probes.cpp
@@ -32,10 +32,11 @@ add_library(weft_core
   src/io/step_reader.cpp
   src/io/iges_reader.cpp
   src/io/brep_reader.cpp
-  # --- Stage B: writer registry (mesh + B-rep writers) ---
   src/io/mesh_writers.cpp
   src/io/occ_writers.cpp
 )
+# Structured retopo meshers archived at src/legacy/meshers_structured.cpp
+# (accuracy-tessellator branch — not compiled).
 
 target_include_directories(weft_core
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
