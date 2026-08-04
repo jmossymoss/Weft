@@ -8,18 +8,19 @@ sag/angle/length tessellator from a clean base.
 Working now:
 
 - Shared topological-edge sample map (finest adjacent-face sag wins)
-- Planar faces → boundary n-gons (holes as separate n-gons for now)
+- Planar faces → boundary n-gons; holes keyhole-bridged into one n-gon
 - Analytic cylinder/cone/sphere/torus from closed-form circle sag
+- Torus/fillet uses major+minor radii for U/V density
 - Freeform → trimmed UV grid (`BRepTopAdaptor_FClass2d`)
 - Presets hone density: Low / Medium / High change rim divisions
-- Normal-aware triangle winding (cuts most folded cells)
+- Normal-aware triangle winding
 
 Still open:
 
-- Planar holes bridged into one web (not separate hole n-gons)
-- Freeform quality vs Pixyz on hard fillets
-- App UI for accuracy knobs (`-DWEFT_BUILD_APP=ON` still parked)
+- Multi-hole pathological bridges (fallback leaves hole unmerged)
 - Pixyz side-by-side calibration on MP9
+- App UI for accuracy knobs (`-DWEFT_BUILD_APP=ON` still parked)
+- Quads on analytic bands (currently tris)
 
 ## What changed
 
