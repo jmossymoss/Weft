@@ -55,4 +55,16 @@ no full-band mid rows.
 - Co-circular CAD arc splits treated as separate segments remain a
   chart/planning concern; not addressed here.
 
+## Corpus effect
+
+`demo` / `torture` (alias) intentionally move toward fewer full-band quads
+and more local n-gons around the window:
+
+| preset | before | after |
+| --- | --- | --- |
+| cad | 497q / 0t / 44n | 445q / 0t / 48n |
+| default | 450q / 0t / 56n | 406q / 0t / 60n |
+
+Goldens banked with this note. No other corpus keys moved.
+
 Reducer: `testInsertDrumAxialOneNoFullBandRings`.
