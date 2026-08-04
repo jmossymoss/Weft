@@ -532,9 +532,22 @@ void meshPlanarFace(const TopoDS_Face& face, int faceId, const Model& model,
     out.addPolygon(std::move(idxs), faceId);
 }
 
-// Closed cylinder / cone / sphere / torus revolution band as UV quads/tris.
+// All shared-edge samples on a face outer+hole wires (for rim seeding).
+std::vector<WireVert> faceBoundarySamples(const TopoDS_Face& face,
+                                          const Model& model,
+                                          const EdgeSampleMap& edgeSamples) {
+    std::vector<WireVert> all;
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        auto ring = walkWire(TopoDS::Wire(wx.Current()), model, edgeSamples);
+        all.insert(all.end(), ring.begin(), ring.end());
+    }
+    return all;
+}
+
+// Closed cylinder / cone / sphere / torus revolution band as UV quads.
 bool meshAnalyticRevolution(const TopoDS_Face& face, int faceId, double sag,
                             double angleDeg, double maxLength, double weldTol,
+                            const Model& model, const EdgeSampleMap& edgeSamples,
                             MeshBuilder& out) {
     BRepAdaptor_Surface surf(face);
     const GeomAbs_SurfaceType ty = surf.GetType();
@@ -547,9 +560,8 @@ bool meshAnalyticRevolution(const TopoDS_Face& face, int faceId, double sag,
     BRepTools::UVBounds(face, u0, u1, v0, v1);
     if (!(u1 > u0) || !(v1 > v0)) return false;
 
-    // Radius for circumferential sag (U for cylinder/cone/sphere/torus).
     double radiusU = 0.0;
-    double radiusV = 0.0;  // >0 ⇒ V is also curved (sphere/torus)
+    double radiusV = 0.0;
     try {
         if (ty == GeomAbs_Cylinder) {
             radiusU = surf.Cylinder().Radius();
@@ -565,7 +577,6 @@ bool meshAnalyticRevolution(const TopoDS_Face& face, int faceId, double sag,
         } else if (ty == GeomAbs_Torus) {
             const double major = surf.Torus().MajorRadius();
             const double minor = surf.Torus().MinorRadius();
-            // Conservative U radius (outer equator of the tube).
             radiusU = major + minor;
             radiusV = minor;
         }
@@ -577,7 +588,6 @@ bool meshAnalyticRevolution(const TopoDS_Face& face, int faceId, double sag,
     const double uSpan = u1 - u0;
     const double vSpan = v1 - v0;
     int nu = circleDivisions(radiusU, sag, angleDeg);
-    // Subtract epsilon so a full-period face (uSpan≈2π) does not ceil to nu+1.
     nu = std::max(3, int(std::ceil(nu * (uSpan / (2.0 * M_PI)) - 1e-9)));
 
     int nv = 1;
@@ -586,7 +596,6 @@ bool meshAnalyticRevolution(const TopoDS_Face& face, int faceId, double sag,
         nv = std::max(1, int(std::ceil(nv * (std::abs(vSpan) / (2.0 * M_PI)) -
                                        1e-9)));
     } else {
-        // Straight generators: sag along mid-U isocurve (usually 1).
         std::vector<gp_Pnt> probe;
         const int probeN = 32;
         for (int i = 0; i <= probeN; ++i) {
@@ -596,7 +605,7 @@ bool meshAnalyticRevolution(const TopoDS_Face& face, int faceId, double sag,
             probe.push_back(p);
         }
         nv = 1;
-        for (int div = 1; div < 256; ++div) {
+        for (int div = 1; div < 64; ++div) {
             bool ok = true;
             for (int i = 0; i < div && ok; ++i) {
                 const double a = double(i) / div;
@@ -626,17 +635,39 @@ bool meshAnalyticRevolution(const TopoDS_Face& face, int faceId, double sag,
             nv = div;
         }
     }
-    nu = std::clamp(nu, 3, 512);
-    nv = std::clamp(nv, 1, 256);
+    nu = std::clamp(nu, 3, 256);
+    nv = std::clamp(nv, 1, 128);
 
-    // Trim test: only emit cells whose center is ON the face.
     BRepTopAdaptor_FClass2d classifier(face, Precision::Confusion());
-    // Prefer geometric normal vs triangle winding to decide flip — TopAbs
-    // alone still left folded cells on some cylinders.
     const bool faceReversed = face.Orientation() == TopAbs_REVERSED;
 
     std::vector<std::vector<uint32_t>> grid(nv + 1,
                                             std::vector<uint32_t>(nu + 1, ~0u));
+
+    // Seed rim/seam grid nodes from shared edge samples via UV (not 3D nearest,
+    // which steals neighbours and inflates open borders).
+    {
+        const auto boundary =
+            faceBoundarySamples(face, model, edgeSamples);
+        for (const WireVert& wv : boundary) {
+            if (wv.edgeId <= 0 || wv.sampleIndex < 0) continue;
+            const Anchor a = anchorOnFace(face, faceId, wv.p);
+            const double fu = (a.u - u0) / uSpan;
+            const double fv = (a.v - v0) / vSpan;
+            if (!(fu >= -0.05 && fu <= 1.05 && fv >= -0.05 && fv <= 1.05)) {
+                continue;
+            }
+            const double iu = fu * nu;
+            const double jv = fv * nv;
+            const int i = int(std::llround(iu));
+            const int j = int(std::llround(jv));
+            if (i < 0 || i > nu || j < 0 || j > nv) continue;
+            if (std::abs(iu - i) > 0.35 || std::abs(jv - j) > 0.35) continue;
+            grid[j][i] = out.addEdgeSample(wv.edgeId, wv.sampleIndex, wv.p, a,
+                                           weldTol);
+        }
+    }
+
     auto ensure = [&](int i, int j) -> uint32_t {
         if (grid[j][i] != ~0u) return grid[j][i];
         const double u = u0 + uSpan * (double(i) / nu);
@@ -650,19 +681,15 @@ bool meshAnalyticRevolution(const TopoDS_Face& face, int faceId, double sag,
     int emitted = 0;
     for (int j = 0; j < nv; ++j) {
         for (int i = 0; i < nu; ++i) {
-            const double um =
-                u0 + uSpan * ((double(i) + 0.5) / nu);
-            const double vm =
-                v0 + vSpan * ((double(j) + 0.5) / nv);
-            const TopAbs_State st = classifier.Perform(gp_Pnt2d(um, vm));
-            if (st == TopAbs_OUT) continue;
+            const double um = u0 + uSpan * ((double(i) + 0.5) / nu);
+            const double vm = v0 + vSpan * ((double(j) + 0.5) / nv);
+            if (classifier.Perform(gp_Pnt2d(um, vm)) == TopAbs_OUT) continue;
 
             const uint32_t ia = ensure(i, j);
             const uint32_t ib = ensure(i + 1, j);
             const uint32_t ic = ensure(i + 1, j + 1);
             const uint32_t id = ensure(i, j + 1);
 
-            // Orient triangle to match surface normal at cell center.
             gp_Pnt p;
             gp_Vec du, dv;
             surf.D1(um, vm, p, du, dv);
@@ -683,7 +710,6 @@ bool meshAnalyticRevolution(const TopoDS_Face& face, int faceId, double sag,
             } else {
                 flipCell = faceReversed;
             }
-            // Analytic bands prefer quads (cylinder / torus / cone / sphere).
             if (!flipCell) {
                 out.addPolygon({ia, ib, ic, id}, faceId);
             } else {
@@ -695,9 +721,10 @@ bool meshAnalyticRevolution(const TopoDS_Face& face, int faceId, double sag,
     return emitted > 0;
 }
 
-// Generic freeform: trimmed UV grid with face classifier.
+// Generic freeform: trimmed UV grid. Hard-capped — sag refine only (angle on
+// freeform UV was thrashing to 256²/512² sliver fields on real CAD).
 void meshFreeformFace(const TopoDS_Face& face, int faceId, double sag,
-                      double angleDeg, double maxLength, double weldTol,
+                      double /*angleDeg*/, double maxLength, double weldTol,
                       MeshBuilder& out) {
     BRepAdaptor_Surface surf(face);
     double u0 = 0, u1 = 0, v0 = 0, v1 = 0;
@@ -713,44 +740,36 @@ void meshFreeformFace(const TopoDS_Face& face, int faceId, double sag,
     const double uLen = std::max(c00.Distance(c10), 1e-9);
     const double vLen = std::max(c00.Distance(c01), 1e-9);
 
-    // Initial density from sag as chord on the longer side, then refine.
-    int nu = std::clamp(int(std::ceil(uLen / std::max(sag, 1e-6))), 1, 256);
-    int nv = std::clamp(int(std::ceil(vLen / std::max(sag, 1e-6))), 1, 256);
-
-    const double angleTol =
-        angleDeg > 0.0 ? angleDeg * M_PI / 180.0 : 1e9;
+    constexpr int kFreeformMax = 64;
+    const double step = std::max(sag * 2.0, 1e-6);
+    int nu = std::clamp(int(std::ceil(uLen / step)), 1, kFreeformMax);
+    int nv = std::clamp(int(std::ceil(vLen / step)), 1, kFreeformMax);
 
     auto cellFails = [&](int nuCur, int nvCur) {
-        for (int i = 0; i < nuCur; ++i) {
-            for (int j = 0; j < nvCur; ++j) {
+        const int stepU = std::max(1, nuCur / 8);
+        const int stepV = std::max(1, nvCur / 8);
+        for (int i = 0; i < nuCur; i += stepU) {
+            for (int j = 0; j < nvCur; j += stepV) {
                 const double ua = u0 + uSpan * (double(i) / nuCur);
-                const double ub = u0 + uSpan * (double(i + 1) / nuCur);
+                const double ub =
+                    u0 + uSpan * (double(std::min(nuCur, i + 1)) / nuCur);
                 const double va = v0 + vSpan * (double(j) / nvCur);
-                const double vb = v0 + vSpan * (double(j + 1) / nvCur);
+                const double vb =
+                    v0 + vSpan * (double(std::min(nvCur, j + 1)) / nvCur);
                 const double um = 0.5 * (ua + ub);
                 const double vm = 0.5 * (va + vb);
                 gp_Pnt p00, p10, p01, p11, pExact;
-                gp_Vec du, dv;
-                surf.D1(ua, va, p00, du, dv);
+                surf.D0(ua, va, p00);
                 surf.D0(ub, va, p10);
                 surf.D0(ua, vb, p01);
                 surf.D0(ub, vb, p11);
-                surf.D1(um, vm, pExact, du, dv);
+                surf.D0(um, vm, pExact);
                 const gp_Pnt pm((p00.XYZ() + p10.XYZ() + p01.XYZ() + p11.XYZ()) *
                                 0.25);
                 if (pm.Distance(pExact) > sag) return true;
                 if (maxLength > 0.0 &&
                     (p00.Distance(p10) > maxLength ||
                      p00.Distance(p01) > maxLength)) {
-                    return true;
-                }
-                gp_Vec nA = du.Crossed(dv);
-                gp_Vec du2, dv2;
-                gp_Pnt tmp;
-                surf.D1(ub, vb, tmp, du2, dv2);
-                gp_Vec nB = du2.Crossed(dv2);
-                if (nA.Magnitude() > 1e-12 && nB.Magnitude() > 1e-12 &&
-                    nA.Angle(nB) > angleTol) {
                     return true;
                 }
             }
@@ -760,8 +779,9 @@ void meshFreeformFace(const TopoDS_Face& face, int faceId, double sag,
 
     for (int pass = 0; pass < 6; ++pass) {
         if (!cellFails(nu, nv)) break;
-        if (nu < 512) nu = std::min(512, nu * 2);
-        if (nv < 512) nv = std::min(512, nv * 2);
+        if (nu < kFreeformMax) nu = std::min(kFreeformMax, nu * 2);
+        if (nv < kFreeformMax) nv = std::min(kFreeformMax, nv * 2);
+        if (nu >= kFreeformMax && nv >= kFreeformMax) break;
     }
 
     BRepTopAdaptor_FClass2d classifier(face, Precision::Confusion());
@@ -895,8 +915,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         }
 
         const bool analytic = meshAnalyticRevolution(
-            face, fid, sag, fs.angleToleranceDeg, fs.maxLength, weldTol,
-            builder);
+            face, fid, sag, fs.angleToleranceDeg, fs.maxLength, weldTol, model,
+            edgeSamples, builder);
         if (analytic) {
             if (report) {
                 report->faceMesher[fid] = MesherKind::RevolutionGrid;
