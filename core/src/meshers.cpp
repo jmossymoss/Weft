@@ -13289,12 +13289,19 @@ bool meshRevolutionRimNotch(const TopoDS_Face& face,
                             int nu, int nv, MeshBuilder& out,
                             const PinnedEdges* pins = nullptr,
                             // Interior row LEVELS (surface v): the insert
-                            // composition subdivides every column at these
+                            // composition subdivides columns at these
                             // heights so slot rows exist for the carve.
                             // Only the pinned boolean-cut path supports
                             // them; the strip path bails so the caller's
                             // floor still catches the face.
-                            const std::vector<double>* levelsOpt = nullptr) {
+                            const std::vector<double>* levelsOpt = nullptr,
+                            // Optional UV boxes for those levels. When set,
+                            // a level only subdivides columns whose u lies
+                            // inside a box — artist axial=1 keeps untouched
+                            // columns as one straight span (no full-band
+                            // ring around the drum at the slot sill/lintel).
+                            const std::vector<std::array<double, 4>>*
+                                levelBoxesOpt = nullptr) {
     if (!surf.IsUClosed() || surf.IsVClosed()) return false;
     if (rimLow.empty() || rimHigh.empty()) return false;
     nu = std::max(3, nu);
@@ -13622,12 +13629,13 @@ bool meshRevolutionRimNotch(const TopoDS_Face& face,
             plainIds[c] =
                 wb.addVertex(plainS[c].p, {faceId, plainS[c].u, plainS[c].v});
         }
-        // Interior row levels (the insert composition): every column line
-        // subdivides at the requested surface-v heights, ordered from the
-        // plain rim toward the cut end. Levels apply only strictly inside
-        // a column's own span — the notch's columns end at the FLOOR, so
-        // a level above it simply doesn't exist there (the caps absorb
-        // the difference as n-gon side verts).
+        // Interior row levels (the insert composition): columns under a
+        // slot subdivide at the requested surface-v heights, ordered from
+        // the plain rim toward the cut end. Levels apply only strictly
+        // inside a column's own span — the notch's columns end at the
+        // FLOOR, so a level above it simply doesn't exist there (the caps
+        // absorb the difference as n-gon side verts). When levelBoxesOpt
+        // is set, untouched columns stay one straight span.
         std::vector<std::vector<uint32_t>> colChain(nu);
         if (levelsOpt) {
             // Margin matches the insert's own plan gate (1% rim
@@ -13635,7 +13643,20 @@ bool meshRevolutionRimNotch(const TopoDS_Face& face,
             // VALID band, and the staircase needs it — a fatter margin
             // silently dropped it and left the carve's loop open.
             const double margin = 0.005 * vspan;
+            auto uInBoxes = [&](double u) {
+                if (!levelBoxesOpt || levelBoxesOpt->empty()) return true;
+                for (const auto& b : *levelBoxesOpt) {
+                    double lo = b[0], hi = b[1];
+                    double uu = u;
+                    // Periodic wrap: a box may straddle the seam.
+                    if (hi < lo) hi += period;
+                    if (uu < lo) uu += period;
+                    if (uu >= lo && uu <= hi) return true;
+                }
+                return false;
+            };
             for (int c = 0; c < nu; ++c) {
+                if (!uInBoxes(uk[c])) continue;
                 const bool notchCol = c > colL && c < colR;
                 const double vEnd = notchCol ? vFloor : vCut;
                 const double lo3 = std::min(vPlain, vEnd) + margin;
@@ -13697,15 +13718,22 @@ bool meshRevolutionRimNotch(const TopoDS_Face& face,
                 (void)cNotch;
                 (void)pNotch;
                 emit({topOf(c), topOf(cp), plainIds[cp], plainIds[c]});
-            } else {
-                // Banded column pair: both lines carry the same level
-                // set (non-cap pairs are both full-height or both
-                // notch-floor columns); a mismatch means a level fell
-                // inside one column's end margin only — bail to the
-                // caller's floor rather than emit a cracked band.
-                if (colChain[c].size() != colChain[cp].size()) {
-                    return false;
+            } else if (colChain[c].size() != colChain[cp].size()) {
+                // Local insert banding (axial=1): only columns under the
+                // slot carry levels. Emit one n-gon with level verts on
+                // the banded side only — the sill/lintel stops at the
+                // slot instead of ringing the whole drum.
+                std::vector<uint32_t> ring{topOf(c), topOf(cp)};
+                for (auto it = colChain[cp].rbegin();
+                     it != colChain[cp].rend(); ++it) {
+                    ring.push_back(*it);
                 }
+                ring.push_back(plainIds[cp]);
+                ring.push_back(plainIds[c]);
+                for (uint32_t v : colChain[c]) ring.push_back(v);
+                emit(std::move(ring));
+            } else {
+                // Banded column pair: both lines carry the same level set.
                 std::vector<uint32_t> lowC{plainIds[c]};
                 std::vector<uint32_t> lowP{plainIds[cp]};
                 for (size_t k = 0; k < colChain[c].size(); ++k) {
@@ -17971,13 +17999,21 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
     }
     // Row layout: rims plus every band extent. A wire too close to a rim
     // can't be banded — plan-time margins should have excluded it.
+    // Artist axial=1 (nv<=1): do NOT stamp insert sill/lintel as
+    // full-drum rows. Levels are applied locally under/near the slot
+    // (levelBoxes), so untouched columns stay one straight span.
+    const bool localInsertLevels = nv <= 1;
     std::vector<double> vRows{v0, v1};
+    std::vector<std::array<double, 4>> levelBoxes;
     for (const Box& b : boxes) {
         if (b.v0 <= v0 + 0.01 * vspan || b.v1 >= v1 - 0.01 * vspan) {
             return false;
         }
-        vRows.push_back(b.v0);
-        vRows.push_back(b.v1);
+        levelBoxes.push_back({b.u0, b.u1, b.v0, b.v1});
+        if (!localInsertLevels) {
+            vRows.push_back(b.v0);
+            vRows.push_back(b.v1);
+        }
     }
     std::sort(vRows.begin(), vRows.end());
     vRows.erase(std::unique(vRows.begin(), vRows.end(),
@@ -18007,8 +18043,9 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
                     dense.end());
         vRows = std::move(dense);
     }
-    if (vRows.size() < 3 ||
-        std::abs(vRows.back() - v1) > 1e-7 * vspan) {
+    if (!localInsertLevels &&
+        (vRows.size() < 3 ||
+         std::abs(vRows.back() - v1) > 1e-7 * vspan)) {
         return false;
     }
 
@@ -18022,12 +18059,37 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
             // boolean-cut notch mesher, subdivided at the slot rows,
             // and the carve below webs the slots exactly as on a
             // plain-rim wall. The interior levels exclude the rims
-            // (vRows carries v0/v1 too).
-            std::vector<double> levels(vRows.begin() + 1, vRows.end() - 1);
-            built = meshRevolutionRimNotch(face, surf, model, plan.rimLow,
-                                           plan.rimHigh, plan.plainRimEdge,
-                                           solvedEdge, faceId, nu, nv, tmp,
-                                           pins, &levels);
+            // (vRows carries v0/v1 too). At axial=1 the slot levels are
+            // local: expand one column past the carve box so transition
+            // n-gons sit OUTSIDE the hole (centroid not covered). A
+            // level box equal to the carve box left those n-gons over
+            // the slot, the quad-only delete kept them, and the collar
+            // web opened the insert walls.
+            std::vector<double> levels;
+            std::vector<std::array<double, 4>> levelBoxesExpanded;
+            if (localInsertLevels) {
+                for (const auto& b : levelBoxes) {
+                    levels.push_back(b[2]);
+                    levels.push_back(b[3]);
+                    // Grow in u by one circumferential pitch so the
+                    // banded/unbanded transition clears the carve box.
+                    levelBoxesExpanded.push_back(
+                        {b[0] - du, b[1] + du, b[2], b[3]});
+                }
+                std::sort(levels.begin(), levels.end());
+                levels.erase(std::unique(levels.begin(), levels.end(),
+                                         [&](double a, double c) {
+                                             return c - a < 1e-7 * vspan;
+                                         }),
+                             levels.end());
+            } else {
+                levels.assign(vRows.begin() + 1, vRows.end() - 1);
+            }
+            built = meshRevolutionRimNotch(
+                face, surf, model, plan.rimLow, plan.rimHigh,
+                plan.plainRimEdge, solvedEdge, faceId, nu, nv, tmp, pins,
+                &levels,
+                localInsertLevels ? &levelBoxesExpanded : nullptr);
         } else {
             built = meshRevolutionGrid(
                 face, surf, model, plan.uEdges, solvedEdge, faceId, nu,
@@ -18093,7 +18155,9 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
     std::vector<char> keep(grid.polygons.size(), 1);
     bool any = false;
     for (size_t p = 0; p < grid.polygons.size(); ++p) {
-        if (covered(grid.polygons[p])) { keep[p] = 0; any = true; }
+        if (!covered(grid.polygons[p])) continue;
+        keep[p] = 0;
+        any = true;
     }
     // Wires present but nothing deleted: the intact grid would cover the
     // holes and every wall border would dangle. Refuse visibly.

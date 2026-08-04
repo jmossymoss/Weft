@@ -4838,6 +4838,87 @@ void testFlaregunOpenBandNotchLipsFullSpan() {
     CHECK(checked >= 2);
 }
 
+// Demo / torture insert-bearing drums at artist axial=1: the slot may
+// keep a local sill/lintel under its own columns, but those levels must
+// NOT stamp a full-band ring around the drum. Straight columns elsewhere;
+// watertight; no contract floor.
+void testInsertDrumAxialOneNoFullBandRings() {
+    std::printf("-- insert drum axial=1 no full-band rings --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() / "fixtures/demo.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+
+    // Multi-edge full-period drums (castellated / boolean + inserts).
+    std::vector<int> walls;
+    for (const auto& f : analysis.faces) {
+        if (f.featureClass != weft::FeatureClass::Drum) continue;
+        if (f.chartKind != weft::ChartKind::FullPeriod) continue;
+        if (int(f.edgeIds.size()) < 9) continue;
+        walls.push_back(f.id);
+    }
+    CHECK(!walls.empty());
+
+    for (int rad : {19, 21, 32}) {
+        weft::GenerationSettings gs;
+        gs.defaults.minimal = true;
+        gs.defaults.adaptive = true;
+        gs.defaults.relativeDeviation = true;
+        for (int fid : walls) {
+            gs.perFace[fid] = gs.defaults;
+            gs.perFace[fid].adaptive = false;
+            gs.perFace[fid].radial = rad;
+            gs.perFace[fid].axial = 1;
+        }
+        weft::GenerationReport report;
+        weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+        CHECK(isWatertight(mesh));
+
+        int checked = 0;
+        for (int fid : walls) {
+            auto bit = report.faceBuild.find(fid);
+            CHECK(bit != report.faceBuild.end());
+            CHECK_EQ(bit->second, 0);
+            auto kit = report.faceMesher.find(fid);
+            CHECK(kit != report.faceMesher.end());
+            CHECK(kit->second == weft::MesherKind::RevolutionGrid);
+
+            double v0 = 1e300, v1 = -1e300;
+            std::map<int, int> bucket;
+            for (size_t i = 0; i < mesh.anchors.size(); ++i) {
+                const auto& a = mesh.anchors[i];
+                if (a.faceId != fid) continue;
+                v0 = std::min(v0, a.v);
+                v1 = std::max(v1, a.v);
+                const int q = int(std::lround(a.v * 50.0));
+                ++bucket[q];
+            }
+            CHECK(v1 > v0);
+            const double vspan = v1 - v0;
+            int peak = 0;
+            for (const auto& [q, n] : bucket) peak = std::max(peak, n);
+            CHECK(peak >= 8);
+            int fullBandRows = 0;
+            for (const auto& [q, n] : bucket) {
+                const double v = q / 50.0;
+                if (v < v0 + 0.05 * vspan || v > v1 - 0.05 * vspan) {
+                    continue;
+                }
+                // Nearly every column at one mid-v = a forbidden ring.
+                if (n * 4 >= peak * 3) ++fullBandRows;
+            }
+            CHECK_EQ(fullBandRows, 0);
+            auto nvit = report.faceCounts.find(fid);
+            CHECK(nvit != report.faceCounts.end());
+            CHECK_EQ(nvit->second[1], 1);
+            ++checked;
+            std::printf("  face#%d radial=%d nu=%d full-band mid rows=0\n",
+                        fid, rad, nvit->second[0]);
+        }
+        CHECK(checked >= 1);
+    }
+}
+
 // Weld: merge picked vertices into one (center/last/first), polygons
 // remap and degenerates drop; the op replays from world points and
 // round-trips through recipes.
@@ -5922,6 +6003,7 @@ int main() {
     RUN(testDensityEditNeverFallsToRaw);
     RUN(testNotchedCylinderKeepsRequestedSpans);
     RUN(testFlaregunOpenBandNotchLipsFullSpan);
+    RUN(testInsertDrumAxialOneNoFullBandRings);
     RUN(testWeldTolerance);
     RUN(testWeldVerts);
     RUN(testConstrainedEditSurvivesDensityChange);
