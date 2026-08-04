@@ -26,11 +26,14 @@ floor.
 
 ## Change
 
-Keep local levels for axial=1, but expand the level u-boxes by one
-circumferential pitch when subdividing columns. The carve still uses the
-tight insert box. Transition n-gons therefore land outside the hole,
-every covered cell under the slot is a deletable quad band, and the
-collar welds to the insert walls.
+Keep local levels for axial=1 on castellated insert drums, but expand
+the level u-boxes by one circumferential pitch when subdividing columns.
+The carve still uses the tight insert box. Transition n-gons therefore
+land outside the hole, every covered cell under the slot is a deletable
+quad band, and the collar welds to the insert walls.
+
+Plain (non-castellated) insert walls still place insert extents in
+`vRows` — the grid carve has no local-level path yet.
 
 ## Result on `demo.step` face #34 (adapt off, axial=1)
 

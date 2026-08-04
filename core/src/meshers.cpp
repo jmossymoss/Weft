@@ -17999,10 +17999,13 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
     }
     // Row layout: rims plus every band extent. A wire too close to a rim
     // can't be banded — plan-time margins should have excluded it.
-    // Artist axial=1 (nv<=1): do NOT stamp insert sill/lintel as
-    // full-drum rows. Levels are applied locally under/near the slot
-    // (levelBoxes), so untouched columns stay one straight span.
-    const bool localInsertLevels = nv <= 1;
+    // Artist axial=1 on a CASTELLATED insert drum: do NOT stamp insert
+    // sill/lintel as full-drum rows. Levels are applied locally
+    // under/near the slot (levelBoxes on the rimnotch lattice), so
+    // untouched columns stay one straight span. Plain (non-castellated)
+    // insert walls still need the extents in vRows — the grid carve has
+    // no local-level path yet, and skipping them demotes the face.
+    const bool localInsertLevels = nv <= 1 && plan.castellated;
     std::vector<double> vRows{v0, v1};
     std::vector<std::array<double, 4>> levelBoxes;
     for (const Box& b : boxes) {
