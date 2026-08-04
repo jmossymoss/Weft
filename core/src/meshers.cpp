@@ -12,6 +12,7 @@
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepTools.hxx>
+#include <BRepTools_WireExplorer.hxx>
 #include <BRepTopAdaptor_FClass2d.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
@@ -35,6 +36,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <map>
 #include <unordered_map>
 #include <vector>
@@ -158,17 +160,35 @@ struct MeshBuilder {
     // Exact vertex index keyed by EdgeId sample slot for seam sharing.
     // Key: (edgeId << 32) | sampleIndex  (sampleIndex along FORWARD edge param)
     std::map<uint64_t, uint32_t> edgeSlot;
-    std::unordered_map<int64_t, uint32_t> weld;
 
-    static int64_t quantize(const gp_Pnt& p, double tol) {
+    // Spatial cell key — must NOT XOR-fold axes (that collides opposite
+    // points on a circle, e.g. 45° with 225° at the same |x|=|y|).
+    struct CellKey {
+        int64_t x = 0, y = 0, z = 0;
+        bool operator==(const CellKey& o) const {
+            return x == o.x && y == o.y && z == o.z;
+        }
+    };
+    struct CellKeyHash {
+        size_t operator()(const CellKey& k) const {
+            size_t h = std::hash<int64_t>{}(k.x);
+            h ^= std::hash<int64_t>{}(k.y) + 0x9e3779b97f4a7c15ULL +
+                 (h << 6) + (h >> 2);
+            h ^= std::hash<int64_t>{}(k.z) + 0x9e3779b97f4a7c15ULL +
+                 (h << 6) + (h >> 2);
+            return h;
+        }
+    };
+    std::unordered_map<CellKey, uint32_t, CellKeyHash> weld;
+
+    static CellKey quantize(const gp_Pnt& p, double tol) {
         const double s = 1.0 / std::max(tol, 1e-12);
-        return (int64_t(std::llround(p.X() * s)) * 73856093) ^
-               (int64_t(std::llround(p.Y() * s)) * 19349663) ^
-               (int64_t(std::llround(p.Z() * s)) * 83492791);
+        return {std::llround(p.X() * s), std::llround(p.Y() * s),
+                std::llround(p.Z() * s)};
     }
 
     uint32_t addVertex(const gp_Pnt& p, const Anchor& a, double weldTol) {
-        const int64_t key = quantize(p, weldTol);
+        const CellKey key = quantize(p, weldTol);
         auto it = weld.find(key);
         if (it != weld.end()) {
             // Prefer an existing anchored vertex; keep first anchor.
@@ -306,15 +326,14 @@ std::vector<WireVert> walkWire(const TopoDS_Wire& wire, const Model& model,
         edgeMap.Add(model.edges(eid));
     }
 
-    for (TopExp_Explorer ex(wire, TopAbs_EDGE); ex.More(); ex.Next()) {
+    // TopExp_Explorer does not follow wire contour order — use WireExplorer.
+    for (BRepTools_WireExplorer ex(wire); ex.More(); ex.Next()) {
         const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
         const TopoDS_Edge fwd = TopoDS::Edge(edge.Oriented(TopAbs_FORWARD));
         int eid = edgeMap.FindIndex(fwd);
         if (eid <= 0) {
-            // Try without reorientation
             eid = edgeMap.FindIndex(edge);
         }
-        // Same geometry may be stored as the model's edge shape.
         if (eid <= 0) {
             for (int i = 1; i <= model.edgeCount(); ++i) {
                 if (edge.IsSame(TopoDS::Edge(model.edges(i)))) {
