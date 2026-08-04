@@ -68,24 +68,75 @@ static void testBoxPlanarNgons() {
 }
 
 static void testPresetHonesDensity() {
-    std::printf("-- Low vs High polycount --\n");
+    std::printf("-- Low vs Medium vs High polycount --\n");
     weft::Model model = loadFixture("cylinder", "weft_acc_cyl2.step");
     weft::Analysis analysis = weft::analyze(model);
-    weft::GenerationSettings lowGs, highGs;
+    weft::GenerationSettings lowGs, medGs, highGs;
     weft::applyQualityPreset(lowGs.defaults, weft::QualityPreset::Low);
+    weft::applyQualityPreset(medGs.defaults, weft::QualityPreset::Medium);
     weft::applyQualityPreset(highGs.defaults, weft::QualityPreset::High);
-    weft::PolyMesh low = weft::generate(model, analysis, lowGs);
-    weft::PolyMesh high = weft::generate(model, analysis, highGs);
-    CHECK(high.polygonCount() > low.polygonCount());
-    std::printf("  Low=%zu High=%zu polys\n", low.polygonCount(),
-                high.polygonCount());
+    weft::GenerationReport lowRep, medRep, highRep;
+    weft::PolyMesh low = weft::generate(model, analysis, lowGs, &lowRep);
+    weft::PolyMesh med = weft::generate(model, analysis, medGs, &medRep);
+    weft::PolyMesh high = weft::generate(model, analysis, highGs, &highRep);
+    CHECK(med.polygonCount() > low.polygonCount());
+    CHECK(high.polygonCount() > med.polygonCount());
+    // Circumferential rim divisions must rise with tighter sag.
+    auto rimDiv = [](const weft::GenerationReport& r) {
+        int best = 0;
+        for (const auto& [eid, n] : r.edgeDivisions) best = std::max(best, n);
+        return best;
+    };
+    CHECK(rimDiv(medRep) > rimDiv(lowRep));
+    CHECK(rimDiv(highRep) > rimDiv(medRep));
+    std::printf("  Low=%zu/%d Medium=%zu/%d High=%zu/%d (polys/rimDiv)\n",
+                low.polygonCount(), rimDiv(lowRep), med.polygonCount(),
+                rimDiv(medRep), high.polygonCount(), rimDiv(highRep));
+}
+
+static void testCylinderCapsAreNgons() {
+    std::printf("-- cylinder caps are n-gons, wall is analytic --\n");
+    weft::Model model = loadFixture("cylinder", "weft_acc_cyl3.step");
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    weft::applyQualityPreset(gs.defaults, weft::QualityPreset::Medium);
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    int walls = 0, caps = 0;
+    for (const auto& [fid, kind] : report.faceMesher) {
+        if (kind == weft::MesherKind::RevolutionGrid) ++walls;
+        if (kind == weft::MesherKind::MinimalNGon) ++caps;
+    }
+    CHECK(walls == 1);
+    CHECK(caps == 2);
+    CHECK(mesh.countNgons() >= 2);
+    std::printf("  walls=%d caps=%d ngons=%zu\n", walls, caps,
+                mesh.countNgons());
+}
+
+static void testFilletFixture() {
+    std::printf("-- fillet fixture meshes --\n");
+    weft::Model model = loadFixture("fillet", "weft_acc_fillet.step");
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    weft::applyQualityPreset(gs.defaults, weft::QualityPreset::High);
+    // Fillets need maxAngle like Pixyz docs recommend.
+    gs.defaults.angleToleranceDeg = 20.0;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    CHECK(mesh.polygonCount() > 0);
+    CHECK(mesh.vertexCount() > 8);
+    std::printf("  faces=%d verts=%zu polys=%zu\n", model.faceCount(),
+                mesh.vertexCount(), mesh.polygonCount());
 }
 
 int main() {
     try {
         testBoxPlanarNgons();
         testCylinderMedium();
+        testCylinderCapsAreNgons();
         testPresetHonesDensity();
+        testFilletFixture();
     } catch (const std::exception& e) {
         std::printf("exception: %s\n", e.what());
         return 1;
