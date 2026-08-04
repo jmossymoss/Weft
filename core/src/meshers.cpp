@@ -34,6 +34,7 @@
 #include <gp_Pnt2d.hxx>
 #include <gp_Vec.hxx>
 
+#include <array>
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -532,7 +533,7 @@ void meshPlanarFace(const TopoDS_Face& face, int faceId, const Model& model,
     out.addPolygon(std::move(idxs), faceId);
 }
 
-// All shared-edge samples on a face outer+hole wires (for rim seeding).
+// All shared-edge samples on a face outer+hole wires.
 std::vector<WireVert> faceBoundarySamples(const TopoDS_Face& face,
                                           const Model& model,
                                           const EdgeSampleMap& edgeSamples) {
@@ -544,17 +545,287 @@ std::vector<WireVert> faceBoundarySamples(const TopoDS_Face& face,
     return all;
 }
 
-// Closed cylinder / cone / sphere / torus revolution band as UV quads.
-bool meshAnalyticRevolution(const TopoDS_Face& face, int faceId, double sag,
-                            double angleDeg, double maxLength, double weldTol,
-                            const Model& model, const EdgeSampleMap& edgeSamples,
-                            MeshBuilder& out) {
+// Ear-clip a UV ring into triangles (indices into `ring`).
+std::vector<std::array<size_t, 3>> earclipUv(
+    const std::vector<IndexedRingVert>& ring) {
+    std::vector<std::array<size_t, 3>> tris;
+    const size_t n = ring.size();
+    if (n < 3) return tris;
+    auto cross = [&](size_t o, size_t a, size_t b) {
+        const double ox = ring[o].uv.X(), oy = ring[o].uv.Y();
+        return (ring[a].uv.X() - ox) * (ring[b].uv.Y() - oy) -
+               (ring[a].uv.Y() - oy) * (ring[b].uv.X() - ox);
+    };
+    auto d2 = [&](size_t a, size_t b) {
+        const double dx = ring[a].uv.X() - ring[b].uv.X();
+        const double dy = ring[a].uv.Y() - ring[b].uv.Y();
+        return dx * dx + dy * dy;
+    };
+    double span = 0;
+    for (const auto& ir : ring) {
+        span = std::max({span, std::abs(ir.uv.X()), std::abs(ir.uv.Y())});
+    }
+    const double eps = 1e-12 * std::max(1.0, span * span);
+    auto inside = [&](size_t a, size_t b, size_t c, size_t p) {
+        return cross(a, b, p) > eps && cross(b, c, p) > eps &&
+               cross(c, a, p) > eps;
+    };
+    // Ensure CCW in UV for ear tests.
+    double area2 = 0;
+    for (size_t i = 0; i < n; ++i) {
+        const auto& a = ring[i].uv;
+        const auto& b = ring[(i + 1) % n].uv;
+        area2 += a.X() * b.Y() - b.X() * a.Y();
+    }
+    std::vector<size_t> idx(n);
+    for (size_t i = 0; i < n; ++i) idx[i] = i;
+    if (area2 < 0) std::reverse(idx.begin(), idx.end());
+
+    size_t guard = 3 * n * n + 16;
+    while (idx.size() > 3 && guard-- > 0) {
+        size_t bestK = idx.size();
+        double bestQ = -1.0;
+        for (size_t k = 0; k < idx.size(); ++k) {
+            const size_t ip = idx[(k + idx.size() - 1) % idx.size()];
+            const size_t ic = idx[k];
+            const size_t in = idx[(k + 1) % idx.size()];
+            const double a2 = cross(ip, ic, in);
+            if (a2 <= eps) continue;
+            const double s = d2(ip, ic) + d2(ic, in) + d2(in, ip);
+            const double q = s > 1e-300 ? a2 / s : 0.0;
+            if (q <= bestQ) continue;
+            bool blocked = false;
+            for (size_t other : idx) {
+                if (other == ip || other == ic || other == in) continue;
+                if (d2(other, ip) < eps || d2(other, ic) < eps ||
+                    d2(other, in) < eps) {
+                    continue;
+                }
+                if (inside(ip, ic, in, other)) {
+                    blocked = true;
+                    break;
+                }
+            }
+            if (blocked) continue;
+            bestK = k;
+            bestQ = q;
+        }
+        if (bestK >= idx.size()) {
+            for (size_t k = 1; k + 1 < idx.size(); ++k) {
+                tris.push_back({idx[0], idx[k], idx[k + 1]});
+            }
+            return tris;
+        }
+        const size_t ip = idx[(bestK + idx.size() - 1) % idx.size()];
+        const size_t ic = idx[bestK];
+        const size_t in = idx[(bestK + 1) % idx.size()];
+        tris.push_back({ip, ic, in});
+        idx.erase(idx.begin() + static_cast<long>(bestK));
+    }
+    if (idx.size() == 3) tris.push_back({idx[0], idx[1], idx[2]});
+    return tris;
+}
+
+// Watertight path for trimmed faces: boundary = shared edge samples only.
+bool meshBoundaryLoops(const TopoDS_Face& face, int faceId, const Model& model,
+                       const EdgeSampleMap& edgeSamples, double weldTol,
+                       MeshBuilder& out) {
+    TopoDS_Wire outerWire = BRepTools::OuterWire(face);
+    if (outerWire.IsNull()) return false;
+    auto outerRing = walkWire(outerWire, model, edgeSamples);
+    if (outerRing.size() < 3) return false;
+
+    std::vector<std::vector<WireVert>> holeRings;
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        const TopoDS_Wire w = TopoDS::Wire(wx.Current());
+        if (w.IsSame(outerWire)) continue;
+        auto hole = walkWire(w, model, edgeSamples);
+        if (hole.size() >= 3) holeRings.push_back(std::move(hole));
+    }
+
+    auto indexedOuter = indexRing(outerRing, face, faceId, weldTol, out);
+    std::vector<std::vector<IndexedRingVert>> indexedHoles;
+    for (const auto& h : holeRings) {
+        indexedHoles.push_back(indexRing(h, face, faceId, weldTol, out));
+    }
+    std::vector<IndexedRingVert> ring = indexedOuter;
+    if (!indexedHoles.empty()) {
+        ring = mergeHolesKeyhole(std::move(indexedOuter),
+                                 std::move(indexedHoles));
+    }
+    if (ring.size() < 3) return false;
+
+    // Prefer a cylinder/cone quad strip when the outer wire is two equal rims.
     BRepAdaptor_Surface surf(face);
     const GeomAbs_SurfaceType ty = surf.GetType();
-    if (ty != GeomAbs_Cylinder && ty != GeomAbs_Cone && ty != GeomAbs_Sphere &&
-        ty != GeomAbs_Torus) {
-        return false;
+    if ((ty == GeomAbs_Cylinder || ty == GeomAbs_Cone) && holeRings.empty()) {
+        struct RimEdge {
+            int eid = 0;
+            bool closed = false;
+            std::vector<WireVert> samples;
+            double vMean = 0;
+        };
+        std::map<int, RimEdge> circ;
+        TopTools_IndexedMapOfShape edgeMap;
+        for (int eid = 1; eid <= model.edgeCount(); ++eid) {
+            edgeMap.Add(model.edges(eid));
+        }
+        for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+            const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+            int eid = edgeMap.FindIndex(edge.Oriented(TopAbs_FORWARD));
+            if (eid <= 0) eid = edgeMap.FindIndex(edge);
+            if (eid <= 0) continue;
+            BRepAdaptor_Curve c(edge);
+            if (c.GetType() != GeomAbs_Circle) continue;
+            auto it = edgeSamples.find(eid);
+            if (it == edgeSamples.end() || it->second.forward.size() < 2) {
+                continue;
+            }
+            RimEdge& re = circ[eid];
+            re.eid = eid;
+            re.closed = BRep_Tool::IsClosed(TopoDS::Edge(model.edges(eid)));
+            re.samples.clear();
+            for (int si = 0; si < int(it->second.forward.size()); ++si) {
+                WireVert wv;
+                wv.p = it->second.forward[si].p;
+                wv.edgeId = eid;
+                wv.sampleIndex = si;
+                re.samples.push_back(wv);
+            }
+            double vs = 0;
+            int nv = 0;
+            for (const WireVert& wv : re.samples) {
+                const Anchor a = anchorOnFace(face, faceId, wv.p);
+                vs += a.v;
+                ++nv;
+            }
+            re.vMean = nv ? vs / nv : 0;
+        }
+        if (circ.size() == 2) {
+            auto it = circ.begin();
+            RimEdge a = it->second;
+            ++it;
+            RimEdge b = it->second;
+            if (a.vMean > b.vMean) std::swap(a, b);
+            auto sortU = [&](RimEdge& r) {
+                std::vector<std::pair<double, WireVert>> keyed;
+                keyed.reserve(r.samples.size());
+                for (const WireVert& wv : r.samples) {
+                    const Anchor an = anchorOnFace(face, faceId, wv.p);
+                    keyed.push_back({an.u, wv});
+                }
+                std::sort(keyed.begin(), keyed.end(),
+                          [](const auto& x, const auto& y) {
+                              return x.first < y.first;
+                          });
+                r.samples.clear();
+                for (auto& kv : keyed) r.samples.push_back(kv.second);
+            };
+            sortU(a);
+            sortU(b);
+            // Align start ends (one rim may run opposite U after sort).
+            if (!a.samples.empty() && !b.samples.empty() &&
+                a.samples.front().p.Distance(b.samples.front().p) >
+                    a.samples.front().p.Distance(b.samples.back().p)) {
+                std::reverse(b.samples.begin(), b.samples.end());
+            }
+            if (a.samples.size() == b.samples.size() && a.samples.size() >= 3 &&
+                a.closed && b.closed) {
+                // Full-period drum only. Open fillet arcs fall through to
+                // boundary earclip so wire order (not U-sort) matches planars.
+                const size_t n = a.samples.size();
+                std::vector<uint32_t> ia(n), ib(n);
+                for (size_t i = 0; i < n; ++i) {
+                    const Anchor aa = anchorOnFace(face, faceId, a.samples[i].p);
+                    const Anchor ab = anchorOnFace(face, faceId, b.samples[i].p);
+                    ia[i] = out.addEdgeSample(a.samples[i].edgeId,
+                                              a.samples[i].sampleIndex,
+                                              a.samples[i].p, aa, weldTol);
+                    ib[i] = out.addEdgeSample(b.samples[i].edgeId,
+                                              b.samples[i].sampleIndex,
+                                              b.samples[i].p, ab, weldTol);
+                }
+                const bool closed = a.closed && b.closed;
+                const size_t seg = closed ? n : (n > 0 ? n - 1 : 0);
+                const bool faceReversed = face.Orientation() == TopAbs_REVERSED;
+                int emitted = 0;
+                for (size_t i = 0; i < seg; ++i) {
+                    const size_t j = closed ? (i + 1) % n : (i + 1);
+                    // Orient with surface normal at mid-cell.
+                    gp_Pnt p;
+                    gp_Vec du, dv;
+                    const Anchor am = anchorOnFace(
+                        face, faceId,
+                        gp_Pnt(0.25 * (a.samples[i].p.X() + a.samples[j].p.X() +
+                                       b.samples[i].p.X() + b.samples[j].p.X()),
+                               0.25 * (a.samples[i].p.Y() + a.samples[j].p.Y() +
+                                       b.samples[i].p.Y() + b.samples[j].p.Y()),
+                               0.25 * (a.samples[i].p.Z() + a.samples[j].p.Z() +
+                                       b.samples[i].p.Z() + b.samples[j].p.Z())));
+                    surf.D1(am.u, am.v, p, du, dv);
+                    gp_Vec sn = du.Crossed(dv);
+                    if (faceReversed) sn.Reverse();
+                    const auto& A = out.mesh.vertices[ia[i]];
+                    const auto& B = out.mesh.vertices[ia[j]];
+                    const auto& C = out.mesh.vertices[ib[j]];
+                    const gp_Vec ab(B[0] - A[0], B[1] - A[1], B[2] - A[2]);
+                    const gp_Vec ac(C[0] - A[0], C[1] - A[1], C[2] - A[2]);
+                    const bool flip = sn.Magnitude() > 1e-12 &&
+                                      ab.Crossed(ac).Dot(sn) < 0.0;
+                    if (!flip) {
+                        out.addPolygon({ia[i], ia[j], ib[j], ib[i]}, faceId);
+                    } else {
+                        out.addPolygon({ia[i], ib[i], ib[j], ia[j]}, faceId);
+                    }
+                    ++emitted;
+                }
+                if (emitted > 0) return true;
+            }
+        }
     }
+
+    // General trimmed face: triangulate boundary loop in UV.
+    auto tris = earclipUv(ring);
+    if (tris.empty()) return false;
+    BRepAdaptor_Surface srf(face);
+    const bool faceReversed = face.Orientation() == TopAbs_REVERSED;
+    int emitted = 0;
+    for (const auto& t : tris) {
+        const uint32_t ia = ring[t[0]].idx;
+        const uint32_t ib = ring[t[1]].idx;
+        const uint32_t ic = ring[t[2]].idx;
+        const double um =
+            (ring[t[0]].uv.X() + ring[t[1]].uv.X() + ring[t[2]].uv.X()) / 3.0;
+        const double vm =
+            (ring[t[0]].uv.Y() + ring[t[1]].uv.Y() + ring[t[2]].uv.Y()) / 3.0;
+        gp_Pnt p;
+        gp_Vec du, dv;
+        srf.D1(um, vm, p, du, dv);
+        gp_Vec sn = du.Crossed(dv);
+        if (faceReversed) sn.Reverse();
+        const auto& A = out.mesh.vertices[ia];
+        const auto& B = out.mesh.vertices[ib];
+        const auto& C = out.mesh.vertices[ic];
+        const gp_Vec ab(B[0] - A[0], B[1] - A[1], B[2] - A[2]);
+        const gp_Vec ac(C[0] - A[0], C[1] - A[1], C[2] - A[2]);
+        if (sn.Magnitude() > 1e-12 && ab.Crossed(ac).Dot(sn) < 0.0) {
+            out.addPolygon({ia, ic, ib}, faceId);
+        } else {
+            out.addPolygon({ia, ib, ic}, faceId);
+        }
+        ++emitted;
+    }
+    return emitted > 0;
+}
+
+// Sphere / torus: UV quads when the domain is a simple rectangle; otherwise
+// fall through to boundary-loop fill.
+bool meshAnalyticUvGrid(const TopoDS_Face& face, int faceId, double sag,
+                        double angleDeg, double maxLength, double weldTol,
+                        MeshBuilder& out) {
+    BRepAdaptor_Surface surf(face);
+    const GeomAbs_SurfaceType ty = surf.GetType();
+    if (ty != GeomAbs_Sphere && ty != GeomAbs_Torus) return false;
 
     double u0 = 0, u1 = 0, v0 = 0, v1 = 0;
     BRepTools::UVBounds(face, u0, u1, v0, v1);
@@ -563,111 +834,43 @@ bool meshAnalyticRevolution(const TopoDS_Face& face, int faceId, double sag,
     double radiusU = 0.0;
     double radiusV = 0.0;
     try {
-        if (ty == GeomAbs_Cylinder) {
-            radiusU = surf.Cylinder().Radius();
-        } else if (ty == GeomAbs_Cone) {
-            const double vm = 0.5 * (v0 + v1);
-            gp_Pnt p;
-            gp_Vec du, dv;
-            surf.D1(u0, vm, p, du, dv);
-            radiusU = du.Magnitude();
-        } else if (ty == GeomAbs_Sphere) {
+        if (ty == GeomAbs_Sphere) {
             radiusU = surf.Sphere().Radius();
             radiusV = radiusU;
-        } else if (ty == GeomAbs_Torus) {
-            const double major = surf.Torus().MajorRadius();
-            const double minor = surf.Torus().MinorRadius();
-            radiusU = major + minor;
-            radiusV = minor;
+        } else {
+            radiusU = surf.Torus().MajorRadius() + surf.Torus().MinorRadius();
+            radiusV = surf.Torus().MinorRadius();
         }
     } catch (...) {
         return false;
     }
-    if (!(radiusU > 1e-12)) return false;
+    if (!(radiusU > 1e-12) || !(radiusV > 1e-12)) return false;
 
     const double uSpan = u1 - u0;
     const double vSpan = v1 - v0;
     int nu = circleDivisions(radiusU, sag, angleDeg);
     nu = std::max(3, int(std::ceil(nu * (uSpan / (2.0 * M_PI)) - 1e-9)));
-
-    int nv = 1;
-    if (radiusV > 1e-12) {
-        nv = circleDivisions(radiusV, sag, angleDeg);
-        nv = std::max(1, int(std::ceil(nv * (std::abs(vSpan) / (2.0 * M_PI)) -
-                                       1e-9)));
-    } else {
-        std::vector<gp_Pnt> probe;
-        const int probeN = 32;
-        for (int i = 0; i <= probeN; ++i) {
-            const double v = v0 + vSpan * (double(i) / probeN);
-            gp_Pnt p;
-            surf.D0(0.5 * (u0 + u1), v, p);
-            probe.push_back(p);
-        }
-        nv = 1;
-        for (int div = 1; div < 64; ++div) {
-            bool ok = true;
-            for (int i = 0; i < div && ok; ++i) {
-                const double a = double(i) / div;
-                const double b = double(i + 1) / div;
-                const double m = 0.5 * (a + b);
-                auto at = [&](double t) {
-                    const double idx = t * probeN;
-                    const int i0 = std::min(probeN - 1, std::max(0, int(idx)));
-                    const double f = idx - i0;
-                    const int i1 = std::min(probeN, i0 + 1);
-                    return gp_Pnt(
-                        probe[i0].X() + (probe[i1].X() - probe[i0].X()) * f,
-                        probe[i0].Y() + (probe[i1].Y() - probe[i0].Y()) * f,
-                        probe[i0].Z() + (probe[i1].Z() - probe[i0].Z()) * f);
-                };
-                const gp_Pnt pa = at(a), pb = at(b), pm = at(m);
-                const gp_Pnt midChord(0.5 * (pa.X() + pb.X()),
-                                      0.5 * (pa.Y() + pb.Y()),
-                                      0.5 * (pa.Z() + pb.Z()));
-                if (pm.Distance(midChord) > sag) ok = false;
-                if (maxLength > 0.0 && pa.Distance(pb) > maxLength) ok = false;
-            }
-            if (ok) {
-                nv = div;
-                break;
-            }
-            nv = div;
-        }
-    }
+    int nv = circleDivisions(radiusV, sag, angleDeg);
+    nv = std::max(1, int(std::ceil(nv * (std::abs(vSpan) / (2.0 * M_PI)) -
+                                   1e-9)));
     nu = std::clamp(nu, 3, 256);
     nv = std::clamp(nv, 1, 128);
 
     BRepTopAdaptor_FClass2d classifier(face, Precision::Confusion());
-    const bool faceReversed = face.Orientation() == TopAbs_REVERSED;
-
-    std::vector<std::vector<uint32_t>> grid(nv + 1,
-                                            std::vector<uint32_t>(nu + 1, ~0u));
-
-    // Seed rim/seam grid nodes from shared edge samples via UV (not 3D nearest,
-    // which steals neighbours and inflates open borders).
-    {
-        const auto boundary =
-            faceBoundarySamples(face, model, edgeSamples);
-        for (const WireVert& wv : boundary) {
-            if (wv.edgeId <= 0 || wv.sampleIndex < 0) continue;
-            const Anchor a = anchorOnFace(face, faceId, wv.p);
-            const double fu = (a.u - u0) / uSpan;
-            const double fv = (a.v - v0) / vSpan;
-            if (!(fu >= -0.05 && fu <= 1.05 && fv >= -0.05 && fv <= 1.05)) {
-                continue;
-            }
-            const double iu = fu * nu;
-            const double jv = fv * nv;
-            const int i = int(std::llround(iu));
-            const int j = int(std::llround(jv));
-            if (i < 0 || i > nu || j < 0 || j > nv) continue;
-            if (std::abs(iu - i) > 0.35 || std::abs(jv - j) > 0.35) continue;
-            grid[j][i] = out.addEdgeSample(wv.edgeId, wv.sampleIndex, wv.p, a,
-                                           weldTol);
+    // Require almost-full rectangle coverage — otherwise boundary fill.
+    int inside = 0, total = nu * nv;
+    for (int j = 0; j < nv; ++j) {
+        for (int i = 0; i < nu; ++i) {
+            const double um = u0 + uSpan * ((double(i) + 0.5) / nu);
+            const double vm = v0 + vSpan * ((double(j) + 0.5) / nv);
+            if (classifier.Perform(gp_Pnt2d(um, vm)) != TopAbs_OUT) ++inside;
         }
     }
+    if (total > 0 && double(inside) / double(total) < 0.92) return false;
 
+    const bool faceReversed = face.Orientation() == TopAbs_REVERSED;
+    std::vector<std::vector<uint32_t>> grid(nv + 1,
+                                            std::vector<uint32_t>(nu + 1, ~0u));
     auto ensure = [&](int i, int j) -> uint32_t {
         if (grid[j][i] != ~0u) return grid[j][i];
         const double u = u0 + uSpan * (double(i) / nu);
@@ -679,125 +882,6 @@ bool meshAnalyticRevolution(const TopoDS_Face& face, int faceId, double sag,
     };
 
     int emitted = 0;
-    for (int j = 0; j < nv; ++j) {
-        for (int i = 0; i < nu; ++i) {
-            const double um = u0 + uSpan * ((double(i) + 0.5) / nu);
-            const double vm = v0 + vSpan * ((double(j) + 0.5) / nv);
-            if (classifier.Perform(gp_Pnt2d(um, vm)) == TopAbs_OUT) continue;
-
-            const uint32_t ia = ensure(i, j);
-            const uint32_t ib = ensure(i + 1, j);
-            const uint32_t ic = ensure(i + 1, j + 1);
-            const uint32_t id = ensure(i, j + 1);
-
-            gp_Pnt p;
-            gp_Vec du, dv;
-            surf.D1(um, vm, p, du, dv);
-            gp_Vec sn = du.Crossed(dv);
-            if (faceReversed) sn.Reverse();
-            auto triNormal = [&](uint32_t a, uint32_t b, uint32_t c) {
-                const auto& A = out.mesh.vertices[a];
-                const auto& B = out.mesh.vertices[b];
-                const auto& C = out.mesh.vertices[c];
-                const gp_Vec ab(B[0] - A[0], B[1] - A[1], B[2] - A[2]);
-                const gp_Vec ac(C[0] - A[0], C[1] - A[1], C[2] - A[2]);
-                return ab.Crossed(ac);
-            };
-            gp_Vec n0 = triNormal(ia, ib, ic);
-            bool flipCell = false;
-            if (sn.Magnitude() > 1e-12 && n0.Magnitude() > 1e-12) {
-                flipCell = sn.Dot(n0) < 0.0;
-            } else {
-                flipCell = faceReversed;
-            }
-            if (!flipCell) {
-                out.addPolygon({ia, ib, ic, id}, faceId);
-            } else {
-                out.addPolygon({ia, id, ic, ib}, faceId);
-            }
-            ++emitted;
-        }
-    }
-    return emitted > 0;
-}
-
-// Generic freeform: trimmed UV grid. Hard-capped — sag refine only (angle on
-// freeform UV was thrashing to 256²/512² sliver fields on real CAD).
-void meshFreeformFace(const TopoDS_Face& face, int faceId, double sag,
-                      double /*angleDeg*/, double maxLength, double weldTol,
-                      MeshBuilder& out) {
-    BRepAdaptor_Surface surf(face);
-    double u0 = 0, u1 = 0, v0 = 0, v1 = 0;
-    BRepTools::UVBounds(face, u0, u1, v0, v1);
-    if (!(u1 > u0) || !(v1 > v0)) return;
-
-    const double uSpan = u1 - u0;
-    const double vSpan = v1 - v0;
-    gp_Pnt c00, c10, c01;
-    surf.D0(u0, v0, c00);
-    surf.D0(u1, v0, c10);
-    surf.D0(u0, v1, c01);
-    const double uLen = std::max(c00.Distance(c10), 1e-9);
-    const double vLen = std::max(c00.Distance(c01), 1e-9);
-
-    constexpr int kFreeformMax = 64;
-    const double step = std::max(sag * 2.0, 1e-6);
-    int nu = std::clamp(int(std::ceil(uLen / step)), 1, kFreeformMax);
-    int nv = std::clamp(int(std::ceil(vLen / step)), 1, kFreeformMax);
-
-    auto cellFails = [&](int nuCur, int nvCur) {
-        const int stepU = std::max(1, nuCur / 8);
-        const int stepV = std::max(1, nvCur / 8);
-        for (int i = 0; i < nuCur; i += stepU) {
-            for (int j = 0; j < nvCur; j += stepV) {
-                const double ua = u0 + uSpan * (double(i) / nuCur);
-                const double ub =
-                    u0 + uSpan * (double(std::min(nuCur, i + 1)) / nuCur);
-                const double va = v0 + vSpan * (double(j) / nvCur);
-                const double vb =
-                    v0 + vSpan * (double(std::min(nvCur, j + 1)) / nvCur);
-                const double um = 0.5 * (ua + ub);
-                const double vm = 0.5 * (va + vb);
-                gp_Pnt p00, p10, p01, p11, pExact;
-                surf.D0(ua, va, p00);
-                surf.D0(ub, va, p10);
-                surf.D0(ua, vb, p01);
-                surf.D0(ub, vb, p11);
-                surf.D0(um, vm, pExact);
-                const gp_Pnt pm((p00.XYZ() + p10.XYZ() + p01.XYZ() + p11.XYZ()) *
-                                0.25);
-                if (pm.Distance(pExact) > sag) return true;
-                if (maxLength > 0.0 &&
-                    (p00.Distance(p10) > maxLength ||
-                     p00.Distance(p01) > maxLength)) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    };
-
-    for (int pass = 0; pass < 6; ++pass) {
-        if (!cellFails(nu, nv)) break;
-        if (nu < kFreeformMax) nu = std::min(kFreeformMax, nu * 2);
-        if (nv < kFreeformMax) nv = std::min(kFreeformMax, nv * 2);
-        if (nu >= kFreeformMax && nv >= kFreeformMax) break;
-    }
-
-    BRepTopAdaptor_FClass2d classifier(face, Precision::Confusion());
-    const bool faceReversed = face.Orientation() == TopAbs_REVERSED;
-    std::vector<std::vector<uint32_t>> grid(nv + 1,
-                                            std::vector<uint32_t>(nu + 1, ~0u));
-    auto ensure = [&](int i, int j) {
-        if (grid[j][i] != ~0u) return grid[j][i];
-        const double u = u0 + uSpan * (double(i) / nu);
-        const double v = v0 + vSpan * (double(j) / nv);
-        gp_Pnt p;
-        surf.D0(u, v, p);
-        grid[j][i] = out.addVertex(p, Anchor{faceId, u, v}, weldTol);
-        return grid[j][i];
-    };
-
     for (int j = 0; j < nv; ++j) {
         for (int i = 0; i < nu; ++i) {
             const double um = u0 + uSpan * ((double(i) + 0.5) / nu);
@@ -817,21 +901,16 @@ void meshFreeformFace(const TopoDS_Face& face, int faceId, double sag,
             const auto& C = out.mesh.vertices[ic];
             const gp_Vec ab(B[0] - A[0], B[1] - A[1], B[2] - A[2]);
             const gp_Vec ac(C[0] - A[0], C[1] - A[1], C[2] - A[2]);
-            const gp_Vec n0 = ab.Crossed(ac);
-            const bool flipCell =
-                (sn.Magnitude() > 1e-12 && n0.Magnitude() > 1e-12)
-                    ? (sn.Dot(n0) < 0.0)
-                    : faceReversed;
-            if (!flipCell) {
-                out.addPolygon({ia, ib, ic}, faceId);
-                out.addPolygon({ia, ic, id}, faceId);
-            } else {
-                out.addPolygon({ia, ic, ib}, faceId);
-                out.addPolygon({ia, id, ic}, faceId);
-            }
+            const bool flip =
+                sn.Magnitude() > 1e-12 && ab.Crossed(ac).Dot(sn) < 0.0;
+            if (!flip) out.addPolygon({ia, ib, ic, id}, faceId);
+            else out.addPolygon({ia, id, ic, ib}, faceId);
+            ++emitted;
         }
     }
+    return emitted > 0;
 }
+
 
 }  // namespace
 
@@ -914,24 +993,30 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             continue;
         }
 
-        const bool analytic = meshAnalyticRevolution(
-            face, fid, sag, fs.angleToleranceDeg, fs.maxLength, weldTol, model,
-            edgeSamples, builder);
-        if (analytic) {
+        // Sphere/torus rectangular UV → quad grid; else / cylinders →
+        // boundary-loop fill (shared edge slots → watertight with planars).
+        if (meshAnalyticUvGrid(face, fid, sag, fs.angleToleranceDeg,
+                               fs.maxLength, weldTol, builder)) {
             if (report) {
                 report->faceMesher[fid] = MesherKind::RevolutionGrid;
                 report->faceBuild[fid] = 0;
-                report->faceBuildCause[fid] = "accuracy-analytic";
+                report->faceBuildCause[fid] = "accuracy-uv-grid";
             }
             continue;
         }
-
-        meshFreeformFace(face, fid, sag, fs.angleToleranceDeg, fs.maxLength,
-                         weldTol, builder);
+        if (meshBoundaryLoops(face, fid, model, edgeSamples, weldTol,
+                              builder)) {
+            if (report) {
+                report->faceMesher[fid] = MesherKind::RevolutionGrid;
+                report->faceBuild[fid] = 0;
+                report->faceBuildCause[fid] = "accuracy-boundary";
+            }
+            continue;
+        }
         if (report) {
             report->faceMesher[fid] = MesherKind::Fallback;
             report->faceBuild[fid] = 0;
-            report->faceBuildCause[fid] = "accuracy-freeform";
+            report->faceBuildCause[fid] = "accuracy-empty";
         }
     }
 
