@@ -105,7 +105,8 @@ std::vector<SamplePoint> sampleEdgeCurve(const TopoDS_Edge& edge, double sag,
     int n = mesher_detail::stableDeflectionCount(curve, angleTol, sag);
     n = std::max(1, n);
 
-    // Circles/arcs: also enforce closed-form sag count so Medium≠High.
+    // Circles/arcs: closed-form sag/angle count is authoritative so analytic
+    // UV grids and shared rim samples stay in lockstep.
     try {
         if (curve.GetType() == GeomAbs_Circle) {
             const double r = curve.Circle().Radius();
@@ -113,7 +114,7 @@ std::vector<SamplePoint> sampleEdgeCurve(const TopoDS_Edge& edge, double sag,
             const int full = circleDivisions(r, sag, angleDeg);
             const int forSpan =
                 std::max(1, int(std::ceil(full * (span / (2.0 * M_PI)))));
-            n = std::max(n, forSpan);
+            n = forSpan;
         }
     } catch (...) {
     }
@@ -576,12 +577,14 @@ bool meshAnalyticRevolution(const TopoDS_Face& face, int faceId, double sag,
     const double uSpan = u1 - u0;
     const double vSpan = v1 - v0;
     int nu = circleDivisions(radiusU, sag, angleDeg);
-    nu = std::max(3, int(std::ceil(nu * (uSpan / (2.0 * M_PI)))));
+    // Subtract epsilon so a full-period face (uSpan≈2π) does not ceil to nu+1.
+    nu = std::max(3, int(std::ceil(nu * (uSpan / (2.0 * M_PI)) - 1e-9)));
 
     int nv = 1;
     if (radiusV > 1e-12) {
         nv = circleDivisions(radiusV, sag, angleDeg);
-        nv = std::max(1, int(std::ceil(nv * (std::abs(vSpan) / (2.0 * M_PI)))));
+        nv = std::max(1, int(std::ceil(nv * (std::abs(vSpan) / (2.0 * M_PI)) -
+                                       1e-9)));
     } else {
         // Straight generators: sag along mid-U isocurve (usually 1).
         std::vector<gp_Pnt> probe;
@@ -680,12 +683,11 @@ bool meshAnalyticRevolution(const TopoDS_Face& face, int faceId, double sag,
             } else {
                 flipCell = faceReversed;
             }
+            // Analytic bands prefer quads (cylinder / torus / cone / sphere).
             if (!flipCell) {
-                out.addPolygon({ia, ib, ic}, faceId);
-                out.addPolygon({ia, ic, id}, faceId);
+                out.addPolygon({ia, ib, ic, id}, faceId);
             } else {
-                out.addPolygon({ia, ic, ib}, faceId);
-                out.addPolygon({ia, id, ic}, faceId);
+                out.addPolygon({ia, id, ic, ib}, faceId);
             }
             ++emitted;
         }
@@ -814,20 +816,25 @@ void meshFreeformFace(const TopoDS_Face& face, int faceId, double sag,
 }  // namespace
 
 void applyQualityPreset(FaceMeshSettings& s, QualityPreset preset) {
-    s.angleToleranceDeg = -1;
+    // Pixyz-style: maxSag + maxAngle. Angle densifies small-radius fillets
+    // when sag alone would leave them coarse (Pixyz docs / SDK examples).
     s.maxLength = -1;
     switch (preset) {
         case QualityPreset::VeryHigh:
             s.chordTolerance = 0.01;
+            s.angleToleranceDeg = 10.0;
             break;
         case QualityPreset::High:
             s.chordTolerance = 0.1;
+            s.angleToleranceDeg = 15.0;
             break;
         case QualityPreset::Medium:
             s.chordTolerance = 0.2;
+            s.angleToleranceDeg = 20.0;
             break;
         case QualityPreset::Low:
             s.chordTolerance = 1.0;
+            s.angleToleranceDeg = 40.0;
             break;
     }
 }

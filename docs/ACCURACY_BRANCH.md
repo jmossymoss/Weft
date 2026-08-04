@@ -9,24 +9,25 @@ Working now:
 
 - Shared topological-edge sample map (finest adjacent-face sag wins)
 - Planar faces → boundary n-gons; holes keyhole-bridged into one n-gon
-- Analytic cylinder/cone/sphere/torus from closed-form circle sag
-- Torus/fillet uses major+minor radii for U/V density
+- Analytic cylinder/cone/sphere/torus as UV **quads** (closed-form circle sag)
+- Presets hone with maxSag + maxAngle (Pixyz-style fillet densify)
+- Torus uses major+minor radii for U/V density
 - Freeform → trimmed UV grid (`BRepTopAdaptor_FClass2d`)
-- Presets hone density: Low / Medium / High change rim divisions
-- Normal-aware triangle winding
+- Normal-aware polygon winding
 
 Still open:
 
 - Multi-hole pathological bridges (fallback leaves hole unmerged)
 - Pixyz side-by-side calibration on MP9
 - App UI for accuracy knobs (`-DWEFT_BUILD_APP=ON` still parked)
-- Quads on analytic bands (currently tris)
+- Drive analytic UV from shared edge samples (exact rim index share)
 
 ## What changed
 
 - `core/src/legacy/meshers_structured.cpp` — archived RevolutionGrid/Coons/… (not built)
 - `core/src/meshers.cpp` — accuracy `generate()`
-- Density UX: `QualityPreset` + `chordTolerance` (maxSag), `angleToleranceDeg` (−1 = off), `maxLength` (−1 = off)
+- Density UX: `QualityPreset` + `chordTolerance` (maxSag), `angleToleranceDeg`
+  (maxAngle; −1 = off), `maxLength` (−1 = off). Presets set both sag and angle.
 - `weft_app` off by default; smoke tests in `tests/test_accuracy_smoke.cpp`
 
 ## Build

@@ -18,12 +18,12 @@ enum class CapStyle {
     Fan,   // center vertex + triangle fan
 };
 
-// Pixyz-aligned quality presets (maxSag mm). Angle/length stay off (−1).
+// Pixyz-aligned quality presets (maxSag mm + maxAngle deg).
 enum class QualityPreset {
-    VeryHigh = 0,  // maxSag 0.01
-    High = 1,      // maxSag 0.1
-    Medium = 2,    // maxSag 0.2
-    Low = 3,       // maxSag 1.0
+    VeryHigh = 0,  // maxSag 0.01, maxAngle 10°
+    High = 1,      // maxSag 0.1,  maxAngle 15°
+    Medium = 2,    // maxSag 0.2,  maxAngle 20°
+    Low = 3,       // maxSag 1.0,  maxAngle 40°
 };
 
 // Named, per-face density controls (the plan's §3.3). A face picks up the
@@ -37,7 +37,7 @@ struct FaceMeshSettings {
     // Accuracy-path density (Pixyz-inspired): chordTolerance ≡ maxSag (mm).
     // angleToleranceDeg < 0 means off (Pixyz default). maxLength < 0 means off.
     double chordTolerance = 0.2;   // maxSag — Medium preset default
-    double angleToleranceDeg = -1; // maxAngle; −1 = unconstrained
+    double angleToleranceDeg = 20.0; // maxAngle; −1 = unconstrained
     double maxLength = -1;         // max edge length; −1 = unconstrained
     // Fillet/blend faces: divisions ACROSS the blend (support loops for
     // baking) and how strongly the loops cluster toward the creases

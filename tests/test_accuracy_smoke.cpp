@@ -44,9 +44,10 @@ static void testCylinderMedium() {
     CHECK(mesh.polygonCount() > 0);
     CHECK(mesh.countNgons() + mesh.countTris() + mesh.countQuads() ==
           mesh.polygonCount());
-    std::printf("  %zu verts, %zu polys (tris=%zu ngons=%zu)\n",
+    std::printf("  %zu verts, %zu polys (tris=%zu quads=%zu ngons=%zu)\n",
                 mesh.vertexCount(), mesh.polygonCount(), mesh.countTris(),
-                mesh.countNgons());
+                mesh.countQuads(), mesh.countNgons());
+    CHECK(mesh.countQuads() > 0);  // analytic cylinder wall = quads
 }
 
 static void testBoxPlanarNgons() {
@@ -118,16 +119,25 @@ static void testFilletFixture() {
     std::printf("-- fillet fixture meshes --\n");
     weft::Model model = loadFixture("fillet", "weft_acc_fillet.step");
     weft::Analysis analysis = weft::analyze(model);
-    weft::GenerationSettings gs;
-    weft::applyQualityPreset(gs.defaults, weft::QualityPreset::High);
-    // Fillets need maxAngle like Pixyz docs recommend.
-    gs.defaults.angleToleranceDeg = 20.0;
-    weft::GenerationReport report;
-    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
-    CHECK(mesh.polygonCount() > 0);
-    CHECK(mesh.vertexCount() > 8);
-    std::printf("  faces=%d verts=%zu polys=%zu\n", model.faceCount(),
-                mesh.vertexCount(), mesh.polygonCount());
+    weft::GenerationSettings lowGs, highGs;
+    weft::applyQualityPreset(lowGs.defaults, weft::QualityPreset::Low);
+    weft::applyQualityPreset(highGs.defaults, weft::QualityPreset::High);
+    weft::GenerationReport lowRep, highRep;
+    weft::PolyMesh low = weft::generate(model, analysis, lowGs, &lowRep);
+    weft::PolyMesh high = weft::generate(model, analysis, highGs, &highRep);
+    CHECK(low.polygonCount() > 0);
+    CHECK(high.polygonCount() > low.polygonCount());
+    // Fillet arc edge divisions must rise with tighter sag/angle.
+    auto maxDiv = [](const weft::GenerationReport& r) {
+        int best = 0;
+        for (const auto& [eid, n] : r.edgeDivisions) best = std::max(best, n);
+        return best;
+    };
+    CHECK(maxDiv(highRep) > maxDiv(lowRep));
+    CHECK(high.countQuads() > 0);  // fillet strip is analytic quads
+    std::printf("  Low=%zu/%d High=%zu/%d (polys/maxEdgeDiv) quads=%zu\n",
+                low.polygonCount(), maxDiv(lowRep), high.polygonCount(),
+                maxDiv(highRep), high.countQuads());
 }
 
 static void testHolePlateKeyhole() {
