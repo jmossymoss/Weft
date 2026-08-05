@@ -15751,6 +15751,7 @@ void pinOrthogonalTrimGrids(const Model& model,
         for (int e : plan.orthogonalEdges) {
             bool insertRevRim = false;
             bool openbandSide = false;
+            bool railLadderEdge = false;
             for (const auto& [ofid, opl] : plans) {
                 (void)ofid;
                 if (opl.kind == MesherKind::RevolutionGrid &&
@@ -15764,6 +15765,19 @@ void pinOrthogonalTrimGrids(const Model& model,
                     openbandSide = true;
                     break;
                 }
+                if (opl.kind == MesherKind::RailLadder) {
+                    for (int ue : opl.uEdges) {
+                        if (ue == e) {
+                            // Rail-ladder outlines sample at the solved
+                            // count. Orthogonal station pins open a
+                            // contract miss that demotes through a failed
+                            // floor to raw (mp9_Edited #2005).
+                            railLadderEdge = true;
+                            break;
+                        }
+                    }
+                    if (railLadderEdge) break;
+                }
                 if (opl.kind != MesherKind::RevolutionGrid) continue;
                 if (opl.insertWires.empty()) continue;
                 for (int ue : opl.uEdges) {
@@ -15774,7 +15788,7 @@ void pinOrthogonalTrimGrids(const Model& model,
                 }
                 if (insertRevRim) break;
             }
-            if (insertRevRim || openbandSide) continue;
+            if (insertRevRim || openbandSide || railLadderEdge) continue;
             pinEdge(e, true, true);
         }
     }
@@ -25416,7 +25430,33 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             if (bad) {
                 dbg("mesh face %d: border contract failed on edge %d (%s)",
                     fid, bad, mesherKindName(plan.kind));
-                demote(fid, face, surf, s, "border contract failed");
+                // Rail-ladder tip search can miss a contract station on a
+                // multi-edge outline; the floor web then fails and OCCT
+                // raw ships (mp9_Edited #2005). A boundary n-gon keeps
+                // exact borders without raw triangulation.
+                bool rescued = false;
+                if (plan.kind == MesherKind::RailLadder) {
+                    PolyMesh ngon;
+                    MeshBuilder nb(ngon);
+                    if (meshMinimalPlanar(face, model, fid, solvedEdge,
+                                          s.radial, nb, &pinnedEdge) &&
+                        borderContractViolation(fid, ngon) == 0 &&
+                        !ngon.polygons.empty()) {
+                        parts[fid] = std::move(ngon);
+                        plans[fid].kind = MesherKind::MinimalNGon;
+                        fellBack[fid] = 0;
+                        buildCause[fid] =
+                            "rail-ladder contract → minimal n-gon";
+                        borderExact[fid] = 1;
+                        rescued = true;
+                        dbg("mesh face %d: rail-ladder contract → "
+                            "minimal n-gon",
+                            fid);
+                    }
+                }
+                if (!rescued) {
+                    demote(fid, face, surf, s, "border contract failed");
+                }
             } else {
                 borderExact[fid] = 1;
             }
