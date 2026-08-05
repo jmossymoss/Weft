@@ -23008,37 +23008,31 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     // T-junctions along its border.
     pinOrthogonalTrimGrids(model, plans, settings, solvedEdge, pinnedEdge);
 
-    // Two-edge rail-ladder digons need equal rail counts for a quad ladder;
-    // a 9-vs-11 solve (or pin inflation on one rail) leaves folded n-gon
-    // rungs (mp9_Edited #1073).
+    // Rail-ladder outlines sample via planar rings / digon rails at the
+    // solved count. Drop any leftover pins on those edges (fillet-hold,
+    // castellated, orthogonal) so the border contract matches what the
+    // ladder emits (mp9_Edited #2005 / #1073).
     for (const auto& [fid, plan] : plans) {
-        if (plan.kind != MesherKind::RailLadder || plan.uEdges.size() != 2) {
-            continue;
+        if (plan.kind != MesherKind::RailLadder) continue;
+        for (int eid : plan.uEdges) {
+            if (eid < 1 || eid >= int(pinnedEdge.size())) continue;
+            if (!pinnedEdge[eid].empty()) pinnedEdge[eid].clear();
         }
+        // Two-edge digons also need equal rail counts for a quad ladder.
+        if (plan.uEdges.size() != 2) continue;
         const int a = plan.uEdges[0], b = plan.uEdges[1];
         if (a < 1 || b < 1 || a >= int(solvedEdge.size()) ||
             b >= int(solvedEdge.size())) {
             continue;
         }
-        auto segs = [&](int eid) {
-            int n = std::max(1, solvedEdge[eid]);
-            if (eid < int(pinnedEdge.size()) && !pinnedEdge[eid].empty()) {
-                n = std::max(n, int(pinnedEdge[eid].size()) - 1);
-            }
-            return n;
-        };
-        const int na = segs(a), nb = segs(b);
+        const int na = std::max(1, solvedEdge[a]);
+        const int nb = std::max(1, solvedEdge[b]);
+        if (na == nb) continue;
         const int want = std::max(na, nb);
         solvedEdge[a] = want;
         solvedEdge[b] = want;
-        // Drop per-rail pins so both sides sample the shared uniform count;
-        // otherwise one pin set re-introduces the length mismatch.
-        if (a < int(pinnedEdge.size())) pinnedEdge[a].clear();
-        if (b < int(pinnedEdge.size())) pinnedEdge[b].clear();
-        if (na != nb) {
-            dbg("generate: digon face %d equalize rails %d/%d -> %d", fid, na,
-                nb, want);
-        }
+        dbg("generate: digon face %d equalize rails %d/%d -> %d", fid, na, nb,
+            want);
     }
 
     // Resolve every face's division counts up front (union-find lookups
