@@ -5661,26 +5661,47 @@ bool meshRailLadder(const TopoDS_Face& face, const Model& model, int faceId,
                 digon.push_back(e);
             }
         }
-        if (wires == 1 && digon.size() == 2) {
+        int faceEdgeCount = 0;
+        std::vector<TopoDS_Edge> faceEdgeList;
+        std::set<int> seenFaceEids;
+        for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+            const TopoDS_Edge e = TopoDS::Edge(ex.Current());
+            if (BRep_Tool::Degenerated(e)) continue;
+            const int eid = model.edges.FindIndex(e);
+            if (eid < 1 || !seenFaceEids.insert(eid).second) continue;
+            ++faceEdgeCount;
+            faceEdgeList.push_back(e);
+        }
+        // WireExplorer can report 2 edges while the face still owns more
+        // (mp9_Edited #2005: explorer=2, face TopExp=7). Only take the
+        // digon shortcut when the face itself is a true 2-edge outline.
+        if (wires == 1 && digon.size() == 2 && faceEdgeCount == 2) {
             auto sampleRail = [&](const TopoDS_Edge& edge,
                                   std::vector<gp_Pnt>& pts,
                                   std::vector<gp_Pnt2d>& uvs) {
                 pts.clear();
                 uvs.clear();
                 const int eid = model.edges.FindIndex(edge);
-                int n = (eid >= 1 && eid < int(solvedEdge.size()))
-                            ? solvedEdge[eid]
-                            : 0;
+                if (eid < 1) return false;
+                int n = eid < int(solvedEdge.size()) ? solvedEdge[eid] : 0;
                 if (n < 1) n = std::max(1, radialDefault);
+                const TopoDS_Edge modelEdge =
+                    TopoDS::Edge(model.edges(eid));
                 double f3, l3, f2, l2;
-                Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, f3, l3);
+                Handle(Geom_Curve) c3 = BRep_Tool::Curve(modelEdge, f3, l3);
                 Handle(Geom2d_Curve) c2 =
-                    BRep_Tool::CurveOnSurface(edge, face, f2, l2);
+                    BRep_Tool::CurveOnSurface(modelEdge, face, f2, l2);
+                if (c2.IsNull()) {
+                    c2 = BRep_Tool::CurveOnSurface(edge, face, f2, l2);
+                }
                 if (c3.IsNull() || c2.IsNull()) return false;
+                const double ph = closedEdgePhase(modelEdge, model);
                 const bool rev = edge.Orientation() == TopAbs_REVERSED;
-                for (double t : edgeSampleFractions(eid, n, 0.0, rev,
-                                                    /*includeLast=*/true, pins,
-                                                    &model)) {
+                std::vector<double> fracs = edgeSampleFractions(
+                    eid, n, ph, /*rev=*/false, /*includeLast=*/true, pins,
+                    &model);
+                if (rev) std::reverse(fracs.begin(), fracs.end());
+                for (double t : fracs) {
                     pts.push_back(c3->Value(f3 + (l3 - f3) * t));
                     uvs.push_back(c2->Value(f2 + (l2 - f2) * t));
                 }
@@ -5832,6 +5853,167 @@ bool meshRailLadder(const TopoDS_Face& face, const Model& model, int faceId,
                           nRail};
             }
             return out.mesh().polygons.size() > polyBefore;
+        }
+
+        // Incomplete wire (WireExplorer < face edges): emit a contract-
+        // sampled boundary n-gon so every outline edge is present
+        // (mp9_Edited #2005). Tip-ladders on hand-chained rings can leave
+        // consecutive contract samples without a polygon edge.
+        if (wires == 1 && faceEdgeCount > int(digon.size()) &&
+            faceEdgeCount >= 3) {
+            struct Piece {
+                std::vector<gp_Pnt> p;
+                std::vector<gp_Pnt2d> uv;
+            };
+            std::vector<Piece> pieces;
+            for (const TopoDS_Edge& edge : faceEdgeList) {
+                const int eid = model.edges.FindIndex(edge);
+                if (eid < 1) continue;
+                int n = eid < int(solvedEdge.size()) ? solvedEdge[eid] : 0;
+                if (n < 1) n = std::max(1, radialDefault);
+                const TopoDS_Edge modelEdge =
+                    TopoDS::Edge(model.edges(eid));
+                double f3, l3, f2 = 0, l2 = 1;
+                Handle(Geom_Curve) c3 =
+                    BRep_Tool::Curve(modelEdge, f3, l3);
+                if (c3.IsNull()) continue;
+                Handle(Geom2d_Curve) c2 =
+                    BRep_Tool::CurveOnSurface(modelEdge, face, f2, l2);
+                if (c2.IsNull()) {
+                    c2 = BRep_Tool::CurveOnSurface(edge, face, f2, l2);
+                }
+                const double ph = closedEdgePhase(modelEdge, model);
+                Piece pc;
+                for (double tt : edgeSampleFractions(eid, n, ph, false, true,
+                                                     pins, &model)) {
+                    pc.p.push_back(c3->Value(f3 + (l3 - f3) * tt));
+                    if (!c2.IsNull()) {
+                        pc.uv.push_back(c2->Value(f2 + (l2 - f2) * tt));
+                    } else {
+                        pc.uv.push_back(gp_Pnt2d(0, 0));
+                    }
+                }
+                if (pc.p.size() >= 2) pieces.push_back(std::move(pc));
+            }
+            if (pieces.size() >= 3) {
+                Piece chain = std::move(pieces[0]);
+                std::vector<char> used(pieces.size(), 0);
+                used[0] = 1;
+                bool chainOk = true;
+                for (size_t step = 1; step < pieces.size(); ++step) {
+                    double bd = 1e300;
+                    size_t bi = 0;
+                    bool rev2 = false;
+                    bool found = false;
+                    for (size_t k = 0; k < pieces.size(); ++k) {
+                        if (used[k]) continue;
+                        found = true;
+                        const double dF =
+                            chain.p.back().Distance(pieces[k].p.front());
+                        const double dB =
+                            chain.p.back().Distance(pieces[k].p.back());
+                        if (dF < bd) {
+                            bd = dF;
+                            bi = k;
+                            rev2 = false;
+                        }
+                        if (dB < bd) {
+                            bd = dB;
+                            bi = k;
+                            rev2 = true;
+                        }
+                    }
+                    if (!found) {
+                        chainOk = false;
+                        break;
+                    }
+                    used[bi] = 1;
+                    Piece pc = std::move(pieces[bi]);
+                    if (rev2) {
+                        std::reverse(pc.p.begin(), pc.p.end());
+                        std::reverse(pc.uv.begin(), pc.uv.end());
+                    }
+                    chain.p.insert(chain.p.end(), pc.p.begin() + 1,
+                                   pc.p.end());
+                    chain.uv.insert(chain.uv.end(), pc.uv.begin() + 1,
+                                    pc.uv.end());
+                }
+                if (chainOk && chain.p.size() > 1 &&
+                    chain.p.front().Distance(chain.p.back()) <
+                        1e-6 + BRep_Tool::Tolerance(face)) {
+                    chain.p.pop_back();
+                    chain.uv.pop_back();
+                }
+                if (chainOk && chain.p.size() >= 3) {
+                    std::vector<uint32_t> ids;
+                    ids.reserve(chain.p.size());
+                    for (size_t i = 0; i < chain.p.size(); ++i) {
+                        ids.push_back(out.addVertex(
+                            chain.p[i],
+                            {faceId, chain.uv[i].X(), chain.uv[i].Y()}));
+                    }
+                    const size_t polyBefore = out.mesh().polygons.size();
+                    // Emit both windings into a temp mesh and keep the one
+                    // whose Newell agrees with a corner-sampled surface
+                    // normal (hand-chain order is unordered).
+                    auto emitOrient = [&](bool flip) {
+                        PolyMesh tmp;
+                        MeshBuilder tb(tmp);
+                        std::vector<uint32_t> tids;
+                        tids.reserve(ids.size());
+                        for (size_t i = 0; i < chain.p.size(); ++i) {
+                            tids.push_back(tb.addVertex(
+                                chain.p[i],
+                                {faceId, chain.uv[i].X(), chain.uv[i].Y()}));
+                        }
+                        tb.addPolygon(std::move(tids), faceId, flip);
+                        const auto& poly = tmp.polygons[0];
+                        gp_XYZ nw(0, 0, 0);
+                        for (size_t i = 0; i < poly.size(); ++i) {
+                            const auto& a = tmp.vertices[poly[i]];
+                            const auto& b =
+                                tmp.vertices[poly[(i + 1) % poly.size()]];
+                            nw += gp_XYZ(a[1] * b[2] - a[2] * b[1],
+                                         a[2] * b[0] - a[0] * b[2],
+                                         a[0] * b[1] - a[1] * b[0]);
+                        }
+                        gp_Vec n(0, 0, 0);
+                        Handle(Geom_Surface) S = BRep_Tool::Surface(face);
+                        if (!S.IsNull()) {
+                            // Sample surface at the first edge midpoint
+                            // that has a real UV (skip 0,0 placeholders).
+                            for (size_t i = 0; i < chain.uv.size(); ++i) {
+                                if (std::abs(chain.uv[i].X()) +
+                                        std::abs(chain.uv[i].Y()) <
+                                    1e-18) {
+                                    continue;
+                                }
+                                gp_Pnt sp;
+                                gp_Vec du, dv;
+                                S->D1(chain.uv[i].X(), chain.uv[i].Y(), sp,
+                                      du, dv);
+                                n = du.Crossed(dv);
+                                if (n.Magnitude() > 1e-16) break;
+                            }
+                        }
+                        if (face.Orientation() == TopAbs_REVERSED) {
+                            n.Reverse();
+                        }
+                        const double score =
+                            n.Magnitude() > 1e-16
+                                ? gp_Vec(nw).Dot(n.Normalized())
+                                : 0.0;
+                        return score;
+                    };
+                    const bool flip =
+                        emitOrient(true) > emitOrient(false);
+                    out.addPolygon(std::move(ids), faceId, flip);
+                    if (built) {
+                        *built = {1, int(chain.p.size())};
+                    }
+                    return out.mesh().polygons.size() > polyBefore;
+                }
+            }
         }
     }
 
