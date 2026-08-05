@@ -9380,8 +9380,14 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         // One extra split on a small patch is ordinary STEP bookkeeping and
         // the existing local fold repair handles it cleanly. The destructive
         // absorption fans appear on genuinely complex outlines (7+ edges),
-        // with trimmed tori requiring the stricter 5-edge limit.
-        const size_t safeEdges = st == GeomAbs_Torus ? 5u : 6u;
+        // with trimmed tori requiring the stricter 5-edge limit. Freeform
+        // B-spline panels on Plasticity exports commonly carry 8–12 bookkeeping
+        // edges on a four-sided UV patch (mp9_Edited #3: 10 edges); let Coons
+        // take those rather than the triangulated floor.
+        const size_t safeEdges = st == GeomAbs_Torus ? 5u
+            : (st == GeomAbs_BSplineSurface || st == GeomAbs_BezierSurface)
+                  ? 10u
+                  : 6u;
         if (!compatible && info.edgeIds.size() <= safeEdges) return true;
         if (!compatible) {
             dbg("coons: face %d rejected: opposite chain topology "
@@ -26100,7 +26106,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                 (sparseInfo.featureClass ==
                                          FeatureClass::SphereCap
                                      ? 1
-                                     : 3);
+                                     // Freeform Coons from chained STEP
+                                     // bookkeeping (mp9_Edited #2421: 4
+                                     // folds) keep the grid over a floor web.
+                                     : sparseInfo.featureClass ==
+                                               FeatureClass::Freeform
+                                           ? 4
+                                           : 3);
                         // Open multi-tooth bands (ABC notched drums) carry
                         // more local web folds than the closed-drum cap of
                         // 8; still refuse a zero-fold floor that turns the
@@ -26221,7 +26233,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         liveFp <= (sparseInfo.featureClass ==
                                            FeatureClass::SphereCap
                                        ? 1
-                                       : 3);
+                                       : sparseInfo.featureClass ==
+                                                 FeatureClass::Freeform
+                                             ? 4
+                                             : 3);
                     const int sparseMinN = sparseRibbon ? 4
                                               : sparseRail ? 1
                                                            : 8;
