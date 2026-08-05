@@ -8,27 +8,31 @@ Structured Weft only (accuracy-tessellator excluded). Tip continues from
 | revision | opens | NM | folds | winding | failed-floor | raw | planned-floor | retention |
 |----------|------:|---:|------:|--------:|-------------:|----:|--------------:|----------:|
 | baseline `4a77e4f` | 54 | 39 | 23 | 3 | 1 | 2 | 31 | 0.9889 |
-| openband + digon | 37 | 39 | 28 | 0 | 0 | 1 | 31 | 0.9895 |
-| incomplete-wire n-gon | 37 | 39 | 28 | 8 | 0 | 0 | 31 | 0.9898 |
-| n-gon neighbour flip | 37 | 39 | 28 | 0 | 0 | 0 | 31 | 0.9898 |
+| current tip | 37 | 39 | 28 | 0 | 0 | 0 | 31 | 0.9898 |
 
 ## Classes landed
 
-### Openband side × orthogonal pin
-Reducer: `tests/regressions/mp9/openband_border_contract_fillet.step`
+1. Openband side × orthogonal pin — `openband_border_contract_fillet.step`
+2. Rail-ladder digon fold→raw — `rail_ladder_digon_fold.step`
+3. Incomplete-wire rail-ladder n-gon — clears raw `#2005`
+4. Post-weld neighbour flip — clears `#2005/#2006` winding
 
-### Rail-ladder digon fold → raw
-Reducer: `tests/regressions/mp9/rail_ladder_digon_fold.step`
+## Open residual (research notes)
 
-### Incomplete-wire rail-ladder → contract n-gon + neighbour winding flip
-`#2005`: WireExplorer reports 2 edges but the face owns 6. Emit a
-contract-sampled boundary n-gon from every face edge. Post-weld, if that
-n-gon conflicts with a small neighbour (`#2006`), flip the neighbour when
-it reduces global winding conflicts.
+### Opens (37) / NM (39)
+Leakiest `#1892` (orth RevolutionGrid) vs `#1891` (Coons): ~0.05 same-curve
+near-misses with pins already present. Orth UV station-snap on shared rims
+is implicated; skipping snap cleared near-misses (opens→13) but demoted
+many orth faces (failed-floor→20). Need a snap policy that keeps shared
+rim weld identity without breaking the row builder.
 
-## Still open
-- ~37 unexplained opens / 39 NM (leakiest `#1892` with 9)
-- ~28 folds (led by `#375` cone drum)
-- 31 planned-floor (freeform interior step / non-monotone dominant)
+### Folds (28)
+Led by `#375` cone drum (7).
 
-Release spot-check: flaregun / foam / teleporter watertight at CAD defaults.
+### Planned-floor (31)
+Dominated by freeform interior step / non-monotone orthogonal rejects.
+
+## Parked experiments (regress releases)
+- Broaden `samplePlanarRings` to face TopExp
+- Overwrite shared rev×coons pins with contract fractions
+- Skip all UV snap on shared orth samples
