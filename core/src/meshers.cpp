@@ -25433,7 +25433,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 // Rail-ladder tip search can miss a contract station on a
                 // multi-edge outline; the floor web then fails and OCCT
                 // raw ships (mp9_Edited #2005). A boundary n-gon keeps
-                // exact borders without raw triangulation.
+                // exact borders when it can; otherwise demote as usual.
                 bool rescued = false;
                 if (plan.kind == MesherKind::RailLadder) {
                     PolyMesh ngon;
