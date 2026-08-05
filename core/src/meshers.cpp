@@ -27097,6 +27097,139 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
 
     finish(mesh);
     timingCheckpoint("corner repair + weld");
+
+    // Incomplete-wire rail-ladder n-gons are contract-correct but their
+    // hand-chained order can still fight neighbours on shared edges.
+    // After welding, flip each single-polygon RailLadder face when that
+    // strictly reduces global winding conflicts (mp9_Edited #2005 class).
+    {
+        auto countWinding = [&](const PolyMesh& m) {
+            struct Use {
+                int count = 0;
+                int forward = 0;
+            };
+            std::map<std::pair<uint32_t, uint32_t>, Use> edges;
+            for (const auto& poly : m.polygons) {
+                const size_t n = poly.size();
+                for (size_t i = 0; i < n; ++i) {
+                    uint32_t a = poly[i];
+                    uint32_t b = poly[(i + 1) % n];
+                    if (a == b) continue;
+                    auto key = a < b ? std::make_pair(a, b)
+                                     : std::make_pair(b, a);
+                    auto& use = edges[key];
+                    ++use.count;
+                    if (a < b) ++use.forward;
+                }
+            }
+            size_t conflicts = 0;
+            for (const auto& [key, use] : edges) {
+                (void)key;
+                if (use.count == 2 && use.forward != 1) ++conflicts;
+            }
+            return conflicts;
+        };
+        size_t winding = countWinding(mesh);
+        if (winding > 0) {
+            std::map<int, std::vector<size_t>> facePolys;
+            for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+                if (p >= mesh.polygonFaceId.size()) continue;
+                const int fid = mesh.polygonFaceId[p];
+                if (fid < 1) continue;
+                auto it = plans.find(fid);
+                if (it == plans.end() ||
+                    it->second.kind != MesherKind::RailLadder) {
+                    continue;
+                }
+                facePolys[fid].push_back(p);
+            }
+            for (auto& [fid, polys] : facePolys) {
+                if (polys.size() != 1) continue;  // n-gon path only
+                const size_t pi = polys[0];
+                std::reverse(mesh.polygons[pi].begin(),
+                             mesh.polygons[pi].end());
+                const size_t after = countWinding(mesh);
+                if (after < winding) {
+                    dbg("generate: flip rail-ladder n-gon face %d "
+                        "winding %zu -> %zu",
+                        fid, winding, after);
+                    winding = after;
+                } else {
+                    std::reverse(mesh.polygons[pi].begin(),
+                                 mesh.polygons[pi].end());
+                }
+            }
+            // If a rail-ladder n-gon still conflicts with one neighbour,
+            // try flipping that neighbour when it is a small structured
+            // patch (mp9_Edited #2005/#2006: all conflicts on that pair).
+            if (winding > 0) {
+                struct Use2 {
+                    int count = 0;
+                    int forward = 0;
+                    int fa = -1, fb = -1;
+                };
+                std::map<std::pair<uint32_t, uint32_t>, Use2> edges2;
+                for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+                    const auto& poly = mesh.polygons[p];
+                    const int fid = p < mesh.polygonFaceId.size()
+                                        ? mesh.polygonFaceId[p]
+                                        : -1;
+                    for (size_t i = 0; i < poly.size(); ++i) {
+                        uint32_t a = poly[i];
+                        uint32_t b = poly[(i + 1) % poly.size()];
+                        if (a == b) continue;
+                        auto key = a < b ? std::make_pair(a, b)
+                                         : std::make_pair(b, a);
+                        auto& use = edges2[key];
+                        ++use.count;
+                        if (a < b) ++use.forward;
+                        if (use.fa < 0) use.fa = fid;
+                        else if (use.fb < 0 && fid != use.fa) use.fb = fid;
+                    }
+                }
+                std::map<int, int> conflictWithNgon;
+                for (const auto& [key, use] : edges2) {
+                    (void)key;
+                    if (!(use.count == 2 && use.forward != 1)) continue;
+                    const int a = use.fa, b = use.fb;
+                    auto isNgon = [&](int f) {
+                        auto it = facePolys.find(f);
+                        return it != facePolys.end() && it->second.size() == 1;
+                    };
+                    if (isNgon(a) && b > 0) ++conflictWithNgon[b];
+                    if (isNgon(b) && a > 0) ++conflictWithNgon[a];
+                }
+                for (auto& [fid, nConf] : conflictWithNgon) {
+                    (void)nConf;
+                    std::vector<size_t> polys;
+                    for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+                        if (p < mesh.polygonFaceId.size() &&
+                            mesh.polygonFaceId[p] == fid) {
+                            polys.push_back(p);
+                        }
+                    }
+                    if (polys.empty() || polys.size() > 12) continue;
+                    for (size_t pi : polys) {
+                        std::reverse(mesh.polygons[pi].begin(),
+                                     mesh.polygons[pi].end());
+                    }
+                    const size_t after = countWinding(mesh);
+                    if (after < winding) {
+                        dbg("generate: flip neighbour face %d of "
+                            "rail-ladder n-gon winding %zu -> %zu",
+                            fid, winding, after);
+                        winding = after;
+                    } else {
+                        for (size_t pi : polys) {
+                            std::reverse(mesh.polygons[pi].begin(),
+                                         mesh.polygons[pi].end());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     if (std::getenv("WEFT_FOLD_PROBE")) {
         const auto mask = foldedPolys(model, mesh);
         std::map<int, int> per;
