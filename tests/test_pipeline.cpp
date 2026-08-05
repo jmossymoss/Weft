@@ -2844,6 +2844,23 @@ void testFailedFloorRibbonWindingAndTallRevgrid() {
                              "mp9 openband side pin");
     }
     {
+        // Two-edge extrusion digon: angle-based tip search crossed the
+        // rails and demoted to raw after the floor web also failed.
+        // Digon path + sparse-fold protect keep rail-ladder structured.
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "regressions/mp9/rail_ladder_digon_fold.step";
+        weft::Model model = weft::loadStep(stepPath.string());
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        weft::generate(model, analysis, cad(), &report);
+        assertNoCause(report, "fold check failed", "mp9 digon rail-ladder");
+        CHECK_EQ(weft::summarizeStructure(report).raw, 0);
+        CHECK_EQ(weft::summarizeStructure(report).failedFloor, 0);
+        assertStructuredKind(report, weft::MesherKind::RailLadder,
+                             "mp9 digon rail-ladder");
+    }
+    {
         // nu==1 + natRight shrink zeros the (0,0) cell; the Coons stub must
         // still emit a polygon edge (mp9 deficit-rail stub).
         const std::filesystem::path stepPath =

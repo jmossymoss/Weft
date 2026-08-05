@@ -5646,6 +5646,195 @@ bool meshRailLadder(const TopoDS_Face& face, const Model& model, int faceId,
                     const std::vector<int>& solvedEdge, int radialDefault,
                     MeshBuilder& out, std::array<int, 2>* built = nullptr,
                     const PinnedEdges* pins = nullptr) {
+    // Two-edge digon / extrusion lune: the rails ARE the two B-rep edges.
+    // Angle-based tip search on the sampled outline picks mid-rail kinks and
+    // ladders crossed rungs (mp9_Edited #1073: 4/9 inverted → raw).
+    {
+        std::vector<TopoDS_Edge> digon;
+        int wires = 0;
+        for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+            if (++wires > 1) break;
+            for (BRepTools_WireExplorer we(TopoDS::Wire(wx.Current()), face);
+                 we.More(); we.Next()) {
+                const TopoDS_Edge e = we.Current();
+                if (BRep_Tool::Degenerated(e)) continue;
+                digon.push_back(e);
+            }
+        }
+        if (wires == 1 && digon.size() == 2) {
+            auto sampleRail = [&](const TopoDS_Edge& edge,
+                                  std::vector<gp_Pnt>& pts,
+                                  std::vector<gp_Pnt2d>& uvs) {
+                pts.clear();
+                uvs.clear();
+                const int eid = model.edges.FindIndex(edge);
+                int n = (eid >= 1 && eid < int(solvedEdge.size()))
+                            ? solvedEdge[eid]
+                            : 0;
+                if (n < 1) n = std::max(1, radialDefault);
+                double f3, l3, f2, l2;
+                Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, f3, l3);
+                Handle(Geom2d_Curve) c2 =
+                    BRep_Tool::CurveOnSurface(edge, face, f2, l2);
+                if (c3.IsNull() || c2.IsNull()) return false;
+                const bool rev = edge.Orientation() == TopAbs_REVERSED;
+                for (double t : edgeSampleFractions(eid, n, 0.0, rev,
+                                                    /*includeLast=*/true, pins,
+                                                    &model)) {
+                    pts.push_back(c3->Value(f3 + (l3 - f3) * t));
+                    uvs.push_back(c2->Value(f2 + (l2 - f2) * t));
+                }
+                return pts.size() >= 2;
+            };
+            std::vector<gp_Pnt> Ap, Bp;
+            std::vector<gp_Pnt2d> Auv, Buv;
+            if (!sampleRail(digon[0], Ap, Auv) ||
+                !sampleRail(digon[1], Bp, Buv)) {
+                return false;
+            }
+            // Same-direction rails: both walk wire order, so one rail runs
+            // tip0→tip1 and the other tip1→tip0. Reverse B to share tips.
+            if (Ap.front().Distance(Bp.front()) <
+                    Ap.front().Distance(Bp.back()) &&
+                Ap.back().Distance(Bp.back()) <
+                    Ap.back().Distance(Bp.front())) {
+                // Already tip-aligned (unusual); keep.
+            } else {
+                std::reverse(Bp.begin(), Bp.end());
+                std::reverse(Buv.begin(), Buv.end());
+            }
+            std::vector<uint32_t> A, B;
+            A.reserve(Ap.size());
+            B.reserve(Bp.size());
+            for (size_t i = 0; i < Ap.size(); ++i) {
+                A.push_back(out.addVertex(Ap[i],
+                                          {faceId, Auv[i].X(), Auv[i].Y()}));
+            }
+            for (size_t i = 0; i < Bp.size(); ++i) {
+                B.push_back(out.addVertex(Bp[i],
+                                          {faceId, Buv[i].X(), Buv[i].Y()}));
+            }
+            auto arcs = [](const std::vector<gp_Pnt>& pts) {
+                std::vector<double> f(pts.size(), 0.0);
+                for (size_t i = 1; i < pts.size(); ++i) {
+                    f[i] = f[i - 1] + pts[i].Distance(pts[i - 1]);
+                }
+                const double t = f.back() > 1e-12 ? f.back() : 1.0;
+                for (double& x : f) x /= t;
+                return f;
+            };
+            const bool aSparse = A.size() <= B.size();
+            const std::vector<uint32_t>& S = aSparse ? A : B;
+            const std::vector<uint32_t>& D = aSparse ? B : A;
+            const std::vector<double> sf = arcs(aSparse ? Ap : Bp);
+            const std::vector<double> df = arcs(aSparse ? Bp : Ap);
+            const int m = int(S.size()) - 1;
+            const int nRail = int(D.size()) - 1;
+            std::vector<int> mp(m + 1);
+            mp[0] = 0;
+            mp[m] = nRail;
+            for (int k = 1; k < m; ++k) {
+                int j = mp[k - 1];
+                while (j + 1 < nRail &&
+                       std::abs(df[j + 1] - sf[k]) <=
+                           std::abs(df[j] - sf[k])) {
+                    ++j;
+                }
+                mp[k] = j;
+            }
+            const bool flip = face.Orientation() == TopAbs_REVERSED;
+            const size_t polyBefore = out.mesh().polygons.size();
+            for (int k = 0; k < m; ++k) {
+                std::vector<uint32_t> ring2;
+                if (aSparse) {
+                    ring2 = {S[k], S[k + 1]};
+                    for (int t = mp[k + 1]; t >= mp[k]; --t) {
+                        ring2.push_back(D[t]);
+                    }
+                } else {
+                    for (int t = mp[k]; t <= mp[k + 1]; ++t) {
+                        ring2.push_back(D[t]);
+                    }
+                    ring2.push_back(S[k + 1]);
+                    ring2.push_back(S[k]);
+                }
+                ring2.erase(std::unique(ring2.begin(), ring2.end()),
+                            ring2.end());
+                if (ring2.size() > 1 && ring2.front() == ring2.back()) {
+                    ring2.pop_back();
+                }
+                if (ring2.size() < 3) continue;
+                out.addPolygon(std::move(ring2), faceId, flip);
+            }
+            // Pick the winding that agrees with the surface (digon tips
+            // aligned still leave UV census inverted for one orientation).
+            {
+                Handle(Geom_Surface) S = BRep_Tool::Surface(face);
+                const bool revFace = face.Orientation() == TopAbs_REVERSED;
+                auto countInv = [&](bool flipPolys) {
+                    int inv = 0, tested = 0;
+                    auto& mesh = out.mesh();
+                    for (size_t pi = polyBefore; pi < mesh.polygons.size();
+                         ++pi) {
+                        auto poly = mesh.polygons[pi];
+                        if (flipPolys) {
+                            std::reverse(poly.begin(), poly.end());
+                        }
+                        if (poly.size() < 3) continue;
+                        gp_XYZ nw(0, 0, 0);
+                        double pu = 0, pv = 0;
+                        int anchored = 0;
+                        for (uint32_t vi : poly) {
+                            const Anchor& an = mesh.anchors[vi];
+                            if (an.faceId == faceId) {
+                                pu += an.u;
+                                pv += an.v;
+                                ++anchored;
+                            }
+                        }
+                        for (size_t i = 0; i < poly.size(); ++i) {
+                            const auto& a = mesh.vertices[poly[i]];
+                            const auto& b =
+                                mesh.vertices[poly[(i + 1) % poly.size()]];
+                            nw += gp_XYZ(a[1] * b[2] - a[2] * b[1],
+                                         a[2] * b[0] - a[0] * b[2],
+                                         a[0] * b[1] - a[1] * b[0]);
+                        }
+                        if (nw.Modulus() < 1e-16 || anchored == 0 ||
+                            S.IsNull()) {
+                            continue;
+                        }
+                        pu /= anchored;
+                        pv /= anchored;
+                        gp_Pnt sp;
+                        gp_Vec du, dv;
+                        S->D1(pu, pv, sp, du, dv);
+                        gp_Vec n = du.Crossed(dv);
+                        if (n.Magnitude() < 1e-16) continue;
+                        if (revFace) n.Reverse();
+                        ++tested;
+                        if (gp_Vec(nw).Dot(n) < 0) ++inv;
+                    }
+                    return std::make_pair(tested, inv);
+                };
+                const auto [t0, i0] = countInv(false);
+                const auto [t1c, i1] = countInv(true);
+                if (t1c > 0 && i1 < i0) {
+                    for (size_t pi = polyBefore;
+                         pi < out.mesh().polygons.size(); ++pi) {
+                        std::reverse(out.mesh().polygons[pi].begin(),
+                                     out.mesh().polygons[pi].end());
+                    }
+                }
+            }
+            if (built) {
+                *built = {int(out.mesh().polygons.size() - polyBefore),
+                          nRail};
+            }
+            return out.mesh().polygons.size() > polyBefore;
+        }
+    }
+
     std::vector<PlanarRing> rings;
     if (!samplePlanarRings(face, model, solvedEdge, radialDefault, rings,
                            pins)) {
@@ -5680,8 +5869,15 @@ bool meshRailLadder(const TopoDS_Face& face, const Model& model, int faceId,
     }
     if (t1 == t2 || a2 < M_PI / 6.0) return false;  // no second tip
     const size_t lo = std::min(t1, t2), hi = std::max(t1, t2);
+    // Carry face UV anchors: the fold census prefers them over projecting
+    // the 3D centroid, and a thin extrusion digon projects onto the wrong
+    // branch without them (mp9_Edited #1073 → false 4/9 inverted → raw).
+    const std::vector<gp_Pnt2d>& UV = rings[0].uv;
+    if (UV.size() != N) return false;
     std::vector<uint32_t> ids(N);
-    for (size_t i = 0; i < N; ++i) ids[i] = out.addVertex(P[i], {});
+    for (size_t i = 0; i < N; ++i) {
+        ids[i] = out.addVertex(P[i], {faceId, UV[i].X(), UV[i].Y()});
+    }
     std::vector<uint32_t> A, B;
     std::vector<gp_Pnt> Ap, Bp;
     for (size_t i = lo;; i = (i + 1) % N) {
@@ -5742,6 +5938,68 @@ bool meshRailLadder(const TopoDS_Face& face, const Model& model, int faceId,
         }
         if (ring2.size() < 3) continue;
         out.addPolygon(std::move(ring2), faceId, flip);
+    }
+    // Digon / extrusion lunes often ladder with the UV census inverted
+    // while the opposite winding is clean. Choose the better winding here
+    // so the shared fold demote never trades the strip for raw OCCT
+    // (mp9_Edited #1073: 4/9 inverted → floor web also fails).
+    {
+        Handle(Geom_Surface) S = BRep_Tool::Surface(face);
+        const bool revFace = face.Orientation() == TopAbs_REVERSED;
+        auto countInverted = [&](bool flippedPolys) {
+            int inv = 0, tested = 0;
+            auto& mesh = out.mesh();
+            for (size_t pi = polyBefore; pi < mesh.polygons.size(); ++pi) {
+                auto poly = mesh.polygons[pi];
+                if (flippedPolys) std::reverse(poly.begin(), poly.end());
+                if (poly.size() < 3) continue;
+                gp_XYZ nw(0, 0, 0);
+                double pu = 0, pv = 0;
+                int anchored = 0;
+                for (uint32_t vi : poly) {
+                    const auto& a = mesh.vertices[vi];
+                    // Newell accumulates below; UV from anchors.
+                    (void)a;
+                    const Anchor& an = mesh.anchors[vi];
+                    if (an.faceId == faceId) {
+                        pu += an.u;
+                        pv += an.v;
+                        ++anchored;
+                    }
+                }
+                for (size_t i = 0; i < poly.size(); ++i) {
+                    const auto& a = mesh.vertices[poly[i]];
+                    const auto& b =
+                        mesh.vertices[poly[(i + 1) % poly.size()]];
+                    nw += gp_XYZ(a[1] * b[2] - a[2] * b[1],
+                                 a[2] * b[0] - a[0] * b[2],
+                                 a[0] * b[1] - a[1] * b[0]);
+                }
+                if (nw.Modulus() < 1e-16 || anchored == 0 || S.IsNull()) {
+                    continue;
+                }
+                pu /= anchored;
+                pv /= anchored;
+                gp_Pnt sp;
+                gp_Vec du, dv;
+                S->D1(pu, pv, sp, du, dv);
+                gp_Vec n = du.Crossed(dv);
+                if (n.Magnitude() < 1e-16) continue;
+                if (revFace) n.Reverse();
+                ++tested;
+                if (gp_Vec(nw).Dot(n) < 0) ++inv;
+            }
+            return std::make_pair(tested, inv);
+        };
+        const auto [t0, i0] = countInverted(false);
+        const auto [t1, i1] = countInverted(true);
+        if (t1 > 0 && i1 < i0) {
+            for (size_t pi = polyBefore; pi < out.mesh().polygons.size();
+                 ++pi) {
+                std::reverse(out.mesh().polygons[pi].begin(),
+                             out.mesh().polygons[pi].end());
+            }
+        }
     }
     // Primary = the number of rungs actually laddered (sparse-rail stations);
     // secondary = the dense rail's station count.
@@ -22736,6 +22994,39 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     // T-junctions along its border.
     pinOrthogonalTrimGrids(model, plans, settings, solvedEdge, pinnedEdge);
 
+    // Two-edge rail-ladder digons need equal rail counts for a quad ladder;
+    // a 9-vs-11 solve (or pin inflation on one rail) leaves folded n-gon
+    // rungs (mp9_Edited #1073).
+    for (const auto& [fid, plan] : plans) {
+        if (plan.kind != MesherKind::RailLadder || plan.uEdges.size() != 2) {
+            continue;
+        }
+        const int a = plan.uEdges[0], b = plan.uEdges[1];
+        if (a < 1 || b < 1 || a >= int(solvedEdge.size()) ||
+            b >= int(solvedEdge.size())) {
+            continue;
+        }
+        auto segs = [&](int eid) {
+            int n = std::max(1, solvedEdge[eid]);
+            if (eid < int(pinnedEdge.size()) && !pinnedEdge[eid].empty()) {
+                n = std::max(n, int(pinnedEdge[eid].size()) - 1);
+            }
+            return n;
+        };
+        const int na = segs(a), nb = segs(b);
+        const int want = std::max(na, nb);
+        solvedEdge[a] = want;
+        solvedEdge[b] = want;
+        // Drop per-rail pins so both sides sample the shared uniform count;
+        // otherwise one pin set re-introduces the length mismatch.
+        if (a < int(pinnedEdge.size())) pinnedEdge[a].clear();
+        if (b < int(pinnedEdge.size())) pinnedEdge[b].clear();
+        if (na != nb) {
+            dbg("generate: digon face %d equalize rails %d/%d -> %d", fid, na,
+                nb, want);
+        }
+    }
+
     // Resolve every face's division counts up front (union-find lookups
     // path-compress, so they must not run concurrently) — after this the
     // per-face meshing is embarrassingly parallel.
@@ -25282,11 +25573,17 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 // census already demotes, so try the flip at that same
                 // threshold (mp9 capsule iso-band: ~254/1016 inverted —
                 // short of a majority but enough to take the floor).
+                // RailLadder: two-tip digons / extrusion lunes often emit
+                // with the UV census inverted while the opposite winding
+                // is clean (mp9_Edited #1073: 4/9 inverted → raw after the
+                // contract floor also fails to web the digon).
                 const bool tryWindingFlip =
                     plan.kind == MesherKind::RibbonSweep
                         ? (inverted * 2 >= tested)
-                        : (plan.kind == MesherKind::CoonsGrid &&
-                           plan.isFillet && inverted * 4 >= tested);
+                        : ((plan.kind == MesherKind::CoonsGrid &&
+                            plan.isFillet && inverted * 4 >= tested) ||
+                           (plan.kind == MesherKind::RailLadder &&
+                            inverted * 4 >= tested));
                 if (tryWindingFlip && tested >= 8) {
                     for (auto& poly : parts[fid].polygons) {
                         std::reverse(poly.begin(), poly.end());
@@ -25304,28 +25601,33 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         }
                     }
                 }
-                // Ribbon cells near a sharp crease can still trip the UV
-                // centroid census while every corner normal agrees. Prefer
-                // foldedPolys before majority-demoting a strip.
-                if (plan.kind == MesherKind::RibbonSweep && inverted > 0) {
+                // Ribbon / rail-ladder cells near a sharp crease can still
+                // trip the UV centroid census while every corner normal
+                // agrees. Prefer foldedPolys before majority-demoting.
+                if ((plan.kind == MesherKind::RibbonSweep ||
+                     plan.kind == MesherKind::RailLadder) &&
+                    inverted > 0) {
                     const auto validated = foldedPolys(model, parts[fid]);
                     int cornerInv = 0;
                     for (uint8_t v : validated) {
                         if (v) ++cornerInv;
                     }
                     if (cornerInv < inverted) {
-                        dbg("mesh face %d: ribbon fold revalidate %d -> %d "
+                        dbg("mesh face %d: %s fold revalidate %d -> %d "
                             "by corner normals",
-                            fid, inverted, cornerInv);
+                            fid, mesherKindName(plan.kind), inverted,
+                            cornerInv);
                         inverted = cornerInv;
                     }
                 }
-                // Ribbon strips use a true majority before majority-demote:
+                // Ribbon / rail-ladder use a true majority before demote:
                 // the shared 25% census (inverted*4 > tested) was trading
-                // flaregun's 8/29 strap for a floor web. Sparse folds then
-                // ride the protect path below.
+                // flaregun's 8/29 strap (and mp9 digon 4/9) for a floor web
+                // that then fails and falls to raw OCCT. Sparse folds ride
+                // the protect path below.
                 const bool majorityFolded =
-                    plan.kind == MesherKind::RibbonSweep
+                    (plan.kind == MesherKind::RibbonSweep ||
+                     plan.kind == MesherKind::RailLadder)
                         ? (inverted * 2 > tested)
                         : (inverted * 4 > tested);
                 if (tested >= 8 && majorityFolded) {
@@ -25563,6 +25865,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         // a triangulated floor web (mp9/teleporter straps).
                         const bool sparseRibbon =
                             plan.kind == MesherKind::RibbonSweep;
+                        // Two-tip rail ladders (extrusion digons) likewise —
+                        // a few residual folds must not demote to a floor
+                        // that then fails and falls to raw (mp9 #1073/#1093).
+                        const bool sparseRail =
+                            plan.kind == MesherKind::RailLadder;
                         // A few residual folds on a Coons / quad-fill chart
                         // (teleporter panels, freeform coons with 2–3
                         // tip folds, flaregun disk caps after local
@@ -25586,16 +25893,19 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             sparseDrum && !plan.bandSides.empty()
                                 ? std::max(8, sparseN / 8)
                                 : 8;
-                        const int sparseMinN = sparseRibbon ? 4 : 8;
+                        const int sparseMinN = sparseRibbon ? 4
+                                                  : sparseRail ? 1
+                                                               : 8;
                         const int sparseFoldBudget =
                             sparseRibbon ? sparseN * 2 / 5 + 1
+                            : sparseRail ? std::max(4, sparseN)
                                          : sparseN / 4;
                         const bool sparseProtect =
                             sparseN >= sparseMinN && liveFolds > 0 &&
                             liveFolds <= foldCap &&
                             liveFolds <= sparseFoldBudget &&
                             (sparseDrum || sparseFilletFull ||
-                             sparseRibbon || sparseCoonsOne);
+                             sparseRibbon || sparseRail || sparseCoonsOne);
                         if (sparseProtect) {
                             dbg("mesh face %d: sparse fold keep %s "
                                 "(%d/%d) — refuse contract floor",
@@ -25655,10 +25965,19 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 liveFp = fpCount(parts[fid]);
             }
             if (liveFp > 0) {
+                // Rail-ladder digons: the contract floor often webs cleaner
+                // in the foldedPolys census but then fails border contract
+                // on the full model (or leaves raw). Keep the ladder.
+                if (plan.kind == MesherKind::RailLadder) {
+                    dbg("mesh face %d: rail-ladder foldedPolys keep "
+                        "(%d) — refuse contract floor",
+                        fid, liveFp);
+                    liveFp = 0;
+                }
                 // Same sparse-fold protect as the invertedCells tournament
                 // (Drum×RevolutionGrid, FilletStrip×FullPeriod, RibbonSweep,
                 // non-sphere Coons).
-                {
+                if (liveFp > 0) {
                     const FaceInfo& sparseInfo = analysis.faces[fid - 1];
                     const int sparseN = int(parts[fid].polygons.size());
                     const bool sparseDrum =
@@ -25677,6 +25996,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             : 8;
                     const bool sparseRibbon =
                         plan.kind == MesherKind::RibbonSweep;
+                    const bool sparseRail =
+                        plan.kind == MesherKind::RailLadder;
                     const bool sparseCoonsOne =
                         (plan.kind == MesherKind::CoonsGrid ||
                          plan.kind == MesherKind::QuadFill) &&
@@ -25685,13 +26006,17 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                            FeatureClass::SphereCap
                                        ? 1
                                        : 3);
-                    const int sparseMinN = sparseRibbon ? 4 : 8;
+                    const int sparseMinN = sparseRibbon ? 4
+                                              : sparseRail ? 1
+                                                           : 8;
                     const int sparseFoldBudget =
-                        sparseRibbon ? sparseN * 2 / 5 + 1 : sparseN / 4;
+                        sparseRibbon ? sparseN * 2 / 5 + 1
+                        : sparseRail ? std::max(4, sparseN)
+                                     : sparseN / 4;
                     if (sparseN >= sparseMinN && liveFp > 0 &&
                         liveFp <= foldCap && liveFp <= sparseFoldBudget &&
                         (sparseDrum || sparseFilletFull || sparseRibbon ||
-                         sparseCoonsOne)) {
+                         sparseRail || sparseCoonsOne)) {
                         dbg("mesh face %d: sparse foldedPolys keep %s "
                             "(%d/%d) — refuse contract floor",
                             fid, mesherKindName(plan.kind), liveFp, sparseN);

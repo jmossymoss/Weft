@@ -1,47 +1,31 @@
 # WP6 — mp9_Edited perfect-topology campaign
 
-Source tip: structured Weft (accuracy-tessellator excluded).
+Structured Weft only (accuracy-tessellator excluded). Tip continues from
+`cursor/axial1-straight-columns-fff5`.
 
-## Phase 1 baseline (`4a77e4f`)
+## Metrics (CAD default)
 
-```sh
-build/cli/weft mesh tests/STEP_Examples/mp9_Edited.stp \
-  -o /tmp/mp9e.obj --profile cad --validate --why
-```
+| revision | opens | NM | folds | winding | failed-floor | raw | planned-floor | retention |
+|----------|------:|---:|------:|--------:|-------------:|----:|--------------:|----------:|
+| baseline `4a77e4f` | 54 | 39 | 23 | 3 | 1 | 2 | 31 | 0.9889 |
+| openband side-pin fix | 51 | 39 | 23 | 3 | 0 | 2 | 31 | 0.9892 |
+| rail-ladder digon | 37 | 39 | 28 | 0 | 0 | 1 | 31 | 0.9895 |
 
-| metric | baseline |
-|--------|------:|
-| open edges (unexplained) | 54 |
-| non-manifold | 39 |
-| folded polygons | 23 |
-| winding conflicts | 3 |
-| planned-floor | 31 |
-| failed-floor | 1 |
-| raw | 2 |
-| retention | 0.9889 |
+## Classes landed
 
-## Class: openband side × orthogonal pin
-
+### Openband side × orthogonal pin
 Reducer: `tests/regressions/mp9/openband_border_contract_fillet.step`
+Skip orthogonal station pins on `bandSides`; sample sides via
+`edgeSampleFractions`.
 
-Root cause: `pinOrthogonalTrimGrids` pinned open-band *side* meridians with
-station crossings, so the pin set outgrew the band's `nv`. Open-band
-`sampleSide` emitted uniform `nv` samples while the border contract demanded
-pin stations → `border contract failed` / failed-floor.
+### Rail-ladder digon fold → raw
+Reducer: `tests/regressions/mp9/rail_ladder_digon_fold.step`
+Two-edge extrusion digons use the B-rep edges as rails (not angle tips),
+carry UV anchors, equalize rail counts, majority fold demote + sparse
+fold protect so the ladder is not traded for a floor/raw path.
 
-Fix: skip orthogonal pins on edges that are `bandSides` of a RevolutionGrid
-open band; sample sides via `edgeSampleFractions` (shared contract).
-
-### After fix
-
-| metric | mp9_Edited |
-|--------|------:|
-| open edges | 51 |
-| non-manifold | 39 |
-| folded | 23 |
-| failed-floor | 0 |
-| raw | 2 |
-| planned-floor | 31 |
-| retention | 0.9892 |
-
-Reducer: structured=9, failed-floor=0, retention=1.0.
+## Still open
+- raw face `#2005` (border contract failed)
+- ~37 unexplained opens / 39 NM
+- ~28 folds (led by `#375` cone drum)
+- 31 planned-floor (freeform interior step dominant)
