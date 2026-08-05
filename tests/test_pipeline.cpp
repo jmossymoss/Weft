@@ -2825,6 +2825,25 @@ void testFailedFloorRibbonWindingAndTallRevgrid() {
                              "mp9 tall side scallop");
     }
     {
+        // Orthogonal station pins on an open-band SIDE inflate the pin set
+        // past the band's nv; the band then misses the border contract (or
+        // demotes). Skip side pins and sample sides through the shared
+        // contract fractions (mp9_Edited fillet iso-band cluster).
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "regressions/mp9/openband_border_contract_fillet.step";
+        weft::Model model = weft::loadStep(stepPath.string());
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        weft::generate(model, analysis, cad(), &report);
+        assertNoCause(report, "border contract failed",
+                      "mp9 openband side pin");
+        assertNoCause(report, "open band failed", "mp9 openband side pin");
+        CHECK_EQ(weft::summarizeStructure(report).failedFloor, 0);
+        assertStructuredKind(report, weft::MesherKind::RevolutionGrid,
+                             "mp9 openband side pin");
+    }
+    {
         // nu==1 + natRight shrink zeros the (0,0) cell; the Coons stub must
         // still emit a polygon edge (mp9 deficit-rail stub).
         const std::filesystem::path stepPath =

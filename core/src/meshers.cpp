@@ -12543,8 +12543,10 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
             }
         }
     }
-    // Side columns: uniform curve steps, corner verts shared with the
-    // chains so the band welds to itself without tolerance games.
+    // Side columns: emit the shared border-contract samples (arc-length /
+    // pins), with corner verts shared with the rim chains so the band
+    // welds without tolerance games. Uniform parameter steps miss pin
+    // stations that orthogonal neighbours inject onto a side edge.
     auto sampleSide = [&](int eid, std::vector<uint32_t>& ids,
                           std::vector<double>& ws, uint32_t idW0,
                           uint32_t idW1) {
@@ -12554,10 +12556,13 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
             BRep_Tool::CurveOnSurface(edge, face, f2, l2);
         Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, f3, l3);
         if (pc.IsNull() || c3.IsNull()) return false;
-        // Row j must land on sample j whichever way the curve runs; the
-        // sample SET {i/n} is direction-independent, so the contract
-        // holds either way.
+        // Row j must land on sample j whichever way the curve runs; order
+        // samples from the cut rim (low w) to the plain rim (high w).
         const bool up = wOf(pc->Value(f2).Y()) <= wOf(pc->Value(l2).Y());
+        const std::vector<double> fracs = edgeSampleFractions(
+            eid, nv, /*ph=*/0.0, /*rev=*/!up, /*includeLast=*/true, pins,
+            &model);
+        if (int(fracs.size()) != nv + 1) return false;
         ids.resize(nv + 1);
         ws.assign(nv + 1, 0.0);
         ws[nv] = wspan;
@@ -12570,7 +12575,7 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
                 ids[j] = idW1;
                 continue;
             }
-            const double t = up ? double(j) / nv : 1.0 - double(j) / nv;
+            const double t = fracs[j];
             gp_Pnt2d uv = pc->Value(f2 + (l2 - f2) * t);
             ws[j] = wOf(uv.Y());
             ids[j] = wb.addVertex(c3->Value(f3 + (l3 - f3) * t),
@@ -15487,8 +15492,20 @@ void pinOrthogonalTrimGrids(const Model& model,
         // stitch absorbs any residual station drift.
         for (int e : plan.orthogonalEdges) {
             bool insertRevRim = false;
+            bool openbandSide = false;
             for (const auto& [ofid, opl] : plans) {
                 (void)ofid;
+                if (opl.kind == MesherKind::RevolutionGrid &&
+                    opl.bandSides.size() == 2 &&
+                    (opl.bandSides[0] == e || opl.bandSides[1] == e)) {
+                    // Open-band sides own the row contract at the solved
+                    // density. Orthogonal station pins here inflate the
+                    // pin set past nv and demote the band (border contract
+                    // miss) or force a solvedEdge raise that breaks other
+                    // orth faces. Rim edges of the same band still pin.
+                    openbandSide = true;
+                    break;
+                }
                 if (opl.kind != MesherKind::RevolutionGrid) continue;
                 if (opl.insertWires.empty()) continue;
                 for (int ue : opl.uEdges) {
@@ -15499,7 +15516,7 @@ void pinOrthogonalTrimGrids(const Model& model,
                 }
                 if (insertRevRim) break;
             }
-            if (insertRevRim) continue;
+            if (insertRevRim || openbandSide) continue;
             pinEdge(e, true, true);
         }
     }
