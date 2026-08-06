@@ -1201,25 +1201,14 @@ double ringAnchorAngle(const gp_Circ& circ) {
 
 // Lazy vertex->edges adjacency per model (read-only after build; the
 // mutex covers concurrent meshing threads).
-const EdgeFaceMap& modelVertexEdges(
-    const Model& model) {
-    static std::mutex mx;
-    static std::map<const void*, std::unique_ptr<EdgeFaceMap>> cache;
-    std::lock_guard<std::mutex> lock(mx);
-    const void* key = model.shape.TShape().get();
-    if (!cache.count(key) && cache.size() > 8) {
-        // Bounded: drop other models' maps (session apps reload often).
-        for (auto it = cache.begin(); it != cache.end();) {
-            it = it->first != key ? cache.erase(it) : std::next(it);
-        }
-    }
-    auto& slot = cache[key];
-    if (!slot) {
-        slot = std::make_unique<EdgeFaceMap>();
-        TopExp::MapShapesAndAncestors(model.shape, TopAbs_VERTEX,
-                                      TopAbs_EDGE, *slot);
-    }
-    return *slot;
+EdgeFaceMap modelVertexEdges(const Model& model) {
+    // By-value rebuild. A TShape*-keyed cache is incorrect when OCCT
+    // recycles pointers across destroyed Models (order-dependent wrong
+    // adjacency / SIGSEGV in the pipeline suite).
+    EdgeFaceMap map;
+    TopExp::MapShapesAndAncestors(model.shape, TopAbs_VERTEX, TopAbs_EDGE,
+                                  map);
+    return map;
 }
 
 // Sample-phase fraction for an edge: >0 only for closed CIRCULAR edges
@@ -1237,7 +1226,7 @@ double closedEdgePhase(const TopoDS_Edge& edge, const Model& model) {
     if (c->Value(f).Distance(c->Value(l)) > 1e-9) return 0.0;
     GeomAdaptor_Curve gc(c, f, l);
     if (gc.GetType() != GeomAbs_Circle) return 0.0;
-    const auto& v2e = modelVertexEdges(model);
+    const EdgeFaceMap v2e = modelVertexEdges(model);
     TopoDS_Vertex va, vb;
     TopExp::Vertices(edge, va, vb);
     for (const TopoDS_Vertex& v : {va, vb}) {
@@ -26630,6 +26619,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                  FeatureClass::Freeform)
                                 ? 3
                                 : 2;
+                        // Cone drums with tip folds (#375/#1579) remesh as
+                        // MinimalNGon. Cylinder drums must keep
+                        // RevolutionGrid (fillet-density ownership tests).
+                        const bool tipConeDrum =
+                            sparseDrum &&
+                            plan.kind == MesherKind::RevolutionGrid &&
+                            surf.GetType() == GeomAbs_Cone;
                         const bool tipFoldNgon =
                             sparseProtect && s.minimal &&
                             liveFolds > 0 && liveFolds <= tipFoldBudget &&
@@ -26637,8 +26633,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                   FeatureClass::Freeform &&
                               (sparseCoonsOne || tipRibbon ||
                                tipFreeformRev)) ||
-                             (sparseDrum &&
-                              plan.kind == MesherKind::RevolutionGrid));
+                             tipConeDrum);
                         if (tipFoldNgon) {
                             PolyMesh ngon;
                             MeshBuilder nb(ngon);
@@ -26783,9 +26778,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     const bool tipFreeformRevFp =
                         sparseInfo.featureClass == FeatureClass::Freeform &&
                         plan.kind == MesherKind::RevolutionGrid;
-                    const bool tipDrumFp =
+                    const bool tipConeDrumFp =
                         sparseDrum &&
-                        plan.kind == MesherKind::RevolutionGrid;
+                        plan.kind == MesherKind::RevolutionGrid &&
+                        BRepAdaptor_Surface(
+                            TopoDS::Face(model.faces(fid)), Standard_True)
+                                .GetType() == GeomAbs_Cone;
                     const int tipFoldBudgetFp =
                         (sparseCoonsOne &&
                          sparseInfo.featureClass == FeatureClass::Freeform)
@@ -26797,7 +26795,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                               FeatureClass::Freeform &&
                           (sparseCoonsOne || tipRibbonFp ||
                            tipFreeformRevFp)) ||
-                         tipDrumFp)) {
+                         tipConeDrumFp)) {
                         PolyMesh ngon;
                         MeshBuilder nb(ngon);
                         if (meshMinimalPlanar(face, model, fid, solvedEdge,
