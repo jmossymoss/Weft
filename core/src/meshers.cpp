@@ -21759,15 +21759,10 @@ void absorbOrphanSeamStations(PolyMesh& mesh, const Model& model,
         auto pa = plans->find(fA);
         auto pb = plans->find(fB);
         if (pa == plans->end() || pb == plans->end()) continue;
-        auto isOrthRev = [](const FacePlan& p) {
-            return p.kind == MesherKind::RevolutionGrid &&
-                   p.orthogonalTrimGrid;
-        };
-        auto isCoons = [](const FacePlan& p) {
-            return p.kind == MesherKind::CoonsGrid;
-        };
-        if (!((isOrthRev(pa->second) && isCoons(pb->second)) ||
-              (isOrthRev(pb->second) && isCoons(pa->second)))) {
+        // Any structured×structured shared edge may carry denser-side
+        // orphans (not only orth×coons).
+        if (pa->second.kind == MesherKind::Fallback ||
+            pb->second.kind == MesherKind::Fallback) {
             continue;
         }
         double cf = 0, cl = 0;
@@ -21975,15 +21970,8 @@ void absorbOrphanSeamStations(PolyMesh& mesh, const Model& model,
         auto pa = plans->find(fA);
         auto pb = plans->find(fB);
         if (pa == plans->end() || pb == plans->end()) continue;
-        auto isOrthRev = [](const FacePlan& p) {
-            return p.kind == MesherKind::RevolutionGrid &&
-                   p.orthogonalTrimGrid;
-        };
-        auto isCoons = [](const FacePlan& p) {
-            return p.kind == MesherKind::CoonsGrid;
-        };
-        if (!((isOrthRev(pa->second) && isCoons(pb->second)) ||
-              (isOrthRev(pb->second) && isCoons(pa->second)))) {
+        if (pa->second.kind == MesherKind::Fallback ||
+            pb->second.kind == MesherKind::Fallback) {
             continue;
         }
         double cf = 0, cl = 0;
