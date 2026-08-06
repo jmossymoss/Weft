@@ -22058,7 +22058,8 @@ void absorbOrphanSeamStations(PolyMesh& mesh, const Model& model,
                         best = u;
                     }
                 }
-                if (best == v || bd > 0.12 * 0.12) continue;
+                // Residual #1892↔#1891 near-misses land around 0.05–0.26.
+                if (best == v || bd > 0.28 * 0.28) continue;
                 for (size_t p : pitSelf->second) {
                     for (uint32_t& q : mesh.polygons[p]) {
                         if (q == v) q = best;
@@ -22117,12 +22118,14 @@ void unionSeams(PolyMesh& mesh, const Model& model, double weldTol) {
             // an open edge on a CURVED border (cylinder rim, fillet rail)
             // lies on the arc, not the chord — its sagitta reaches 21% of
             // the chord at a 90-degree span, so an 8% chord slack silently
-            // dropped every curved seam. Allow 25% perpendicular drift
-            // plus an ellipse detour bound (|uw|+|wv| vs |uv|); the walk's
-            // monotone parameter and the exact topological closure at u
-            // remain the real gatekeepers.
+            // dropped every curved seam. Allow 35% perpendicular drift
+            // (matches stitchSeams; mp9_Edited #1892↔#1886 fillet path
+            // measured 32% and was rejected at 25%) plus an ellipse
+            // detour bound (|uw|+|wv| vs |uv|); the walk's monotone
+            // parameter and the exact topological closure at u remain
+            // the real gatekeepers.
             const double chord = std::sqrt(ee);
-            const double slack = std::max(weldTol * 2.0, 0.25 * chord);
+            const double slack = std::max(weldTol * 2.0, 0.35 * chord);
             auto onSegment = [&](uint32_t w, double tMax, double& tOut) {
                 const auto& W = mesh.vertices[w];
                 double px = W[0] - U[0], py = W[1] - U[1], pz = W[2] - U[2];
@@ -27726,6 +27729,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         // Orth×coons rims: exclusive denser stations stitch cannot absorb
         // when the sparse side has no open spanning chord (#1891/#1892).
         absorbOrphanSeamStations(mesh, model, weldGlobal, &plans);
+        // Stitch can leave a long open chord against a curved fillet path
+        // that only exists after denser-side edits (mp9_Edited #1892↔#1886:
+        // 32% sagitta complement). Re-run the n-gon absorber with the
+        // widened 35% slack.
+        if (settings.conformBorders) {
+            unionSeams(mesh, model, weldGlobal);
+        }
         // FreeformComb lattices leave near-duplicate stations that only
         // become mutual after the first splice. A second fuse+stitch
         // pass closes the residual T-junctions (#1805 f2↔f5).
@@ -27733,6 +27743,9 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             fuseSeamTwins(mesh, model, weldGlobal, &fellBack, &plans);
             stitchSeams(mesh, model, weldGlobal, &plans, &fellBack);
             absorbOrphanSeamStations(mesh, model, weldGlobal, &plans);
+            if (settings.conformBorders) {
+                unionSeams(mesh, model, weldGlobal);
+            }
         }
         if (std::getenv("WEFT_FOLD_PROBE")) {
             const auto mask = foldedPolys(model, mesh);
@@ -27873,6 +27886,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             mesh.polygons = std::move(polys);
             mesh.polygonFaceId = std::move(polyFace);
             dbg("generate: %zu folded polygons dropped", drop.size());
+            // Dropping a flap can reopen a curved-fillet complement that
+            // stitch had closed as a multi-edge path (mp9_Edited
+            // #1892↔#1886). Re-absorb while the 35% sagitta slack still
+            // sees the neighbour's arc.
+            if (settings.conformBorders) {
+                unionSeams(mesh, model, weldGlobal);
+            }
         }
 
         // Post-stitch / post-flap geometric folds: per-face centre-fan and

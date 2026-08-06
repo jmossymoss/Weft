@@ -15,6 +15,7 @@ Structured Weft only (accuracy-tessellator excluded). Tip continues from
 | ribbon-aware safeEdges | 33 | 39 | 32 | 0 | 0 | 0 | 24 | 0.9921 |
 | freeform n-gon floor rescue | 33 | 39 | 32 | 0 | 0 | 0 | 19 | 0.9938 |
 | wideDrum ≤1 inset + nearFull | 33 | 39 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
+| unionSeams 35% + post-fold | 30 | 39 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
 
 ## Classes landed
 
@@ -49,3 +50,10 @@ with an orthogonal RevolutionGrid.
 exclusive stations onto the partner within 0.12. Opens 40→36;
 #1892 opens 9→5 (residual: 1×#1886 long T-junction + 4×#1891).
 Coons chained sides now keep every pin station (`includeLast`).
+
+### unionSeams 35% sagitta + post-fold re-absorb
+
+Fillet complement paths can sit at ~32% chord sagitta; the prior 25%
+slack rejected them. Raising to 35% (stitch parity) and re-running
+unionSeams after folded-polygon drops closes the #1892↔#1886 long open
+(opens 33→30).
