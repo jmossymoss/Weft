@@ -9394,11 +9394,14 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         // with trimmed tori requiring the stricter 5-edge limit. Freeform
         // B-spline panels on Plasticity exports commonly carry 8–12 bookkeeping
         // edges on a four-sided UV patch (mp9_Edited #3: 10 edges); let Coons
-        // take those rather than the triangulated floor.
-        const size_t safeEdges = st == GeomAbs_Torus ? 5u
-            : (st == GeomAbs_BSplineSurface || st == GeomAbs_BezierSurface)
-                  ? 14u
-                  : 6u;
+        // take those rather than the triangulated floor. Ribbon-detectable
+        // strips keep the stricter 6-edge gate so they still reach
+        // RibbonSweep (teleporter skinny-rail / winding reducers).
+        size_t safeEdges = st == GeomAbs_Torus ? 5u : 6u;
+        if ((st == GeomAbs_BSplineSurface || st == GeomAbs_BezierSurface) &&
+            !ribbonDetect(face, model)) {
+            safeEdges = 14u;
+        }
         if (!compatible && info.edgeIds.size() <= safeEdges) return true;
         if (!compatible) {
             dbg("coons: face %d rejected: opposite chain topology "
