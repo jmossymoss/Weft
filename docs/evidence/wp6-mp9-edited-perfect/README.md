@@ -9,18 +9,21 @@ Structured Weft only (accuracy-tessellator excluded). Tip continues from
 |----------|------:|---:|------:|--------:|-------------:|----:|--------------:|----------:|
 | baseline `4a77e4f` | 54 | 39 | 23 | 3 | 1 | 2 | 31 | 0.9889 |
 | validity clears | 37 | 39 | 28 | 0 | 0 | 0 | 31 | 0.9898 |
-| freeform Coons chains | 40 | 39 | 33 | 0 | 0 | 0 | 24 | 0.9921 |
+| freeform Coons chains | 40 | 39 | 32 | 0 | 0 | 0 | 26 | 0.9915 |
 
 ## Classes landed
 
 1. Openband side × orthogonal pin — `openband_border_contract_fillet.step`
 2. Rail-ladder digon fold→raw — `rail_ladder_digon_fold.step`
-3. Incomplete-wire rail-ladder n-gon + neighbour winding flip — clears `#2005` raw/winding
-4. Freeform B-spline Coons chain compatibility up to 10 edges + sparse fold protect (4) for Freeform Coons — planned-floor 31→24
+3. Incomplete-wire rail-ladder n-gon + neighbour winding flip — `#2005`
+4. Freeform B-spline Coons chain compatibility (≤10 edges) + Freeform sparse-fold
+   protect (≤4) — reducer `freeform_coons_chain_panel.step`
 
 ## Still open
 - 40 unexplained opens / 39 NM (leakiest `#1892` orth×coons rim)
-- 33 folds (led by `#375`)
-- 24 planned-floor
+- 32 folds (led by `#375`)
+- 26 planned-floor (freeform interior step / no fourth corner / drum inset `#65`)
 
-Release spot-check: flaregun / foam / teleporter watertight at CAD defaults.
+## Parked experiments
+- Orth shared-rim UV snap skip (opens↓, failed-floor↑)
+- Shared rev×coons pin overwrite (release failed-floor)
