@@ -27,3 +27,13 @@ Structured Weft only (accuracy-tessellator excluded). Tip continues from
 ## Parked experiments
 - Orth shared-rim UV snap skip (opens↓, failed-floor↑)
 - Shared rev×coons pin overwrite (release failed-floor)
+
+## Open-edge diagnosis (#1891/#1892)
+
+Shared B-rep edge 5482: stitch sees sides 27/31 (coons/orth), not equal.
+Coons candidate border segments on the curve: 26, all already shared with
+orth (`open=0`). Orth has 4 open segments. Orth emits exclusive rim verts
+that do not fall between any Coons border chord on this curve — Coons is
+not covering the full pin param range on the shared rim. Next: force
+Coons border sampling to emit every pin fraction on 2-owner edges shared
+with an orthogonal RevolutionGrid.
