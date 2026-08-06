@@ -17,6 +17,7 @@ Structured Weft only (accuracy-tessellator excluded). Tip continues from
 | wideDrum ≤1 inset + nearFull | 33 | 39 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
 | unionSeams 35% + post-fold | 30 | 39 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
 | absorb near-miss all-partner | 25 | 39 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
+| unionSeams deepest-t pick | 7 | 39 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
 
 ## Classes landed
 

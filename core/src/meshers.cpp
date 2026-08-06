@@ -22161,28 +22161,27 @@ void unionSeams(PolyMesh& mesh, const Model& model, double weldTol) {
             for (int step = 0; step < 24 && !closed; ++step) {
                 uint32_t nxt = UINT32_MAX;
                 double tNxt = 0;
-                bool ambiguous = false;
+                bool canClose = false;
+                // When several on-chord candidates exist (common at drum
+                // corners), take the deepest into the open chord (smallest
+                // t). Bailing on "ambiguous" left mp9_Edited #631–#643 /
+                // #1853 long opens with clear 2-hop complements unabsorbed.
                 for (auto it = outOf.lower_bound(cur);
                      it != outOf.end() && it->first == cur; ++it) {
                     const uint32_t w = it->second;
-                    if (w == u && !path.empty()) {
-                        if (count.count({w, u})) {}
-                        // direct closure candidate handled below
-                    }
                     if (w == u) {
-                        if (!path.empty()) { nxt = u; tNxt = 0; }
+                        if (!path.empty()) canClose = true;
                         continue;
                     }
                     double t;
                     if (!onSegment(w, tCur - 1e-9, t)) continue;
-                    if (nxt != UINT32_MAX && nxt != u) {
-                        ambiguous = true;  // two candidates: bail, safety
-                        break;
+                    if (nxt == UINT32_MAX || t < tNxt) {
+                        nxt = w;
+                        tNxt = t;
                     }
-                    if (nxt == UINT32_MAX || nxt == u) { nxt = w; tNxt = t; }
                 }
-                if (ambiguous || nxt == UINT32_MAX) break;
-                if (nxt == u) { closed = true; break; }
+                if (canClose) { closed = true; break; }
+                if (nxt == UINT32_MAX) break;
                 path.push_back(nxt);
                 cur = nxt;
                 tCur = tNxt;
@@ -28599,6 +28598,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 "pair(s)",
                 pass, fuse.size());
         }
+    }
+
+    // Final seam absorb: fold geoheal / micro-nm passes can reopen curved
+    // complement paths that earlier unionSeams closed (or create new long
+    // open chords against already-shared endpoints).
+    if (settings.conformBorders) {
+        unionSeams(mesh, model, weldGlobal);
     }
 
     dbg("generate: done (%zu verts, %zu polys)", mesh.vertexCount(),
