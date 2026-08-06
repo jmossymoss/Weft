@@ -2316,6 +2316,8 @@ void testMp9EditedWatertight() {
     CHECK_EQ(summary.raw, 0);
     CHECK_EQ(summary.empty, 0);
     CHECK_EQ(summary.failedFloor, 0);
+    CHECK_EQ(summary.plannedFloor, 0);
+    CHECK_EQ(summary.structured, summary.total);
     const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
     CHECK_EQ(vr.openEdges, 0);
     CHECK_EQ(vr.nonManifoldEdges, 0);

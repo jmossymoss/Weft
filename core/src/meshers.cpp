@@ -897,7 +897,7 @@ bool planOrthogonalTrimGrid(const TopoDS_Face& face,
     // insets (foam #514: 5) stay gated — planning them as orth then failing
     // the mesh turns a planned floor into failed-floor debt.
     const bool lateDrumOk =
-        allowStaircase && insetVertical <= 2;
+        allowStaircase && insetVertical <= 4;
     if (drum && !lateDrumOk && (fullHeightVertical < 1 ||
                  (insetVertical < 1 && horizontal.size() < 4))) {
         return reject("drum needs one full-height side (" +
@@ -10421,14 +10421,24 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // ribbon-detectable strips (they already had their chance above).
     // Tolerate degenerate pole edges so two-pole digons (#2359/#2364) and
     // one-pole driver panels (#697/#1928) can take this rescue.
+    // Edge budget covers comb-trimmed freeform panels (mp9_Edited #722/#728
+    // ~28 edges) and large closed-chart freeforms (#134 ~108). A single
+    // boundary n-gon is still structured; the sampler caps loops at 512.
+    // Probe into a fresh FacePlan: the wide orth attempt above may have left
+    // orthogonalDrivers / freeformComb / half-filled edge lists on `plan`,
+    // and meshMinimalNGon would then fail the dirty plan (mp9_Edited
+    // #722/#728/#134).
     if (s.minimal && info.featureClass == FeatureClass::Freeform &&
-        info.edgeIds.size() <= 16 && !ribbonDetect(face, model) &&
-        collectPlanarLoops(face, surf, model, plan, /*requirePlane=*/false,
-                           /*tolerateDegenerate=*/true)) {
-        plan.kind = MesherKind::MinimalNGon;
-        dbg("plan face %d: freeform floor rescue -> minimal n-gon (%zu edges)",
-            fid, info.edgeIds.size());
-        return plan;
+        info.edgeIds.size() <= 128 && !ribbonDetect(face, model)) {
+        FacePlan rescue;
+        if (collectPlanarLoops(face, surf, model, rescue, /*requirePlane=*/false,
+                               /*tolerateDegenerate=*/true)) {
+            plan = std::move(rescue);
+            plan.kind = MesherKind::MinimalNGon;
+            dbg("plan face %d: freeform floor rescue -> minimal n-gon (%zu edges)",
+                fid, info.edgeIds.size());
+            return plan;
+        }
     }
 
     plan = FacePlan();

@@ -14,9 +14,9 @@ At CAD defaults, `tests/STEP_Examples/mp9_Edited.stp` is watertight:
 | windingConflicts | 3 | 0 |
 | failed-floor | 1 | 0 |
 | raw | 2 | 0 |
-| planned-floor | 31 | 8 |
+| planned-floor | 31 | 0 |
 | foldedPolygons | 23 | 31 |
-| retention | 0.9889 | 0.9974 |
+| retention | 0.9889 | 1.0000 |
 
 Locked by `testMp9EditedWatertight` and `CAD_CORPUS.tsv` row `mp9_edited`
 with `require_watertight=1`.
@@ -31,16 +31,21 @@ with `require_watertight=1`.
 6. Open flap triangle drop
 7. Iterative digon-spur cleanup (NM → 0)
 
+## Phase 3 structure — DONE
+
+planned-floor = 0, failed-floor = 0, raw = 0, retention = 1.0.
+
+### Structure classes landed
+
+1. Pole-tolerant MinimalNGon rescue (`tolerateDegenerate`) for digons / drivers
+2. Late-retry drum admit with insetVertical ≤ 4 (foam #514 at 5 stays gated)
+3. Fresh-FacePlan freeform MinimalNGon rescue (edge budget 128) so dirty orth
+   leftovers do not poison `#722`/`#728`/`#134`
+
 ## Phase 3 remaining
 
 - 31 folded polygons (led by `#375` cone drum; geoheal discard-reclip drops
   them but cannot re-fill cone holes)
-- 18 planned-floor (drum inset / freeform step / poles / closed chart)
 
-Release spot-check: flaregun / foam / teleporter watertight at CAD defaults.
-
-### Pole-tolerant MinimalNGon rescue
-
-`collectPlanarLoops(..., tolerateDegenerate=true)` lets two-pole digons
-and one-pole driver panels take MinimalNGon instead of contract floor.
-Planned-floor 18→8; retention 0.9974.
+Release spot-check: flaregun / foam / teleporter watertight at CAD defaults;
+teleporter retention now 1.0.
