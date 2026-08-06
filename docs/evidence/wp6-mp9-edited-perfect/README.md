@@ -70,6 +70,13 @@ RevolutionGrid drums with ≤2 residual folds, to MinimalNGon when the
 census improves. Flaregun earclip (16 edges) and dense-fold straps stay
 RibbonSweep. Folds 11→3.
 
+### Late tip-fold re-snap
+
+After weld, exclusive-face verts on polygons with ≤2 late folds are
+re-snapped to UV anchors when that clears folds without raising winding
+or global fold count. Residual #133/#3025 use shared seam verts (still
+open).
+
 ## Phase 3 remaining
 
 - 31 folded polygons (led by `#375` cone drum; geoheal discard-reclip drops

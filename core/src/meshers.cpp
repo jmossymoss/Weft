@@ -1,4 +1,5 @@
 #include "weft/meshers.hpp"
+#include "weft/validate.hpp"
 
 #include "mesher_sampling.hpp"
 #include "mesher_trace.hpp"
@@ -26564,12 +26565,17 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         const bool tipRibbon =
                             sparseRibbon &&
                             int(sparseInfo.edgeIds.size()) <= 14;
+                        const bool tipFreeformRev =
+                            sparseInfo.featureClass ==
+                                FeatureClass::Freeform &&
+                            plan.kind == MesherKind::RevolutionGrid;
                         const bool tipFoldNgon =
                             sparseProtect && s.minimal &&
                             liveFolds > 0 && liveFolds <= 2 &&
                             ((sparseInfo.featureClass ==
                                   FeatureClass::Freeform &&
-                              (sparseCoonsOne || tipRibbon)) ||
+                              (sparseCoonsOne || tipRibbon ||
+                               tipFreeformRev)) ||
                              (sparseDrum &&
                               plan.kind == MesherKind::RevolutionGrid));
                         if (tipFoldNgon) {
@@ -26713,10 +26719,19 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     const bool tipRibbonFp =
                         sparseRibbon &&
                         int(sparseInfo.edgeIds.size()) <= 14;
-                    if (sparseFpProtect && s.minimal &&
+                    const bool tipFreeformRevFp =
                         sparseInfo.featureClass == FeatureClass::Freeform &&
-                        liveFp > 0 && liveFp <= 2 &&
-                        (sparseCoonsOne || tipRibbonFp)) {
+                        plan.kind == MesherKind::RevolutionGrid;
+                    const bool tipDrumFp =
+                        sparseDrum &&
+                        plan.kind == MesherKind::RevolutionGrid;
+                    if (sparseFpProtect && s.minimal && liveFp > 0 &&
+                        liveFp <= 2 &&
+                        ((sparseInfo.featureClass ==
+                              FeatureClass::Freeform &&
+                          (sparseCoonsOne || tipRibbonFp ||
+                           tipFreeformRevFp)) ||
+                         tipDrumFp)) {
                         PolyMesh ngon;
                         MeshBuilder nb(ngon);
                         if (meshMinimalPlanar(face, model, fid, solvedEdge,
@@ -26725,8 +26740,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             !ngon.polygons.empty()) {
                             const int ni = fpCount(ngon);
                             if (ni < liveFp) {
-                                dbg("mesh face %d: freeform %s "
-                                    "foldedPolys %d → minimal n-gon %d",
+                                dbg("mesh face %d: %s foldedPolys %d → "
+                                    "minimal n-gon %d",
                                     fid, mesherKindName(plan.kind), liveFp,
                                     ni);
                                 parts[fid] = std::move(ngon);
@@ -27600,6 +27615,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
 
     finish(mesh);
     timingCheckpoint("corner repair + weld");
+
 
     // Incomplete-wire rail-ladder n-gons are contract-correct but their
     // hand-chained order can still fight neighbours on shared edges.
@@ -28657,6 +28673,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         unionSeams(mesh, model, weldGlobal);
     }
 
+
     // Drop open flap triangles: a 3-gon with exactly one open edge whose
     // other two edges are already used by a different face is a duplicate
     // cover of that neighbour (mp9_Edited #897 over #1007).
@@ -28880,6 +28897,95 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 polys.size());
             mesh.polygons = std::move(polys);
             mesh.polygonFaceId = std::move(polyFace);
+        }
+    }
+
+    // Late tip-fold re-snap: weld / micro-edge collapse can drift mesh
+    // vertices off their UV anchors so Newell normals oppose the surface
+    // while neighbour winding stays consistent (mp9_Edited #133/#3025).
+    // Snap folded-polygon verts back onto their anchored surface points
+    // when that clears the fold without raising winding conflicts.
+    {
+        auto mask = foldedPolys(model, mesh);
+        int lateFolds = int(std::count(mask.begin(), mask.end(), uint8_t{1}));
+        if (lateFolds > 0 && lateFolds <= 8) {
+            const size_t windBefore =
+                ::weft::validateMesh(mesh, &model).windingConflicts;
+            std::map<int, std::vector<size_t>> byFace;
+            for (size_t i = 0; i < mask.size(); ++i) {
+                if (!mask[i]) continue;
+                const int fid = (i < mesh.polygonFaceId.size())
+                                    ? mesh.polygonFaceId[i]
+                                    : 0;
+                if (fid > 0) byFace[fid].push_back(i);
+            }
+            // Only snap verts used exclusively by this face — shared seam
+            // verts belong to neighbours and moving them can invent folds.
+            std::vector<int> vertOwner(mesh.vertices.size(), 0);
+            std::vector<uint8_t> vertShared(mesh.vertices.size(), 0);
+            for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+                const int pf =
+                    p < mesh.polygonFaceId.size() ? mesh.polygonFaceId[p]
+                                                  : 0;
+                if (pf < 1) continue;
+                for (uint32_t vi : mesh.polygons[p]) {
+                    if (vi >= vertOwner.size()) continue;
+                    if (vertOwner[vi] == 0) {
+                        vertOwner[vi] = pf;
+                    } else if (vertOwner[vi] != pf) {
+                        vertShared[vi] = 1;
+                    }
+                }
+            }
+            int cleared = 0;
+            int foldsBefore = lateFolds;
+            for (auto& [fid, idxs] : byFace) {
+                if (idxs.empty() || idxs.size() > 2) continue;
+                if (fid < 1 || fid > model.faceCount()) continue;
+                const TopoDS_Face face = TopoDS::Face(model.faces(fid));
+                const BRepAdaptor_Surface surf(face, Standard_True);
+                std::map<uint32_t, std::array<double, 3>> saved;
+                for (size_t pi : idxs) {
+                    for (uint32_t vi : mesh.polygons[pi]) {
+                        if (vi >= mesh.anchors.size() ||
+                            mesh.anchors[vi].faceId != fid ||
+                            (vi < vertShared.size() && vertShared[vi])) {
+                            continue;
+                        }
+                        if (!saved.count(vi)) saved[vi] = mesh.vertices[vi];
+                        const Anchor& an = mesh.anchors[vi];
+                        const gp_Pnt p = surf.Value(an.u, an.v);
+                        mesh.vertices[vi] = {p.X(), p.Y(), p.Z()};
+                    }
+                }
+                if (saved.empty()) continue;
+                const auto after = foldedPolys(model, mesh);
+                const int foldsAfter = int(
+                    std::count(after.begin(), after.end(), uint8_t{1}));
+                int faceAfter = 0;
+                for (size_t i = 0; i < after.size(); ++i) {
+                    if (!after[i]) continue;
+                    if (i < mesh.polygonFaceId.size() &&
+                        mesh.polygonFaceId[i] == fid) {
+                        ++faceAfter;
+                    }
+                }
+                const size_t windAfter =
+                    ::weft::validateMesh(mesh, &model).windingConflicts;
+                if (faceAfter == 0 && foldsAfter <= foldsBefore &&
+                    windAfter <= windBefore) {
+                    cleared += int(idxs.size());
+                    foldsBefore = foldsAfter;
+                } else {
+                    for (const auto& [vi, xyz] : saved) {
+                        mesh.vertices[vi] = xyz;
+                    }
+                }
+            }
+            if (cleared > 0) {
+                dbg("generate: late tip-fold re-snap cleared %d polygon(s)",
+                    cleared);
+            }
         }
     }
 
