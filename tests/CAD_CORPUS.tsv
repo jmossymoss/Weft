@@ -62,4 +62,4 @@ teleporter_planar_ngon	regression	regressions/release/teleporter_planar_ngon_r1.
 nasty_cheese	stress	STEP_Examples/nasty_cheese.stp	0	0	0	0	-	closed_solid	target-assets	-	-	stress	manual/scheduled stress
 tork	stress	STEP_Examples/tork.stp	0	0	0	0	-	invalid	target-assets	-	-	broken_source	broken_source open surface; validate emits diagnostic; mesh without crash
 MP9	performance	STEP_Examples/MP9.stp	0	6	2	0	-	closed_solid	target-assets	-	-	performance,workload	performance/integration only — not geometry coverage
-mp9_edited	performance	STEP_Examples/mp9_Edited.stp	0	6	2	0	-	closed_solid	target-assets	-	-	performance,workload	artist-edited MP9 (centre seams removed from many cylinders); segfaulted in meshRevolutionGrid on empty pole rows until 2026-07-25
+mp9_edited	performance	STEP_Examples/mp9_Edited.stp	0	0	0	1	-	closed_solid	target-assets	-	-	performance,workload	artist-edited MP9; CAD watertight (opens=0 NM=0) as of WP6 perfect-topology campaign

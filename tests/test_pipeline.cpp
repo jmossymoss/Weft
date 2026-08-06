@@ -2295,6 +2295,38 @@ void testMp9EditedMuzzleTwoFullHeightSides() {
     CHECK_EQ(vr.nonManifoldEdges, 0);
 }
 
+// mp9_Edited CAD defaults must stay watertight with consistent winding
+// (WP6 perfect-topology Phase 2 gate). Folds/planned-floor are tracked
+// separately and must not regress validity.
+void testMp9EditedWatertight() {
+    std::printf("-- MP9 edited watertight --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "STEP_Examples/mp9_Edited.stp";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    gs.defaults.minCurvedSegments = 6;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    const auto summary = weft::summarizeStructure(report);
+    CHECK_EQ(summary.raw, 0);
+    CHECK_EQ(summary.empty, 0);
+    CHECK_EQ(summary.failedFloor, 0);
+    const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK_EQ(vr.openEdges, 0);
+    CHECK_EQ(vr.nonManifoldEdges, 0);
+    CHECK_EQ(vr.windingConflicts, 0);
+    CHECK(vr.watertight());
+    std::printf("  faces=%d structured=%d planned-floor=%d "
+                "retention=%.4f\n",
+                summary.total, summary.structured, summary.plannedFloor,
+                summary.retention());
+}
+
 // MP9 grip / optic freeform panels must keep Coons quad flow under CAD
 // rather than collapsing shallow bsplines to a single minimal n-gon.
 void testMp9GripFreeformCoons() {
@@ -6028,6 +6060,7 @@ int main() {
     RUN(testMp9FilletCapsuleNotRevolution);
     RUN(testMp9MuzzleColumnCells);
     RUN(testMp9EditedMuzzleTwoFullHeightSides);
+    RUN(testMp9EditedWatertight);
     RUN(testMp9GripFreeformCoons);
     RUN(testOrthogonalStaircaseInteriorStep);
     RUN(testCylinderWallFullLengthSpans);
