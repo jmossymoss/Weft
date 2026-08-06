@@ -2284,12 +2284,23 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
             BRepAdaptor_Curve c(TopoDS::Edge(model.edges(pce.edgeId)));
             const double f3 = c.FirstParameter(), l3 = c.LastParameter();
             if (edgeIsPinned(pce.edgeId, pins)) {
+                // Keep every pin station on chained sides (includeLast).
+                // Dropping the trailing endpoint used to starve shared
+                // orth rims of pin samples the neighbour emitted
+                // (mp9_Edited #1891/#1892). Joint duplicates are removed
+                // when the next piece starts at the same 3D point.
                 for (double tt : edgeSampleFractions(
                          pce.edgeId, 0, 0.0, pce.rev,
-                         /*includeLast=*/k + 1 == ch.size(), pins, &model)) {
+                         /*includeLast=*/true, pins, &model)) {
+                    const gp_Pnt p3 = c.Value(f3 + tt * (l3 - f3));
+                    if (!row.empty() &&
+                        p3.Distance(row.back().p) <=
+                            1e-6 + BRep_Tool::Tolerance(
+                                       TopoDS::Edge(model.edges(pce.edgeId)))) {
+                        continue;
+                    }
                     row.push_back(
-                        {c.Value(f3 + tt * (l3 - f3)),
-                         pce.pc->Value(pce.f + tt * (pce.l - pce.f))});
+                        {p3, pce.pc->Value(pce.f + tt * (pce.l - pce.f))});
                 }
                 continue;
             }
@@ -21657,6 +21668,400 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
     if (spliced) dbg("stitch: %d seam vertex insertion(s)", spliced);
 }
 
+// After stitch: denser orth lattices can still own exclusive on-curve
+// stations that the coons partner never emitted. Stitch cannot absorb
+// them when the sparse side has no open spanning chord (mp9_Edited
+// #1891/#1892: coons open=0, orth +4). Insert each orphan into the
+// sparse border edge whose param interval contains it; if none exists,
+// collapse the orphan onto the nearest sparse station.
+void absorbOrphanSeamStations(PolyMesh& mesh, const Model& model,
+                              double weldTol,
+                              const std::map<int, FacePlan>* plans) {
+    if (!plans) return;
+    std::map<int, std::vector<size_t>> facePolys;
+    for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+        if (p < mesh.polygonFaceId.size() && mesh.polygonFaceId[p] > 0) {
+            facePolys[mesh.polygonFaceId[p]].push_back(p);
+        }
+    }
+    std::map<int, std::set<std::pair<uint32_t, uint32_t>>> faceBoundary;
+    for (const auto& [fid, polys] : facePolys) {
+        std::map<std::pair<uint32_t, uint32_t>, int> cnt;
+        for (size_t p : polys) {
+            const auto& poly = mesh.polygons[p];
+            for (size_t i = 0; i < poly.size(); ++i) {
+                uint32_t a = poly[i], b = poly[(i + 1) % poly.size()];
+                if (a > b) std::swap(a, b);
+                ++cnt[{a, b}];
+            }
+        }
+        auto& bset = faceBoundary[fid];
+        for (const auto& [seg, c] : cnt) {
+            if (c == 1) bset.insert(seg);
+        }
+    }
+    // Only touch orphans that still own an open mesh edge — never rewrite
+    // already-closed seams (foam #508/#525 drum pair).
+    std::map<std::pair<uint32_t, uint32_t>, int> meshEdgeCount;
+    for (const auto& poly : mesh.polygons) {
+        for (size_t i = 0; i < poly.size(); ++i) {
+            uint32_t a = poly[i], b = poly[(i + 1) % poly.size()];
+            if (a == b) continue;
+            if (a > b) std::swap(a, b);
+            ++meshEdgeCount[{a, b}];
+        }
+    }
+    std::set<uint32_t> openVerts;
+    for (const auto& [seg, c] : meshEdgeCount) {
+        if (c == 1) {
+            openVerts.insert(seg.first);
+            openVerts.insert(seg.second);
+        }
+    }
+    if (openVerts.empty()) return;
+
+    constexpr int kSeg = 96;
+    int absorbed = 0, collapsed = 0;
+    for (int eid = 1; eid <= model.edgeCount(); ++eid) {
+        const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+        if (BRep_Tool::Degenerated(edge)) continue;
+        if (!model.edgeToFaces.Contains(edge)) continue;
+        const auto& owners = model.edgeToFaces.FindFromKey(edge);
+        if (owners.Extent() != 2) continue;
+        const int fA = model.faces.FindIndex(owners.First());
+        const int fB = model.faces.FindIndex(owners.Last());
+        if (fA < 1 || fB < 1) continue;
+        auto pa = plans->find(fA);
+        auto pb = plans->find(fB);
+        if (pa == plans->end() || pb == plans->end()) continue;
+        auto isOrthRev = [](const FacePlan& p) {
+            return p.kind == MesherKind::RevolutionGrid &&
+                   p.orthogonalTrimGrid;
+        };
+        auto isCoons = [](const FacePlan& p) {
+            return p.kind == MesherKind::CoonsGrid;
+        };
+        if (!((isOrthRev(pa->second) && isCoons(pb->second)) ||
+              (isOrthRev(pb->second) && isCoons(pa->second)))) {
+            continue;
+        }
+        double cf = 0, cl = 0;
+        Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, cf, cl);
+        if (c3.IsNull() || cl - cf <= 1e-14) continue;
+        std::vector<gp_Pnt> cp;
+        cp.reserve(kSeg + 1);
+        double clen = 0;
+        for (int k = 0; k <= kSeg; ++k) {
+            cp.push_back(c3->Value(cf + (cl - cf) * k / double(kSeg)));
+            if (k) clen += cp[k].Distance(cp[k - 1]);
+        }
+        if (clen < 1e-9) continue;
+        auto paramOf = [&](const std::array<double, 3>& v, double tol,
+                           double& tOut) {
+            const double tol2 = tol * tol;
+            double best = tol2;
+            bool hit = false;
+            for (int k = 0; k < kSeg; ++k) {
+                const gp_XYZ a = cp[k].XYZ(), b = cp[k + 1].XYZ();
+                const gp_XYZ ab = b - a;
+                const gp_XYZ av(v[0] - a.X(), v[1] - a.Y(), v[2] - a.Z());
+                const double ll = ab.SquareModulus();
+                double t = ll > 1e-30 ? av.Dot(ab) / ll : 0.0;
+                t = std::clamp(t, 0.0, 1.0);
+                const gp_XYZ q = a + ab * t;
+                const double d2 =
+                    gp_XYZ(v[0] - q.X(), v[1] - q.Y(), v[2] - q.Z())
+                        .SquareModulus();
+                if (d2 < best) {
+                    best = d2;
+                    tOut = (k + t) / double(kSeg);
+                    hit = true;
+                }
+            }
+            return hit;
+        };
+        struct SV {
+            uint32_t v;
+            double t;
+        };
+        std::array<std::vector<SV>, 2> side;
+        const int fids[2] = {fA, fB};
+        for (int s = 0; s < 2; ++s) {
+            auto bit = faceBoundary.find(fids[s]);
+            if (bit == faceBoundary.end()) continue;
+            std::set<uint32_t> seen;
+            for (const auto& seg : bit->second) {
+                for (uint32_t v : {seg.first, seg.second}) {
+                    if (!seen.insert(v).second) continue;
+                    double t = 0;
+                    // Generous band: orphans sit on-curve but may have
+                    // short incident pitch from T-junction edges.
+                    if (!paramOf(mesh.vertices[v],
+                                 std::max(weldTol * 8.0, 0.15), t)) {
+                        continue;
+                    }
+                    side[s].push_back({v, t});
+                }
+            }
+            std::sort(side[s].begin(), side[s].end(),
+                      [](const SV& a, const SV& b) { return a.t < b.t; });
+        }
+        if (side[0].empty() || side[1].empty()) continue;
+        std::set<uint32_t> set0, set1;
+        for (const auto& s : side[0]) set0.insert(s.v);
+        for (const auto& s : side[1]) set1.insert(s.v);
+        // Dense = more exclusive stations; sparse receives inserts.
+        const int dense = side[0].size() >= side[1].size() ? 0 : 1;
+        const int sparse = 1 - dense;
+        const int fSparse = fids[sparse];
+        const auto& denseSide = side[dense];
+        const auto& sparseSide = side[sparse];
+        const auto& sparseSet = sparse == 0 ? set0 : set1;
+        auto pitSparse = facePolys.find(fSparse);
+        if (pitSparse == facePolys.end()) continue;
+        auto& bsetSparse = faceBoundary[fSparse];
+        for (const SV& d : denseSide) {
+            if (sparseSet.count(d.v)) continue;  // shared
+            if (!openVerts.count(d.v)) continue;  // seam already closed
+            // Nearest sparse stations by param.
+            int iLo = -1, iHi = -1;
+            for (int i = 0; i < int(sparseSide.size()); ++i) {
+                if (sparseSide[i].t <= d.t) iLo = i;
+                if (sparseSide[i].t >= d.t && iHi < 0) iHi = i;
+            }
+            if (iLo < 0 || iHi < 0 || iLo == iHi) {
+                // Outside sparse param coverage or on a station: collapse.
+                int best = -1;
+                double bd = 1e300;
+                for (int i = 0; i < int(sparseSide.size()); ++i) {
+                    const auto& P = mesh.vertices[d.v];
+                    const auto& Q = mesh.vertices[sparseSide[i].v];
+                    const double dx = P[0] - Q[0], dy = P[1] - Q[1],
+                                 dz = P[2] - Q[2];
+                    const double dd = dx * dx + dy * dy + dz * dz;
+                    if (dd < bd) {
+                        bd = dd;
+                        best = i;
+                    }
+                }
+                if (best < 0 || bd > 0.12 * 0.12) continue;
+                const uint32_t keep = sparseSide[best].v;
+                auto pitDense = facePolys.find(fids[dense]);
+                if (pitDense == facePolys.end()) continue;
+                for (size_t p : pitDense->second) {
+                    for (uint32_t& q : mesh.polygons[p]) {
+                        if (q == d.v) q = keep;
+                    }
+                }
+                ++collapsed;
+                continue;
+            }
+            const uint32_t a = sparseSide[iLo].v;
+            const uint32_t c = sparseSide[iHi].v;
+            // Prefer a direct sparse boundary edge a—c.
+            auto segAC = std::make_pair(std::min(a, c), std::max(a, c));
+            bool inserted = false;
+            if (a != c && bsetSparse.count(segAC)) {
+                for (size_t p : pitSparse->second) {
+                    auto& poly = mesh.polygons[p];
+                    for (size_t i = 0; i < poly.size(); ++i) {
+                        const uint32_t u = poly[i];
+                        const uint32_t w = poly[(i + 1) % poly.size()];
+                        if (!((u == a && w == c) || (u == c && w == a))) {
+                            continue;
+                        }
+                        poly.insert(poly.begin() +
+                                        static_cast<std::ptrdiff_t>(i + 1),
+                                    d.v);
+                        bsetSparse.erase(segAC);
+                        bsetSparse.insert(
+                            {std::min(u, d.v), std::max(u, d.v)});
+                        bsetSparse.insert(
+                            {std::min(d.v, w), std::max(d.v, w)});
+                        inserted = true;
+                        ++absorbed;
+                        break;
+                    }
+                    if (inserted) break;
+                }
+            }
+            if (inserted) continue;
+            // No direct a—c chord (coons detours off-curve between
+            // stations): collapse the orphan onto the nearer station
+            // when it still sits within a near-miss band.
+            const auto& P = mesh.vertices[d.v];
+            const auto& A = mesh.vertices[a];
+            const auto& C = mesh.vertices[c];
+            const double dA = gp_Pnt(P[0], P[1], P[2])
+                                  .Distance(gp_Pnt(A[0], A[1], A[2]));
+            const double dC = gp_Pnt(P[0], P[1], P[2])
+                                  .Distance(gp_Pnt(C[0], C[1], C[2]));
+            const double dKeep = std::min(dA, dC);
+            if (dKeep > 0.12) continue;
+            const uint32_t keep = dA <= dC ? a : c;
+            auto pitDense = facePolys.find(fids[dense]);
+            if (pitDense == facePolys.end()) continue;
+            for (size_t p : pitDense->second) {
+                for (uint32_t& q : mesh.polygons[p]) {
+                    if (q == d.v) q = keep;
+                }
+            }
+            ++collapsed;
+        }
+    }
+    // Second sweep: any remaining OPEN endpoint on an orth×coons shared
+    // curve that sits within 0.12 of the partner face collapses onto it.
+    // Catches orphans the param-interval pass missed (mp9_Edited #1892
+    // residual 0.05 near-misses after the first sweep).
+    openVerts.clear();
+    meshEdgeCount.clear();
+    faceBoundary.clear();
+    for (const auto& [fid, polys] : facePolys) {
+        std::map<std::pair<uint32_t, uint32_t>, int> cnt;
+        for (size_t p : polys) {
+            const auto& poly = mesh.polygons[p];
+            for (size_t i = 0; i < poly.size(); ++i) {
+                uint32_t a = poly[i], b = poly[(i + 1) % poly.size()];
+                if (a == b) continue;
+                if (a > b) std::swap(a, b);
+                ++cnt[{a, b}];
+                ++meshEdgeCount[{a, b}];
+            }
+        }
+        auto& bset = faceBoundary[fid];
+        for (const auto& [seg, c] : cnt) {
+            if (c == 1) bset.insert(seg);
+        }
+    }
+    for (const auto& [seg, c] : meshEdgeCount) {
+        if (c == 1) {
+            openVerts.insert(seg.first);
+            openVerts.insert(seg.second);
+        }
+    }
+    for (int eid = 1; eid <= model.edgeCount() && !openVerts.empty(); ++eid) {
+        const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
+        if (BRep_Tool::Degenerated(edge)) continue;
+        if (!model.edgeToFaces.Contains(edge)) continue;
+        const auto& owners = model.edgeToFaces.FindFromKey(edge);
+        if (owners.Extent() != 2) continue;
+        const int fA = model.faces.FindIndex(owners.First());
+        const int fB = model.faces.FindIndex(owners.Last());
+        auto pa = plans->find(fA);
+        auto pb = plans->find(fB);
+        if (pa == plans->end() || pb == plans->end()) continue;
+        auto isOrthRev = [](const FacePlan& p) {
+            return p.kind == MesherKind::RevolutionGrid &&
+                   p.orthogonalTrimGrid;
+        };
+        auto isCoons = [](const FacePlan& p) {
+            return p.kind == MesherKind::CoonsGrid;
+        };
+        if (!((isOrthRev(pa->second) && isCoons(pb->second)) ||
+              (isOrthRev(pb->second) && isCoons(pa->second)))) {
+            continue;
+        }
+        double cf = 0, cl = 0;
+        Handle(Geom_Curve) c3 = BRep_Tool::Curve(edge, cf, cl);
+        if (c3.IsNull()) continue;
+        std::vector<gp_Pnt> cp;
+        for (int k = 0; k <= kSeg; ++k) {
+            cp.push_back(c3->Value(cf + (cl - cf) * k / double(kSeg)));
+        }
+        auto onCurve = [&](uint32_t v) {
+            const auto& P = mesh.vertices[v];
+            double best = 1e300;
+            for (int k = 0; k < kSeg; ++k) {
+                const gp_XYZ a = cp[k].XYZ(), b = cp[k + 1].XYZ();
+                const gp_XYZ ab = b - a;
+                const gp_XYZ av(P[0] - a.X(), P[1] - a.Y(), P[2] - a.Z());
+                const double ll = ab.SquareModulus();
+                double t = ll > 1e-30 ? av.Dot(ab) / ll : 0.0;
+                t = std::clamp(t, 0.0, 1.0);
+                const gp_XYZ q = a + ab * t;
+                best = std::min(
+                    best, gp_XYZ(P[0] - q.X(), P[1] - q.Y(), P[2] - q.Z())
+                              .SquareModulus());
+            }
+            return best <= 0.15 * 0.15;
+        };
+        const int fids[2] = {fA, fB};
+        std::array<std::vector<uint32_t>, 2> sideOpen;
+        for (int s = 0; s < 2; ++s) {
+            auto bit = faceBoundary.find(fids[s]);
+            if (bit == faceBoundary.end()) continue;
+            std::set<uint32_t> seen;
+            for (const auto& seg : bit->second) {
+                for (uint32_t v : {seg.first, seg.second}) {
+                    if (!seen.insert(v).second) continue;
+                    if (!openVerts.count(v)) continue;
+                    if (!onCurve(v)) continue;
+                    sideOpen[s].push_back(v);
+                }
+            }
+        }
+        for (int s = 0; s < 2; ++s) {
+            const int other = 1 - s;
+            auto pitOther = facePolys.find(fids[other]);
+            auto pitSelf = facePolys.find(fids[s]);
+            if (pitOther == facePolys.end() || pitSelf == facePolys.end()) {
+                continue;
+            }
+            // Partner boundary verts (not only open ones).
+            std::vector<uint32_t> partner;
+            auto bit = faceBoundary.find(fids[other]);
+            if (bit == faceBoundary.end()) continue;
+            for (const auto& seg : bit->second) {
+                partner.push_back(seg.first);
+                partner.push_back(seg.second);
+            }
+            std::sort(partner.begin(), partner.end());
+            partner.erase(std::unique(partner.begin(), partner.end()),
+                          partner.end());
+            for (uint32_t v : sideOpen[s]) {
+                uint32_t best = v;
+                double bd = 1e300;
+                for (uint32_t u : partner) {
+                    if (u == v) continue;
+                    const auto& P = mesh.vertices[v];
+                    const auto& Q = mesh.vertices[u];
+                    const double dx = P[0] - Q[0], dy = P[1] - Q[1],
+                                 dz = P[2] - Q[2];
+                    const double dd = dx * dx + dy * dy + dz * dz;
+                    if (dd < bd) {
+                        bd = dd;
+                        best = u;
+                    }
+                }
+                if (best == v || bd > 0.12 * 0.12) continue;
+                for (size_t p : pitSelf->second) {
+                    for (uint32_t& q : mesh.polygons[p]) {
+                        if (q == v) q = best;
+                    }
+                }
+                ++collapsed;
+            }
+        }
+    }
+    if (absorbed || collapsed) {
+        // Collapse can leave aa edges; drop consecutive duplicate corners.
+        for (auto& poly : mesh.polygons) {
+            if (poly.size() < 2) continue;
+            std::vector<uint32_t> cleaned;
+            cleaned.reserve(poly.size());
+            for (uint32_t v : poly) {
+                if (cleaned.empty() || cleaned.back() != v) cleaned.push_back(v);
+            }
+            while (cleaned.size() > 1 && cleaned.front() == cleaned.back()) {
+                cleaned.pop_back();
+            }
+            if (cleaned.size() >= 3) poly.swap(cleaned);
+        }
+        dbg("absorbOrphanSeamStations: insert=%d collapse=%d", absorbed,
+            collapsed);
+    }
+}
+
 void unionSeams(PolyMesh& mesh, const Model& model, double weldTol) {
     (void)model;
     int total = 0;
@@ -27293,12 +27698,16 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             fuseSeamTwins(mesh, model, weldGlobal, &fellBack, &plans);
         }
         stitchSeams(mesh, model, weldGlobal, &plans, &fellBack);
+        // Orth×coons rims: exclusive denser stations stitch cannot absorb
+        // when the sparse side has no open spanning chord (#1891/#1892).
+        absorbOrphanSeamStations(mesh, model, weldGlobal, &plans);
         // FreeformComb lattices leave near-duplicate stations that only
         // become mutual after the first splice. A second fuse+stitch
         // pass closes the residual T-junctions (#1805 f2↔f5).
         if (hasFreeformComb && !std::getenv("WEFT_NO_FUSE")) {
             fuseSeamTwins(mesh, model, weldGlobal, &fellBack, &plans);
             stitchSeams(mesh, model, weldGlobal, &plans, &fellBack);
+            absorbOrphanSeamStations(mesh, model, weldGlobal, &plans);
         }
         if (std::getenv("WEFT_FOLD_PROBE")) {
             const auto mask = foldedPolys(model, mesh);

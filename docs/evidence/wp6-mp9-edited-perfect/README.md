@@ -10,6 +10,7 @@ Structured Weft only (accuracy-tessellator excluded). Tip continues from
 | baseline `4a77e4f` | 54 | 39 | 23 | 3 | 1 | 2 | 31 | 0.9889 |
 | validity clears | 37 | 39 | 28 | 0 | 0 | 0 | 31 | 0.9898 |
 | freeform Coons chains | 40 | 39 | 32 | 0 | 0 | 0 | 26 | 0.9915 |
+| orphan seam absorb | 36 | 39 | 32 | 0 | 0 | 0 | 26 | 0.9915 |
 
 ## Classes landed
 
@@ -37,3 +38,10 @@ that do not fall between any Coons border chord on this curve — Coons is
 not covering the full pin param range on the shared rim. Next: force
 Coons border sampling to emit every pin fraction on 2-owner edges shared
 with an orthogonal RevolutionGrid.
+
+### Orphan seam absorb (landed)
+
+`absorbOrphanSeamStations` after stitch collapses open orth×coons
+exclusive stations onto the partner within 0.12. Opens 40→36;
+#1892 opens 9→5 (residual: 1×#1886 long T-junction + 4×#1891).
+Coons chained sides now keep every pin station (`includeLast`).
