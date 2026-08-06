@@ -13,6 +13,7 @@ Structured Weft only (accuracy-tessellator excluded). Tip continues from
 | orphan seam absorb | 36 | 39 | 32 | 0 | 0 | 0 | 26 | 0.9915 |
 | freeform Coons ≤14 edges | 36 | 39 | 33 | 0 | 0 | 0 | 25 | 0.9918 |
 | ribbon-aware safeEdges | 33 | 39 | 32 | 0 | 0 | 0 | 24 | 0.9921 |
+| freeform n-gon floor rescue | 33 | 39 | 32 | 0 | 0 | 0 | 19 | 0.9938 |
 
 ## Classes landed
 

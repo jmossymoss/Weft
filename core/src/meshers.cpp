@@ -10415,6 +10415,19 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         orthWhy = wideReject;
     }
 
+    // Freeform free-trim panels that nothing lattice-shaped can claim: a
+    // single boundary n-gon is still structured and border-exact (game
+    // editable), better than a triangulated contract floor web. Skip
+    // ribbon-detectable strips (they already had their chance above).
+    if (s.minimal && info.featureClass == FeatureClass::Freeform &&
+        info.edgeIds.size() <= 8 && !ribbonDetect(face, model) &&
+        collectPlanarLoops(face, surf, model, plan, /*requirePlane=*/false)) {
+        plan.kind = MesherKind::MinimalNGon;
+        dbg("plan face %d: freeform floor rescue -> minimal n-gon (%zu edges)",
+            fid, info.edgeIds.size());
+        return plan;
+    }
+
     plan = FacePlan();
     plan.kind = MesherKind::Fallback;
     // The ladder ran out. Name the two probes that own most of the routing
