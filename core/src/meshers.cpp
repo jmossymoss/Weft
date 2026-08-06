@@ -10113,9 +10113,12 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         // it has a plain-rim bandDriver (castellated barrels / insert
         // walls). Otherwise keep the orthogonal lattice.
         if (orthOk && info.featureClass != FeatureClass::FilletStrip) {
+            // Dense castellations (ABC notched, hundreds of edges) need
+            // open-band. Moderate IsoBand muzzles (tens of edges) keep the
+            // orthogonal column lattice (mp9 two-full-height sides).
             if (info.featureClass == FeatureClass::Drum &&
                 info.chartKind == ChartKind::IsoBand &&
-                info.edgeIds.size() >= 8 && tryOpenBand() &&
+                info.edgeIds.size() >= 64 && tryOpenBand() &&
                 plan.bandDriver >= 1) {
                 dbg("plan face %d: iso-band drum -> open band (driver %d)",
                     fid, plan.bandDriver);
