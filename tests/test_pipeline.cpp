@@ -2861,6 +2861,23 @@ void testFailedFloorRibbonWindingAndTallRevgrid() {
                              "mp9 digon rail-ladder");
     }
     {
+        // Freeform B-spline with ~10 bookkeeping edges on a four-sided UV
+        // patch: opposite-chain reject used to floor it; Coons must keep it
+        // structured (mp9_Edited #3 family).
+        const std::filesystem::path stepPath =
+            std::filesystem::path(__FILE__).parent_path() /
+            "regressions/mp9/freeform_coons_chain_panel.step";
+        weft::Model model = weft::loadStep(stepPath.string());
+        weft::Analysis analysis = weft::analyze(model);
+        weft::GenerationReport report;
+        weft::generate(model, analysis, cad(), &report);
+        assertNoCause(report, "opposite chain topology",
+                      "mp9 freeform coons chain");
+        CHECK_EQ(weft::summarizeStructure(report).plannedFloor, 0);
+        assertStructuredKind(report, weft::MesherKind::CoonsGrid,
+                             "mp9 freeform coons chain");
+    }
+    {
         // nu==1 + natRight shrink zeros the (0,0) cell; the Coons stub must
         // still emit a polygon edge (mp9 deficit-rail stub).
         const std::filesystem::path stepPath =
