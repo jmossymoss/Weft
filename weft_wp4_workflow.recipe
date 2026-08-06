@@ -1,5 +1,0 @@
-weft-recipe 1
-default radial=12,axial=2,gridu=1,gridv=1,cap=ngon,chord=0.1,angle=28,loops=3,hold=0,rings=0,quads=0,minimal=0,skip=0,mesher=0,linkrims=1,minsize=0,reldev=0,adapt=0,mincurve=6,boundary=0,sqcollar=0,crot=0,puretris=0,weld=0
-face 1 radial=14,axial=2,gridu=1,gridv=1,cap=ngon,chord=0.1,angle=28,loops=3,hold=0,rings=0,quads=0,minimal=0,skip=0,mesher=0,linkrims=1,minsize=0,reldev=0,adapt=0,mincurve=6,boundary=0,sqcollar=0,crot=0,puretris=0,weld=0
-op loop 1 0 7.5 0.5
-op nudge 1 -1.0362081563168128e-13 7.5 0.14999999999989638 7.5
