@@ -3,75 +3,38 @@
 Structured Weft only (accuracy-tessellator excluded). Tip continues from
 `cursor/axial1-straight-columns-fff5`.
 
-## Metrics (CAD default)
+## Phase 2 validity — DONE
 
-| revision | opens | NM | folds | winding | failed-floor | raw | planned-floor | retention |
-|----------|------:|---:|------:|--------:|-------------:|----:|--------------:|----------:|
-| baseline `4a77e4f` | 54 | 39 | 23 | 3 | 1 | 2 | 31 | 0.9889 |
-| validity clears | 37 | 39 | 28 | 0 | 0 | 0 | 31 | 0.9898 |
-| freeform Coons chains | 40 | 39 | 32 | 0 | 0 | 0 | 26 | 0.9915 |
-| orphan seam absorb | 36 | 39 | 32 | 0 | 0 | 0 | 26 | 0.9915 |
-| freeform Coons ≤14 edges | 36 | 39 | 33 | 0 | 0 | 0 | 25 | 0.9918 |
-| ribbon-aware safeEdges | 33 | 39 | 32 | 0 | 0 | 0 | 24 | 0.9921 |
-| freeform n-gon floor rescue | 33 | 39 | 32 | 0 | 0 | 0 | 19 | 0.9938 |
-| wideDrum ≤1 inset + nearFull | 33 | 39 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
-| unionSeams 35% + post-fold | 30 | 39 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
-| absorb near-miss all-partner | 25 | 39 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
-| unionSeams deepest-t pick | 7 | 39 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
-| absorb all structured pairs | 5 | 39 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
-| open-endpoint partner near-weld | 1 | 39 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
-| open flap triangle drop | 0 | 37 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
-| digon-spur cleanup | 0 | 10 | 31 | 0 | 0 | 0 | 18 | 0.9941 |
-| iterative digon+dedupe | 0 | 0 | 31 | 0 | 0 | 0 | 18 | 0.9941 |
+At CAD defaults, `tests/STEP_Examples/mp9_Edited.stp` is watertight:
 
-## Classes landed
+| metric | baseline | tip |
+|--------|--------:|----:|
+| openEdges | 54 | 0 |
+| nonManifoldEdges | 39 | 0 |
+| windingConflicts | 3 | 0 |
+| failed-floor | 1 | 0 |
+| raw | 2 | 0 |
+| planned-floor | 31 | 18 |
+| foldedPolygons | 23 | 31 |
+| retention | 0.9889 | 0.9941 |
 
-1. Openband side × orthogonal pin — `openband_border_contract_fillet.step`
-2. Rail-ladder digon fold→raw — `rail_ladder_digon_fold.step`
-3. Incomplete-wire rail-ladder n-gon + neighbour winding flip — `#2005`
-4. Freeform B-spline Coons chain compatibility (≤14 edges) + Freeform sparse-fold
-   protect (≤4) — reducer `freeform_coons_chain_panel.step`
+Locked by `testMp9EditedWatertight` and `CAD_CORPUS.tsv` row `mp9_edited`
+with `require_watertight=1`.
 
-## Still open
-- 40 unexplained opens / 39 NM (leakiest `#1892` orth×coons rim)
-- 32 folds (led by `#375`)
-- 26 planned-floor (freeform interior step / no fourth corner / drum inset `#65`)
+## Validity classes landed
 
-## Parked experiments
-- Orth shared-rim UV snap skip (opens↓, failed-floor↑)
-- Shared rev×coons pin overwrite (release failed-floor)
+1. Openband side × orthogonal pin
+2. Rail-ladder digon / incomplete-wire n-gon + winding neighbour flip
+3. Freeform Coons opposite-chain (≤14, ribbon-aware) + sparse-fold protect
+4. Orphan seam absorb (structured pairs, partner near-miss, open-endpoint weld)
+5. unionSeams 35% sagitta + post-fold re-run + deepest-t walk
+6. Open flap triangle drop
+7. Iterative digon-spur cleanup (NM → 0)
 
-## Open-edge diagnosis (#1891/#1892)
+## Phase 3 remaining
 
-Shared B-rep edge 5482: stitch sees sides 27/31 (coons/orth), not equal.
-Coons candidate border segments on the curve: 26, all already shared with
-orth (`open=0`). Orth has 4 open segments. Orth emits exclusive rim verts
-that do not fall between any Coons border chord on this curve — Coons is
-not covering the full pin param range on the shared rim. Next: force
-Coons border sampling to emit every pin fraction on 2-owner edges shared
-with an orthogonal RevolutionGrid.
+- 31 folded polygons (led by `#375` cone drum; geoheal discard-reclip drops
+  them but cannot re-fill cone holes)
+- 18 planned-floor (drum inset / freeform step / poles / closed chart)
 
-### Orphan seam absorb (landed)
-
-`absorbOrphanSeamStations` after stitch collapses open orth×coons
-exclusive stations onto the partner within 0.12. Opens 40→36;
-#1892 opens 9→5 (residual: 1×#1886 long T-junction + 4×#1891).
-Coons chained sides now keep every pin station (`includeLast`).
-
-### unionSeams 35% sagitta + post-fold re-absorb
-
-Fillet complement paths can sit at ~32% chord sagitta; the prior 25%
-slack rejected them. Raising to 35% (stitch parity) and re-running
-unionSeams after folded-polygon drops closes the #1892↔#1886 long open
-(opens 33→30).
-
-### Absorb near-miss onto all partner verts
-
-Residual #1892 opens had one exact-shared endpoint and one 0.05 twin
-that sat on an *interior* coons sample. Second-sweep absorb now searches
-all partner-face verts (not only boundary), clearing #1892 (opens 30→25).
-
-## Validity (Phase 2)
-
-**WATERTIGHT** at tip: openEdges=0, nonManifoldEdges=0, windingConflicts=0.
-Remaining for perfect topology: folds≈31, planned-floor=18.
+Release spot-check: flaregun / foam / teleporter watertight at CAD defaults.
