@@ -87,6 +87,13 @@ OK but blend zones look triangulated.
 **Verify after fix:** Object 37 tri% drops substantially; fillet bands read as
 across/along strips.
 
+**Verification (2026-08-06):** PARTIAL.
+- Small iso-band cylinder fillets (5–8 edges) → MinimalNGon (same class as
+  #1105 free-trim). Faces 2519/2520 cleared of Coons tris.
+- Object 37 totals: tris 19→9 (18.6%→15%). Remaining tris on freeform Coons
+  patches (2504/2523/2526).
+- Screenshots: `before_d3/` vs `after_d3/`. Watertight retained.
+
 ---
 
 ### D4 — P1 — Object 2: radial n-gon plate (notched disk)
@@ -188,11 +195,31 @@ sparse panels unless silhouette breaks.
 
 ---
 
+### D10 — P0 — Cylinder “support edges” / mid-span rings (artist)
+
+**Seen (object 5 after D1, flaregun history):** Circumferential stations that
+are not full-height column spans — notch lips / insert lintels that read as
+extra rings chopping the cylinder.
+
+**Artist (cut-cylinder spans):** Keep requested spans; do not “solve” cuts with
+feature rows; absorb cutouts as n-gons. No mid-span rings when `nv==1`.
+
+**Attempted:** Skipping notch lip keys at `nv==1` in open-band. On multi-tooth
+drums every column is someone’s boundary, so lips still become full-band;
+skipping them entirely made face 374 fail self-check / opened seams.
+
+**Status:** OPEN — needs sector-absorption open-band (full-height cells +
+notch n-gons) without planting lip row keys when `nv==1`. Tracked separately
+from D1 column densify.
+
+---
+
 ## Fix order (implement only after this analysis)
 
-1. **D1** Object 5 IsoBand column crush  
-2. **D2** Object 19 collapsed solid  
-3. **D3** Object 37 high-tri fillet  
+1. **D1** Object 5 IsoBand column crush — DONE  
+2. **D2** Object 19 collapsed solid — PARKED  
+3. **D3** Object 37 high-tri fillet — PARTIAL  
+4. **D10** Cylinder support edges / mid-span rings — OPEN  
 4. **D4** Object 2 plate web  
 5. **D5** Objects 8/9 freeform density / MinimalNGon  
 6. **D6–D8** as time allows  

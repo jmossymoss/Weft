@@ -9734,12 +9734,15 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             }
             break;
         case FeatureClass::FilletStrip: {
-            // Five-edge free-trim cylinder fillets: clipped Coons sparsely
-            // folds after weld (mp9_Edited #1105). Four-edge free-trim
-            // fillets are common flaregun blend straps and must stay Coons.
-            if (s.minimal && info.chartKind == ChartKind::FreeTrim &&
-                surf.GetType() == GeomAbs_Cylinder &&
-                info.edgeIds.size() == 5) {
+            // Small cylinder fillet straps (free-trim 5-edge, or short
+            // iso-band 5–8 edge): clipped Coons sparsely folds / tris after
+            // weld (#1105; mp9 object 37). Four-edge free-trim fillets are
+            // common flaregun blend straps and must stay Coons.
+            if (s.minimal && surf.GetType() == GeomAbs_Cylinder &&
+                ((info.chartKind == ChartKind::FreeTrim &&
+                  info.edgeIds.size() == 5) ||
+                 (info.chartKind == ChartKind::IsoBand &&
+                  info.edgeIds.size() >= 5 && info.edgeIds.size() <= 8))) {
                 FacePlan tiny;
                 if (collectPlanarLoops(face, surf, model, tiny,
                                        /*requirePlane=*/false,
@@ -9753,7 +9756,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 plan.kind = MesherKind::MinimalNGon;
                 plan.isFillet = true;
                 plan.constrains = true;
-                dbg("plan face %d: fillet-strip 5-edge free-trim -> "
+                dbg("plan face %d: fillet-strip small cylinder -> "
                     "minimal n-gon",
                     fid);
                 return plan;
@@ -26650,6 +26653,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             sparseDrum &&
                             plan.kind == MesherKind::RevolutionGrid &&
                             surf.GetType() == GeomAbs_Cone;
+                        // Small fillet Coons with tip folds (mp9 object 37
+                        // iso-band straps): MinimalNGon clears tris/folds
+                        // without a floor web.
+                        const bool tipFilletCoons =
+                            sparseInfo.featureClass ==
+                                FeatureClass::FilletStrip &&
+                            plan.kind == MesherKind::CoonsGrid &&
+                            sparseN <= 48;
                         const bool tipFoldNgon =
                             sparseProtect && s.minimal &&
                             liveFolds > 0 && liveFolds <= tipFoldBudget &&
@@ -26657,7 +26668,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                   FeatureClass::Freeform &&
                               (sparseCoonsOne || tipRibbon ||
                                tipFreeformRev)) ||
-                             tipConeDrum);
+                             tipConeDrum || tipFilletCoons);
                         if (tipFoldNgon) {
                             PolyMesh ngon;
                             MeshBuilder nb(ngon);
