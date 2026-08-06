@@ -2,8 +2,10 @@
 
 Method: open `tests/STEP_Examples/mp9_Edited.stp` once in `weft_app
 --finalize --screenshot-objects`, isolate each outliner solid, frame visible
-faces, capture two angles. Gallery: `objects/object_XXX_v{0,1}.png` (also under
+faces, **deselect**, switch to **wire-only** (bright wires, no fill/verts/brep),
+capture two angles. Gallery: `objects/object_XXX_v{0,1}.png` (also under
 `/opt/cursor/artifacts/mp9_object_qa/`).
+
 
 Assembly CAD defaults remain watertight (21898 verts / 15796 polys /
 13273 quads / 793 tris / 1730 n-gons).

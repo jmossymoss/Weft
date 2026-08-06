@@ -1551,14 +1551,16 @@ static bool isolateSolidObject(App& app, size_t solidIndex) {
     for (const auto& fi : app.analysis.faces) {
         if (!inSolid.count(fi.id)) app.hiddenFaces.insert(fi.id);
     }
+    // Frame while selected (bbox of solid), then fully deselect and rebuild
+    // so no orange selection fill/verts remain — wireframe must be readable.
     for (int fid : fids) app.selFaces.insert(fid);
     app.activeFace = fids.empty() ? 0 : fids.front();
     rebuildBuffers(app);
     frameModel(app);
-    // Drop selection highlight so topology (not orange overlay) is visible
-    // in headless object galleries; isolation stays via hiddenFaces.
     app.selFaces.clear();
+    app.selEdges.clear();
     app.activeFace = 0;
+    rebuildBuffers(app);
     return true;
 }
 
@@ -5691,8 +5693,15 @@ int main(int argc, char** argv) {
     if (objectShotArmed) {
         std::error_code ec;
         std::filesystem::create_directories(screenshotObjectsDir, ec);
+        // Wire-only, deselected: bright wires on dark bg, no fill/verts/brep.
+        app.showFill = false;
         app.showWire = true;
-        app.showFill = true;
+        app.showVerts = false;
+        app.showBrepEdges = false;
+        app.showProblems = false;
+        app.wireColor[0] = 0.82f;
+        app.wireColor[1] = 0.88f;
+        app.wireColor[2] = 0.95f;
     }
 
     while (!glfwWindowShouldClose(window)) {
@@ -7311,6 +7320,12 @@ int main(int argc, char** argv) {
                 frameModel(app);
                 objectShotSettle = 1;
             } else if (++objectShotSettle >= 4) {
+                if (!app.selFaces.empty() || app.activeFace != 0) {
+                    app.selFaces.clear();
+                    app.selEdges.clear();
+                    app.activeFace = 0;
+                    rebuildBuffers(app);
+                }
                 std::vector<unsigned char> px(size_t(fbw) * fbh * 3);
                 glReadPixels(0, 0, fbw, fbh, GL_RGB, GL_UNSIGNED_BYTE,
                              px.data());
