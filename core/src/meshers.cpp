@@ -10105,13 +10105,26 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         std::string orthReject;
         const bool orthOk =
             planOrthogonalTrimGrid(face, surf, model, orth, &orthReject);
-        if (orthOk && info.featureClass != FeatureClass::FilletStrip) {
+        // Multi-edge IsoBand drums are open-band subjects (ABC notched
+        // multi-tooth). Early orth would claim them via a full-height
+        // meridian then fail at mesh time ("orthogonal revolution grid
+        // failed"). Prefer the open-band path below.
+        if (orthOk && info.featureClass != FeatureClass::FilletStrip &&
+            !(info.featureClass == FeatureClass::Drum &&
+              info.chartKind == ChartKind::IsoBand &&
+              info.edgeIds.size() > 24)) {
             dbg("plan face %d: orthogonal trim grid u=%zu v=%zu", fid,
                 orth.uEdges.size(), orth.vEdges.size());
             plan = std::move(orth);
             return plan;
         }
-        orthWhy = orthOk ? "held back for fillet coons" : orthReject;
+        if (orthOk && info.featureClass == FeatureClass::Drum &&
+            info.chartKind == ChartKind::IsoBand &&
+            info.edgeIds.size() > 24) {
+            orthWhy = "iso-band castellation prefers open-band";
+        } else {
+            orthWhy = orthOk ? "held back for fillet coons" : orthReject;
+        }
     }
 
     // Spherical / dome cap (a single-wire revolution-like bspline that bulges
@@ -10406,7 +10419,10 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         FacePlan wide;
         std::string wideReject;
         if (planOrthogonalTrimGrid(face, surf, model, wide, &wideReject,
-                                   /*allowStaircase=*/true)) {
+                                   /*allowStaircase=*/true) &&
+            !(info.featureClass == FeatureClass::Drum &&
+              info.chartKind == ChartKind::IsoBand &&
+              info.edgeIds.size() > 24)) {
             // A blend strip is held back from the lattice EARLIER so that
             // across/along ownership and filletHold stay with Coons. Here
             // Coons has already refused it, so the choice is the lattice or
