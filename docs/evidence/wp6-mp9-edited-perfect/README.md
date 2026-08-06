@@ -15,7 +15,7 @@ At CAD defaults, `tests/STEP_Examples/mp9_Edited.stp` is watertight:
 | failed-floor | 1 | 0 |
 | raw | 2 | 0 |
 | planned-floor | 31 | 0 |
-| foldedPolygons | 23 | 21 |
+| foldedPolygons | 23 | 16 |
 | retention | 0.9889 | 1.0000 |
 
 Locked by `testMp9EditedWatertight` and `CAD_CORPUS.tsv` row `mp9_edited`
@@ -52,6 +52,11 @@ azimuth quads. Folds 31→26; #375 7→2.
 
 Thin extrusion digons (#1073) emit one border-exact n-gon instead of
 ladder rungs that fold under the UV census. Folds 26→21.
+
+### Tiny freeform → MinimalNGon
+
+Freeform faces with ≤3 edges claim MinimalNGon early (#1828 class).
+Folds 21→16.
 
 ## Phase 3 remaining
 

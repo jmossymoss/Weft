@@ -2330,6 +2330,32 @@ void testMp9EditedWatertight() {
 }
 
 
+
+// Tiny freeform patches (≤3 edges) must take MinimalNGon rather than a
+// Coons lattice that sparse-keeps tip folds (mp9_Edited #1828).
+void testMp9TinyFreeformMinimalNgon() {
+    std::printf("-- MP9 tiny freeform minimal n-gon --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/tiny_freeform_minimal_ngon.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    const auto folded = weft::foldedPolys(model, mesh);
+    CHECK_EQ(int(std::count(folded.begin(), folded.end(), uint8_t{1})), 0);
+    int ngon = 0;
+    for (const auto& [fid, kind] : report.faceMesher) {
+        if (kind == weft::MesherKind::MinimalNGon) ++ngon;
+    }
+    CHECK(ngon >= 1);
+    std::printf("  folds=0 minimal-ngon=%d\n", ngon);
+}
+
 // Thin extrusion digons must emit a fold-free rail-ladder n-gon
 // (mp9_Edited #1073).
 void testMp9DigonRailLadderNgon() {
@@ -6141,6 +6167,7 @@ int main() {
     RUN(testMp9MuzzleColumnCells);
     RUN(testMp9EditedMuzzleTwoFullHeightSides);
     RUN(testMp9EditedWatertight);
+    RUN(testMp9TinyFreeformMinimalNgon);
     RUN(testMp9DigonRailLadderNgon);
     RUN(testMp9FreeformCombMinimalNgon);
     RUN(testMp9PoleDigonMinimalNgon);

@@ -9717,6 +9717,22 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 dbg("plan face %d: freeform -> dome-cap", fid);
                 return plan;
             }
+            // Tiny freeform patches (≤3 edges) build cleaner as a single
+            // boundary n-gon than a Coons lattice that sparse-keeps a few
+            // tip folds under full-model density (mp9_Edited #1828).
+            if (s.minimal && info.edgeIds.size() <= 3) {
+                FacePlan tiny;
+                if (collectPlanarLoops(face, surf, model, tiny,
+                                       /*requirePlane=*/false,
+                                       /*tolerateDegenerate=*/true)) {
+                    plan = std::move(tiny);
+                    plan.kind = MesherKind::MinimalNGon;
+                    dbg("plan face %d: freeform tiny -> minimal n-gon "
+                        "(%zu edges)",
+                        fid, info.edgeIds.size());
+                    return plan;
+                }
+            }
             break;
         case FeatureClass::FilletStrip: {
             // Full-period closed analytic blends: RevolutionGrid keeps
