@@ -2330,6 +2330,57 @@ void testMp9EditedWatertight() {
 }
 
 
+// Thin extrusion digons must emit a fold-free rail-ladder n-gon
+// (mp9_Edited #1073).
+void testMp9DigonRailLadderNgon() {
+    std::printf("-- MP9 digon rail-ladder n-gon --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/rail_ladder_digon_fold_ngon.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    const auto folded = weft::foldedPolys(model, mesh);
+    CHECK_EQ(int(std::count(folded.begin(), folded.end(), uint8_t{1})), 0);
+    int rl = 0;
+    for (const auto& [fid, kind] : report.faceMesher) {
+        if (kind == weft::MesherKind::RailLadder) ++rl;
+    }
+    CHECK(rl >= 1);
+    std::printf("  folds=0 rail-ladder=%d\n", rl);
+}
+
+// Comb-trimmed freeform panels that refuse Coons/orth must rescue as
+// MinimalNGon from a fresh FacePlan (mp9_Edited #722/#728).
+void testMp9FreeformCombMinimalNgon() {
+    std::printf("-- MP9 freeform comb minimal n-gon --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/freeform_comb_minimal_ngon.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    weft::GenerationReport report;
+    weft::generate(model, analysis, gs, &report);
+    const auto summary = weft::summarizeStructure(report);
+    CHECK_EQ(summary.plannedFloor, 0);
+    CHECK_EQ(summary.failedFloor, 0);
+    int ngon = 0;
+    for (const auto& [fid, kind] : report.faceMesher) {
+        if (kind == weft::MesherKind::MinimalNGon) ++ngon;
+    }
+    CHECK(ngon >= 2);
+    std::printf("  planned-floor=0 minimal-ngon=%d\n", ngon);
+}
+
 // Two-pole freeform digons (degenerate seams) must rescue as MinimalNGon
 // rather than a triangulated contract floor (mp9_Edited #2359/#2364).
 void testMp9PoleDigonMinimalNgon() {
@@ -6090,6 +6141,8 @@ int main() {
     RUN(testMp9MuzzleColumnCells);
     RUN(testMp9EditedMuzzleTwoFullHeightSides);
     RUN(testMp9EditedWatertight);
+    RUN(testMp9DigonRailLadderNgon);
+    RUN(testMp9FreeformCombMinimalNgon);
     RUN(testMp9PoleDigonMinimalNgon);
     RUN(testMp9GripFreeformCoons);
     RUN(testOrthogonalStaircaseInteriorStep);
