@@ -59,3 +59,15 @@ App screenshots (`app_*.png`) from `weft_app` with CAD defaults
 `--finalize`: watertight badge, structured quads on drums/fillets/grips,
 exploded assembly reads as an MP9 (suppressor, optic, magazine spring).
 Matplotlib `mp9_edited_*.png` are coarse overview plots only.
+
+## Phase 4 — suite / corpus harden (2026-08-06)
+
+- `ctest` green (pipeline + topology_signature).
+- IsoBand open-band prefer gated to `edgeIds >= 64` with `bandDriver`, so ABC
+  notched drums take open-band while mp9 muzzle two-full-height keeps orth
+  column cells.
+- Corpus goldens refreshed after intentional topology moves on foam /
+  teleporter / flaregun / demo / torture / canrev / ellipse_plate (structured
+  retention held; counts drift from IsoBand / tip-fold / floor-clear classes
+  banked this campaign).
+- `tools/corpus_gate.sh` PASS after `--update`.
