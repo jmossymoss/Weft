@@ -23403,8 +23403,28 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     // contract floor (MP9 face 906: 7 versus 6). Repair only
                     // this tightly bounded case, choosing a group absent
                     // from the opposite rim so the raise cannot cancel out.
-                    if (small.size() <= 4 && large.size() <= 4 &&
-                        deficit <= 2) {
+                    // Default: tiny T-junction (≤4/≤4, deficit≤2). Cone /
+                    // cylinder full-period drums with a notched multi-edge
+                    // rim (mp9_Edited #375: ~15 vs ~20) need a wider budget
+                    // so strip reconcile never invents folded azimuth quads.
+                    int smallCap = 4, largeCap = 4;
+                    long deficitCap = 2;
+                    if (fid >= 1 && fid <= model.faceCount()) {
+                        const TopoDS_Face f = TopoDS::Face(model.faces(fid));
+                        const BRepAdaptor_Surface surf(f, Standard_True);
+                        // Cone only: cylinder/fillet tubes share multi-edge
+                        // rims with neighbours and a wide raise pumps folds
+                        // into flaregun/teleporter. Cone lead-ins (#375)
+                        // need the deficit budget without that side effect.
+                        if (surf.GetType() == GeomAbs_Cone) {
+                            smallCap = 12;
+                            largeCap = 12;
+                            deficitCap = 8;
+                        }
+                    }
+                    if (int(small.size()) <= smallCap &&
+                        int(large.size()) <= largeCap &&
+                        deficit <= deficitCap) {
                         std::set<int> oppositeRoots;
                         for (int e : large) {
                             oppositeRoots.insert(density.groups.find(e));
