@@ -34,6 +34,15 @@ plain-rim `bandDriver`; orth density then collapses circumference.
 **Verify after fix:** Re-shot object 5; expect denser, more even columns on the
 teal wall; face 374 `u`/polys near alone spans; watertight retained.
 
+**Verification (2026-08-06):** FIXED / improved.
+- Before: face 374 `u=6`, 6 n-gons; wall looked coarse.
+- After: open-band route (`tryOpenBand` even when `bandDriver=0`); face 374
+  `u=14`, **170 polys** (109 quads + n-gons). Screenshots
+  `before/object_005_*.png` vs `after_d1/object_005_*.png` show denser
+  circumferential edge flow on the teal wall. Watertight retained.
+- Residual: still below alone `nu≈32`; thin spanning quads remain on some
+  outer panels — acceptable vs prior crush; further densify optional.
+
 ---
 
 ### D2 — P1 — Object 19: collapsed / blocky freeform body
