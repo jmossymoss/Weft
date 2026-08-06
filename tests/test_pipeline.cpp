@@ -2331,6 +2331,27 @@ void testMp9EditedWatertight() {
 
 
 
+
+// Comb-trimmed freeform ribbons with ≤2 tip folds rescue as MinimalNGon
+// (mp9_Edited #743/#1059). Longer earclip straps must stay RibbonSweep.
+void testMp9RibbonTipFoldNgon() {
+    std::printf("-- MP9 ribbon tip fold n-gon --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/ribbon_tip_fold_ngon.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    const auto folded = weft::foldedPolys(model, mesh);
+    CHECK_EQ(int(std::count(folded.begin(), folded.end(), uint8_t{1})), 0);
+    std::printf("  folds=0\n");
+}
+
 // Tiny freeform patches (≤3 edges) must take MinimalNGon rather than a
 // Coons lattice that sparse-keeps tip folds (mp9_Edited #1828).
 void testMp9TinyFreeformMinimalNgon() {
@@ -6170,6 +6191,7 @@ int main() {
     RUN(testMp9MuzzleColumnCells);
     RUN(testMp9EditedMuzzleTwoFullHeightSides);
     RUN(testMp9EditedWatertight);
+    RUN(testMp9RibbonTipFoldNgon);
     RUN(testMp9TinyFreeformMinimalNgon);
     RUN(testMp9DigonRailLadderNgon);
     RUN(testMp9FreeformCombMinimalNgon);

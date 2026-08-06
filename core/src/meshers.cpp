@@ -26552,15 +26552,27 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             liveFolds <= sparseFoldBudget &&
                             (sparseDrum || sparseFilletFull ||
                              sparseRibbon || sparseRail || sparseCoonsOne);
-                        // Freeform Coons tip folds: a border-exact
-                        // MinimalNGon is structured and fold-free
-                        // (mp9_Edited #47). Ribbons stay RibbonSweep —
-                        // straps must not collapse to a single n-gon.
+                        // Freeform Coons / short-ribbon tip folds (≤2): a
+                        // border-exact MinimalNGon is structured and
+                        // fold-free (mp9_Edited #47 Coons; #743/#1059
+                        // ribbon). Leave straps with denser fold pockets
+                        // as RibbonSweep (flaregun census strap: 8 folds).
                         bool freeformNgonRescue = false;
-                        if (sparseProtect && sparseCoonsOne &&
-                            sparseInfo.featureClass ==
-                                FeatureClass::Freeform &&
-                            s.minimal) {
+                        // Comb-trimmed freeform ribbons (≤14 edges) tip-
+                        // fold; longer earclip/cap straps (flaregun: 16
+                        // edges) must stay RibbonSweep.
+                        const bool tipRibbon =
+                            sparseRibbon &&
+                            int(sparseInfo.edgeIds.size()) <= 14;
+                        const bool tipFoldNgon =
+                            sparseProtect && s.minimal &&
+                            liveFolds > 0 && liveFolds <= 2 &&
+                            ((sparseInfo.featureClass ==
+                                  FeatureClass::Freeform &&
+                              (sparseCoonsOne || tipRibbon)) ||
+                             (sparseDrum &&
+                              plan.kind == MesherKind::RevolutionGrid));
+                        if (tipFoldNgon) {
                             PolyMesh ngon;
                             MeshBuilder nb(ngon);
                             if (meshMinimalPlanar(face, model, fid,
@@ -26571,9 +26583,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                 const auto [nt, ni] = invertedCells(ngon);
                                 (void)nt;
                                 if (ni < liveFolds) {
-                                    dbg("mesh face %d: freeform coons "
+                                    dbg("mesh face %d: freeform %s "
                                         "folds %d → minimal n-gon %d",
-                                        fid, liveFolds, ni);
+                                        fid, mesherKindName(plan.kind),
+                                        liveFolds, ni);
                                     parts[fid] = std::move(ngon);
                                     plans[fid].kind =
                                         MesherKind::MinimalNGon;
@@ -26697,9 +26710,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         liveFp <= foldCap && liveFp <= sparseFoldBudget &&
                         (sparseDrum || sparseFilletFull || sparseRibbon ||
                          sparseRail || sparseCoonsOne);
-                    if (sparseFpProtect && sparseCoonsOne &&
+                    const bool tipRibbonFp =
+                        sparseRibbon &&
+                        int(sparseInfo.edgeIds.size()) <= 14;
+                    if (sparseFpProtect && s.minimal &&
                         sparseInfo.featureClass == FeatureClass::Freeform &&
-                        s.minimal) {
+                        liveFp > 0 && liveFp <= 2 &&
+                        (sparseCoonsOne || tipRibbonFp)) {
                         PolyMesh ngon;
                         MeshBuilder nb(ngon);
                         if (meshMinimalPlanar(face, model, fid, solvedEdge,
@@ -26708,9 +26725,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             !ngon.polygons.empty()) {
                             const int ni = fpCount(ngon);
                             if (ni < liveFp) {
-                                dbg("mesh face %d: freeform coons "
+                                dbg("mesh face %d: freeform %s "
                                     "foldedPolys %d → minimal n-gon %d",
-                                    fid, liveFp, ni);
+                                    fid, mesherKindName(plan.kind), liveFp,
+                                    ni);
                                 parts[fid] = std::move(ngon);
                                 plans[fid].kind = MesherKind::MinimalNGon;
                                 liveFp = ni;

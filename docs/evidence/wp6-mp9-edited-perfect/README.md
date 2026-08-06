@@ -15,7 +15,7 @@ At CAD defaults, `tests/STEP_Examples/mp9_Edited.stp` is watertight:
 | failed-floor | 1 | 0 |
 | raw | 2 | 0 |
 | planned-floor | 31 | 0 |
-| foldedPolygons | 23 | 11 |
+| foldedPolygons | 23 | 3 |
 | retention | 0.9889 | 1.0000 |
 
 Locked by `testMp9EditedWatertight` and `CAD_CORPUS.tsv` row `mp9_edited`
@@ -62,6 +62,13 @@ Folds 21→16.
 
 When sparse-fold protect would keep freeform Coons tip folds, remesh as
 MinimalNGon if fold census improves (#47/#8). Folds 16→11.
+
+### Tip-fold ≤2 MinimalNGon (ribbon ≤14 edges + revgrid drums)
+
+Rescue freeform Coons/ribbons with ≤2 tip folds and ≤14 edges, plus
+RevolutionGrid drums with ≤2 residual folds, to MinimalNGon when the
+census improves. Flaregun earclip (16 edges) and dense-fold straps stay
+RibbonSweep. Folds 11→3.
 
 ## Phase 3 remaining
 
