@@ -15,7 +15,7 @@ At CAD defaults, `tests/STEP_Examples/mp9_Edited.stp` is watertight:
 | failed-floor | 1 | 0 |
 | raw | 2 | 0 |
 | planned-floor | 31 | 0 |
-| foldedPolygons | 23 | 26 |
+| foldedPolygons | 23 | 21 |
 | retention | 0.9889 | 1.0000 |
 
 Locked by `testMp9EditedWatertight` and `CAD_CORPUS.tsv` row `mp9_edited`
@@ -47,6 +47,11 @@ planned-floor = 0, failed-floor = 0, raw = 0, retention = 1.0.
 Widen split-rim density repair for `GeomAbs_Cone` (caps 12/12, deficit≤8)
 so notched lead-in rims equalize instead of strip-reconciling folded
 azimuth quads. Folds 31→26; #375 7→2.
+
+### Digon rail-ladder → single n-gon
+
+Thin extrusion digons (#1073) emit one border-exact n-gon instead of
+ladder rungs that fold under the UV census. Folds 26→21.
 
 ## Phase 3 remaining
 

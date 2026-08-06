@@ -5764,133 +5764,52 @@ bool meshRailLadder(const TopoDS_Face& face, const Model& model, int faceId,
                                               {faceId, Buv[i].X(), Buv[i].Y()}));
                 }
             }
-            auto arcs = [](const std::vector<gp_Pnt>& pts) {
-                std::vector<double> f(pts.size(), 0.0);
-                for (size_t i = 1; i < pts.size(); ++i) {
-                    f[i] = f[i - 1] + pts[i].Distance(pts[i - 1]);
-                }
-                const double t = f.back() > 1e-12 ? f.back() : 1.0;
-                for (double& x : f) x /= t;
-                return f;
-            };
-            const bool flip = face.Orientation() == TopAbs_REVERSED;
             const size_t polyBefore = out.mesh().polygons.size();
-            const bool aSparse = A.size() <= B.size();
-            const std::vector<uint32_t>& S = aSparse ? A : B;
-            const std::vector<uint32_t>& D = aSparse ? B : A;
-            const std::vector<double> sf = arcs(aSparse ? Ap : Bp);
-            const std::vector<double> df = arcs(aSparse ? Bp : Ap);
-            const int m = int(S.size()) - 1;
-            int nRail = int(D.size()) - 1;
-            std::vector<int> mp(m + 1);
-            mp[0] = 0;
-            mp[m] = nRail;
-            for (int k = 1; k < m; ++k) {
-                int j = mp[k - 1];
-                while (j + 1 < nRail &&
-                       std::abs(df[j + 1] - sf[k]) <=
-                           std::abs(df[j] - sf[k])) {
-                    ++j;
-                }
-                mp[k] = j;
+            int nRail = int(std::max(A.size(), B.size())) - 1;
+            // Ladder rungs on thin extrusion digons fold under the UV
+            // census (mp9_Edited #1073). Emit one border-exact n-gon.
+            std::vector<uint32_t> ring = A;
+            for (int i = int(B.size()) - 1; i >= 0; --i) {
+                ring.push_back(B[size_t(i)]);
             }
-            for (int k = 0; k < m; ++k) {
-                std::vector<uint32_t> ring2;
-                if (aSparse) {
-                    ring2 = {S[k], S[k + 1]};
-                    for (int t = mp[k + 1]; t >= mp[k]; --t) {
-                        ring2.push_back(D[t]);
-                    }
-                } else {
-                    for (int t = mp[k]; t <= mp[k + 1]; ++t) {
-                        ring2.push_back(D[t]);
-                    }
-                    ring2.push_back(S[k + 1]);
-                    ring2.push_back(S[k]);
-                }
-                ring2.erase(std::unique(ring2.begin(), ring2.end()),
-                            ring2.end());
-                if (ring2.size() > 1 && ring2.front() == ring2.back()) {
-                    ring2.pop_back();
-                }
-                if (ring2.size() < 3) continue;
-                out.addPolygon(std::move(ring2), faceId, flip);
+            ring.erase(std::unique(ring.begin(), ring.end()), ring.end());
+            if (ring.size() > 1 && ring.front() == ring.back()) {
+                ring.pop_back();
             }
-            // Pick the winding that agrees with the surface (digon tips
-            // aligned still leave UV census inverted for one orientation).
-            {
-                Handle(Geom_Surface) S = BRep_Tool::Surface(face);
-                const bool revFace = face.Orientation() == TopAbs_REVERSED;
-                auto countInv = [&](bool flipPolys) {
-                    int inv = 0, tested = 0;
-                    auto& mesh = out.mesh();
-                    for (size_t pi = polyBefore; pi < mesh.polygons.size();
-                         ++pi) {
-                        auto poly = mesh.polygons[pi];
-                        if (flipPolys) {
-                            std::reverse(poly.begin(), poly.end());
-                        }
-                        if (poly.size() < 3) continue;
-                        gp_XYZ nw(0, 0, 0);
-                        gp_XYZ cen(0, 0, 0);
-                        for (size_t i = 0; i < poly.size(); ++i) {
-                            const auto& a = mesh.vertices[poly[i]];
-                            const auto& b =
-                                mesh.vertices[poly[(i + 1) % poly.size()]];
-                            nw += gp_XYZ(a[1] * b[2] - a[2] * b[1],
-                                         a[2] * b[0] - a[0] * b[2],
-                                         a[0] * b[1] - a[1] * b[0]);
-                            cen += gp_XYZ(a[0], a[1], a[2]);
-                        }
-                        if (nw.Modulus() < 1e-16 || S.IsNull()) continue;
-                        cen /= double(poly.size());
-                        gp_Pnt sp;
-                        gp_Vec du, dv;
-                        gp_Vec n;
-                        if (oppositeWireU) {
-                            // UV-centroid census ties on coincident pcurves;
-                            // judge winding from the projected 3D centroid.
-                            GeomAPI_ProjectPointOnSurf proj(gp_Pnt(cen), S);
-                            if (!proj.IsDone() || proj.NbPoints() < 1) {
-                                continue;
-                            }
-                            double pu = 0, pv = 0;
-                            proj.LowerDistanceParameters(pu, pv);
-                            S->D1(pu, pv, sp, du, dv);
-                        } else {
-                            double pu = 0, pv = 0;
-                            int anchored = 0;
-                            for (uint32_t vi : poly) {
-                                const Anchor& an = mesh.anchors[vi];
-                                if (an.faceId == faceId) {
-                                    pu += an.u;
-                                    pv += an.v;
-                                    ++anchored;
-                                }
-                            }
-                            if (anchored == 0) continue;
-                            pu /= anchored;
-                            pv /= anchored;
-                            S->D1(pu, pv, sp, du, dv);
-                        }
-                        n = du.Crossed(dv);
-                        if (n.Magnitude() < 1e-16) continue;
-                        if (revFace) n.Reverse();
-                        ++tested;
-                        if (gp_Vec(nw).Dot(n) < 0) ++inv;
-                    }
-                    return std::make_pair(tested, inv);
-                };
-                const auto [t0, i0] = countInv(false);
-                const auto [t1c, i1] = countInv(true);
-                if (t1c > 0 && i1 < i0) {
-                    for (size_t pi = polyBefore;
-                         pi < out.mesh().polygons.size(); ++pi) {
-                        std::reverse(out.mesh().polygons[pi].begin(),
-                                     out.mesh().polygons[pi].end());
-                    }
+            if (ring.size() < 3) return false;
+            Handle(Geom_Surface) Ssurf = BRep_Tool::Surface(face);
+            const bool revFace = face.Orientation() == TopAbs_REVERSED;
+            auto score = [&](bool rev) {
+                auto poly = ring;
+                if (rev) std::reverse(poly.begin(), poly.end());
+                auto& mesh = out.mesh();
+                gp_XYZ nw(0, 0, 0);
+                gp_XYZ cen(0, 0, 0);
+                for (size_t i = 0; i < poly.size(); ++i) {
+                    const auto& a = mesh.vertices[poly[i]];
+                    const auto& b =
+                        mesh.vertices[poly[(i + 1) % poly.size()]];
+                    nw += gp_XYZ(a[1] * b[2] - a[2] * b[1],
+                                 a[2] * b[0] - a[0] * b[2],
+                                 a[0] * b[1] - a[1] * b[0]);
+                    cen += gp_XYZ(a[0], a[1], a[2]);
                 }
-            }
+                if (nw.Modulus() < 1e-16 || Ssurf.IsNull()) return 0.0;
+                cen /= double(poly.size());
+                GeomAPI_ProjectPointOnSurf proj(gp_Pnt(cen), Ssurf);
+                if (!proj.IsDone() || proj.NbPoints() < 1) return 0.0;
+                double pu = 0, pv = 0;
+                proj.LowerDistanceParameters(pu, pv);
+                gp_Pnt sp;
+                gp_Vec du, dv;
+                Ssurf->D1(pu, pv, sp, du, dv);
+                gp_Vec n = du.Crossed(dv);
+                if (n.Magnitude() < 1e-16) return 0.0;
+                if (revFace) n.Reverse();
+                return gp_Vec(nw).Dot(n);
+            };
+            const bool flip = score(true) > score(false);
+            out.addPolygon(std::move(ring), faceId, flip);
             if (built) {
                 *built = {int(out.mesh().polygons.size() - polyBefore),
                           nRail};
