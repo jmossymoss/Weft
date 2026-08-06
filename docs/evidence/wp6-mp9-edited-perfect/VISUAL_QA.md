@@ -38,6 +38,8 @@ Remaining solids (6–7, 10–13, 15–21, 23–31, 33–36, 38–55, 58–64): 
 gallery; no additional severity beyond “small fastener / sparse n-gon panel”
 unless listed below. Full inventory: `OBJECTS.md`.
 
+Full prioritized image-error list: [`IMAGE_ERRORS.md`](IMAGE_ERRORS.md).
+
 ## Defects (shared-class hypotheses)
 
 ### A — Coupled IsoBand drum column crush (object 5 / face ~374 class)
