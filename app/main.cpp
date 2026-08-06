@@ -5487,6 +5487,7 @@ int main(int argc, char** argv) {
 
     std::string screenshotPath, screenshotObjectsDir, startModel,
         startFixture = "demo";
+    int screenshotObjectOnly = 0;  // 1-based; 0 = all solids
     int startSelect = 0, startMode = 0;
     bool startQuality = false, startMatcap = false, startSmooth = false;
     bool startProxy = false;
@@ -5498,6 +5499,8 @@ int main(int argc, char** argv) {
         if (a == "--screenshot" && i + 1 < argc) screenshotPath = argv[++i];
         else if (a == "--screenshot-objects" && i + 1 < argc)
             screenshotObjectsDir = argv[++i];
+        else if (a == "--screenshot-object" && i + 1 < argc)
+            screenshotObjectOnly = std::stoi(argv[++i]);
         else if (a == "--fixture" && i + 1 < argc) startFixture = argv[++i];
         else if (a == "--select" && i + 1 < argc) startSelect = std::stoi(argv[++i]);
         else if (a == "--yaw" && i + 1 < argc) startYaw = std::stof(argv[++i]);
@@ -5685,7 +5688,10 @@ int main(int argc, char** argv) {
     int lastClickFace = 0;
     double hoverX = -1, hoverY = -1;  // last hover-picked cursor (framebuffer)
     int frame = 0;
-    size_t objectShotIndex = 0;
+    size_t objectShotIndex =
+        screenshotObjectOnly > 0 ? size_t(screenshotObjectOnly - 1) : 0;
+    const size_t objectShotEnd =
+        screenshotObjectOnly > 0 ? objectShotIndex + 1 : size_t(-1);
     int objectShotView = 0;
     int objectShotSettle = 0;
     bool objectShotArmed = !screenshotObjectsDir.empty();
@@ -7305,7 +7311,8 @@ int main(int argc, char** argv) {
         if (objectShotArmed && meshReady && app.hasModel &&
             !app.analysis.solidFaces.empty()) {
             if (objectShotSettle == 0) {
-                if (objectShotIndex >= app.analysis.solidFaces.size()) {
+                if (objectShotIndex >= app.analysis.solidFaces.size() ||
+                    objectShotIndex >= objectShotEnd) {
                     std::printf("screenshot-objects: done (%zu solids)\n",
                                 app.analysis.solidFaces.size());
                     break;
