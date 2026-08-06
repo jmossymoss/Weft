@@ -16,6 +16,7 @@ Structured Weft only (accuracy-tessellator excluded). Tip continues from
 | freeform n-gon floor rescue | 33 | 39 | 32 | 0 | 0 | 0 | 19 | 0.9938 |
 | wideDrum ≤1 inset + nearFull | 33 | 39 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
 | unionSeams 35% + post-fold | 30 | 39 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
+| absorb near-miss all-partner | 25 | 39 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
 
 ## Classes landed
 
@@ -57,3 +58,9 @@ Fillet complement paths can sit at ~32% chord sagitta; the prior 25%
 slack rejected them. Raising to 35% (stitch parity) and re-running
 unionSeams after folded-polygon drops closes the #1892↔#1886 long open
 (opens 33→30).
+
+### Absorb near-miss onto all partner verts
+
+Residual #1892 opens had one exact-shared endpoint and one 0.05 twin
+that sat on an *interior* coons sample. Second-sweep absorb now searches
+all partner-face verts (not only boundary), clearing #1892 (opens 30→25).

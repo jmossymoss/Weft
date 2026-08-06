@@ -22011,6 +22011,36 @@ void absorbOrphanSeamStations(PolyMesh& mesh, const Model& model,
             return best <= 0.15 * 0.15;
         };
         const int fids[2] = {fA, fB};
+        // All partner-face verts (not only boundary): a near-miss twin can
+        // sit on an interior lattice sample of the coons neighbour
+        // (mp9_Edited #1892 residual 0.05 opens).
+        std::array<std::vector<uint32_t>, 2> partnerVerts;
+        for (int s = 0; s < 2; ++s) {
+            auto pit = facePolys.find(fids[s]);
+            if (pit == facePolys.end()) continue;
+            std::set<uint32_t> seen;
+            for (size_t p : pit->second) {
+                for (uint32_t v : mesh.polygons[p]) seen.insert(v);
+            }
+            partnerVerts[s].assign(seen.begin(), seen.end());
+        }
+        auto nearPartner = [&](uint32_t v, int otherSide, double& bdOut) {
+            bdOut = 1e300;
+            uint32_t best = v;
+            for (uint32_t u : partnerVerts[otherSide]) {
+                if (u == v) continue;
+                const auto& P = mesh.vertices[v];
+                const auto& Q = mesh.vertices[u];
+                const double dx = P[0] - Q[0], dy = P[1] - Q[1],
+                             dz = P[2] - Q[2];
+                const double dd = dx * dx + dy * dy + dz * dz;
+                if (dd < bdOut) {
+                    bdOut = dd;
+                    best = u;
+                }
+            }
+            return best;
+        };
         std::array<std::vector<uint32_t>, 2> sideOpen;
         for (int s = 0; s < 2; ++s) {
             auto bit = faceBoundary.find(fids[s]);
@@ -22020,46 +22050,22 @@ void absorbOrphanSeamStations(PolyMesh& mesh, const Model& model,
                 for (uint32_t v : {seg.first, seg.second}) {
                     if (!seen.insert(v).second) continue;
                     if (!openVerts.count(v)) continue;
-                    if (!onCurve(v)) continue;
+                    double bd = 1e300;
+                    nearPartner(v, 1 - s, bd);
+                    // Accept on-curve orphans OR near-miss twins the
+                    // polyline gate would drop (mp9_Edited #1892: 0.05).
+                    if (!onCurve(v) && bd > 0.12 * 0.12) continue;
                     sideOpen[s].push_back(v);
                 }
             }
         }
         for (int s = 0; s < 2; ++s) {
-            const int other = 1 - s;
-            auto pitOther = facePolys.find(fids[other]);
             auto pitSelf = facePolys.find(fids[s]);
-            if (pitOther == facePolys.end() || pitSelf == facePolys.end()) {
-                continue;
-            }
-            // Partner boundary verts (not only open ones).
-            std::vector<uint32_t> partner;
-            auto bit = faceBoundary.find(fids[other]);
-            if (bit == faceBoundary.end()) continue;
-            for (const auto& seg : bit->second) {
-                partner.push_back(seg.first);
-                partner.push_back(seg.second);
-            }
-            std::sort(partner.begin(), partner.end());
-            partner.erase(std::unique(partner.begin(), partner.end()),
-                          partner.end());
+            if (pitSelf == facePolys.end()) continue;
             for (uint32_t v : sideOpen[s]) {
-                uint32_t best = v;
                 double bd = 1e300;
-                for (uint32_t u : partner) {
-                    if (u == v) continue;
-                    const auto& P = mesh.vertices[v];
-                    const auto& Q = mesh.vertices[u];
-                    const double dx = P[0] - Q[0], dy = P[1] - Q[1],
-                                 dz = P[2] - Q[2];
-                    const double dd = dx * dx + dy * dy + dz * dz;
-                    if (dd < bd) {
-                        bd = dd;
-                        best = u;
-                    }
-                }
-                // Residual #1892↔#1891 near-misses land around 0.05–0.26.
-                if (best == v || bd > 0.28 * 0.28) continue;
+                const uint32_t best = nearPartner(v, 1 - s, bd);
+                if (best == v || bd > 0.12 * 0.12) continue;
                 for (size_t p : pitSelf->second) {
                     for (uint32_t& q : mesh.polygons[p]) {
                         if (q == v) q = best;
