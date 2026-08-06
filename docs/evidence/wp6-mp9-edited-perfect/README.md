@@ -15,7 +15,7 @@ At CAD defaults, `tests/STEP_Examples/mp9_Edited.stp` is watertight:
 | failed-floor | 1 | 0 |
 | raw | 2 | 0 |
 | planned-floor | 31 | 0 |
-| foldedPolygons | 23 | 3 |
+| foldedPolygons | 23 | 2 |
 | retention | 0.9889 | 1.0000 |
 
 Locked by `testMp9EditedWatertight` and `CAD_CORPUS.tsv` row `mp9_edited`
@@ -76,6 +76,12 @@ After weld, exclusive-face verts on polygons with ≤2 late folds are
 re-snapped to UV anchors when that clears folds without raising winding
 or global fold count. Residual #133/#3025 use shared seam verts (still
 open).
+
+### Surface-evaluated Newell for foldedPolys
+
+When ≥3 face UV anchors exist, Newell uses surface-evaluated points so
+weld/micro-edge drift cannot invent false folds (#133 cleared). Residual
+#3020/#3025 remain.
 
 ## Phase 3 remaining
 
