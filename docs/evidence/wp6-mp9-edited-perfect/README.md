@@ -22,6 +22,7 @@ Structured Weft only (accuracy-tessellator excluded). Tip continues from
 | open-endpoint partner near-weld | 1 | 39 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
 | open flap triangle drop | 0 | 37 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
 | digon-spur cleanup | 0 | 10 | 31 | 0 | 0 | 0 | 18 | 0.9941 |
+| iterative digon+dedupe | 0 | 0 | 31 | 0 | 0 | 0 | 18 | 0.9941 |
 
 ## Classes landed
 
@@ -69,3 +70,8 @@ unionSeams after folded-polygon drops closes the #1892↔#1886 long open
 Residual #1892 opens had one exact-shared endpoint and one 0.05 twin
 that sat on an *interior* coons sample. Second-sweep absorb now searches
 all partner-face verts (not only boundary), clearing #1892 (opens 30→25).
+
+## Validity (Phase 2)
+
+**WATERTIGHT** at tip: openEdges=0, nonManifoldEdges=0, windingConflicts=0.
+Remaining for perfect topology: folds≈31, planned-floor=18.

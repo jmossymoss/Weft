@@ -28773,6 +28773,26 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             bool changed = true;
             while (changed && poly.size() >= 3) {
                 changed = false;
+                // Collapse consecutive duplicates first so nested spurs
+                // …a,b,c,b,a… reduce: remove c → …a,b,b,a… → …a,b,a…
+                {
+                    std::vector<uint32_t> cleaned;
+                    cleaned.reserve(poly.size());
+                    for (uint32_t v : poly) {
+                        if (cleaned.empty() || cleaned.back() != v) {
+                            cleaned.push_back(v);
+                        }
+                    }
+                    while (cleaned.size() > 1 &&
+                           cleaned.front() == cleaned.back()) {
+                        cleaned.pop_back();
+                    }
+                    if (cleaned.size() != poly.size()) {
+                        poly.swap(cleaned);
+                        changed = true;
+                        continue;
+                    }
+                }
                 const size_t n = poly.size();
                 for (size_t i = 0; i < n; ++i) {
                     if (poly[i] == poly[(i + 2) % n] &&
@@ -28790,18 +28810,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 }
             }
             if (poly.size() < 3) continue;
-            std::vector<uint32_t> cleaned;
-            for (uint32_t v : poly) {
-                if (cleaned.empty() || cleaned.back() != v) {
-                    cleaned.push_back(v);
-                }
-            }
-            while (cleaned.size() > 1 &&
-                   cleaned.front() == cleaned.back()) {
-                cleaned.pop_back();
-            }
-            if (cleaned.size() < 3) continue;
-            polys.push_back(std::move(cleaned));
+            polys.push_back(std::move(poly));
             polyFace.push_back(mesh.polygonFaceId[p]);
         }
         if (polys.size() != before) {
