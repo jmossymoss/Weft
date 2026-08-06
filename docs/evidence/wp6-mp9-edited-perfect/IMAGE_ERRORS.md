@@ -59,8 +59,17 @@ effectively MinimalNGon-collapsed.
 multi-face freeform body.
 
 **Verify after fix:** Object 19 must show structured face flow (Coons/revgrid/
-planar panels), not 3 blobs; poly count � (Coons/revgrid/
 planar panels), not 3 blobs; poly count ≫ 3.
+
+**Verification (attempted):** PARKED — tradeoff.
+- Tip-fold → MinimalNGon is fold-free but shades as a melted blob (sparse
+  single n-gon on a helical freeform).
+- Keeping Coons yields a readable coil (~224 quads) in solid+wire shots but
+  leaves **3 foldedPolys** on face 1828 (fails `testMp9EditedWatertight`).
+- Cell winding flips cleared folds locally but opened 6 seam edges against
+  neighbouring MinimalNGon planes.
+- Needs a non-planar edge-exact n-gon or Coons geoheal that preserves seams.
+  Screenshots: `before_d2/` (blob) vs `after_d2/` (coil + 3 folded cells).
 
 ---
 
