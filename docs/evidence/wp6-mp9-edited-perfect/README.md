@@ -52,3 +52,10 @@ Opens measured 7 after the same class fixes (was ~247).
 ## Release spot-check
 
 flaregun / foam / teleporter / iso14649-demo watertight at CAD defaults.
+
+## Visual inspection
+
+App screenshots (`app_*.png`) from `weft_app` with CAD defaults
+`--finalize`: watertight badge, structured quads on drums/fillets/grips,
+exploded assembly reads as an MP9 (suppressor, optic, magazine spring).
+Matplotlib `mp9_edited_*.png` are coarse overview plots only.
