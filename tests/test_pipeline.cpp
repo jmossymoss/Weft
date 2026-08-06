@@ -2327,6 +2327,33 @@ void testMp9EditedWatertight() {
                 summary.retention());
 }
 
+
+// Two-pole freeform digons (degenerate seams) must rescue as MinimalNGon
+// rather than a triangulated contract floor (mp9_Edited #2359/#2364).
+void testMp9PoleDigonMinimalNgon() {
+    std::printf("-- MP9 pole digon minimal n-gon --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/pole_digon_minimal_ngon.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    weft::GenerationReport report;
+    weft::generate(model, analysis, gs, &report);
+    const auto summary = weft::summarizeStructure(report);
+    CHECK_EQ(summary.plannedFloor, 0);
+    CHECK_EQ(summary.failedFloor, 0);
+    int ngon = 0;
+    for (const auto& [fid, kind] : report.faceMesher) {
+        if (kind == weft::MesherKind::MinimalNGon) ++ngon;
+    }
+    CHECK(ngon >= 2);
+    std::printf("  planned-floor=0 minimal-ngon=%d\n", ngon);
+}
+
 // MP9 grip / optic freeform panels must keep Coons quad flow under CAD
 // rather than collapsing shallow bsplines to a single minimal n-gon.
 void testMp9GripFreeformCoons() {
@@ -6061,6 +6088,7 @@ int main() {
     RUN(testMp9MuzzleColumnCells);
     RUN(testMp9EditedMuzzleTwoFullHeightSides);
     RUN(testMp9EditedWatertight);
+    RUN(testMp9PoleDigonMinimalNgon);
     RUN(testMp9GripFreeformCoons);
     RUN(testOrthogonalStaircaseInteriorStep);
     RUN(testCylinderWallFullLengthSpans);

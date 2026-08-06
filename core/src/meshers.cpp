@@ -10428,9 +10428,12 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     // single boundary n-gon is still structured and border-exact (game
     // editable), better than a triangulated contract floor web. Skip
     // ribbon-detectable strips (they already had their chance above).
+    // Tolerate degenerate pole edges so two-pole digons (#2359/#2364) and
+    // one-pole driver panels (#697/#1928) can take this rescue.
     if (s.minimal && info.featureClass == FeatureClass::Freeform &&
-        info.edgeIds.size() <= 8 && !ribbonDetect(face, model) &&
-        collectPlanarLoops(face, surf, model, plan, /*requirePlane=*/false)) {
+        info.edgeIds.size() <= 16 && !ribbonDetect(face, model) &&
+        collectPlanarLoops(face, surf, model, plan, /*requirePlane=*/false,
+                           /*tolerateDegenerate=*/true)) {
         plan.kind = MesherKind::MinimalNGon;
         dbg("plan face %d: freeform floor rescue -> minimal n-gon (%zu edges)",
             fid, info.edgeIds.size());

@@ -14,9 +14,9 @@ At CAD defaults, `tests/STEP_Examples/mp9_Edited.stp` is watertight:
 | windingConflicts | 3 | 0 |
 | failed-floor | 1 | 0 |
 | raw | 2 | 0 |
-| planned-floor | 31 | 18 |
+| planned-floor | 31 | 8 |
 | foldedPolygons | 23 | 31 |
-| retention | 0.9889 | 0.9941 |
+| retention | 0.9889 | 0.9974 |
 
 Locked by `testMp9EditedWatertight` and `CAD_CORPUS.tsv` row `mp9_edited`
 with `require_watertight=1`.
@@ -38,3 +38,9 @@ with `require_watertight=1`.
 - 18 planned-floor (drum inset / freeform step / poles / closed chart)
 
 Release spot-check: flaregun / foam / teleporter watertight at CAD defaults.
+
+### Pole-tolerant MinimalNGon rescue
+
+`collectPlanarLoops(..., tolerateDegenerate=true)` lets two-pole digons
+and one-pole driver panels take MinimalNGon instead of contract floor.
+Planned-floor 18→8; retention 0.9974.
