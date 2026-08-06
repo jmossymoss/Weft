@@ -10109,22 +10109,25 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         // multi-tooth). Early orth would claim them via a full-height
         // meridian then fail at mesh time ("orthogonal revolution grid
         // failed"). Prefer the open-band path below.
-        if (orthOk && info.featureClass != FeatureClass::FilletStrip &&
-            !(info.featureClass == FeatureClass::Drum &&
-              info.chartKind == ChartKind::IsoBand &&
-              info.edgeIds.size() > 24)) {
+        // IsoBand drums with enough rim pieces: try open-band first when
+        // it has a plain-rim bandDriver (castellated barrels / insert
+        // walls). Otherwise keep the orthogonal lattice.
+        if (orthOk && info.featureClass != FeatureClass::FilletStrip) {
+            if (info.featureClass == FeatureClass::Drum &&
+                info.chartKind == ChartKind::IsoBand &&
+                info.edgeIds.size() >= 8 && tryOpenBand() &&
+                plan.bandDriver >= 1) {
+                dbg("plan face %d: iso-band drum -> open band (driver %d)",
+                    fid, plan.bandDriver);
+                return plan;
+            }
+            // tryOpenBand may have dirtied plan; restore orth claim.
             dbg("plan face %d: orthogonal trim grid u=%zu v=%zu", fid,
                 orth.uEdges.size(), orth.vEdges.size());
             plan = std::move(orth);
             return plan;
         }
-        if (orthOk && info.featureClass == FeatureClass::Drum &&
-            info.chartKind == ChartKind::IsoBand &&
-            info.edgeIds.size() > 24) {
-            orthWhy = "iso-band castellation prefers open-band";
-        } else {
-            orthWhy = orthOk ? "held back for fillet coons" : orthReject;
-        }
+        orthWhy = orthOk ? "held back for fillet coons" : orthReject;
     }
 
     // Spherical / dome cap (a single-wire revolution-like bspline that bulges
