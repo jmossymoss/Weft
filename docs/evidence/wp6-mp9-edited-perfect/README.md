@@ -15,7 +15,7 @@ At CAD defaults, `tests/STEP_Examples/mp9_Edited.stp` is watertight:
 | failed-floor | 1 | 0 |
 | raw | 2 | 0 |
 | planned-floor | 31 | 0 |
-| foldedPolygons | 23 | 2 |
+| foldedPolygons | 23 | 0 |
 | retention | 0.9889 | 1.0000 |
 
 Locked by `testMp9EditedWatertight` and `CAD_CORPUS.tsv` row `mp9_edited`
@@ -82,6 +82,15 @@ open).
 When ≥3 face UV anchors exist, Newell uses surface-evaluated points so
 weld/micro-edge drift cannot invent false folds (#133 cleared). Residual
 #3020/#3025 remain.
+
+### Freeform tiny-revolve → MinimalNGon
+
+Freeform geometric revolves with 3–5 edges plan as MinimalNGon instead of
+RevolutionGrid (#3020/#3025). Folded polygons 2→0.
+
+## Phase 2+3 — DONE on mp9_Edited
+
+All validity and structure invariants green at CAD defaults.
 
 ## Phase 3 remaining
 

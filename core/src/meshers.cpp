@@ -9922,6 +9922,25 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         (isClosedRevolution(surf) || geomRev())) {
         std::vector<std::vector<int>> inserts;
         if (edgesHugRimsOrInserts(face, surf, model, inserts)) {
+            // Tiny freeform geometric revolves (3–5 edges) keep a single
+            // border n-gon rather than a revgrid that sparsely folds after
+            // weld (#3020/#3025). Larger freeform revolves and all drums
+            // still take RevolutionGrid.
+            if (s.minimal &&
+                info.featureClass == FeatureClass::Freeform &&
+                info.edgeIds.size() >= 3 && info.edgeIds.size() <= 5) {
+                FacePlan tiny;
+                if (collectPlanarLoops(face, surf, model, tiny,
+                                       /*requirePlane=*/false,
+                                       /*tolerateDegenerate=*/true)) {
+                    plan = std::move(tiny);
+                    plan.kind = MesherKind::MinimalNGon;
+                    dbg("plan face %d: freeform tiny-revolve -> minimal "
+                        "n-gon (%zu edges)",
+                        fid, info.edgeIds.size());
+                    return plan;
+                }
+            }
             plan.insertWires = std::move(inserts);
             finishRevolution();
             return plan;

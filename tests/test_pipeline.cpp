@@ -2323,6 +2323,8 @@ void testMp9EditedWatertight() {
     CHECK_EQ(vr.nonManifoldEdges, 0);
     CHECK_EQ(vr.windingConflicts, 0);
     CHECK(vr.watertight());
+    const auto folded = weft::foldedPolys(model, mesh);
+    CHECK_EQ(int(std::count(folded.begin(), folded.end(), uint8_t{1})), 0);
     std::printf("  faces=%d structured=%d planned-floor=%d "
                 "retention=%.4f\n",
                 summary.total, summary.structured, summary.plannedFloor,
@@ -2331,6 +2333,33 @@ void testMp9EditedWatertight() {
 
 
 
+
+
+// Tiny freeform geometric revolves (3–5 edges) must plan as MinimalNGon
+// rather than a revgrid that sparsely folds after weld (mp9_Edited
+// #3020/#3025).
+void testMp9FreeformTinyRevolveNgon() {
+    std::printf("-- MP9 freeform tiny-revolve n-gon --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() /
+        "regressions/mp9/freeform_tiny_revolve_ngon.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    gs.defaults.adaptive = true;
+    gs.defaults.relativeDeviation = true;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    const auto folded = weft::foldedPolys(model, mesh);
+    CHECK_EQ(int(std::count(folded.begin(), folded.end(), uint8_t{1})), 0);
+    int ngon = 0;
+    for (const auto& [fid, kind] : report.faceMesher) {
+        if (kind == weft::MesherKind::MinimalNGon) ++ngon;
+    }
+    CHECK(ngon >= 2);
+    std::printf("  folds=0 minimal-ngon=%d\n", ngon);
+}
 
 // Comb-trimmed freeform ribbons with ≤2 tip folds rescue as MinimalNGon
 // (mp9_Edited #743/#1059). Longer earclip straps must stay RibbonSweep.
@@ -6191,6 +6220,7 @@ int main() {
     RUN(testMp9MuzzleColumnCells);
     RUN(testMp9EditedMuzzleTwoFullHeightSides);
     RUN(testMp9EditedWatertight);
+    RUN(testMp9FreeformTinyRevolveNgon);
     RUN(testMp9RibbonTipFoldNgon);
     RUN(testMp9TinyFreeformMinimalNgon);
     RUN(testMp9DigonRailLadderNgon);
