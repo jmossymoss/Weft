@@ -11,13 +11,14 @@ Structured Weft only (accuracy-tessellator excluded). Tip continues from
 | validity clears | 37 | 39 | 28 | 0 | 0 | 0 | 31 | 0.9898 |
 | freeform Coons chains | 40 | 39 | 32 | 0 | 0 | 0 | 26 | 0.9915 |
 | orphan seam absorb | 36 | 39 | 32 | 0 | 0 | 0 | 26 | 0.9915 |
+| freeform Coons ≤14 edges | 36 | 39 | 33 | 0 | 0 | 0 | 25 | 0.9918 |
 
 ## Classes landed
 
 1. Openband side × orthogonal pin — `openband_border_contract_fillet.step`
 2. Rail-ladder digon fold→raw — `rail_ladder_digon_fold.step`
 3. Incomplete-wire rail-ladder n-gon + neighbour winding flip — `#2005`
-4. Freeform B-spline Coons chain compatibility (≤10 edges) + Freeform sparse-fold
+4. Freeform B-spline Coons chain compatibility (≤14 edges) + Freeform sparse-fold
    protect (≤4) — reducer `freeform_coons_chain_panel.step`
 
 ## Still open

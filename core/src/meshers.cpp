@@ -9397,7 +9397,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         // take those rather than the triangulated floor.
         const size_t safeEdges = st == GeomAbs_Torus ? 5u
             : (st == GeomAbs_BSplineSurface || st == GeomAbs_BezierSurface)
-                  ? 10u
+                  ? 14u
                   : 6u;
         if (!compatible && info.edgeIds.size() <= safeEdges) return true;
         if (!compatible) {
