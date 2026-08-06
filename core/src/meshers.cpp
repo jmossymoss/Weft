@@ -28761,6 +28761,57 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         }
     }
 
+    // Remove digon spurs …a,b,a… that make one face traverse an undirected
+    // edge in both directions and inflate the NM census to 4 (mp9_Edited
+    // #1371/#2130/#2160 clusters).
+    {
+        std::vector<std::vector<uint32_t>> polys;
+        std::vector<int> polyFace;
+        const size_t before = mesh.polygons.size();
+        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+            auto poly = mesh.polygons[p];
+            bool changed = true;
+            while (changed && poly.size() >= 3) {
+                changed = false;
+                const size_t n = poly.size();
+                for (size_t i = 0; i < n; ++i) {
+                    if (poly[i] == poly[(i + 2) % n] &&
+                        poly[i] != poly[(i + 1) % n]) {
+                        std::vector<uint32_t> next;
+                        next.reserve(n - 1);
+                        const size_t drop = (i + 1) % n;
+                        for (size_t k = 0; k < n; ++k) {
+                            if (k != drop) next.push_back(poly[k]);
+                        }
+                        poly.swap(next);
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+            if (poly.size() < 3) continue;
+            std::vector<uint32_t> cleaned;
+            for (uint32_t v : poly) {
+                if (cleaned.empty() || cleaned.back() != v) {
+                    cleaned.push_back(v);
+                }
+            }
+            while (cleaned.size() > 1 &&
+                   cleaned.front() == cleaned.back()) {
+                cleaned.pop_back();
+            }
+            if (cleaned.size() < 3) continue;
+            polys.push_back(std::move(cleaned));
+            polyFace.push_back(mesh.polygonFaceId[p]);
+        }
+        if (polys.size() != before) {
+            dbg("generate: digon-spur cleanup %zu -> %zu polys", before,
+                polys.size());
+            mesh.polygons = std::move(polys);
+            mesh.polygonFaceId = std::move(polyFace);
+        }
+    }
+
     dbg("generate: done (%zu verts, %zu polys)", mesh.vertexCount(),
         mesh.polygonCount());
     timingCheckpoint("cleanup");
