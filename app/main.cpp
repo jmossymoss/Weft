@@ -5693,15 +5693,17 @@ int main(int argc, char** argv) {
     if (objectShotArmed) {
         std::error_code ec;
         std::filesystem::create_directories(screenshotObjectsDir, ec);
-        // Wire-only, deselected: bright wires on dark bg, no fill/verts/brep.
-        app.showFill = false;
+        // Solid + mesh wire, fully deselected (no orange overlay / verts).
+        app.showFill = true;
         app.showWire = true;
         app.showVerts = false;
         app.showBrepEdges = false;
         app.showProblems = false;
-        app.wireColor[0] = 0.82f;
-        app.wireColor[1] = 0.88f;
-        app.wireColor[2] = 0.95f;
+        app.lightStyle = 0;  // lit solid
+        // Dark wires read on shaded fill (same as UI default on dark theme).
+        app.wireColor[0] = 0.10f;
+        app.wireColor[1] = 0.11f;
+        app.wireColor[2] = 0.13f;
     }
 
     while (!glfwWindowShouldClose(window)) {

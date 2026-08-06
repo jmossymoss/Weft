@@ -2,7 +2,7 @@
 
 Method: open `tests/STEP_Examples/mp9_Edited.stp` once in `weft_app
 --finalize --screenshot-objects`, isolate each outliner solid, frame visible
-faces, **deselect**, switch to **wire-only** (bright wires, no fill/verts/brep),
+faces, **deselect**, **solid shaded + mesh wire** (no selection overlay / verts / brep),
 capture two angles. Gallery: `objects/object_XXX_v{0,1}.png` (also under
 `/opt/cursor/artifacts/mp9_object_qa/`).
 
