@@ -14,6 +14,7 @@ Structured Weft only (accuracy-tessellator excluded). Tip continues from
 | freeform Coons ≤14 edges | 36 | 39 | 33 | 0 | 0 | 0 | 25 | 0.9918 |
 | ribbon-aware safeEdges | 33 | 39 | 32 | 0 | 0 | 0 | 24 | 0.9921 |
 | freeform n-gon floor rescue | 33 | 39 | 32 | 0 | 0 | 0 | 19 | 0.9938 |
+| wideDrum ≤1 inset + nearFull | 33 | 39 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
 
 ## Classes landed
 

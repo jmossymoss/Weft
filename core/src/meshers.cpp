@@ -750,6 +750,7 @@ bool planOrthogonalTrimGrid(const TopoDS_Face& face,
     double bestU = -1.0, bestV = -1.0;
     bool hasInteriorStep = false;
     int fullHeightVertical = 0, insetVertical = 0;
+    int nearFullVertical = 0;  // ≥0.75 chart v (cap-trimmed drums)
     int realEdges = 0, diagonalEdges = 0;
     // Can the row/column clipper decompose this trim? Every pcurve monotone
     // in both parameters is what it needs — not an absence of interior steps.
@@ -794,7 +795,8 @@ bool planOrthogonalTrimGrid(const TopoDS_Face& face,
                 vertical.push_back(eid);
                 if (dv > bestV) { bestV = dv; plan.orthogonalDriverV = eid; }
                 const double um = 0.5 * (eu0 + eu1);
-                if (dv >= 0.9*vs) ++fullHeightVertical;
+                if (dv >= 0.9 * vs) ++fullHeightVertical;
+                if (dv >= 0.75 * vs) ++nearFullVertical;
                 if (um > u0 + 0.05*us && um < u1 - 0.05*us) ++insetVertical;
                 hasInteriorStep |= um > u0 + 0.05*us && um < u1 - 0.05*us;
                 break;
@@ -891,7 +893,14 @@ bool planOrthogonalTrimGrid(const TopoDS_Face& face,
     // declined and the alternative is the web. The column builder still
     // declines transactionally when a trim that passes both defeats it, and
     // the row clipper behind it is itself guarded.
-    const bool wideDrum = allowStaircase && columnSafe && insetVertical == 0;
+    // Cap-trimmed drums often measure ~0.77 of chart v (mp9_Edited #1892).
+    // At the late retry, treat ≥0.75 as full-height when there is at most
+    // one inset vertical — multi-inset drums (foam #514: 5 insets) still
+    // need the row builder, not columns.
+    const bool wideDrum =
+        allowStaircase && columnSafe &&
+        (insetVertical == 0 ||
+         (insetVertical <= 1 && nearFullVertical >= 1));
     // At least one full-height meridian is required; requiring EXACTLY one
     // rejected the same capsule-cut muzzle class when BOTH side meridians
     // measured full-height (mp9_Edited #374: 2 full + inset capsule walls),
