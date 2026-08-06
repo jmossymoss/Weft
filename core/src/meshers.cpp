@@ -28595,6 +28595,115 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         unionSeams(mesh, model, weldGlobal);
     }
 
+    // Last-chance open near-miss weld: only OPEN endpoints, and only onto
+    // a face that already owns the open edge's other endpoint (true seam
+    // partner). Broader distance bands without this partner gate reopen
+    // #1891 (mp9_Edited #1130/#1212/#1319 residuals at ~0.03).
+    if (settings.conformBorders && !std::getenv("WEFT_NO_OPEN_NEAR")) {
+        std::map<std::pair<uint32_t, uint32_t>, int> useN;
+        std::map<std::pair<uint32_t, uint32_t>, int> openOwner;
+        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+            const auto& poly = mesh.polygons[p];
+            const int fid =
+                p < mesh.polygonFaceId.size() ? mesh.polygonFaceId[p] : -1;
+            for (size_t i = 0; i < poly.size(); ++i) {
+                uint32_t a = poly[i], b = poly[(i + 1) % poly.size()];
+                if (a == b) continue;
+                auto key = std::make_pair(std::min(a, b), std::max(a, b));
+                ++useN[key];
+                if (useN[key] == 1) openOwner[key] = fid;
+                else openOwner.erase(key);
+            }
+        }
+        std::map<int, std::vector<uint32_t>> faceVerts;
+        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+            if (p >= mesh.polygonFaceId.size()) continue;
+            const int fid = mesh.polygonFaceId[p];
+            for (uint32_t v : mesh.polygons[p]) faceVerts[fid].push_back(v);
+        }
+        for (auto& [fid, vs] : faceVerts) {
+            std::sort(vs.begin(), vs.end());
+            vs.erase(std::unique(vs.begin(), vs.end()), vs.end());
+        }
+        int welded = 0;
+        std::map<uint32_t, uint32_t> remap;
+        for (const auto& [key, fid] : openOwner) {
+            if (fid < 1) continue;
+            const uint32_t ends[2] = {key.first, key.second};
+            for (int ei = 0; ei < 2; ++ei) {
+                const uint32_t v = ends[ei];
+                const uint32_t other = ends[1 - ei];
+                if (remap.count(v)) continue;
+                // Partner faces: those that already contain `other`.
+                std::vector<int> partners;
+                for (const auto& [pf, vs] : faceVerts) {
+                    if (pf == fid) continue;
+                    if (std::binary_search(vs.begin(), vs.end(), other)) {
+                        partners.push_back(pf);
+                    }
+                }
+                if (partners.empty()) continue;
+                uint32_t best = v;
+                double bd = 1e300;
+                for (int pf : partners) {
+                    for (uint32_t u : faceVerts[pf]) {
+                        if (u == v) continue;
+                        const auto& P = mesh.vertices[v];
+                        const auto& Q = mesh.vertices[u];
+                        const double dx = P[0] - Q[0], dy = P[1] - Q[1],
+                                     dz = P[2] - Q[2];
+                        const double dd = dx * dx + dy * dy + dz * dz;
+                        if (dd < bd) {
+                            bd = dd;
+                            best = u;
+                        }
+                    }
+                }
+                if (best == v || bd > 0.12 * 0.12) continue;
+                remap[v] = best;
+                ++welded;
+            }
+        }
+        if (welded > 0) {
+            // Owner face for each remapped vert (open-edge owner only).
+            std::map<uint32_t, int> remapFace;
+            for (const auto& [key, fid] : openOwner) {
+                for (uint32_t e : {key.first, key.second}) {
+                    if (remap.count(e)) remapFace[e] = fid;
+                }
+            }
+            for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+                const int fid =
+                    p < mesh.polygonFaceId.size() ? mesh.polygonFaceId[p]
+                                                  : -1;
+                for (uint32_t& q : mesh.polygons[p]) {
+                    auto it = remap.find(q);
+                    if (it == remap.end()) continue;
+                    auto fit = remapFace.find(q);
+                    if (fit == remapFace.end() || fit->second != fid) {
+                        continue;
+                    }
+                    q = it->second;
+                }
+                auto& poly = mesh.polygons[p];
+                std::vector<uint32_t> cleaned;
+                cleaned.reserve(poly.size());
+                for (uint32_t v : poly) {
+                    if (cleaned.empty() || cleaned.back() != v) {
+                        cleaned.push_back(v);
+                    }
+                }
+                while (cleaned.size() > 1 &&
+                       cleaned.front() == cleaned.back()) {
+                    cleaned.pop_back();
+                }
+                if (cleaned.size() >= 3) poly.swap(cleaned);
+            }
+            dbg("generate: open-endpoint near-miss weld %d", welded);
+            unionSeams(mesh, model, weldGlobal);
+        }
+    }
+
     dbg("generate: done (%zu verts, %zu polys)", mesh.vertexCount(),
         mesh.polygonCount());
     timingCheckpoint("cleanup");

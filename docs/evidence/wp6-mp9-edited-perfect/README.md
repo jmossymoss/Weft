@@ -19,6 +19,7 @@ Structured Weft only (accuracy-tessellator excluded). Tip continues from
 | absorb near-miss all-partner | 25 | 39 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
 | unionSeams deepest-t pick | 7 | 39 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
 | absorb all structured pairs | 5 | 39 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
+| open-endpoint partner near-weld | 1 | 39 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
 
 ## Classes landed
 
