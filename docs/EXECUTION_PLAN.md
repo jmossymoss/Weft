@@ -7,23 +7,12 @@ new test evidence before changing direction.
 
 Active work package: WP6 — validate real work.
 
-WP5 exit criteria re-pass at this revision: FilletStrip→Coons + drum+blend
-stack continuity (`testCylindricalStackContinuity` / bossfillet), sphere tip
-and dimple reducers, foam/teleporter CAD watertight, feature/chart in
-inspect/signature, no new MesherKind. FreeformComb #1805 stitch deadlock
-cut extract unexplained 83→73 with 0 folds. WP6 cleared slitdrill / tan_slit
-/ tork / fillet-capsule / grip-freeform / bullet-body KNOWN_RED rows;
-residual MP9 opens (~247 after freeformComb shared-edge snap; #1805 no longer dominates) remain in `tests/KNOWN_RED.tsv`.
-ABC nightly `00008536` multi-tooth open-band drum is off the contract floor
-(face 57 → RevolutionGrid; model slivers 359→136; `passPlain` densify).
-ABC `00002324` tall FreeTrim drums are off MinimalNGon needles (16 faces →
-RevolutionGrid; reducer `tall_free_trim_drum_r0`). Early Freeform
-ribbon/rail stays on the late ladder (foam counterexample). ABC
-`00006051` sphere×fillet floors cleared (reducer
-`sphere_fillet_fullperiod_r1`). ABC `00008536` tooth-wall Newell folds
-cleared (32→0) by raising multi-tooth open-band densify to
-`12 * notches + 2` so inter-tooth land keeps a column (reducer
-`notched_drum_iso_band_r0`; ABC whole stays watertight).
+`tests/STEP_Examples/mp9_Edited.stp` CAD defaults: watertight, winding
+consistent, foldedPolygons=0, raw=0, planned-floor=0, failed-floor=0,
+structure retention=1.0 (`testMp9EditedWatertight`). Original `MP9.stp`
+opens tightened in `tests/KNOWN_RED.tsv` (measured 7; ceiling 20). Release
+spot-check flaregun/foam/teleporter/iso14649-demo remain watertight at CAD
+defaults.
 
 Change the active package only when its exit criteria pass at one revision. If
 a later failure invalidates an earlier gate, reopen the earliest affected
