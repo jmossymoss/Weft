@@ -71,3 +71,17 @@ Matplotlib `mp9_edited_*.png` are coarse overview plots only.
   retention held; counts drift from IsoBand / tip-fold / floor-clear classes
   banked this campaign).
 - `tools/corpus_gate.sh` PASS after `--update`.
+
+## Phase 5 — object isolate visual QA
+
+Opened full `mp9_Edited.stp` in `weft_app --finalize --screenshot-objects`,
+isolated each of 65 outliner solids, framed visible faces, captured two
+angles per object.
+
+- Gallery: `objects/object_XXX_v{0,1}.png`
+- Inventory: `OBJECTS.md`
+- Scorecard + defects: `VISUAL_QA.md`
+- App support: `--screenshot-objects <dir>`
+
+Fix plan (awaiting approval): coupled IsoBand column crush (object 5),
+high-tri object 37, over-broad MinimalNGon on curved freeform (8/9).
