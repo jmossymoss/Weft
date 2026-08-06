@@ -28595,6 +28595,63 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         unionSeams(mesh, model, weldGlobal);
     }
 
+    // Drop open flap triangles: a 3-gon with exactly one open edge whose
+    // other two edges are already used by a different face is a duplicate
+    // cover of that neighbour (mp9_Edited #897 over #1007).
+    if (settings.conformBorders) {
+        std::map<std::pair<uint32_t, uint32_t>, std::vector<int>> edgeFaces;
+        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+            const int fid =
+                p < mesh.polygonFaceId.size() ? mesh.polygonFaceId[p] : -1;
+            const auto& poly = mesh.polygons[p];
+            for (size_t i = 0; i < poly.size(); ++i) {
+                uint32_t a = poly[i], b = poly[(i + 1) % poly.size()];
+                if (a == b) continue;
+                if (a > b) std::swap(a, b);
+                edgeFaces[{a, b}].push_back(fid);
+            }
+        }
+        std::set<size_t> dropFlap;
+        for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+            const auto& poly = mesh.polygons[p];
+            if (poly.size() != 3) continue;
+            const int fid =
+                p < mesh.polygonFaceId.size() ? mesh.polygonFaceId[p] : -1;
+            int openCount = 0;
+            int foreignCount = 0;
+            for (size_t i = 0; i < 3; ++i) {
+                uint32_t a = poly[i], b = poly[(i + 1) % 3];
+                if (a > b) std::swap(a, b);
+                const auto& faces = edgeFaces[{a, b}];
+                bool foreign = false;
+                for (int f : faces) {
+                    if (f != fid) {
+                        foreign = true;
+                        break;
+                    }
+                }
+                if (faces.size() == 1) ++openCount;
+                else if (foreign) ++foreignCount;
+            }
+            if (openCount == 1 && foreignCount == 2) dropFlap.insert(p);
+        }
+        if (!dropFlap.empty()) {
+            std::vector<std::vector<uint32_t>> polys;
+            std::vector<int> polyFace;
+            polys.reserve(mesh.polygons.size() - dropFlap.size());
+            for (size_t p = 0; p < mesh.polygons.size(); ++p) {
+                if (dropFlap.count(p)) continue;
+                polys.push_back(std::move(mesh.polygons[p]));
+                polyFace.push_back(mesh.polygonFaceId[p]);
+            }
+            mesh.polygons = std::move(polys);
+            mesh.polygonFaceId = std::move(polyFace);
+            dbg("generate: dropped %zu open flap triangle(s)",
+                dropFlap.size());
+            unionSeams(mesh, model, weldGlobal);
+        }
+    }
+
     // Last-chance open near-miss weld: only OPEN endpoints, and only onto
     // a face that already owns the open edge's other endpoint (true seam
     // partner). Broader distance bands without this partner gate reopen

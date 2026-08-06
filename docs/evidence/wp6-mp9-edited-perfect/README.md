@@ -20,6 +20,7 @@ Structured Weft only (accuracy-tessellator excluded). Tip continues from
 | unionSeams deepest-t pick | 7 | 39 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
 | absorb all structured pairs | 5 | 39 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
 | open-endpoint partner near-weld | 1 | 39 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
+| open flap triangle drop | 0 | 37 | 32 | 0 | 0 | 0 | 18 | 0.9941 |
 
 ## Classes landed
 
