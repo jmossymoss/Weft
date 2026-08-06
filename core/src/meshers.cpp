@@ -9718,25 +9718,57 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 dbg("plan face %d: freeform -> dome-cap", fid);
                 return plan;
             }
-            // Tiny freeform patches (3 edges) build cleaner as a single
-            // boundary n-gon than a Coons lattice that sparse-keeps a few
-            // tip folds under full-model density (mp9_Edited #1828).
-            // Two-edge digons stay for RailLadder (mp9_Edited #1073).
+            // Tiny freeform patches (3 edges) that cannot make a Coons
+            // patch become MinimalNGon (#1828 class). Bullet tip bodies
+            // that Coons can claim keep Coons (testBulletBodyTipRimContinuity).
             if (s.minimal && info.edgeIds.size() == 3) {
+                CoonsPatch probe;
+                const char* why = nullptr;
+                bool reflex = false;
+                const bool coonsOk =
+                    makeCoonsPatch(face, model, probe, s.coonsRotate, &why,
+                                   &reflex) &&
+                    coonsChainsCompatible(probe);
+                if (!coonsOk) {
+                    FacePlan tiny;
+                    if (collectPlanarLoops(face, surf, model, tiny,
+                                           /*requirePlane=*/false,
+                                           /*tolerateDegenerate=*/true)) {
+                        plan = std::move(tiny);
+                        plan.kind = MesherKind::MinimalNGon;
+                        dbg("plan face %d: freeform tiny -> minimal n-gon "
+                            "(%zu edges)",
+                            fid, info.edgeIds.size());
+                        return plan;
+                    }
+                }
+            }
+            break;
+        case FeatureClass::FilletStrip: {
+            // Five-edge free-trim cylinder fillets: clipped Coons sparsely
+            // folds after weld (mp9_Edited #1105). Four-edge free-trim
+            // fillets are common flaregun blend straps and must stay Coons.
+            if (s.minimal && info.chartKind == ChartKind::FreeTrim &&
+                surf.GetType() == GeomAbs_Cylinder &&
+                info.edgeIds.size() == 5) {
                 FacePlan tiny;
                 if (collectPlanarLoops(face, surf, model, tiny,
                                        /*requirePlane=*/false,
                                        /*tolerateDegenerate=*/true)) {
                     plan = std::move(tiny);
-                    plan.kind = MesherKind::MinimalNGon;
-                    dbg("plan face %d: freeform tiny -> minimal n-gon "
-                        "(%zu edges)",
-                        fid, info.edgeIds.size());
-                    return plan;
+                } else {
+                    // No clean planar loops (missing pcurves); UV n-gon
+                    // still gives a fold-free single polygon (#1105).
+                    plan = FacePlan();
                 }
+                plan.kind = MesherKind::MinimalNGon;
+                plan.isFillet = true;
+                plan.constrains = true;
+                dbg("plan face %d: fillet-strip 5-edge free-trim -> "
+                    "minimal n-gon",
+                    fid);
+                return plan;
             }
-            break;
-        case FeatureClass::FilletStrip: {
             // Full-period closed analytic blends: RevolutionGrid keeps
             // iso columns and avoids Coons period-wrap mass inversion on
             // sphere–cylinder torus tubes (ABC 00006051). isFillet +
@@ -9926,9 +9958,11 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             // border n-gon rather than a revgrid that sparsely folds after
             // weld (#3020/#3025). Larger freeform revolves and all drums
             // still take RevolutionGrid.
+            // 4–5 edges only: 3-edge freeform revolves stay available for
+            // Coons (bullet tip body).
             if (s.minimal &&
                 info.featureClass == FeatureClass::Freeform &&
-                info.edgeIds.size() >= 3 && info.edgeIds.size() <= 5) {
+                info.edgeIds.size() >= 4 && info.edgeIds.size() <= 5) {
                 FacePlan tiny;
                 if (collectPlanarLoops(face, surf, model, tiny,
                                        /*requirePlane=*/false,
@@ -26588,9 +26622,17 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             sparseInfo.featureClass ==
                                 FeatureClass::Freeform &&
                             plan.kind == MesherKind::RevolutionGrid;
+                        // Freeform Coons tip folds up to 3 (#1828); other
+                        // tip classes stay at ≤2.
+                        const int tipFoldBudget =
+                            (sparseCoonsOne &&
+                             sparseInfo.featureClass ==
+                                 FeatureClass::Freeform)
+                                ? 3
+                                : 2;
                         const bool tipFoldNgon =
                             sparseProtect && s.minimal &&
-                            liveFolds > 0 && liveFolds <= 2 &&
+                            liveFolds > 0 && liveFolds <= tipFoldBudget &&
                             ((sparseInfo.featureClass ==
                                   FeatureClass::Freeform &&
                               (sparseCoonsOne || tipRibbon ||
@@ -26744,8 +26786,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     const bool tipDrumFp =
                         sparseDrum &&
                         plan.kind == MesherKind::RevolutionGrid;
+                    const int tipFoldBudgetFp =
+                        (sparseCoonsOne &&
+                         sparseInfo.featureClass == FeatureClass::Freeform)
+                            ? 3
+                            : 2;
                     if (sparseFpProtect && s.minimal && liveFp > 0 &&
-                        liveFp <= 2 &&
+                        liveFp <= tipFoldBudgetFp &&
                         ((sparseInfo.featureClass ==
                               FeatureClass::Freeform &&
                           (sparseCoonsOne || tipRibbonFp ||
