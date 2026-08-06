@@ -9717,10 +9717,11 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 dbg("plan face %d: freeform -> dome-cap", fid);
                 return plan;
             }
-            // Tiny freeform patches (≤3 edges) build cleaner as a single
+            // Tiny freeform patches (3 edges) build cleaner as a single
             // boundary n-gon than a Coons lattice that sparse-keeps a few
             // tip folds under full-model density (mp9_Edited #1828).
-            if (s.minimal && info.edgeIds.size() <= 3) {
+            // Two-edge digons stay for RailLadder (mp9_Edited #1073).
+            if (s.minimal && info.edgeIds.size() == 3) {
                 FacePlan tiny;
                 if (collectPlanarLoops(face, surf, model, tiny,
                                        /*requirePlane=*/false,
@@ -26551,8 +26552,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             liveFolds <= sparseFoldBudget &&
                             (sparseDrum || sparseFilletFull ||
                              sparseRibbon || sparseRail || sparseCoonsOne);
-                        // Freeform Coons tip folds: a border-exact MinimalNGon
-                        // is structured and fold-free (mp9_Edited #47/#743).
+                        // Freeform Coons tip folds: a border-exact
+                        // MinimalNGon is structured and fold-free
+                        // (mp9_Edited #47). Ribbons stay RibbonSweep —
+                        // straps must not collapse to a single n-gon.
                         bool freeformNgonRescue = false;
                         if (sparseProtect && sparseCoonsOne &&
                             sparseInfo.featureClass ==

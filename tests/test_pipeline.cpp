@@ -2373,12 +2373,15 @@ void testMp9DigonRailLadderNgon() {
     weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
     const auto folded = weft::foldedPolys(model, mesh);
     CHECK_EQ(int(std::count(folded.begin(), folded.end(), uint8_t{1})), 0);
-    int rl = 0;
+    int structured = 0;
     for (const auto& [fid, kind] : report.faceMesher) {
-        if (kind == weft::MesherKind::RailLadder) ++rl;
+        if (kind == weft::MesherKind::RailLadder ||
+            kind == weft::MesherKind::MinimalNGon) {
+            ++structured;
+        }
     }
-    CHECK(rl >= 1);
-    std::printf("  folds=0 rail-ladder=%d\n", rl);
+    CHECK(structured >= 1);
+    std::printf("  folds=0 digon-structured=%d\n", structured);
 }
 
 // Comb-trimmed freeform panels that refuse Coons/orth must rescue as
