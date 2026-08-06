@@ -1511,6 +1511,22 @@ static void frameModel(App& app) {
         }
     }
     if (!any) {
+        // Prefer visible (non-hidden) faces so isolate+frame focuses the
+        // remaining object instead of the full assembly bbox.
+        for (size_t p = 0; p < app.mesh.polygons.size(); ++p) {
+            const int fid = app.mesh.polygonFaceId[p];
+            if (fid > 0 && app.hiddenFaces.count(fid)) continue;
+            for (uint32_t vi : app.mesh.polygons[p]) {
+                const auto& v = app.mesh.vertices[vi];
+                for (int i = 0; i < 3; ++i) {
+                    lo[i] = std::min(lo[i], v[i]);
+                    hi[i] = std::max(hi[i], v[i]);
+                }
+                any = true;
+            }
+        }
+    }
+    if (!any) {
         for (const auto& v : app.mesh.vertices) {
             for (int i = 0; i < 3; ++i) {
                 lo[i] = std::min(lo[i], v[i]);
@@ -1539,6 +1555,10 @@ static bool isolateSolidObject(App& app, size_t solidIndex) {
     app.activeFace = fids.empty() ? 0 : fids.front();
     rebuildBuffers(app);
     frameModel(app);
+    // Drop selection highlight so topology (not orange overlay) is visible
+    // in headless object galleries; isolation stays via hiddenFaces.
+    app.selFaces.clear();
+    app.activeFace = 0;
     return true;
 }
 
@@ -5671,6 +5691,8 @@ int main(int argc, char** argv) {
     if (objectShotArmed) {
         std::error_code ec;
         std::filesystem::create_directories(screenshotObjectsDir, ec);
+        app.showWire = true;
+        app.showFill = true;
     }
 
     while (!glfwWindowShouldClose(window)) {
