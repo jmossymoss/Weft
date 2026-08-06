@@ -26551,12 +26551,40 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             liveFolds <= sparseFoldBudget &&
                             (sparseDrum || sparseFilletFull ||
                              sparseRibbon || sparseRail || sparseCoonsOne);
-                        if (sparseProtect) {
+                        // Freeform Coons tip folds: a border-exact MinimalNGon
+                        // is structured and fold-free (mp9_Edited #47/#743).
+                        bool freeformNgonRescue = false;
+                        if (sparseProtect && sparseCoonsOne &&
+                            sparseInfo.featureClass ==
+                                FeatureClass::Freeform &&
+                            s.minimal) {
+                            PolyMesh ngon;
+                            MeshBuilder nb(ngon);
+                            if (meshMinimalPlanar(face, model, fid,
+                                                  solvedEdge, s.radial, nb,
+                                                  &pinnedEdge) &&
+                                borderContractViolation(fid, ngon) == 0 &&
+                                !ngon.polygons.empty()) {
+                                const auto [nt, ni] = invertedCells(ngon);
+                                (void)nt;
+                                if (ni < liveFolds) {
+                                    dbg("mesh face %d: freeform coons "
+                                        "folds %d → minimal n-gon %d",
+                                        fid, liveFolds, ni);
+                                    parts[fid] = std::move(ngon);
+                                    plans[fid].kind =
+                                        MesherKind::MinimalNGon;
+                                    liveFolds = ni;
+                                    freeformNgonRescue = true;
+                                }
+                            }
+                        }
+                        if (sparseProtect && !freeformNgonRescue) {
                             dbg("mesh face %d: sparse fold keep %s "
                                 "(%d/%d) — refuse contract floor",
                                 fid, mesherKindName(plan.kind), liveFolds,
                                 sparseN);
-                        } else {
+                        } else if (!freeformNgonRescue) {
                         FaceMeshSettings fsT = s;
                         const double dscT =
                             std::clamp(settings.densityScale, 0.05, 20.0);
@@ -26661,10 +26689,32 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         sparseRibbon ? sparseN * 2 / 5 + 1
                         : sparseRail ? std::max(4, sparseN)
                                      : sparseN / 4;
-                    if (sparseN >= sparseMinN && liveFp > 0 &&
+                    const bool sparseFpProtect =
+                        sparseN >= sparseMinN && liveFp > 0 &&
                         liveFp <= foldCap && liveFp <= sparseFoldBudget &&
                         (sparseDrum || sparseFilletFull || sparseRibbon ||
-                         sparseRail || sparseCoonsOne)) {
+                         sparseRail || sparseCoonsOne);
+                    if (sparseFpProtect && sparseCoonsOne &&
+                        sparseInfo.featureClass == FeatureClass::Freeform &&
+                        s.minimal) {
+                        PolyMesh ngon;
+                        MeshBuilder nb(ngon);
+                        if (meshMinimalPlanar(face, model, fid, solvedEdge,
+                                              s.radial, nb, &pinnedEdge) &&
+                            borderContractViolation(fid, ngon) == 0 &&
+                            !ngon.polygons.empty()) {
+                            const int ni = fpCount(ngon);
+                            if (ni < liveFp) {
+                                dbg("mesh face %d: freeform coons "
+                                    "foldedPolys %d → minimal n-gon %d",
+                                    fid, liveFp, ni);
+                                parts[fid] = std::move(ngon);
+                                plans[fid].kind = MesherKind::MinimalNGon;
+                                liveFp = ni;
+                            }
+                        }
+                    }
+                    if (sparseFpProtect && liveFp > 0) {
                         dbg("mesh face %d: sparse foldedPolys keep %s "
                             "(%d/%d) — refuse contract floor",
                             fid, mesherKindName(plan.kind), liveFp, sparseN);

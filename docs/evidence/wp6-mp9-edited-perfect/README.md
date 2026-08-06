@@ -15,7 +15,7 @@ At CAD defaults, `tests/STEP_Examples/mp9_Edited.stp` is watertight:
 | failed-floor | 1 | 0 |
 | raw | 2 | 0 |
 | planned-floor | 31 | 0 |
-| foldedPolygons | 23 | 16 |
+| foldedPolygons | 23 | 11 |
 | retention | 0.9889 | 1.0000 |
 
 Locked by `testMp9EditedWatertight` and `CAD_CORPUS.tsv` row `mp9_edited`
@@ -57,6 +57,11 @@ ladder rungs that fold under the UV census. Folds 26→21.
 
 Freeform faces with ≤3 edges claim MinimalNGon early (#1828 class).
 Folds 21→16.
+
+### Freeform Coons tip → MinimalNGon
+
+When sparse-fold protect would keep freeform Coons tip folds, remesh as
+MinimalNGon if fold census improves (#47/#8). Folds 16→11.
 
 ## Phase 3 remaining
 
