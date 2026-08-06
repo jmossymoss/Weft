@@ -5724,6 +5724,11 @@ bool meshRailLadder(const TopoDS_Face& face, const Model& model, int faceId,
                 !sampleRail(digon[1], Bp, Buv)) {
                 return false;
             }
+            const bool oppositeWireU =
+                Auv.size() >= 2 && Buv.size() >= 2 &&
+                (Auv.back().X() - Auv.front().X()) *
+                        (Buv.back().X() - Buv.front().X()) <
+                    0.0;
             // Same-direction rails: both walk wire order, so one rail runs
             // tip0→tip1 and the other tip1→tip0. Reverse B to share tips.
             if (Ap.front().Distance(Bp.front()) <
@@ -5738,13 +5743,26 @@ bool meshRailLadder(const TopoDS_Face& face, const Model& model, int faceId,
             std::vector<uint32_t> A, B;
             A.reserve(Ap.size());
             B.reserve(Bp.size());
+            double railLen = 0.0;
+            for (size_t i = 1; i < Ap.size(); ++i) {
+                railLen += Ap[i].Distance(Ap[i - 1]);
+            }
+            const double weldTol =
+                std::max(1e-9, railLen > 1e-12 ? railLen * 1e-4 : 1e-6);
             for (size_t i = 0; i < Ap.size(); ++i) {
                 A.push_back(out.addVertex(Ap[i],
                                           {faceId, Auv[i].X(), Auv[i].Y()}));
             }
             for (size_t i = 0; i < Bp.size(); ++i) {
-                B.push_back(out.addVertex(Bp[i],
-                                          {faceId, Buv[i].X(), Buv[i].Y()}));
+                // Opposite-wire extrusion digons: the two rails share a
+                // pcurve until the strip opens; weld coincident stations so
+                // degenerate rungs drop instead of folding (mp9 #1073).
+                if (oppositeWireU && Ap[i].Distance(Bp[i]) <= weldTol) {
+                    B.push_back(A[i]);
+                } else {
+                    B.push_back(out.addVertex(Bp[i],
+                                              {faceId, Buv[i].X(), Buv[i].Y()}));
+                }
             }
             auto arcs = [](const std::vector<gp_Pnt>& pts) {
                 std::vector<double> f(pts.size(), 0.0);
@@ -5755,13 +5773,15 @@ bool meshRailLadder(const TopoDS_Face& face, const Model& model, int faceId,
                 for (double& x : f) x /= t;
                 return f;
             };
+            const bool flip = face.Orientation() == TopAbs_REVERSED;
+            const size_t polyBefore = out.mesh().polygons.size();
             const bool aSparse = A.size() <= B.size();
             const std::vector<uint32_t>& S = aSparse ? A : B;
             const std::vector<uint32_t>& D = aSparse ? B : A;
             const std::vector<double> sf = arcs(aSparse ? Ap : Bp);
             const std::vector<double> df = arcs(aSparse ? Bp : Ap);
             const int m = int(S.size()) - 1;
-            const int nRail = int(D.size()) - 1;
+            int nRail = int(D.size()) - 1;
             std::vector<int> mp(m + 1);
             mp[0] = 0;
             mp[m] = nRail;
@@ -5774,8 +5794,6 @@ bool meshRailLadder(const TopoDS_Face& face, const Model& model, int faceId,
                 }
                 mp[k] = j;
             }
-            const bool flip = face.Orientation() == TopAbs_REVERSED;
-            const size_t polyBefore = out.mesh().polygons.size();
             for (int k = 0; k < m; ++k) {
                 std::vector<uint32_t> ring2;
                 if (aSparse) {
@@ -5814,16 +5832,7 @@ bool meshRailLadder(const TopoDS_Face& face, const Model& model, int faceId,
                         }
                         if (poly.size() < 3) continue;
                         gp_XYZ nw(0, 0, 0);
-                        double pu = 0, pv = 0;
-                        int anchored = 0;
-                        for (uint32_t vi : poly) {
-                            const Anchor& an = mesh.anchors[vi];
-                            if (an.faceId == faceId) {
-                                pu += an.u;
-                                pv += an.v;
-                                ++anchored;
-                            }
-                        }
+                        gp_XYZ cen(0, 0, 0);
                         for (size_t i = 0; i < poly.size(); ++i) {
                             const auto& a = mesh.vertices[poly[i]];
                             const auto& b =
@@ -5831,17 +5840,40 @@ bool meshRailLadder(const TopoDS_Face& face, const Model& model, int faceId,
                             nw += gp_XYZ(a[1] * b[2] - a[2] * b[1],
                                          a[2] * b[0] - a[0] * b[2],
                                          a[0] * b[1] - a[1] * b[0]);
+                            cen += gp_XYZ(a[0], a[1], a[2]);
                         }
-                        if (nw.Modulus() < 1e-16 || anchored == 0 ||
-                            S.IsNull()) {
-                            continue;
-                        }
-                        pu /= anchored;
-                        pv /= anchored;
+                        if (nw.Modulus() < 1e-16 || S.IsNull()) continue;
+                        cen /= double(poly.size());
                         gp_Pnt sp;
                         gp_Vec du, dv;
-                        S->D1(pu, pv, sp, du, dv);
-                        gp_Vec n = du.Crossed(dv);
+                        gp_Vec n;
+                        if (oppositeWireU) {
+                            // UV-centroid census ties on coincident pcurves;
+                            // judge winding from the projected 3D centroid.
+                            GeomAPI_ProjectPointOnSurf proj(gp_Pnt(cen), S);
+                            if (!proj.IsDone() || proj.NbPoints() < 1) {
+                                continue;
+                            }
+                            double pu = 0, pv = 0;
+                            proj.LowerDistanceParameters(pu, pv);
+                            S->D1(pu, pv, sp, du, dv);
+                        } else {
+                            double pu = 0, pv = 0;
+                            int anchored = 0;
+                            for (uint32_t vi : poly) {
+                                const Anchor& an = mesh.anchors[vi];
+                                if (an.faceId == faceId) {
+                                    pu += an.u;
+                                    pv += an.v;
+                                    ++anchored;
+                                }
+                            }
+                            if (anchored == 0) continue;
+                            pu /= anchored;
+                            pv /= anchored;
+                            S->D1(pu, pv, sp, du, dv);
+                        }
+                        n = du.Crossed(dv);
                         if (n.Magnitude() < 1e-16) continue;
                         if (revFace) n.Reverse();
                         ++tested;
