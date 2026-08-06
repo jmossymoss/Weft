@@ -5,6 +5,7 @@
 // and watch the topology regenerate live. Orbit/pan/zoom like Blender.
 //
 //   weft_app [model.step] [--fixture demo] [--screenshot out.png] [--finalize]
+//   weft_app model.step --finalize --screenshot-objects <dir>
 
 // windows.h + commdlg.h must come FIRST: OCCT's headers include windows.h
 // themselves with slimmed-down defines, and a later re-include is a no-op
@@ -75,6 +76,7 @@
 #include <fstream>
 #include <functional>
 #include <thread>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -1520,6 +1522,44 @@ static void frameModel(App& app) {
                       float(lo[2] + hi[2]) * 0.5f};
     double dx = hi[0] - lo[0], dy = hi[1] - lo[1], dz = hi[2] - lo[2];
     app.cam.dist = 1.9f * float(std::sqrt(dx * dx + dy * dy + dz * dz) + 1.0);
+}
+
+// Outliner isolate: hide every face not owned by solidIndex (0-based), select
+// that solid's faces, and frame the selection.
+static bool isolateSolidObject(App& app, size_t solidIndex) {
+    if (solidIndex >= app.analysis.solidFaces.size()) return false;
+    const std::vector<int>& fids = app.analysis.solidFaces[solidIndex];
+    app.hiddenFaces.clear();
+    app.selFaces.clear();
+    std::set<int> inSolid(fids.begin(), fids.end());
+    for (const auto& fi : app.analysis.faces) {
+        if (!inSolid.count(fi.id)) app.hiddenFaces.insert(fi.id);
+    }
+    for (int fid : fids) app.selFaces.insert(fid);
+    app.activeFace = fids.empty() ? 0 : fids.front();
+    rebuildBuffers(app);
+    frameModel(app);
+    return true;
+}
+
+static std::string solidObjectFileStem(const App& app, size_t solidIndex) {
+    char buf[96];
+    std::string nm;
+    if (solidIndex < app.model.solidNames.size())
+        nm = app.model.solidNames[solidIndex];
+    for (char& c : nm) {
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '-' ||
+              c == '_')) {
+            c = '_';
+        }
+    }
+    if (!nm.empty()) {
+        std::snprintf(buf, sizeof buf, "object_%03zu_%s", solidIndex + 1,
+                      nm.c_str());
+    } else {
+        std::snprintf(buf, sizeof buf, "object_%03zu", solidIndex + 1);
+    }
+    return buf;
 }
 
 static void finishLoadModel(App& app) {
@@ -5423,7 +5463,8 @@ int main(int argc, char** argv) {
     weft::setGenerateDebugLog(gDebugLog);
     logLine("weft_app start (built %s %s)", __DATE__, __TIME__);
 
-    std::string screenshotPath, startModel, startFixture = "demo";
+    std::string screenshotPath, screenshotObjectsDir, startModel,
+        startFixture = "demo";
     int startSelect = 0, startMode = 0;
     bool startQuality = false, startMatcap = false, startSmooth = false;
     bool startProxy = false;
@@ -5433,6 +5474,8 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--screenshot" && i + 1 < argc) screenshotPath = argv[++i];
+        else if (a == "--screenshot-objects" && i + 1 < argc)
+            screenshotObjectsDir = argv[++i];
         else if (a == "--fixture" && i + 1 < argc) startFixture = argv[++i];
         else if (a == "--select" && i + 1 < argc) startSelect = std::stoi(argv[++i]);
         else if (a == "--yaw" && i + 1 < argc) startYaw = std::stof(argv[++i]);
@@ -5565,8 +5608,10 @@ int main(int argc, char** argv) {
     } else {
         loadFixture(app, startFixture);
     }
-    if (startFinalize) app.forceFinalize = true;
-    if ((startStitch || startFinalize) && app.hasModel) {
+    if (startFinalize || !screenshotObjectsDir.empty())
+        app.forceFinalize = true;
+    if ((startStitch || startFinalize || !screenshotObjectsDir.empty()) &&
+        app.hasModel) {
         // After the load (which resets the recipe): apply screenshot
         // experiment flags and rebuild synchronously so the capture shows
         // the intended mesh (finalize = production export path).
@@ -5618,6 +5663,15 @@ int main(int argc, char** argv) {
     int lastClickFace = 0;
     double hoverX = -1, hoverY = -1;  // last hover-picked cursor (framebuffer)
     int frame = 0;
+    size_t objectShotIndex = 0;
+    int objectShotView = 0;
+    int objectShotSettle = 0;
+    bool objectShotArmed = !screenshotObjectsDir.empty();
+    const float objectShotViews[2][2] = {{0.9f, 0.5f}, {2.4f, 0.35f}};
+    if (objectShotArmed) {
+        std::error_code ec;
+        std::filesystem::create_directories(screenshotObjectsDir, ec);
+    }
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
@@ -7213,9 +7267,47 @@ int main(int argc, char** argv) {
         // freshly-rendered BACK buffer before swapping: reading GL_BACK after
         // glfwSwapBuffers captures the previous frame, which was commonly the
         // "welding + conforming" progress card rather than the finished mesh.
-        if (!screenshotPath.empty() && ++frame >= 4 &&
-            !app.loadBusy && !app.loadReady &&
-            !(app.hasModel && (app.genBusy || app.genReady))) {
+                const bool meshReady = !app.loadBusy && !app.loadReady &&
+            !(app.hasModel && (app.genBusy || app.genReady));
+        if (objectShotArmed && meshReady && app.hasModel &&
+            !app.analysis.solidFaces.empty()) {
+            if (objectShotSettle == 0) {
+                if (objectShotIndex >= app.analysis.solidFaces.size()) {
+                    std::printf("screenshot-objects: done (%zu solids)\n",
+                                app.analysis.solidFaces.size());
+                    break;
+                }
+                if (!isolateSolidObject(app, objectShotIndex)) {
+                    std::printf("screenshot-objects: skip %zu\n",
+                                objectShotIndex + 1);
+                    ++objectShotIndex;
+                    objectShotView = 0;
+                    continue;
+                }
+                app.cam.yaw = objectShotViews[objectShotView][0];
+                app.cam.pitch = objectShotViews[objectShotView][1];
+                frameModel(app);
+                objectShotSettle = 1;
+            } else if (++objectShotSettle >= 4) {
+                std::vector<unsigned char> px(size_t(fbw) * fbh * 3);
+                glReadPixels(0, 0, fbw, fbh, GL_RGB, GL_UNSIGNED_BYTE,
+                             px.data());
+                stbi_flip_vertically_on_write(1);
+                const std::string stem =
+                    solidObjectFileStem(app, objectShotIndex);
+                const std::filesystem::path out =
+                    std::filesystem::path(screenshotObjectsDir) /
+                    (stem + "_v" + std::to_string(objectShotView) + ".png");
+                stbi_write_png(out.string().c_str(), fbw, fbh, 3, px.data(),
+                               fbw * 3);
+                std::printf("wrote %s\n", out.string().c_str());
+                objectShotSettle = 0;
+                if (++objectShotView >= 2) {
+                    objectShotView = 0;
+                    ++objectShotIndex;
+                }
+            }
+        } else if (!screenshotPath.empty() && ++frame >= 4 && meshReady) {
             std::vector<unsigned char> px(size_t(fbw) * fbh * 3);
             glReadPixels(0, 0, fbw, fbh, GL_RGB, GL_UNSIGNED_BYTE, px.data());
             stbi_flip_vertically_on_write(1);
@@ -7224,7 +7316,7 @@ int main(int argc, char** argv) {
             std::printf("wrote %s\n", screenshotPath.c_str());
             break;
         }
-        glfwSwapBuffers(window);
+glfwSwapBuffers(window);
     }
 
     // A window close may arrive while either worker is active. Drain both so
