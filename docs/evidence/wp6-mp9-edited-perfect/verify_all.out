@@ -5,7 +5,7 @@ OBJ001 faces=130 polys=1367 q=1189 t=101 n=77 folds=0 floor=0 raw=0 min=47 coons
 OBJ002 faces=159 polys=599 q=487 t=16 n=96 folds=0 floor=0 raw=0 min=57 coons=70 rev=3 PASS 
 OBJ003 faces=10 polys=220 q=212 t=4 n=4 folds=0 floor=0 raw=0 min=0 coons=0 rev=8 PASS 
 OBJ004 faces=61 polys=130 q=100 t=2 n=28 folds=0 floor=0 raw=0 min=41 coons=17 rev=2 PASS 
-OBJ005 faces=33 polys=477 q=378 t=4 n=95 folds=0 floor=0 raw=0 min=5 coons=12 rev=9 PASS 
+OBJ005 faces=33 polys=421 q=333 t=4 n=84 folds=0 floor=0 raw=0 min=5 coons=12 rev=9 PASS 
 OBJ006 faces=12 polys=42 q=26 t=2 n=14 folds=0 floor=0 raw=0 min=8 coons=0 rev=3 PASS 
 OBJ007 faces=12 polys=42 q=26 t=2 n=14 folds=0 floor=0 raw=0 min=8 coons=0 rev=3 PASS 
 OBJ008 faces=304 polys=1066 q=801 t=61 n=204 folds=0 floor=0 raw=0 min=241 coons=56 rev=4 PASS 

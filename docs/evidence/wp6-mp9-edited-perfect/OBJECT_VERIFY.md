@@ -1,6 +1,6 @@
 # mp9_Edited — per-object mesh verification
 
-Tip after D1+D3+D10. Gallery: `objects/object_XXX_v{0,1}.png` (solid+wire, deselected).
+Tip `4ee49ef`+ (D1+D3+D10). Gallery: `objects/object_XXX_v{0,1}.png`.
 
 ## Assembly
 
@@ -11,34 +11,35 @@ Tip after D1+D3+D10. Gallery: `objects/object_XXX_v{0,1}.png` (solid+wire, desel
 | failed-floor / raw | 0 / 0 |
 | watertight | yes |
 
-## Per-object verdicts
+## Per-object (65 solids)
 
-Automated from CAD `generate()`: FAIL = floor/raw/folds; WARN = high-tri ≥15% (p≥40), high-ngon ≥35%, or collapsed (≤3 polys on ≥3 faces).
+| Verdict | Count | Objects |
+|---------|------:|---------|
+| PASS | 63 | all except 19, 37 |
+| WARN | 2 | 19 (D2 parked collapsed MinimalNGon), 37 (D3 partial high-tri 15%) |
+| FAIL | 0 | — |
 
-| Obj | Faces | Polys | q/t/n | Verdict | Notes |
-|----:|------:|------:|-------|---------|-------|
-| 1–18, 20–36, 38–65 | — | — | — | **PASS** | See `/tmp/verify_all.out` full table |
-| 19 | 3 | 3 | 0/0/3 | **WARN** | D2 parked — MinimalNGon blob vs Coons+folds |
-| 37 | 26 | 60 | 41/9/10 | **WARN** | D3 partial — tri% 15% (was 18.6%) |
+Full machine table: `verify_all.out`.
 
-**Summary: 63 PASS, 2 WARN, 0 FAIL.**
+## Completed fixes this campaign
 
-## Fix status linked to objects
+| ID | Change | Verify |
+|----|--------|--------|
+| D1 | IsoBand open-band without bandDriver (≥32 edges) | object 5 before_d1/after_d1 |
+| D3 | Small iso-band cylinder fillets → MinimalNGon | object 37 before_d3/after_d3 |
+| D10 | nv==1 notch lips snap to top strip (no support rings) | object 5 before_d10/after_d10 |
 
-| Defect | Objects | Status |
-|--------|---------|--------|
-| D1 IsoBand columns | 5 | DONE |
-| D2 collapsed freeform | 19 | PARKED |
-| D3 fillet tris | 37 | PARTIAL |
-| D10 cylinder support rings | 5 (+ drums) | DONE |
-| D4 plate web | 2 | OPEN (PASS metrics; visual n-gons remain) |
-| D5 freeform density | 8, 9 | OPEN (PASS metrics; density uneven) |
-| D6–D8 | 1, 3, 14, 24, 22, 32 | OPEN (PASS metrics) |
+## Remaining WARN (accepted / parked)
 
-## Re-run
+| Obj | Issue | Next step |
+|----:|-------|-----------|
+| 19 | 3-face solid as 3 n-gons (melted) vs Coons+3 folds | seam-safe Coons geoheal |
+| 37 | 15% tris on remaining freeform Coons | further fillet/freeform tip cleanup |
+
+## Re-verify
 
 ```sh
 xvfb-run -a build/app/weft_app tests/STEP_Examples/mp9_Edited.stp \
-  --finalize --screenshot-objects /opt/cursor/artifacts/mp9_object_qa
-# + /tmp/verify_all (see tools recipe in IMAGE_ERRORS)
+  --finalize --screenshot-objects OUTDIR
+# build /tmp/verify_all against weft_core (see session notes)
 ```
