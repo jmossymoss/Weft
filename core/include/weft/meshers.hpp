@@ -115,7 +115,11 @@ struct FaceMeshSettings {
     // matches the historic hard floor; raise it (e.g. 12) when CAD/
     // relative-deviation's 60° gate would otherwise leave rings faceted.
     // Straight edges are unaffected. Recipe/CLI: mincurve / --min-curve.
-    int minCurvedSegments = 6;
+    // Closed curved rings (cylinder/sphere/torus circles): artist floor.
+    // 24 is the minimum readable circumferential span for game cylinders
+    // at CAD defaults; smaller rings still share this floor so bores do
+    // not read as hex prisms next to denser barrels.
+    int minCurvedSegments = 24;
     // Per-face pathology guard: a hard ceiling on this face's total cell
     // count (0 = no ceiling). A face's mesh should scale with its surface
     // area; a face carrying vastly more cells than its area-share of the

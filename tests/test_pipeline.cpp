@@ -1326,13 +1326,10 @@ void testSlottedDrumRadialPreservesCoonsFillets() {
         CHECK_EQ(bit->second, 0);
         auto b = baseRep.faceCounts[fid];
         auto u = upRep.faceCounts[fid];
-        // Neither axis may collapse to a single span when the drum densifies
-        // (the "square fillet" failure: 6×3 → 1×3).
-        if (b[0] >= 3) CHECK(u[0] >= 2);
-        if (b[1] >= 3) CHECK(u[1] >= 2);
-        // Across/along must not track the drum radial (22) on a short strip.
-        CHECK(u[0] < 16);
-        CHECK(u[1] < 16);
+        // Drum radial raise must not restamp Coons strips (square-fillet
+        // bug). Counts stay at the adaptive/base grid.
+        CHECK_EQ(u[0], b[0]);
+        CHECK_EQ(u[1], b[1]);
         std::printf("  coons fillet#%d base %d×%d -> raised-drum %d×%d\n", fid,
                     b[0], b[1], u[0], u[1]);
     }
@@ -2378,7 +2375,7 @@ void testMp9EditedWatertight() {
     gs.defaults.minimal = true;
     gs.defaults.adaptive = true;
     gs.defaults.relativeDeviation = true;
-    gs.defaults.minCurvedSegments = 6;
+    gs.defaults.minCurvedSegments = 24;  // CAD cylinder minimum spans
     weft::GenerationReport report;
     weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
     const auto summary = weft::summarizeStructure(report);
@@ -2394,10 +2391,31 @@ void testMp9EditedWatertight() {
     CHECK(vr.watertight());
     const auto folded = weft::foldedPolys(model, mesh);
     CHECK_EQ(int(std::count(folded.begin(), folded.end(), uint8_t{1})), 0);
+    // Simple full-period cylinders (≤4 edges) honour the 24-span floor.
+    int drumChecked = 0;
+    for (const auto& f : analysis.faces) {
+        if (f.featureClass != weft::FeatureClass::Drum || f.radius <= 0) {
+            continue;
+        }
+        if (f.chartKind != weft::ChartKind::FullPeriod) continue;
+        if (f.edgeIds.size() > 4) continue;  // boolean/notched: softer floor
+        auto kit = report.faceMesher.find(f.id);
+        auto bit = report.faceBuild.find(f.id);
+        auto cit = report.faceCounts.find(f.id);
+        if (kit == report.faceMesher.end() ||
+            kit->second != weft::MesherKind::RevolutionGrid ||
+            bit == report.faceBuild.end() || bit->second != 0 ||
+            cit == report.faceCounts.end()) {
+            continue;
+        }
+        CHECK(cit->second[0] >= 24);
+        ++drumChecked;
+    }
+    CHECK(drumChecked >= 1);
     std::printf("  faces=%d structured=%d planned-floor=%d "
-                "retention=%.4f\n",
+                "retention=%.4f simpleDrums>=24=%d\n",
                 summary.total, summary.structured, summary.plannedFloor,
-                summary.retention());
+                summary.retention(), drumChecked);
 }
 
 

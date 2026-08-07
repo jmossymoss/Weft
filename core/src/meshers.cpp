@@ -10923,7 +10923,8 @@ void propagateRadialThroughDensityGroups(
     }
 }
 
-DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
+DensitySolution solveDensity(const Model& model, const Analysis& analysis,
+                             std::map<int, FacePlan>& plans,
                              const GenerationSettings& settings,
                              GenerationCache* cache) {
     DensitySolution sol(model.edgeCount());
@@ -11098,7 +11099,24 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
         if (gc.GetType() == GeomAbs_Line) return false;
         return c3->Value(f).Distance(c3->Value(l)) < 1e-9;
     };
+    auto drumRingFloor = [&](int eid, int ringFloor) -> int {
+        // Simple cylinders (≤4 edges): full artist floor (24).
+        // Boolean/notched drums and non-drums: legacy floor of 6.
+        bool simple = false, complex = false;
+        if (eid >= 1 && eid <= int(analysis.edges.size())) {
+            for (int pf : analysis.edges[size_t(eid) - 1].faceIds) {
+                if (pf < 1 || pf > int(analysis.faces.size())) continue;
+                const FaceInfo& fi = analysis.faces[size_t(pf) - 1];
+                if (fi.featureClass != FeatureClass::Drum) continue;
+                if (fi.edgeIds.size() <= 4) simple = true;
+                else complex = true;
+            }
+        }
+        if (simple) return ringFloor;
+        return std::min(ringFloor, 6);
+    };
     auto adaptiveCount = [&](int eid, const FaceMeshSettings& s) {
+
         const int ringFloor = std::clamp(s.minCurvedSegments, 1, 256);
         const std::array<long long, 5> key = {
             eid,
@@ -11176,7 +11194,8 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                         n = std::max(n, int(std::ceil(2.0 * M_PI / ang -
                                                       1e-9)));
                     }
-                    n = std::clamp(n, ringFloor, 256);
+                    const int floorUse = drumRingFloor(eid, ringFloor);
+                    n = std::clamp(n, floorUse, 256);
                 } else {
                     try {
                         n = std::clamp(stableDeflectionCount(c, ang, chord),
@@ -11186,7 +11205,7 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
                     // Closed curved rings keep the adaptive lower floor
                     // (cylinders, spheres, torus/fillet circles, …).
                     if (closedLoop && c.GetType() != GeomAbs_Line) {
-                        n = std::max(n, ringFloor);
+                        n = std::max(n, drumRingFloor(eid, ringFloor));
                     }
                 }
                 // Plasticity-split co-circular arcs: apply this edge's share
@@ -11234,7 +11253,9 @@ DensitySolution solveDensity(const Model& model, std::map<int, FacePlan>& plans,
             // Split co-circular arcs use their span share of that floor.
             int flo = floorA;
             if (closedCurvedEdge(eid)) {
-                flo = std::max(flo, std::clamp(s.minCurvedSegments, 1, 256));
+                flo = std::max(
+                    flo, drumRingFloor(
+                             eid, std::clamp(s.minCurvedSegments, 1, 256)));
             }
             auto cit = cocircArcFloor.find(eid);
             if (cit != cocircArcFloor.end()) {
@@ -22463,7 +22484,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     timingCheckpoint("face planning");
     propagateBandRadialToBlendGroup(analysis, plans, settings);
 
-    DensitySolution density = solveDensity(model, plans, settings, cache);
+    DensitySolution density =
+        solveDensity(model, analysis, plans, settings, cache);
     // A lone radial override can raise a density-united rim that also binds
     // co-circular peers the topological blend walk never saw. Stamp those
     // peers and re-solve so their proposals / pins match the raised group.
@@ -22485,7 +22507,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             }
         }
         if (changed) {
-            density = solveDensity(model, plans, settings, cache);
+            density =
+                solveDensity(model, analysis, plans, settings, cache);
         }
     }
     timingCheckpoint("density proposals");
@@ -22548,7 +22571,28 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             settings.forFace(p.faceId).minCurvedSegments);
                     }
                 }
-                floorN = std::max(floorN, std::clamp(artist, 1, 256));
+                // Per-edge drum complexity: simple cylinders get the full
+                // artist floor; notched/boolean drums stay at 6.
+                int flo = std::clamp(artist, 1, 256);
+                bool simple = false;
+                if (eid >= 1 && eid <= int(analysis.edges.size())) {
+                    for (int pf :
+                         analysis.edges[static_cast<size_t>(eid) - 1]
+                             .faceIds) {
+                        if (pf < 1 || pf > int(analysis.faces.size())) {
+                            continue;
+                        }
+                        const FaceInfo& fi =
+                            analysis.faces[static_cast<size_t>(pf) - 1];
+                        if (fi.featureClass == FeatureClass::Drum &&
+                            fi.edgeIds.size() <= 4) {
+                            simple = true;
+                            break;
+                        }
+                    }
+                }
+                if (!simple) flo = std::min(flo, 6);
+                floorN = std::max(floorN, flo);
             }
             auto [it, inserted] = floorOfRoot.try_emplace(root, floorN);
             if (!inserted && it->second < floorN) it->second = floorN;
@@ -23875,9 +23919,17 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             case MesherKind::RevolutionGrid:
             case MesherKind::DiskCap: {
                 if (plan.orthogonalTrimGrid) {
+                    int circ = std::max(3, s.radial);
+                    if (fid >= 1 && fid <= int(analysis.faces.size())) {
+                        const FaceInfo& fi = analysis.faces[fid - 1];
+                        if (fi.featureClass == FeatureClass::Drum &&
+                            fi.edgeIds.size() <= 4) {
+                            circ = std::max(
+                                circ, std::clamp(s.minCurvedSegments, 1, 256));
+                        }
+                    }
                     const int radialWrap = std::max(
-                        1, int(std::lround(std::max(3, s.radial) *
-                                           plan.bandWrapFrac)));
+                        1, int(std::lround(circ * plan.bandWrapFrac)));
                     const int nuO = plan.orthogonalDriverU > 0
                         ? std::max(solvedEdge[plan.orthogonalDriverU],
                                    density.countFor(plan.orthogonalDriverU,
@@ -23907,9 +23959,17 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     // density like any revolution rim) — never the
                     // castellated chain's total. uEdges[0] would be
                     // the castellated chain's first arc.
+                    int circ = std::max(3, s.radial);
+                    if (fid >= 1 && fid <= int(analysis.faces.size())) {
+                        const FaceInfo& fi = analysis.faces[fid - 1];
+                        if (fi.featureClass == FeatureClass::Drum &&
+                            fi.edgeIds.size() <= 4) {
+                            circ = std::max(
+                                circ, std::clamp(s.minCurvedSegments, 1, 256));
+                        }
+                    }
                     const int radialWrap = std::max(
-                        3, int(std::lround(std::max(3, s.radial) *
-                                           plan.bandWrapFrac)));
+                        3, int(std::lround(circ * plan.bandWrapFrac)));
                     int nuB = radialWrap;
                     if (plan.bandDriver > 0) {
                         nuB = std::max(
@@ -23980,14 +24040,26 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     counts[fid] = {nuA, solved(plan.vEdges, defV), nuB};
                     break;
                 }
-                int nuA = solved(plan.uEdges, s.radial);
-                int nuB = nuA;
-                if (!plan.linkRims && plan.uEdges.size() == 2) {
-                    nuB = std::max(
-                        solvedEdge[plan.uEdges[1]],
-                        density.countFor(plan.uEdges[1], s.radial));
+                {
+                    int circ = std::max(3, s.radial);
+                    if (fid >= 1 && fid <= int(analysis.faces.size())) {
+                        const FaceInfo& fi = analysis.faces[fid - 1];
+                        if (fi.featureClass == FeatureClass::Drum &&
+                            fi.edgeIds.size() <= 4) {
+                            circ = std::max(
+                                circ,
+                                std::clamp(s.minCurvedSegments, 1, 256));
+                        }
+                    }
+                    int nuA = solved(plan.uEdges, circ);
+                    int nuB = nuA;
+                    if (!plan.linkRims && plan.uEdges.size() == 2) {
+                        nuB = std::max(
+                            solvedEdge[plan.uEdges[1]],
+                            density.countFor(plan.uEdges[1], circ));
+                    }
+                    counts[fid] = {nuA, solved(plan.vEdges, s.axial), nuB};
                 }
-                counts[fid] = {nuA, solved(plan.vEdges, s.axial), nuB};
                 break;
             }
             case MesherKind::PlanarGrid:

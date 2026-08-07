@@ -357,6 +357,9 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
                 // Game topology: deviation relative to feature size, so
                 // ring counts follow the ANGLE criterion at every scale.
                 gs.defaults.relativeDeviation = true;
+                // Cylinders: never below 24 circumferential spans at the
+                // CAD default (partial wraps scale by bandWrapFrac).
+                gs.defaults.minCurvedSegments = 24;
             } else if (prof == "dense") {
                 gs.defaults.minimal = false;
             } else {

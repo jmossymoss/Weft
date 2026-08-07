@@ -1623,6 +1623,8 @@ static void finishLoadModel(App& app) {
         // Deviation relative to feature size: a 500mm bore and a 5mm bore
         // carry the same ring topology, the angle criterion drives counts.
         app.recipe.settings.defaults.relativeDeviation = true;
+        // Readable cylinders: never below 24 circumferential spans.
+        app.recipe.settings.defaults.minCurvedSegments = 24;
         frameModel(app);
         app.status = path + ": " + std::to_string(app.model.faceCount()) +
                      " faces, " + std::to_string(app.model.edgeCount()) +
