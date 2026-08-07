@@ -230,3 +230,30 @@ skipping them entirely made face 374 fail self-check / opened seams.
 
 For each: implement shared-class fix → `--screenshot-object N` before/after →
 assess in `IMAGE_ERRORS.md` “Verification” section → commit.
+
+
+### D11 — P0 — Cylinder circumferential spans vs object scale
+
+**Images:** `object_005_v0.png` (after_scale_spans/)
+
+**Seen:** Average cylinder column counts did not track radius×wrap under
+CAD relative deviation. Main IsoBand wall (f374) crushed to `nu=6` (scale
+wants ~11). Fluted cone (f362) drove off an oversampled boolean rim at
+`nu=120` (scale wants ~10).
+
+**Class:** (1) Partial-wrap IsoBand rims skip the closed-ring curvature
+floor. (2) Rim-sum castellated collapse required a lone opposite rim, so
+multi-edge plain rims never collapsed oversampled flute arcs.
+
+**Fix:**
+1. `drum-scale-floor` after curvature floors: mid-size IsoBand drums
+   (16–80 edges) raise circumferential groups to `ceil(fullTurn(r)×wrap)`.
+2. Move flute-rim `capGroup(1)` collapse before the `small.size()!=1`
+   early-out; soften arc/ratio gates under relative deviation (8 arcs, 4×).
+3. Few-flute open-band densify uses `2×notches+2` when `notchRuns<16`
+   (ABC gears keep `12×`).
+
+**Verification:** f374 `nu=11` (=scale). f362 `nu=120→24` (rims 13/24).
+`testMp9EditedWatertight` green. Screenshots `after_scale_spans/`.
+Cylinder under/over scan: under=1 over=34 ok=163 (was under=1 over=41).
+

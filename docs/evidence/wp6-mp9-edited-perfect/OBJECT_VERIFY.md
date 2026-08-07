@@ -1,6 +1,6 @@
 # mp9_Edited — per-object mesh verification
 
-Tip `4ee49ef`+ (D1+D3+D10). Gallery: `objects/object_XXX_v{0,1}.png`.
+Tip (D1+D3+D10+D11 scale spans). Gallery: `objects/object_XXX_v{0,1}.png`.
 
 ## Assembly
 

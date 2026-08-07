@@ -12598,11 +12598,15 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
             }
         }
         if (notchRuns >= 3) {
-            // ≥12 columns per notch so an inter-tooth land keeps its own
-            // column after pad/mid-split. At ~4 cols/tooth opposing walls
-            // share one U-gap and the left-wall web double-covers (folds
-            // on REVERSED drums; ABC 00008536 / notched reducer).
-            const int want = 12 * notchRuns + 2;
+            // ABC multi-tooth gears need ≥12 columns per notch so an
+            // inter-tooth land keeps its own column after pad/mid-split
+            // (at ~4 cols/tooth opposing walls share one U-gap and fold;
+            // ABC 00008536 / notched reducer). Few-flute artistic drums
+            // (mp9 suppressor cone ~8–10 flutes) must NOT take that
+            // densify — 12× turns a r≈14 wall into ~120 staves when the
+            // radius×wrap scale wants ~10 spans.
+            const int want = notchRuns >= 16 ? (12 * notchRuns + 2)
+                                             : (2 * notchRuns + 2);
             if (nu < want) {
                 dbg("openband face %d: raise nu %d -> %d for %d notches",
                     faceId, nu, want, notchRuns);
@@ -22561,6 +22565,73 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         }
     }
     timingCheckpoint("curvature floors");
+    // IsoBand drum scale floor: partial-wrap rims are not closed loops, so
+    // the closed-ring curvature floor never raises them. Lift circumferential
+    // groups to radius×wrap under relative deviation (mp9 object 5 f374:
+    // expect ~11 spans at r=21, was crushed to 6).
+    if (settings.defaults.relativeDeviation) {
+        Bnd_Box bb;
+        double modelDiag = 0.0;
+        try {
+            BRepBndLib::Add(model.shape, bb);
+            if (!bb.IsVoid()) {
+                double x0, y0, z0, x1, y1, z1;
+                bb.Get(x0, y0, z0, x1, y1, z1);
+                modelDiag =
+                    gp_Pnt(x0, y0, z0).Distance(gp_Pnt(x1, y1, z1));
+            }
+        } catch (const Standard_Failure&) {
+        }
+        if (modelDiag > 1e-9) {
+            const double chord =
+                std::max(settings.defaults.chordTolerance * 0.01 * modelDiag,
+                         1e-9);
+            for (const auto& [fid, plan] : plans) {
+                if (fid < 1 || fid > model.faceCount()) continue;
+                const FaceInfo& dfi = analysis.faces[fid - 1];
+                // Skip tiny panels and ABC-scale multi-tooth drums (hundreds
+                // of edges) whose open-band densify owns circumferential
+                // count. Target mid-size IsoBand walls under-sampled by a
+                // short driver arc (mp9 object 5 f374: 37 edges, r≈21).
+                if (dfi.featureClass != FeatureClass::Drum ||
+                    dfi.chartKind != ChartKind::IsoBand ||
+                    dfi.radius < 1e-9 || dfi.edgeIds.size() < 16 ||
+                    dfi.edgeIds.size() > 80) {
+                    continue;
+                }
+                if (plan.kind != MesherKind::RevolutionGrid) continue;
+                const double wrap =
+                    std::max(1e-9, std::min(1.0, plan.bandWrapFrac));
+                const double half =
+                    std::acos(1.0 - std::min(chord / dfi.radius, 1.0));
+                int full =
+                    half > 1e-9 ? int(std::ceil(M_PI / half - 1e-9)) : 256;
+                full = std::max(full, 6);
+                full = std::clamp(full, 1, 256);
+                const int scaleNu = std::max(
+                    1, int(std::ceil(full * wrap - 1e-9)));
+                auto raise = [&](int eid) {
+                    if (eid < 1 || eid > model.edgeCount()) return;
+                    const int root = density.groups.find(eid);
+                    if (density.pinnedRoots.count(root)) return;
+                    auto it = density.groupCount.find(root);
+                    if (it == density.groupCount.end()) {
+                        density.groupCount[root] = scaleNu;
+                        density.ownerByRoot[root] = "drum-scale-floor";
+                    } else if (it->second < scaleNu) {
+                        it->second = scaleNu;
+                        density.ownerByRoot[root] = "drum-scale-floor";
+                    }
+                    solvedEdge[eid] = std::max(solvedEdge[eid], scaleNu);
+                };
+                for (int eid : plan.uEdges) raise(eid);
+                if (plan.orthogonalDriverU > 0) raise(plan.orthogonalDriverU);
+                if (plan.bandDriver > 0) raise(plan.bandDriver);
+                dbg("drum-scale-floor: face %d nu>=%d (r=%.2f wrap=%.2f)",
+                    fid, scaleNu, dfi.radius, wrap);
+            }
+        }
+    }
     // Digon chord floor: micro-edge vertex unification can leave a face
     // with two (or more) non-micro edges that share the same endpoint
     // pair. At count=1 both chords collapse to one mesh segment, so the
@@ -23494,6 +23565,37 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 const auto& small = tLo < tHi ? lo : hi;
                 const auto& large = tLo < tHi ? hi : lo;
                 const long deficit = std::labs(tHi - tLo);
+                const long heavy = std::max(tLo, tHi);
+                const long light = std::max<long>(1, std::min(tLo, tHi));
+                // Castellated / flute-rim collapse runs BEFORE the
+                // small.size()!=1 early-out: mp9 suppressor cone #362 has a
+                // multi-edge plain rim opposite an oversampled flute rim
+                // (≈13 vs ≈120), and the old lone-rim gate never fired.
+                // Foam's boolean ring: ≥24 arcs AND ≥8×. Few-flute CAD
+                // drums under relative deviation: ≥8 arcs AND ≥4× so
+                // circumferential spans track object scale (~10), not a
+                // stave lattice.
+                {
+                    const size_t arcGate =
+                        settings.defaults.relativeDeviation ? 8 : 24;
+                    const long ratioGate =
+                        settings.defaults.relativeDeviation ? 4 : 8;
+                    if (settings.defaults.minimal &&
+                        large.size() >= arcGate &&
+                        heavy >= ratioGate * light) {
+                        for (int e : large) {
+                            if (density.pinnedRoots.count(
+                                    density.groups.find(e))) {
+                                continue;
+                            }
+                            if (solvedEdge[e] > 1) {
+                                capGroup(e, 1);
+                                changed = true;
+                            }
+                        }
+                        continue;
+                    }
+                }
                 if (small.size() != 1) {
                     // A small boolean/T-junction split can leave two short
                     // rim chains just one or two stations apart. The
@@ -23542,43 +23644,6 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                 "equalized on edge %d",
                                 fid, tLo, tHi, e);
                             break;
-                        }
-                    }
-                    continue;
-                }
-                // A rim split into MANY edges is a castellated boolean rim
-                // (foam's top ring: 74 feature arcs, each a short bspline
-                // intersection curve the freeform chord gate over-samples),
-                // not a genuine few-way T-junction. Raising the lone clean
-                // opposite rim to that inflated sum shatters the whole band
-                // into one spanning column per feature arc — exactly the
-                // "segment loops to support the booleans" pathology. In game
-                // topology, leave the clean rim clean and let the transition
-                // strip carry the mismatch. (A real T-junction splits a rim
-                // into a handful of arcs, so the threshold stays well clear.)
-                // Skip only the castellated-boolean-rim pathology: the heavy
-                // rim is split into MANY short arcs (>=24) AND its total dwarfs
-                // the clean rim (>=8x) because those arcs are bspline boolean
-                // cuts the freeform chord gate over-samples. A genuine few-way
-                // T-junction (a handful of arcs, totals within a small factor)
-                // still equalizes so its thin transition strip can't fold.
-                const long heavy = std::max(tLo, tHi);
-                const long light = std::max<long>(1, std::min(tLo, tHi));
-                if (settings.defaults.minimal && large.size() >= 24 &&
-                    heavy >= 8 * light) {
-                    // Collapse the castellated rim's over-sampled arcs to
-                    // simple density (each short analytic-boundary arc needs
-                    // ~1 segment), so the band meshes as clean spans instead
-                    // of one spanning column per arc. Shared only with the
-                    // analytic body strips, which stay exact at count 1;
-                    // user-pinned rings keep their explicit count.
-                    for (int e : large) {
-                        if (density.pinnedRoots.count(density.groups.find(e))) {
-                            continue;
-                        }
-                        if (solvedEdge[e] > 1) {
-                            capGroup(e, 1);
-                            changed = true;
                         }
                     }
                     continue;
@@ -23873,7 +23938,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             // opposing-wall UV double-cover folds).
                             const int estNotches =
                                 std::max(3, int(cutN) / 15);
-                            const int want = 12 * estNotches + 2;
+                            // Mirror open-band few-flute vs ABC densify.
+                            const int want =
+                                estNotches >= 16 ? (12 * estNotches + 2)
+                                                 : (2 * estNotches + 2);
                             solvedEdge[plan.bandDriver] = std::max(
                                 solvedEdge[plan.bandDriver], want);
                             nuB = std::max(nuB, want);
