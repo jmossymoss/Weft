@@ -10834,7 +10834,16 @@ void propagateBandRadialToBlendGroup(const Analysis& analysis,
     // the group target, so a lone override reaches its whole group whether it
     // raises OR lowers the count (the seed and its blends stay equal either
     // way) while a user who set several faces keeps the highest.
+    //
+    // Do NOT stamp radial onto Coons / rail / ribbon blend strips. Those
+    // meshers own density via gridU (along) + filletLoops (across). Writing
+    // radial onto them creates a per-face count override that trips
+    // curCountOverride, kills along-axis adaptive, and squares slot-fillet
+    // Coons grids when a boolean drum's radial is raised (demo.step: faces
+    // 42/43 collapsed 6×3 → 1×3; tip fillets 2/4 grew with the drum radial).
+    // Shared rim contracts still densify through density groups / edge pins.
     for (const auto& [g, R] : target) {
+        if (isBlendFillet(g)) continue;
         const int keep = radialOverride(g);  // this face's own explicit radial
         FaceMeshSettings& s = settings.perFace.count(g)
                                   ? settings.perFace[g]

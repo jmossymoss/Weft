@@ -64,3 +64,23 @@ flute pockets pinches into floor webs.
 - Harden orth / rim-sum so `face N:radial=up` cannot floor the edited face
   or its drum neighbours (root cause of the solid-bbox attempt failures).
 - Re-run this gallery after that fix; only then revisit per-solid scale.
+
+## Slotted drum → Coons fillet coupling (fixed)
+
+On `tests/fixtures/demo.step`, raising the stacked slotted cylinders
+(`--face 7:radial=22,adapt=0 --face 27:radial=22,adapt=0`) used to stamp
+`radial` onto neighbour Coons fillet strips via `propagateBandRadialToBlendGroup`.
+That tripped `curCountOverride`, killed along-axis adaptive, and squared
+slot fillets (e.g. faces 42/43: **6×3 → 1×3**; tip fillets 2/4 grew with
+the drum radial).
+
+Fix: do not stamp `radial` onto Coons / rail / ribbon blend faces; shared
+rim contracts still densify through density groups / edge pins.
+
+| Fillet | BASE | radial 22 (before) | radial 22 (after) |
+|--------|------|--------------------|-------------------|
+| #42 / #43 | 6×3 | 1×3 | 6×3 |
+| #2 / #4 | 1×3 / 3×1 | 1×6 / 6×1 | 1×3 / 3×1 |
+
+Lock: `testSlottedDrumRadialPreservesCoonsFillets`.
+Screenshots: `objects/slotted_fillet_fix/base_v0.png`, `radial22_v0.png`.

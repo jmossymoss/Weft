@@ -1275,6 +1275,69 @@ void testDemoNotchedRadialKeepsStructured() {
     }
 }
 
+// Raising radial on a slotted/boolean drum must not stamp that radial onto
+// neighbour Coons fillet strips (blend-group). That tripped curCountOverride,
+// killed along-axis adaptive, and squared slot fillets (demo.step 42/43).
+void testSlottedDrumRadialPreservesCoonsFillets() {
+    std::printf("-- slotted drum radial preserves coons fillets --\n");
+    const std::filesystem::path stepPath =
+        std::filesystem::path(__FILE__).parent_path() / "fixtures/demo.step";
+    weft::Model model = weft::loadStep(stepPath.string());
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings baseGs;
+    baseGs.defaults.minimal = true;
+    baseGs.defaults.adaptive = true;
+    baseGs.defaults.relativeDeviation = true;
+
+    weft::GenerationReport baseRep;
+    weft::generate(model, analysis, baseGs, &baseRep);
+
+    std::vector<int> drums;
+    std::vector<int> coonsFillets;
+    for (const auto& f : analysis.faces) {
+        if (f.featureClass == weft::FeatureClass::Drum &&
+            f.chartKind == weft::ChartKind::FullPeriod &&
+            int(f.edgeIds.size()) >= 5) {
+            drums.push_back(f.id);
+        }
+        auto kit = baseRep.faceMesher.find(f.id);
+        if (kit != baseRep.faceMesher.end() &&
+            kit->second == weft::MesherKind::CoonsGrid &&
+            f.featureClass == weft::FeatureClass::FilletStrip) {
+            coonsFillets.push_back(f.id);
+        }
+    }
+    CHECK(!drums.empty());
+    CHECK(!coonsFillets.empty());
+
+    weft::GenerationSettings up = baseGs;
+    for (int fid : drums) {
+        up.perFace[fid] = up.defaults;
+        up.perFace[fid].adaptive = false;
+        up.perFace[fid].radial = 22;
+    }
+    weft::GenerationReport upRep;
+    weft::PolyMesh upMesh = weft::generate(model, analysis, up, &upRep);
+    CHECK(isWatertight(upMesh));
+
+    for (int fid : coonsFillets) {
+        auto bit = upRep.faceBuild.find(fid);
+        CHECK(bit != upRep.faceBuild.end());
+        CHECK_EQ(bit->second, 0);
+        auto b = baseRep.faceCounts[fid];
+        auto u = upRep.faceCounts[fid];
+        // Neither axis may collapse to a single span when the drum densifies
+        // (the "square fillet" failure: 6×3 → 1×3).
+        if (b[0] >= 3) CHECK(u[0] >= 2);
+        if (b[1] >= 3) CHECK(u[1] >= 2);
+        // Across/along must not track the drum radial (22) on a short strip.
+        CHECK(u[0] < 16);
+        CHECK(u[1] < 16);
+        std::printf("  coons fillet#%d base %d×%d -> raised-drum %d×%d\n", fid,
+                    b[0], b[1], u[0], u[1]);
+    }
+}
+
 void testFilletDensityAxisOwnership() {
     std::printf("-- fillet density axis ownership --\n");
     auto cad = []() {
@@ -6255,6 +6318,7 @@ int main() {
     RUN(testPlateWebSliverRefine);
     RUN(testSphereFilletFullPeriodNoFloor);
     RUN(testFilletDensityAxisOwnership);
+    RUN(testSlottedDrumRadialPreservesCoonsFillets);
     RUN(testDemoNotchedRadialKeepsStructured);
     RUN(testNotchedDrumOpenBand);
     RUN(testTallFreeTrimDrum);
