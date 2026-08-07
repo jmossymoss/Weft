@@ -208,14 +208,15 @@ feature rows; absorb cutouts as n-gons. No mid-span rings when `nv==1`.
 drums every column is someone’s boundary, so lips still become full-band;
 skipping them entirely made face 374 fail self-check / opened seams.
 
-**Verification (2026-08-06):** FIXED for nv==1 castellation lips.
-- Snap notch `rowKey` to top strip when `nv<=1` so no mid-span support row
-  is inserted; interior notch columns have no lattice span; web uses
-  full-height sides + top strip.
-- Face 374: no true mid-span full-band ring (only near-strip @5% false
-  positive). Watertight; flaregun/insert axial=1 tests green.
-- Screenshots: `before_d10/` vs `after_d10/` — outer wall shows full-height
-  spans without mid-cylinder support rings.
+**Verification (continued):** PARTIAL — clarified artist meaning.
+- Mid-span lip rings: snap-to-top when `nv<=1` (kept).
+- Dense Coons grids on short **torus** fillet iso-bands (3 edges) were the
+  visible "support edge" grids on object 5 blend pockets → MinimalNGon.
+  Screenshots: `after_d10_final/`.
+- Remaining: main drum wall still has circumferential column staves
+  (`nu≈14` from adaptive). Aggressive nu reduction for few flutes floors
+  the face; needs a dedicated sector-span open-band that keeps low nu
+  without self-check failure.
 
 ---
 

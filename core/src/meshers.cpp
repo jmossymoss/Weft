@@ -9734,14 +9734,19 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             }
             break;
         case FeatureClass::FilletStrip: {
-            // Small cylinder fillet straps (free-trim 5-edge, or short
-            // iso-band 5–8 edge): clipped Coons sparsely folds / tris after
-            // weld (#1105; mp9 object 37). Four-edge free-trim fillets are
-            // common flaregun blend straps and must stay Coons.
-            if (s.minimal && surf.GetType() == GeomAbs_Cylinder &&
+            // Small analytic fillet straps: Coons across×along grids read as
+            // unwanted "support edges" on short torus iso-bands (mp9 object
+            // 5 blend pockets). Also 5–8 edge cylinder iso-bands (object 37).
+            // Four-edge free-trim cylinder straps stay Coons (flaregun).
+            if (s.minimal &&
                 ((info.chartKind == ChartKind::FreeTrim &&
+                  surf.GetType() == GeomAbs_Cylinder &&
                   info.edgeIds.size() == 5) ||
                  (info.chartKind == ChartKind::IsoBand &&
+                  surf.GetType() == GeomAbs_Torus &&
+                  info.edgeIds.size() == 3) ||
+                 (info.chartKind == ChartKind::IsoBand &&
+                  surf.GetType() == GeomAbs_Cylinder &&
                   info.edgeIds.size() >= 5 && info.edgeIds.size() <= 8))) {
                 FacePlan tiny;
                 if (collectPlanarLoops(face, surf, model, tiny,
