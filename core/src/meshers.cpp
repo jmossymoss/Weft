@@ -10120,6 +10120,28 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         // IsoBand drums with enough rim pieces: try open-band first when
         // it has a plain-rim bandDriver (castellated barrels / insert
         // walls). Otherwise keep the orthogonal lattice.
+        // Short IsoBand cylinder lands (mp9 object 5 flute walls): early
+        // orth plants longitudinal support staves. Prefer MinimalNGon
+        // before the orth claim.
+        if (s.minimal && info.featureClass == FeatureClass::Drum &&
+            info.chartKind == ChartKind::IsoBand &&
+            surf.GetType() == GeomAbs_Cylinder &&
+            info.edgeIds.size() <= 5) {
+            FacePlan tiny;
+            if (collectPlanarLoops(face, surf, model, tiny,
+                                   /*requirePlane=*/false,
+                                   /*tolerateDegenerate=*/true)) {
+                plan = std::move(tiny);
+            } else {
+                plan = FacePlan();
+            }
+            plan.kind = MesherKind::MinimalNGon;
+            plan.constrains = true;
+            dbg("plan face %d: short iso-band cylinder -> minimal n-gon "
+                "(pre-orth)",
+                fid);
+            return plan;
+        }
         if (orthOk && info.featureClass != FeatureClass::FilletStrip) {
             // Castellated IsoBand drums (≥32 edges): prefer open-band when
             // it accepts the face. Requiring bandDriver≥1 left assembled
@@ -10127,9 +10149,13 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             // face ~374: alone ~32 columns, assembled orth nu=6 because
             // tryOpenBand succeeded with driver=0). Multi-piece rims still
             // boolean-cut under open-band; ABC notched drums keep this path.
+            // Only dense multi-tooth drums (ABC, ≥64 edges) steal early orth
+            // into open-band. Fewer-flute muzzles (mp9 object 5, ~37 edges)
+            // stay on orth so the wall is not carved into thin stave
+            // "support" columns (artist: no support edges on cylinders).
             if (info.featureClass == FeatureClass::Drum &&
                 info.chartKind == ChartKind::IsoBand &&
-                info.edgeIds.size() >= 32 && tryOpenBand()) {
+                info.edgeIds.size() >= 64 && tryOpenBand()) {
                 dbg("plan face %d: iso-band drum -> open band (driver %d)",
                     fid, plan.bandDriver);
                 return plan;
@@ -10227,6 +10253,27 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
              surf.GetType() == GeomAbs_SurfaceOfRevolution) &&
             !surf.IsUClosed() &&
             surf.LastUParameter() - surf.FirstUParameter() > 1e-6;
+        // Short IsoBand cylinder lands (mp9 object 5 flute walls): a
+        // revolution/open-band lattice plants longitudinal "support"
+        // staves. Prefer one border-exact n-gon.
+        if (s.minimal && info.featureClass == FeatureClass::Drum &&
+            info.chartKind == ChartKind::IsoBand &&
+            surf.GetType() == GeomAbs_Cylinder &&
+            info.edgeIds.size() <= 5) {
+            FacePlan tiny;
+            if (collectPlanarLoops(face, surf, model, tiny,
+                                   /*requirePlane=*/false,
+                                   /*tolerateDegenerate=*/true)) {
+                plan = std::move(tiny);
+            } else {
+                plan = FacePlan();
+            }
+            plan.kind = MesherKind::MinimalNGon;
+            plan.constrains = true;
+            dbg("plan face %d: short iso-band cylinder -> minimal n-gon",
+                fid);
+            return plan;
+        }
         if (drumBand) {
             if (tryOpenBand()) {
                 // Coupled seams need a single-edge plain driver so

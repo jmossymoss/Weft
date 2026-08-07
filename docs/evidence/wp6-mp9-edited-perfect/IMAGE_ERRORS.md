@@ -208,15 +208,13 @@ feature rows; absorb cutouts as n-gons. No mid-span rings when `nv==1`.
 drums every column is someone’s boundary, so lips still become full-band;
 skipping them entirely made face 374 fail self-check / opened seams.
 
-**Verification (continued):** PARTIAL — clarified artist meaning.
+**Verification (continued):** improved again (tip `…`).
 - Mid-span lip rings: snap-to-top when `nv<=1` (kept).
-- Dense Coons grids on short **torus** fillet iso-bands (3 edges) were the
-  visible "support edge" grids on object 5 blend pockets → MinimalNGon.
-  Screenshots: `after_d10_final/`.
-- Remaining: main drum wall still has circumferential column staves
-  (`nu≈14` from adaptive). Aggressive nu reduction for few flutes floors
-  the face; needs a dedicated sector-span open-band that keeps low nu
-  without self-check failure.
+- Short torus fillet iso-bands (3 edges) → MinimalNGon (no Coons support grids).
+- Short IsoBand cylinder flute walls (≤5 edges) → MinimalNGon (no stave
+  lattices on orange groove sides).
+- Main wall f374 back on orth with `nu=6` (wide panels, not 14 staves).
+- Screenshots: `after_d10_flutengon/` / latest `object_005_*.png`.
 
 ---
 
