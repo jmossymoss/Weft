@@ -208,9 +208,14 @@ feature rows; absorb cutouts as n-gons. No mid-span rings when `nv==1`.
 drums every column is someone’s boundary, so lips still become full-band;
 skipping them entirely made face 374 fail self-check / opened seams.
 
-**Status:** OPEN — needs sector-absorption open-band (full-height cells +
-notch n-gons) without planting lip row keys when `nv==1`. Tracked separately
-from D1 column densify.
+**Verification (2026-08-06):** FIXED for nv==1 castellation lips.
+- Snap notch `rowKey` to top strip when `nv<=1` so no mid-span support row
+  is inserted; interior notch columns have no lattice span; web uses
+  full-height sides + top strip.
+- Face 374: no true mid-span full-band ring (only near-strip @5% false
+  positive). Watertight; flaregun/insert axial=1 tests green.
+- Screenshots: `before_d10/` vs `after_d10/` — outer wall shows full-height
+  spans without mid-cylinder support rings.
 
 ---
 
@@ -219,7 +224,7 @@ from D1 column densify.
 1. **D1** Object 5 IsoBand column crush — DONE  
 2. **D2** Object 19 collapsed solid — PARKED  
 3. **D3** Object 37 high-tri fillet — PARTIAL  
-4. **D10** Cylinder support edges / mid-span rings — OPEN  
+4. **D10** Cylinder support edges / mid-span rings — DONE  
 4. **D4** Object 2 plate web  
 5. **D5** Objects 8/9 freeform density / MinimalNGon  
 6. **D6–D8** as time allows  

@@ -12927,6 +12927,15 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
     // columns so it cannot remain a short mid-span ring (flaregun Ring B).
     const double axPitch = wspan / std::max(1, nv);
     for (Region& r : regions) {
+        // Single axial step: snap every notch lip onto the top strip so
+        // no mid-span support row is inserted. Interior columns then use
+        // floorKey=keyTop (no lattice over the hole); the notch web runs
+        // full-height sides + top strip. Artist: keep cylinder spans.
+        if (nv <= 1) {
+            r.rowKey = keyTop;
+            r.rowfW = rowW[keyTop];
+            continue;
+        }
         int best = -1;
         double bestD = 1e300;
         for (int ki = 0; ki < int(rowW.size()); ++ki) {
