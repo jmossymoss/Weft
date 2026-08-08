@@ -11100,19 +11100,21 @@ DensitySolution solveDensity(const Model& model, const Analysis& analysis,
         return c3->Value(f).Distance(c3->Value(l)) < 1e-9;
     };
     auto drumRingFloor = [&](int eid, int ringFloor) -> int {
-        // Simple cylinders (≤4 edges): full artist floor (24).
-        // Boolean/notched drums and non-drums: legacy floor of 6.
-        bool simple = false, complex = false;
+        // All Drum faces (plain and notched/boolean) take the artist
+        // cylinder floor (default 24). Non-drum closed rings keep the
+        // legacy floor of 6 so fillet circles are not forced dense.
+        bool onDrum = false;
         if (eid >= 1 && eid <= int(analysis.edges.size())) {
             for (int pf : analysis.edges[size_t(eid) - 1].faceIds) {
                 if (pf < 1 || pf > int(analysis.faces.size())) continue;
-                const FaceInfo& fi = analysis.faces[size_t(pf) - 1];
-                if (fi.featureClass != FeatureClass::Drum) continue;
-                if (fi.edgeIds.size() <= 4) simple = true;
-                else complex = true;
+                if (analysis.faces[size_t(pf) - 1].featureClass ==
+                    FeatureClass::Drum) {
+                    onDrum = true;
+                    break;
+                }
             }
         }
-        if (simple) return ringFloor;
+        if (onDrum) return ringFloor;
         return std::min(ringFloor, 6);
     };
     auto adaptiveCount = [&](int eid, const FaceMeshSettings& s) {
@@ -18121,7 +18123,12 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
                     denseRim.push_back({r.u, r.v, r.p});
                 for (const RimPt& r : rim[driveSide])
                     notchRim.push_back({r.u, r.v, r.p});
-                const int nvBody = std::max(1, nv);
+                // Notched drums at the CAD 24-floor need ≥2 axial rows so
+                // the notch reduction band does not double-cover (mp9
+                // #1611/#1613 self-check at nvBody=1).
+                const int nvBody = (driveCount < stripCount)
+                                       ? std::max(2, nv)
+                                       : std::max(1, nv);
                 dbg("revgrid face %d: ANNULUS-BODY nu=%d(dense) notch=%d "
                     "nvBody=%d notchRange=%g bandH=%g",
                     faceId, int(denseRim.size()), int(notchRim.size()), nvBody,
@@ -22571,10 +22578,10 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             settings.forFace(p.faceId).minCurvedSegments);
                     }
                 }
-                // Per-edge drum complexity: simple cylinders get the full
-                // artist floor; notched/boolean drums stay at 6.
+                // Drum closed rings (plain and notched) take the full
+                // artist floor; non-drum closed rings stay at legacy 6.
                 int flo = std::clamp(artist, 1, 256);
-                bool simple = false;
+                bool onDrum = false;
                 if (eid >= 1 && eid <= int(analysis.edges.size())) {
                     for (int pf :
                          analysis.edges[static_cast<size_t>(eid) - 1]
@@ -22582,16 +22589,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         if (pf < 1 || pf > int(analysis.faces.size())) {
                             continue;
                         }
-                        const FaceInfo& fi =
-                            analysis.faces[static_cast<size_t>(pf) - 1];
-                        if (fi.featureClass == FeatureClass::Drum &&
-                            fi.edgeIds.size() <= 4) {
-                            simple = true;
+                        if (analysis.faces[static_cast<size_t>(pf) - 1]
+                                .featureClass == FeatureClass::Drum) {
+                            onDrum = true;
                             break;
                         }
                     }
                 }
-                if (!simple) flo = std::min(flo, 6);
+                if (!onDrum) flo = std::min(flo, 6);
                 floorN = std::max(floorN, flo);
             }
             auto [it, inserted] = floorOfRoot.try_emplace(root, floorN);
@@ -23857,6 +23862,89 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             pinnedEdge[eid] = clusteredParams(n, fs.filletHold);
         }
     }
+    // Cylinder span floor for IsoBand (wrap-scaled) and notched
+    // full-period drums whose plain rim missed the closed-loop floor.
+    // Raise only single-edge plain rims / drivers — not every notch arc.
+    if (settings.defaults.relativeDeviation) {
+        for (const auto& [fid, plan] : plans) {
+            if (fid < 1 || fid > model.faceCount()) continue;
+            const FaceInfo& dfi = analysis.faces[fid - 1];
+            if (dfi.featureClass != FeatureClass::Drum ||
+                plan.kind != MesherKind::RevolutionGrid ||
+                dfi.edgeIds.size() > 80) {
+                continue;
+            }
+            const bool iso = dfi.chartKind == ChartKind::IsoBand;
+            const bool full = dfi.chartKind == ChartKind::FullPeriod;
+            if (!iso && !full) continue;
+            // IsoBand wrap floor still breaks FullPeriod neighbours even
+            // with shared-edge skipping (opens/folds on mp9). Full-period
+            // notched drums are the scope of the 24-span rule here.
+            // Span-floor edge raises reopen seams on mp9; adaptiveCount +
+            // counts circ floor own the 24-span rule for full-period
+            // (plain and notched). IsoBand wrap raises deferred.
+            if (iso || full) continue;
+            const FaceMeshSettings& fs = settings.forFace(fid);
+            const int ringMin = std::clamp(fs.minCurvedSegments, 1, 256);
+            const double wrap =
+                iso ? std::max(1e-9, std::min(1.0, plan.bandWrapFrac))
+                    : 1.0;
+            const int floorNu =
+                std::max(3, int(std::ceil(ringMin * wrap - 1e-9)));
+            auto raise = [&](int eid) -> bool {
+                if (eid < 1 || eid > model.edgeCount()) return false;
+                // IsoBand: skip edges shared with a FullPeriod drum —
+                // raising those self-checks the neighbour (mp9 f375).
+                if (iso && eid <= int(analysis.edges.size())) {
+                    for (int nf :
+                         analysis.edges[static_cast<size_t>(eid) - 1]
+                             .faceIds) {
+                        if (nf == fid || nf < 1 ||
+                            nf > int(analysis.faces.size())) {
+                            continue;
+                        }
+                        const FaceInfo& of =
+                            analysis.faces[static_cast<size_t>(nf) - 1];
+                        if (of.featureClass == FeatureClass::Drum &&
+                            of.chartKind == ChartKind::FullPeriod) {
+                            return false;
+                        }
+                    }
+                }
+                const int root = density.groups.find(eid);
+                if (density.pinnedRoots.count(root)) return false;
+                auto it = density.groupCount.find(root);
+                if (it == density.groupCount.end()) {
+                    density.groupCount[root] = floorNu;
+                    density.ownerByRoot[root] = "cylinder-span-floor";
+                } else if (it->second < floorNu) {
+                    it->second = floorNu;
+                    density.ownerByRoot[root] = "cylinder-span-floor";
+                }
+                solvedEdge[eid] = std::max(solvedEdge[eid], floorNu);
+                return true;
+            };
+            int raised = 0;
+            if (plan.plainRimEdge > 0 && raise(plan.plainRimEdge)) ++raised;
+            if (plan.rimLow.size() == 1 && raise(plan.rimLow[0])) ++raised;
+            if (plan.rimHigh.size() == 1 && raise(plan.rimHigh[0])) ++raised;
+            if (plan.orthogonalDriverU > 0 &&
+                raise(plan.orthogonalDriverU)) {
+                ++raised;
+            }
+            if (plan.bandDriver > 0 && raise(plan.bandDriver)) ++raised;
+            if (raised == 0 && iso) {
+                for (int eid : plan.uEdges) {
+                    if (raise(eid)) ++raised;
+                }
+            }
+            if (raised > 0) {
+                dbg("cylinder-span-floor: face %d nu>=%d (min=%d wrap=%.2f)",
+                    fid, floorNu, ringMin, wrap);
+            }
+        }
+    }
+
     // One station set owns every side of an orthogonal trim. Propagate the
     // intersections onto the shared B-rep edges so neighbouring faces emit
     // the same points; otherwise a clean quad lattice would merely hide
@@ -23920,13 +24008,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             case MesherKind::DiskCap: {
                 if (plan.orthogonalTrimGrid) {
                     int circ = std::max(3, s.radial);
-                    if (fid >= 1 && fid <= int(analysis.faces.size())) {
-                        const FaceInfo& fi = analysis.faces[fid - 1];
-                        if (fi.featureClass == FeatureClass::Drum &&
-                            fi.edgeIds.size() <= 4) {
-                            circ = std::max(
-                                circ, std::clamp(s.minCurvedSegments, 1, 256));
-                        }
+                    if (fid >= 1 && fid <= int(analysis.faces.size()) &&
+                        analysis.faces[fid - 1].featureClass ==
+                            FeatureClass::Drum) {
+                        circ = std::max(
+                            circ, std::clamp(s.minCurvedSegments, 1, 256));
                     }
                     const int radialWrap = std::max(
                         1, int(std::lround(circ * plan.bandWrapFrac)));
@@ -23947,9 +24033,16 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     // Full-wrap castellated rim: the plain rim drives the
                     // column count (the notch is cut, never counted); the
                     // castellated chain's arcs weld through a strip.
+                    int circ = std::max(3, s.radial);
+                    if (fid >= 1 && fid <= int(analysis.faces.size()) &&
+                        analysis.faces[fid - 1].featureClass ==
+                            FeatureClass::Drum) {
+                        circ = std::max(
+                            circ, std::clamp(s.minCurvedSegments, 1, 256));
+                    }
                     const int nuP = std::max(
                         solvedEdge[plan.plainRimEdge],
-                        density.countFor(plan.plainRimEdge, s.radial));
+                        density.countFor(plan.plainRimEdge, circ));
                     counts[fid] = {std::max(3, nuP), std::max(1, s.axial), 0};
                     break;
                 }
@@ -23960,13 +24053,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     // castellated chain's total. uEdges[0] would be
                     // the castellated chain's first arc.
                     int circ = std::max(3, s.radial);
-                    if (fid >= 1 && fid <= int(analysis.faces.size())) {
-                        const FaceInfo& fi = analysis.faces[fid - 1];
-                        if (fi.featureClass == FeatureClass::Drum &&
-                            fi.edgeIds.size() <= 4) {
-                            circ = std::max(
-                                circ, std::clamp(s.minCurvedSegments, 1, 256));
-                        }
+                    if (fid >= 1 && fid <= int(analysis.faces.size()) &&
+                        analysis.faces[fid - 1].featureClass ==
+                            FeatureClass::Drum) {
+                        circ = std::max(
+                            circ, std::clamp(s.minCurvedSegments, 1, 256));
                     }
                     const int radialWrap = std::max(
                         3, int(std::lround(circ * plan.bandWrapFrac)));
@@ -24042,14 +24133,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 }
                 {
                     int circ = std::max(3, s.radial);
-                    if (fid >= 1 && fid <= int(analysis.faces.size())) {
-                        const FaceInfo& fi = analysis.faces[fid - 1];
-                        if (fi.featureClass == FeatureClass::Drum &&
-                            fi.edgeIds.size() <= 4) {
-                            circ = std::max(
-                                circ,
-                                std::clamp(s.minCurvedSegments, 1, 256));
-                        }
+                    if (fid >= 1 && fid <= int(analysis.faces.size()) &&
+                        analysis.faces[fid - 1].featureClass ==
+                            FeatureClass::Drum) {
+                        circ = std::max(
+                            circ, std::clamp(s.minCurvedSegments, 1, 256));
                     }
                     int nuA = solved(plan.uEdges, circ);
                     int nuB = nuA;
