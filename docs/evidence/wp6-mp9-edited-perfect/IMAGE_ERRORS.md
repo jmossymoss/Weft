@@ -52,8 +52,10 @@ Sparse notch-rim chains on full-period cylinders equalize up to
 
 ### V5 — Object 2 endcap / notch corners (OPEN)
 Notch flats are intentional 4-edge MinimalNGons. Castellated drum f133
-still carries ~5 tris; large endcap hole-plates remain n-gon dominant.
-Needs a dedicated plate-web / notch-corner pass.
+still carries ~5 tris. Large freeform endcap #134 (~108 edges) stays
+MinimalNGon — Coons is blocked by opposite-chain mismatch (45/37 vs 7/20);
+raising the chain budget produced a usable plan but was too costly /
+unstable for this pass. Needs a dedicated near-disk freeform mesher.
 
 ## Verification protocol
 After each fix: remesh CAD profile → re-screenshot affected object(s) →
