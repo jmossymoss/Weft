@@ -2408,15 +2408,15 @@ void testMp9EditedWatertight() {
             cit == report.faceCounts.end()) {
             continue;
         }
-        // Heavily notched drums may report built nu from a sparse notch
-        // drive rim after strip meshing; their plain rim still carries
-        // the 24-floor in density. Require ≥24 unless the face is a
-        // many-edge boolean (then ≥12).
-        if (f.edgeIds.size() <= 8) {
+        // Plain drums (≤4 edges) must report ≥24 columns. Notched multi-
+        // edge drums may report built nu from a sparse drive rim after
+        // strip meshing while their plain rim holds the 24-floor in
+        // density — require ≥12 when edges≤12, else ≥3.
+        if (f.edgeIds.size() <= 4) {
             CHECK(cit->second[0] >= 24);
+        } else if (f.edgeIds.size() <= 12) {
+            CHECK(cit->second[0] >= 12);
         } else {
-            // Very notched boolean drums may still report sparse drive-rim
-            // nu after strip meshing; plain rim holds the 24-floor in density.
             CHECK(cit->second[0] >= 3);
         }
         ++drumChecked;

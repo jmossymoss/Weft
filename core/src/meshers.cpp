@@ -11103,19 +11103,32 @@ DensitySolution solveDensity(const Model& model, const Analysis& analysis,
         // All Drum faces (plain and notched/boolean) take the artist
         // cylinder floor (default 24). Non-drum closed rings keep the
         // legacy floor of 6 so fillet circles are not forced dense.
+        // Adapt-off radial pins below the floor win — the artist typed
+        // an exact count (wheel/panel down).
         bool onDrum = false;
+        int pinnedBelow = 0;
         if (eid >= 1 && eid <= int(analysis.edges.size())) {
             for (int pf : analysis.edges[size_t(eid) - 1].faceIds) {
                 if (pf < 1 || pf > int(analysis.faces.size())) continue;
-                if (analysis.faces[size_t(pf) - 1].featureClass ==
+                if (analysis.faces[size_t(pf) - 1].featureClass !=
                     FeatureClass::Drum) {
-                    onDrum = true;
-                    break;
+                    continue;
+                }
+                onDrum = true;
+                auto pit = settings.perFace.find(pf);
+                if (pit != settings.perFace.end() && !pit->second.adaptive &&
+                    pit->second.radial > 0 &&
+                    pit->second.radial < ringFloor) {
+                    pinnedBelow = pinnedBelow == 0
+                                      ? pit->second.radial
+                                      : std::min(pinnedBelow,
+                                                 pit->second.radial);
                 }
             }
         }
-        if (onDrum) return ringFloor;
-        return std::min(ringFloor, 6);
+        if (!onDrum) return std::min(ringFloor, 6);
+        if (pinnedBelow > 0) return pinnedBelow;
+        return ringFloor;
     };
     auto adaptiveCount = [&](int eid, const FaceMeshSettings& s) {
 
@@ -18111,10 +18124,17 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
                 }
                 notchRange = hi - lo;
             }
+            // Skip annulus-body when the dense/notch count ratio is high
+            // or the notch eats most of the band height:
+            // meshRevolutionAnnulusBody then emits repeated directed
+            // edges (mp9 #375; demo #8/#28 on radial down).
+            const double densNotchRatio =
+                double(std::max(driveCount, stripCount)) /
+                double(std::max(1, std::min(driveCount, stripCount)));
             const bool annulusBody =
                 !vWrap && driveSide >= 0 && driveCount < stripCount &&
                 reconBandH > 1e-9 && notchRange >= 0.15 * reconBandH &&
-                notchRange <= 0.85 * reconBandH;
+                notchRange <= 0.45 * reconBandH && densNotchRatio <= 1.2;
             if (annulusBody) {
                 std::vector<RevRimPt> denseRim, notchRim;
                 denseRim.reserve(rim[driveSide ^ 1].size());
@@ -22578,10 +22598,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             settings.forFace(p.faceId).minCurvedSegments);
                     }
                 }
-                // Drum closed rings (plain and notched) take the full
-                // artist floor; non-drum closed rings stay at legacy 6.
+                // Drum closed rings take the artist floor; non-drums stay
+                // at 6. Adapt-off radial pins below the floor win.
                 int flo = std::clamp(artist, 1, 256);
                 bool onDrum = false;
+                int pinnedBelow = 0;
                 if (eid >= 1 && eid <= int(analysis.edges.size())) {
                     for (int pf :
                          analysis.edges[static_cast<size_t>(eid) - 1]
@@ -22589,14 +22610,26 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         if (pf < 1 || pf > int(analysis.faces.size())) {
                             continue;
                         }
-                        if (analysis.faces[static_cast<size_t>(pf) - 1]
-                                .featureClass == FeatureClass::Drum) {
-                            onDrum = true;
-                            break;
+                        const FaceInfo& fi =
+                            analysis.faces[static_cast<size_t>(pf) - 1];
+                        if (fi.featureClass != FeatureClass::Drum) continue;
+                        onDrum = true;
+                        auto pit = settings.perFace.find(pf);
+                        if (pit != settings.perFace.end() &&
+                            !pit->second.adaptive && pit->second.radial > 0 &&
+                            pit->second.radial < flo) {
+                            pinnedBelow = pinnedBelow == 0
+                                              ? pit->second.radial
+                                              : std::min(pinnedBelow,
+                                                         pit->second.radial);
                         }
                     }
                 }
-                if (!onDrum) flo = std::min(flo, 6);
+                if (!onDrum) {
+                    flo = std::min(flo, 6);
+                } else if (pinnedBelow > 0) {
+                    flo = pinnedBelow;
+                }
                 floorN = std::max(floorN, flo);
             }
             auto [it, inserted] = floorOfRoot.try_emplace(root, floorN);
@@ -23874,28 +23907,42 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 dfi.edgeIds.size() > 80) {
                 continue;
             }
-            const bool iso = dfi.chartKind == ChartKind::IsoBand;
-            const bool full = dfi.chartKind == ChartKind::FullPeriod;
-            if (!iso && !full) continue;
-            // IsoBand wrap floor still breaks FullPeriod neighbours even
-            // with shared-edge skipping (opens/folds on mp9). Full-period
-            // notched drums are the scope of the 24-span rule here.
-            // Span-floor edge raises reopen seams on mp9; adaptiveCount +
-            // counts circ floor own the 24-span rule for full-period
-            // (plain and notched). IsoBand wrap raises deferred.
-            if (iso || full) continue;
+            // IsoBand only here — full-period drums get the floor from
+            // adaptiveCount/drumRingFloor. Partial wraps are not closed
+            // loops, so lift their column edges to ceil(minCurved×wrap).
+            // Shared edges with a FullPeriod neighbour raise to the
+            // neighbour's full ring floor (usually 24), not the smaller
+            // wrap-scaled count, so both sides agree.
+            // Gate to significant wraps: tiny flute IsoBands (wrap≪0.5)
+            // raising shared seams caused collateral floors (mp9 2019).
+            if (dfi.chartKind != ChartKind::IsoBand) continue;
+            if (dfi.edgeIds.size() < 16) continue;
+            if (plan.bandWrapFrac < 0.75) continue;
             const FaceMeshSettings& fs = settings.forFace(fid);
             const int ringMin = std::clamp(fs.minCurvedSegments, 1, 256);
             const double wrap =
-                iso ? std::max(1e-9, std::min(1.0, plan.bandWrapFrac))
-                    : 1.0;
-            const int floorNu =
+                std::max(1e-9, std::min(1.0, plan.bandWrapFrac));
+            const int wrapFloor =
                 std::max(3, int(std::ceil(ringMin * wrap - 1e-9)));
-            auto raise = [&](int eid) -> bool {
+            auto raiseTo = [&](int eid, int want) -> bool {
                 if (eid < 1 || eid > model.edgeCount()) return false;
-                // IsoBand: skip edges shared with a FullPeriod drum —
-                // raising those self-checks the neighbour (mp9 f375).
-                if (iso && eid <= int(analysis.edges.size())) {
+                const int root = density.groups.find(eid);
+                if (density.pinnedRoots.count(root)) return false;
+                auto it = density.groupCount.find(root);
+                if (it == density.groupCount.end()) {
+                    density.groupCount[root] = want;
+                    density.ownerByRoot[root] = "cylinder-span-floor";
+                } else if (it->second < want) {
+                    it->second = want;
+                    density.ownerByRoot[root] = "cylinder-span-floor";
+                }
+                solvedEdge[eid] = std::max(solvedEdge[eid], want);
+                return true;
+            };
+            auto raiseIso = [&](int eid) -> bool {
+                if (eid < 1 || eid > model.edgeCount()) return false;
+                int want = wrapFloor;
+                if (eid <= int(analysis.edges.size())) {
                     for (int nf :
                          analysis.edges[static_cast<size_t>(eid) - 1]
                              .faceIds) {
@@ -23907,40 +23954,76 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             analysis.faces[static_cast<size_t>(nf) - 1];
                         if (of.featureClass == FeatureClass::Drum &&
                             of.chartKind == ChartKind::FullPeriod) {
-                            return false;
+                            want = std::max(
+                                want,
+                                std::clamp(
+                                    settings.forFace(nf).minCurvedSegments,
+                                    1, 256));
                         }
                     }
                 }
-                const int root = density.groups.find(eid);
-                if (density.pinnedRoots.count(root)) return false;
-                auto it = density.groupCount.find(root);
-                if (it == density.groupCount.end()) {
-                    density.groupCount[root] = floorNu;
-                    density.ownerByRoot[root] = "cylinder-span-floor";
-                } else if (it->second < floorNu) {
-                    it->second = floorNu;
-                    density.ownerByRoot[root] = "cylinder-span-floor";
-                }
-                solvedEdge[eid] = std::max(solvedEdge[eid], floorNu);
-                return true;
+                return raiseTo(eid, want);
             };
             int raised = 0;
-            if (plan.plainRimEdge > 0 && raise(plan.plainRimEdge)) ++raised;
-            if (plan.rimLow.size() == 1 && raise(plan.rimLow[0])) ++raised;
-            if (plan.rimHigh.size() == 1 && raise(plan.rimHigh[0])) ++raised;
-            if (plan.orthogonalDriverU > 0 &&
-                raise(plan.orthogonalDriverU)) {
+            if (plan.plainRimEdge > 0 && raiseIso(plan.plainRimEdge)) {
                 ++raised;
             }
-            if (plan.bandDriver > 0 && raise(plan.bandDriver)) ++raised;
-            if (raised == 0 && iso) {
+            if (plan.rimLow.size() == 1 && raiseIso(plan.rimLow[0])) {
+                ++raised;
+            }
+            if (plan.rimHigh.size() == 1 && raiseIso(plan.rimHigh[0])) {
+                ++raised;
+            }
+            if (plan.orthogonalDriverU > 0 &&
+                raiseIso(plan.orthogonalDriverU)) {
+                ++raised;
+            }
+            if (plan.bandDriver > 0 && raiseIso(plan.bandDriver)) ++raised;
+            if (raised == 0) {
                 for (int eid : plan.uEdges) {
-                    if (raise(eid)) ++raised;
+                    if (raiseIso(eid)) ++raised;
                 }
             }
             if (raised > 0) {
-                dbg("cylinder-span-floor: face %d nu>=%d (min=%d wrap=%.2f)",
-                    fid, floorNu, ringMin, wrap);
+                dbg("cylinder-span-floor: face %d raised=%d wrapFloor=%d "
+                    "(min=%d wrap=%.2f)",
+                    fid, raised, wrapFloor, ringMin, wrap);
+                // Equalize FullPeriod neighbours' single-edge rims to the
+                // shared floor so they do not tip-fold into the contract
+                // floor (mp9 #375).
+                for (int eid : plan.uEdges) {
+                    if (eid < 1 || eid > int(analysis.edges.size())) continue;
+                    for (int nf :
+                         analysis.edges[static_cast<size_t>(eid) - 1]
+                             .faceIds) {
+                        if (nf == fid || nf < 1 ||
+                            nf > int(analysis.faces.size())) {
+                            continue;
+                        }
+                        auto np = plans.find(nf);
+                        if (np == plans.end() ||
+                            np->second.kind != MesherKind::RevolutionGrid) {
+                            continue;
+                        }
+                        const FaceInfo& of =
+                            analysis.faces[static_cast<size_t>(nf) - 1];
+                        if (of.featureClass != FeatureClass::Drum ||
+                            of.chartKind != ChartKind::FullPeriod) {
+                            continue;
+                        }
+                        const int want = std::clamp(
+                            settings.forFace(nf).minCurvedSegments, 1, 256);
+                        if (np->second.rimLow.size() == 1) {
+                            raiseTo(np->second.rimLow[0], want);
+                        }
+                        if (np->second.rimHigh.size() == 1) {
+                            raiseTo(np->second.rimHigh[0], want);
+                        }
+                        if (np->second.plainRimEdge > 0) {
+                            raiseTo(np->second.plainRimEdge, want);
+                        }
+                    }
+                }
             }
         }
     }
@@ -24011,8 +24094,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     if (fid >= 1 && fid <= int(analysis.faces.size()) &&
                         analysis.faces[fid - 1].featureClass ==
                             FeatureClass::Drum) {
-                        circ = std::max(
-                            circ, std::clamp(s.minCurvedSegments, 1, 256));
+                        // Adapt-off typed radial below the floor wins.
+                        if (!(settings.perFace.count(fid) &&
+                              !s.adaptive && s.radial > 0 &&
+                              s.radial < s.minCurvedSegments)) {
+                            circ = std::max(
+                                circ,
+                                std::clamp(s.minCurvedSegments, 1, 256));
+                        }
                     }
                     const int radialWrap = std::max(
                         1, int(std::lround(circ * plan.bandWrapFrac)));
@@ -24037,8 +24126,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     if (fid >= 1 && fid <= int(analysis.faces.size()) &&
                         analysis.faces[fid - 1].featureClass ==
                             FeatureClass::Drum) {
-                        circ = std::max(
-                            circ, std::clamp(s.minCurvedSegments, 1, 256));
+                        if (!(settings.perFace.count(fid) && !s.adaptive &&
+                              s.radial > 0 &&
+                              s.radial < s.minCurvedSegments)) {
+                            circ = std::max(
+                                circ,
+                                std::clamp(s.minCurvedSegments, 1, 256));
+                        }
                     }
                     const int nuP = std::max(
                         solvedEdge[plan.plainRimEdge],
@@ -24056,8 +24150,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     if (fid >= 1 && fid <= int(analysis.faces.size()) &&
                         analysis.faces[fid - 1].featureClass ==
                             FeatureClass::Drum) {
-                        circ = std::max(
-                            circ, std::clamp(s.minCurvedSegments, 1, 256));
+                        if (!(settings.perFace.count(fid) && !s.adaptive &&
+                              s.radial > 0 &&
+                              s.radial < s.minCurvedSegments)) {
+                            circ = std::max(
+                                circ,
+                                std::clamp(s.minCurvedSegments, 1, 256));
+                        }
                     }
                     const int radialWrap = std::max(
                         3, int(std::lround(circ * plan.bandWrapFrac)));
@@ -24136,8 +24235,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     if (fid >= 1 && fid <= int(analysis.faces.size()) &&
                         analysis.faces[fid - 1].featureClass ==
                             FeatureClass::Drum) {
-                        circ = std::max(
-                            circ, std::clamp(s.minCurvedSegments, 1, 256));
+                        if (!(settings.perFace.count(fid) && !s.adaptive &&
+                              s.radial > 0 &&
+                              s.radial < s.minCurvedSegments)) {
+                            circ = std::max(
+                                circ,
+                                std::clamp(s.minCurvedSegments, 1, 256));
+                        }
                     }
                     int nuA = solved(plan.uEdges, circ);
                     int nuB = nuA;
@@ -26914,7 +27018,19 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             sparseRibbon ? sparseN * 2 / 5 + 1
                             : sparseRail ? std::max(4, sparseN)
                                          : sparseN / 4;
+                        // Notched cylinder drums with several folds after
+                        // a neighbour density raise must not refuse the
+                        // fold-free floor (mp9 #375: 6 folds kept).
+                        const bool notchedCylFoldDump =
+                            sparseDrum &&
+                            plan.kind == MesherKind::RevolutionGrid &&
+                            (surf.GetType() == GeomAbs_Cylinder ||
+                             surf.GetType() == GeomAbs_Cone) &&
+                            int(sparseInfo.edgeIds.size()) >= 5 &&
+                            int(sparseInfo.edgeIds.size()) <= 16 &&
+                            liveFolds >= 4;
                         const bool sparseProtect =
+                            !notchedCylFoldDump &&
                             sparseN >= sparseMinN && liveFolds > 0 &&
                             liveFolds <= foldCap &&
                             liveFolds <= sparseFoldBudget &&
@@ -26959,14 +27075,21 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                 FeatureClass::FilletStrip &&
                             plan.kind == MesherKind::CoonsGrid &&
                             sparseN <= 48;
+                        // tipConeDrum / notchedCylFoldDump: allow n-gon
+                        // rescue even when sparseProtect was suppressed
+                        // so fold-keep cannot trap residual folds.
                         const bool tipFoldNgon =
-                            sparseProtect && s.minimal &&
-                            liveFolds > 0 && liveFolds <= tipFoldBudget &&
-                            ((sparseInfo.featureClass ==
-                                  FeatureClass::Freeform &&
-                              (sparseCoonsOne || tipRibbon ||
-                               tipFreeformRev)) ||
-                             tipConeDrum || tipFilletCoons);
+                            s.minimal && liveFolds > 0 &&
+                            ((tipConeDrum &&
+                              liveFolds <= 8) ||
+                             (notchedCylFoldDump && liveFolds <= 8) ||
+                             (sparseProtect &&
+                              liveFolds <= tipFoldBudget &&
+                              ((sparseInfo.featureClass ==
+                                    FeatureClass::Freeform &&
+                                (sparseCoonsOne || tipRibbon ||
+                                 tipFreeformRev)) ||
+                               tipFilletCoons)));
                         if (tipFoldNgon) {
                             PolyMesh ngon;
                             MeshBuilder nb(ngon);
@@ -26977,7 +27100,9 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                 !ngon.polygons.empty()) {
                                 const auto [nt, ni] = invertedCells(ngon);
                                 (void)nt;
-                                if (ni < liveFolds) {
+                                if (ni < liveFolds ||
+                                    ((tipConeDrum || notchedCylFoldDump) &&
+                                     ni == 0)) {
                                     dbg("mesh face %d: freeform %s "
                                         "folds %d → minimal n-gon %d",
                                         fid, mesherKindName(plan.kind),
@@ -27016,15 +27141,49 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                 invertedCells(cand);
                             (void)ctested;
                             if (cinverted < liveFolds) {
-                                dbg("mesh face %d: self-heal — %d folded "
-                                    "cell(s) on %s, floor folds %d, floor "
-                                    "kept",
-                                    fid, liveFolds,
-                                    mesherKindName(plan.kind), cinverted);
-                                parts[fid] = std::move(cand);
-                                fellBack[fid] = 2;  // exact borders
-                                buildCause[fid] =
-                                    "fold self-heal → contract floor";
+                                // Prefer fold-free MinimalNGon over the
+                                // contract floor when the drum tip-folded
+                                // after a density raise (keeps structured
+                                // retention; mp9 #375/#1554).
+                                PolyMesh ngon;
+                                MeshBuilder nb(ngon);
+                                bool usedNgon = false;
+                                if (s.minimal &&
+                                    meshMinimalPlanar(face, model, fid,
+                                                      solvedEdge, s.radial,
+                                                      nb, &pinnedEdge) &&
+                                    borderContractViolation(fid, ngon) ==
+                                        0 &&
+                                    !ngon.polygons.empty()) {
+                                    const auto [nt, ni] =
+                                        invertedCells(ngon);
+                                    (void)nt;
+                                    if (ni == 0) {
+                                        dbg("mesh face %d: fold self-heal "
+                                            "→ minimal n-gon (was %d "
+                                            "folds on %s)",
+                                            fid, liveFolds,
+                                            mesherKindName(plan.kind));
+                                        parts[fid] = std::move(ngon);
+                                        plans[fid].kind =
+                                            MesherKind::MinimalNGon;
+                                        fellBack[fid] = 0;
+                                        liveFolds = 0;
+                                        usedNgon = true;
+                                    }
+                                }
+                                if (!usedNgon) {
+                                    dbg("mesh face %d: self-heal — %d "
+                                        "folded cell(s) on %s, floor "
+                                        "folds %d, floor kept",
+                                        fid, liveFolds,
+                                        mesherKindName(plan.kind),
+                                        cinverted);
+                                    parts[fid] = std::move(cand);
+                                    fellBack[fid] = 2;
+                                    buildCause[fid] =
+                                        "fold self-heal → contract floor";
+                                }
                             }
                         }
                         }

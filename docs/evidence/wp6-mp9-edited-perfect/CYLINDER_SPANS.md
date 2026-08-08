@@ -1,30 +1,37 @@
-# CAD cylinder span floor (min 24)
+# CAD cylinder span floor (min 24) + density raise/lower
 
 ## Policy
 
-- `minCurvedSegments` default / CAD profile / app session: **24**
-- All Drum faces (plain and notched/boolean) take the 24-span floor on
-  closed circumferential rings via `drumRingFloor`
-- Curvature adaptive can still raise above 24 when the model-diagonal
-  chord demands it (`n = max(24, nCurv)`)
-- Non-drum closed rings (fillet circles) keep the legacy floor of 6
-- Notched drums with a plain rim at 24 vs a shorter notch chain use
-  annulus-body with `nvBody ≥ 2` so the reduction band does not
-  double-cover (mp9 #1611/#1613)
-- IsoBand wrap floor (`ceil(24×wrap)`) still deferred — shared-rim raises
-  reopen seams (mp9 f374/f375)
+- `minCurvedSegments` = **24** (defaults / `--profile cad` / app)
+- All Drum faces (plain and notched) take that floor on closed rings
+- IsoBand walls with wrap ≥ 0.75 and ≥16 edges raise column seams to
+  `ceil(24×wrap)`, and to 24 when shared with a FullPeriod neighbour
+- Adapt-off radial pins below 24 win (density down works)
+- Annulus-body skipped when dense/notch ratio > 1.2 or notch height >
+  45% of band (avoids self-check on density edits)
+- Non-drum closed rings stay at legacy floor 6
 
-## Object 5
+## Object 5 (CAD defaults)
 
 | Face | nu | Notes |
 |------|---:|-------|
-| 364 / 366 / 368 | 24 | simple cylinders at floor |
-| 362 | ≥24 | notched cone |
-| 374 | ~11 | IsoBand — wrap floor deferred |
-| 375 | ~20+ | complex / MinimalNGon |
+| 364/366/368 | 24 | simple cylinders |
+| 362 | 28 | notched |
+| 374 | 24 | IsoBand wrap floor |
+| 375 | 25 | FullPeriod neighbour |
+
+## Density raise/lower (demo.step kind harness)
+
+| Kind | Down | Up |
+|------|------|-----|
+| revolution-grid | ok (f7/f8) | ok |
+| coons-grid (loops) | ok | ok |
+| annulus-ring | ok | ok |
+| plate-web | ok | ok |
+
+mp9: watertight, failed-floor=0, folded=0, structured 3052/3052.
 
 ## Locks
 
-- `testMp9EditedWatertight` at `minCurvedSegments=24`: structured drums
-  with ≤8 edges have `nu ≥ 24`; heavier notches ≥3 with structured build
+- `testMp9EditedWatertight` at minCurved=24
 - Screenshots: `objects/cyl24/`
