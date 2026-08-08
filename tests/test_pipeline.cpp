@@ -2398,35 +2398,29 @@ void testMp9EditedWatertight() {
     CHECK_EQ(vr.windingConflicts, 0);
     CHECK(vr.watertight());
     const auto folded = weft::foldedPolys(model, mesh);
-    int nFolded =
-        int(std::count(folded.begin(), folded.end(), uint8_t{1}));
-    // Large few-edge freeform Coons bodies keep structured grids instead
-    // of melting to MinimalNGon; up to 3 tip folds on that class alone
-    // are allowed while the fold-free remesh is chased (visual QA: spring
-    // body must stay Coons, not a blob).
-    int freeformCoonsTipFolds = 0;
-    int otherFolds = 0;
-    for (size_t pi = 0; pi < folded.size(); ++pi) {
-        if (!folded[pi]) continue;
-        const int fid =
-            pi < mesh.polygonFaceId.size() ? mesh.polygonFaceId[pi] : 0;
-        bool tipClass = false;
-        if (fid >= 1 && fid <= int(analysis.faces.size())) {
-            const auto& fi = analysis.faces[size_t(fid) - 1];
-            auto kit = report.faceMesher.find(fid);
-            if (kit != report.faceMesher.end() &&
-                kit->second == weft::MesherKind::CoonsGrid &&
-                fi.featureClass == weft::FeatureClass::Freeform &&
-                fi.edgeIds.size() <= 4) {
-                tipClass = true;
+    CHECK_EQ(int(std::count(folded.begin(), folded.end(), uint8_t{1})), 0);
+    // Large few-edge freeform Coons must stay structured (not MinimalNGon
+    // blobs) after tip-fold rotate retry (mp9 object 19 / face ~1828).
+    {
+        bool foundSpring = false;
+        for (const auto& f : analysis.faces) {
+            if (f.featureClass != weft::FeatureClass::Freeform ||
+                f.edgeIds.size() > 4) {
+                continue;
+            }
+            auto kit = report.faceMesher.find(f.id);
+            auto bit = report.faceBuild.find(f.id);
+            if (kit == report.faceMesher.end() ||
+                bit == report.faceBuild.end() || bit->second != 0) {
+                continue;
+            }
+            if (kit->second == weft::MesherKind::CoonsGrid) {
+                foundSpring = true;
+                break;
             }
         }
-        if (tipClass) ++freeformCoonsTipFolds;
-        else ++otherFolds;
+        CHECK(foundSpring);
     }
-    CHECK_EQ(otherFolds, 0);
-    CHECK(freeformCoonsTipFolds <= 3);
-    CHECK_EQ(nFolded, freeformCoonsTipFolds);
     // Full-period RevolutionGrid drums (plain and notched) honour the
     // 24-span floor when they build structured.
     int drumChecked = 0;

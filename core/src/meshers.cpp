@@ -26857,6 +26857,71 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     // strictly better candidate swaps in, so this can
                     // never regress a face.
                     int liveFolds = inverted;
+                    // Large few-edge freeform Coons tip folds (mp9 #1828):
+                    // retry alternate Coons rotations before n-gon rescue
+                    // or sparse fold-keep. Rotate 0 ships 3 tip folds;
+                    // rotate 1/2/3 clear them on the spring body without
+                    // melting to MinimalNGon.
+                    if (liveFolds > 0 && liveFolds <= 3 &&
+                        plan.kind == MesherKind::CoonsGrid &&
+                        analysis.faces[size_t(fid) - 1].featureClass ==
+                            FeatureClass::Freeform &&
+                        analysis.faces[size_t(fid) - 1].edgeIds.size() <=
+                            4 &&
+                        int(parts[fid].polygons.size()) >= 64) {
+                        const double holdU =
+                            plan.isFillet && plan.acrossIsU ? s.filletHold
+                                                             : 0.0;
+                        const double holdV =
+                            plan.isFillet && !plan.acrossIsU ? s.filletHold
+                                                              : 0.0;
+                        const auto uParams = clusteredParams(nu, holdU);
+                        const auto vParams = clusteredParams(nv, holdV);
+                        for (int drot = 1; drot <= 3 && liveFolds > 0;
+                             ++drot) {
+                            const int tryRot =
+                                (plan.coonsRotate + drot) & 3;
+                            PolyMesh cand;
+                            MeshBuilder cb(cand);
+                            // Odd rotates swap which side pair is U —
+                            // feed swapped param counts so the long
+                            // spring axis keeps its denser sample budget.
+                            const auto& up =
+                                (drot & 1) ? vParams : uParams;
+                            const auto& vp =
+                                (drot & 1) ? uParams : vParams;
+                            if (!meshCoonsGrid(
+                                    face, model, fid, up, vp, tryRot,
+                                    solvedEdge, cb,
+                                    plan.insertWires.empty()
+                                        ? nullptr
+                                        : &plan.insertWires,
+                                    std::max(0, s.junctionRings),
+                                    &pinnedEdge, s.cellCap,
+                                    settings.decoupleSeams,
+                                    /*allowDrumWedge=*/false,
+                                    /*maxWireEdges=*/24,
+                                    /*maxSideChain=*/8)) {
+                                continue;
+                            }
+                            if (borderContractViolation(fid, cand) != 0) {
+                                continue;
+                            }
+                            const auto [t2, i2] = invertedCells(cand);
+                            (void)t2;
+                            if (i2 >= liveFolds) continue;
+                            dbg("mesh face %d: freeform coons tip-fold "
+                                "rotate %d -> %d (%d folds -> %d)",
+                                fid, plan.coonsRotate, tryRot, liveFolds,
+                                i2);
+                            parts[fid] = std::move(cand);
+                            plans[fid].coonsRotate = tryRot;
+                            liveFolds = i2;
+                            if (drot & 1) {
+                                std::swap(counts[fid][0], counts[fid][1]);
+                            }
+                        }
+                    }
                     // A folding closed revolution band gets a structured
                     // candidate FIRST: rebuild with the drive rim's
                     // iso-azimuth runs collapsed to single columns (the
