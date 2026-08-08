@@ -45,11 +45,15 @@ caps → MinimalNGon via richest-wire border (was 1-tri quad-fill fan).
 Residual: sphere tip may still register as a 3-gon/tri under sparse
 samples. Screenshots: `objects/after_v3/object_041_v{0,1}.png`.
 
-### V4 — Notched full-period drums under 24 (MEDIUM)
-Object 11 f1611/1613 at nu=15. Same 24-floor class as plain drums.
+### V4 — Notched full-period drums under 24 (FIXED 2026-08-08)
+Sparse notch-rim chains on full-period cylinders equalize up to
+`minCurvedSegments` when the dense rim already holds the floor (mp9
+#1611/#1613: 15→27). Screenshots: `objects/after_v4/object_011_v{0,1}.png`.
 
-### V5 — Object 2 endcap / notch corners (MEDIUM)
-Large sparse n-gons on flat gear faces; jagged notch corners.
+### V5 — Object 2 endcap / notch corners (OPEN)
+Notch flats are intentional 4-edge MinimalNGons. Castellated drum f133
+still carries ~5 tris; large endcap hole-plates remain n-gon dominant.
+Needs a dedicated plate-web / notch-corner pass.
 
 ## Verification protocol
 After each fix: remesh CAD profile → re-screenshot affected object(s) →

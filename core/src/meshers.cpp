@@ -23760,6 +23760,60 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                             smallCap = 12;
                             largeCap = 12;
                             deficitCap = 8;
+                        } else if (surf.GetType() == GeomAbs_Cylinder &&
+                                   fid <= int(analysis.faces.size())) {
+                            // Notched full-period cylinders whose dense rim
+                            // already holds the artist floor (mp9 #1611:
+                            // 15 vs 24): distribute the deficit across the
+                            // sparse notch chain so columns match the floor
+                            // without a single-edge dump onto shared fillets.
+                            const FaceInfo& dfi =
+                                analysis.faces[size_t(fid) - 1];
+                            const int floorN = std::clamp(
+                                settings.forFace(fid).minCurvedSegments, 1,
+                                256);
+                            if (dfi.featureClass == FeatureClass::Drum &&
+                                dfi.chartKind == ChartKind::FullPeriod &&
+                                heavy >= floorN && light < floorN &&
+                                int(small.size()) >= 2 &&
+                                int(small.size()) <= 16 &&
+                                int(large.size()) <= 4) {
+                                long need = std::min<long>(
+                                    deficit, floorN - light);
+                                std::set<int> oppositeRoots;
+                                for (int e : large) {
+                                    oppositeRoots.insert(
+                                        density.groups.find(e));
+                                }
+                                int raisedN = 0;
+                                for (long step = 0; step < need; ++step) {
+                                    int best = -1;
+                                    int bestCount = 1 << 30;
+                                    for (int e : small) {
+                                        const int root =
+                                            density.groups.find(e);
+                                        if (oppositeRoots.count(root) ||
+                                            density.pinnedRoots.count(
+                                                root)) {
+                                            continue;
+                                        }
+                                        if (solvedEdge[e] < bestCount) {
+                                            bestCount = solvedEdge[e];
+                                            best = e;
+                                        }
+                                    }
+                                    if (best < 0) break;
+                                    raiseGroup(best, solvedEdge[best] + 1);
+                                    ++raisedN;
+                                    changed = true;
+                                }
+                                if (raisedN > 0) {
+                                    dbg("density: face %d notched drum rim "
+                                        "floor equalize +%d (was %ld/%ld)",
+                                        fid, raisedN, tLo, tHi);
+                                }
+                                continue;
+                            }
                         }
                     }
                     if (int(small.size()) <= smallCap &&
