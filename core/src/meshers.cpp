@@ -27118,6 +27118,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         // tipConeDrum / notchedCylFoldDump: allow n-gon
                         // rescue even when sparseProtect was suppressed
                         // so fold-keep cannot trap residual folds.
+                        // Large few-edge freeform Coons (mp9 #1828: ~224
+                        // cells, ≤4 edges): MinimalNGon rescue melts the
+                        // body into a blob. Keep structured Coons and let
+                        // sparse fold-keep hold tip folds. Small freeform
+                        // Coons tip folds still rescue to n-gon (f8/f47).
+                        const bool tipFreeformCoonsRescue =
+                            !(sparseCoonsOne && sparseN >= 64 &&
+                              int(sparseInfo.edgeIds.size()) <= 4);
                         const bool tipFoldNgon =
                             s.minimal && liveFolds > 0 &&
                             ((tipConeDrum &&
@@ -27127,8 +27135,9 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                               liveFolds <= tipFoldBudget &&
                               ((sparseInfo.featureClass ==
                                     FeatureClass::Freeform &&
-                                (sparseCoonsOne || tipRibbon ||
-                                 tipFreeformRev)) ||
+                                ((tipFreeformCoonsRescue &&
+                                  sparseCoonsOne) ||
+                                 tipRibbon || tipFreeformRev)) ||
                                tipFilletCoons)));
                         if (tipFoldNgon) {
                             PolyMesh ngon;
@@ -27321,12 +27330,17 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                          sparseInfo.featureClass == FeatureClass::Freeform)
                             ? 3
                             : 2;
+                    // Match invertedCells tipFoldNgon gate for large
+                    // freeform Coons bodies (mp9 #1828).
+                    const bool tipFreeformCoonsRescueFp =
+                        !(sparseCoonsOne && sparseN >= 64 &&
+                          int(sparseInfo.edgeIds.size()) <= 4);
                     if (sparseFpProtect && s.minimal && liveFp > 0 &&
                         liveFp <= tipFoldBudgetFp &&
                         ((sparseInfo.featureClass ==
                               FeatureClass::Freeform &&
-                          (sparseCoonsOne || tipRibbonFp ||
-                           tipFreeformRevFp)) ||
+                          ((tipFreeformCoonsRescueFp && sparseCoonsOne) ||
+                           tipRibbonFp || tipFreeformRevFp)) ||
                          tipConeDrumFp)) {
                         PolyMesh ngon;
                         MeshBuilder nb(ngon);

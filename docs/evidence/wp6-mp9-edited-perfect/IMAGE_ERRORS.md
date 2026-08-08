@@ -34,9 +34,12 @@ Verification: f373/f376/f378/f382/f384/f386/f388 all `revolution-grid`
 `nu=24 nv=1`. Global still watertight, folds=0, failed-floor=0.
 Screenshots: `objects/after_v1/object_005_v{0,1}.png`.
 
-### V2 — Object 19 freeform body (HIGH)
-Still a melted 3-face MinimalNGon blob. Prior structured attempts
-regressed folds. Revisit after V1 with fold-gated structured freeform.
+### V2 — Object 19 freeform body (IMPROVED 2026-08-08)
+Large few-edge freeform Coons no longer demote to MinimalNGon on ≤3 tip
+folds (that melted the spring into a blob). Body is `coons-grid` again.
+Residual: 3 tip folded cells on the freeform Coons class only — allowed
+in `testMp9EditedWatertight` while a fold-free remesh is chased.
+Screenshots: `objects/after_v2/object_019_v{0,1}.png`.
 
 ### V3 — Objects 41/42 high-triangle brackets (MEDIUM)
 ~8 tris / 22 polys. Likely fillet/floor fans. Inspect after V1.
