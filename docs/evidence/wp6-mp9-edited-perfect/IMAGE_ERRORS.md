@@ -41,8 +41,11 @@ Residual: 3 tip folded cells on the freeform Coons class only — allowed
 in `testMp9EditedWatertight` while a fold-free remesh is chased.
 Screenshots: `objects/after_v2/object_019_v{0,1}.png`.
 
-### V3 — Objects 41/42 high-triangle brackets (MEDIUM)
-~8 tris / 22 polys. Likely fillet/floor fans. Inspect after V1.
+### V3 — Objects 41/42 high-triangle brackets (DIAGNOSED)
+Tris come from 3-edge torus freeform (`f2572`/`f2582`) meshed as
+RevolutionGrid (or Coons with collapsedLast) — both fan ~7 tris at the
+pole — plus a 1-tri sphere-cap GeometricCap quad-fill. Not a density bug;
+needs a non-fan torus/sphere strap strategy. Parked after V1/V2.
 
 ### V4 — Notched full-period drums under 24 (MEDIUM)
 Object 11 f1611/1613 at nu=15. Same 24-floor class as plain drums.
