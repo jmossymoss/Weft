@@ -10120,29 +10120,25 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         // IsoBand drums with enough rim pieces: try open-band first when
         // it has a plain-rim bandDriver (castellated barrels / insert
         // walls). Otherwise keep the orthogonal lattice.
-        // Short IsoBand cylinder lands (mp9 object 5 flute walls): early
-        // orth plants longitudinal support staves. Prefer MinimalNGon
-        // before the orth claim.
-        if (s.minimal && info.featureClass == FeatureClass::Drum &&
+        // Short IsoBand cylinder lands (mp9 object 5 flute walls / recess
+        // drums): early orth plants mid-span longitudinal "support"
+        // staves. Prefer open-band with a single axial cell so columns
+        // run full height. Do NOT collapse to MinimalNGon — that leaves
+        // under-spanned borders (hexagonal recesses, coarse lands) even
+        // when minCurvedSegments=24.
+        const bool shortIsoCyl =
+            s.minimal && info.featureClass == FeatureClass::Drum &&
             info.chartKind == ChartKind::IsoBand &&
             surf.GetType() == GeomAbs_Cylinder &&
-            info.edgeIds.size() <= 5) {
-            FacePlan tiny;
-            if (collectPlanarLoops(face, surf, model, tiny,
-                                   /*requirePlane=*/false,
-                                   /*tolerateDegenerate=*/true)) {
-                plan = std::move(tiny);
-            } else {
-                plan = FacePlan();
-            }
-            plan.kind = MesherKind::MinimalNGon;
-            plan.constrains = true;
-            dbg("plan face %d: short iso-band cylinder -> minimal n-gon "
-                "(pre-orth)",
-                fid);
+            info.edgeIds.size() <= 5;
+        if (shortIsoCyl && tryOpenBand()) {
+            dbg("plan face %d: short iso-band cylinder -> open band "
+                "(pre-orth, driver %d)",
+                fid, plan.bandDriver);
             return plan;
         }
-        if (orthOk && info.featureClass != FeatureClass::FilletStrip) {
+        if (orthOk && !shortIsoCyl &&
+            info.featureClass != FeatureClass::FilletStrip) {
             // Castellated IsoBand drums (≥32 edges): prefer open-band when
             // it accepts the face. Requiring bandDriver≥1 left assembled
             // muzzles on early orth with crushed nu (mp9_Edited object 5 /
@@ -10253,27 +10249,9 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
              surf.GetType() == GeomAbs_SurfaceOfRevolution) &&
             !surf.IsUClosed() &&
             surf.LastUParameter() - surf.FirstUParameter() > 1e-6;
-        // Short IsoBand cylinder lands (mp9 object 5 flute walls): a
-        // revolution/open-band lattice plants longitudinal "support"
-        // staves. Prefer one border-exact n-gon.
-        if (s.minimal && info.featureClass == FeatureClass::Drum &&
-            info.chartKind == ChartKind::IsoBand &&
-            surf.GetType() == GeomAbs_Cylinder &&
-            info.edgeIds.size() <= 5) {
-            FacePlan tiny;
-            if (collectPlanarLoops(face, surf, model, tiny,
-                                   /*requirePlane=*/false,
-                                   /*tolerateDegenerate=*/true)) {
-                plan = std::move(tiny);
-            } else {
-                plan = FacePlan();
-            }
-            plan.kind = MesherKind::MinimalNGon;
-            plan.constrains = true;
-            dbg("plan face %d: short iso-band cylinder -> minimal n-gon",
-                fid);
-            return plan;
-        }
+        // Short IsoBand cylinders are handled above (open-band) or fall
+        // through drumBand below — never force MinimalNGon solely to
+        // dodge mid-span staves.
         if (drumBand) {
             if (tryOpenBand()) {
                 // Coupled seams need a single-edge plain driver so
@@ -23916,14 +23894,27 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             // Gate to significant wraps: tiny flute IsoBands (wrap≪0.5)
             // raising shared seams caused collateral floors (mp9 2019).
             if (dfi.chartKind != ChartKind::IsoBand) continue;
-            if (dfi.edgeIds.size() < 16) continue;
-            if (plan.bandWrapFrac < 0.75) continue;
+            // Short lands (≤5 edges) still need wrap-scaled columns so
+            // recess drums / flute walls are not hexagonal under the
+            // artist floor. Large wraps keep the prior ≥16 / ≥0.75 gate
+            // for seam stability; short lands use a looser wrap gate.
+            const bool shortLand = dfi.edgeIds.size() <= 5;
+            if (!shortLand && dfi.edgeIds.size() < 16) continue;
+            if (!shortLand && plan.bandWrapFrac < 0.75) continue;
+            if (shortLand && plan.bandWrapFrac < 0.20) continue;
             const FaceMeshSettings& fs = settings.forFace(fid);
             const int ringMin = std::clamp(fs.minCurvedSegments, 1, 256);
             const double wrap =
                 std::max(1e-9, std::min(1.0, plan.bandWrapFrac));
-            const int wrapFloor =
+            // Short cylinder lands (flute walls / recess drums) take the
+            // full artist floor — wrap-scaled counts left mp9 object 5
+            // recesses hexagonal (nu≈11 on wrap≈0.45) while sibling
+            // lands sharing the muzzle wall already sat at 24. Significant
+            // wraps (≥0.75) likewise take the full floor so large lands
+            // are not stuck at ceil(24×0.78)=19.
+            int wrapFloor =
                 std::max(3, int(std::ceil(ringMin * wrap - 1e-9)));
+            if (shortLand) wrapFloor = ringMin;
             auto raiseTo = [&](int eid, int want) -> bool {
                 if (eid < 1 || eid > model.edgeCount()) return false;
                 const int root = density.groups.find(eid);
@@ -23937,6 +23928,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     density.ownerByRoot[root] = "cylinder-span-floor";
                 }
                 solvedEdge[eid] = std::max(solvedEdge[eid], want);
+                // Pins may already encode the pre-floor station count
+                // (castellated / fillet-hold). Drop them so open-band
+                // rebuilds columns from the raised solvedEdge.
+                if (eid >= 1 && eid < int(pinnedEdge.size()) &&
+                    !pinnedEdge[eid].empty()) {
+                    pinnedEdge[eid].clear();
+                }
                 return true;
             };
             auto raiseIso = [&](int eid) -> bool {
@@ -23965,23 +23963,47 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 return raiseTo(eid, want);
             };
             int raised = 0;
-            if (plan.plainRimEdge > 0 && raiseIso(plan.plainRimEdge)) {
-                ++raised;
-            }
-            if (plan.rimLow.size() == 1 && raiseIso(plan.rimLow[0])) {
-                ++raised;
-            }
-            if (plan.rimHigh.size() == 1 && raiseIso(plan.rimHigh[0])) {
-                ++raised;
-            }
-            if (plan.orthogonalDriverU > 0 &&
-                raiseIso(plan.orthogonalDriverU)) {
-                ++raised;
-            }
-            if (plan.bandDriver > 0 && raiseIso(plan.bandDriver)) ++raised;
-            if (raised == 0) {
+            if (shortLand) {
+                // Raise every circumferential edge. Stopping after the
+                // first rimLow hit left opposite sides at wrap-scaled
+                // counts (mp9 recess drums: sides 1044/1047 stayed at 11
+                // while wrapFloor=24).
+                for (int eid : plan.rimLow) {
+                    if (raiseIso(eid)) ++raised;
+                }
+                for (int eid : plan.rimHigh) {
+                    if (raiseIso(eid)) ++raised;
+                }
                 for (int eid : plan.uEdges) {
                     if (raiseIso(eid)) ++raised;
+                }
+                if (plan.plainRimEdge > 0 && raiseIso(plan.plainRimEdge)) {
+                    ++raised;
+                }
+                if (plan.bandDriver > 0 && raiseIso(plan.bandDriver)) {
+                    ++raised;
+                }
+            } else {
+                if (plan.plainRimEdge > 0 && raiseIso(plan.plainRimEdge)) {
+                    ++raised;
+                }
+                if (plan.rimLow.size() == 1 && raiseIso(plan.rimLow[0])) {
+                    ++raised;
+                }
+                if (plan.rimHigh.size() == 1 && raiseIso(plan.rimHigh[0])) {
+                    ++raised;
+                }
+                if (plan.orthogonalDriverU > 0 &&
+                    raiseIso(plan.orthogonalDriverU)) {
+                    ++raised;
+                }
+                if (plan.bandDriver > 0 && raiseIso(plan.bandDriver)) {
+                    ++raised;
+                }
+                if (raised == 0) {
+                    for (int eid : plan.uEdges) {
+                        if (raiseIso(eid)) ++raised;
+                    }
                 }
             }
             if (raised > 0) {
@@ -24165,6 +24187,24 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         nuB = std::max(
                             solvedEdge[plan.bandDriver],
                             density.countFor(plan.bandDriver, radialWrap));
+                    } else {
+                        // No plain driver (multi-fillet recess drums):
+                        // columns follow the strongest circumferential
+                        // rim edge. Leaving nuB at wrap-scaled radialWrap
+                        // ignored cylinder-span-floor raises on rimLow/
+                        // rimHigh (mp9 object 5: sides raised to 24 but
+                        // open-band still built cols=11).
+                        auto lift = [&](int eid) {
+                            if (eid < 1 || eid >= int(solvedEdge.size()))
+                                return;
+                            nuB = std::max(
+                                nuB,
+                                std::max(solvedEdge[eid],
+                                         density.countFor(eid, radialWrap)));
+                        };
+                        for (int eid : plan.rimLow) lift(eid);
+                        for (int eid : plan.rimHigh) lift(eid);
+                        for (int eid : plan.uEdges) lift(eid);
                     }
                     int nvB = solved(plan.vEdges, s.axial);
                     // Multi-tooth / castellated cut rims need several
