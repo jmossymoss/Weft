@@ -9656,6 +9656,59 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 return plan;
             }
             if (info.chartKind == ChartKind::GeometricCap) {
+                // Multi-edge geometric caps (mp9 objects 41/42: 7-edge
+                // sphere tips) leave a residual tri under quad-fill. Prefer
+                // a border-exact n-gon in minimal mode. Build the outer
+                // wire loop directly — collectPlanarLoops can reject these
+                // analytic tips even with requirePlane=false when a second
+                // wire (seam/helper) confuses the outer-first ordering.
+                if (s.minimal && info.edgeIds.size() >= 5) {
+                    FacePlan tiny;
+                    if (collectPlanarLoops(face, surf, model, tiny,
+                                           /*requirePlane=*/false,
+                                           /*tolerateDegenerate=*/true) &&
+                        !tiny.loops.empty() && tiny.loops[0].size() >= 3) {
+                        plan = std::move(tiny);
+                        plan.kind = MesherKind::MinimalNGon;
+                        plan.constrains = true;
+                        dbg("plan face %d: sphere-cap geometric-cap -> "
+                            "minimal n-gon",
+                            fid);
+                        return plan;
+                    }
+                    // Outer wire alone may be a single closed circle while
+                    // sibling wires hold the faceted outline — pick the
+                    // richest wire as the n-gon border.
+                    std::vector<int> best;
+                    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More();
+                         wx.Next()) {
+                        std::vector<int> loop;
+                        const TopoDS_Wire wire = TopoDS::Wire(wx.Current());
+                        for (BRepTools_WireExplorer we(wire, face); we.More();
+                             we.Next()) {
+                            const TopoDS_Edge edge = we.Current();
+                            if (BRep_Tool::Degenerated(edge)) continue;
+                            const int eid = model.edges.FindIndex(edge);
+                            if (eid < 1) {
+                                loop.clear();
+                                break;
+                            }
+                            loop.push_back(eid);
+                        }
+                        if (loop.size() > best.size()) best = std::move(loop);
+                    }
+                    if (best.size() >= 3) {
+                        plan = FacePlan();
+                        plan.loops = {best};
+                        plan.uEdges = best;
+                        plan.kind = MesherKind::MinimalNGon;
+                        plan.constrains = true;
+                        dbg("plan face %d: sphere-cap geometric-cap -> "
+                            "minimal n-gon (richest wire %zu)",
+                            fid, best.size());
+                        return plan;
+                    }
+                }
                 FacePlan qf;
                 if (planQuadFill(face, surf, model, qf)) {
                     plan = std::move(qf);
@@ -9706,6 +9759,23 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             if (planDomeCap(face, surf, model, plan)) {
                 dbg("plan face %d: freeform -> dome-cap", fid);
                 return plan;
+            }
+            // Tiny torus freeform straps (mp9 objects 41/42): RevolutionGrid
+            // and collapsedLast Coons both fan ~7 tris at the pole. Prefer
+            // one border-exact n-gon for these short analytic straps.
+            if (s.minimal && surf.GetType() == GeomAbs_Torus &&
+                info.edgeIds.size() <= 3) {
+                FacePlan tiny;
+                if (collectPlanarLoops(face, surf, model, tiny,
+                                       /*requirePlane=*/false,
+                                       /*tolerateDegenerate=*/true)) {
+                    plan = std::move(tiny);
+                    plan.kind = MesherKind::MinimalNGon;
+                    plan.constrains = true;
+                    dbg("plan face %d: freeform torus strap -> minimal n-gon",
+                        fid);
+                    return plan;
+                }
             }
             // Tiny freeform patches (3 edges) that cannot make a Coons
             // patch become MinimalNGon (#1828 class). Bullet tip bodies

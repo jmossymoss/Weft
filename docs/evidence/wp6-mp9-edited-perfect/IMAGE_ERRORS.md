@@ -39,11 +39,11 @@ Large few-edge freeform Coons no longer demote to MinimalNGon on ≤3 tip
 folds. Tip folds clear via alternate Coons rotate retry (0→1). Body is
 fold-free `coons-grid`. Screenshots: `objects/after_v2b/object_019_v{0,1}.png`.
 
-### V3 — Objects 41/42 high-triangle brackets (DIAGNOSED)
-Tris come from 3-edge torus freeform (`f2572`/`f2582`) meshed as
-RevolutionGrid (or Coons with collapsedLast) — both fan ~7 tris at the
-pole — plus a 1-tri sphere-cap GeometricCap quad-fill. Not a density bug;
-needs a non-fan torus/sphere strap strategy. Parked after V1/V2.
+### V3 — Objects 41/42 high-triangle brackets (IMPROVED 2026-08-08)
+Torus freeform straps → MinimalNGon (0 tris). Multi-edge sphere geometric
+caps → MinimalNGon via richest-wire border (was 1-tri quad-fill fan).
+Residual: sphere tip may still register as a 3-gon/tri under sparse
+samples. Screenshots: `objects/after_v3/object_041_v{0,1}.png`.
 
 ### V4 — Notched full-period drums under 24 (MEDIUM)
 Object 11 f1611/1613 at nu=15. Same 24-floor class as plain drums.
