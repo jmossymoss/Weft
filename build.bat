@@ -186,75 +186,42 @@ for /f "delims=" %%f in ('dir /s /b "!OCCT_DIR!\TKernel.dll" 2^>nul') do (
         xcopy "%%~dpfTK*.dll" "%BINDIR%" /D /Y >nul
     )
 )
-REM Third-party runtimes the TK dlls import. The FOR set must stay
-REM wildcard-free (cmd globs * against the current directory); the
-REM wildcard goes in the dir pattern so versioned names match too
-REM (tbb12.dll, tbb12_debug.dll, avcodec-57.dll...). ffmpeg is imported
-REM by TKService when OCCT was built with video support, even though
-REM Weft never uses it.
-REM
-REM Search roots cover the common OCCT Windows zip layouts:
-REM   OCCT_DIR itself
-REM   OCCT_DIR\3rdparty*          (inside the install)
-REM   OCCT_DIR\..\3rdparty*       (sibling of opencascade-X.Y.Z)
-REM   OCCT_DIR\..\*3rdparty*      (renamed 3rdparty-vc14-64 folders)
-REM   parent of OCCT_DIR          (when OCCT_DIR is ...\opencascade-8.0.1)
-REM CMake also deploys these when the link interface still points at
-REM absolute .lib paths; relocated "with-debug" zips often break that,
-REM so this pass is required.
-set "TPROOTS="!OCCT_DIR!""
-for /d %%p in ("!OCCT_DIR!\3rdparty*") do set "TPROOTS=!TPROOTS! "%%~fp""
-for /d %%p in ("!OCCT_DIR!\..\3rdparty*") do set "TPROOTS=!TPROOTS! "%%~fp""
-for /d %%p in ("!OCCT_DIR!\..\*3rdparty*") do set "TPROOTS=!TPROOTS! "%%~fp""
-for %%p in ("!OCCT_DIR!\..") do set "TPROOTS=!TPROOTS! "%%~fp""
-set "TPDIRS=;"
-set "TPFOUND=0"
-for %%d in (tbb jemalloc freetype FreeImage openvr zlib
-            avcodec avformat avutil swscale swresample) do (
-    for %%r in (!TPROOTS!) do (
-        if exist "%%~r" (
-            for /f "delims=" %%f in ('dir /s /b "%%~r\%%d*.dll" 2^>nul') do (
-                xcopy "%%f" "%BINDIR%" /D /Y >nul
-                set "TPFOUND=1"
-                if "!TPDIRS:%%~dpf;=!"=="!TPDIRS!" set "TPDIRS=!TPDIRS!%%~dpf;"
-            )
-        )
-    )
+REM Third-party runtimes are VENDORED in the repo under
+REM third_party\occt-win-runtime\ (from OCCT 8.0.1 3rdparty-vc14-64.zip).
+REM Copy them next to the exes -- no discovery from the OCCT install.
+set "TPRUNTIME=%~dp0third_party\occt-win-runtime"
+if not exist "%TPRUNTIME%\tbb12.dll" (
+    echo.
+    echo   *** FATAL: vendored OCCT runtime DLLs missing:
+    echo   ***   %TPRUNTIME%
+    echo   *** Pull the latest branch ^(third_party/occt-win-runtime^) or
+    echo   *** restore that folder from git. A build without these DLLs
+    echo   *** cannot launch weft_app.exe.
+    echo.
+    goto :fail
 )
-REM Also sweep any bin\ / bind\ folders under the OCCT tree for the
-REM known names (some with-debug packages keep 3rdparty DLLs next to
-REM TK*.dll rather than under a 3rdparty product folder).
-for %%n in (tbb12.dll tbb12_debug.dll tbbmalloc.dll tbbmalloc_debug.dll
-            jemalloc.dll jemalloc_debug.dll FreeImage.dll FreeImage_debug.dll
-            openvr_api.dll openvr_api_debug.dll freetype.dll freetype_debug.dll
-            zlib1.dll zlibd1.dll) do (
-    for /f "delims=" %%f in ('dir /s /b "!OCCT_DIR!\%%n" 2^>nul') do (
-        xcopy "%%f" "%BINDIR%" /D /Y >nul
-        set "TPFOUND=1"
-        if "!TPDIRS:%%~dpf;=!"=="!TPDIRS!" set "TPDIRS=!TPDIRS!%%~dpf;"
-    )
-    for /f "delims=" %%f in ('dir /s /b "!OCCT_DIR!\..\%%n" 2^>nul') do (
-        xcopy "%%f" "%BINDIR%" /D /Y >nul
-        set "TPFOUND=1"
-        if "!TPDIRS:%%~dpf;=!"=="!TPDIRS!" set "TPDIRS=!TPDIRS!%%~dpf;"
-    )
+echo   Deploying vendored OCCT third-party DLLs from third_party\occt-win-runtime...
+xcopy "%TPRUNTIME%\*.dll" "%BINDIR%" /D /Y >nul
+if %errorLevel% neq 0 (
+    echo   Failed to copy vendored runtime DLLs.
+    goto :fail
+)
+REM Required set that OCCT 8.x TK dlls import at process start.
+set "MISSING_REQ="
+for %%n in (tbb12.dll tbb12_debug.dll jemalloc.dll FreeImage.dll openvr_api.dll freetype.dll) do (
+    if not exist "%BINDIR%\%%n" set "MISSING_REQ=!MISSING_REQ! %%n"
+)
+if defined MISSING_REQ (
+    echo.
+    echo   *** FATAL: required runtime DLL^(s^) not in %BINDIR%:!MISSING_REQ!
+    echo   *** The vendored folder is incomplete. Restore third_party\occt-win-runtime from git.
+    echo.
+    goto :fail
 )
 for /f %%c in ('dir /b "%BINDIR%\*.dll" 2^>nul ^| find /c ".dll"') do (
-    echo   %%c runtime DLL^(s^) in place
+    echo   %%c runtime DLL^(s^) in place ^(TK + vendored third-party^)
 )
-if "!TPFOUND!"=="0" (
-    echo.
-    echo   *** WARNING: no OCCT third-party DLLs found ^(tbb / jemalloc /
-    echo   *** FreeImage / openvr / freetype^). weft_app.exe will fail at
-    echo   *** launch with "DLL was not found". Your OCCT zip likely keeps
-    echo   *** them in a 3rdparty folder next to the opencascade dir.
-    echo   *** Find them, then copy into build\bin\Release:
-    echo   ***   dir /s /b C:\OpenCASCADE\tbb12*.dll
-    echo   ***   dir /s /b C:\OpenCASCADE\jemalloc*.dll
-    echo   ***   dir /s /b C:\OpenCASCADE\FreeImage*.dll
-    echo   ***   dir /s /b C:\OpenCASCADE\openvr*.dll
-    echo.
-)
+set "TPDIRS=%TPRUNTIME%;"
 
 REM Also put the OCCT runtime folders on the user PATH: the copy above
 REM covers build\bin\Release, but a PATH entry covers exes run from

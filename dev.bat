@@ -56,16 +56,22 @@ if /I "%CONFIG%"=="Debug" if not "%TARGET%"=="build" (
     )
 )
 
-REM Quick sanity: third-party OCCT runtimes must sit next to the exe.
-REM If they are missing, point at build.bat / WINDOWS_BUILD.md rather
-REM than letting Windows pop a silent "DLL was not found" dialog.
+REM Ensure vendored OCCT third-party runtimes sit next to the exe.
+REM (build.bat does a full deploy; this keeps `dev.bat` usable after a
+REM clean bin folder without re-running the whole suite.)
+set "TPRUNTIME=%~dp0third_party\occt-win-runtime"
+if exist "%TPRUNTIME%\tbb12.dll" (
+    if not exist "%BINDIR%" mkdir "%BINDIR%" >nul 2>nul
+    xcopy "%TPRUNTIME%\*.dll" "%BINDIR%" /D /Y >nul
+)
 if not "%TARGET%"=="build" (
-    if not exist "%BINDIR%\tbb12.dll" if not exist "%BINDIR%\tbb12_debug.dll" (
+    if not exist "%BINDIR%\tbb12.dll" (
         echo.
-        echo   WARNING: tbb12*.dll not next to the exe.
-        echo   Run build.bat again ^(DLL deploy step^), or see
-        echo   WINDOWS_BUILD.md "tbb12_debug.dll / jemalloc.dll not found".
+        echo   FATAL: tbb12.dll not next to the exe and vendored runtimes
+        echo   missing. Pull third_party\occt-win-runtime from git, then
+        echo   re-run. See WINDOWS_BUILD.md.
         echo.
+        exit /b 1
     )
 )
 

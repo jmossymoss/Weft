@@ -116,6 +116,21 @@ if(WIN32)
   endif()
 endif()
 
+# Copy the third-party DLLs next to a just-built executable. Prefer the
+# vendored tree in third_party/occt-win-runtime (checked into git); fall
+# back to whatever CMake resolved from OCCT's link interface.
+set(WEFT_VENDORED_OCCT_RUNTIME_DIR
+    "${CMAKE_SOURCE_DIR}/third_party/occt-win-runtime")
+if(WIN32 AND EXISTS "${WEFT_VENDORED_OCCT_RUNTIME_DIR}")
+  file(GLOB WEFT_VENDORED_OCCT_RUNTIME_DLLS
+       "${WEFT_VENDORED_OCCT_RUNTIME_DIR}/*.dll")
+  if(WEFT_VENDORED_OCCT_RUNTIME_DLLS)
+    message(STATUS "OCCT third-party runtimes (vendored): "
+                   "${WEFT_VENDORED_OCCT_RUNTIME_DIR}")
+    set(WEFT_OCCT_3P_DLLS "${WEFT_VENDORED_OCCT_RUNTIME_DLLS}")
+  endif()
+endif()
+
 # Copy the third-party DLLs next to a just-built executable. All exes
 # share CMAKE_RUNTIME_OUTPUT_DIRECTORY, so any one build refreshes them.
 function(weft_deploy_occt_dlls tgt)
