@@ -9759,6 +9759,61 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                     }
                 }
             }
+            // Small freeform patches against planar MinimalNGon neighbours:
+            // claim a wire-border n-gon early so later orth/coons/ribbon
+            // cannot leave open seams (mp9 #1063/#1064, #129).
+            if (s.minimal && info.edgeIds.size() >= 4 &&
+                info.edgeIds.size() <= 12) {
+                bool nbrPlanar = false;
+                for (int eid : info.edgeIds) {
+                    if (eid < 1 || eid > int(analysis.edges.size())) {
+                        continue;
+                    }
+                    for (int nf : analysis.edges[size_t(eid) - 1].faceIds) {
+                        if (nf != fid && nf >= 1 &&
+                            nf <= int(analysis.faces.size()) &&
+                            analysis.faces[size_t(nf) - 1].featureClass ==
+                                FeatureClass::PlanarPanel) {
+                            nbrPlanar = true;
+                            break;
+                        }
+                    }
+                    if (nbrPlanar) break;
+                }
+                if (nbrPlanar) {
+                    std::vector<int> loop;
+                    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More();
+                         wx.Next()) {
+                        std::vector<int> wloop;
+                        for (BRepTools_WireExplorer we(
+                                 TopoDS::Wire(wx.Current()), face);
+                             we.More(); we.Next()) {
+                            const TopoDS_Edge edge = we.Current();
+                            if (BRep_Tool::Degenerated(edge)) continue;
+                            const int eid = model.edges.FindIndex(edge);
+                            if (eid < 1) {
+                                wloop.clear();
+                                break;
+                            }
+                            wloop.push_back(eid);
+                        }
+                        if (wloop.size() > loop.size()) {
+                            loop = std::move(wloop);
+                        }
+                    }
+                    if (loop.size() >= 3) {
+                        plan = FacePlan();
+                        plan.loops = {loop};
+                        plan.uEdges = loop;
+                        plan.kind = MesherKind::MinimalNGon;
+                        plan.constrains = true;
+                        dbg("plan face %d: freeform vs planar -> minimal "
+                            "n-gon (wire %zu)",
+                            fid, loop.size());
+                        return plan;
+                    }
+                }
+            }
             break;
         case FeatureClass::FilletStrip: {
             // Small analytic fillet straps: Coons across×along grids read as
