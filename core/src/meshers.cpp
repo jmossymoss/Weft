@@ -10025,16 +10025,35 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             break;
         }
         case FeatureClass::Drum:
-            if (info.chartKind == ChartKind::FullPeriod &&
-                (isClosedRevolution(surf) || geomRev())) {
-                std::vector<std::vector<int>> inserts;
-                if (edgesHugRimsOrInserts(face, surf, model, inserts)) {
-                    plan.insertWires = std::move(inserts);
+            // Include analytic cones/cylinders even when not U-closed —
+            // otherwise a 4-edge full-period cone falls through to Coons
+            // at nu=nv=24 and reads as a shredded nest (mp9 object 14 /
+            // #1769).
+            if (info.chartKind == ChartKind::FullPeriod) {
+                const auto st = surf.GetType();
+                // Few-edge analytic cones/cylinders that are not U-closed
+                // still belong on RevolutionGrid — Coons at 24×24 shreds
+                // them (mp9 #1769). Broader non-closed analytics stay on
+                // the later ladder (border-contract safe).
+                // Cone only: #1769 is a 4-edge full-period cone. Non-closed
+                // cylinders with many edges (f65: 17) already take rev via
+                // geomRev and must keep their prior border-contract path.
+                const bool fewEdgeAnalytic =
+                    info.edgeIds.size() <= 4 && st == GeomAbs_Cone;
+                const bool analyticRev =
+                    isClosedRevolution(surf) || geomRev() ||
+                    fewEdgeAnalytic;
+                if (analyticRev) {
+                    std::vector<std::vector<int>> inserts;
+                    if (edgesHugRimsOrInserts(face, surf, model, inserts)) {
+                        plan.insertWires = std::move(inserts);
+                    }
+                    finishRevolution();
+                    dbg("plan face %d: drum full-period -> revolution grid "
+                        "(stype=%d)",
+                        fid, int(st));
+                    return plan;
                 }
-                finishRevolution();
-                dbg("plan face %d: drum full-period -> revolution grid",
-                    fid);
-                return plan;
             }
             break;
     }
