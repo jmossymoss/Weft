@@ -139,17 +139,29 @@ echo ========================================
 echo  Configuring
 echo ========================================
 echo.
+echo   GLFW/ImGui are vendored in third_party\ -- configure does NOT
+echo   download from the network. First run still takes a bit while
+echo   CMake probes the Visual Studio / Windows SDK toolchains.
+echo   If this appears stuck for more than ~2 minutes with no new lines:
+echo     1. Ctrl+C
+echo     2. rmdir /s /q build
+echo     3. Re-run build.bat
+echo.
 
 REM Use the VS generator: CMake locates the compiler through the VS
 REM installation itself, so we never need cl.exe on PATH or vcvars.
-cmake -B build -G "Visual Studio 17 2022" -A x64 ^
-    -DCMAKE_PREFIX_PATH="!OCCT_DIR!" ^
-    -DOCCT_SEARCH_PATH="!OCCT_DIR!"
+REM Force line-buffered status so "Selecting Windows SDK..." is not the
+REM last thing you see while later steps run.
+set "CMAKE_ARGS=-DCMAKE_PREFIX_PATH=!OCCT_DIR! -DOCCT_SEARCH_PATH=!OCCT_DIR!"
+cmake -B build -G "Visual Studio 17 2022" -A x64 !CMAKE_ARGS! --log-level=STATUS
 if %errorLevel% neq 0 (
     echo.
     echo   CMake configuration failed -- the error is printed above.
+    echo   If configure hung previously, delete the build folder and retry:
+    echo     rmdir /s /q build
     goto :fail
 )
+echo   Configure finished.
 
 echo.
 echo ========================================

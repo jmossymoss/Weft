@@ -111,10 +111,22 @@ Or manually install dependencies:
 Run the batch script as Administrator (right-click → Run as Administrator).
 
 ### GUI app (weft_app.exe) missing from build\bin\Release
-CMake fetches GLFW/ImGui sources during configure; if that download failed
-(no internet at configure time), the app target is skipped and the CLI
-still builds. Re-run `build.bat` with internet access, or delete
-`build\CMakeCache.txt` first to force a fresh configure.
+GLFW and ImGui are vendored under `third_party/glfw` and
+`third_party/imgui`. If those folders are missing from your checkout,
+pull again. Configure does not download them from the network.
+
+### Configure hangs on `Selecting Windows SDK version...`
+That line is CMake’s Visual Studio toolchain probe. It can sit there for
+a minute on first configure. With vendored GLFW/ImGui there is no git
+fetch afterward. If it truly never advances:
+
+```cmd
+Ctrl+C
+rmdir /s /q build
+build.bat
+```
+
+Also close other Visual Studio instances that might be locking the SDK.
 
 ### weft_app.exe starts then says a third-party DLL was not found
 OCCT’s `TK*.dll`s import TBB, jemalloc, FreeImage, OpenVR, FreeType,
