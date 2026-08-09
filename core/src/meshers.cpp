@@ -10645,22 +10645,13 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             // Single-wire large freeforms may still report loops.size()>1
             // when collectPlanarLoops splits a slit/keyhole; prefer quads
             // whenever the edge budget is large enough.
-            if (info.edgeIds.size() >= 48) {
-                plan = FacePlan();
-                plan.kind = MesherKind::Fallback;
-                plan.forceFallbackQuads = 1;
-                plan.constrains = true;
-                // Distinct from a silent planned floor: meshFace will clear
-                // fellBack after a successful quad-dominant build so the
-                // face counts as structured.
-                plan.floorWhy = "freeform quad-dominant rescue";
-                dbg("plan face %d: freeform floor rescue -> quad-dominant "
-                    "fallback (%zu edges, %zu loops)",
-                    fid, info.edgeIds.size(), rescue.loops.size());
-                return plan;
-            }
+            // Prefer MinimalNGon over QD for large freeforms that deferred
+            // Coons/orth: QD on mp9 #742/#1130 left tip folds and open
+            // seams against planar neighbours. Giant endcaps (#134) stay
+            // one border-exact n-gon rather than a folded QD web.
             plan = std::move(rescue);
             plan.kind = MesherKind::MinimalNGon;
+            plan.constrains = true;
             dbg("plan face %d: freeform floor rescue -> minimal n-gon (%zu edges)",
                 fid, info.edgeIds.size());
             return plan;
