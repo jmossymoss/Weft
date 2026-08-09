@@ -9822,6 +9822,61 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             // ownership / filletHold / no RevolutionGrid — same as the
             // coons-fail fallback below.
             if (info.chartKind == ChartKind::IsoBand) {
+                // Multi-edge iso-band fillets (mp9 object 22 / #1948: 46
+                // edges) build a dense orth-coons lattice (3×42 stations)
+                // that cracks against neighbour drum columns → hundreds
+                // of open edges. Prefer border-exact MinimalNGon under
+                // CAD/minimal so seams weld at solved rim counts.
+                if (s.minimal && info.edgeIds.size() > 24) {
+                    FacePlan filletNgon;
+                    if (collectPlanarLoops(face, surf, model, filletNgon,
+                                           /*requirePlane=*/false,
+                                           /*tolerateDegenerate=*/true) &&
+                        !filletNgon.loops.empty()) {
+                        plan = std::move(filletNgon);
+                        plan.kind = MesherKind::MinimalNGon;
+                        plan.isFillet = true;
+                        plan.constrains = true;
+                        dbg("plan face %d: fillet-strip iso-band multi-edge "
+                            "-> minimal n-gon (%zu edges)",
+                            fid, info.edgeIds.size());
+                        return plan;
+                    }
+                    // Curved iso-band fillets often reject collectPlanarLoops
+                    // even with requirePlane=false. Build the outer wire
+                    // loop from edge ids so meshMinimalPlanar can still
+                    // emit a border-exact n-gon (mp9 #1948).
+                    std::vector<int> loop;
+                    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More();
+                         wx.Next()) {
+                        std::vector<int> wloop;
+                        for (BRepTools_WireExplorer we(
+                                 TopoDS::Wire(wx.Current()), face);
+                             we.More(); we.Next()) {
+                            const TopoDS_Edge edge = we.Current();
+                            if (BRep_Tool::Degenerated(edge)) continue;
+                            const int eid = model.edges.FindIndex(edge);
+                            if (eid < 1) {
+                                wloop.clear();
+                                break;
+                            }
+                            wloop.push_back(eid);
+                        }
+                        if (wloop.size() > loop.size()) loop = std::move(wloop);
+                    }
+                    if (loop.size() >= 3) {
+                        plan = FacePlan();
+                        plan.loops = {loop};
+                        plan.uEdges = loop;
+                        plan.kind = MesherKind::MinimalNGon;
+                        plan.isFillet = true;
+                        plan.constrains = true;
+                        dbg("plan face %d: fillet-strip iso-band multi-edge "
+                            "-> minimal n-gon (wire %zu)",
+                            fid, loop.size());
+                        return plan;
+                    }
+                }
                 FacePlan orthFirst;
                 if (planOrthogonalTrimGrid(face, surf, model, orthFirst)) {
                     orthFirst.kind = MesherKind::CoonsGrid;

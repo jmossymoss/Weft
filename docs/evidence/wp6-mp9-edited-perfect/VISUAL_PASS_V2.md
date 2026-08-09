@@ -63,3 +63,11 @@ adjacent bands.
 
 - Validity remains green while many objects still fail visual rubric.
 - Do not claim "fixed" without retake of the same object after the change.
+
+## Validity note (post-gallery)
+
+CAD default assembly was opening 261 edges on object 22: multi-edge
+iso-band fillet #1948 took orth-coons (3×42 stations) against neighbour
+drum columns. Routed iso-band fillets with >24 edges to MinimalNGon
+under CAD/minimal → opens 261→29. Remaining leaks: obj 9 (f742/f1130
+large freeform) and a few others. Continue next.
