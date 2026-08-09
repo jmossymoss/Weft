@@ -17646,7 +17646,7 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
     double dv = (v1 - v0) / nv;
     int rows = vWrap ? nv : nv + 1;
     auto rowV = [&](int j) {
-        return vRows ? (*vRows)[(std::min)(j, vRows->size() - 1)]
+        return vRows ? (*vRows)[(std::min)(size_t(j), vRows->size() - 1)]
                      : v0 + j * dv;
     };
     const bool flip = face.Orientation() == TopAbs_REVERSED;
