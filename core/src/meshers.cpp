@@ -7206,7 +7206,9 @@ bool meshRibbonSweep(const TopoDS_Face& face, const Model& model, int faceId,
                                         webFlip, out);
         dbg("ribbon face %d: cap web (%s) %zu pts -> %s", faceId,
             nearCap ? "near" : "far", poly.size(), okw ? "ok" : "FAIL");
-        if (!okw && ids.size() >= 3 && ids.size() <= 8) {
+        // Cap rings of 9–12 pts (flaregun #131 near-cap) still prefer one
+        // n-gon over a failed triangulateWeb → contract floor.
+        if (!okw && ids.size() >= 3 && ids.size() <= 12) {
             out.addPolygon(std::move(ids), faceId, webFlip);
             dbg("ribbon face %d: cap (%s) closed as one n-gon", faceId,
                 nearCap ? "near" : "far");
@@ -9434,8 +9436,12 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     auto tryOpenBand = [&]() {
         std::vector<int> sides;
         std::vector<std::vector<int>> inserts;
-        if (!openBandSides(face, surf, model, sides) ||
-            !edgesHugRimsOrInserts(face, surf, model, inserts, &sides)) {
+        if (!openBandSides(face, surf, model, sides)) {
+            dbg("plan face %d: open-band reject: sides", fid);
+            return false;
+        }
+        if (!edgesHugRimsOrInserts(face, surf, model, inserts, &sides)) {
+            dbg("plan face %d: open-band reject: rim/insert hug", fid);
             return false;
         }
         // Strictly-interior wires (a slot or hole through the wall) mesh
@@ -9757,14 +9763,17 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             }
             // Small freeform (6–12 edges) against planar panels: wire n-gon
             // so orth/coons cannot open seams (mp9 #1063). Exclude 4-edge
-            // freeforms — grip Coons fixtures use those.
+            // freeforms — grip Coons fixtures use those. Ribbon straps
+            // between plates (sharedPlanar≥4) stay RibbonSweep.
             if (s.minimal && info.edgeIds.size() >= 6 &&
                 info.edgeIds.size() <= 12) {
                 bool nbrPlanar = false, nbrDrum = false;
+                int sharedPlanarEdges = 0;
                 for (int eid : info.edgeIds) {
                     if (eid < 1 || eid > int(analysis.edges.size())) {
                         continue;
                     }
+                    bool planarEdge = false;
                     for (int nf : analysis.edges[size_t(eid) - 1].faceIds) {
                         if (nf == fid || nf < 1 ||
                             nf > int(analysis.faces.size())) {
@@ -9772,11 +9781,17 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                         }
                         const auto fc =
                             analysis.faces[size_t(nf) - 1].featureClass;
-                        if (fc == FeatureClass::PlanarPanel) nbrPlanar = true;
+                        if (fc == FeatureClass::PlanarPanel) {
+                            nbrPlanar = true;
+                            planarEdge = true;
+                        }
                         if (fc == FeatureClass::Drum) nbrDrum = true;
                     }
+                    if (planarEdge) ++sharedPlanarEdges;
                 }
-                if (nbrPlanar && !nbrDrum) {
+                const bool ribbonBetweenPlates =
+                    ribbonDetect(face, model) && sharedPlanarEdges >= 4;
+                if (nbrPlanar && !nbrDrum && !ribbonBetweenPlates) {
                     std::vector<int> loop;
                     for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More();
                          wx.Next()) {
@@ -9877,15 +9892,11 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             // ownership / filletHold / no RevolutionGrid — same as the
             // coons-fail fallback below.
             if (info.chartKind == ChartKind::IsoBand) {
-                // Multi-edge iso-band fillets (mp9 #1948: 46 edges) build
-                // dense orth-coons lattices that crack against drum
-                // columns. Prefer MinimalNGon. Mid-size fillets (9–24
-                // edges) only when they share an IsoBand drum neighbour
-                // (#1891) — capsule Coons fixtures (edges ≥20, no drum
-                // neighbour) stay Coons.
+                // Multi-edge iso-band fillets (mp9 #1948: 46 edges;
+                // #1001/#1008: 26) crack as orth-coons. Mid-size (9–19)
+                // only when IsoBand-drum adjacent (#1891) — capsule Coons
+                // fixtures (≥20 edges) stay Coons unless size >24.
                 bool nbrIsoDrum = false;
-                // Only mid-size fillets (9–19 edges): larger capsule
-                // iso-bands (≥20) keep Coons even when drum-adjacent.
                 if (info.edgeIds.size() > 8 && info.edgeIds.size() < 20) {
                     for (int eid : info.edgeIds) {
                         if (eid < 1 || eid > int(analysis.edges.size())) {
@@ -9908,9 +9919,6 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                         if (nbrIsoDrum) break;
                     }
                 }
-                // Size gate >24 catches mp9 #1948 (46) and #1001/#1008
-                // (26). Capsule reducers of the same size prefer
-                // MinimalNGon too (structured, not RevolutionGrid).
                 if (s.minimal &&
                     (info.edgeIds.size() > 24 || nbrIsoDrum)) {
                     FacePlan filletNgon;
@@ -11340,9 +11348,7 @@ DensitySolution solveDensity(const Model& model, const Analysis& analysis,
                     FeatureClass::PlanarPanel) {
                     continue;
                 }
-                // Allow larger planar panels that still read as straps
-                // when forced to the drum floor (mp9 object 9 grip faces).
-                if (analysis.faces[size_t(pf) - 1].edgeIds.size() > 40) {
+                if (analysis.faces[size_t(pf) - 1].edgeIds.size() > 10) {
                     continue;
                 }
                 auto pit = plans.find(pf);
@@ -24239,7 +24245,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         if (analysis.faces[size_t(nf) - 1].featureClass ==
                                 FeatureClass::PlanarPanel &&
                             analysis.faces[size_t(nf) - 1].edgeIds.size() <=
-                                40) {
+                                10) {
                             want = std::min(want, 6);
                             break;
                         }
@@ -27467,9 +27473,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         // a neighbour density raise must not refuse the
                         // fold-free floor (mp9 #375: 6 folds kept).
                         // Per-face radial raise above the model default:
-                        // keep RevolutionGrid (demo notched radial test /
-                        // artist wheel-up). Tip-fold n-gon dump is for
-                        // default-density fold dumps only (mp9 #375).
+                        // keep RevolutionGrid (demo notched radial test).
                         const bool artistRadialRaise =
                             settings.perFace.count(fid) &&
                             settings.perFace.at(fid).radial >
@@ -27495,20 +27499,21 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         // ribbon). Leave straps with denser fold pockets
                         // as RibbonSweep (flaregun census strap: 8 folds).
                         bool freeformNgonRescue = false;
-                        // Comb-trimmed freeform ribbons (≤14 edges) tip-
-                        // fold; longer earclip/cap straps (flaregun: 16
-                        // edges) must stay RibbonSweep.
+                        // Comb-trimmed freeform ribbons (10–14 edges) tip-
+                        // fold (mp9 #1059). Shorter single-segment rails
+                        // and longer earclip/cap straps (flaregun: 16)
+                        // stay RibbonSweep.
                         const bool tipRibbon =
                             sparseRibbon &&
+                            int(sparseInfo.edgeIds.size()) >= 10 &&
                             int(sparseInfo.edgeIds.size()) <= 14;
                         const bool tipFreeformRev =
                             sparseInfo.featureClass ==
                                 FeatureClass::Freeform &&
                             plan.kind == MesherKind::RevolutionGrid;
                         // Freeform Coons tip folds up to 3 (#1828); short
-                        // tip ribbons up to 4 (#1059: 4 folds before the
-                        // edge-flip pass reduces to 3); other tip classes
-                        // stay at ≤2.
+                        // tip ribbons up to 4 (#1059 before edge-flip);
+                        // other tip classes stay at ≤2.
                         const int tipFoldBudget =
                             (sparseCoonsOne &&
                              sparseInfo.featureClass ==
@@ -27567,7 +27572,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                 // tipRibbon / tipConeDrum / notched dump:
                                 // accept a fold-free n-gon even when the
                                 // fold count did not strictly decrease
-                                // (mp9 #1059: ni==0, liveFolds==3).
+                                // (mp9 #1059: ni==0 with liveFolds==3/4).
                                 if (ni < liveFolds ||
                                     ((tipConeDrum || notchedCylFoldDump ||
                                       tipRibbon) &&

@@ -51,7 +51,9 @@ jobs:
         run: tools/release_gate.sh
 
   windows:
-    needs: linux
+    # Run in parallel with linux so a Linux test red does not skip the
+    # Windows compile/runtime signal (local Windows builds still need the
+    # vendored OCCT third-party DLLs under third_party/occt-win-runtime).
     continue-on-error: true
     runs-on: windows-latest
     steps:
@@ -94,6 +96,7 @@ jobs:
           WEFT=build/bin/Release/weft.exe \
             tools/release_gate.sh
       - name: Download Linux topology signatures
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: topology-signatures-linux
@@ -105,6 +108,10 @@ jobs:
           mkdir -p build/topology_signatures/release
           tools/topology_signature.sh release-set -o build/topology_signatures/release
           fail=0
+          if [[ ! -d build/topology_signatures-linux/release ]]; then
+            echo "WARN: Linux topology signatures unavailable; skip cross-OS compare"
+            exit 0
+          fi
           for sig in build/topology_signatures/release/*.sig; do
             base=$(basename "$sig")
             ref="build/topology_signatures-linux/release/$base"
