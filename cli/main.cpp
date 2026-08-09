@@ -360,6 +360,9 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
                 // Cylinders: never below 24 circumferential spans at the
                 // CAD default (partial wraps scale by bandWrapFrac).
                 gs.defaults.minCurvedSegments = 24;
+                // Hole plates: at least one collar ring so bored flats
+                // don't residual as spoke n-gons (mp9 object 11 / #1612).
+                gs.defaults.junctionRings = 1;
             } else if (prof == "dense") {
                 gs.defaults.minimal = false;
             } else {

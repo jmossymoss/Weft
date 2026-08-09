@@ -26316,7 +26316,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     demote(fid, face, surf, s, "annulus ring failed");
                 }
                 break;
-            case MesherKind::PlateWeb:
+            case MesherKind::PlateWeb: {
                 // Boundary-driven around the outer loop (plus collar rings at
                 // each hole, a separate knob) — report the outer total. Set
                 // before the call so a contract-floor demote (borders still
@@ -26324,8 +26324,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 // demote resets it below.
                 builtCounts[fid] = {
                     outerWireSolvedTotal(face, model, solvedEdge, s.radial), 0};
+                // CAD/minimal: always plant at least one collar ring so
+                // hole-plate residuals are not one spoke n-gon per hole
+                // (mp9 object 11 / #1612 with junctionRings=0).
+                const int collars =
+                    s.minimal ? std::max(1, s.junctionRings)
+                              : s.junctionRings;
                 if (!meshPlateWeb(face, surf, model, fid, solvedEdge,
-                                  s.radial, s.junctionRings, s.squareCollar,
+                                  s.radial, collars, s.squareCollar,
                                   out, /*minimalResidual=*/s.minimal,
                                   &pinnedEdge)) {
                     // Under CAD/minimal, prefer a boundary n-gon over raw
@@ -26400,6 +26406,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     }
                 }
                 break;
+            }
             case MesherKind::RibbonSweep: {
                 // The rail sweep, or on any doubt (unequal rails, a fold, a
                 // leak) the local exact-border floor. Never invent a global

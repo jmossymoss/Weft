@@ -2384,6 +2384,7 @@ void testMp9EditedWatertight() {
     gs.defaults.adaptive = true;
     gs.defaults.relativeDeviation = true;
     gs.defaults.minCurvedSegments = 24;  // CAD cylinder minimum spans
+    gs.defaults.junctionRings = 1;       // CAD hole-plate collar default
     weft::GenerationReport report;
     weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
     const auto summary = weft::summarizeStructure(report);
