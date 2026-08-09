@@ -116,6 +116,51 @@ CMake fetches GLFW/ImGui sources during configure; if that download failed
 still builds. Re-run `build.bat` with internet access, or delete
 `build\CMakeCache.txt` first to force a fresh configure.
 
+### weft_app.exe starts then says `tbb12_debug.dll` / `jemalloc.dll` /
+### `FreeImage.dll` / `openvr_api.dll` was not found
+Those are OpenCASCADE third-party runtimes. The TK\*.dlls Weft links
+import them; they are not part of Weft itself.
+
+`build.bat` copies them into `build\bin\Release` when it can find them.
+Relocated OCCT zips (especially `*-with-debug.zip`) often leave CMake
+unable to resolve the .lib → .dll paths (`OCCT third-party runtimes:
+none resolved from the link interface`), so the batch search has to
+locate the 3rdparty tree itself.
+
+1. Re-run `build.bat` after pulling the latest script (it now searches
+   `OCCT_DIR\3rdparty*`, sibling `3rdparty*` folders, and common DLL
+   names under the OCCT root).
+2. If it still warns that no third-party DLLs were found, locate them:
+   ```cmd
+   dir /s /b C:\OpenCASCADE\tbb12*.dll
+   dir /s /b C:\OpenCASCADE\jemalloc*.dll
+   dir /s /b C:\OpenCASCADE\FreeImage*.dll
+   dir /s /b C:\OpenCASCADE\openvr*.dll
+   dir /s /b C:\OpenCASCADE\freetype*.dll
+   ```
+   Official Windows packages usually keep them under something like
+   `C:\OpenCASCADE\3rdparty-vc14-64\...` next to `opencascade-8.0.1\`.
+3. Copy every matching DLL into the folder next to the exe you run:
+   ```cmd
+   copy /Y path\to\tbb12.dll build\bin\Release\
+   copy /Y path\to\tbb12_debug.dll build\bin\Release\
+   copy /Y path\to\jemalloc.dll build\bin\Release\
+   copy /Y path\to\FreeImage.dll build\bin\Release\
+   copy /Y path\to\openvr_api.dll build\bin\Release\
+   ```
+   Copy both release and `*_debug` variants if present — a Release
+   Weft build still needs the release TK DLLs, but some with-debug
+   packages pull in `tbb12_debug.dll` depending on which TK binaries
+   ended up on PATH.
+4. Prefer launching from `build\bin\Release\weft_app.exe` (or
+   `dev.bat app`) so the deployed DLLs sit beside the exe. If you
+   start the exe from elsewhere, those folders must be on PATH.
+
+`tbb12_debug.dll` specifically means a Debug TBB import. If you only
+built Release Weft but still see it, check that `build\bin\Release`
+contains Release `TK*.dll` from OCCT’s `bin` (not `bind` / debug)
+folder.
+
 ## Output
 
 After a successful build, everything lives in `build\bin\Release`,

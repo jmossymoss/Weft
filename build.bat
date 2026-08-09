@@ -189,28 +189,71 @@ for /f "delims=" %%f in ('dir /s /b "!OCCT_DIR!\TKernel.dll" 2^>nul') do (
 REM Third-party runtimes the TK dlls import. The FOR set must stay
 REM wildcard-free (cmd globs * against the current directory); the
 REM wildcard goes in the dir pattern so versioned names match too
-REM (tbb12.dll, avcodec-57.dll...). ffmpeg is imported by TKService
-REM when OCCT was built with video support, even though Weft never
-REM uses it.
-REM Search the OCCT dir itself AND any 3rdparty* sibling (the official
-REM installer keeps third-party products NEXT TO the opencascade dir,
-REM not inside it). CMake also deploys these post-build by resolving
-REM the .lib paths recorded in OCCT's link interface -- this pass is
-REM belt and braces for layouts CMake can't see.
+REM (tbb12.dll, tbb12_debug.dll, avcodec-57.dll...). ffmpeg is imported
+REM by TKService when OCCT was built with video support, even though
+REM Weft never uses it.
+REM
+REM Search roots cover the common OCCT Windows zip layouts:
+REM   OCCT_DIR itself
+REM   OCCT_DIR\3rdparty*          (inside the install)
+REM   OCCT_DIR\..\3rdparty*       (sibling of opencascade-X.Y.Z)
+REM   OCCT_DIR\..\*3rdparty*      (renamed 3rdparty-vc14-64 folders)
+REM   parent of OCCT_DIR          (when OCCT_DIR is ...\opencascade-8.0.1)
+REM CMake also deploys these when the link interface still points at
+REM absolute .lib paths; relocated "with-debug" zips often break that,
+REM so this pass is required.
 set "TPROOTS="!OCCT_DIR!""
+for /d %%p in ("!OCCT_DIR!\3rdparty*") do set "TPROOTS=!TPROOTS! "%%~fp""
 for /d %%p in ("!OCCT_DIR!\..\3rdparty*") do set "TPROOTS=!TPROOTS! "%%~fp""
+for /d %%p in ("!OCCT_DIR!\..\*3rdparty*") do set "TPROOTS=!TPROOTS! "%%~fp""
+for %%p in ("!OCCT_DIR!\..") do set "TPROOTS=!TPROOTS! "%%~fp""
 set "TPDIRS=;"
+set "TPFOUND=0"
 for %%d in (tbb jemalloc freetype FreeImage openvr zlib
             avcodec avformat avutil swscale swresample) do (
     for %%r in (!TPROOTS!) do (
-        for /f "delims=" %%f in ('dir /s /b "%%~r\%%d*.dll" 2^>nul') do (
-            xcopy "%%f" "%BINDIR%" /D /Y >nul
-            if "!TPDIRS:%%~dpf;=!"=="!TPDIRS!" set "TPDIRS=!TPDIRS!%%~dpf;"
+        if exist "%%~r" (
+            for /f "delims=" %%f in ('dir /s /b "%%~r\%%d*.dll" 2^>nul') do (
+                xcopy "%%f" "%BINDIR%" /D /Y >nul
+                set "TPFOUND=1"
+                if "!TPDIRS:%%~dpf;=!"=="!TPDIRS!" set "TPDIRS=!TPDIRS!%%~dpf;"
+            )
         )
+    )
+)
+REM Also sweep any bin\ / bind\ folders under the OCCT tree for the
+REM known names (some with-debug packages keep 3rdparty DLLs next to
+REM TK*.dll rather than under a 3rdparty product folder).
+for %%n in (tbb12.dll tbb12_debug.dll tbbmalloc.dll tbbmalloc_debug.dll
+            jemalloc.dll jemalloc_debug.dll FreeImage.dll FreeImage_debug.dll
+            openvr_api.dll openvr_api_debug.dll freetype.dll freetype_debug.dll
+            zlib1.dll zlibd1.dll) do (
+    for /f "delims=" %%f in ('dir /s /b "!OCCT_DIR!\%%n" 2^>nul') do (
+        xcopy "%%f" "%BINDIR%" /D /Y >nul
+        set "TPFOUND=1"
+        if "!TPDIRS:%%~dpf;=!"=="!TPDIRS!" set "TPDIRS=!TPDIRS!%%~dpf;"
+    )
+    for /f "delims=" %%f in ('dir /s /b "!OCCT_DIR!\..\%%n" 2^>nul') do (
+        xcopy "%%f" "%BINDIR%" /D /Y >nul
+        set "TPFOUND=1"
+        if "!TPDIRS:%%~dpf;=!"=="!TPDIRS!" set "TPDIRS=!TPDIRS!%%~dpf;"
     )
 )
 for /f %%c in ('dir /b "%BINDIR%\*.dll" 2^>nul ^| find /c ".dll"') do (
     echo   %%c runtime DLL^(s^) in place
+)
+if "!TPFOUND!"=="0" (
+    echo.
+    echo   *** WARNING: no OCCT third-party DLLs found ^(tbb / jemalloc /
+    echo   *** FreeImage / openvr / freetype^). weft_app.exe will fail at
+    echo   *** launch with "DLL was not found". Your OCCT zip likely keeps
+    echo   *** them in a 3rdparty folder next to the opencascade dir.
+    echo   *** Find them, then copy into build\bin\Release:
+    echo   ***   dir /s /b C:\OpenCASCADE\tbb12*.dll
+    echo   ***   dir /s /b C:\OpenCASCADE\jemalloc*.dll
+    echo   ***   dir /s /b C:\OpenCASCADE\FreeImage*.dll
+    echo   ***   dir /s /b C:\OpenCASCADE\openvr*.dll
+    echo.
 )
 
 REM Also put the OCCT runtime folders on the user PATH: the copy above

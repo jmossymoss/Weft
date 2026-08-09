@@ -64,6 +64,44 @@ if(WIN32)
     endforeach()
   endwhile()
   list(REMOVE_DUPLICATES WEFT_OCCT_3P_DLLS)
+  # Relocated OCCT Windows zips often break the absolute .lib paths in
+  # the link interface. Fall back to scanning OCCT_DIR / 3rdparty siblings
+  # for the known runtime DLL names (release + debug variants).
+  if(NOT WEFT_OCCT_3P_DLLS)
+    set(_weft_tp_roots "")
+    if(DEFINED OpenCASCADE_INSTALL_PREFIX)
+      list(APPEND _weft_tp_roots "${OpenCASCADE_INSTALL_PREFIX}")
+      list(APPEND _weft_tp_roots "${OpenCASCADE_INSTALL_PREFIX}/..")
+    endif()
+    if(DEFINED OpenCASCADE_DIR)
+      get_filename_component(_weft_occt_cfg_dir "${OpenCASCADE_DIR}" DIRECTORY)
+      list(APPEND _weft_tp_roots "${_weft_occt_cfg_dir}")
+      list(APPEND _weft_tp_roots "${_weft_occt_cfg_dir}/..")
+      list(APPEND _weft_tp_roots "${_weft_occt_cfg_dir}/../..")
+    endif()
+    if(DEFINED OCCT_SEARCH_PATH)
+      list(APPEND _weft_tp_roots "${OCCT_SEARCH_PATH}")
+      list(APPEND _weft_tp_roots "${OCCT_SEARCH_PATH}/..")
+    endif()
+    list(REMOVE_DUPLICATES _weft_tp_roots)
+    set(_weft_tp_names
+      tbb12 tbb12_debug tbbmalloc tbbmalloc_debug
+      jemalloc jemalloc_debug
+      FreeImage FreeImage_debug
+      openvr_api openvr_api_debug
+      freetype freetype_debug
+      zlib1 zlibd1)
+    foreach(_root IN LISTS _weft_tp_roots)
+      if(NOT EXISTS "${_root}")
+        continue()
+      endif()
+      foreach(_name IN LISTS _weft_tp_names)
+        file(GLOB_RECURSE _hit "${_root}/${_name}.dll")
+        list(APPEND WEFT_OCCT_3P_DLLS ${_hit})
+      endforeach()
+    endforeach()
+    list(REMOVE_DUPLICATES WEFT_OCCT_3P_DLLS)
+  endif()
   if(WEFT_OCCT_3P_DLLS)
     message(STATUS "OCCT third-party runtimes to deploy: ${WEFT_OCCT_3P_DLLS}")
   else()
