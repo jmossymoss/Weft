@@ -56,6 +56,19 @@ if /I "%CONFIG%"=="Debug" if not "%TARGET%"=="build" (
     )
 )
 
+REM Quick sanity: third-party OCCT runtimes must sit next to the exe.
+REM If they are missing, point at build.bat / WINDOWS_BUILD.md rather
+REM than letting Windows pop a silent "DLL was not found" dialog.
+if not "%TARGET%"=="build" (
+    if not exist "%BINDIR%\tbb12.dll" if not exist "%BINDIR%\tbb12_debug.dll" (
+        echo.
+        echo   WARNING: tbb12*.dll not next to the exe.
+        echo   Run build.bat again ^(DLL deploy step^), or see
+        echo   WINDOWS_BUILD.md "tbb12_debug.dll / jemalloc.dll not found".
+        echo.
+    )
+)
+
 if /I "%TARGET%"=="app" (
     cmake --build build --config %CONFIG% --target weft_app -j || exit /b 1
     "%BINDIR%\weft_app.exe" !ARGS!
