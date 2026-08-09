@@ -31,12 +31,12 @@ adjacent bands.
 | 19 | OK | Spring structured Coons, not melted blob |
 | 20 | OK | Slotted pin clean columns + slot |
 | 37 | WEAK | Fillet straps pinchy but simple L-bracket readable |
-| 40 | BAD | Ultra-dense orange straps on upright tops / base fillets |
+| 40 | IMPROVED | Strap nu capped (31→13); upright tops readable. `after_40b/`. |
 | 41 | WEAK→improving | Planar strap panels restored (micro-edge protect). Screenshots `after_41d/`. Still need cleaner torus/sphere density. |
 | 42 | WEAK→improving | Same class as 41; panels restored. `after_41d/`. |
 | 45 | WEAK | Hex bore interior coarse; outer columns OK |
 | 50 | WEAK | Orange hinge fillets dense vs grey bars |
-| 55 | BAD | Hook orange straps over-dense parallel bands |
+| 55 | IMPROVED | Hook bands look regular after density clamp. `after_40b/`. |
 | 65 | BAD | Teal/purple inner straps look shredded / intersecting |
 
 ## Sampled mid/tail objects
