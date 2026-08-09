@@ -11353,6 +11353,25 @@ DensitySolution solveDensity(const Model& model, const Analysis& analysis,
         }
         if (!onDrum) return std::min(ringFloor, 6);
         if (pinnedBelow > 0) return pinnedBelow;
+        // Shared with a small planar MinimalNGon strap: keep a low floor so
+        // upright tops don't inherit 24-span hatching (mp9 object 40).
+        if (eid >= 1 && eid <= int(analysis.edges.size())) {
+            for (int pf : analysis.edges[size_t(eid) - 1].faceIds) {
+                if (pf < 1 || pf > int(analysis.faces.size())) continue;
+                if (analysis.faces[size_t(pf) - 1].featureClass !=
+                    FeatureClass::PlanarPanel) {
+                    continue;
+                }
+                if (analysis.faces[size_t(pf) - 1].edgeIds.size() > 10) {
+                    continue;
+                }
+                auto pit = plans.find(pf);
+                if (pit != plans.end() &&
+                    pit->second.kind == MesherKind::MinimalNGon) {
+                    return std::min(ringFloor, 6);
+                }
+            }
+        }
         return ringFloor;
     };
     auto adaptiveCount = [&](int eid, const FaceMeshSettings& s) {
