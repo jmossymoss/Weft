@@ -116,9 +116,16 @@ GLFW and ImGui are vendored under `third_party/glfw` and
 pull again. Configure does not download them from the network.
 
 ### Configure hangs on `Selecting Windows SDK version...`
-That line is CMake’s Visual Studio toolchain probe. It can sit there for
-a minute on first configure. With vendored GLFW/ImGui there is no git
-fetch afterward. If it truly never advances:
+That line is CMake finishing `project()` / the first compiler probe. It
+normally takes 30–90 seconds the first time (longer with Windows Defender).
+
+After that you should see `Looking for OpenCASCADE...` then
+`OCCT third-party runtimes: N vendored DLL(s)...`. Older revisions could
+hang for many minutes here because CMake recursively scanned all of
+`C:\OpenCASCADE` for third-party DLLs — that walk is gone; runtimes come
+from `third_party\occt-win-runtime\` in the repo.
+
+If nothing new appears for more than ~3 minutes:
 
 ```cmd
 Ctrl+C
@@ -126,7 +133,10 @@ rmdir /s /q build
 build.bat
 ```
 
-Also close other Visual Studio instances that might be locking the SDK.
+Also:
+- Confirm `third_party\occt-win-runtime\tbb12.dll` exists after `git pull`
+- Exclude the repo folder from real-time antivirus scanning
+- Close other Visual Studio instances that might lock the Windows SDK
 
 ### weft_app.exe starts then says a third-party DLL was not found
 OCCT’s `TK*.dll`s import TBB, jemalloc, FreeImage, OpenVR, FreeType,

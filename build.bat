@@ -130,35 +130,54 @@ REM [5/5] Optional GUI deps (GLFW/ImGui/stb) -- app target skips
 REM itself when absent, so this is informational only.
 REM ---------------------------------------------------------------
 echo [5/5] GUI dependencies...
-echo   GLFW and ImGui are fetched and built from source automatically
-echo   during configure ^(needs internet the first time^), so the
-echo   interactive weft_app.exe builds with no extra installs.
+echo   GLFW and ImGui are vendored under third_party\ ^(no network fetch^).
 
 echo.
 echo ========================================
 echo  Configuring
 echo ========================================
 echo.
-echo   GLFW/ImGui are vendored in third_party\ -- configure does NOT
-echo   download from the network. First run still takes a bit while
-echo   CMake probes the Visual Studio / Windows SDK toolchains.
-echo   If this appears stuck for more than ~2 minutes with no new lines:
+echo   After "Selecting Windows SDK version..." CMake compiles a short
+echo   compiler probe ^(often 30-90s the first time, Windows Defender can
+echo   stretch it^). Then it should print "Looking for OpenCASCADE...".
+echo   If NOTHING new appears for more than ~3 minutes:
 echo     1. Ctrl+C
 echo     2. rmdir /s /q build
 echo     3. Re-run build.bat
+echo     Also exclude the repo folder from real-time antivirus scanning.
 echo.
+
+REM Stale half-configured trees are a common hang source — wipe if the
+REM previous configure never finished (no CMakeCache.txt yet).
+if exist "build\CMakeCache.txt" (
+    echo   Reusing existing build\CMakeCache.txt
+) else if exist "build" (
+    echo   Clearing incomplete build\ from a previous interrupted configure...
+    rmdir /s /q build 2>nul
+)
 
 REM Use the VS generator: CMake locates the compiler through the VS
 REM installation itself, so we never need cl.exe on PATH or vcvars.
-REM Force line-buffered status so "Selecting Windows SDK..." is not the
-REM last thing you see while later steps run.
-set "CMAKE_ARGS=-DCMAKE_PREFIX_PATH=!OCCT_DIR! -DOCCT_SEARCH_PATH=!OCCT_DIR!"
-cmake -B build -G "Visual Studio 17 2022" -A x64 !CMAKE_ARGS! --log-level=STATUS
-if %errorLevel% neq 0 (
+echo   Running: cmake -B build -G "Visual Studio 17 2022" -A x64 ...
+echo. >> "%LOG%"
+echo === cmake configure %date% %time% === >> "%LOG%"
+REM Live console + append to build_log.txt. STATUS lines so the SDK probe
+REM is not the last thing you see for minutes.
+cmake -B build -G "Visual Studio 17 2022" -A x64 ^
+  -DCMAKE_PREFIX_PATH="!OCCT_DIR!" ^
+  -DOCCT_SEARCH_PATH="!OCCT_DIR!" ^
+  --log-level=STATUS
+set "CFG_ERR=!errorLevel!"
+>> "%LOG%" echo cmake configure exit=!CFG_ERR!
+if !CFG_ERR! neq 0 (
     echo.
-    echo   CMake configuration failed -- the error is printed above.
+    echo   CMake configuration failed ^(exit !CFG_ERR!^) -- see output above.
     echo   If configure hung previously, delete the build folder and retry:
     echo     rmdir /s /q build
+    goto :fail
+)
+if not exist "build\CMakeCache.txt" (
+    echo   Configure did not produce build\CMakeCache.txt — treating as failure.
     goto :fail
 )
 echo   Configure finished.
