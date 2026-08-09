@@ -9434,12 +9434,8 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     auto tryOpenBand = [&]() {
         std::vector<int> sides;
         std::vector<std::vector<int>> inserts;
-        if (!openBandSides(face, surf, model, sides)) {
-            dbg("plan face %d: open-band reject: sides", fid);
-            return false;
-        }
-        if (!edgesHugRimsOrInserts(face, surf, model, inserts, &sides)) {
-            dbg("plan face %d: open-band reject: rim/insert hug", fid);
+        if (!openBandSides(face, surf, model, sides) ||
+            !edgesHugRimsOrInserts(face, surf, model, inserts, &sides)) {
             return false;
         }
         // Strictly-interior wires (a slot or hole through the wall) mesh
@@ -11362,7 +11358,9 @@ DensitySolution solveDensity(const Model& model, const Analysis& analysis,
                     FeatureClass::PlanarPanel) {
                     continue;
                 }
-                if (analysis.faces[size_t(pf) - 1].edgeIds.size() > 10) {
+                // Allow larger planar panels that still read as straps
+                // when forced to the drum floor (mp9 object 9 grip faces).
+                if (analysis.faces[size_t(pf) - 1].edgeIds.size() > 40) {
                     continue;
                 }
                 auto pit = plans.find(pf);
@@ -24259,7 +24257,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         if (analysis.faces[size_t(nf) - 1].featureClass ==
                                 FeatureClass::PlanarPanel &&
                             analysis.faces[size_t(nf) - 1].edgeIds.size() <=
-                                10) {
+                                40) {
                             want = std::min(want, 6);
                             break;
                         }
