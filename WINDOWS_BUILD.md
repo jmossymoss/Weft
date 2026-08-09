@@ -72,10 +72,11 @@ ctest --test-dir build --output-on-failure
 - **OpenCASCADE dev**: https://www.opencascade.com/content/latest-release
 
 ### GUI app dependencies — automatic
-GLFW and Dear ImGui are downloaded and built from source by CMake
-automatically when they aren't installed (the normal case on Windows), so
-`weft_app.exe` builds with no extra setup. The first configure needs
-internet access for the two small source downloads.
+GLFW and Dear ImGui are downloaded as tagged source zip archives and built
+by CMake when they aren't installed (the normal case on Windows), so
+`weft_app.exe` builds with no extra setup and without requiring Git on
+PATH. The first configure needs internet access for the two small
+downloads.
 
 ## Setting up OpenCASCADE
 
@@ -115,6 +116,14 @@ CMake fetches GLFW/ImGui sources during configure; if that download failed
 (no internet at configure time), the app target is skipped and the CLI
 still builds. Re-run `build.bat` with internet access, or delete
 `build\CMakeCache.txt` first to force a fresh configure.
+
+### `could not find git for clone of glfw-populate`
+Older revisions cloned GLFW/ImGui with `git`. Current `app/CMakeLists.txt`
+fetches tagged zip archives over HTTPS instead, so Git is not required.
+If you still see this error, you are on an older tree: pull/update, delete
+`build\CMakeCache.txt` (and `build\_deps` if present), and re-run
+`build.bat`. Alternatively install Git for Windows and ensure `git` is on
+PATH for the same prompt that runs CMake.
 
 ## Output
 

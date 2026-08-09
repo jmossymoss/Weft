@@ -19,8 +19,15 @@ endif()
 # ImGui is ALWAYS fetched, pinned to the DOCKING build: dockable panels
 # need it and no distro ships the docking branch. GLFW still comes from
 # the system when present.
+#
+# Use GitHub release/tag zip archives (URL) rather than GIT_REPOSITORY so
+# configure works without git on PATH — the common Windows failure mode
+# when only CMake + VS Build Tools are installed.
 if(TRUE)
   include(FetchContent)
+  if(POLICY CMP0135)
+    cmake_policy(SET CMP0135 NEW)
+  endif()
   message(STATUS "weft_app: fetching ImGui (docking) sources")
 
   if(NOT glfw3_FOUND)
@@ -29,17 +36,15 @@ if(TRUE)
     set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
     set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
     FetchContent_Declare(glfw
-      GIT_REPOSITORY https://github.com/glfw/glfw.git
-      GIT_TAG 3.4
-      GIT_SHALLOW TRUE
+      URL https://github.com/glfw/glfw/archive/refs/tags/3.4.zip
+      URL_HASH SHA256=a133ddc3d3c66143eba9035621db8e0bcf34dba1ee9514a9e23e96afd39fd57a
     )
     FetchContent_MakeAvailable(glfw)
   endif()
 
   FetchContent_Declare(imgui
-    GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG v1.90.9-docking
-    GIT_SHALLOW TRUE
+    URL https://github.com/ocornut/imgui/archive/refs/tags/v1.90.9-docking.zip
+    URL_HASH SHA256=1dba00780ccd40d90fb423adb3f193424083b024b6cd347e27ec4af47a41de1a
   )
   FetchContent_MakeAvailable(imgui)
 
