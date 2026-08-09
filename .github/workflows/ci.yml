@@ -73,6 +73,20 @@ jobs:
             -DVCPKG_TARGET_TRIPLET=x64-windows-release `
             -DCMAKE_BUILD_TYPE=Release
           cmake --build build --config Release -j 4
+      - name: Deploy vendored OCCT third-party DLLs
+        shell: pwsh
+        run: |
+          $src = "third_party/occt-win-runtime"
+          $dst = "build/bin/Release"
+          if (-not (Test-Path "$src/tbb12.dll")) {
+            throw "Missing vendored runtime $src/tbb12.dll — check git LFS / checkout"
+          }
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          Copy-Item "$src/*.dll" $dst -Force
+          foreach ($n in @("tbb12.dll","jemalloc.dll","FreeImage.dll","openvr_api.dll","freetype.dll")) {
+            if (-not (Test-Path "$dst/$n")) { throw "Required DLL missing after deploy: $n" }
+          }
+          Write-Host "Vendored OCCT runtimes deployed next to Release binaries"
       - name: Pipeline tests
         shell: pwsh
         run: ctest --test-dir build -C Release --output-on-failure
