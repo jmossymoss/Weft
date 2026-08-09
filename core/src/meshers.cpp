@@ -9262,9 +9262,17 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         bool reflex = false;
         const bool drumWedge =
             info.featureClass == FeatureClass::Drum;
+        // Large freeform endcaps (mp9 #134: 108 edges) hit the default
+        // 24-edge wire budget and fell to a single 169-gon. Raise the
+        // budget for Freeform only — keep opposite-chain compatibility
+        // strict so we do not reopen the seams that a looser Coons
+        // acceptance caused earlier.
+        const int wireBudget =
+            info.featureClass == FeatureClass::Freeform ? 128 : 24;
+        const int sideBudget =
+            info.featureClass == FeatureClass::Freeform ? 48 : 8;
         bool v = makeCoonsPatch(face, model, patch, s.coonsRotate, &why,
-                                &reflex, /*maxWireEdges=*/24,
-                                /*maxSideChain=*/8, drumWedge);
+                                &reflex, wireBudget, sideBudget, drumWedge);
         // Four-sided trims on analytic drums often cannot use the strict
         // open-band mesher (their side curves are not full-height isos), but
         // they still need the primitive's semantic axes. Wire start order is
@@ -9297,8 +9305,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 bool canonicalReflex = false;
                 if (makeCoonsPatch(face, model, canonical, 1,
                                    &canonicalWhy, &canonicalReflex,
-                                   /*maxWireEdges=*/24, /*maxSideChain=*/8,
-                                   drumWedge)) {
+                                   wireBudget, sideBudget, drumWedge)) {
                     patch = std::move(canonical);
                     reflex = canonicalReflex;
                     coonsEffectiveRotate = 1;
@@ -10517,6 +10524,29 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         FacePlan rescue;
         if (collectPlanarLoops(face, surf, model, rescue, /*requirePlane=*/false,
                                /*tolerateDegenerate=*/true)) {
+            // Large single-wire freeform endcaps (mp9 #134: 108 edges) make
+            // a ~169-gon under MinimalNGon and cannot take Coons (opposite
+            // chain topology 45/37×7/20). Prefer a border-exact
+            // quad-dominant fallback so the plate reads as a grid, not one
+            // giant n-gon. Multi-loop freeforms keep MinimalNGon / plate-web.
+            // Force quads even when the CAD profile leaves quadDominant off.
+            // Single-wire large freeforms may still report loops.size()>1
+            // when collectPlanarLoops splits a slit/keyhole; prefer quads
+            // whenever the edge budget is large enough.
+            if (info.edgeIds.size() >= 48) {
+                plan = FacePlan();
+                plan.kind = MesherKind::Fallback;
+                plan.forceFallbackQuads = 1;
+                plan.constrains = true;
+                // Distinct from a silent planned floor: meshFace will clear
+                // fellBack after a successful quad-dominant build so the
+                // face counts as structured.
+                plan.floorWhy = "freeform quad-dominant rescue";
+                dbg("plan face %d: freeform floor rescue -> quad-dominant "
+                    "fallback (%zu edges, %zu loops)",
+                    fid, info.edgeIds.size(), rescue.loops.size());
+                return plan;
+            }
             plan = std::move(rescue);
             plan.kind = MesherKind::MinimalNGon;
             dbg("plan face %d: freeform floor rescue -> minimal n-gon (%zu edges)",
@@ -26215,8 +26245,20 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         /*allowDrumWedge=*/
                         analysis.faces[fid - 1].featureClass ==
                             FeatureClass::Drum,
-                        /*maxWireEdges=*/plan.isFillet ? 48 : 24,
-                        /*maxSideChain=*/plan.isFillet ? 16 : 8)) {
+                        /*maxWireEdges=*/
+                        plan.isFillet
+                            ? 48
+                            : (analysis.faces[fid - 1].featureClass ==
+                                       FeatureClass::Freeform
+                                   ? 128
+                                   : 24),
+                        /*maxSideChain=*/
+                        plan.isFillet
+                            ? 16
+                            : (analysis.faces[fid - 1].featureClass ==
+                                       FeatureClass::Freeform
+                                   ? 48
+                                   : 8))) {
                     demote(fid, face, surf, s, "coons failed");
                 }
                 break;
@@ -27657,6 +27699,19 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 }
             }
         }
+        // Intentional freeform quad-dominant rescue (mp9 #134): count as a
+        // normal structured build after fold self-heal has finished. Run
+        // last so later heal passes cannot re-stamp fellBack=2.
+        {
+            const FacePlan& pl = plans.at(fid);
+            if (fellBack[fid] == 2 && pl.forceFallbackQuads == 1 &&
+                pl.floorWhy.find("freeform quad-dominant rescue") !=
+                    std::string::npos &&
+                !parts[fid].polygons.empty()) {
+                fellBack[fid] = 0;
+                buildCause[fid].clear();
+            }
+        }
     };
 
     std::vector<int> workFaces;
@@ -27957,10 +28012,16 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 report->faceChartKind[fid] = analysis.faces[fid - 1].chartKind;
             }
             if (!s.exclude) {
-                report->faceBuild[fid] = parts[fid].polygons.empty()
-                                             ? -1
-                                             : int(fellBack[fid]);
-                const int how = report->faceBuild[fid];
+                // Freeform quad-dominant rescue is intentional structured
+                // meshing, not a planned contract floor — report as built.
+                int how = parts[fid].polygons.empty() ? -1
+                                                      : int(fellBack[fid]);
+                if (how == 2 && plan.forceFallbackQuads == 1 &&
+                    plan.floorWhy.find("freeform quad-dominant rescue") !=
+                        std::string::npos) {
+                    how = 0;
+                }
+                report->faceBuild[fid] = how;
                 if (how != 0) {
                     std::string cause = buildCause[fid];
                     if (cause.empty()) {

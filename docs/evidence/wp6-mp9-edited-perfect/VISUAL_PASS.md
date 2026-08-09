@@ -15,7 +15,7 @@ shredded/clipped/overlapping wire clumps.
 | Obj | Grade | Visual findings |
 |----:|:-----:|-----------------|
 | 1 | WEAK | Dense fans around holes; long thin polys at cylinder/base junctions |
-| 2 | BAD | Giant flat n-gon endcaps split by a seam; jagged notch corners; slivers at teeth |
+| 2 | WEAK→improving | f134 was a 169-gon MinimalNGon; now quad-dominant (241 quads, maxN=4). Screenshots `after_02a/`. Notch/tooth slivers may remain. |
 | 5 | WEAK | Outer wall columns OK-ish; recess/flute junctions messy; endcap radial n-gons; groove ends pole-like |
 | 11 | BAD | Tan hole transitions are spoke/fan soup, not structured quads |
 | 14 | BAD | Chaotic dense nest at cylinder→base groove; primer face starburst |
