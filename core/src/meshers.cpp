@@ -9434,8 +9434,12 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     auto tryOpenBand = [&]() {
         std::vector<int> sides;
         std::vector<std::vector<int>> inserts;
-        if (!openBandSides(face, surf, model, sides) ||
-            !edgesHugRimsOrInserts(face, surf, model, inserts, &sides)) {
+        if (!openBandSides(face, surf, model, sides)) {
+            dbg("plan face %d: open-band reject: sides", fid);
+            return false;
+        }
+        if (!edgesHugRimsOrInserts(face, surf, model, inserts, &sides)) {
+            dbg("plan face %d: open-band reject: rim/insert hug", fid);
             return false;
         }
         // Strictly-interior wires (a slot or hole through the wall) mesh
@@ -9827,7 +9831,7 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 // that cracks against neighbour drum columns → hundreds
                 // of open edges. Prefer border-exact MinimalNGon under
                 // CAD/minimal so seams weld at solved rim counts.
-                if (s.minimal && info.edgeIds.size() > 24) {
+                if (s.minimal && info.edgeIds.size() > 10) {
                     FacePlan filletNgon;
                     if (collectPlanarLoops(face, surf, model, filletNgon,
                                            /*requirePlane=*/false,
@@ -10516,17 +10520,9 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         info.featureClass != FeatureClass::BossJunction &&
         ribbonDetect(face, model) &&
         planQuadFill(face, surf, model, plan)) {
-        // CAD/minimal: freeform ribbons whose Coons already failed on
-        // opposite-chain topology tip-fold under RibbonSweep (mp9 #1059).
-        // Prefer the n-gon floor rescue below.
-        if (!(s.minimal && info.featureClass == FeatureClass::Freeform &&
-              coonsWhy.find("opposite") != std::string::npos)) {
-            plan.kind = MesherKind::RibbonSweep;
-            populateRibbonRailChains(face, model, plan);
-            return plan;
-        }
-        dbg("plan face %d: skip ribbon after coons opposite-chain", fid);
-        plan = FacePlan();
+        plan.kind = MesherKind::RibbonSweep;
+        populateRibbonRailChains(face, model, plan);
+        return plan;
     }
 
     // A shallow conical cap nothing else claimed would tri-fan; a single
