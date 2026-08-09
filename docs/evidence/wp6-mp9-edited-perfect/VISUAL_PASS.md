@@ -17,7 +17,7 @@ shredded/clipped/overlapping wire clumps.
 | 1 | WEAK | Dense fans around holes; long thin polys at cylinder/base junctions |
 | 2 | WEAK→improving | f134 was a 169-gon MinimalNGon; now quad-dominant (241 quads, maxN=4). Screenshots `after_02a/`. Notch/tooth slivers may remain. |
 | 5 | WEAK | Outer wall columns OK-ish; recess/flute junctions messy; endcap radial n-gons; groove ends pole-like |
-| 11 | BAD | Tan hole transitions are spoke/fan soup, not structured quads |
+| 11 | BAD→PARTIAL | CAD default now plants 1 collar ring on plate-webs (f1612: 3→57 polys). Tan fillet straps around holes still dense/spoke-like. `after_11a/`. |
 | 14 | BAD | Chaotic dense nest at cylinder→base groove; primer face starburst |
 | 19 | WEAK→OK | Spring reads as structured Coons (no melted blob); some density stretch on helix |
 | 37 | WEAK | Fillet straps pinchy at elbow; otherwise simple |
