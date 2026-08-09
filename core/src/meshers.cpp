@@ -17646,8 +17646,12 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
     double dv = (v1 - v0) / nv;
     int rows = vWrap ? nv : nv + 1;
     auto rowV = [&](int j) {
-        return vRows ? (*vRows)[(std::min)(size_t(j), vRows->size() - 1)]
-                     : v0 + j * dv;
+        if (!vRows) return v0 + j * dv;
+        // Avoid std::min(int, size_t) — MSVC cannot deduce a common type.
+        size_t idx = j < 0 ? 0 : size_t(j);
+        if (vRows->empty()) return v0;
+        if (idx >= vRows->size()) idx = vRows->size() - 1;
+        return (*vRows)[idx];
     };
     const bool flip = face.Orientation() == TopAbs_REVERSED;
 
