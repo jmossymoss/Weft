@@ -628,6 +628,7 @@ void testBoss() {
     gs.defaults.gridU = 3;
     gs.defaults.gridV = 3;
     gs.defaults.junctionRings = 2;
+    gs.defaults.minCurvedSegments = 12;  // exact ring count for this fixture
     weft::GenerationReport report;
     weft::PolyMesh mesh = weft::generate(model, a, gs, &report);
 
@@ -676,6 +677,7 @@ void testHolePlate() {
     gs.defaults.gridV = 4;
     gs.defaults.axial = 2;
     gs.defaults.junctionRings = 3;
+    gs.defaults.minCurvedSegments = 16;  // exact bore ring for this fixture
     // Deliberately absurd radial: the junctions must override it to 16.
     gs.defaults.radial = 99;
     weft::GenerationReport report;
@@ -2132,7 +2134,7 @@ void testMp9FilletCapsuleNotRevolution() {
     weft::GenerationReport report;
     weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
 
-    int filletFaces = 0, rev = 0, coons = 0;
+    int filletFaces = 0, rev = 0, structured = 0;
     for (const auto& f : analysis.faces) {
         if (f.featureClass != weft::FeatureClass::FilletStrip) continue;
         if (f.edgeIds.size() < 20) continue;  // capsule-scale iso-bands
@@ -2142,14 +2144,20 @@ void testMp9FilletCapsuleNotRevolution() {
         std::printf("  fillet face %d edges=%zu -> %s\n", f.id,
                     f.edgeIds.size(), weft::mesherKindName(kit->second));
         if (kit->second == weft::MesherKind::RevolutionGrid) ++rev;
-        if (kit->second == weft::MesherKind::CoonsGrid) ++coons;
+        // Multi-edge iso-band fillets prefer Coons or border-exact
+        // MinimalNGon — never RevolutionGrid (which shreds the capsule).
+        if (kit->second == weft::MesherKind::CoonsGrid ||
+            kit->second == weft::MesherKind::MinimalNGon) {
+            ++structured;
+        }
     }
     CHECK(filletFaces >= 2);
     CHECK_EQ(rev, 0);
-    CHECK(coons >= 2);
+    CHECK(structured >= 2);
     const weft::ValidationReport vr = weft::validateMesh(mesh, &model);
     // Suite-order residual NM (≤2) has appeared after larger foam/fillet
-    // generates; the product claim above is capsule fillets stay Coons.
+    // generates; the product claim above is capsule fillets stay structured
+    // non-revolution (Coons or MinimalNGon).
     CHECK(vr.nonManifoldEdges <= 2);
 }
 
