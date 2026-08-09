@@ -10547,7 +10547,17 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         const bool skipOrthLargeFreeform =
             s.minimal && info.featureClass == FeatureClass::Freeform &&
             info.edgeIds.size() > 48;
-        if (!skipOrthLargeFreeform &&
+        // Few-edge analytic drums after open-band bail: orth staircase
+        // emits 2-column lattices that leave open edges (mp9 f1892).
+        const bool skipOrthSmallDrum =
+            info.featureClass == FeatureClass::Drum &&
+            info.chartKind == ChartKind::IsoBand &&
+            info.edgeIds.size() <= 12 &&
+            (surf.GetType() == GeomAbs_Cylinder ||
+             surf.GetType() == GeomAbs_Cone ||
+             surf.GetType() == GeomAbs_SurfaceOfRevolution ||
+             surf.GetType() == GeomAbs_SurfaceOfExtrusion);
+        if (!skipOrthLargeFreeform && !skipOrthSmallDrum &&
             planOrthogonalTrimGrid(face, surf, model, wide, &wideReject,
                                    /*allowStaircase=*/true) &&
             !(info.featureClass == FeatureClass::Drum &&
@@ -10570,6 +10580,42 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             return plan;
         }
         orthWhy = wideReject;
+    }
+
+    // Few-edge analytic drums that skipped orth staircase: border-exact
+    // n-gon from the outer wire (mp9 f1892 open-band bail class).
+    if (s.minimal && info.featureClass == FeatureClass::Drum &&
+        info.chartKind == ChartKind::IsoBand && info.edgeIds.size() <= 12 &&
+        (surf.GetType() == GeomAbs_Cylinder ||
+         surf.GetType() == GeomAbs_Cone ||
+         surf.GetType() == GeomAbs_SurfaceOfRevolution ||
+         surf.GetType() == GeomAbs_SurfaceOfExtrusion)) {
+        std::vector<int> loop;
+        for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+            std::vector<int> wloop;
+            for (BRepTools_WireExplorer we(TopoDS::Wire(wx.Current()), face);
+                 we.More(); we.Next()) {
+                const TopoDS_Edge edge = we.Current();
+                if (BRep_Tool::Degenerated(edge)) continue;
+                const int eid = model.edges.FindIndex(edge);
+                if (eid < 1) {
+                    wloop.clear();
+                    break;
+                }
+                wloop.push_back(eid);
+            }
+            if (wloop.size() > loop.size()) loop = std::move(wloop);
+        }
+        if (loop.size() >= 3) {
+            plan = FacePlan();
+            plan.loops = {loop};
+            plan.uEdges = loop;
+            plan.kind = MesherKind::MinimalNGon;
+            plan.constrains = true;
+            dbg("plan face %d: small drum bail -> minimal n-gon (wire %zu)",
+                fid, loop.size());
+            return plan;
+        }
     }
 
     // Freeform free-trim panels that nothing lattice-shaped can claim: a
