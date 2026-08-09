@@ -32,8 +32,8 @@ adjacent bands.
 | 20 | OK | Slotted pin clean columns + slot |
 | 37 | WEAK | Fillet straps pinchy but simple L-bracket readable |
 | 40 | BAD | Ultra-dense orange straps on upright tops / base fillets |
-| 41 | BAD | Green shards / shredded straps vs flat grey n-gon — catastrophic |
-| 42 | BAD | Same class as 41 |
+| 41 | WEAK→improving | Planar strap panels restored (micro-edge protect). Screenshots `after_41d/`. Still need cleaner torus/sphere density. |
+| 42 | WEAK→improving | Same class as 41; panels restored. `after_41d/`. |
 | 45 | WEAK | Hex bore interior coarse; outer columns OK |
 | 50 | WEAK | Orange hinge fillets dense vs grey bars |
 | 55 | BAD | Hook orange straps over-dense parallel bands |
@@ -69,5 +69,5 @@ adjacent bands.
 CAD default assembly was opening 261 edges on object 22: multi-edge
 iso-band fillet #1948 took orth-coons (3×42 stations) against neighbour
 drum columns. Routed iso-band fillets with >24 edges to MinimalNGon
-under CAD/minimal → opens 261→29. Remaining leaks: obj 9 (f742/f1130
+under CAD/minimal → opens 261→16. Remaining leaks: obj 9 (f742/f1130
 large freeform) and a few others. Continue next.
