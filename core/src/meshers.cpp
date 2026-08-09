@@ -28347,6 +28347,29 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             BRepAdaptor_Curve c(e);
             const double len = GCPnts_AbscissaPoint::Length(c);
             if (len >= microTol) continue;
+            // Near-threshold edges shared by two small MinimalNGon faces
+            // are strap panels (mp9 41/42 ~0.34mm vs ~0.4mm microTol), not
+            // CAD hairlines — keep them so finish()/weld does not erase
+            // the only n-gon. True hairlines (≪ microTol) still collapse.
+            if (len > 0.25 * microTol) {
+                const int eid = model.edges.FindIndex(e);
+                int ngonOwners = 0;
+                if (eid >= 1 && eid <= int(analysis.edges.size())) {
+                    for (int ofid :
+                         analysis.edges[size_t(eid) - 1].faceIds) {
+                        auto pit = plans.find(ofid);
+                        if (pit != plans.end() &&
+                            pit->second.kind == MesherKind::MinimalNGon &&
+                            ofid >= 1 &&
+                            ofid <= int(analysis.faces.size()) &&
+                            analysis.faces[size_t(ofid) - 1].edgeIds.size() <=
+                                6) {
+                            ++ngonOwners;
+                        }
+                    }
+                }
+                if (ngonOwners >= 2) continue;
+            }
             const int a = find(vmap.FindIndex(v1));
             const int b = find(vmap.FindIndex(v2));
             if (a != b) {
