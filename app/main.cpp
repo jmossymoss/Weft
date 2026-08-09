@@ -1625,7 +1625,6 @@ static void finishLoadModel(App& app) {
         app.recipe.settings.defaults.relativeDeviation = true;
         // Readable cylinders: never below 24 circumferential spans.
         app.recipe.settings.defaults.minCurvedSegments = 24;
-        app.recipe.settings.defaults.junctionRings = 1;
         frameModel(app);
         app.status = path + ": " + std::to_string(app.model.faceCount()) +
                      " faces, " + std::to_string(app.model.edgeCount()) +
