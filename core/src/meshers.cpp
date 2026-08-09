@@ -9761,26 +9761,28 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
             }
             // Small freeform patches against planar MinimalNGon neighbours:
             // claim a wire-border n-gon early so later orth/coons/ribbon
-            // cannot leave open seams (mp9 #1063/#1064, #129).
+            // cannot leave open seams (mp9 #1063/#1064). Skip when a drum
+            // neighbour is present — n-gon vs open-band leaves twin gaps
+            // (#127/#129 vs #21).
             if (s.minimal && info.edgeIds.size() >= 4 &&
                 info.edgeIds.size() <= 12) {
-                bool nbrPlanar = false;
+                bool nbrPlanar = false, nbrDrum = false;
                 for (int eid : info.edgeIds) {
                     if (eid < 1 || eid > int(analysis.edges.size())) {
                         continue;
                     }
                     for (int nf : analysis.edges[size_t(eid) - 1].faceIds) {
-                        if (nf != fid && nf >= 1 &&
-                            nf <= int(analysis.faces.size()) &&
-                            analysis.faces[size_t(nf) - 1].featureClass ==
-                                FeatureClass::PlanarPanel) {
-                            nbrPlanar = true;
-                            break;
+                        if (nf == fid || nf < 1 ||
+                            nf > int(analysis.faces.size())) {
+                            continue;
                         }
+                        const auto fc =
+                            analysis.faces[size_t(nf) - 1].featureClass;
+                        if (fc == FeatureClass::PlanarPanel) nbrPlanar = true;
+                        if (fc == FeatureClass::Drum) nbrDrum = true;
                     }
-                    if (nbrPlanar) break;
                 }
-                if (nbrPlanar) {
+                if (nbrPlanar && !nbrDrum) {
                     std::vector<int> loop;
                     for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More();
                          wx.Next()) {
@@ -10273,6 +10275,24 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
                 "(pre-orth, driver %d)",
                 fid, plan.bandDriver);
             return plan;
+        }
+        // 6–8 edge iso-band cylinders (mp9 #21): prefer open-band when it
+        // accepts WITH a plain rim driver. Driver=0 multi-rim bands can
+        // plan then fail mesh ("side counts differ", #1972).
+        if (s.minimal && info.featureClass == FeatureClass::Drum &&
+            info.chartKind == ChartKind::IsoBand &&
+            surf.GetType() == GeomAbs_Cylinder &&
+            info.edgeIds.size() >= 6 && info.edgeIds.size() <= 8 &&
+            tryOpenBand()) {
+            if (plan.bandDriver >= 1) {
+                dbg("plan face %d: mid iso-band cylinder -> open band "
+                    "(pre-orth, driver %d)",
+                    fid, plan.bandDriver);
+                return plan;
+            }
+            dbg("plan face %d: mid iso-band open-band no driver -> orth",
+                fid);
+            plan = FacePlan();
         }
         if (orthOk && !shortIsoCyl &&
             info.featureClass != FeatureClass::FilletStrip) {
