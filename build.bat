@@ -84,12 +84,27 @@ if %errorLevel% neq 0 (
 echo   Found
 
 REM ---------------------------------------------------------------
-REM [3/5] Git (only needed if you want to pull updates; not fatal)
+REM [3/5] Git (optional; app deps fetch via HTTPS zip, not git clone)
 REM ---------------------------------------------------------------
 echo [3/5] Checking Git...
 where git >nul 2>&1
 if %errorLevel% neq 0 (
-    echo   Not found ^(not required to build^) -- skipping.
+    call :ensure_choco
+    if !errorLevel! neq 0 (
+        echo   Not found -- skipping ^(not required to build^).
+    ) else (
+        echo   Installing Git...
+        choco install git -y --no-progress >> "%LOG%" 2>&1
+        REM Pick up common install locations without needing a new console
+        set "PATH=!PATH!;%ProgramFiles%\Git\cmd;%ProgramFiles%\Git\bin"
+        where git >nul 2>&1
+        if !errorLevel! neq 0 (
+            echo   Git install finished but not on PATH yet -- continuing
+            echo   without it ^(configure fetches GLFW/ImGui as zip archives^).
+        ) else (
+            echo   Found
+        )
+    )
 ) else (
     echo   Found
 )
@@ -130,9 +145,9 @@ REM [5/5] Optional GUI deps (GLFW/ImGui/stb) -- app target skips
 REM itself when absent, so this is informational only.
 REM ---------------------------------------------------------------
 echo [5/5] GUI dependencies...
-echo   GLFW and ImGui are fetched and built from source automatically
-echo   during configure ^(needs internet the first time^), so the
-echo   interactive weft_app.exe builds with no extra installs.
+echo   GLFW and ImGui are downloaded as source archives and built
+echo   automatically during configure ^(needs internet the first time^).
+echo   No separate Git install is required for that fetch.
 
 echo.
 echo ========================================
