@@ -4,6 +4,20 @@
 #include "mesher_sampling.hpp"
 #include "mesher_trace.hpp"
 
+// Windows headers (pulled in via OCCT) may define min/max macros that break
+// std::min<T>(...) / std::max<T>(...) — MSVC then reports "type 'char'
+// unexpected" deep inside density solvers. Keep the STL algorithms intact.
+#ifdef min
+#undef min
+#endif
+#ifdef max
+#undef max
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
+#include <cstdint>
 #include <functional>
 #include <sstream>
 
@@ -1976,7 +1990,7 @@ bool makeCoonsPatch(const TopoDS_Face& face, const Model& model,
                         order.begin() + (rotate % order.size()),
                         order.end());
         }
-        for (size_t k = 0; k < std::min<size_t>(4, order.size()); ++k) {
+        for (size_t k = 0; k < (std::min)(size_t(4), order.size()); ++k) {
             sideStart.push_back(k);
         }
         // Four plain sides: every joint is a corner, and a reflex one
@@ -2589,7 +2603,7 @@ bool meshCoonsGridBody(const TopoDS_Face& face, const Model& model,
                     meanAbs += std::abs(a2);
                 }
             }
-            meanAbs /= double(std::max<size_t>(1, areas.size()));
+            meanAbs /= double((std::max)(size_t(1), areas.size()));
             int flips = 0;
             for (double a2 : areas) {
                 if (a2 * total < 0 && std::abs(a2) > 1e-3 * meanAbs) {
@@ -8058,7 +8072,7 @@ bool zipperRings(const std::vector<WebPoint>& outer,
         total += a;
         meanAbs += std::abs(a);
     }
-    meanAbs /= double(std::max<size_t>(1, areas.size()));
+    meanAbs /= double((std::max)(size_t(1), areas.size()));
     for (double a : areas) {
         if (a * total < 0 && std::abs(a) > 1e-3 * meanAbs) return false;
     }
@@ -8179,7 +8193,7 @@ bool meshDiskCap(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     const double defl = faceDeflection(face, fs);
     auto radialSag = [&](int st) {
         double worst = 0;
-        const size_t stride = std::max<size_t>(1, n / 8);
+        const size_t stride = (std::max)(size_t(1), n / 8);
         for (size_t i = 0; i < n; i += stride) {
             const double du = r.uv[i].X() - cu, dv = r.uv[i].Y() - cv;
             for (int k = 0; k < st; ++k) {
@@ -17632,7 +17646,7 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
     double dv = (v1 - v0) / nv;
     int rows = vWrap ? nv : nv + 1;
     auto rowV = [&](int j) {
-        return vRows ? (*vRows)[std::min<size_t>(j, vRows->size() - 1)]
+        return vRows ? (*vRows)[(std::min)(j, vRows->size() - 1)]
                      : v0 + j * dv;
     };
     const bool flip = face.Orientation() == TopAbs_REVERSED;
@@ -18300,7 +18314,7 @@ bool meshRevolutionGrid(const TopoDS_Face& face, const BRepAdaptor_Surface& surf
         const bool mirrorB = rim[1].empty();
         double vFarMean = 0;
         for (const RimPt& r : A) vFarMean += r.v;
-        vFarMean /= std::max<size_t>(1, A.size());
+        vFarMean /= (std::max)(size_t(1), A.size());
         const double vFar =
             std::abs(vFarMean - v0) <= std::abs(vFarMean - v1) ? v1 : v0;
         // Rotational alignment of B to A (wrap-shortest total delta).
@@ -19097,7 +19111,7 @@ bool meshRevolutionInsert(const TopoDS_Face& face,
         {
             double rMid = 0, hMid = 0;
             for (const auto& p : ringPts) rMid += p[0] / rScale;
-            rMid /= std::max<size_t>(1, ringPts.size());
+            rMid /= (std::max)(size_t(1), ringPts.size());
             for (const auto& p : hole) hMid += p.u;
             hMid /= hole.size();
             const double shift =
@@ -23565,8 +23579,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         }
                     }
                     if (bumpEid == 0) continue;
-                    const int target = std::min<long>(
-                        256, solvedEdge[bumpEid] + deficit);
+                    const int target = (std::min)(
+                        256, solvedEdge[bumpEid] + int(deficit));
                     if (target <= solvedEdge[bumpEid]) continue;
                     dbg("density: face %d coons chain sum %ld != %ld, "
                         "edge %d raised to %d",
@@ -23704,8 +23718,9 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 const auto& small = tLo < tHi ? lo : hi;
                 const auto& large = tLo < tHi ? hi : lo;
                 const long deficit = std::labs(tHi - tLo);
-                const long heavy = std::max(tLo, tHi);
-                const long light = std::max<long>(1, std::min(tLo, tHi));
+                const long heavy = (std::max)(tLo, tHi);
+                const long lightRaw = (std::min)(tLo, tHi);
+                const long light = (std::max)(1L, lightRaw);
                 // Castellated / flute-rim collapse runs BEFORE the
                 // small.size()!=1 early-out: mp9 suppressor cone #362 has a
                 // multi-edge plain rim opposite an oversampled flute rim
@@ -23778,8 +23793,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                 int(small.size()) >= 2 &&
                                 int(small.size()) <= 16 &&
                                 int(large.size()) <= 4) {
-                                long need = std::min<long>(
-                                    deficit, floorN - light);
+                                long need =
+                                    (std::min)(deficit, long(floorN) - light);
                                 std::set<int> oppositeRoots;
                                 for (int e : large) {
                                     oppositeRoots.insert(
@@ -27713,9 +27728,9 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     for (int fid = 1; fid <= faceN; ++fid) {
         if (!cached[fid]) workFaces.push_back(fid);
     }
-    unsigned threads = std::min<unsigned>(
-        std::max(1u, std::thread::hardware_concurrency()),
-        std::max(1u, static_cast<unsigned>(workFaces.size())));
+    unsigned threads = (std::min)(
+        (std::max)(1u, std::thread::hardware_concurrency()),
+        (std::max)(1u, static_cast<unsigned>(workFaces.size())));
     if (!settings.parallelMeshing) threads = 1;
     if (threads > 1) {
         // OCCT computes pcurves and UV bounds lazily and caches them on
@@ -27921,6 +27936,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         builtCounts[fid] = {-1, -1};
         pl.coonsSides = {};
         pl.loops.clear();
+    }
+
+    // Snapshot parts before merge moves their polygons away — seam fusion
+    // can later drop a face's only n-gon, and restore needs the pre-stitch
+    // geometry (mp9 objects 41/42 planar panels).
+    std::vector<PolyMesh> partSnap(size_t(faceN) + 1);
+    for (int fid = 1; fid <= faceN; ++fid) {
+        if (!parts[fid].polygons.empty()) partSnap[size_t(fid)] = parts[fid];
     }
 
     PolyMesh mesh;
@@ -29784,6 +29807,121 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             if (cleared > 0) {
                 dbg("generate: late tip-fold re-snap cleared %d polygon(s)",
                     cleared);
+            }
+        }
+    }
+
+    // Seam fusion can collapse a face's only n-gon below 3 verts and drop
+    // it while faceBuild still claims success (mp9 objects 41/42: six
+    // planar panels vanish → shredded visual through the hole). Re-emit
+    // from the pre-merge snapshot. Do NOT re-run unionSeams here — that
+    // is what destroyed them; a later light twin-fuse on shared borders
+    // is enough for watertightness when neighbours already hold the
+    // stations.
+    {
+        std::vector<char> hasPoly(size_t(faceN) + 1, 0);
+        for (int fid : mesh.polygonFaceId) {
+            if (fid >= 1 && fid <= faceN) hasPoly[size_t(fid)] = 1;
+        }
+        int restored = 0;
+        const double weld2 = weldGlobal * weldGlobal;
+        auto nearestExisting = [&](const std::array<double, 3>& p,
+                                   uint32_t beforeN) -> uint32_t {
+            uint32_t best = UINT32_MAX;
+            double bestD = weld2;
+            for (uint32_t i = 0; i < beforeN; ++i) {
+                const auto& q = mesh.vertices[i];
+                const double dx = p[0] - q[0], dy = p[1] - q[1],
+                             dz = p[2] - q[2];
+                const double d2 = dx * dx + dy * dy + dz * dz;
+                if (d2 <= bestD) {
+                    bestD = d2;
+                    best = i;
+                }
+            }
+            return best;
+        };
+        for (int fid = 1; fid <= faceN; ++fid) {
+            if (hasPoly[size_t(fid)]) continue;
+            if (settings.forFace(fid).exclude) continue;
+            const PolyMesh& snap = partSnap[size_t(fid)];
+            if (snap.polygons.empty()) continue;
+            const uint32_t beforeN = uint32_t(mesh.vertices.size());
+            const uint32_t vBase = beforeN;
+            // Stage snap verts, then remap each to a nearby existing seam
+            // vert when possible — but only if every restored poly keeps
+            // ≥3 unique corners after remap (otherwise keep private verts).
+            mesh.vertices.insert(mesh.vertices.end(), snap.vertices.begin(),
+                                 snap.vertices.end());
+            mesh.anchors.insert(mesh.anchors.end(), snap.anchors.begin(),
+                                snap.anchors.end());
+            std::vector<uint32_t> remap(snap.vertices.size());
+            for (size_t i = 0; i < snap.vertices.size(); ++i) {
+                const uint32_t hit =
+                    nearestExisting(snap.vertices[i], beforeN);
+                remap[i] = (hit == UINT32_MAX) ? (vBase + uint32_t(i)) : hit;
+            }
+            bool ok = true;
+            for (const auto& poly : snap.polygons) {
+                if (poly.size() < 3) continue;
+                std::set<uint32_t> uniq;
+                for (uint32_t v : poly) {
+                    if (v < remap.size()) uniq.insert(remap[v]);
+                }
+                if (uniq.size() < 3) {
+                    ok = false;
+                    break;
+                }
+            }
+            if (!ok) {
+                // Private verts — face is present; may leave open edges.
+                for (size_t i = 0; i < snap.vertices.size(); ++i) {
+                    remap[i] = vBase + uint32_t(i);
+                }
+            }
+            const size_t polysBefore = mesh.polygons.size();
+            for (const auto& poly : snap.polygons) {
+                if (poly.size() < 3) continue;
+                std::vector<uint32_t> out;
+                out.reserve(poly.size());
+                for (uint32_t v : poly) {
+                    out.push_back(v < remap.size() ? remap[v]
+                                                   : (vBase + v));
+                }
+                // Collapse consecutive duplicates from remap.
+                out.erase(std::unique(out.begin(), out.end()), out.end());
+                while (out.size() > 1 && out.front() == out.back()) {
+                    out.pop_back();
+                }
+                if (out.size() < 3) continue;
+                mesh.polygons.push_back(std::move(out));
+                mesh.polygonFaceId.push_back(fid);
+            }
+            if (mesh.polygons.size() > polysBefore) {
+                hasPoly[size_t(fid)] = 1;
+                ++restored;
+                if (report) report->faceBuild[fid] = int(fellBack[fid]);
+            } else {
+                // Roll back unused private verts if nothing emitted.
+                mesh.vertices.resize(beforeN);
+                mesh.anchors.resize(beforeN);
+            }
+        }
+        if (restored > 0) {
+            dbg("generate: restored %d face(s) vanished in seam fusion",
+                restored);
+        }
+        // Correct faceBuild for any face that is still empty after restore.
+        if (report) {
+            std::fill(hasPoly.begin(), hasPoly.end(), 0);
+            for (int fid : mesh.polygonFaceId) {
+                if (fid >= 1 && fid <= faceN) hasPoly[size_t(fid)] = 1;
+            }
+            for (int fid = 1; fid <= faceN; ++fid) {
+                if (settings.forFace(fid).exclude) continue;
+                if (hasPoly[size_t(fid)]) continue;
+                report->faceBuild[fid] = -1;
+                report->faceBuildCause[fid] = "emitted nothing (post-stitch)";
             }
         }
     }

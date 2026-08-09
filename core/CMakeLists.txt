@@ -1,6 +1,9 @@
 if(MSVC)
   # PDBs even in Release so crash traces resolve core frames too.
   add_compile_options(/Zi)
+  # OCCT on Windows pulls windows.h; without NOMINMAX the min/max macros
+  # shatter std::min<T>/std::max<T> (MSVC: "type 'char' unexpected").
+  add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
 add_library(weft_core
