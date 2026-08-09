@@ -10361,7 +10361,11 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     {
         CoonsPatch patch;
         const bool patchOk = coonsOk(patch);
-        if (patchOk && coonsChainsCompatible(patch)) {
+        // Large freeform outlines under CAD/minimal defer Coons to the
+        // QD/n-gon floor rescue (mp9 obj 9 f742/f1130 open seams).
+        if (patchOk && coonsChainsCompatible(patch) &&
+            !(s.minimal && info.featureClass == FeatureClass::Freeform &&
+              info.edgeIds.size() > 48)) {
             // A flat chevron (reflex outline) folds under any transfinite
             // grid. In quad-dominant mode quad-fill's grid + CDT rim is
             // strictly better and samples the same solved counts. In
@@ -10537,7 +10541,14 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
     {
         FacePlan wide;
         std::string wideReject;
-        if (planOrthogonalTrimGrid(face, surf, model, wide, &wideReject,
+        // Large freeform outlines under CAD/minimal: orth staircase builds
+        // dense lattices that leave open seams (mp9 obj 9 f742/f1130).
+        // Fall through to QD / n-gon floor rescue instead.
+        const bool skipOrthLargeFreeform =
+            s.minimal && info.featureClass == FeatureClass::Freeform &&
+            info.edgeIds.size() > 48;
+        if (!skipOrthLargeFreeform &&
+            planOrthogonalTrimGrid(face, surf, model, wide, &wideReject,
                                    /*allowStaircase=*/true) &&
             !(info.featureClass == FeatureClass::Drum &&
               info.chartKind == ChartKind::IsoBand &&
