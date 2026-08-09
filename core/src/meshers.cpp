@@ -10516,9 +10516,17 @@ FacePlan planFace(int fid, const Model& model, const Analysis& analysis,
         info.featureClass != FeatureClass::BossJunction &&
         ribbonDetect(face, model) &&
         planQuadFill(face, surf, model, plan)) {
-        plan.kind = MesherKind::RibbonSweep;
-        populateRibbonRailChains(face, model, plan);
-        return plan;
+        // CAD/minimal: freeform ribbons whose Coons already failed on
+        // opposite-chain topology tip-fold under RibbonSweep (mp9 #1059).
+        // Prefer the n-gon floor rescue below.
+        if (!(s.minimal && info.featureClass == FeatureClass::Freeform &&
+              coonsWhy.find("opposite") != std::string::npos)) {
+            plan.kind = MesherKind::RibbonSweep;
+            populateRibbonRailChains(face, model, plan);
+            return plan;
+        }
+        dbg("plan face %d: skip ribbon after coons opposite-chain", fid);
+        plan = FacePlan();
     }
 
     // A shallow conical cap nothing else claimed would tri-fan; a single
@@ -27367,24 +27375,28 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                         // ribbon). Leave straps with denser fold pockets
                         // as RibbonSweep (flaregun census strap: 8 folds).
                         bool freeformNgonRescue = false;
-                        // Comb-trimmed freeform ribbons (≤14 edges) tip-
-                        // fold; longer earclip/cap straps (flaregun: 16
-                        // edges) must stay RibbonSweep.
+                        // Comb-trimmed freeform ribbons tip-fold; keep
+                        // RibbonSweep for longer earclip/cap straps
+                        // (flaregun: 16 edges) unless folds remain after
+                        // sparse keep (mp9 #1059: 3 tip folds).
                         const bool tipRibbon =
                             sparseRibbon &&
-                            int(sparseInfo.edgeIds.size()) <= 14;
+                            (int(sparseInfo.edgeIds.size()) <= 14 ||
+                             (liveFolds > 0 && liveFolds <= 3 &&
+                              int(sparseInfo.edgeIds.size()) <= 24));
                         const bool tipFreeformRev =
                             sparseInfo.featureClass ==
                                 FeatureClass::Freeform &&
                             plan.kind == MesherKind::RevolutionGrid;
-                        // Freeform Coons tip folds up to 3 (#1828); other
-                        // tip classes stay at ≤2.
+                        // Freeform Coons tip folds up to 3 (#1828); ribbon
+                        // tip folds up to 4 (mp9 #1059); other tip classes
+                        // stay at ≤2.
                         const int tipFoldBudget =
                             (sparseCoonsOne &&
                              sparseInfo.featureClass ==
                                  FeatureClass::Freeform)
                                 ? 3
-                                : 2;
+                                : (tipRibbon ? 4 : 2);
                         // Cone drums with tip folds (#375/#1579) remesh as
                         // MinimalNGon. Cylinder drums must keep
                         // RevolutionGrid (fillet-density ownership tests).
