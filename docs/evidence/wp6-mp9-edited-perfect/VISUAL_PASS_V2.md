@@ -71,3 +71,8 @@ iso-band fillet #1948 took orth-coons (3×42 stations) against neighbour
 drum columns. Routed iso-band fillets with >24 edges to MinimalNGon
 under CAD/minimal → opens 261→16. Remaining leaks: obj 9 (f742/f1130
 large freeform) and a few others. Continue next.
+
+## Validity (latest)
+
+`testMp9EditedWatertight` green: watertight, structured 3052/3052, folds=0,
+empty=0. Gallery retake: `objects/visual_pass_v3/`.

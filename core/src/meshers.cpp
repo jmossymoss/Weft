@@ -24223,6 +24223,29 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             if (shortLand) wrapFloor = ringMin;
             auto raiseTo = [&](int eid, int want) -> bool {
                 if (eid < 1 || eid > model.edgeCount()) return false;
+                // Small planar MinimalNGon straps sharing this edge would
+                // inherit a 24-gon border and read as shredded orange
+                // hatching (mp9 object 40 upright tops). Cap the raise.
+                if (eid <= int(analysis.edges.size())) {
+                    for (int nf :
+                         analysis.edges[size_t(eid) - 1].faceIds) {
+                        if (nf < 1 || nf > int(analysis.faces.size())) {
+                            continue;
+                        }
+                        auto pit = plans.find(nf);
+                        if (pit == plans.end() ||
+                            pit->second.kind != MesherKind::MinimalNGon) {
+                            continue;
+                        }
+                        if (analysis.faces[size_t(nf) - 1].featureClass ==
+                                FeatureClass::PlanarPanel &&
+                            analysis.faces[size_t(nf) - 1].edgeIds.size() <=
+                                10) {
+                            want = std::min(want, 6);
+                            break;
+                        }
+                    }
+                }
                 const int root = density.groups.find(eid);
                 if (density.pinnedRoots.count(root)) return false;
                 auto it = density.groupCount.find(root);
