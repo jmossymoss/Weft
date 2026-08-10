@@ -1,0 +1,122 @@
+# Build portable Linux + Windows packages and attach them to a GitHub
+# pre-release for the pushed tag (v*-pre* / v*-rc*).
+name: pre-release
+
+on:
+  push:
+    tags:
+      - 'v*-pre*'
+      - 'v*-rc*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to upload packages into
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libocct-foundation-dev libocct-modeling-data-dev \
+            libocct-modeling-algorithms-dev libocct-data-exchange-dev \
+            libocct-ocaf-dev libocct-visualization-dev ninja-build \
+            libglfw3-dev libgl1-mesa-dev libtbb-dev libfontconfig1-dev \
+            patchelf
+      - name: Configure + build
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j"$(nproc)" --target weft weft_app
+      - name: Package
+        run: tools/package_linux.sh dist
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: weft-linux-x64
+          path: dist/weft-linux-x64.tar.gz
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install OCCT (vcpkg, cached)
+        uses: johnwason/vcpkg-action@v6
+        with:
+          pkgs: opencascade
+          triplet: x64-windows-release
+          token: ${{ github.token }}
+          github-binarycache: true
+      - name: Configure + build
+        shell: pwsh
+        run: |
+          cmake -B build `
+            -DCMAKE_TOOLCHAIN_FILE="$env:GITHUB_WORKSPACE/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-release `
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release -j 4 --target weft weft_app
+      - name: Package
+        shell: pwsh
+        run: .\tools\package_windows.ps1 -OutDir dist
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: weft-windows-x64
+          path: dist/weft-windows-x64.zip
+
+  publish:
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          path: packages
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Attach to GitHub pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.tag.outputs.name }}"
+          NOTES="$(cat <<EOF
+          Engineering pre-release for tester downloads.
+
+          Packages:
+          - \`weft-linux-x64.tar.gz\` — CLI + app + bundled OCCT/GLFW libs
+          - \`weft-windows-x64.zip\` — CLI + app + OCCT DLLs
+
+          Linux: extract and run \`bin/weft_app\` / \`bin/weft\` (needs OpenGL).
+          Windows: extract and run \`bin\\weft_app.exe\` / \`bin\\weft.exe\`.
+
+          Blender live-link add-on is in \`blender/weft_link.py\`.
+          Not an MVP release — geometry gates are still open on WP6.
+          EOF
+          )"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" \
+              packages/weft-linux-x64/weft-linux-x64.tar.gz \
+              packages/weft-windows-x64/weft-windows-x64.zip \
+              --clobber
+          else
+            gh release create "$TAG" \
+              --prerelease \
+              --title "Weft $TAG" \
+              --notes "$NOTES" \
+              packages/weft-linux-x64/weft-linux-x64.tar.gz \
+              packages/weft-windows-x64/weft-windows-x64.zip
+          fi

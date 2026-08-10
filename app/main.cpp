@@ -683,9 +683,23 @@ struct App {
     bool slideFlipped = false;  // hover chose the mirrored ordering
     // Vertex grab (G): the nudge op being dragged; the drag plane faces
     // the camera through the vertex's start position, and every hit
-    // re-projects exactly onto the CAD face (snapToFace).
+    // re-projects exactly onto the CAD face (snapToFace). Live preview
+    // restores grabMeshBase + nudgeVertex each move so the UI thread
+    // never launches a full generate mid-drag.
     int grabOp = -1;
     std::array<double, 3> grabStart{};
+    weft::PolyMesh grabMeshBase;
+    bool grabPreviewActive = false;
+
+    // Loop-cut hover cache: insertLoop on a full mesh copy is far too
+    // expensive to re-run twice on every mouse-move frame.
+    uint32_t loopHoverA = 0, loopHoverB = 0;
+    int loopHoverTq = -1;
+    bool loopHoverFlipped = false;
+    std::vector<float> loopHoverLines;
+
+    // Idle hover pick throttle (full-mesh ID pass + readback).
+    double lastHoverPickTime = 0.0;
 
     // Bridge tool: open boundary loops of the current mesh, each mapped to
     // its nearest B-rep edge (the stable id recorded in the op).
@@ -877,10 +891,98 @@ static std::array<float, 3> heatColor(double q) {
     return lerp3(bad, mid, float(std::max(0.0, (q - 0.15) / 0.4)));
 }
 
+// UV proxy for the active face only — used by the live density isoline
+// overlay. Separated so face selection can refresh markers without
+// recomputing CAD-exact fill normals for the whole model.
+static void rebuildGpuProxy(App& app) {
+    const weft::PolyMesh& m = app.mesh;
+    std::vector<float> proxy;
+    if (app.activeFace >= 1 && app.activeFace <= app.model.faceCount()) {
+        try {
+            const int fid = app.activeFace;
+            const TopoDS_Face face = TopoDS::Face(app.model.faces(fid));
+            BRepAdaptor_Surface surf(face);
+            const double u0 = surf.FirstUParameter();
+            const double u1 = surf.LastUParameter();
+            const double v0 = surf.FirstVParameter();
+            const double v1 = surf.LastVParameter();
+            const double du = u1 - u0, dv = v1 - v0;
+            if (std::isfinite(du) && std::isfinite(dv) &&
+                std::abs(du) > 1e-12 && std::abs(dv) > 1e-12) {
+                std::map<uint32_t, std::array<double, 2>> uvCache;
+                auto uvOf = [&](uint32_t vi,
+                                std::array<double, 2>& uv) -> bool {
+                    auto hit = uvCache.find(vi);
+                    if (hit != uvCache.end()) {
+                        uv = hit->second;
+                        return std::isfinite(uv[0]) && std::isfinite(uv[1]);
+                    }
+                    weft::Anchor a;
+                    if (vi < m.anchors.size()) a = m.anchors[vi];
+                    if (a.faceId != fid) {
+                        std::array<double, 3> point = m.vertices[vi];
+                        a = weft::snapToFace(app.model, fid, point);
+                    }
+                    uv = {(a.u - u0) / du, (a.v - v0) / dv};
+                    uvCache[vi] = uv;
+                    return a.faceId == fid && std::isfinite(uv[0]) &&
+                           std::isfinite(uv[1]);
+                };
+                auto emitTri = [&](uint32_t a, uint32_t b, uint32_t c) {
+                    std::array<uint32_t, 3> vi{a, b, c};
+                    std::array<std::array<double, 2>, 3> uv;
+                    for (int k = 0; k < 3; ++k) {
+                        if (!uvOf(vi[k], uv[k])) return;
+                    }
+                    for (int axis = 0; axis < 2; ++axis) {
+                        const bool periodic = axis == 0 ? surf.IsUPeriodic()
+                                                        : surf.IsVPeriodic();
+                        if (!periodic) continue;
+                        double lo = uv[0][axis], hi = lo;
+                        for (int k = 1; k < 3; ++k) {
+                            lo = std::min(lo, uv[k][axis]);
+                            hi = std::max(hi, uv[k][axis]);
+                        }
+                        if (hi - lo > 0.5) {
+                            for (int k = 0; k < 3; ++k) {
+                                if (uv[k][axis] < 0.5) uv[k][axis] += 1.0;
+                            }
+                        }
+                    }
+                    for (int k = 0; k < 3; ++k) {
+                        const auto& p = m.vertices[vi[k]];
+                        proxy.insert(proxy.end(),
+                                     {float(p[0]), float(p[1]), float(p[2]),
+                                      float(uv[k][0]), float(uv[k][1])});
+                    }
+                };
+                for (size_t pi = 0; pi < m.polygons.size(); ++pi) {
+                    if (m.polygonFaceId[pi] != fid) continue;
+                    const auto& poly = m.polygons[pi];
+                    if (poly.size() <= 4) {
+                        for (size_t k = 1; k + 1 < poly.size(); ++k) {
+                            emitTri(poly[0], poly[k], poly[k + 1]);
+                        }
+                    } else {
+                        for (const auto& t :
+                             weft::triangulatePoly(m.vertices, poly)) {
+                            emitTri(poly[t[0]], poly[t[1]], poly[t[2]]);
+                        }
+                    }
+                }
+            }
+        } catch (const Standard_Failure&) {
+            proxy.clear();
+        }
+    }
+    app.gpuProxy.uploadUv(proxy);
+    app.gpuProxyFace = proxy.empty() ? 0 : app.activeFace;
+}
+
 static void rebuildBuffers(App& app) {
     const weft::PolyMesh& m = app.mesh;
 
-    std::vector<float> fill, pick, wire, proxy;
+    std::vector<float> fill, pick, wire;
     fill.reserve(m.polygons.size() * 27);
     auto push = [](std::vector<float>& v, const std::array<double, 3>& p,
                    const std::array<float, 3>& c) {
@@ -1040,10 +1142,12 @@ static void rebuildBuffers(App& app) {
         }
         const weft::FaceInfo& info =
             fid > 0 ? app.analysis.faces[fid - 1] : kBridgeInfo;
+        // Selection tint is drawn as a cheap overlay pass — baking it
+        // into the fill buffer forced a full rebuild (exact CAD normals
+        // included) on every click.
         std::array<float, 3> col =
-            app.qualityView
-                ? heatColor(polyQuality(m, i))
-                : faceColor(info, fid > 0 && app.selFaces.count(fid) > 0);
+            app.qualityView ? heatColor(polyQuality(m, i))
+                            : faceColor(info, false);
         std::array<float, 3> id{float(fid & 255) / 255.0f,
                                 float((fid >> 8) & 255) / 255.0f,
                                 170.0f / 255.0f};
@@ -1077,95 +1181,10 @@ static void rebuildBuffers(App& app) {
         app.polyFillRange[i][1] = int(fill.size() / 9) - app.polyFillRange[i][0];
     }
 
-    // Build UV-bearing triangles only for the active face. This buffer is
-    // stable for the life of the current exact mesh; density edits change two
-    // shader uniforms, never CPU geometry or GPU uploads.
-    if (app.activeFace >= 1 && app.activeFace <= app.model.faceCount()) {
-        try {
-            const int fid = app.activeFace;
-            const TopoDS_Face face = TopoDS::Face(app.model.faces(fid));
-            BRepAdaptor_Surface surf(face);
-            const double u0 = surf.FirstUParameter();
-            const double u1 = surf.LastUParameter();
-            const double v0 = surf.FirstVParameter();
-            const double v1 = surf.LastVParameter();
-            const double du = u1 - u0, dv = v1 - v0;
-            if (std::isfinite(du) && std::isfinite(dv) &&
-                std::abs(du) > 1e-12 && std::abs(dv) > 1e-12) {
-                std::map<uint32_t, std::array<double, 2>> uvCache;
-                auto uvOf = [&](uint32_t vi,
-                                std::array<double, 2>& uv) -> bool {
-                    auto hit = uvCache.find(vi);
-                    if (hit != uvCache.end()) {
-                        uv = hit->second;
-                        return std::isfinite(uv[0]) && std::isfinite(uv[1]);
-                    }
-                    weft::Anchor a;
-                    if (vi < m.anchors.size()) a = m.anchors[vi];
-                    if (a.faceId != fid) {
-                        std::array<double, 3> point = m.vertices[vi];
-                        a = weft::snapToFace(app.model, fid, point);
-                    }
-                    uv = {(a.u - u0) / du, (a.v - v0) / dv};
-                    uvCache[vi] = uv;
-                    return a.faceId == fid && std::isfinite(uv[0]) &&
-                           std::isfinite(uv[1]);
-                };
-                auto emitTri = [&](uint32_t a, uint32_t b, uint32_t c) {
-                    std::array<uint32_t, 3> vi{a, b, c};
-                    std::array<std::array<double, 2>, 3> uv;
-                    for (int k = 0; k < 3; ++k) {
-                        if (!uvOf(vi[k], uv[k])) return;
-                    }
-                    // Keep periodic seam triangles local in UV space so the
-                    // procedural grid does not streak across the full chart.
-                    for (int axis = 0; axis < 2; ++axis) {
-                        const bool periodic = axis == 0 ? surf.IsUPeriodic()
-                                                        : surf.IsVPeriodic();
-                        if (!periodic) continue;
-                        double lo = uv[0][axis], hi = lo;
-                        for (int k = 1; k < 3; ++k) {
-                            lo = std::min(lo, uv[k][axis]);
-                            hi = std::max(hi, uv[k][axis]);
-                        }
-                        if (hi - lo > 0.5) {
-                            for (int k = 0; k < 3; ++k) {
-                                if (uv[k][axis] < 0.5) uv[k][axis] += 1.0;
-                            }
-                        }
-                    }
-                    for (int k = 0; k < 3; ++k) {
-                        const auto& p = m.vertices[vi[k]];
-                        proxy.insert(proxy.end(), {float(p[0]), float(p[1]),
-                                                   float(p[2]),
-                                                   float(uv[k][0]),
-                                                   float(uv[k][1])});
-                    }
-                };
-                for (size_t pi = 0; pi < m.polygons.size(); ++pi) {
-                    if (m.polygonFaceId[pi] != fid) continue;
-                    const auto& poly = m.polygons[pi];
-                    if (poly.size() <= 4) {
-                        for (size_t k = 1; k + 1 < poly.size(); ++k) {
-                            emitTri(poly[0], poly[k], poly[k + 1]);
-                        }
-                    } else {
-                        for (const auto& t :
-                             weft::triangulatePoly(m.vertices, poly)) {
-                            emitTri(poly[t[0]], poly[t[1]], poly[t[2]]);
-                        }
-                    }
-                }
-            }
-        } catch (const Standard_Failure&) {
-            proxy.clear();
-        }
-    }
     app.fill.upload(fill, 9);
     app.pick.upload(pick);
     app.wire.upload(wire);
-    app.gpuProxy.uploadUv(proxy);
-    app.gpuProxyFace = proxy.empty() ? 0 : app.activeFace;
+    rebuildGpuProxy(app);
 
     // Vertices of the selected faces (drawn as points; colour comes from
     // the uniform tint, so the values here are placeholders).
@@ -1231,6 +1250,70 @@ static void rebuildBuffers(App& app) {
     app.brep.upload(brep);
 }
 
+// Selection / edge-highlight markers only. Face selection tint is an
+// overlay draw, so clicking a face must not recompute CAD normals or
+// re-upload the full fill/pick/wire geometry.
+static void refreshSelectionViz(App& app) {
+    const weft::PolyMesh& m = app.mesh;
+    auto push = [](std::vector<float>& v, const std::array<double, 3>& p,
+                   const std::array<float, 3>& c) {
+        v.push_back(float(p[0]));
+        v.push_back(float(p[1]));
+        v.push_back(float(p[2]));
+        v.push_back(c[0]);
+        v.push_back(c[1]);
+        v.push_back(c[2]);
+    };
+    std::vector<float> verts;
+    if (!app.selFaces.empty()) {
+        std::set<uint32_t> seen;
+        for (size_t i = 0; i < m.polygons.size(); ++i) {
+            int fid = m.polygonFaceId[i];
+            if (fid <= 0 || !app.selFaces.count(fid)) continue;
+            if (app.hiddenFaces.count(fid)) continue;
+            for (uint32_t v : m.polygons[i]) {
+                if (!seen.insert(v).second) continue;
+                push(verts, m.vertices[v], {1, 1, 1});
+            }
+        }
+    }
+    app.verts.upload(verts);
+
+    std::vector<float> brep;
+    for (const weft::EdgePolyline& e : app.brepEdges) {
+        const weft::EdgeInfo& info = app.analysis.edges[e.edgeId - 1];
+        if (!info.faceIds.empty()) {
+            bool allHidden = true;
+            for (int fid : info.faceIds) {
+                if (!app.hiddenFaces.count(fid)) {
+                    allHidden = false;
+                    break;
+                }
+            }
+            if (allHidden) continue;
+        }
+        std::array<float, 3> c{0.55f, 0.55f, 0.55f};
+        switch (info.convexity) {
+            case weft::EdgeConvexity::Convex: c = {0.95f, 0.62f, 0.18f}; break;
+            case weft::EdgeConvexity::Concave: c = {0.25f, 0.55f, 0.95f}; break;
+            case weft::EdgeConvexity::Smooth: c = {0.30f, 0.78f, 0.42f}; break;
+            default: break;
+        }
+        if (app.selEdges.count(e.edgeId)) c = {1.0f, 1.0f, 1.0f};
+        for (size_t i = 0; i + 1 < e.points.size(); ++i) {
+            push(brep, e.points[i], c);
+            push(brep, e.points[i + 1], c);
+        }
+    }
+    app.brep.upload(brep);
+
+    // Density isoline proxy is per active face; rebuild just that buffer
+    // when selection changes the owner (not the whole shaded mesh).
+    if (app.activeFace != app.gpuProxyFace) {
+        rebuildGpuProxy(app);
+    }
+}
+
 // Scan the final mesh for open and non-manifold (multiply-used) directed
 // edges and rebuild the red/magenta overlay lines. This is the same test
 // the export pipeline cares about: zero of both = watertight. Folded
@@ -1272,15 +1355,19 @@ static void updateProblems(App& app) {
             }
         }
     }
-    const std::vector<uint8_t> folded =
-        weft::foldedPolys(app.model, app.mesh);
-    for (size_t p = 0; p < folded.size(); ++p) {
-        if (!folded[p]) continue;
-        ++app.foldedPolyCount;
-        const auto& poly = app.mesh.polygons[p];
-        for (size_t i = 0; i < poly.size(); ++i) {
-            pushEdge(poly[i], poly[(i + 1) % poly.size()], 1.0f, 0.12f,
-                     0.12f);  // red outline
+    // foldedPolys walks every polygon against its CAD face — skip the
+    // scan when the overlay is hidden (toggle re-runs updateProblems).
+    if (app.showProblems) {
+        const std::vector<uint8_t> folded =
+            weft::foldedPolys(app.model, app.mesh);
+        for (size_t p = 0; p < folded.size(); ++p) {
+            if (!folded[p]) continue;
+            ++app.foldedPolyCount;
+            const auto& poly = app.mesh.polygons[p];
+            for (size_t i = 0; i < poly.size(); ++i) {
+                pushEdge(poly[i], poly[(i + 1) % poly.size()], 1.0f, 0.12f,
+                         0.12f);  // red outline
+            }
         }
     }
     app.problems.upload(lines);
@@ -1371,6 +1458,10 @@ static void finishGenerate(App& app) {
         app.selMeshEdges.clear();
         app.hoverVert = -1;
         app.hoverMeshEdge = UINT64_MAX;
+        app.loopHoverA = app.loopHoverB = 0;
+        app.loopHoverTq = -1;
+        app.loopHoverLines.clear();
+        app.hoverValid = false;
         app.vertFaces.assign(app.mesh.vertexCount(), {});
         for (size_t p = 0; p < app.mesh.polygons.size(); ++p) {
             int fid = app.mesh.polygonFaceId[p];
@@ -1419,26 +1510,41 @@ static void finishGenerate(App& app) {
 
     // Open boundary loops (deleted faces leave them) for the bridge tool,
     // each mapped to its nearest sampled B-rep edge for a stable op id.
+    // Flatten edge samples into one KD-tree so loop mapping is
+    // O(loops * verts * log samples), not O(loops * verts * samples).
     app.bLoops = weft::boundaryLoops(app.mesh);
     app.bLoopEdge.assign(app.bLoops.size(), 0);
     app.hoverLoop = -1;
-    for (size_t li = 0; li < app.bLoops.size(); ++li) {
-        double bestDist = 1e300;
+    if (!app.bLoops.empty() && !app.brepEdges.empty()) {
+        std::vector<std::array<double, 3>> edgeSamples;
+        std::vector<int> sampleEdgeId;
         for (const weft::EdgePolyline& e : app.brepEdges) {
-            double sum = 0;
+            for (const auto& q : e.points) {
+                edgeSamples.push_back(q);
+                sampleEdgeId.push_back(e.edgeId);
+            }
+        }
+        const VertexKdTree edgeTree(edgeSamples);
+        for (size_t li = 0; li < app.bLoops.size(); ++li) {
+            std::map<int, double> edgeCost;
             for (uint32_t v : app.bLoops[li]) {
                 const auto& p = app.mesh.vertices[v];
-                double dmin = 1e300;
-                for (const auto& q : e.points) {
-                    double dx = p[0] - q[0], dy = p[1] - q[1],
-                           dz = p[2] - q[2];
-                    dmin = std::min(dmin, dx * dx + dy * dy + dz * dz);
+                uint32_t hit = 0;
+                if (!edgeTree.nearestWithin(p, 1e300, hit) ||
+                    hit >= edgeSamples.size()) {
+                    continue;
                 }
-                sum += dmin;
+                const auto& q = edgeSamples[hit];
+                const double dx = p[0] - q[0], dy = p[1] - q[1],
+                             dz = p[2] - q[2];
+                edgeCost[sampleEdgeId[hit]] += dx * dx + dy * dy + dz * dz;
             }
-            if (sum < bestDist) {
-                bestDist = sum;
-                app.bLoopEdge[li] = e.edgeId;
+            double bestDist = 1e300;
+            for (const auto& [eid, sum] : edgeCost) {
+                if (sum < bestDist) {
+                    bestDist = sum;
+                    app.bLoopEdge[li] = eid;
+                }
             }
         }
     }
@@ -2014,6 +2120,9 @@ static void markDirty(App& app) {
     app.dirty = true;
     app.mutatedThisFrame = true;
     app.gpuProxyPending = app.activeFace > 0;
+    if (app.gpuProxyPending && app.activeFace != app.gpuProxyFace) {
+        rebuildGpuProxy(app);
+    }
 }
 
 
@@ -2612,7 +2721,7 @@ static void setSelectMode(App& app, SelectMode next) {
     app.hoverFace = 0;
     app.hoverVert = -1;
     app.hoverMeshEdge = UINT64_MAX;
-    rebuildBuffers(app);
+    refreshSelectionViz(app);
     app.status = next == SelectMode::Vert       ? "vert mode"
                  : next == SelectMode::MeshEdge ? "edge mode"
                  : next == SelectMode::Poly     ? "face mode"
@@ -2634,7 +2743,7 @@ static void selectFacesMatching(App& app,
         }
     }
     app.activeFace = app.selFaces.empty() ? 0 : *app.selFaces.begin();
-    rebuildBuffers(app);
+    refreshSelectionViz(app);
     if (!app.selFaces.empty()) {
         char buf[96];
         std::snprintf(buf, sizeof buf, "selected %zu face(s)",
@@ -2870,7 +2979,28 @@ static void updateLoopCutHover(App& app, const Mat4& mvp, double mx, double my,
             }
         }
     }
-    if (bestA == bestB) return;
+    if (bestA == bestB) {
+        app.loopHoverTq = -1;
+        return;
+    }
+
+    // Quantize t so tiny mouse jitter does not re-run insertLoop.
+    const int tq = int(std::lround(bestT * 40.0));
+    if (bestA == app.loopHoverA && bestB == app.loopHoverB &&
+        tq == app.loopHoverTq && !app.loopHoverLines.empty()) {
+        float pa[3] = {0, 0, -1}, pb[3] = {0, 0, -1};
+        projectPoint(mvp, m.vertices[bestA], fbw, fbh, pa);
+        projectPoint(mvp, m.vertices[bestB], fbw, fbh, pb);
+        app.slideA[0] = pa[0];
+        app.slideA[1] = pa[1];
+        app.slideB[0] = pb[0];
+        app.slideB[1] = pb[1];
+        app.slideFlipped = app.loopHoverFlipped;
+        app.preview.upload(app.loopHoverLines);
+        app.hoverOp.t = app.loopHoverFlipped ? (1.0 - bestT) : bestT;
+        app.hoverValid = true;
+        return;
+    }
 
     const weft::Anchor& aa = m.anchors[bestA];
     weft::ManualOp op;
@@ -2900,6 +3030,8 @@ static void updateLoopCutHover(App& app, const Mat4& mvp, double mx, double my,
 
     // Probe on a copy; if the split lands on the far side of the edge from
     // the cursor (the walker picked the reversed ordering), mirror t.
+    // Prefer the previously chosen orientation when the edge is unchanged
+    // so a t-only move does one insertLoop instead of two.
     auto previewSegments = [&](const weft::ManualOp& probe,
                                double* splitScreenDist) -> std::vector<float> {
         weft::PolyMesh copy = m;
@@ -2933,17 +3065,30 @@ static void updateLoopCutHover(App& app, const Mat4& mvp, double mx, double my,
         return lines;
     };
 
-    double dist = 0, distFlipped = 0;
-    std::vector<float> lines = previewSegments(op, &dist);
-    weft::ManualOp flipped = op;
-    flipped.t = 1.0 - op.t;
-    std::vector<float> linesFlipped = previewSegments(flipped, &distFlipped);
     bool usedFlipped = false;
-    if (!linesFlipped.empty() &&
-        (lines.empty() || distFlipped + 1.0 < dist)) {
-        op = flipped;
-        lines = std::move(linesFlipped);
-        usedFlipped = true;
+    std::vector<float> lines;
+    if (bestA == app.loopHoverA && bestB == app.loopHoverB &&
+        app.loopHoverTq >= 0) {
+        weft::ManualOp preferred = op;
+        if (app.loopHoverFlipped) {
+            preferred.t = 1.0 - op.t;
+            usedFlipped = true;
+        }
+        lines = previewSegments(preferred, nullptr);
+        if (usedFlipped) op = preferred;
+    } else {
+        double dist = 0, distFlipped = 0;
+        lines = previewSegments(op, &dist);
+        weft::ManualOp flipped = op;
+        flipped.t = 1.0 - op.t;
+        std::vector<float> linesFlipped =
+            previewSegments(flipped, &distFlipped);
+        if (!linesFlipped.empty() &&
+            (lines.empty() || distFlipped + 1.0 < dist)) {
+            op = flipped;
+            lines = std::move(linesFlipped);
+            usedFlipped = true;
+        }
     }
     if (lines.empty()) return;
 
@@ -2957,6 +3102,11 @@ static void updateLoopCutHover(App& app, const Mat4& mvp, double mx, double my,
     app.slideB[0] = pb[0];
     app.slideB[1] = pb[1];
     app.slideFlipped = usedFlipped;
+    app.loopHoverA = bestA;
+    app.loopHoverB = bestB;
+    app.loopHoverTq = tq;
+    app.loopHoverFlipped = usedFlipped;
+    app.loopHoverLines = lines;
 
     app.preview.upload(lines);
     app.hoverOp = op;
@@ -3148,7 +3298,8 @@ static PickRect readPickRect(App& app, GLuint flatProg, const Mat4& mvp,
     glBindVertexArray(app.pick.vao);
     glDrawArrays(GL_TRIANGLES, 0, app.pick.count);
     glBindVertexArray(0);
-    glFinish();
+    // glReadPixels already synchronizes the pick draw; glFinish() was an
+    // extra full-pipeline stall on every hover/box pick.
     if (x0 > x1) std::swap(x0, x1);
     if (y0 > y1) std::swap(y0, y1);
     x0 = std::clamp(x0, 0, fbw - 1);
@@ -3318,7 +3469,6 @@ static int pickFace(App& app, GLuint flatProg, const Mat4& mvp, int px, int py,
     glBindVertexArray(app.pick.vao);
     glDrawArrays(GL_TRIANGLES, 0, app.pick.count);
     glBindVertexArray(0);
-    glFinish();
     unsigned char rgba[4] = {0, 0, 0, 0};
     glReadPixels(px, fbh - 1 - py, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
     (void)fbw;
@@ -4748,7 +4898,9 @@ static void drawShadingBar(App& app) {
                               "green ok, orange skewed, red sliver");
         }
         ImGui::SameLine();
-        ImGui::Checkbox("problems", &app.showProblems);
+        if (ImGui::Checkbox("problems", &app.showProblems)) {
+            if (app.hasModel) updateProblems(app);
+        }
         ImGui::Separator();
         ImGui::TextDisabled("background");
         ImGui::ColorEdit3("##bgcol", app.bgColor,
@@ -4834,7 +4986,7 @@ static void drawOutliner(App& app) {
                 if (!ImGui::GetIO().KeyShift) app.selFaces.clear();
                 for (int fid : fids) app.selFaces.insert(fid);
                 if (!fids.empty()) app.activeFace = fids[0];
-                rebuildBuffers(app);
+                refreshSelectionViz(app);
             }
             if (open) {
                 for (int fid : fids) {
@@ -4872,7 +5024,7 @@ static void drawOutliner(App& app) {
                             app.selFaces.insert(fid);
                             app.activeFace = fid;
                         }
-                        rebuildBuffers(app);
+                        refreshSelectionViz(app);
                     }
                     ImGui::PopID();
                 }
@@ -4993,14 +5145,18 @@ static void drawUi(App& app) {
                                "%d open edge(s), %d non-manifold",
                                app.openEdgeCount, app.multiEdgeCount);
             ImGui::SameLine();
-            ImGui::Checkbox("show##problems", &app.showProblems);
+            if (ImGui::Checkbox("show##problems", &app.showProblems)) {
+                updateProblems(app);
+            }
         }
         if (app.foldedPolyCount > 0) {
             ImGui::TextColored({1.0f, 0.25f, 0.2f, 1.0f},
                                "%d folded cell(s)", app.foldedPolyCount);
             if (app.openEdgeCount == 0 && app.multiEdgeCount == 0) {
                 ImGui::SameLine();
-                ImGui::Checkbox("show##problems", &app.showProblems);
+                if (ImGui::Checkbox("show##problems", &app.showProblems)) {
+                    updateProblems(app);
+                }
             }
             ImGui::SameLine();
             if (ImGui::SmallButton("select##foldedfaces")) {
@@ -5271,7 +5427,9 @@ static void drawUi(App& app) {
         ImGui::Checkbox("wireframe", &app.showWire);
         ImGui::SameLine();
         ImGui::Checkbox("feature edges", &app.showBrepEdges);
-        ImGui::Checkbox("show folded cells", &app.showProblems);
+        if (ImGui::Checkbox("show folded cells", &app.showProblems)) {
+            if (app.hasModel) updateProblems(app);
+        }
         ImGui::SetNextItemWidth(110.0f * gUiScale);
         ImGui::SliderFloat("vert size (active)", &app.vertSizeActive,
                            1.0f, 12.0f, "%.0f px");
@@ -5905,7 +6063,11 @@ int main(int argc, char** argv) {
                     }
                     app.grabOp = -1;
                     app.mode = Mode::Idle;
-                    markDirty(app);
+                    if (app.grabPreviewActive) {
+                        app.mesh = std::move(app.grabMeshBase);
+                        app.grabPreviewActive = false;
+                        rebuildBuffers(app);
+                    }
                     app.status = "grab cancelled";
                 } else if (app.mode == Mode::Bridge && app.bridgeFirstEdge) {
                     app.bridgeFirstEdge = 0;
@@ -5918,7 +6080,7 @@ int main(int argc, char** argv) {
                     app.selVertOrder.clear();
                     app.selMeshEdges.clear();
                     app.activeFace = 0;
-                    rebuildBuffers(app);
+                    refreshSelectionViz(app);
                 }
             }
             // Selection modes on 1-5: verts, mesh edges, mesh faces,
@@ -5982,7 +6144,7 @@ int main(int argc, char** argv) {
                     app.selFaces = std::move(inv);
                     app.activeFace =
                         app.selFaces.empty() ? 0 : *app.selFaces.begin();
-                    rebuildBuffers(app);
+                    refreshSelectionViz(app);
                 } else if (app.selectMode == SelectMode::Poly) {
                     std::set<size_t> inv;
                     for (size_t pp = 0; pp < app.mesh.polygons.size();
@@ -6328,11 +6490,13 @@ int main(int argc, char** argv) {
 
         // Loop-cut hover preview follows the cursor; pressing commits the
         // op into the recipe and dragging before release slides its t along
-        // the strip (regeneration replays it — fully non-destructive).
+        // the strip. Remesh once on release — mid-drag uses the yellow
+        // preview line only (full generate per mouse-move was unusable).
         if (app.mode == Mode::LoopCut && !io.WantCaptureMouse) {
             if (app.slideOp >= 0) {
                 if (!lmb) {
                     app.slideOp = -1;
+                    markDirty(app);
                     app.status = "loop cut committed (ctrl+z undoes)";
                 } else if (app.slideOp < int(app.recipe.ops.size())) {
                     float ex = app.slideB[0] - app.slideA[0];
@@ -6347,7 +6511,37 @@ int main(int argc, char** argv) {
                         weft::ManualOp& op = app.recipe.ops[app.slideOp];
                         if (std::abs(nt - op.t) > 1e-4) {
                             op.t = nt;
-                            markDirty(app);
+                            // Preview the slid cut without remeshing.
+                            weft::PolyMesh copy = app.mesh;
+                            const size_t firstNew = copy.vertexCount();
+                            std::vector<float> lines;
+                            if (weft::insertLoop(copy, app.model, op) > 0) {
+                                for (const auto& poly : copy.polygons) {
+                                    for (size_t i = 0; i < poly.size();
+                                         ++i) {
+                                        uint32_t v0 = poly[i];
+                                        uint32_t v1 =
+                                            poly[(i + 1) % poly.size()];
+                                        if (v0 < firstNew || v1 < firstNew ||
+                                            v0 > v1) {
+                                            continue;
+                                        }
+                                        for (uint32_t v : {v0, v1}) {
+                                            lines.push_back(
+                                                float(copy.vertices[v][0]));
+                                            lines.push_back(
+                                                float(copy.vertices[v][1]));
+                                            lines.push_back(
+                                                float(copy.vertices[v][2]));
+                                            lines.push_back(1.0f);
+                                            lines.push_back(0.85f);
+                                            lines.push_back(0.25f);
+                                        }
+                                    }
+                                }
+                            }
+                            if (!lines.empty()) app.preview.upload(lines);
+                            else app.preview.count = 0;
                         }
                         std::snprintf(app.hudText, sizeof app.hudText,
                                       "loop slide: %.2f", op.t);
@@ -6359,7 +6553,6 @@ int main(int argc, char** argv) {
                 if (lmbPressed && app.hoverValid) {
                     app.recipe.ops.push_back(app.hoverOp);
                     app.slideOp = int(app.recipe.ops.size()) - 1;
-                    markDirty(app);
                     app.status = "loop cut: drag slides, release commits";
                 }
             }
@@ -6368,6 +6561,10 @@ int main(int argc, char** argv) {
                 // Drag plane: camera-facing through the grab point; the
                 // hit re-projects exactly onto the vertex's CAD face.
                 weft::ManualOp& op = app.recipe.ops[app.grabOp];
+                if (!app.grabPreviewActive) {
+                    app.grabMeshBase = app.mesh;
+                    app.grabPreviewActive = true;
+                }
                 Vec3 eye = app.cam.eye();
                 Vec3 dir = mouseRay(app.cam, mx, my, fbw, fbh);
                 Vec3 f = norm(sub(app.cam.target, eye));
@@ -6387,7 +6584,15 @@ int main(int argc, char** argv) {
                             std::abs(a.v - op.v2) > 1e-12) {
                             op.u2 = a.u;
                             op.v2 = a.v;
-                            markDirty(app);
+                            // Local preview: restore pre-grab mesh, apply
+                            // just this nudge, upload buffers. Exact CAD
+                            // normals stay cached across the restore.
+                            const bool wasExact = app.exactNormals;
+                            app.exactNormals = false;
+                            app.mesh = app.grabMeshBase;
+                            weft::nudgeVertex(app.mesh, app.model, op);
+                            rebuildBuffers(app);
+                            app.exactNormals = wasExact;
                         }
                     } catch (const std::exception&) {
                         // Projection can fail while the cursor is far off
@@ -6397,17 +6602,25 @@ int main(int argc, char** argv) {
                 if (clicked) {
                     app.mode = Mode::Idle;
                     app.grabOp = -1;
+                    app.grabPreviewActive = false;
+                    app.grabMeshBase = {};
+                    markDirty(app);  // authoritative remesh with the op
                     app.status = "vertex nudged (ctrl+z undoes)";
                 } else if (rClicked) {
                     app.recipe.ops.erase(app.recipe.ops.begin() + app.grabOp);
                     app.grabOp = -1;
                     app.mode = Mode::Idle;
-                    markDirty(app);
+                    if (app.grabPreviewActive) {
+                        app.mesh = std::move(app.grabMeshBase);
+                        app.grabPreviewActive = false;
+                        rebuildBuffers(app);
+                    }
                     app.status = "grab cancelled";
                 }
             } else {
                 app.mode = Mode::Idle;
                 app.grabOp = -1;
+                app.grabPreviewActive = false;
             }
         } else if (app.mode == Mode::Bridge && !io.WantCaptureMouse) {
             updateBridgeHover(app, mvp, mx, my, fbw, fbh);
@@ -6537,7 +6750,7 @@ int main(int argc, char** argv) {
                         }
                     }
                 }
-                rebuildBuffers(app);
+                refreshSelectionViz(app);
             } else {
                 // Element / object mode: visible faces in the rect
                 // (objects expand to their whole solid).
@@ -6555,7 +6768,7 @@ int main(int argc, char** argv) {
                 }
                 if (!hits.empty()) app.activeFace = *hits.begin();
                 else if (!extend) app.activeFace = 0;
-                rebuildBuffers(app);
+                refreshSelectionViz(app);
             }
         } else if ((clicked || rClicked) && app.hasModel &&
                    app.pieKind < 0) {
@@ -6671,7 +6884,7 @@ int main(int argc, char** argv) {
                         app.selEdges.insert(hit);
                     }
                 }
-                rebuildBuffers(app);
+                refreshSelectionViz(app);
             } else {
                 // Face picking: pick pass + pixel read. Plain click
                 // replaces the selection, shift+click extends/toggles;
@@ -6740,15 +6953,20 @@ int main(int argc, char** argv) {
                     lastClickTime = now;
                     lastClickFace = hit;
                 }
-                rebuildBuffers(app);
+                refreshSelectionViz(app);
             }
         }
 
         // Hover pre-highlight: pick under the cursor when it moved (idle
-        // only; the overlay draws below need no buffer rebuild).
+        // only; the overlay draws below need no buffer rebuild). Cap at
+        // ~30 Hz and skip while navigating so the ID pass + readback does
+        // not fight the camera.
+        const double nowHover = glfwGetTime();
         if (app.hasModel && app.mode == Mode::Idle && !io.WantCaptureMouse &&
-            !lmb && !rmb &&
-            (std::abs(mx - hoverX) > 1 || std::abs(my - hoverY) > 1)) {
+            !lmb && !rmb && !navOrbit && !navPan && !navZoom &&
+            (std::abs(mx - hoverX) > 1 || std::abs(my - hoverY) > 1) &&
+            (nowHover - app.lastHoverPickTime) >= (1.0 / 30.0)) {
+            app.lastHoverPickTime = nowHover;
             if (app.selectMode == SelectMode::Face ||
                 app.selectMode == SelectMode::Object) {
                 glViewport(0, 0, fbw, fbh);
@@ -7059,19 +7277,37 @@ int main(int argc, char** argv) {
                 glDepthFunc(GL_LESS);
                 glUseProgram(prog);
             }
-            // Hover highlight: re-draw just that face's runs, tinted.
-            if (app.hoverFace > 0 && !app.selFaces.count(app.hoverFace)) {
+            // Selection / hover tint: re-draw just those faces' runs.
+            // Selection used to bake into the fill buffer and force a
+            // full rebuild (CAD-exact normals) on every click.
+            if (!app.selFaces.empty() ||
+                (app.hoverFace > 0 && !app.selFaces.count(app.hoverFace))) {
                 glDepthFunc(GL_LEQUAL);
                 glUseProgram(flatProg);
                 glUniformMatrix4fv(glGetUniformLocation(flatProg, "uMVP"), 1,
                                    GL_FALSE, mvp.m);
-                glUniform1f(glGetUniformLocation(flatProg, "uMix"), 0.30f);
-                float hl[3] = {1.0f, 0.95f, 0.75f};
-                glUniform3fv(glGetUniformLocation(flatProg, "uColor"), 1, hl);
                 glBindVertexArray(app.fill.vao);
-                for (const auto& seg : app.fillSegs) {
-                    if (seg[0] == app.hoverFace) {
-                        glDrawArrays(GL_TRIANGLES, seg[1], seg[2]);
+                if (!app.selFaces.empty()) {
+                    glUniform1f(glGetUniformLocation(flatProg, "uMix"), 0.55f);
+                    float sl[3] = {0.98f, 0.80f, 0.25f};
+                    glUniform3fv(glGetUniformLocation(flatProg, "uColor"), 1,
+                                 sl);
+                    for (const auto& seg : app.fillSegs) {
+                        if (app.selFaces.count(seg[0])) {
+                            glDrawArrays(GL_TRIANGLES, seg[1], seg[2]);
+                        }
+                    }
+                }
+                if (app.hoverFace > 0 &&
+                    !app.selFaces.count(app.hoverFace)) {
+                    glUniform1f(glGetUniformLocation(flatProg, "uMix"), 0.30f);
+                    float hl[3] = {1.0f, 0.95f, 0.75f};
+                    glUniform3fv(glGetUniformLocation(flatProg, "uColor"), 1,
+                                 hl);
+                    for (const auto& seg : app.fillSegs) {
+                        if (seg[0] == app.hoverFace) {
+                            glDrawArrays(GL_TRIANGLES, seg[1], seg[2]);
+                        }
                     }
                 }
                 glUniform1f(glGetUniformLocation(flatProg, "uMix"), 0.0f);
