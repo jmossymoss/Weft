@@ -1,38 +1,68 @@
 #include "weft/recipe.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
 
 namespace weft {
+namespace {
+
+// Recipes and --face specs are untrusted text. Subdivision counts size the
+// generated mesh, so an out-of-range count is rejected at the parse boundary
+// rather than turned into an allocation the mesher cannot satisfy. The bound
+// is far above the app's own 256-per-axis controls.
+constexpr int kMaxCount = 4096;
+
+int parseCount(const std::string& key, const std::string& value, int lo) {
+    const int n = std::stoi(value);
+    if (n < lo || n > kMaxCount) {
+        throw std::runtime_error(key + " out of range [" +
+                                std::to_string(lo) + ", " +
+                                std::to_string(kMaxCount) + "]: " + value);
+    }
+    return n;
+}
+
+// Tolerances feed convergence loops; a NaN or infinity there never
+// terminates them.
+double parseFinite(const std::string& key, const std::string& value) {
+    const double v = std::stod(value);
+    if (!std::isfinite(v)) {
+        throw std::runtime_error(key + " must be finite: " + value);
+    }
+    return v;
+}
+
+}  // namespace
 
 void applySetting(FaceMeshSettings& s, const std::string& key,
                   const std::string& value) {
-    if (key == "radial") s.radial = std::stoi(value);
-    else if (key == "axial") s.axial = std::stoi(value);
-    else if (key == "gridu") s.gridU = std::stoi(value);
-    else if (key == "gridv") s.gridV = std::stoi(value);
-    else if (key == "chord") s.chordTolerance = std::stod(value);
-    else if (key == "angle") s.angleToleranceDeg = std::stod(value);
-    else if (key == "loops") s.filletLoops = std::stoi(value);
-    else if (key == "hold") s.filletHold = std::stod(value);
-    else if (key == "rings") s.junctionRings = std::stoi(value);
+    if (key == "radial") s.radial = parseCount(key, value, 0);
+    else if (key == "axial") s.axial = parseCount(key, value, 0);
+    else if (key == "gridu") s.gridU = parseCount(key, value, 0);
+    else if (key == "gridv") s.gridV = parseCount(key, value, 0);
+    else if (key == "chord") s.chordTolerance = parseFinite(key, value);
+    else if (key == "angle") s.angleToleranceDeg = parseFinite(key, value);
+    else if (key == "loops") s.filletLoops = parseCount(key, value, 0);
+    else if (key == "hold") s.filletHold = parseFinite(key, value);
+    else if (key == "rings") s.junctionRings = parseCount(key, value, 0);
     else if (key == "quads") s.quadDominant = std::stoi(value) != 0;
     else if (key == "puretris") s.pureTriFloor = std::stoi(value) != 0;
     else if (key == "minimal") s.minimal = std::stoi(value) != 0;
     else if (key == "skip") s.exclude = std::stoi(value) != 0;
     else if (key == "mesher") s.forceMesher = std::stoi(value);
     else if (key == "linkrims") s.linkRims = std::stoi(value) != 0;
-    else if (key == "minsize") s.minSize = std::stod(value);
-    else if (key == "weld") s.weldTolerance = std::stod(value);
+    else if (key == "minsize") s.minSize = parseFinite(key, value);
+    else if (key == "weld") s.weldTolerance = parseFinite(key, value);
     else if (key == "reldev") s.relativeDeviation = std::stoi(value) != 0;
     else if (key == "adapt") s.adaptive = std::stoi(value) != 0;
     else if (key == "mincurve") {
         s.minCurvedSegments = std::clamp(std::stoi(value), 1, 256);
     }
-    else if (key == "boundary") s.boundary = std::stoi(value);
+    else if (key == "boundary") s.boundary = parseCount(key, value, 0);
     else if (key == "sqcollar") s.squareCollar = std::stoi(value) != 0;
     else if (key == "crot") s.coonsRotate = std::stoi(value);
     else if (key == "cap") {
@@ -166,10 +196,16 @@ Recipe loadRecipe(const std::string& path) {
                 gs.perEdge[eid] = count;
             } else if (kind == "scale") {
                 ss >> gs.densityScale;
-                if (!ss || gs.densityScale <= 0) gs.densityScale = 1.0;
+                if (!ss || !std::isfinite(gs.densityScale) ||
+                    gs.densityScale <= 0 || gs.densityScale > kMaxCount) {
+                    gs.densityScale = 1.0;
+                }
             } else if (kind == "weld") {
                 ss >> gs.weldTolerance;
-                if (!ss || gs.weldTolerance < 0) gs.weldTolerance = 1e-6;
+                if (!ss || !std::isfinite(gs.weldTolerance) ||
+                    gs.weldTolerance < 0) {
+                    gs.weldTolerance = 1e-6;
+                }
             } else if (kind == "op") {
                 std::string opKind;
                 ss >> opKind;
@@ -209,7 +245,8 @@ Recipe loadRecipe(const std::string& path) {
                     op.kind = ManualOp::Kind::WeldVerts;
                     size_t count = 0;
                     ss >> op.weldMode >> count;
-                    if (!ss || count > 1000000) {
+                    if (!ss || count > 1000000 || op.weldMode < 0 ||
+                        op.weldMode > 2) {
                         throw std::runtime_error("malformed op weld");
                     }
                     for (size_t k = 0; k < count; ++k) {

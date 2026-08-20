@@ -70,7 +70,7 @@ How to obtain ABC STEP (not committed; multi-GB per chunk):
        # first chunk:
        sed '1q;d' step_v00.txt | xargs -n 2 sh -c 'curl -fL -o "\$1" "\$0"'
        # or parallel (see upstream docs):
-       #   cat step_v00.txt | xargs -n 2 -P 4 sh -c 'curl --insecure -o step/\$1 \$0'
+       #   cat step_v00.txt | xargs -n 2 -P 4 sh -c 'curl -fL -o step/\$1 \$0'
   4. Unpack into a local tree, e.g.:
        mkdir -p "\$WEFT_ABC_ROOT"
        7z x abc_0000_step_v00.7z -o"\$WEFT_ABC_ROOT"

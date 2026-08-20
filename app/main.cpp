@@ -1711,6 +1711,19 @@ static void reloadModel(App& app) {
 // Whether the last dialog attempt found NO dialog tool at all — the
 // panel then tells the user to type a path instead of doing nothing.
 static bool gNoDialogTool = false;
+// Wrap a value for /bin/sh: single quotes with embedded quotes closed,
+// escaped, and reopened. The dialog commands run through popen, so any
+// interpolated text (export names derive from the loaded model's file
+// name) must not be able to end its quoting and start a new command.
+static std::string shellQuote(const std::string& s) {
+    std::string out = "'";
+    for (char c : s) {
+        if (c == '\'') out += "'\\''";
+        else out += c;
+    }
+    out += '\'';
+    return out;
+}
 static std::string runDialog(const char* zenityCmd, const char* kdialogCmd) {
     gNoDialogTool = false;
     for (const char* cmd : {zenityCmd, kdialogCmd}) {
@@ -1773,13 +1786,12 @@ static std::string saveFileDialog(const char* defaultName) {
     if (GetSaveFileNameA(&ofn)) return file;
     return "";
 #else
+    const std::string name = shellQuote(defaultName ? defaultName : "");
     return runDialog(
         ("zenity --file-selection --save --title='Export OBJ' "
-         "--filename='" + std::string(defaultName) + "' 2>/dev/null")
+         "--filename=" + name + " 2>/dev/null")
             .c_str(),
-        ("kdialog --getsavefilename '" + std::string(defaultName) +
-         "' 2>/dev/null")
-            .c_str());
+        ("kdialog --getsavefilename " + name + " 2>/dev/null").c_str());
 #endif
 }
 
@@ -1894,17 +1906,12 @@ static FileBrowser gBrowser;
 static const bool gNoDialogTool = false;  // comdlg32 always exists
 #endif
 
-static std::string tempDir() {
-    for (const char* var : {"TMPDIR", "TMP", "TEMP"}) {
-        if (const char* d = std::getenv(var); d && *d) return d;
-    }
-#ifndef _WIN32
-    // Linux desktops rarely set TMPDIR; "." is often read-only (app
-    // launched from a file manager). /tmp is the convention.
-    return "/tmp";
-#else
+// Scratch directory for files the app materializes for itself (fixtures).
+// The per-user data dir, never a shared world-writable one: a fixed name
+// under /tmp lets any local user pre-plant a symlink there and redirect
+// the write.
+static std::string scratchDir() {
     return gDataDir.empty() ? "." : gDataDir;
-#endif
 }
 
 static weft::PolyMesh finalizedMeshForExport(App& app) {
@@ -1995,7 +2002,7 @@ static void exportObjTo(App& app, const std::string& out,
 }
 
 static void loadFixture(App& app, const std::string& name) {
-    std::string path = tempDir() + "/weft_fixture_" + name + ".step";
+    std::string path = scratchDir() + "/weft_fixture_" + name + ".step";
     try {
         weft::writeStep(weft::makeFixture(name), path);
         loadModel(app, path);
