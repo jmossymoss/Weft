@@ -4,6 +4,7 @@
 
 #include "mesher_sampling.hpp"
 #include "mesher_trace.hpp"
+#include "mesh_scratch.hpp"
 
 // Windows headers (pulled in via OCCT) may define min/max macros that break
 // std::min<T>(...) / std::max<T>(...) — MSVC then reports "type 'char'
@@ -79,6 +80,7 @@
 #include <set>
 #include <thread>
 #include <tuple>
+#include <unordered_map>
 #include <vector>
 
 namespace weft {
@@ -20161,6 +20163,22 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     // keeping the cached finer triangulation.
     TopLoc_Location loc;
     Handle(Poly_Triangulation) tri;
+
+    // Read-only bbox / deflection math OUTSIDE the mutex — uses the live
+    // face as a const shape query (no TEdge triangulation write).
+    double defl = std::max(1e-9, s.chordTolerance);
+    if (s.relativeDeviation) {
+        Bnd_Box bb;
+        BRepBndLib::Add(face, bb);
+        if (!bb.IsVoid()) {
+            double x0, y0, z0, x1, y1, z1;
+            bb.Get(x0, y0, z0, x1, y1, z1);
+            const double diag =
+                gp_Pnt(x0, y0, z0).Distance(gp_Pnt(x1, y1, z1));
+            defl = std::max(1e-9, s.chordTolerance * 0.05 * diag);
+        }
+    }
+    const double angleRad = s.angleToleranceDeg * M_PI / 180.0;
     {
         static std::mutex occtMeshMutex;
         std::lock_guard<std::mutex> lock(occtMeshMutex);
@@ -20173,29 +20191,11 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
             TopoDS::Face(copier.Shape());
         BRepTools::Clean(triangulationFace);
         IMeshTools_Parameters mp;
-        // Relative mode scales the tolerance by THIS FACE's extent
-        // ourselves (sagitta as a fraction of feature size — the same
-        // meaning the border solver uses). OCCT's own Relative flag
-        // multiplies per component edge, which saturates at the
-        // coarsest mesh for any typical value — the deviation slider
-        // read as dead.
-        double defl = std::max(1e-9, s.chordTolerance);
-        if (s.relativeDeviation) {
-            Bnd_Box bb;
-            BRepBndLib::Add(face, bb);
-            if (!bb.IsVoid()) {
-                double x0, y0, z0, x1, y1, z1;
-                bb.Get(x0, y0, z0, x1, y1, z1);
-                const double diag = gp_Pnt(x0, y0, z0).Distance(
-                    gp_Pnt(x1, y1, z1));
-                defl = std::max(1e-9, s.chordTolerance * 0.05 * diag);
-            }
-        }
         mp.Deflection = defl;
-        mp.Angle = s.angleToleranceDeg * M_PI / 180.0;
+        mp.Angle = angleRad;
         mp.Relative = Standard_False;
         if (s.minSize > 0) mp.MinSize = s.minSize;
-        mp.InParallel = Standard_True;
+        mp.InParallel = Standard_False;  // we already parallelize by face
         BRepMesh_IncrementalMesh mesher(triangulationFace, mp);
         tri = BRep_Tool::Triangulation(triangulationFace, loc);
     }
@@ -20203,32 +20203,43 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
 
     const bool flip = face.Orientation() == TopAbs_REVERSED;
     const bool hasUV = tri->HasUVNodes();
-    std::vector<uint32_t> verts(tri->NbNodes());
-    std::vector<gp_Pnt> pts(tri->NbNodes());
-    for (int i = 1; i <= tri->NbNodes(); ++i) {
+    auto& scratch = mesher_detail::threadMeshScratch();
+    scratch.resetWorking();
+    const int nNodes = tri->NbNodes();
+    const int nTris = tri->NbTriangles();
+    scratch.ensureVerts(size_t(nNodes));
+    scratch.ensureTris(size_t(nTris));
+    scratch.verts.resize(size_t(nNodes));
+    scratch.pts.resize(size_t(nNodes));
+    for (int i = 1; i <= nNodes; ++i) {
         Anchor a;
         if (hasUV) {
             gp_Pnt2d uv = tri->UVNode(i);
             a = {faceId, uv.X(), uv.Y()};
         }
-        pts[i - 1] = tri->Node(i).Transformed(loc.Transformation());
-        verts[i - 1] = out.addVertex(pts[i - 1], a);
+        scratch.pts[size_t(i - 1)] =
+            tri->Node(i).Transformed(loc.Transformation());
+        scratch.verts[size_t(i - 1)] =
+            out.addVertex(scratch.pts[size_t(i - 1)], a);
     }
 
-    std::vector<std::array<int, 3>> tris(tri->NbTriangles());
-    for (int i = 1; i <= tri->NbTriangles(); ++i) {
+    scratch.tris.resize(size_t(nTris));
+    for (int i = 1; i <= nTris; ++i) {
         int a, b, c;
         tri->Triangle(i).Get(a, b, c);
-        tris[i - 1] = {a - 1, b - 1, c - 1};
+        scratch.tris[size_t(i - 1)] = {a - 1, b - 1, c - 1};
     }
 
     if (!s.quadDominant) {
-        for (const auto& t : tris) {
-            out.addPolygon({verts[t[0]], verts[t[1]], verts[t[2]]}, faceId, flip);
+        for (const auto& t : scratch.tris) {
+            out.addPolygon({scratch.verts[size_t(t[0])],
+                            scratch.verts[size_t(t[1])],
+                            scratch.verts[size_t(t[2])]},
+                           faceId, flip);
         }
         return;
     }
-    std::vector<std::vector<int>> paired;  // local rings, tris and quads
+    std::vector<std::vector<int>> paired;  // local rings, scratch.tris and quads
 
     // Candidate merges: two triangles sharing an edge form the quad
     // (opp1, a, opp2, b) with the shared diagonal (a,b) removed.
@@ -20237,10 +20248,10 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         int t1, t2;
         std::array<int, 4> ring;
     };
-    std::map<std::pair<int, int>, std::pair<int, int>> edgeUse;  // edge -> tris
-    for (size_t t = 0; t < tris.size(); ++t) {
+    std::map<std::pair<int, int>, std::pair<int, int>> edgeUse;  // edge -> scratch.tris
+    for (size_t t = 0; t < scratch.tris.size(); ++t) {
         for (int i = 0; i < 3; ++i) {
-            int a = tris[t][i], b = tris[t][(i + 1) % 3];
+            int a = scratch.tris[t][i], b = scratch.tris[t][(i + 1) % 3];
             auto key = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
             auto it = edgeUse.find(key);
             if (it == edgeUse.end()) edgeUse[key] = {static_cast<int>(t), -1};
@@ -20249,7 +20260,7 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     }
 
     auto thirdVertex = [&](int t, int a, int b) {
-        for (int v : tris[t]) {
+        for (int v : scratch.tris[t]) {
             if (v != a && v != b) return v;
         }
         return -1;
@@ -20266,15 +20277,15 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
         // when t1 runs b->a.
         std::array<int, 4> ring{c1, a, c2, b};
         for (int i = 0; i < 3; ++i) {
-            if (tris[owners.first][i] == b &&
-                tris[owners.first][(i + 1) % 3] == a) {
+            if (scratch.tris[owners.first][i] == b &&
+                scratch.tris[owners.first][(i + 1) % 3] == a) {
                 ring = {c1, b, c2, a};
                 break;
             }
         }
         double cost =
-            quadAngleCost({pts[ring[0]], pts[ring[1]], pts[ring[2]],
-                           pts[ring[3]]});
+            quadAngleCost({scratch.pts[ring[0]], scratch.pts[ring[1]], scratch.pts[ring[2]],
+                           scratch.pts[ring[3]]});
         if (cost > 1e8) continue;
 
         // Guidance: reward quads whose edges follow the parametric
@@ -20287,7 +20298,7 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
             surf.D1(0.5 * (uv0.X() + uv2.X()), 0.5 * (uv0.Y() + uv2.Y()), p,
                     du, dv);
             if (du.Magnitude() > 1e-9 && dv.Magnitude() > 1e-9) {
-                gp_Vec e(pts[ring[0]], pts[ring[1]]);
+                gp_Vec e(scratch.pts[ring[0]], scratch.pts[ring[1]]);
                 if (e.Magnitude() > 1e-12) {
                     double alignU = std::abs(e.Normalized().Dot(du.Normalized()));
                     double alignV = std::abs(e.Normalized().Dot(dv.Normalized()));
@@ -20303,15 +20314,15 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
                   return x.cost < y.cost;
               });
 
-    std::vector<bool> used(tris.size(), false);
+    std::vector<bool> used(scratch.tris.size(), false);
     for (const Candidate& c : candidates) {
         if (used[c.t1] || used[c.t2]) continue;
         used[c.t1] = used[c.t2] = true;
         paired.push_back({c.ring[0], c.ring[1], c.ring[2], c.ring[3]});
     }
-    for (size_t t = 0; t < tris.size(); ++t) {
+    for (size_t t = 0; t < scratch.tris.size(); ++t) {
         if (used[t]) continue;
-        paired.push_back({tris[t][0], tris[t][1], tris[t][2]});
+        paired.push_back({scratch.tris[t][0], scratch.tris[t][1], scratch.tris[t][2]});
     }
 
     // Emit the paired mesh AS IS: quads where two triangles merged,
@@ -20322,7 +20333,7 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
     for (const auto& ring : paired) {
         std::vector<uint32_t> poly;
         poly.reserve(ring.size());
-        for (int v : ring) poly.push_back(verts[v]);
+        for (int v : ring) poly.push_back(scratch.verts[v]);
         out.addPolygon(std::move(poly), faceId, flip);
     }
 }
@@ -20333,7 +20344,7 @@ void meshFallback(const TopoDS_Face& face, const BRepAdaptor_Surface& surf,
 // neighbour's solved divisions — T-junctions along every shared edge. Fix
 // after meshing: for each edge where a fallback face meets a constraining
 // analytic face, snap the fallback border chain onto the analytic vertex
-// chain and insert any analytic verts the chain skips; the weld then fuses
+// chain and insert any analytic scratch.verts the chain skips; the weld then fuses
 // the seam exactly.
 
 struct EdgeParamPoint {
@@ -20472,7 +20483,7 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
             // Freeform-to-freeform seams: the DENSER side is the
             // authority (ties: lower id) and only the sparser side moves,
             // exactly like the analytic case — snapping never collapses
-            // because the target chain has at least as many verts.
+            // because the target chain has at least as many scratch.verts.
             const bool freeformSeam = !analyticNb && !pinnedResample &&
                                       nfid >= 1 && isFreeform(nfid);
             if (!analyticNb && !pinnedResample && !freeformSeam) continue;
@@ -20543,20 +20554,20 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                                   tol, paramOut);
             };
 
-            // The authoritative chain: the analytic side's verts on this
+            // The authoritative chain: the analytic side's scratch.verts on this
             // edge, or — for a pinned resample — fresh uniform samples on
-            // the curve itself. Coons verts evaluate through the pcurve,
+            // the curve itself. Coons scratch.verts evaluate through the pcurve,
             // which only agrees with the 3D curve to the edge tolerance,
             // so include it.
             const double tolTarget =
                 std::max(1e-6 * (1.0 + edgeLen),
                          10.0 * BRep_Tool::Tolerance(edge));
-            // My border verts on this edge (needed up front: seams pick
+            // My border scratch.verts on this edge (needed up front: seams pick
             // the denser side as authority before any vertex moves).
             // Fallback/ring borders lie ON their curves, so capture them
-            // tightly — a loose radius kidnaps verts that belong to
+            // tightly — a loose radius kidnaps scratch.verts that belong to
             // ADJACENT edges when a face is thinner than the slack (a
-            // 0.19mm strip's interior verts are within 0.12 of every
+            // 0.19mm strip's interior scratch.verts are within 0.12 of every
             // edge around it) and snapping folds them onto the corners.
             // Only decimated borders (quad-dominant simplification,
             // unconstrained grids) genuinely sit off-curve and keep the
@@ -20599,7 +20610,7 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
                 // Triangulation NODES on an edge lie exactly on its curve
                 // (only chord midpoints sag), so a freeform authority uses
                 // the same tight projection as an analytic one. A loose
-                // tolerance here captured the neighbour's verts on OTHER
+                // tolerance here captured the neighbour's scratch.verts on OTHER
                 // nearly-collinear edges as targets, and the insertion
                 // step then dragged this border onto them (folds).
                 for (size_t v = range[nfid][0]; v < range[nfid][1]; ++v) {
@@ -20626,10 +20637,10 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
             // Decoupled seams: conform must never work from an
             // INCOMPLETE target set. Stitch-mode resampled rims sit a
             // hair off the exact curve, so the tight target projection
-            // captures only their corner verts and conform pulls a
+            // captures only their corner scratch.verts and conform pulls a
             // solved ring down onto 2 points (mohne's hole caved to a
             // triangle). Completeness test: recount the neighbour's
-            // verts with a loose (4x) band — if the tight set missed a
+            // scratch.verts with a loose (4x) band — if the tight set missed a
             // real fraction of them, the neighbour's border is off-
             // curve by stitch design, and the seam belongs to the
             // stitcher. (A complete-but-small set is legitimate: a
@@ -20652,10 +20663,10 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
             // (both faces sampled this edge at the same solved count,
             // so their borders are bit-identical). The loose capture
             // can still catch EXTRA targets on adjacent edges, and
-            // pairing against those drags matched verts off the seam —
+            // pairing against those drags matched scratch.verts off the seam —
             // tearing a junction that was already exact. Nothing to
             // conform here. Known limitation: a raw-OCCT part whose
-            // only border verts are the edge ENDPOINTS also reads as
+            // only border scratch.verts are the edge ENDPOINTS also reads as
             // aligned and skips the insertion splice — reachable only
             // when both floor retries failed (no corpus instance); the
             // seam absorber still gets a shot at such gaps.
@@ -20890,7 +20901,7 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
 // Plasticity absorbs a denser neighbour — and the seam closes without
 // moving or collapsing anything. Requiring the exact complement path
 // (not curve proximity) makes sliver cross-talk impossible. Iterating
-// lets chains of absorbed verts close multi-vert gaps one layer at a
+// lets chains of absorbed scratch.verts close multi-vert gaps one layer at a
 // time. This pass is the contract that will let neighbouring faces
 // disagree on border counts (strips vs fillet rings).
 // Seam-twin fusion (decoupled seams, pre-stitch): two faces sampling a
@@ -20899,7 +20910,7 @@ void conformFallbackBorders(PolyMesh& mesh, const Model& model,
 // samples of one contract point land a few percent of a pitch apart:
 // past the weld, with nothing "between" for the stitcher to splice
 // (nasty_cheese walls: both sides at t = 0, 0.113, 0.423, 0.733, 1 with
-// interior verts 0.05 apart — 4 permanently open segments per face
+// interior scratch.verts 0.05 apart — 4 permanently open segments per face
 // pair). Those twins ARE the same contract point; fusing them is the
 // weld's semantic with a param-aware, seam-scoped tolerance the global
 // weld could never afford. Pairs must be cross-side, mutually nearest
@@ -21071,7 +21082,7 @@ void fuseSeamTwins(PolyMesh& mesh, const Model& model, double weldTol,
             }
             return hit;
         };
-        // Collect each side's on-curve boundary verts (band + cap only —
+        // Collect each side's on-curve boundary scratch.verts (band + cap only —
         // fusion's own mutual-nearest + twin-distance rules are the
         // contamination gate here).
         struct SideVert {
@@ -21117,7 +21128,7 @@ void fuseSeamTwins(PolyMesh& mesh, const Model& model, double weldTol,
                         std::max(weldTol * 4.0, 0.5 * hit->second);
                     if (nearEnd) slack = std::max(slack, 0.05 * pv);
                     // Comb notches sit parallel to the shared seam; a
-                    // slightly larger home slack keeps true seam verts.
+                    // slightly larger home slack keeps true seam scratch.verts.
                     if (freeformCombSeam) {
                         slack = std::max(slack, 0.15);
                     }
@@ -21262,7 +21273,7 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
         }
     }
     // Per-face BOUNDARY segments (undirected within-face count of 1):
-    // only these may stitch — interior verts that merely pass near a
+    // only these may stitch — interior scratch.verts that merely pass near a
     // border curve must never be swallowed into a seam chain. Alongside,
     // each boundary vertex's longest incident boundary segment: the
     // vertex's own sampling pitch, which scales its on-curve acceptance
@@ -21398,7 +21409,7 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
         const double clen = curveLen[eid];
         if (clen < 1e-9) continue;
         // Closed ring: params wrap, and there are no ends for corner
-        // verts to live at.
+        // scratch.verts to live at.
         const bool isClosedPl =
             cp.front().Distance(cp.back()) <=
             std::max(weldTol, 1e-7 * clen);
@@ -21414,7 +21425,7 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
         // contamination defense. (The old 0.4%-of-curve-length tolerance
         // failed both ways: too tight for coarse rims on short edges, and
         // on a long edge it grew past the cell size and swallowed
-        // neighbouring seams' verts near corners.)
+        // neighbouring seams' scratch.verts near corners.)
         auto paramOf = [&](const std::array<double, 3>& v, double tol,
                            double& tOut) {
             const double tol2 = tol * tol;
@@ -21439,7 +21450,7 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
             }
             return hit;
         };
-        // Each side's on-curve verts, then the union chain.
+        // Each side's on-curve scratch.verts, then the union chain.
         const char* dbgEidEnv = std::getenv("WEFT_STITCH_EID");
         const bool traceEid = dbgEidEnv && std::atoi(dbgEidEnv) == eid;
         std::map<uint32_t, double> tOf;  // vert -> curve param (union)
@@ -21464,7 +21475,7 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
                     // 35%: coons rails' UV-interpolated resampling on
                     // curved bsplines drifts past the sagitta model
                     // (teleporter face 301: 27% of pitch off its rail
-                    // curve). Foreign verts still sit a FULL pitch off;
+                    // curve). Foreign scratch.verts still sit a FULL pitch off;
                     // home attribution + the closed-segment guards are
                     // the real contamination defense.
                     const double tolV = std::max(
@@ -21483,7 +21494,7 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
                     // Home test: this curve must be (nearly) the
                     // vertex's nearest among its face's own curves.
                     // The pitch-scaled slack floor exists ONLY for true
-                    // corner verts — which sit a hair off BOTH adjacent
+                    // corner scratch.verts — which sit a hair off BOTH adjacent
                     // curves — and corners live at the curve's ENDS, so
                     // the floor is gated on end-proximity: an interior-
                     // param vertex gets no floor (a chamfer ring's far
@@ -21526,17 +21537,17 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
         std::vector<std::pair<double, uint32_t>> chain;
         for (const auto& [v, t] : tOf) chain.push_back({t, v});
         std::sort(chain.begin(), chain.end());
-        // Insert missing union verts into each side's border segments.
+        // Insert missing union scratch.verts into each side's border segments.
         for (int s2 = 0; s2 < 2; ++s2) {
             // Contract-exact minimal-ngon (and verified contract floors)
             // already emit the shared border. Pitch-scaled fullEdge
-            // insertions pull foreign fillet/pad corner verts into the
+            // insertions pull foreign fillet/pad corner scratch.verts into the
             // single n-gon chord and open planar_ngon_border_contract.
             // Neighbors may still stitch toward this face; we only refuse
             // to rewrite the authority polygon.
             //
             // Same class on the coons side of a MinimalNGon seam
-            // (plane_fillet_bspline_junction): pad/plane n-gon verts
+            // (plane_fillet_bspline_junction): pad/plane n-gon scratch.verts
             // inserted into a successful CoonsGrid fillet/bspline border
             // fold the strip and open the junction. Skip rewriting that
             // coons polygon; coons↔revolution and contract-floor stitches
@@ -21585,7 +21596,7 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
                     const int other = fids[1 - s2];
                     auto oit = plans->find(other);
                     // Coons strips fold when MinimalNGon / contract-floor
-                    // verts are spliced into an exact border (foam CAD
+                    // scratch.verts are spliced into an exact border (foam CAD
                     // 829/837). Keep coons↔revolution stitches enabled.
                     // FreeformComb may still accept floor samples when
                     // the partner demoted after fold self-heal.
@@ -21615,7 +21626,7 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
                         continue;
                     }
                     // Only true BOUNDARY segments stitch — a diagonal or
-                    // interior chord between two on-curve verts is not a
+                    // interior chord between two on-curve scratch.verts is not a
                     // seam.
                     const auto seg =
                         std::make_pair(std::min(a, b), std::max(a, b));
@@ -21725,12 +21736,12 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
                             "tb=%.5f",
                             eid, fids[s2], a, b, ta, tb);
                     }
-                    // Which verts lie between a and b? On a CLOSED curve
+                    // Which scratch.verts lie between a and b? On a CLOSED curve
                     // params wrap, so "between" is ambiguous — a segment
                     // hugging the wrap point read as spanning the whole
                     // circle and swallowed every vertex of the ring
                     // (teleporter bores: one 4%-arc chord gained all 12
-                    // of the far side's verts). The chord MIDPOINT's
+                    // of the far side's scratch.verts). The chord MIDPOINT's
                     // param (already located) picks the true arc: map
                     // every param to r = (t - ta) mod 1 and walk toward
                     // b on the side that contains the midpoint.
@@ -21879,14 +21890,14 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
                     // 5-gon whose every triangulation still folds
                     // (foam CAD 829/837 ← cylinder 824). If the cell
                     // becomes folded, revert and collapse the opposite
-                    // face onto chord a-b: delete the insert verts, then
+                    // face onto chord a-b: delete the insert scratch.verts, then
                     // bridge a-b if the denser side carried them across
                     // multiple polygons (824: 6773-6669 / 6669-6774).
                     //
                     // Exception: freeformComb → MinimalNGon / contract
-                    // floor inserts use the comb's OWN border verts.
+                    // floor inserts use the comb's OWN border scratch.verts.
                     // Collapsing the opposite would delete those lattice
-                    // verts from the comb and manufacture folds/opens.
+                    // scratch.verts from the comb and manufacture folds/opens.
                     const bool freeformIntoAuthority =
                         plans &&
                         [&]() {
@@ -21989,7 +22000,7 @@ void stitchSeams(PolyMesh& mesh, const Model& model, double weldTol,
                                 return false;
                             };
                             if (oit != facePolys.end()) {
-                                // 1) Delete insert verts from opposite.
+                                // 1) Delete insert scratch.verts from opposite.
                                 for (size_t op : oit->second) {
                                     if (op >= mesh.polygons.size()) {
                                         continue;
@@ -22398,7 +22409,7 @@ void absorbOrphanSeamStations(PolyMesh& mesh, const Model& model,
             return best <= 0.15 * 0.15;
         };
         const int fids[2] = {fA, fB};
-        // All partner-face verts (not only boundary): a near-miss twin can
+        // All partner-face scratch.verts (not only boundary): a near-miss twin can
         // sit on an interior lattice sample of the coons neighbour
         // (mp9_Edited #1892 residual 0.05 opens).
         std::array<std::vector<uint32_t>, 2> partnerVerts;
@@ -22973,13 +22984,49 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             }
         }
     }
+    timingCheckpoint("drum scale floors");
     // Digon chord floor: micro-edge vertex unification can leave a face
     // with two (or more) non-micro edges that share the same endpoint
     // pair. At count=1 both chords collapse to one mesh segment, so the
     // face and both neighbors overweld into a use-4 non-manifold edge
     // (bspline_contract_floor_overweld). Midpoints (count >= 2) keep the
     // two paths distinct — the CAD/adaptive outcome on the same stack.
+    //
+    // Topology-only: independent of per-face radial edits. Compute once
+    // per model (GenerationCache::digonsDirty); warm local edits re-apply
+    // the cached edge floors in O(digons) without rebuilding the UF.
     {
+        auto applyDigonFloor = [&](int eid, int target) {
+            if (eid < 1 || eid > model.edgeCount()) return;
+            const int root = density.groups.find(eid);
+            auto git = density.groupCount.find(root);
+            if (git != density.groupCount.end() && git->second < target) {
+                git->second = target;
+                density.ownerByRoot[root] = "digon-floor";
+            }
+            if (solvedEdge[static_cast<size_t>(eid)] < target) {
+                solvedEdge[static_cast<size_t>(eid)] = target;
+            }
+            // Propagate to density-group siblings without scanning all
+            // edges: groupCount raise makes countFor agree; siblings that
+            // already share the root pick it up on the next solvedEdge
+            // sync below for edges we explicitly recorded.
+        };
+        if (cache && !cache->digonsDirty && !cache->digonEdgeFloors.empty()) {
+            for (const auto& [eid, target] : cache->digonEdgeFloors) {
+                if (eid < 1 || eid > model.edgeCount()) continue;
+                const int root = density.groups.find(eid);
+                auto git = density.groupCount.find(root);
+                if (git != density.groupCount.end() && git->second < target) {
+                    git->second = target;
+                    density.ownerByRoot[root] = "digon-floor";
+                }
+                if (solvedEdge[static_cast<size_t>(eid)] < target) {
+                    solvedEdge[static_cast<size_t>(eid)] = target;
+                }
+            }
+            timingCheckpoint("digon floors (cached)");
+        } else {
         weft::ShapeMap vmap;
         TopExp::MapShapes(model.shape, TopAbs_VERTEX, vmap);
         std::vector<int> vroot(static_cast<size_t>(vmap.Extent()) + 1);
@@ -23018,19 +23065,18 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             const int b = vfind(ib);
             if (a != b) vroot[static_cast<size_t>(a)] = b;
         }
+        std::vector<std::pair<int, int>> raised;
+        raised.reserve(256);
         auto raiseDigon = [&](int eid, int target) {
+            applyDigonFloor(eid, target);
             const int root = density.groups.find(eid);
-            auto git = density.groupCount.find(root);
-            if (git != density.groupCount.end() && git->second < target) {
-                git->second = target;
-                density.ownerByRoot[root] = "digon-floor";
-            }
             for (int e = 1; e <= model.edgeCount(); ++e) {
-                if (density.groups.find(e) == root &&
-                    solvedEdge[static_cast<size_t>(e)] < target) {
+                if (density.groups.find(e) != root) continue;
+                if (solvedEdge[static_cast<size_t>(e)] < target) {
                     solvedEdge[static_cast<size_t>(e)] = target;
                     density.ownerByRoot[root] = "digon-floor";
                 }
+                raised.push_back({e, target});
             }
         };
         for (int fid = 1; fid <= model.faceCount(); ++fid) {
@@ -23045,8 +23091,6 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 const int ia = vmap.FindIndex(v1);
                 const int ib = vmap.FindIndex(v2);
                 if (ia < 1 || ib < 1) return;
-                // Skip the collapsed micro sides — only the surviving
-                // parallel chords need midpoints.
                 if (BRep_Tool::Pnt(v1).Distance(BRep_Tool::Pnt(v2)) <
                     microTol) {
                     try {
@@ -23087,7 +23131,15 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 }
             }
         }
+        if (cache) {
+            std::sort(raised.begin(), raised.end());
+            raised.erase(std::unique(raised.begin(), raised.end()),
+                         raised.end());
+            cache->digonEdgeFloors = std::move(raised);
+            cache->digonsDirty = false;
+        }
         timingCheckpoint("digon floors");
+        }
     }
     auto geometryEdgeLength = [&](int eid) {
         if (eid >= 1 && !analysis.topology.empty() &&
@@ -28059,17 +28111,31 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         // large assemblies (observed inside meshCoonsGrid on an 8k-face
         // model). Warm only the cache-miss faces and their edges
         // single-threaded first; the parallel pass then only reads.
+        mesher_detail::warmMeshScratchPool(threads);
         std::vector<char> warmEdge(model.edgeCount() + 1, 0);
         for (int fid : workFaces) {
-            for (TopExp_Explorer ex(model.faces(fid), TopAbs_EDGE); ex.More();
-                 ex.Next()) {
-                const int eid = model.edges.FindIndex(ex.Current());
-                if (eid > 0) warmEdge[eid] = 1;
+            if (!analysis.topology.empty() &&
+                fid <= analysis.topology.faceCount) {
+                for (const uint32_t* ep =
+                         analysis.topology.faceEdgesBegin(uint32_t(fid));
+                     ep != analysis.topology.faceEdgesEnd(uint32_t(fid));
+                     ++ep) {
+                    if (*ep > 0) warmEdge[*ep] = 1;
+                }
+            } else {
+                for (TopExp_Explorer ex(model.faces(fid), TopAbs_EDGE);
+                     ex.More(); ex.Next()) {
+                    const int eid = model.edges.FindIndex(ex.Current());
+                    if (eid > 0) warmEdge[eid] = 1;
+                }
             }
             try {
                 Bnd_Box2d warm;
-                BRepTools::AddUVBounds(TopoDS::Face(model.faces(fid)), warm);
-                (void)BRep_Tool::Surface(TopoDS::Face(model.faces(fid)));
+                const TopoDS_Face F = TopoDS::Face(model.faces(fid));
+                BRepTools::AddUVBounds(F, warm);
+                // Const surface handle: read-only after warm; workers share
+                // the cached Geom_Surface without taking the mesh mutex.
+                (void)BRep_Tool::Surface(F);
             } catch (...) {
                 // A face too broken to bound fails later, visibly.
             }

@@ -439,6 +439,10 @@ struct GenerationCache {
     // the public API.
     std::shared_ptr<void> facePlans;
     std::shared_ptr<void> cornerRepair;
+    // Digon chord floor is topology/micro-edge geometry — independent of
+    // per-face density edits. Compute once per model, re-apply on warm runs.
+    bool digonsDirty = true;
+    std::vector<std::pair<int, int>> digonEdgeFloors;  // (edgeId, minCount)
     void clear() {
         faces.clear();
         revolutionCovers.clear();
@@ -455,6 +459,8 @@ struct GenerationCache {
         modelDiagonal = -1.0;
         facePlans.reset();
         cornerRepair.reset();
+        digonsDirty = true;
+        digonEdgeFloors.clear();
     }
 };
 
