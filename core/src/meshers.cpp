@@ -1,5 +1,6 @@
 #include "weft/meshers.hpp"
 #include "weft/validate.hpp"
+#include "weft/profile.hpp"
 
 #include "mesher_sampling.hpp"
 #include "mesher_trace.hpp"
@@ -22658,21 +22659,25 @@ int outerWireSolvedTotal(const TopoDS_Face& face, const Model& model,
 PolyMesh generate(const Model& model, const Analysis& analysis,
                   const GenerationSettings& settingsIn, GenerationReport* report,
                   GenerationCache* cache) {
-    const bool timingEnabled = std::getenv("WEFT_TIMINGS") != nullptr;
-    auto timingLast = std::chrono::steady_clock::now();
-    const auto timingBegin = timingLast;
+    GenerateProfileSession profileSession;
+    WEFT_PROFILE_SCOPE("generate() total");
+    auto timingLast = std::chrono::high_resolution_clock::now();
     auto timingCheckpoint = [&](const char* stage) {
-        if (!timingEnabled) return;
-        const auto now = std::chrono::steady_clock::now();
-        const auto delta = std::chrono::duration_cast<std::chrono::milliseconds>(
-                               now - timingLast)
-                               .count();
-        const auto total = std::chrono::duration_cast<std::chrono::milliseconds>(
-                               now - timingBegin)
-                               .count();
-        std::fprintf(stderr, "timing: %-20s %6lld ms (%6lld total)\n", stage,
+        if (!profileTimingsEnabled()) return;
+        const auto now = std::chrono::high_resolution_clock::now();
+        const auto delta =
+            std::chrono::duration_cast<std::chrono::milliseconds>(now -
+                                                                  timingLast)
+                .count();
+        const auto total =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - profileSession.sessionStart())
+                .count();
+        std::fprintf(stderr,
+                     "profile: %-28s %7lld ms  (session %7lld ms)\n", stage,
                      static_cast<long long>(delta),
                      static_cast<long long>(total));
+        std::fflush(stderr);
         timingLast = now;
     };
     // Per-face trace capture, on only when a caller wants a report: the
@@ -22717,7 +22722,9 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         }
     }
     std::map<int, FacePlan> plans;
-    for (int fid = 1; fid <= model.faceCount(); ++fid) {
+    {
+        WEFT_PROFILE_SCOPE("1.face planning");
+        for (int fid = 1; fid <= model.faceCount(); ++fid) {
         const FaceMeshSettings& effective = settings.forFace(fid);
         const bool explicitFace = settings.perFace.count(fid) != 0;
         FacePlan plan;
@@ -22748,6 +22755,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                                      plan};
         }
         plans.emplace(fid, std::move(plan));
+        }
     }
     dbg("generate: plans done");
     timingCheckpoint("face planning");

@@ -463,6 +463,9 @@ struct GenerationCache {
 // Lines are flushed as written so a crash log ends at the crash site.
 void setGenerateDebugLog(std::FILE* f);
 
+// Lightweight generation profiler: set WEFT_TIMINGS=1 or WEFT_PROFILE=1 to
+// print scoped phase milliseconds (stderr) for generate(). See weft/profile.hpp.
+
 // Generate topology for every face of the model, per-face controllable.
 //
 // Density matching (plan §3.3, first increment): before meshing, edge
