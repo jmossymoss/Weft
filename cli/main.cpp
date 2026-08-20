@@ -63,6 +63,16 @@ void usage() {
         "      import then export with no retopo: B-rep->B-rep serializes the\n"
         "      shape (step/iges/brep); B-rep->mesh tessellates (obj/glb/stl/fbx)\n"
         "\n"
+        "  weft intent-sweep <in.step> [--profile cad] [--range LO..HI]\n"
+        "                    [--stride N] [--face-stride N]\n"
+        "                    [--adapt off|on|both] [--verbose]\n"
+        "      artist-intent density harness: turn each face's SEMANTIC knob\n"
+        "      (radial / fillet loops / grid u) through every count in the\n"
+        "      range, with adaptive off (the wheel + panel path) by default,\n"
+        "      and fail when a face LOSES ITS PLANNED TOPOLOGY to the\n"
+        "      contract floor -- not only when the mesh leaks. `sweep` below\n"
+        "      checks six radial values with adaptive on and misses that\n"
+        "\n"
         "  weft sweep <in.step> [--profile cad] [--radials 8,16,24,...]\n"
         "      adversarial density harness: bump every revolution-family\n"
         "      face's radial through the list, re-validating each result —\n"
@@ -84,6 +94,9 @@ void usage() {
         "    --rings N         concentric quad loops around holes/bosses in\n"
         "                      planar faces (default 2)\n"
         "    --validate        run bake-ready checks after meshing\n"
+        "    --why             print the mesher's own trace for every demoted\n"
+        "                      face (--why-face ID for one) — the reasoning\n"
+        "                      behind a contract-floor or raw demotion\n"
         "    --signature FILE  write cross-platform topology signature\n"
         "                      (implies --validate; see tools/topology_signature.sh)\n"
         "    --no-normals      skip exact CAD vertex normals in exports\n"
@@ -288,6 +301,9 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     std::string recipeOut;
     std::string signatureOut;
     bool validate = validateOnly;
+    // --why prints the mesher's own trace for every demoted face (or one), so
+    // a floor/raw demotion explains itself without instrumenting the core.
+    int whyFace = -1;
     bool noNormals = false;
     std::vector<double> lods;
     weft::ObjExportOptions objOpts;
@@ -341,6 +357,9 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
                 // Game topology: deviation relative to feature size, so
                 // ring counts follow the ANGLE criterion at every scale.
                 gs.defaults.relativeDeviation = true;
+                // Cylinders: never below 24 circumferential spans at the
+                // CAD default (partial wraps scale by bandWrapFrac).
+                gs.defaults.minCurvedSegments = 24;
             } else if (prof == "dense") {
                 gs.defaults.minimal = false;
             } else {
@@ -348,6 +367,8 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
             }
         }
         else if (a == "--validate") validate = true;
+        else if (a == "--why") whyFace = 0;
+        else if (a == "--why-face") whyFace = std::stoi(next());
         else if (a == "--signature") {
             signatureOut = next();
             validate = true;  // signature needs ValidationReport
@@ -558,6 +579,18 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     {
         const std::string demotions = weft::formatBuildDemotions(report);
         if (!demotions.empty()) std::printf("%s", demotions.c_str());
+    }
+    {
+        // Structure retention: how many faces kept the topology their plan
+        // chose, and which failure classes cost the rest. Watertightness says
+        // nothing about this, so gates read it separately.
+        const std::string structure = weft::formatStructure(report);
+        if (!structure.empty()) std::printf("%s", structure.c_str());
+    }
+    if (whyFace >= 0) {
+        const std::string why = weft::formatFaceTrace(report, whyFace);
+        if (why.empty()) std::printf("  no traced demotions\n");
+        else std::printf("%s", why.c_str());
     }
     {
         // Density-matched edge counts, ownership tags, and proposal/pin/
@@ -823,6 +856,225 @@ int cmdSweep(const std::vector<std::string>& args) {
     return failures ? 1 : 0;
 }
 
+// weft intent-sweep — the artist-intent harness.
+//
+// `sweep` above tests a path artists do not use: six radial values, adaptive
+// left on, revolution families only, and it only fails on raw/empty faces. So
+// it stayed green while a typed count dropped faces to the contract floor —
+// the "it still triangulates" class, reported three times from live sessions.
+//
+// This sweep walks the knob the artist actually turns: the semantic count for
+// each face family, every integer across a range, with adaptive OFF (the wheel
+// and panel path) as well as on, and it fails when a face LOSES ITS PLANNED
+// TOPOLOGY, not merely when the mesh leaks.
+int cmdIntentSweep(const std::vector<std::string>& args) {
+    if (args.empty()) { usage(); return 2; }
+    const std::string input = args[0];
+    weft::GenerationSettings gs;
+    gs.defaults.minimal = true;
+    int lo = 6, hi = 28, stride = 1, faceStride = 1;
+    bool adaptOn = false, adaptOff = true, verbose = false;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& a = args[i];
+        auto next = [&]() -> std::string {
+            if (i + 1 >= args.size()) {
+                throw std::runtime_error("missing value for " + a);
+            }
+            return args[++i];
+        };
+        if (a == "--profile") {
+            const std::string p = next();
+            if (p == "cad") {
+                gs.defaults.adaptive = true;
+                gs.defaults.relativeDeviation = true;
+            } else if (p != "dense") {
+                throw std::runtime_error("unknown profile: " + p);
+            }
+        } else if (a == "--range") {
+            const std::string r = next();
+            const size_t dots = r.find("..");
+            if (dots == std::string::npos) {
+                throw std::runtime_error("--range wants LO..HI");
+            }
+            lo = std::stoi(r.substr(0, dots));
+            hi = std::stoi(r.substr(dots + 2));
+        } else if (a == "--stride") {
+            stride = std::max(1, std::stoi(next()));
+        } else if (a == "--face-stride") {
+            faceStride = std::max(1, std::stoi(next()));
+        } else if (a == "--adapt") {
+            const std::string m = next();
+            adaptOn = m == "on" || m == "both";
+            adaptOff = m == "off" || m == "both";
+        } else if (a == "--verbose") {
+            verbose = true;
+        } else {
+            throw std::runtime_error("unknown option: " + a);
+        }
+    }
+    if (hi < lo) std::swap(lo, hi);
+
+    weft::Model model = weft::loadStep(input);
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationCache cache;
+    weft::GenerationReport base;
+    weft::PolyMesh baseMesh =
+        weft::generate(model, analysis, gs, &base, &cache);
+    size_t baseWinding = 0;
+    {
+        const weft::ValidationReport vr = weft::validateMesh(baseMesh, &model);
+        if (vr.openEdges != vr.openEdgesOnInputBoundary ||
+            vr.nonManifoldEdges != 0) {
+            std::printf("BASE not watertight — fix that before sweeping\n");
+            return 1;
+        }
+        baseWinding = vr.windingConflicts;
+    }
+    // A face already off its plan at base density is pre-existing debt (the
+    // structure ratchet owns it); this harness only reports NEW losses.
+    std::map<int, int> baseBuild;
+    for (const auto& [fid, how] : base.faceBuild) baseBuild[fid] = how;
+
+    // Which knob is semantic for each family — the number the panel shows.
+    enum class Knob { Radial, Loops, GridU };
+    std::vector<std::pair<int, Knob>> targets;
+    for (const auto& [fid, kind] : base.faceMesher) {
+        switch (kind) {
+            case weft::MesherKind::RevolutionGrid:
+            case weft::MesherKind::DomeCap:
+            case weft::MesherKind::AnnulusRing:
+            case weft::MesherKind::DiskCap:
+            case weft::MesherKind::RingJunction:
+                targets.emplace_back(fid, Knob::Radial);
+                break;
+            case weft::MesherKind::CoonsGrid:
+            case weft::MesherKind::PlanarGrid: {
+                const bool fillet =
+                    base.faceAcross.find(fid) != base.faceAcross.end();
+                targets.emplace_back(fid, fillet ? Knob::Loops : Knob::GridU);
+                break;
+            }
+            case weft::MesherKind::RailLadder:
+            case weft::MesherKind::RibbonSweep:
+                targets.emplace_back(fid, Knob::Radial);
+                break;
+            default:
+                break;
+        }
+    }
+    if (faceStride > 1) {
+        std::vector<std::pair<int, Knob>> sampled;
+        for (size_t i = 0; i < targets.size(); i += size_t(faceStride)) {
+            sampled.push_back(targets[i]);
+        }
+        targets.swap(sampled);
+    }
+
+    long runs = 0, selfLost = 0, neighbourLost = 0, leaks = 0, throws = 0;
+    long windingBad = 0;
+    std::map<std::string, long> causes;
+    std::map<int, long> lostByFace;
+    for (const auto& [fid, knob] : targets) {
+        for (int adaptPass = 0; adaptPass < 2; ++adaptPass) {
+            const bool adaptive = adaptPass == 1;
+            if (adaptive && !adaptOn) continue;
+            if (!adaptive && !adaptOff) continue;
+            for (int n = lo; n <= hi; n += stride) {
+                weft::GenerationSettings s = gs;
+                weft::FaceMeshSettings f = gs.defaults;
+                f.adaptive = adaptive;
+                switch (knob) {
+                    case Knob::Radial: f.radial = n; break;
+                    case Knob::Loops: f.filletLoops = n; break;
+                    case Knob::GridU: f.gridU = n; break;
+                }
+                s.perFace[fid] = f;
+                weft::GenerationReport rep;
+                weft::PolyMesh mesh;
+                try {
+                    mesh = weft::generate(model, analysis, s, &rep, &cache);
+                } catch (const std::exception& e) {
+                    std::printf("THROW face %d n=%d adapt=%d: %s\n", fid, n,
+                                adaptive ? 1 : 0, e.what());
+                    ++throws;
+                    continue;
+                }
+                ++runs;
+                const weft::ValidationReport vr =
+                    weft::validateMesh(mesh, &model);
+                if (vr.openEdges != vr.openEdgesOnInputBoundary ||
+                    vr.nonManifoldEdges != 0) {
+                    std::printf("LEAK face %d n=%d adapt=%d: open=%zu nm=%zu\n",
+                                fid, n, adaptive ? 1 : 0, vr.openEdges,
+                                vr.nonManifoldEdges);
+                    ++leaks;
+                }
+                // Consistent winding is a §3.1 completion gate, but nothing
+                // enforced it: a watertight mesh whose neighbours traverse a
+                // shared edge the same way bakes with flipped normals.
+                if (vr.windingConflicts > baseWinding) {
+                    std::printf(
+                        "WINDING face %d n=%d adapt=%d: %zu conflicting edge "
+                        "pairs (base %zu)\n",
+                        fid, n, adaptive ? 1 : 0, vr.windingConflicts,
+                        baseWinding);
+                    ++windingBad;
+                }
+                bool self = false, other = false;
+                for (const auto& [f2, how] : rep.faceBuild) {
+                    if (how == 0) continue;
+                    auto bit = baseBuild.find(f2);
+                    if (bit != baseBuild.end() && bit->second == how) continue;
+                    std::string cause;
+                    auto cit = rep.faceBuildCause.find(f2);
+                    if (cit != rep.faceBuildCause.end()) cause = cit->second;
+                    ++causes[cause.empty() ? "(no cause)" : cause];
+                    ++lostByFace[f2];
+                    if (f2 == fid) self = true;
+                    else other = true;
+                }
+                if (self) ++selfLost;
+                if (other) ++neighbourLost;
+                if (verbose && (self || other)) {
+                    std::printf("LOST face %d n=%d adapt=%d:%s%s\n", fid, n,
+                                adaptive ? 1 : 0, self ? " self" : "",
+                                other ? " neighbour" : "");
+                }
+            }
+        }
+    }
+
+    // Machine-greppable summary the gate ratchets on.
+    std::printf(
+        "intent: faces=%zu runs=%ld self-lost=%ld neighbour-lost=%ld "
+        "leaks=%ld winding=%ld throws=%ld\n",
+        targets.size(), runs, selfLost, neighbourLost, leaks, windingBad,
+        throws);
+    if (!causes.empty()) {
+        std::printf("intent-causes:");
+        for (const auto& [cause, n] : causes) {
+            std::printf(" %s=%ld", cause.c_str(), n);
+        }
+        std::printf("\n");
+    }
+    if (!lostByFace.empty()) {
+        std::vector<std::pair<int, long>> worst(lostByFace.begin(),
+                                                lostByFace.end());
+        std::sort(worst.begin(), worst.end(),
+                  [](const auto& a, const auto& b) {
+                      return a.second > b.second;
+                  });
+        std::printf("intent-worst-faces:");
+        for (size_t i = 0; i < worst.size() && i < 8; ++i) {
+            std::printf(" #%d=%ld", worst[i].first, worst[i].second);
+        }
+        std::printf("\n");
+    }
+    return (selfLost || neighbourLost || leaks || windingBad || throws)
+               ? 1
+               : 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -839,6 +1091,7 @@ int main(int argc, char** argv) {
         if (cmd == "validate") return cmdMesh(args, /*validateOnly=*/true);
         if (cmd == "signature-compare") return cmdSignatureCompare(args);
         if (cmd == "sweep") return cmdSweep(args);
+        if (cmd == "intent-sweep") return cmdIntentSweep(args);
         usage();
         return 2;
     } catch (const std::exception& e) {

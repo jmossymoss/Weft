@@ -1,0 +1,179 @@
+# Capsule slots lose their round to a trim-grid pin (2026-07-25)
+
+Artist report: the MP9 muzzle's capsule slots "are supposed to be capsules, but
+the hole doesn't have that at all" — the ends read as flat faces.
+
+## Root cause (measured, not inferred)
+
+The counts are already correct. Probing the four sides of a capsule end wall
+(muzzle extract face 6, a quarter-cylinder) gives:
+
+```
+sideprobe face 6: nu=11 nv=1 sides e38=11 e35=1 e37=11 e36=1 natB=2 ...
+```
+
+11 on both arcs, 1 on both straight rulings — exactly right for a round wall
+one division deep. Nothing is mismatched.
+
+What flattens it is a PIN. The drum plans as an orthogonal trim grid, and
+`pinOrthogonalTrimGrids` pins every shared boundary edge to its endpoints plus
+its crossings with the grid's station lines. A capsule end arc crosses no
+station line, so it is pinned to exactly two fractions, 0 and 1. A pin is the
+authoritative sampling for an edge wherever it is read, so:
+
+- the drum draws that arc as one straight chord (chamfered slot end), and
+- the end wall's side collapses to 2 points, leaving no lattice, so it ships as
+  a single crescent n-gon.
+
+Both symptoms, one cause.
+
+## The change
+
+Seed the pin with the edge's OWN solved samples (curved edges only — interior
+samples on a line carry no shape) in addition to the station crossings. The
+curve's count is what makes it round; the stations only add the crossings the
+clip needs.
+
+Result on the muzzle extract:
+
+| | before | after |
+| --- | --- | --- |
+| capsule end wall (face 6) | 1 n-gon | 10 quads + 1 pentagon |
+| drum slot cells (face 21) | 9 n-gons | 21 pentagons + 3 hexagons |
+| MP9 coons/plane extract cracks | 52 | 26 |
+
+![capsule ends](capsule_ends_before_after.png)
+
+## Progress on the fallout (2026-07-25, second pass)
+
+Ordering inside the pin is what matters. The first version appended the edge's
+own samples and then deduped at 1e-10, which left a station crossing sitting a
+micron from a natural sample as its own pin — a near-zero border segment that
+tears the weld on whichever neighbour reads the same edge. Deduping at a
+fraction of the sample spacing instead was worse: it dropped crossings, and a
+crossing is the whole reason the pin exists (MP9 then gained folds and
+non-manifold edges).
+
+The order that works: crossings are mandatory and go in first, then the edge's
+own samples are added only where they do not crowd one (0.35 of a sample
+spacing). That took the suite from 10 failures to 5:
+
+| | first pass | now |
+| --- | --- | --- |
+| foam (cad) | 3 open, 2 winding | clean |
+| flaregun, iso14649-demo | clean | clean |
+| MP9 coons/plane extract cracks | 26 | 24 (baseline 52) |
+| teleporter (cad) | 2 winding | 28 open, 2 winding |
+| capsule end wall | 11 polys | 11 polys |
+
+Two dead ends, both reverted: deriving cell orientation from the UV signed area
+instead of a 3D Newell normal (teleporter got worse, so the Newell cancellation
+theory was wrong), and skipping the station snap for pinned samples (no
+measurable effect).
+
+## Why this is NOT merged
+
+`teleporter` still regresses, so this stays parked:
+
+- `teleporter` (cad): 28 open edges, 2 winding conflicts
+- `testMp9CoonsPlaneSeamCanonicalize`: `floors <= 1` exceeded
+
+The cracks are between trim-grid drums (faces 91, 302, 306, 384 — all
+`cylinder / drum/iso-band`, the same class as the muzzle) and their neighbours,
+which are `minimal-ngon` planes (96, 98, 443, 444) and bspline Coons faces
+(326, 329). So the drum reproduces the denser pin and at least one of those
+neighbour paths does not sample the shared edge at the pin's fractions. That is
+the next thing to check: whether `samplePlanarRings` and the Coons side sampler
+both consume pin fractions or only the pin's COUNT.
+
+Narrowing the seeding to curved edges, and then to RevolutionGrid plans only,
+does not help — teleporter's cracking faces are exactly that class.
+
+## Reproducer
+
+```sh
+weft extract tests/STEP_Examples/MP9.stp --faces 3432 --rings 1 -o muzzle.step
+weft mesh muzzle.step -o muzzle.obj --profile cad     # ~1s
+python3 tools/render_obj_wireframe.py muzzle.obj ends.png --faces 6,7,10,11
+```
+
+## The remaining gap is architectural (artist observation, 2026-07-25)
+
+> I can see the arc is being made, but the issue is the ngon isn't being filled
+> in from that edge.
+
+Correct, and measurable. On the muzzle extract the capsule end WALL now carries
+12 vertices along its arc, but the DRUM shares only 3 of them:
+
+```
+face_6:  25 verts, shares 3 with the drum
+face_7:  25 verts, shares 3 with the drum
+```
+
+So the wall is round while the drum still meshes to the chord, and the sliver
+between chord and arc is unfilled.
+
+The cause is the trim grid's row-slab clipper. For each row it takes the ONE
+boundary segment crossing the row's midpoint and evaluates it at the row's floor
+and ceiling — a chord. Every boundary sample between those two heights is
+discarded by construction, so cells can only follow a boundary that is monotone
+within a row.
+
+Two ways out, both rejected for now:
+
+1. Add V stations at the arc's sample points. Then each row's limit IS a single
+   boundary segment and the cells land exactly on the arc — but a V station is a
+   full ring around the drum, which is the "extra rings breaking the long spans"
+   the artist explicitly ruled out.
+2. Make the row follow the boundary polyline. Tried twice: the chain walk
+   produces rings that wiggle in u, the per-cell half-plane clip mangles them,
+   and the extract went to 6 unexplained cracks and 6 winding conflicts with
+   FEWER shared arc vertices (face_6 dropped 3 -> 2). Reverted.
+
+Doing this properly means replacing the row-slab clipper with a real polygon
+arrangement: overlay the trim loop with the station grid and extract cells as
+faces of the arrangement, which can return several components per cell and
+handles a boundary that re-enters a row. That is a contained but real piece of
+work and it is the actual fix for both this and the leftover rings.
+
+## Tested: a row per arc sample (fills correctly, costs rings)
+
+The artist's algorithm is: "the cylinder spans go up till they find that arc,
+then stop at it and it becomes the vertex, and the inner boolean shape (half
+capsule) defines the vertex number."
+
+That is exactly right, and the cheap way to get it inside the current
+architecture is to give every curved-boundary sample its own V station, so a
+row edge lands on the arc vertex the wall already owns rather than on a chord.
+Measured on the muzzle extract:
+
+| | chord (current) | row per arc sample |
+| --- | --- | --- |
+| drum shares with end wall | 3 verts | 22 verts |
+| stations | 23 x 8 | 23 x 49 |
+| cells on the drum | 105 | 697 |
+| unexplained cracks | 0 | 0 |
+| winding | consistent | consistent |
+
+So it fills the arc, watertight, no cracks — but a V station is a full ring
+around the drum, so it cuts every lengthwise span into 49 pieces. That is the
+"long spans should maintain the full cylinder length, and not be broken up"
+requirement, violated. Reverted.
+
+![ring trade-off](../../../docs/evidence/wp6-capsule-arc-pins/arc_rows_tradeoff.png)
+
+## What the correct implementation needs
+
+The span must terminate at the arc LOCALLY — no global row. In the row-slab
+clipper a cell boundary can only be a chord between the crossings at the row's
+floor and ceiling, so "stop at the arc" is not expressible; the two ways to say
+it are a global row (rings, above) or following the boundary polyline through
+the row (tried twice, produces rings that wiggle in u which the per-cell
+half-plane clip mangles).
+
+The fix is to build cells per COLUMN instead: march each u-station line along v,
+terminate it at the nearest existing boundary sample, and close each cell with
+the boundary polyline between two adjacent columns' termination points. Only
+existing samples are used, so the wall's vertex count drives the arc exactly as
+the artist described, and nothing global is added. That is the same arrangement
+work the leftover rings need, so both collapse into one change.

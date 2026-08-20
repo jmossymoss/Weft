@@ -1,0 +1,3 @@
+Vendored Dear ImGui v1.90.9-docking for Weft.
+Upstream: https://github.com/ocornut/imgui/releases/tag/v1.90.9-docking
+examples/docs/misc trimmed; see LICENSE.txt.

@@ -1,0 +1,8 @@
+Vendored OpenCASCADE Technology 8.0.1 Windows third-party runtime DLLs.
+
+Upstream archive:
+  https://github.com/Open-Cascade-SAS/OCCT/releases/download/V8.0.1/3rdparty-vc14-64.zip
+
+See README.md for the product list and license notes.
+Do not edit these binaries by hand; refresh from the upstream zip when
+bumping the supported OCCT Windows runtime set.

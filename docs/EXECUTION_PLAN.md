@@ -7,14 +7,12 @@ new test evidence before changing direction.
 
 Active work package: WP6 — validate real work.
 
-WP5 exit criteria re-pass at this revision: FilletStrip→Coons + drum+blend
-stack continuity (`testCylindricalStackContinuity` / bossfillet), sphere tip
-and dimple reducers, foam/teleporter CAD watertight, feature/chart in
-inspect/signature, no new MesherKind. FreeformComb #1805 stitch deadlock
-cut extract unexplained 83→73 with 0 folds. WP6 cleared slitdrill / tan_slit
-/ tork / fillet-capsule / grip-freeform / bullet-body KNOWN_RED rows;
-residual MP9 opens (~380, #1805 family) remain in `tests/KNOWN_RED.tsv`.
-Early Freeform ribbon/rail stays on the late ladder (foam counterexample).
+`tests/STEP_Examples/mp9_Edited.stp` CAD defaults: watertight, winding
+consistent, foldedPolygons=0, raw=0, planned-floor=0, failed-floor=0,
+structure retention=1.0 (`testMp9EditedWatertight`). Original `MP9.stp`
+opens tightened in `tests/KNOWN_RED.tsv` (measured 7; ceiling 20). Release
+spot-check flaregun/foam/teleporter/iso14649-demo remain watertight at CAD
+defaults.
 
 Change the active package only when its exit criteria pass at one revision. If
 a later failure invalidates an earlier gate, reopen the earliest affected
@@ -390,6 +388,12 @@ Entry-point audit and settings summary:
 The removed decoupled-core rewrite is not an active direction. Do not restore
 it, port work from old branches, or begin another ground-up rewrite without a
 new architecture decision supported by release-corpus evidence.
+
+Interactive responsiveness in `weft_app` may schedule regenerate work through a
+per-face bake queue (FIFO, latest-wins dedupe, single worker). That queue is
+scheduling only: every bake still calls `weft::generate()` with a frozen
+settings snapshot. It is not a second mesher, not a parallel density solver,
+and not a decoupled-core rewrite.
 
 ### AD-2: stitch experiment
 

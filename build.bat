@@ -130,26 +130,57 @@ REM [5/5] Optional GUI deps (GLFW/ImGui/stb) -- app target skips
 REM itself when absent, so this is informational only.
 REM ---------------------------------------------------------------
 echo [5/5] GUI dependencies...
-echo   GLFW and ImGui are fetched and built from source automatically
-echo   during configure ^(needs internet the first time^), so the
-echo   interactive weft_app.exe builds with no extra installs.
+echo   GLFW and ImGui are vendored under third_party\ ^(no network fetch^).
 
 echo.
 echo ========================================
 echo  Configuring
 echo ========================================
 echo.
+echo   After "Selecting Windows SDK version..." CMake compiles a short
+echo   compiler probe ^(often 30-90s the first time, Windows Defender can
+echo   stretch it^). Then it should print "Looking for OpenCASCADE...".
+echo   If NOTHING new appears for more than ~3 minutes:
+echo     1. Ctrl+C
+echo     2. rmdir /s /q build
+echo     3. Re-run build.bat
+echo     Also exclude the repo folder from real-time antivirus scanning.
+echo.
+
+REM Stale half-configured trees are a common hang source — wipe if the
+REM previous configure never finished (no CMakeCache.txt yet).
+if exist "build\CMakeCache.txt" (
+    echo   Reusing existing build\CMakeCache.txt
+) else if exist "build" (
+    echo   Clearing incomplete build\ from a previous interrupted configure...
+    rmdir /s /q build 2>nul
+)
 
 REM Use the VS generator: CMake locates the compiler through the VS
 REM installation itself, so we never need cl.exe on PATH or vcvars.
+echo   Running: cmake -B build -G "Visual Studio 17 2022" -A x64 ...
+echo. >> "%LOG%"
+echo === cmake configure %date% %time% === >> "%LOG%"
+REM Live console + append to build_log.txt. STATUS lines so the SDK probe
+REM is not the last thing you see for minutes.
 cmake -B build -G "Visual Studio 17 2022" -A x64 ^
-    -DCMAKE_PREFIX_PATH="!OCCT_DIR!" ^
-    -DOCCT_SEARCH_PATH="!OCCT_DIR!"
-if %errorLevel% neq 0 (
+  -DCMAKE_PREFIX_PATH="!OCCT_DIR!" ^
+  -DOCCT_SEARCH_PATH="!OCCT_DIR!" ^
+  --log-level=STATUS
+set "CFG_ERR=!errorLevel!"
+>> "%LOG%" echo cmake configure exit=!CFG_ERR!
+if !CFG_ERR! neq 0 (
     echo.
-    echo   CMake configuration failed -- the error is printed above.
+    echo   CMake configuration failed ^(exit !CFG_ERR!^) -- see output above.
+    echo   If configure hung previously, delete the build folder and retry:
+    echo     rmdir /s /q build
     goto :fail
 )
+if not exist "build\CMakeCache.txt" (
+    echo   Configure did not produce build\CMakeCache.txt — treating as failure.
+    goto :fail
+)
+echo   Configure finished.
 
 echo.
 echo ========================================
@@ -186,32 +217,42 @@ for /f "delims=" %%f in ('dir /s /b "!OCCT_DIR!\TKernel.dll" 2^>nul') do (
         xcopy "%%~dpfTK*.dll" "%BINDIR%" /D /Y >nul
     )
 )
-REM Third-party runtimes the TK dlls import. The FOR set must stay
-REM wildcard-free (cmd globs * against the current directory); the
-REM wildcard goes in the dir pattern so versioned names match too
-REM (tbb12.dll, avcodec-57.dll...). ffmpeg is imported by TKService
-REM when OCCT was built with video support, even though Weft never
-REM uses it.
-REM Search the OCCT dir itself AND any 3rdparty* sibling (the official
-REM installer keeps third-party products NEXT TO the opencascade dir,
-REM not inside it). CMake also deploys these post-build by resolving
-REM the .lib paths recorded in OCCT's link interface -- this pass is
-REM belt and braces for layouts CMake can't see.
-set "TPROOTS="!OCCT_DIR!""
-for /d %%p in ("!OCCT_DIR!\..\3rdparty*") do set "TPROOTS=!TPROOTS! "%%~fp""
-set "TPDIRS=;"
-for %%d in (tbb jemalloc freetype FreeImage openvr zlib
-            avcodec avformat avutil swscale swresample) do (
-    for %%r in (!TPROOTS!) do (
-        for /f "delims=" %%f in ('dir /s /b "%%~r\%%d*.dll" 2^>nul') do (
-            xcopy "%%f" "%BINDIR%" /D /Y >nul
-            if "!TPDIRS:%%~dpf;=!"=="!TPDIRS!" set "TPDIRS=!TPDIRS!%%~dpf;"
-        )
-    )
+REM Third-party runtimes are VENDORED in the repo under
+REM third_party\occt-win-runtime\ (from OCCT 8.0.1 3rdparty-vc14-64.zip).
+REM Copy them next to the exes -- no discovery from the OCCT install.
+set "TPRUNTIME=%~dp0third_party\occt-win-runtime"
+if not exist "%TPRUNTIME%\tbb12.dll" (
+    echo.
+    echo   *** FATAL: vendored OCCT runtime DLLs missing:
+    echo   ***   %TPRUNTIME%
+    echo   *** Pull the latest branch ^(third_party/occt-win-runtime^) or
+    echo   *** restore that folder from git. A build without these DLLs
+    echo   *** cannot launch weft_app.exe.
+    echo.
+    goto :fail
+)
+echo   Deploying vendored OCCT third-party DLLs from third_party\occt-win-runtime...
+xcopy "%TPRUNTIME%\*.dll" "%BINDIR%" /D /Y >nul
+if %errorLevel% neq 0 (
+    echo   Failed to copy vendored runtime DLLs.
+    goto :fail
+)
+REM Required set that OCCT 8.x TK dlls import at process start.
+set "MISSING_REQ="
+for %%n in (tbb12.dll tbb12_debug.dll jemalloc.dll FreeImage.dll openvr_api.dll freetype.dll) do (
+    if not exist "%BINDIR%\%%n" set "MISSING_REQ=!MISSING_REQ! %%n"
+)
+if defined MISSING_REQ (
+    echo.
+    echo   *** FATAL: required runtime DLL^(s^) not in %BINDIR%:!MISSING_REQ!
+    echo   *** The vendored folder is incomplete. Restore third_party\occt-win-runtime from git.
+    echo.
+    goto :fail
 )
 for /f %%c in ('dir /b "%BINDIR%\*.dll" 2^>nul ^| find /c ".dll"') do (
-    echo   %%c runtime DLL^(s^) in place
+    echo   %%c runtime DLL^(s^) in place ^(TK + vendored third-party^)
 )
+set "TPDIRS=%TPRUNTIME%;"
 
 REM Also put the OCCT runtime folders on the user PATH: the copy above
 REM covers build\bin\Release, but a PATH entry covers exes run from

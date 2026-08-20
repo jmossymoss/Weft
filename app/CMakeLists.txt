@@ -1,66 +1,63 @@
-# Interactive shell. Needs GLFW + OpenGL + Dear ImGui. System packages are
-# used when present (Debian/Ubuntu: libglfw3-dev libgl1-mesa-dev
-# libimgui-dev); otherwise GLFW and ImGui are fetched and built from source
-# (the normal path on Windows). stb_image_write is vendored in third_party/.
-# Only OpenGL itself is a hard requirement.
+# Interactive shell. Needs GLFW + OpenGL + Dear ImGui.
+# ImGui (docking) is always taken from third_party/imgui (vendored — no
+# FetchContent git clone that hangs Windows configure).
+# GLFW prefers a system package when present; otherwise uses
+# third_party/glfw. stb_image_write is also vendored.
+# Only OpenGL itself is a hard system requirement.
 find_package(OpenGL QUIET)
 if(NOT OpenGL_FOUND)
   message(STATUS "weft_app skipped (no OpenGL)")
   return()
 endif()
 
+set(WEFT_IMGUI_DIR "${CMAKE_SOURCE_DIR}/third_party/imgui")
+if(NOT EXISTS "${WEFT_IMGUI_DIR}/imgui.cpp")
+  message(FATAL_ERROR
+    "Vendored ImGui missing at ${WEFT_IMGUI_DIR}. "
+    "Pull third_party/imgui from git (docking branch v1.90.9).")
+endif()
+
 option(WEFT_FETCH_APP_DEPS
-       "Force-fetch GLFW/ImGui from source even if installed" OFF)
+       "Unused (kept for compatibility); GLFW/ImGui are vendored" OFF)
 
-if(NOT WEFT_FETCH_APP_DEPS)
-  find_package(glfw3 3.3 QUIET)
-endif()
-
-# ImGui is ALWAYS fetched, pinned to the DOCKING build: dockable panels
-# need it and no distro ships the docking branch. GLFW still comes from
-# the system when present.
-if(TRUE)
-  include(FetchContent)
-  message(STATUS "weft_app: fetching ImGui (docking) sources")
-
-  if(NOT glfw3_FOUND)
-    set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-    set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-    set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-    set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
-    FetchContent_Declare(glfw
-      GIT_REPOSITORY https://github.com/glfw/glfw.git
-      GIT_TAG 3.4
-      GIT_SHALLOW TRUE
-    )
-    FetchContent_MakeAvailable(glfw)
+find_package(glfw3 3.3 QUIET)
+if(glfw3_FOUND)
+  message(STATUS "weft_app: system GLFW + vendored ImGui")
+else()
+  set(WEFT_GLFW_DIR "${CMAKE_SOURCE_DIR}/third_party/glfw")
+  if(NOT EXISTS "${WEFT_GLFW_DIR}/CMakeLists.txt")
+    message(FATAL_ERROR
+      "Vendored GLFW missing at ${WEFT_GLFW_DIR} and no system glfw3. "
+      "Pull third_party/glfw from git (3.4) or install libglfw3-dev.")
   endif()
-
-  FetchContent_Declare(imgui
-    GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG v1.90.9-docking
-    GIT_SHALLOW TRUE
-  )
-  FetchContent_MakeAvailable(imgui)
-
-  add_library(weft_imgui STATIC
-    ${imgui_SOURCE_DIR}/imgui.cpp
-    ${imgui_SOURCE_DIR}/imgui_draw.cpp
-    ${imgui_SOURCE_DIR}/imgui_tables.cpp
-    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-  )
-  target_include_directories(weft_imgui PUBLIC ${imgui_SOURCE_DIR})
-
-  set(WEFT_IMGUI_LIB weft_imgui)
-  set(WEFT_IMGUI_INC ${imgui_SOURCE_DIR})
-  # Use the backends that ship with the fetched ImGui, so versions match.
-  set(WEFT_BACKEND_SRC
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
-  )
+  message(STATUS "weft_app: vendored GLFW + ImGui (no network fetch)")
+  set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+  set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+  # Avoid Wayland pkg-config hard-fail on Linux hosts without those deps;
+  # X11 (or Win32/Cocoa) is enough for weft_app.
+  set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "" FORCE)
+  add_subdirectory("${WEFT_GLFW_DIR}" "${CMAKE_BINARY_DIR}/_deps/glfw-build"
+                   EXCLUDE_FROM_ALL)
 endif()
 
-add_executable(weft_app main.cpp ${WEFT_BACKEND_SRC})
+add_library(weft_imgui STATIC
+  ${WEFT_IMGUI_DIR}/imgui.cpp
+  ${WEFT_IMGUI_DIR}/imgui_draw.cpp
+  ${WEFT_IMGUI_DIR}/imgui_tables.cpp
+  ${WEFT_IMGUI_DIR}/imgui_widgets.cpp
+)
+target_include_directories(weft_imgui PUBLIC ${WEFT_IMGUI_DIR})
+
+set(WEFT_IMGUI_LIB weft_imgui)
+set(WEFT_IMGUI_INC ${WEFT_IMGUI_DIR})
+set(WEFT_BACKEND_SRC
+  ${WEFT_IMGUI_DIR}/backends/imgui_impl_glfw.cpp
+  ${WEFT_IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+)
+
+add_executable(weft_app main.cpp bake_queue.cpp ${WEFT_BACKEND_SRC})
 
 target_include_directories(weft_app PRIVATE
   ${WEFT_IMGUI_INC}

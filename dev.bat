@@ -56,6 +56,25 @@ if /I "%CONFIG%"=="Debug" if not "%TARGET%"=="build" (
     )
 )
 
+REM Ensure vendored OCCT third-party runtimes sit next to the exe.
+REM (build.bat does a full deploy; this keeps `dev.bat` usable after a
+REM clean bin folder without re-running the whole suite.)
+set "TPRUNTIME=%~dp0third_party\occt-win-runtime"
+if exist "%TPRUNTIME%\tbb12.dll" (
+    if not exist "%BINDIR%" mkdir "%BINDIR%" >nul 2>nul
+    xcopy "%TPRUNTIME%\*.dll" "%BINDIR%" /D /Y >nul
+)
+if not "%TARGET%"=="build" (
+    if not exist "%BINDIR%\tbb12.dll" (
+        echo.
+        echo   FATAL: tbb12.dll not next to the exe and vendored runtimes
+        echo   missing. Pull third_party\occt-win-runtime from git, then
+        echo   re-run. See WINDOWS_BUILD.md.
+        echo.
+        exit /b 1
+    )
+)
+
 if /I "%TARGET%"=="app" (
     cmake --build build --config %CONFIG% --target weft_app -j || exit /b 1
     "%BINDIR%\weft_app.exe" !ARGS!

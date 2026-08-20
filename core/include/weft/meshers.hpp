@@ -37,9 +37,11 @@ struct FaceMeshSettings {
     // ("hold" loops; 0 = uniform spacing, toward 1 = tight at the edges).
     int filletLoops = 3;
     double filletHold = 0.0;
-    // Ring junctions (a hole/boss circle inside a rectangular planar face):
-    // number of concentric quad loops between the circle and the boundary.
-    int junctionRings = 1;
+    // Hole-plate / ring-junction collar depth: concentric quad loops
+    // between each hole rim and the plate web. 0 = no collar (default for
+    // hole plates — the web meets the bore rim directly); raise to turn
+    // collars on. RingJunction still floors at 1 internally.
+    int junctionRings = 0;
     // Route flat plates (and reflex coons outlines) through the
     // structured quad-fill grid instead of minimal n-gons / transfinite
     // patches. Routing only — the fallback floor pairs its triangles
@@ -113,7 +115,11 @@ struct FaceMeshSettings {
     // matches the historic hard floor; raise it (e.g. 12) when CAD/
     // relative-deviation's 60° gate would otherwise leave rings faceted.
     // Straight edges are unaffected. Recipe/CLI: mincurve / --min-curve.
-    int minCurvedSegments = 6;
+    // Closed curved rings (cylinder/sphere/torus circles): artist floor.
+    // 24 is the minimum readable circumferential span for game cylinders
+    // at CAD defaults; smaller rings still share this floor so bores do
+    // not read as hex prisms next to denser barrels.
+    int minCurvedSegments = 24;
     // Per-face pathology guard: a hard ceiling on this face's total cell
     // count (0 = no ceiling). A face's mesh should scale with its surface
     // area; a face carrying vastly more cells than its area-share of the
@@ -225,6 +231,58 @@ enum class MesherKind {
 
 const char* mesherKindName(MesherKind k);
 
+// Why a face did or did not keep the structured topology its plan chose.
+//
+// `GenerationReport::faceBuild` says only 0/1/2/-1 and the cause is free text,
+// so failure classes could not be counted or ranked and fixes got picked by
+// whichever face an artist happened to point at. This is the countable view:
+// classifyFaceBuild() maps (build, cause) through one central table, and an
+// unregistered cause resolves to Unknown rather than being folded silently
+// into a healthy bucket.
+enum class FaceBuildClass {
+    Built,           // the planned mesher built the face
+    PlannedFloor,    // routed to the contract floor by design, not by failure
+    MesherFailed,    // a structured mesher gave up and the floor caught it
+    BorderContract,  // the build violated a shared-border contract
+    FoldHeal,        // the floor was taken to clear folded/inverted cells
+    SelfCheck,       // the face's own post-build self-check rejected it
+    DensityOverride, // demoted because of a per-face density edit
+    Raw,             // raw OCCT triangulation (the tri-soup last resort)
+    Empty,           // the face emitted no polygons
+    Unknown,         // cause string not registered — treated as debt
+};
+
+const char* faceBuildClassName(FaceBuildClass c);
+
+// build: GenerationReport::faceBuild value (0 planned, 1 raw, 2 floor,
+// -1 empty). cause: the matching GenerationReport::faceBuildCause entry.
+FaceBuildClass classifyFaceBuild(int build, const std::string& cause);
+
+// Structure retention for one generate() run. `failedFloor` is the artist-
+// visible debt: a face whose planned structure was lost to a failure rather
+// than to a deliberate routing decision.
+struct StructureSummary {
+    int total = 0;
+    int structured = 0;
+    int plannedFloor = 0;
+    int failedFloor = 0;
+    int raw = 0;
+    int empty = 0;
+    std::map<FaceBuildClass, int> byClass;
+    // Failed-floor faces grouped by their exact cause string, so the biggest
+    // class can be attacked first instead of the newest complaint.
+    std::map<std::string, int> failedByCause;
+    // Planned-floor faces grouped the same way. A planned floor is a routing
+    // gap rather than debt, but the gaps still need ranking: planFace
+    // records which ladder stage exhausted, so the census says which class
+    // of trim the ladder cannot express yet.
+    std::map<std::string, int> plannedByCause;
+
+    double retention() const {
+        return total ? double(structured) / double(total) : 1.0;
+    }
+};
+
 // n+1 monotonically increasing parameters in [0,1] splitting it into n
 // intervals. hold=0 is uniform; hold in (0,1) squeezes the intervals toward
 // both ends, which is how fillet support loops hug the creases.
@@ -263,7 +321,8 @@ struct GenerationReport {
     // EdgeId -> how the solved count was chosen for that edge's density
     // group. Short stable tags for CLI/validate attribution:
     // "sole-proposal", "max-proposal", "face-pin", "edge-pin",
-    // "ring-derived", "curvature-floor", "wire-floor", "annulus-floor".
+    // "ring-derived", "curvature-floor", "wire-floor", "annulus-floor",
+    // "rail-align".
     // Present for the same edges as edgeDivisions when attribution ran.
     std::map<int, std::string> edgeDivisionOwner;
     // Shared-group ownership conflicts: proposing faces disagreed, or a
@@ -294,11 +353,29 @@ struct GenerationReport {
     // semantically), so UIs should present loops/along, not raw u/v.
     // Absent for faces without across semantics.
     std::map<int, int> faceAcross;
+    // FaceId -> the mesher's own trace lines for faces that did NOT build
+    // cleanly. A bail returns false through one of hundreds of internal
+    // guards and the cause string names only the outermost failure, so this
+    // is the evidence that used to require adding temporary dbg() calls and
+    // rebuilding the core. Populated only for faceBuild != 0 (and only when
+    // capture is on, which generate() enables), so healthy runs pay nothing.
+    std::map<int, std::vector<std::string>> faceTrace;
 };
 
 // Human-readable demotion attribution for CLI/validate: counts plus
 // per-face id and cause for contract-floor, raw OCCT, and empty faces.
 std::string formatBuildDemotions(const GenerationReport& report);
+
+StructureSummary summarizeStructure(const GenerationReport& report);
+
+// The mesher's own trace for demoted faces (GenerationReport::faceTrace).
+// faceId > 0 selects one face; 0 formats every traced face.
+std::string formatFaceTrace(const GenerationReport& report, int faceId = 0);
+
+// One-line machine-greppable summary for CLI/gate consumption:
+//   structure: faces=N structured=N planned-floor=N failed-floor=N raw=N
+//              empty=N retention=0.983
+std::string formatStructure(const GenerationReport& report);
 
 // Human-readable density-matching attribution for CLI/validate: matched
 // edge counts, ownership tags, and any proposal/pin/floor conflicts.
@@ -328,6 +405,11 @@ struct GenerationCache {
         // so a cache hit re-emits the same faceBuildCause a fresh mesh
         // would have written into GenerationReport.
         std::string buildCause;
+        // Border-contract oracle passed: conform treats this part as an
+        // exact-border authority. Must round-trip with the cache or a
+        // full hit rebuilds with every face freeform and can drop a
+        // weld-degenerate cell the cold path kept (teleporter +1 poly).
+        char borderExact = 0;
     };
     std::map<int, CachedFace> faces;
     // Geometry-only memos (settings-independent, per model): results of
@@ -335,6 +417,9 @@ struct GenerationCache {
     std::map<int, bool> revolutionCovers;
     std::map<int, bool> geomRevolution;
     std::map<int, bool> coonsValid;
+    // Reject reason for the faces coonsValid memoized as false, so a replan
+    // that skips patch construction still explains a contract floor.
+    std::map<int, std::string> coonsReject;
     // Flat faces whose coons outline has a strong reflex bend (chevron
     // plates): geometry-only, planning may prefer quad-fill for them.
     std::map<int, bool> coonsReflex;
@@ -354,11 +439,22 @@ struct GenerationCache {
     // the public API.
     std::shared_ptr<void> facePlans;
     std::shared_ptr<void> cornerRepair;
+    // Digon chord floor is topology/micro-edge geometry — independent of
+    // per-face density edits. Compute once per model, re-apply on warm runs.
+    bool digonsDirty = true;
+    std::vector<std::pair<int, int>> digonEdgeFloors;  // (edgeId, minCount)
+    // IsoBand drum-scale floor depends on model diag + defaults chord tol +
+    // band wrap — not on per-face radial. Cache raises; invalidate on clear
+    // or when defaults.chordTolerance changes.
+    bool drumScalesDirty = true;
+    double drumScalesChordTol = -1.0;
+    std::vector<std::pair<int, int>> drumScaleEdgeFloors;  // (edgeId, minCount)
     void clear() {
         faces.clear();
         revolutionCovers.clear();
         geomRevolution.clear();
         coonsValid.clear();
+        coonsReject.clear();
         coonsReflex.clear();
         faceAreas.clear();
         faceOuterPerimeters.clear();
@@ -369,6 +465,11 @@ struct GenerationCache {
         modelDiagonal = -1.0;
         facePlans.reset();
         cornerRepair.reset();
+        digonsDirty = true;
+        digonEdgeFloors.clear();
+        drumScalesDirty = true;
+        drumScalesChordTol = -1.0;
+        drumScaleEdgeFloors.clear();
     }
 };
 
@@ -376,6 +477,9 @@ struct GenerationCache {
 // each face meshed, conformity per edge, weld) to a stream; null disables.
 // Lines are flushed as written so a crash log ends at the crash site.
 void setGenerateDebugLog(std::FILE* f);
+
+// Lightweight generation profiler: set WEFT_TIMINGS=1 or WEFT_PROFILE=1 to
+// print scoped phase milliseconds (stderr) for generate(). See weft/profile.hpp.
 
 // Generate topology for every face of the model, per-face controllable.
 //

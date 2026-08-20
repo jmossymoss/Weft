@@ -5,6 +5,7 @@
 // and watch the topology regenerate live. Orbit/pan/zoom like Blender.
 //
 //   weft_app [model.step] [--fixture demo] [--screenshot out.png] [--finalize]
+//   weft_app model.step --finalize --screenshot-objects <dir>
 
 // windows.h + commdlg.h must come FIRST: OCCT's headers include windows.h
 // themselves with slimmed-down defines, and a later re-include is a no-op
@@ -42,6 +43,7 @@
 
 #include "weft/analysis.hpp"
 #include "weft/edit.hpp"
+#include "bake_queue.hpp"
 #include "weft/export_fbx.hpp"
 #include "weft/export_gltf.hpp"
 #include "weft/fixture.hpp"
@@ -75,6 +77,7 @@
 #include <fstream>
 #include <functional>
 #include <thread>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -135,9 +138,9 @@ static std::string userDataDir() {
     return dir;
 }
 
-// UI scale from the monitor's content scale (Windows DPI setting). Fonts
-// and style metrics rebuild when it changes (e.g. dragging the window to
-// a monitor with a different scale).
+// UI scale from the monitor's content scale (HiDPI / fractional scaling).
+// Fonts and style metrics rebuild when it changes (e.g. dragging the
+// window to a monitor with a different scale).
 static float gUiScale = 1.0f;
 static GLuint gLogoBadgeTex = 0;   // Settings-panel logo badge (0 until GL up)
 static float gPendingUiScale = 0.0f;
@@ -621,6 +624,9 @@ struct App {
     weft::PolyMesh mesh;
     weft::GenerationReport report;
     weft::GenerationCache genCache;  // per-face reuse across regenerates
+    // Per-face bake queue (Phase 1): single worker, latest-wins dedupe,
+    // full-mesh adopt. Always calls weft::generate() (AD-1).
+    weft_app::FaceBakeQueue bakeQueue;
     std::vector<weft::EdgePolyline> brepEdges;
 
     // Selection: Blender-style modes. Face mode selects B-rep faces, edge
@@ -835,6 +841,25 @@ static std::array<float, 3> faceColor(const weft::FaceInfo& f, bool selected) {
     return c;
 }
 
+// Amber tint while a face is queued/baking so the artist sees which
+// regions the background worker is still resolving.
+static std::array<float, 3> faceColorWithFidelity(const weft::FaceInfo& f,
+                                                  bool selected,
+                                                  weft_app::FaceFidelity fid) {
+    auto c = faceColor(f, selected);
+    if (fid == weft_app::FaceFidelity::Baking) {
+        c[0] = 0.45f * c[0] + 0.55f * 0.95f;
+        c[1] = 0.45f * c[1] + 0.55f * 0.62f;
+        c[2] = 0.45f * c[2] + 0.55f * 0.18f;
+    } else if (fid == weft_app::FaceFidelity::Queued ||
+               fid == weft_app::FaceFidelity::LowPolyProxy) {
+        c[0] = 0.65f * c[0] + 0.35f * 0.85f;
+        c[1] = 0.65f * c[1] + 0.35f * 0.70f;
+        c[2] = 0.65f * c[2] + 0.35f * 0.35f;
+    }
+    return c;
+}
+
 // Worst corner angle of a polygon relative to its regular ideal: 1.0 is
 // perfectly regular, 0 collapses. Slivers and pinches score low.
 static double polyQuality(const weft::PolyMesh& m, size_t i) {
@@ -1043,7 +1068,10 @@ static void rebuildBuffers(App& app) {
         std::array<float, 3> col =
             app.qualityView
                 ? heatColor(polyQuality(m, i))
-                : faceColor(info, fid > 0 && app.selFaces.count(fid) > 0);
+                : faceColorWithFidelity(
+                      info, fid > 0 && app.selFaces.count(fid) > 0,
+                      fid > 0 ? app.bakeQueue.fidelity(uint32_t(fid))
+                              : weft_app::FaceFidelity::HighFidelity);
         std::array<float, 3> id{float(fid & 255) / 255.0f,
                                 float((fid >> 8) & 255) / 255.0f,
                                 170.0f / 255.0f};
@@ -1289,83 +1317,55 @@ static void updateProblems(App& app) {
 
 static void finishGenerate(App& app);
 
-// Kick the worker: the UI thread never blocks on meshing. Settings are
-// snapshotted so live slider edits during the run can't race the solver;
-// further edits leave `dirty` set and coalesce into the next run.
+// Snapshot recipe → bake queue. faceId 0 = model-wide (load / defaults).
+static void enqueueBake(App& app, uint32_t faceId) {
+    if (!app.hasModel) return;
+    weft::GenerationSettings s = app.recipe.settings;
+    s.finalizeMesh = app.forceFinalize || app.liveLink;
+    app.bakeQueue.enqueue(faceId, s, app.recipe.ops);
+    app.dirty = true;
+    app.genBusy = true;
+    app.genStartTime = glfwGetTime();
+    app.genProgress = 0;
+    app.genTotal = -1;
+}
+
+// Kick a bake: UI thread never blocks on meshing. Settings are snapshotted
+// inside the queue; further edits coalesce via latest-wins pending overwrite.
 static void startGenerate(App& app) {
-    if (!app.hasModel || app.genBusy) return;
+    if (!app.hasModel) return;
     logLine("regenerate: begin (%zu overrides, %zu edge pins, %zu ops)",
             app.recipe.settings.perFace.size(),
             app.recipe.settings.perEdge.size(), app.recipe.ops.size());
-    if (app.genThread.joinable()) app.genThread.join();
-    app.genSettings = app.recipe.settings;
-    // The viewport needs connected vertices for editing, but not the costly
-    // whole-model conformation/stitch/cleanup pass. Export regenerates from
-    // these cached face parts with finalization enabled. Screenshot /
-    // visual-QA runs set forceFinalize so captures match CLI export.
-    // Live-link OBJ is a delivery path (§3.3): write the finalized mesh,
-    // not the reduced interactive preview.
-    app.genSettings.finalizeMesh = app.forceFinalize || app.liveLink;
-    // Ops frozen like settings: the UI thread mutates them mid-run
-    // (weld, undo, grab drags) and a live read is a use-after-free
-    // in the worker.
-    app.genOps = app.recipe.ops;
-    app.genProgress = 0;
-    // Unknown until planning/density/cache lookup determines the affected
-    // border-connected set. Do not imply that every model face will remesh.
-    app.genTotal = -1;
-    app.genSettings.progressFaces = &app.genProgress;
-    app.genSettings.progressTotal = &app.genTotal;
     app.genError.clear();
-    app.genStartTime = glfwGetTime();
-    app.genBusy = true;
-    app.genReady = false;
     app.dirty = false;
-    App* a = &app;  // outlives the thread (owned by main)
-    app.genThread = std::thread([a] {
-        try {
-            weft::GenerationReport report;
-            weft::PolyMesh mesh =
-                weft::generate(a->model, a->analysis, a->genSettings,
-                               &report, &a->genCache);
-            weft::ApplyOpsReport ops =
-                weft::applyOps(mesh, a->model, a->genOps);
-            a->genOpsApplied = ops.applied;
-            a->genOpsFailed = ops.failed;
-            a->genMesh = std::move(mesh);
-            a->genReport = std::move(report);
-        } catch (const std::exception& e) {
-            a->genError = e.what();
-        } catch (...) {
-            a->genError = "unknown exception";
-        }
-        a->genReady = true;
-    });
+    enqueueBake(app, 0);  // model-wide trigger; pending faces still coalesce
 }
 
 // Worker finished: adopt its mesh on the UI thread and rebuild all the
 // GL-side derived state. Failures keep the previous mesh (ctrl+Z path).
 static void frameModel(App& app);
 
-static void finishGenerate(App& app) {
-    if (app.genThread.joinable()) app.genThread.join();
-    app.genBusy = false;
+static void adoptBakeResult(App& app, weft_app::FaceBakeResult& result) {
+    app.genBusy = app.bakeQueue.busy();
     app.genReady = false;
     const bool firstMesh = app.mesh.vertices.empty();
-    if (!app.genError.empty()) {
-        logLine("regenerate: FAILED: %s", app.genError.c_str());
-        app.status = "regenerate failed (ctrl+Z): " + app.genError;
+    if (!result.error.empty()) {
+        logLine("regenerate: FAILED: %s", result.error.c_str());
+        app.status = "regenerate failed (ctrl+Z): " + result.error;
         return;
     }
-    logLine("regenerate: generate took %.1f ms",
-            (glfwGetTime() - app.genStartTime) * 1000.0);
+    logLine("regenerate: generate took %.1f ms (triggers=%zu gen=%llu)",
+            (glfwGetTime() - app.genStartTime) * 1000.0,
+            result.triggerFaces.size(),
+            (unsigned long long)result.generation);
     {
-        app.mesh = std::move(app.genMesh);
-        app.meshFinalized = app.genSettings.finalizeMesh;
+        app.mesh = std::move(result.mesh);
+        app.meshFinalized = result.finalizeMesh;
         app.gpuProxyPending = app.dirty && app.activeFace > 0;
-        app.report = std::move(app.genReport);
-        app.exactNormalCache.clear();  // vert indices died with the mesh
-        app.selPolys.clear();  // mesh indices died with the old mesh
+        app.report = std::move(result.report);
+        app.exactNormalCache.clear();
+        app.selPolys.clear();
         app.selVerts.clear();
         app.selVertOrder.clear();
         app.selMeshEdges.clear();
@@ -1384,29 +1384,25 @@ static void finishGenerate(App& app) {
         }
     }
     logLine("regenerate: ops applied (%d ok, %d failed), rebuilding buffers",
-            app.genOpsApplied, app.genOpsFailed);
-    if (app.genOpsFailed > 0) {
-        app.status = "regen: " + std::to_string(app.genOpsFailed) +
+            result.opsApplied, result.opsFailed);
+    if (result.opsFailed > 0) {
+        app.status = "regen: " + std::to_string(result.opsFailed) +
                      " correction(s) did not apply — check recipe / undo";
     }
     updateProblems(app);
 
-    // Resample the B-rep edge overlay at the solved divisions so its
-    // chords coincide with the mesh instead of ghosting past it. The edge
-    // curve's parameter origin can be rotated against the surface's, so
-    // snap each sample onto the nearest generated vertex too.
     app.brepEdges = weft::sampleEdges(app.model, 28,
                                       app.report.edgeDivisions);
     const VertexKdTree meshVertices(app.mesh.vertices);
     for (weft::EdgePolyline& e : app.brepEdges) {
         if (!app.report.edgeDivisions.count(e.edgeId)) continue;
         if (e.points.size() < 2) continue;
-        double cl2 = 0;  // squared chord length as the snap radius
+        double cl2 = 0;
         {
             double dx = e.points[1][0] - e.points[0][0];
             double dy = e.points[1][1] - e.points[0][1];
             double dz = e.points[1][2] - e.points[0][2];
-            cl2 = (dx * dx + dy * dy + dz * dz) * 0.36;  // (0.6*chord)^2
+            cl2 = (dx * dx + dy * dy + dz * dz) * 0.36;
         }
         for (auto& p : e.points) {
             double best = cl2;
@@ -1417,8 +1413,6 @@ static void finishGenerate(App& app) {
         }
     }
 
-    // Open boundary loops (deleted faces leave them) for the bridge tool,
-    // each mapped to its nearest sampled B-rep edge for a stable op id.
     app.bLoops = weft::boundaryLoops(app.mesh);
     app.bLoopEdge.assign(app.bLoops.size(), 0);
     app.hoverLoop = -1;
@@ -1444,13 +1438,7 @@ static void finishGenerate(App& app) {
     }
 
     rebuildBuffers(app);
-    if (firstMesh) frameModel(app);  // async initial load framed late
-    // `dirty` is NOT cleared here: startGenerate cleared it when it froze
-    // this run's settings, so a set flag now means the user kept editing
-    // (or hit undo) WHILE the worker ran. Those edits must coalesce into
-    // the next run — clearing the flag here silently dropped them, so a
-    // drag's landed value never meshed and an undo during a run restored
-    // the recipe but left the stale mesh on screen.
+    if (firstMesh) frameModel(app);
     logLine("regenerate: done (%zu verts, %zu polys; %d remeshed, %d reused)",
             app.mesh.vertexCount(), app.mesh.polygonCount(),
             app.report.cacheMisses, app.report.cacheHits);
@@ -1460,9 +1448,6 @@ static void finishGenerate(App& app) {
                      std::to_string(app.report.cacheHits);
     }
 
-    // Blender live link: mirror every result to the watched OBJ. Written
-    // to a temp file and renamed into place, so the addon's mtime poll
-    // never reads a half-written export.
     if (app.liveLink && !app.livePath.empty()) {
         try {
             std::string tmp = app.livePath + ".tmp";
@@ -1474,20 +1459,31 @@ static void finishGenerate(App& app) {
     }
 }
 
+static void finishGenerate(App& app) {
+    // Legacy entry: drain bake-queue completions (genThread path retired).
+    for (auto& r : app.bakeQueue.pollCompleted()) {
+        adoptBakeResult(app, r);
+    }
+    app.genBusy = app.bakeQueue.busy();
+}
+
 // Synchronous regenerate for flows that need the fresh mesh in hand
-// (budget fitting, recipe remap, load-with-recipe): runs the same
-// worker and waits. The async dirty-flag path is the norm.
+// (budget fitting, recipe remap, load-with-recipe): drain the bake queue
+// and wait for one settled run.
 static void regenerate(App& app) {
     if (!app.hasModel) return;
-    while (app.genBusy && !app.genReady) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
-    if (app.genReady) finishGenerate(app);  // adopt any in-flight run
+    auto drain = [&] {
+        while (app.bakeQueue.busy() || app.bakeQueue.hasPending()) {
+            finishGenerate(app);
+            if (app.bakeQueue.busy() || app.bakeQueue.hasPending()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+        }
+        finishGenerate(app);
+    };
+    drain();
     startGenerate(app);
-    while (!app.genReady) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
-    finishGenerate(app);
+    drain();
 }
 
 // Frame the selection if there is one, else the whole model (F).
@@ -1498,6 +1494,22 @@ static void frameModel(App& app) {
     if (!app.selFaces.empty()) {
         for (size_t p = 0; p < app.mesh.polygons.size(); ++p) {
             if (!app.selFaces.count(app.mesh.polygonFaceId[p])) continue;
+            for (uint32_t vi : app.mesh.polygons[p]) {
+                const auto& v = app.mesh.vertices[vi];
+                for (int i = 0; i < 3; ++i) {
+                    lo[i] = std::min(lo[i], v[i]);
+                    hi[i] = std::max(hi[i], v[i]);
+                }
+                any = true;
+            }
+        }
+    }
+    if (!any) {
+        // Prefer visible (non-hidden) faces so isolate+frame focuses the
+        // remaining object instead of the full assembly bbox.
+        for (size_t p = 0; p < app.mesh.polygons.size(); ++p) {
+            const int fid = app.mesh.polygonFaceId[p];
+            if (fid > 0 && app.hiddenFaces.count(fid)) continue;
             for (uint32_t vi : app.mesh.polygons[p]) {
                 const auto& v = app.mesh.vertices[vi];
                 for (int i = 0; i < 3; ++i) {
@@ -1520,6 +1532,50 @@ static void frameModel(App& app) {
                       float(lo[2] + hi[2]) * 0.5f};
     double dx = hi[0] - lo[0], dy = hi[1] - lo[1], dz = hi[2] - lo[2];
     app.cam.dist = 1.9f * float(std::sqrt(dx * dx + dy * dy + dz * dz) + 1.0);
+}
+
+// Outliner isolate: hide every face not owned by solidIndex (0-based), select
+// that solid's faces, and frame the selection.
+static bool isolateSolidObject(App& app, size_t solidIndex) {
+    if (solidIndex >= app.analysis.solidFaces.size()) return false;
+    const std::vector<int>& fids = app.analysis.solidFaces[solidIndex];
+    app.hiddenFaces.clear();
+    app.selFaces.clear();
+    std::set<int> inSolid(fids.begin(), fids.end());
+    for (const auto& fi : app.analysis.faces) {
+        if (!inSolid.count(fi.id)) app.hiddenFaces.insert(fi.id);
+    }
+    // Frame while selected (bbox of solid), then fully deselect and rebuild
+    // so no orange selection fill/verts remain — wireframe must be readable.
+    for (int fid : fids) app.selFaces.insert(fid);
+    app.activeFace = fids.empty() ? 0 : fids.front();
+    rebuildBuffers(app);
+    frameModel(app);
+    app.selFaces.clear();
+    app.selEdges.clear();
+    app.activeFace = 0;
+    rebuildBuffers(app);
+    return true;
+}
+
+static std::string solidObjectFileStem(const App& app, size_t solidIndex) {
+    char buf[96];
+    std::string nm;
+    if (solidIndex < app.model.solidNames.size())
+        nm = app.model.solidNames[solidIndex];
+    for (char& c : nm) {
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '-' ||
+              c == '_')) {
+            c = '_';
+        }
+    }
+    if (!nm.empty()) {
+        std::snprintf(buf, sizeof buf, "object_%03zu_%s", solidIndex + 1,
+                      nm.c_str());
+    } else {
+        std::snprintf(buf, sizeof buf, "object_%03zu", solidIndex + 1);
+    }
+    return buf;
 }
 
 static void finishLoadModel(App& app) {
@@ -1561,6 +1617,10 @@ static void finishLoadModel(App& app) {
         // Deviation relative to feature size: a 500mm bore and a 5mm bore
         // carry the same ring topology, the angle criterion drives counts.
         app.recipe.settings.defaults.relativeDeviation = true;
+        // Readable cylinders: never below 24 circumferential spans.
+        app.recipe.settings.defaults.minCurvedSegments = 24;
+        app.bakeQueue.clearPending();
+        app.bakeQueue.bind(&app.model, &app.analysis, &app.genCache);
         frameModel(app);
         app.status = path + ": " + std::to_string(app.model.faceCount()) +
                      " faces, " + std::to_string(app.model.edgeCount()) +
@@ -1600,6 +1660,13 @@ static void loadModel(App& app, const std::string& path,
         app.status = "already loading " + app.loadPath;
         return;
     }
+    // Drain bake worker before the load thread prepares a replacement model.
+    while (app.bakeQueue.busy() || app.bakeQueue.hasPending()) {
+        finishGenerate(app);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    finishGenerate(app);
+    app.bakeQueue.clearPending();
     logLine("load: %s", path.c_str());
     if (app.loadThread.joinable()) app.loadThread.join();
     app.loadPath = path;
@@ -1639,12 +1706,13 @@ static void loadModel(App& app, const std::string& path,
 // same mapping. The undo stack refers to old ids, so it resets.
 static void reloadModel(App& app) {
     logLine("hot-reload: %s", app.sourcePath.c_str());
-    // Same rule as loadModel: never swap the model out from under a
-    // running worker (the file watcher can fire mid-run).
-    while (app.genBusy && !app.genReady) {
+    // Never swap the model out from under a running bake worker.
+    while (app.bakeQueue.busy() || app.bakeQueue.hasPending()) {
+        finishGenerate(app);
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
-    if (app.genReady) finishGenerate(app);
+    finishGenerate(app);
+    app.bakeQueue.clearPending();
     try {
         weft::Model fresh = weft::loadStep(app.sourcePath);
         weft::Analysis freshAnalysis = weft::analyze(fresh);
@@ -1655,6 +1723,7 @@ static void reloadModel(App& app) {
         app.model = std::move(fresh);
         app.analysis = std::move(freshAnalysis);
         app.recipe = std::move(remapped);
+        app.bakeQueue.bind(&app.model, &app.analysis, &app.genCache);
 
         auto mapSet = [](std::set<int>& ids, const std::map<int, int>& m) {
             std::set<int> out;
@@ -1908,12 +1977,12 @@ static std::string tempDir() {
 }
 
 static weft::PolyMesh finalizedMeshForExport(App& app) {
-    // The generation cache is shared with the preview worker, so drain it
-    // before reusing the cached face parts for the authoritative final pass.
-    while (app.genBusy && !app.genReady) {
+    // Drain the bake queue before a sync finalize generate (shared cache).
+    while (app.bakeQueue.busy() || app.bakeQueue.hasPending()) {
+        finishGenerate(app);
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
-    if (app.genReady) finishGenerate(app);
+    finishGenerate(app);
 
     weft::GenerationSettings settings = app.recipe.settings;
     settings.finalizeMesh = true;
@@ -2010,12 +2079,17 @@ static void loadFixture(App& app, const std::string& name) {
 
 // Every recipe mutation goes through this so the undo stack can snapshot
 // the pre-edit state once per gesture (see the frame bookkeeping in main).
+// Per-face fidelity flips to Queued immediately; the debounced main-loop
+// flush enqueues a latest-wins bake so camera stays free.
 static void markDirty(App& app) {
     app.dirty = true;
     app.mutatedThisFrame = true;
+    app.lastMutationTime = glfwGetTime();
     app.gpuProxyPending = app.activeFace > 0;
+    if (app.activeFace > 0) {
+        app.bakeQueue.noteQueued(uint32_t(app.activeFace));
+    }
 }
-
 
 // The solved subdivision total around a face's OUTER loop — the honest
 // seed when a pinned boundary total switches on (seeding from 0 or a
@@ -2130,10 +2204,31 @@ static std::array<float, 2> gpuProxyCounts(App& app) {
     auto manual = [&](int u, int v) {
         n = {std::max(1, u), std::max(1, v)};
     };
+    // Blend strips: semantic knobs → parametric U/V for the isoline
+    // overlay. faceAcross 1 = loops ride U; 2 = loops ride V. Without
+    // this remap the proxy densifies the wrong GPU axis when the artist
+    // scrubs along / fillet-loops (adaptive-off path).
+    const bool filletFace =
+        fid <= int(app.analysis.faces.size()) &&
+        app.analysis.faces[fid - 1].isFillet;
+    const auto axIt = app.report.faceAcross.find(fid);
+    const int stripAcross =
+        filletFace && axIt != app.report.faceAcross.end() ? axIt->second
+                                                          : 0;
     using MK = weft::MesherKind;
     switch (kind) {
         case MK::RevolutionGrid:
-        case MK::DomeCap: manual(s.radial, s.axial); break;
+        case MK::DomeCap:
+            if (stripAcross && kind == MK::RevolutionGrid) {
+                if (stripAcross == 1) {
+                    manual(s.filletLoops, s.radial);
+                } else {
+                    manual(s.radial, s.filletLoops);
+                }
+            } else {
+                manual(s.radial, s.axial);
+            }
+            break;
         case MK::DiskCap:
         case MK::AnnulusRing: manual(s.radial, 1); break;
         case MK::RibbonSweep:
@@ -2145,7 +2240,17 @@ static std::array<float, 2> gpuProxyCounts(App& app) {
         case MK::MinimalNGon:
             manual(s.boundary > 0 ? s.boundary : 1, 1);
             break;
-        default: manual(s.gridU, s.gridV); break;
+        default:
+            if (stripAcross) {
+                if (stripAcross == 1) {
+                    manual(s.filletLoops, s.gridU);
+                } else {
+                    manual(s.gridU, s.filletLoops);
+                }
+            } else {
+                manual(s.gridU, s.gridV);
+            }
+            break;
     }
     if (s.adaptive) {
         const std::array<int, 2> live = faceSolvedCounts(app, fid);
@@ -2335,10 +2440,40 @@ static std::string adjustFaceDensityOne(App& app, int fid,
     using MK = weft::MesherKind;
     switch (kind) {
         case MK::RevolutionGrid:
-        case MK::DomeCap:
-            if (secondary) count(s.axial, 1, "axial", live[1]);
-            else count(s.radial, 3, "radial", live[0]);
+        case MK::DomeCap: {
+            // Analytic fillet strips: primary = along (radial), secondary =
+            // fillet loops across — not raw axial (which was the wrong
+            // parametric axis on cylinder fillets with acrossIsU).
+            const bool strip = fid <= int(app.analysis.faces.size()) &&
+                               app.analysis.faces[fid - 1].isFillet;
+            const auto ax = app.report.faceAcross.find(fid);
+            if (kind == MK::RevolutionGrid && strip &&
+                ax != app.report.faceAcross.end()) {
+                if (secondary) {
+                    const int liveAcross =
+                        ax->second == 1 ? live[0] : live[1];
+                    if (s.adaptive) {
+                        if (liveAcross > 0) {
+                            s.filletLoops =
+                                std::max(s.filletLoops, liveAcross);
+                        }
+                        s.adaptive = false;
+                    }
+                    s.filletLoops = std::max(1, s.filletLoops + steps);
+                    std::snprintf(hud, sizeof hud,
+                                  "fillet loops (across): %d",
+                                  s.filletLoops);
+                } else {
+                    count(s.radial, 3, "along the blend",
+                          ax->second == 1 ? live[1] : live[0]);
+                }
+            } else if (secondary) {
+                count(s.axial, 1, "axial", live[1]);
+            } else {
+                count(s.radial, 3, "radial", live[0]);
+            }
             break;
+        }
         case MK::DiskCap:
             // DiskCap density is rim-only (radial). Axial is unused.
             if (secondary) {
@@ -2363,7 +2498,7 @@ static std::string adjustFaceDensityOne(App& app, int fid,
             count(s.radial, 3, "loop verts", live[0]);
             break;
         case MK::PlateWeb:
-            if (secondary) count(s.junctionRings, 1, "collar rings", 0);
+            if (secondary) count(s.junctionRings, 0, "collar rings", 0);
             else total(s.boundary, "boundary verts");
             break;
         case MK::QuadFill:
@@ -2448,17 +2583,13 @@ static void adjustFaceDensity(App& app, bool secondary, int steps) {
             app.activeFace);
     std::string hud;
     if (app.selFaces.empty()) {
-        // No selection: nudge the global density scale. Nudging the
-        // DEFAULTS' counts here reads as harmless, but the count lambda
-        // flips adaptive off — so [ ] with nothing selected silently
-        // disabled curvature-adaptive density for the whole model.
-        app.recipe.settings.densityScale = std::clamp(
-            app.recipe.settings.densityScale * std::pow(1.06, double(steps)),
-            0.05, 20.0);
-        char buf[64];
-        std::snprintf(buf, sizeof buf, "density scale: %.2fx",
-                      app.recipe.settings.densityScale);
-        hud = buf;
+        // No selection: do not touch global density scale — wheel+modifier
+        // over empty space used to fight face density keybinds and silently
+        // rescale the whole model. Scale stays on the panel slider only.
+        std::snprintf(app.hudText, sizeof app.hudText,
+                      "select a face to edit density");
+        app.hudUntil = glfwGetTime() + 0.9;
+        return;
     } else {
         for (int fid : app.selFaces) {
             auto it = app.recipe.settings.perFace.find(fid);
@@ -2483,9 +2614,10 @@ static void adjustFaceDensity(App& app, bool secondary, int steps) {
 }
 
 // Fluid hover editing: with nothing selected, modifier+wheel edits the
-// face UNDER THE CURSOR directly (auto-creating its override), and over
-// empty space it edits the GLOBAL settings — no select, no panel:
-//   shift+wheel        face primary density   | global density scale
+// face UNDER THE CURSOR directly (auto-creating its override). Over empty
+// space it does NOT change global density scale (that fought face density
+// keybinds) — only angle / fillet-loop defaults:
+//   shift+wheel        face primary density   | (idle — select a face)
 //   ctrl+wheel         face secondary density | global angle tolerance
 //   ctrl+shift+wheel   face fillet loops      | global fillet loops
 static void adjustHovered(App& app, bool ctrl, bool shift, int steps) {
@@ -2501,14 +2633,15 @@ static void adjustHovered(App& app, bool ctrl, bool shift, int steps) {
         if (ctrl && shift) {
             it->second.filletLoops = std::max(1, it->second.filletLoops + steps);
             hud = "fillet loops: " + std::to_string(it->second.filletLoops);
-            // Honest HUD: fillet loops only feed the coons/planar fillet
+            // Honest HUD: fillet loops feed coons/planar/rev-grid fillet
             // meshers — flag the nudge when this face ignores it.
             const weft::MesherKind k = effectiveKind(app, fid);
             const bool used =
                 fid <= int(app.analysis.faces.size()) &&
                 app.analysis.faces[fid - 1].isFillet &&
                 (k == weft::MesherKind::CoonsGrid ||
-                 k == weft::MesherKind::PlanarGrid);
+                 k == weft::MesherKind::PlanarGrid ||
+                 k == weft::MesherKind::RevolutionGrid);
             if (!used) hud += " (no effect here)";
         } else {
             hud = adjustFaceDensityOne(app, fid, it->second, ctrl, steps);
@@ -2519,7 +2652,7 @@ static void adjustHovered(App& app, bool ctrl, bool shift, int steps) {
         markDirty(app);
         return;
     }
-    // Background: the global knobs.
+    // Background: angle / fillet defaults only — never density scale.
     weft::FaceMeshSettings& d = app.recipe.settings.defaults;
     if (ctrl && shift) {
         d.filletLoops = std::max(1, d.filletLoops + steps);
@@ -2532,14 +2665,11 @@ static void adjustHovered(App& app, bool ctrl, bool shift, int steps) {
         std::snprintf(app.hudText, sizeof app.hudText, "angle: %.1f deg",
                       d.angleToleranceDeg);
     } else {
-        app.recipe.settings.densityScale = std::clamp(
-            app.recipe.settings.densityScale * std::pow(1.06, double(steps)),
-            0.05, 20.0);
-        std::snprintf(app.hudText, sizeof app.hudText, "density scale: %.2fx",
-                      app.recipe.settings.densityScale);
+        std::snprintf(app.hudText, sizeof app.hudText,
+                      "select a face to edit density");
     }
     app.hudUntil = glfwGetTime() + 0.9;
-    markDirty(app);
+    if (ctrl) markDirty(app);
 }
 
 // Shared verbs (key handlers + pie menus call the same code).
@@ -3446,48 +3576,75 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
     const std::array<int, 2> liveN =
         s.adaptive ? faceSolvedCounts(app, app.activeFace)
                    : std::array<int, 2>{0, 0};
+    // Blend strips get SEMANTIC axis knobs: the raw u/v (or radial/axial)
+    // exposure leaks patch orientation. faceAcross says which axis the
+    // fillet-loops knob drives; along is gridU (Coons/Planar) or radial
+    // (RevolutionGrid analytic fillets).
+    int stripAcross = 0;  // 1 = loops ride the patch u axis, 2 = v
+    if (isFillet && (k == MK::CoonsGrid || k == MK::PlanarGrid ||
+                     k == MK::RevolutionGrid)) {
+        auto ax = app.report.faceAcross.find(app.activeFace);
+        if (ax != app.report.faceAcross.end()) stripAcross = ax->second;
+    }
     if (revolved) {
         // Typing a count IS choosing manual density for this face —
         // same rule as the wheel — otherwise the number displays while
         // adaptive keeps driving and they never match.
         // Labels match the wheel HUD so selected-face settings name the
         // same semantic axes the artist already scrolled.
-        const char* radialLabel = "radial";
-        if (k == MK::AnnulusRing) radialLabel = "loop verts";
-        else if (k == MK::RibbonSweep || k == MK::RailLadder) {
-            radialLabel = "rail density";
-        } else if (k == MK::PlateWeb || k == MK::QuadFill) {
-            // Outer density is boundary verts when pinned; radial only
-            // seeds shares on loops the pin does not cover (holes).
-            radialLabel =
-                s.boundary > 0 ? "hole share seed" : "loop share seed";
-        }
-        int radialShown =
-            s.adaptive && liveN[0] > 0 ? liveN[0] : s.radial;
-        if (ImGui::DragInt(radialLabel, &radialShown, 0.2f, 3, 256)) {
-            s.radial = radialShown;
-            ch = true;
-            // Manual only where radial IS the density; on plate-web /
-            // quad-fill it merely seeds loop shares and killing
-            // adaptive collapses the borders to flat pins.
-            if (k == MK::RevolutionGrid || k == MK::DiskCap ||
-                k == MK::AnnulusRing || k == MK::RibbonSweep ||
-                k == MK::RailLadder || k == MK::DomeCap) {
-                s.adaptive = false;
-            }
-        }
-        hover({int(MK::RevolutionGrid), int(MK::DiskCap),
-               int(MK::AnnulusRing), int(MK::PlateWeb), int(MK::QuadFill),
-               int(MK::RibbonSweep), int(MK::RailLadder), int(MK::DomeCap)});
-        if (k == MK::RevolutionGrid || k == MK::DomeCap) {
-            int axialShown =
-                s.adaptive && liveN[1] > 0 ? liveN[1] : s.axial;
-            if (ImGui::DragInt("axial", &axialShown, 0.2f, 1, 256)) {
-                s.axial = axialShown;
+        if (k == MK::RevolutionGrid && stripAcross) {
+            const int alongLive =
+                stripAcross == 1 ? liveN[1] : liveN[0];
+            int alongShown =
+                s.adaptive && alongLive > 0 ? alongLive : s.radial;
+            if (ImGui::DragInt("along the blend", &alongShown, 0.2f, 3,
+                               256)) {
+                s.radial = alongShown;
                 ch = true;
                 s.adaptive = false;
             }
-            hover({int(MK::RevolutionGrid), int(MK::DomeCap)});
+            hover({int(MK::RevolutionGrid)});
+            ImGui::TextDisabled("across = fillet loops (patch %s)",
+                                stripAcross == 1 ? "u" : "v");
+        } else {
+            const char* radialLabel = "radial";
+            if (k == MK::AnnulusRing) radialLabel = "loop verts";
+            else if (k == MK::RibbonSweep || k == MK::RailLadder) {
+                radialLabel = "rail density";
+            } else if (k == MK::PlateWeb || k == MK::QuadFill) {
+                // Outer density is boundary verts when pinned; radial only
+                // seeds shares on loops the pin does not cover (holes).
+                radialLabel =
+                    s.boundary > 0 ? "hole share seed" : "loop share seed";
+            }
+            int radialShown =
+                s.adaptive && liveN[0] > 0 ? liveN[0] : s.radial;
+            if (ImGui::DragInt(radialLabel, &radialShown, 0.2f, 3, 256)) {
+                s.radial = radialShown;
+                ch = true;
+                // Manual only where radial IS the density; on plate-web /
+                // quad-fill it merely seeds loop shares and killing
+                // adaptive collapses the borders to flat pins.
+                if (k == MK::RevolutionGrid || k == MK::DiskCap ||
+                    k == MK::AnnulusRing || k == MK::RibbonSweep ||
+                    k == MK::RailLadder || k == MK::DomeCap) {
+                    s.adaptive = false;
+                }
+            }
+            hover({int(MK::RevolutionGrid), int(MK::DiskCap),
+                   int(MK::AnnulusRing), int(MK::PlateWeb), int(MK::QuadFill),
+                   int(MK::RibbonSweep), int(MK::RailLadder),
+                   int(MK::DomeCap)});
+            if (k == MK::RevolutionGrid || k == MK::DomeCap) {
+                int axialShown =
+                    s.adaptive && liveN[1] > 0 ? liveN[1] : s.axial;
+                if (ImGui::DragInt("axial", &axialShown, 0.2f, 1, 256)) {
+                    s.axial = axialShown;
+                    ch = true;
+                    s.adaptive = false;
+                }
+                hover({int(MK::RevolutionGrid), int(MK::DomeCap)});
+            }
         }
         if (k == MK::DiskCap) {
             int cap = s.cap == weft::CapStyle::Fan ? 1 : 0;
@@ -3498,13 +3655,24 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
             hover({int(MK::DiskCap)});
         }
         if (k == MK::PlateWeb) {
-            // Concentric collar rings around each hole (same field the
-            // wheel labels "collar rings").
-            ch |= ImGui::DragInt("collar rings", &s.junctionRings, 0.2f,
-                                 1, 32);
-            hover({int(MK::RingJunction), int(MK::PlateWeb)});
-            ch |= ImGui::Checkbox("square collars", &s.squareCollar);
-            hover({int(MK::PlateWeb)});
+            // Hole-plate collars: off by default (0); raise rings or tick
+            // the checkbox to turn the rim on.
+            {
+                bool collars = s.junctionRings > 0;
+                if (ImGui::Checkbox("hole collars", &collars)) {
+                    s.junctionRings = collars ? std::max(1, s.junctionRings)
+                                              : 0;
+                    ch = true;
+                }
+                hover({int(MK::PlateWeb)});
+            }
+            if (s.junctionRings > 0) {
+                ch |= ImGui::DragInt("collar rings", &s.junctionRings, 0.2f,
+                                     1, 32);
+                hover({int(MK::RingJunction), int(MK::PlateWeb)});
+                ch |= ImGui::Checkbox("square collars", &s.squareCollar);
+                hover({int(MK::PlateWeb)});
+            }
         }
     }
     // Boundary totals stand alone: MinimalNGon isn't in the revolved set
@@ -3525,17 +3693,8 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
         }
         hover({int(MK::PlateWeb), int(MK::QuadFill), int(MK::MinimalNGon)});
     }
-    // Blend strips get SEMANTIC axis knobs: the raw u/v exposure leaks
-    // the wire-start-dependent patch orientation, so mirror-twin strips
-    // bound the same geometric direction to grid u on one and grid v on
-    // the other (artist report). The solve remaps: on strips, gridU is
-    // ALWAYS the along count, fillet loops ALWAYS the across count, and
-    // gridV is inert — so show along + the across mapping, not raw u/v.
-    int stripAcross = 0;  // 1 = loops ride the patch u axis, 2 = v
-    if (isFillet && (k == MK::CoonsGrid || k == MK::PlanarGrid)) {
-        auto ax = app.report.faceAcross.find(app.activeFace);
-        if (ax != app.report.faceAcross.end()) stripAcross = ax->second;
-    }
+    // Blend strips (Coons / Planar): remapped along via gridU. Revolution
+    // analytic fillets already showed along via radial above.
     if (grid && stripAcross) {
         const int alongLive = stripAcross == 1 ? liveN[1] : liveN[0];
         int alongShown =
@@ -3584,7 +3743,7 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
         if (k == MK::RingJunction) {
             ch |= ImGui::DragInt("junction rings", &s.junctionRings, 0.2f, 1,
                                  32);
-            hover({int(MK::RingJunction), int(MK::PlateWeb)});
+            hover({int(MK::RingJunction)});
         }
         if (k == MK::CoonsGrid) {
             // Which corner anchors the grid; on triangular patches this
@@ -3596,12 +3755,12 @@ static bool settingsEditor(App& app, weft::FaceMeshSettings& s,
             }
         }
     }
-    // Fillet loops / hold only feed the CoonsGrid / PlanarGrid fillet
-    // meshers (they set the across-the-blend count and its crease
-    // clustering). A fillet that meshes as a revolution grid, ribbon, etc.
-    // ignores them — so only surface them where they actually do something,
-    // not on every face the classifier merely tagged [fillet].
-    if (isFillet && (k == MK::CoonsGrid || k == MK::PlanarGrid)) {
+    // Fillet loops / hold feed Coons / Planar / RevolutionGrid fillet
+    // meshers (across-the-blend count and crease clustering). Only
+    // surface them where they actually do something — not on every face
+    // the classifier merely tagged [fillet].
+    if (isFillet && (k == MK::CoonsGrid || k == MK::PlanarGrid ||
+                     k == MK::RevolutionGrid)) {
         ch |= ImGui::DragInt(stripAcross ? "fillet loops (across)"
                                          : "fillet loops",
                              &s.filletLoops, 0.2f, 1, 64);
@@ -3703,7 +3862,8 @@ static void drawActiveFaceSettings(App& app) {
         app.recipe.settings.forFace(app.activeFace).forceMesher > 0;
     // The report lags the recipe until the pending regenerate lands —
     // annotate instead of listing last run's kind as if it were current.
-    const bool pending = app.dirty || app.genBusy;
+    const bool pending =
+        app.dirty || app.bakeQueue.busy() || app.bakeQueue.hasPending();
     ImGui::Text("mesher: %s%s%s", weft::mesherKindName(kind),
                 forced ? " (forced)" : "", pending ? "  updating..." : "");
     if (!pending) {
@@ -3969,12 +4129,24 @@ static void drawMesherDefaultTabs(App& app) {
     }
     if (tab("rings", {int(MK::RingJunction), int(MK::AnnulusRing),
                       int(MK::PlateWeb)})) {
-        ImGui::TextDisabled("hole collars, annuli, plate webs");
-        ch |= ImGui::DragInt("junction rings", &d.junctionRings, 0.2f, 1,
-                             32);
-        hover({int(MK::RingJunction), int(MK::PlateWeb)});
-        ch |= ImGui::Checkbox("square collars", &d.squareCollar);
-        hover({int(MK::PlateWeb)});
+        ImGui::TextDisabled("hole plates default to no collar rim");
+        {
+            bool collars = d.junctionRings > 0;
+            if (ImGui::Checkbox("hole collars", &collars)) {
+                d.junctionRings =
+                    collars ? std::max(1, d.junctionRings) : 0;
+                ch = true;
+            }
+            hover({int(MK::PlateWeb)});
+        }
+        if (d.junctionRings > 0) {
+            ch |= ImGui::DragInt("collar rings", &d.junctionRings, 0.2f, 1,
+                                 32);
+            hover({int(MK::RingJunction), int(MK::PlateWeb)});
+            ch |= ImGui::Checkbox("square collars", &d.squareCollar);
+            hover({int(MK::PlateWeb)});
+        }
+        ImGui::TextDisabled("ring-junction uses max(1, collar rings)");
         ImGui::EndTabItem();
     }
     if (tab("flat faces", {int(MK::MinimalNGon), int(MK::PlanarGrid),
@@ -4000,11 +4172,13 @@ static void drawMesherDefaultTabs(App& app) {
 // anchor to it so they never sit under the docked panels.
 static ImVec2 gViewMin{0, 0}, gViewMax{0, 0};
 
-// While the worker meshes, a centred card shows a spinning hourglass
-// and the per-face progress — the app never just hangs.
+// While the bake-queue worker meshes, a centred card shows a spinning
+// hourglass and per-face progress — the app never just hangs.
 static void drawGenProgress(App& app) {
     const bool loading = app.loadBusy.load(std::memory_order_relaxed);
-    if (!loading && !app.genBusy) return;
+    const bool baking =
+        app.bakeQueue.busy() || app.bakeQueue.hasPending();
+    if (!loading && !baking) return;
     const double started = loading ? app.loadStartTime : app.genStartTime;
     if (glfwGetTime() - started < 0.2) return;  // no flicker
     ImGui::SetNextWindowPos({(gViewMin.x + gViewMax.x) * 0.5f,
@@ -4022,8 +4196,6 @@ static void drawGenProgress(App& app) {
     ImVec2 cur = ImGui::GetCursorScreenPos();
     ImVec2 ctr{cur.x + w * 0.5f, cur.y + r + 6.0f * gUiScale};
     const float spin = float(glfwGetTime()) * 3.0f;
-    // Spinning hourglass: two point-to-point triangles rotating inside
-    // a chasing arc.
     auto rot = [&](float x, float y) {
         const float cs = std::cos(spin), sn = std::sin(spin);
         return ImVec2{ctr.x + x * cs - y * sn, ctr.y + x * sn + y * cs};
@@ -4043,9 +4215,11 @@ static void drawGenProgress(App& app) {
         ImGui::TextDisabled("%.1f s elapsed; the app remains responsive",
                             glfwGetTime() - app.loadStartTime);
     } else {
-        const int done = app.genProgress.load(std::memory_order_relaxed);
-        const int total = app.genTotal.load(std::memory_order_relaxed);
-        char label[64];
+        const int done =
+            app.bakeQueue.progressFaces.load(std::memory_order_relaxed);
+        const int total =
+            app.bakeQueue.progressTotal.load(std::memory_order_relaxed);
+        char label[96];
         if (total < 0) {
             std::snprintf(label, sizeof label,
                           "planning affected faces...");
@@ -4062,11 +4236,17 @@ static void drawGenProgress(App& app) {
             total <= 0 ? (total == 0 ? 1.0f : 0.0f)
                        : std::min(1.0f, float(done) / float(total));
         ImGui::ProgressBar(fraction, {w, 0}, label);
-        // Edits made while this run was already meshing coalesce into a
-        // follow-up run — say so, so the value the user landed on is
-        // visibly still on its way rather than silently dropped.
-        if (app.dirty) {
-            ImGui::TextDisabled("newer edits queued for the next pass...");
+        const int pending = app.bakeQueue.pendingDepth();
+        const auto bakingFaces =
+            app.bakeQueue.facesInState(weft_app::FaceFidelity::Baking);
+        if (!bakingFaces.empty()) {
+            ImGui::TextDisabled("baking %zu face region(s)...",
+                                bakingFaces.size());
+        }
+        if (pending > 0 || app.dirty) {
+            ImGui::TextDisabled(
+                "newer edits queued (%d pending) — latest params win",
+                std::max(pending, app.dirty ? 1 : 0));
         }
     }
     ImGui::End();
@@ -5326,7 +5506,9 @@ int main(int argc, char** argv) {
     weft::setGenerateDebugLog(gDebugLog);
     logLine("weft_app start (built %s %s)", __DATE__, __TIME__);
 
-    std::string screenshotPath, startModel, startFixture = "demo";
+    std::string screenshotPath, screenshotObjectsDir, startModel,
+        startFixture = "demo";
+    int screenshotObjectOnly = 0;  // 1-based; 0 = all solids
     int startSelect = 0, startMode = 0;
     bool startQuality = false, startMatcap = false, startSmooth = false;
     bool startProxy = false;
@@ -5336,6 +5518,10 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--screenshot" && i + 1 < argc) screenshotPath = argv[++i];
+        else if (a == "--screenshot-objects" && i + 1 < argc)
+            screenshotObjectsDir = argv[++i];
+        else if (a == "--screenshot-object" && i + 1 < argc)
+            screenshotObjectOnly = std::stoi(argv[++i]);
         else if (a == "--fixture" && i + 1 < argc) startFixture = argv[++i];
         else if (a == "--select" && i + 1 < argc) startSelect = std::stoi(argv[++i]);
         else if (a == "--yaw" && i + 1 < argc) startYaw = std::stof(argv[++i]);
@@ -5445,12 +5631,35 @@ int main(int argc, char** argv) {
     GLuint proxyProg = makeProgram(kProxyVS, kProxyFS);
 
     App app;
+    app.bakeQueue.start();
+    // Model/analysis rebound on each successful load.
     app.livePath = gDataDir + "/weft_live.obj";
     bool startupLoadPending = !startModel.empty();
-    if (startupLoadPending) loadModel(app, startModel, false);
-    else loadFixture(app, startFixture);
-    if (startFinalize) app.forceFinalize = true;
-    if ((startStitch || startFinalize) && app.hasModel) {
+    // Fixture loads are async too: face overrides / select / proxy must
+    // wait until finishLoadModel lands, same as a path argument.
+    bool startupApplyPending =
+        !startFaceOverrides.empty() || startSelect > 0 || startProxy;
+    if (startupLoadPending) {
+        // Skip auto-generate: overrides apply first, then startGenerate.
+        loadModel(app, startModel, false);
+    } else if (startupApplyPending) {
+        // Same for fixtures that need select / density overrides / proxy.
+        std::string path =
+            tempDir() + "/weft_fixture_" + startFixture + ".step";
+        try {
+            weft::writeStep(weft::makeFixture(startFixture), path);
+            loadModel(app, path, false);
+            app.status = "fixture: " + startFixture;
+        } catch (const std::exception& e) {
+            app.status = std::string("fixture failed: ") + e.what();
+        }
+    } else {
+        loadFixture(app, startFixture);
+    }
+    if (startFinalize || !screenshotObjectsDir.empty())
+        app.forceFinalize = true;
+    if ((startStitch || startFinalize || !screenshotObjectsDir.empty()) &&
+        app.hasModel) {
         // After the load (which resets the recipe): apply screenshot
         // experiment flags and rebuild synchronously so the capture shows
         // the intended mesh (finalize = production export path).
@@ -5471,31 +5680,60 @@ int main(int argc, char** argv) {
     if (startMode >= 1 && startMode <= 6) {
         setSelectMode(app, SelectMode(startMode - 1));
     }
-    if (!startFaceOverrides.empty() && app.hasModel) {
+    // Face overrides / select for an already-resident model (rare). The
+    // common async-load path applies them in the main loop once hasModel.
+    if (!startupApplyPending) {
+        // nothing
+    } else if (app.hasModel && !app.loadBusy) {
         for (const auto& [fid, spec] : startFaceOverrides) {
             weft::FaceMeshSettings s = app.recipe.settings.defaults;
             weft::applySettingsList(s, spec);
             app.recipe.settings.perFace[fid] = s;
         }
+        if (startSelect > 0 && startSelect <= app.model.faceCount()) {
+            app.selFaces = {startSelect};
+            app.activeFace = startSelect;
+            frameModel(app);
+        }
+        if (startProxy && app.activeFace > 0) app.gpuProxyPending = true;
         regenerate(app);
         rebuildBuffers(app);
-    }
-    if (startSelect > 0 && startSelect <= app.model.faceCount()) {
-        app.selFaces = {startSelect};
-        app.activeFace = startSelect;
-        rebuildBuffers(app);
-        frameModel(app);  // zoom to the face under inspection
+        startupApplyPending = false;
     }
 
-    double lastX = 0, lastY = 0;
+    double lastX = 0, lastY = 0;  // window-space cursor for orbit/pan feel
     bool navOrbit = false, navPan = false, navZoom = false, navSnap = false;
     bool navFromLmb = false;  // laptop scheme: this nav drag rode alt+LMB
-    double downX = 0, downY = 0, downRX = 0, downRY = 0;
+    double downX = 0, downY = 0, downRX = 0, downRY = 0;      // framebuffer
+    double downXWin = 0, downYWin = 0, downRXWin = 0, downRYWin = 0;  // window
     bool prevLmb = false, prevRmb = false;
     double lastClickTime = 0;  // double-click select-similar
     int lastClickFace = 0;
-    double hoverX = -1, hoverY = -1;  // last hover-picked cursor position
+    double hoverX = -1, hoverY = -1;  // last hover-picked cursor (framebuffer)
     int frame = 0;
+    size_t objectShotIndex =
+        screenshotObjectOnly > 0 ? size_t(screenshotObjectOnly - 1) : 0;
+    const size_t objectShotEnd =
+        screenshotObjectOnly > 0 ? objectShotIndex + 1 : size_t(-1);
+    int objectShotView = 0;
+    int objectShotSettle = 0;
+    bool objectShotArmed = !screenshotObjectsDir.empty();
+    const float objectShotViews[2][2] = {{0.9f, 0.5f}, {2.4f, 0.35f}};
+    if (objectShotArmed) {
+        std::error_code ec;
+        std::filesystem::create_directories(screenshotObjectsDir, ec);
+        // Solid + mesh wire, fully deselected (no orange overlay / verts).
+        app.showFill = true;
+        app.showWire = true;
+        app.showVerts = false;
+        app.showBrepEdges = false;
+        app.showProblems = false;
+        app.lightStyle = 0;  // lit solid
+        // Dark wires read on shaded fill (same as UI default on dark theme).
+        app.wireColor[0] = 0.10f;
+        app.wireColor[1] = 0.11f;
+        app.wireColor[2] = 0.13f;
+    }
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
@@ -5518,14 +5756,26 @@ int main(int argc, char** argv) {
         app.preFrame = app.recipe;
         app.mutatedThisFrame = false;
 
-        int fbw, fbh;
+        int fbw, fbh, winW, winH;
         glfwGetFramebufferSize(window, &fbw, &fbh);
-        double mx, my;
-        glfwGetCursorPos(window, &mx, &my);
+        glfwGetWindowSize(window, &winW, &winH);
+        // GLFW cursor position is in window coordinates; glReadPixels /
+        // projectPoint / the pick buffer use framebuffer pixels. On HiDPI
+        // Linux (and macOS) these differ by the content scale — mixing them
+        // offsets selection from the cursor. Keep both spaces: mx/my for
+        // 3D picking, mxWin/myWin for ImGui overlays and orbit feel.
+        double mxWin = 0, myWin = 0;
+        glfwGetCursorPos(window, &mxWin, &myWin);
+        const double fbSX = winW > 0 ? double(fbw) / double(winW) : 1.0;
+        const double fbSY = winH > 0 ? double(fbh) / double(winH) : 1.0;
+        double mx = mxWin * fbSX;
+        double my = myWin * fbSY;
         if (demoLoopCut) {  // scripted screenshots: cursor at viewport center
             app.mode = Mode::LoopCut;
             mx = fbw * 0.42;
             my = fbh * 0.5;
+            mxWin = fbSX > 0 ? mx / fbSX : mx;
+            myWin = fbSY > 0 ? my / fbSY : my;
         }
 
         // Blender-standard navigation: MMB orbit, shift+MMB pan, ctrl+MMB
@@ -5557,8 +5807,8 @@ int main(int argc, char** argv) {
                 navOrbit = !navPan && !navZoom;
                 navSnap = alt && realMmb;  // axis snap needs a real MMB
                 navFromLmb = !realMmb;
-                lastX = mx;
-                lastY = my;
+                lastX = mxWin;
+                lastY = myWin;
             }
             if (!mmb) {
                 if (navOrbit && navSnap) {  // alt+MMB: nearest axis view
@@ -5572,8 +5822,8 @@ int main(int argc, char** argv) {
                 navFromLmb = false;
             }
             if (navOrbit) {
-                app.cam.yaw -= float(mx - lastX) * 0.008f;
-                app.cam.pitch += float(my - lastY) * 0.008f;
+                app.cam.yaw -= float(mxWin - lastX) * 0.008f;
+                app.cam.pitch += float(myWin - lastY) * 0.008f;
                 app.cam.pitch = std::clamp(app.cam.pitch, -1.55f, 1.55f);
             }
             if (navPan) {
@@ -5582,16 +5832,22 @@ int main(int argc, char** argv) {
                 Vec3 f = norm(sub(app.cam.target, eye));
                 Vec3 r = norm(cross(f, {0, 0, 1}));
                 Vec3 u = cross(r, f);
-                app.cam.target.x -= (float(mx - lastX) * r.x - float(my - lastY) * u.x) * k;
-                app.cam.target.y -= (float(mx - lastX) * r.y - float(my - lastY) * u.y) * k;
-                app.cam.target.z -= (float(mx - lastX) * r.z - float(my - lastY) * u.z) * k;
+                app.cam.target.x -=
+                    (float(mxWin - lastX) * r.x - float(myWin - lastY) * u.x) *
+                    k;
+                app.cam.target.y -=
+                    (float(mxWin - lastX) * r.y - float(myWin - lastY) * u.y) *
+                    k;
+                app.cam.target.z -=
+                    (float(mxWin - lastX) * r.z - float(myWin - lastY) * u.z) *
+                    k;
             }
             if (navZoom) {
-                app.cam.dist *= std::pow(1.006f, float(my - lastY));
+                app.cam.dist *= std::pow(1.006f, float(myWin - lastY));
                 app.cam.dist = std::clamp(app.cam.dist, 0.5f, 10000.0f);
             }
-            lastX = mx;
-            lastY = my;
+            lastX = mxWin;
+            lastY = myWin;
             if (gScroll != 0.0f) {
                 // Modal density: shift+wheel drives the primary axis
                 // (radial/grid-u), ctrl+wheel the secondary (axial/grid-v),
@@ -5632,7 +5888,7 @@ int main(int argc, char** argv) {
                            !app.selFaces.empty()) {
                     // ctrl+shift+wheel: fillet support loops. Flag the
                     // nudge when the active face's mesher ignores them
-                    // (only coons/planar fillet meshers read the value).
+                    // (coons/planar/rev-grid fillet meshers read the value).
                     editSelected(app, [&](weft::FaceMeshSettings& s) {
                         s.filletLoops = std::max(1, s.filletLoops + steps);
                     });
@@ -5643,7 +5899,8 @@ int main(int argc, char** argv) {
                         app.activeFace <= int(app.analysis.faces.size()) &&
                         app.analysis.faces[app.activeFace - 1].isFillet &&
                         (k == weft::MesherKind::CoonsGrid ||
-                         k == weft::MesherKind::PlanarGrid);
+                         k == weft::MesherKind::PlanarGrid ||
+                         k == weft::MesherKind::RevolutionGrid);
                     std::snprintf(app.hudText, sizeof app.hudText,
                                   "fillet loops: %d%s",
                                   app.recipe.settings.forFace(app.activeFace)
@@ -5865,8 +6122,8 @@ int main(int argc, char** argv) {
                 } else {
                     app.pieKind = want;
                     app.pieHold = true;
-                    app.pieCenter[0] = float(mx);
-                    app.pieCenter[1] = float(my);
+                    app.pieCenter[0] = float(mxWin);
+                    app.pieCenter[1] = float(myWin);
                 }
             }
             bool dec = ImGui::IsKeyPressed(ImGuiKey_LeftBracket);
@@ -6061,21 +6318,34 @@ int main(int argc, char** argv) {
                    glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) ==
                        GLFW_PRESS;
         bool lmbPressed = lmb && !prevLmb;
-        if (lmbPressed) { downX = mx; downY = my; }
-        bool clicked = prevLmb && !lmb && std::abs(mx - downX) < 4 &&
-                       std::abs(my - downY) < 4;
+        // Gesture thresholds stay in window pixels so click-vs-drag feel is
+        // stable across DPI; downX/Y stay in framebuffer pixels for picking.
+        if (lmbPressed) {
+            downX = mx;
+            downY = my;
+            downXWin = mxWin;
+            downYWin = myWin;
+        }
+        bool clicked = prevLmb && !lmb && std::abs(mxWin - downXWin) < 4 &&
+                       std::abs(myWin - downYWin) < 4;
         // Box select: an LMB drag in idle rubber-bands in EVERY mode.
         bool boxDrag = lmb && app.mode == Mode::Idle && app.pieKind < 0 &&
-                       (std::abs(mx - downX) > 6 || std::abs(my - downY) > 6);
+                       (std::abs(mxWin - downXWin) > 6 ||
+                        std::abs(myWin - downYWin) > 6);
         bool boxReleased = prevLmb && !lmb && !clicked &&
                            app.mode == Mode::Idle && app.pieKind < 0;
         prevLmb = lmb;
         bool rmb = !io.WantCaptureMouse &&
                    glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) ==
                        GLFW_PRESS;
-        if (rmb && !prevRmb) { downRX = mx; downRY = my; }
-        bool rClicked = prevRmb && !rmb && std::abs(mx - downRX) < 4 &&
-                        std::abs(my - downRY) < 4;
+        if (rmb && !prevRmb) {
+            downRX = mx;
+            downRY = my;
+            downRXWin = mxWin;
+            downRYWin = myWin;
+        }
+        bool rClicked = prevRmb && !rmb && std::abs(mxWin - downRXWin) < 4 &&
+                        std::abs(myWin - downRYWin) < 4;
         prevRmb = rmb;
         gScroll = 0.0f;
 
@@ -6107,14 +6377,21 @@ int main(int argc, char** argv) {
         }
 
         if (app.mutatedThisFrame) logLine("frame: input handled, dirty");
-        if (app.genReady) {
-            finishGenerate(app);
-            if (startProxy && app.activeFace > 0) {
+        // Poll completed bakes every frame — camera never joins the worker.
+        {
+            auto done = app.bakeQueue.pollCompleted();
+            for (auto& r : done) adoptBakeResult(app, r);
+            app.genBusy = app.bakeQueue.busy();
+            if (!done.empty() && startProxy && app.activeFace > 0) {
                 app.gpuProxyPending = true;
             }
         }
-        if (app.loadReady && !app.genBusy) finishLoadModel(app);
-        if (startupLoadPending && app.hasModel && !app.loadBusy) {
+        if (app.loadReady && !app.bakeQueue.busy() &&
+            !app.bakeQueue.hasPending()) {
+            finishLoadModel(app);
+        }
+        if ((startupLoadPending || startupApplyPending) && app.hasModel &&
+            !app.loadBusy) {
             if (startStitch) app.recipe.settings.decoupleSeams = true;
             for (const auto& [fid, spec] : startFaceOverrides) {
                 weft::FaceMeshSettings s = app.recipe.settings.defaults;
@@ -6126,20 +6403,32 @@ int main(int argc, char** argv) {
                 app.activeFace = startSelect;
                 frameModel(app);
             }
+            if (startProxy && app.activeFace > 0) {
+                app.gpuProxyPending = true;
+            }
             startupLoadPending = false;
+            startupApplyPending = false;
             startGenerate(app);
         }
-        // Slider drags and wheel bursts can emit dozens of mutations. Wait
-        // briefly for the gesture to settle instead of launching a generation
-        // for each intermediate value and leaving a tail of stale jobs behind
-        // the pointer. Buttons/undo still feel immediate; continuous controls
-        // pay one small debounce and then one exact local remesh.
+        // Debounce continuous controls, then enqueue one latest-wins bake
+        // for the active face (0 = model-wide defaults).
         const bool editingTopology =
             app.mutatedThisFrame || ImGui::IsAnyItemActive() ||
             (glfwGetTime() - app.lastMutationTime < 0.08);
-        if (app.dirty && !app.genBusy && !app.loadBusy && !app.loadReady &&
-            !editingTopology) {
-            startGenerate(app);
+        if (app.dirty && !app.bakeQueue.busy() && !app.loadBusy &&
+            !app.loadReady && !editingTopology) {
+            const uint32_t fid =
+                app.activeFace > 0 ? uint32_t(app.activeFace) : 0u;
+            app.dirty = false;
+            enqueueBake(app, fid);
+        }
+        // If the worker is busy but newer edits arrived, keep them pending
+        // via noteQueued; when the worker finishes, dirty flush above runs.
+        if (app.dirty && app.bakeQueue.busy() && !editingTopology) {
+            const uint32_t fid =
+                app.activeFace > 0 ? uint32_t(app.activeFace) : 0u;
+            enqueueBake(app, fid);
+            app.dirty = false;
         }
 
         const float vpAspect = fbh > 0 ? float(fbw) / fbh : 1.6f;
@@ -6661,7 +6950,8 @@ int main(int argc, char** argv) {
 #endif
         if (boxDrag) {
             ImGui::GetForegroundDrawList()->AddRect(
-                {float(downX), float(downY)}, {float(mx), float(my)},
+                {float(downXWin), float(downYWin)},
+                {float(mxWin), float(myWin)},
                 IM_COL32(255, 200, 80, 200), 0.0f, 0, 1.5f);
         }
         // Pie menus: sectors around the opening point, nearest-direction
@@ -6684,7 +6974,7 @@ int main(int argc, char** argv) {
             const int n = app.pieKind == 0 ? 6 : 8;
             const float cx = app.pieCenter[0], cy = app.pieCenter[1];
             const float radius = 92.0f * gUiScale;
-            float dx = float(mx) - cx, dy = float(my) - cy;
+            float dx = float(mxWin) - cx, dy = float(myWin) - cy;
             int hover = -1;
             if (std::hypot(dx, dy) > 18.0f * gUiScale) {
                 float ang = std::atan2(dy, dx);
@@ -6703,7 +6993,7 @@ int main(int argc, char** argv) {
             dl->AddCircleFilled({cx, cy}, 5.0f * gUiScale,
                                 IM_COL32(255, 196, 64, 255));
             if (hover >= 0) {
-                dl->AddLine({cx, cy}, {float(mx), float(my)},
+                dl->AddLine({cx, cy}, {float(mxWin), float(myWin)},
                             IM_COL32(255, 196, 64, 140), 2.0f * gUiScale);
             }
             for (int i = 0; i < n; ++i) {
@@ -6773,6 +7063,11 @@ int main(int argc, char** argv) {
         if (app.hasModel && (app.selectMode == SelectMode::Vert ||
                              app.selectMode == SelectMode::MeshEdge)) {
             ImDrawList* dl = ImGui::GetBackgroundDrawList();
+            // projectPoint is in framebuffer pixels; ImGui draw lists use
+            // window coordinates — convert before drawing on HiDPI.
+            auto toUi = [&](float x, float y) -> ImVec2 {
+                return {float(x / fbSX), float(y / fbSY)};
+            };
             auto projV = [&](uint32_t v, float* sp) {
                 projectPoint(mvp, app.mesh.vertices[v], fbw, fbh, sp);
                 return sp[2] > 0;
@@ -6783,8 +7078,9 @@ int main(int argc, char** argv) {
                     if (v >= app.mesh.vertexCount()) continue;
                     float sp[3];
                     if (projV(v, sp)) {
-                        dl->AddRectFilled({sp[0] - r, sp[1] - r},
-                                          {sp[0] + r, sp[1] + r},
+                        ImVec2 p = toUi(sp[0], sp[1]);
+                        dl->AddRectFilled({p.x - r, p.y - r},
+                                          {p.x + r, p.y + r},
                                           IM_COL32(255, 196, 64, 255));
                     }
                 }
@@ -6792,7 +7088,8 @@ int main(int argc, char** argv) {
                     app.hoverVert < int64_t(app.mesh.vertexCount())) {
                     float sp[3];
                     if (projV(uint32_t(app.hoverVert), sp)) {
-                        dl->AddCircle({sp[0], sp[1]}, 6.0f * gUiScale,
+                        ImVec2 p = toUi(sp[0], sp[1]);
+                        dl->AddCircle(p, 6.0f * gUiScale,
                                       IM_COL32(255, 255, 255, 220), 0,
                                       1.5f * gUiScale);
                     }
@@ -6807,7 +7104,8 @@ int main(int argc, char** argv) {
                     }
                     float sa[3], sb[3];
                     if (projV(a, sa) && projV(b, sb)) {
-                        dl->AddLine({sa[0], sa[1]}, {sb[0], sb[1]}, col, w);
+                        dl->AddLine(toUi(sa[0], sa[1]), toUi(sb[0], sb[1]),
+                                    col, w);
                     }
                 };
                 for (uint64_t e : app.selMeshEdges) {
@@ -7045,9 +7343,56 @@ int main(int argc, char** argv) {
         // freshly-rendered BACK buffer before swapping: reading GL_BACK after
         // glfwSwapBuffers captures the previous frame, which was commonly the
         // "welding + conforming" progress card rather than the finished mesh.
-        if (!screenshotPath.empty() && ++frame >= 4 &&
-            !app.loadBusy && !app.loadReady &&
-            !(app.hasModel && (app.genBusy || app.genReady))) {
+                const bool meshReady = !app.loadBusy && !app.loadReady &&
+            !(app.hasModel &&
+              (app.bakeQueue.busy() || app.bakeQueue.hasPending() ||
+               app.dirty));
+        if (objectShotArmed && meshReady && app.hasModel &&
+            !app.analysis.solidFaces.empty()) {
+            if (objectShotSettle == 0) {
+                if (objectShotIndex >= app.analysis.solidFaces.size() ||
+                    objectShotIndex >= objectShotEnd) {
+                    std::printf("screenshot-objects: done (%zu solids)\n",
+                                app.analysis.solidFaces.size());
+                    break;
+                }
+                if (!isolateSolidObject(app, objectShotIndex)) {
+                    std::printf("screenshot-objects: skip %zu\n",
+                                objectShotIndex + 1);
+                    ++objectShotIndex;
+                    objectShotView = 0;
+                    continue;
+                }
+                app.cam.yaw = objectShotViews[objectShotView][0];
+                app.cam.pitch = objectShotViews[objectShotView][1];
+                frameModel(app);
+                objectShotSettle = 1;
+            } else if (++objectShotSettle >= 4) {
+                if (!app.selFaces.empty() || app.activeFace != 0) {
+                    app.selFaces.clear();
+                    app.selEdges.clear();
+                    app.activeFace = 0;
+                    rebuildBuffers(app);
+                }
+                std::vector<unsigned char> px(size_t(fbw) * fbh * 3);
+                glReadPixels(0, 0, fbw, fbh, GL_RGB, GL_UNSIGNED_BYTE,
+                             px.data());
+                stbi_flip_vertically_on_write(1);
+                const std::string stem =
+                    solidObjectFileStem(app, objectShotIndex);
+                const std::filesystem::path out =
+                    std::filesystem::path(screenshotObjectsDir) /
+                    (stem + "_v" + std::to_string(objectShotView) + ".png");
+                stbi_write_png(out.string().c_str(), fbw, fbh, 3, px.data(),
+                               fbw * 3);
+                std::printf("wrote %s\n", out.string().c_str());
+                objectShotSettle = 0;
+                if (++objectShotView >= 2) {
+                    objectShotView = 0;
+                    ++objectShotIndex;
+                }
+            }
+        } else if (!screenshotPath.empty() && ++frame >= 4 && meshReady) {
             std::vector<unsigned char> px(size_t(fbw) * fbh * 3);
             glReadPixels(0, 0, fbw, fbh, GL_RGB, GL_UNSIGNED_BYTE, px.data());
             stbi_flip_vertically_on_write(1);
@@ -7056,12 +7401,13 @@ int main(int argc, char** argv) {
             std::printf("wrote %s\n", screenshotPath.c_str());
             break;
         }
-        glfwSwapBuffers(window);
+glfwSwapBuffers(window);
     }
 
     // A window close may arrive while either worker is active. Drain both so
     // their App pointer and OCCT objects remain alive through completion.
     if (app.loadThread.joinable()) app.loadThread.join();
+    app.bakeQueue.stop();
     if (app.genThread.joinable()) app.genThread.join();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();

@@ -15,66 +15,62 @@ if(WIN32)
   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 endif()
 
+message(STATUS "Looking for OpenCASCADE...")
 find_package(OpenCASCADE REQUIRED)
+message(STATUS "OpenCASCADE found")
 
-# build.bat deploys the TK*.dlls next to the exes, but the TK dlls in turn
-# load the third-party runtimes OCCT was built against (tbb12, jemalloc,
-# FreeImage, openvr_api, freetype, ffmpeg...) and those usually live
-# OUTSIDE the OCCT install dir. Their true locations are recorded in
-# OCCT's link interface as absolute .lib paths, so resolve each to the
-# .dll beside it (or in a sibling bin/) and deploy those too.
-if(WIN32)
-  set(WEFT_OCCT_3P_DLLS "")
-  set(_weft_seen "")
-  set(_weft_stack ${OpenCASCADE_LIBRARIES})
-  while(_weft_stack)
-    list(POP_FRONT _weft_stack _t)
-    if(NOT TARGET ${_t})
-      continue()
+# Third-party OCCT runtimes (tbb12, jemalloc, FreeImage, ...). Prefer the
+# vendored tree in git — NEVER recursively walk C:\OpenCASCADE (that
+# GLOB_RECURSE was hanging Windows configure for minutes after the
+# "Selecting Windows SDK version" line).
+set(WEFT_OCCT_3P_DLLS "")
+set(WEFT_VENDORED_OCCT_RUNTIME_DIR
+    "${CMAKE_SOURCE_DIR}/third_party/occt-win-runtime")
+if(WIN32 AND EXISTS "${WEFT_VENDORED_OCCT_RUNTIME_DIR}/tbb12.dll")
+  file(GLOB WEFT_VENDORED_OCCT_RUNTIME_DLLS
+       "${WEFT_VENDORED_OCCT_RUNTIME_DIR}/*.dll")
+  set(WEFT_OCCT_3P_DLLS "${WEFT_VENDORED_OCCT_RUNTIME_DLLS}")
+  list(LENGTH WEFT_OCCT_3P_DLLS _weft_n)
+  message(STATUS "OCCT third-party runtimes: ${_weft_n} vendored DLL(s) in "
+                 "${WEFT_VENDORED_OCCT_RUNTIME_DIR}")
+elseif(WIN32)
+  message(STATUS "OCCT third-party runtimes: vendored folder missing; "
+                 "trying shallow OCCT bin dirs (no recursive scan)")
+  # Shallow only: bin/ next to OpenCASCADEConfig.cmake and common 3rdparty
+  # layouts. Do not GLOB_RECURSE the whole install tree.
+  set(_weft_tp_bins "")
+  if(DEFINED OpenCASCADE_DIR)
+    get_filename_component(_weft_occt_cfg_dir "${OpenCASCADE_DIR}" DIRECTORY)
+    list(APPEND _weft_tp_bins
+      "${_weft_occt_cfg_dir}/../win64/vc14/bin"
+      "${_weft_occt_cfg_dir}/../bind"
+      "${_weft_occt_cfg_dir}/../bin"
+      "${_weft_occt_cfg_dir}/../../3rdparty-vc14-64/tbb/bin"
+      "${_weft_occt_cfg_dir}/../../3rdparty-vc14-64/freeimage/bin"
+      "${_weft_occt_cfg_dir}/../../3rdparty-vc14-64/freetype/bin"
+      "${_weft_occt_cfg_dir}/../../3rdparty-vc14-64/openvr/bin/win64"
+      "${_weft_occt_cfg_dir}/../../3rdparty-vc14-64/jemalloc-vc14-64/bin")
+  endif()
+  if(DEFINED OCCT_SEARCH_PATH)
+    list(APPEND _weft_tp_bins
+      "${OCCT_SEARCH_PATH}/win64/vc14/bin"
+      "${OCCT_SEARCH_PATH}/bind"
+      "${OCCT_SEARCH_PATH}/bin")
+  endif()
+  list(REMOVE_DUPLICATES _weft_tp_bins)
+  foreach(_bin IN LISTS _weft_tp_bins)
+    if(EXISTS "${_bin}")
+      file(GLOB _hit "${_bin}/*.dll")
+      list(APPEND WEFT_OCCT_3P_DLLS ${_hit})
     endif()
-    if(_t IN_LIST _weft_seen)
-      continue()
-    endif()
-    list(APPEND _weft_seen ${_t})
-    get_target_property(_deps ${_t} INTERFACE_LINK_LIBRARIES)
-    if(NOT _deps)
-      continue()
-    endif()
-    foreach(_d IN LISTS _deps)
-      if(TARGET ${_d})
-        list(APPEND _weft_stack ${_d})
-        continue()
-      endif()
-      # Entries may be wrapped in generator expressions; fish the path out.
-      string(REGEX MATCH "[A-Za-z]:[^<>;$]*\\.lib" _lib "${_d}")
-      if(NOT _lib)
-        continue()
-      endif()
-      if(NOT EXISTS "${_lib}")
-        # OCCT was built against this lib but it is gone from that path
-        # (relocated install). Say so: its dll must be found by hand.
-        list(APPEND _weft_3p_missing "${_lib}")
-        continue()
-      endif()
-      get_filename_component(_dir "${_lib}" DIRECTORY)
-      get_filename_component(_name "${_lib}" NAME_WE)
-      # Versioned dll names (zlib1.dll, avcodec-57.dll) need the glob.
-      file(GLOB _dll "${_dir}/${_name}*.dll" "${_dir}/../bin/${_name}*.dll")
-      list(APPEND WEFT_OCCT_3P_DLLS ${_dll})
-    endforeach()
-  endwhile()
+  endforeach()
   list(REMOVE_DUPLICATES WEFT_OCCT_3P_DLLS)
   if(WEFT_OCCT_3P_DLLS)
-    message(STATUS "OCCT third-party runtimes to deploy: ${WEFT_OCCT_3P_DLLS}")
+    list(LENGTH WEFT_OCCT_3P_DLLS _weft_n)
+    message(STATUS "OCCT third-party runtimes: ${_weft_n} DLL(s) from shallow bins")
   else()
-    message(STATUS "OCCT third-party runtimes: none resolved from the link "
-                   "interface (OCCT built without them, or relocated)")
-  endif()
-  if(_weft_3p_missing)
-    list(REMOVE_DUPLICATES _weft_3p_missing)
-    message(WARNING "OCCT's link interface records third-party libs at "
-                    "paths that no longer exist -- their DLLs must be "
-                    "located manually: ${_weft_3p_missing}")
+    message(STATUS "OCCT third-party runtimes: none found — pull "
+                   "third_party/occt-win-runtime from git for weft_app.exe")
   endif()
 endif()
 
