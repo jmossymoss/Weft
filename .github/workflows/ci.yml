@@ -19,7 +19,7 @@ jobs:
             libocct-foundation-dev libocct-modeling-data-dev \
             libocct-modeling-algorithms-dev libocct-data-exchange-dev \
             libocct-ocaf-dev libocct-visualization-dev ninja-build \
-            libglfw3-dev libgl1-mesa-dev libtbb-dev
+            libglfw3-dev libgl1-mesa-dev libtbb-dev libfontconfig-dev
       - name: Configure + build
         run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
