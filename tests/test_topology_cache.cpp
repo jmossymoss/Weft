@@ -1,4 +1,5 @@
 #include "weft/analysis.hpp"
+#include "weft/fixture.hpp"
 #include "weft/model.hpp"
 #include "weft/topology_cache.hpp"
 
@@ -14,7 +15,14 @@ static int gFails = 0;
     } while (0)
 
 int main() {
-    weft::Model model = weft::loadStep("tests/fixtures/demo.step");
+    // CTest cwd is the build tree — synthesize a tiny solid instead of
+    // relying on a repo-relative STEP path.
+    weft::Model model;
+    {
+        const std::string path = "weft_topo_cache_test.step";
+        weft::writeStep(weft::makeFixture("box"), path);
+        model = weft::loadStep(path);
+    }
     weft::Analysis a = weft::analyze(model);
     CHECK(!a.topology.empty());
     CHECK(a.topology.faceCount == model.faceCount());
