@@ -1,12 +1,10 @@
 // Type-specific geometric primitive pools (data-oriented).
 //
 // Extracted once at analyze()/load from BRepAdaptor_Surface. Runtime
-// generate() solvers (RevolutionGrid, etc.) evaluate points via plain
-// ElSLib-equivalent math on these structs — no BRepAdaptor_Surface on the
-// hot path for Plane/Cylinder/Cone/Sphere/Torus. NURBS poles/knots are
-// stored for future lock-free sampling; until then BSpline still falls
-// back to OCCT. This accelerates the existing weft::generate() path (AD-1);
-// it is not a second mesher.
+// generate() solvers evaluate via ElSLib (analytics) or native Cox-de Boor
+// (NURBS) on these structs — no BRepAdaptor_Surface on the hot path for
+// Plane/Cylinder/Cone/Sphere/Torus/Nurb. Accelerates weft::generate() (AD-1);
+// not a second mesher.
 //
 #pragma once
 
@@ -73,10 +71,12 @@ struct TorusPrimitive {
 struct NurbPrimitive {
     uint32_t faceId = 0;
     int uDegree = 0, vDegree = 0;
-    int nU = 0, nV = 0;  // poles grid
+    int nU = 0, nV = 0;  // control-point grid (nV rows × nU cols)
     bool rational = false;
-    std::vector<gp_Pnt> poles;    // row-major nV rows of nU
-    std::vector<double> weights;  // empty if !rational
+    // Flat, contiguous control net (row-major: pole(iv, iu) at iv*nU+iu).
+    std::vector<gp_Pnt> poles;
+    std::vector<double> weights;  // empty if !rational; same layout as poles
+    // Full knot sequences (with multiplicities), length = nPoles+degree+1.
     std::vector<double> uKnots, vKnots;
     double u0 = 0, u1 = 0, v0 = 0, v1 = 0;
 };
@@ -103,8 +103,8 @@ struct GeometryPool {
     // OCCT extract — call once from analyze(model).
     void extractFromModel(const Model& model, const Analysis& analysis);
 
-    // Lock-free point evaluation for analytic kinds. Returns false if the
-    // face has no analytic slot (Nurb/Other/missing) — caller keeps OCCT.
+    // Lock-free point evaluation for Plane/Cylinder/Cone/Sphere/Torus and
+    // native Cox-de Boor for Nurb. Returns false only for Other/missing.
     bool value(uint32_t faceId, double u, double v, gp_Pnt& out) const;
 
     const FaceGeomSlot& slot(uint32_t faceId) const {

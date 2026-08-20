@@ -22994,7 +22994,33 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     // the closed-ring curvature floor never raises them. Lift circumferential
     // groups to radius×wrap under relative deviation (mp9 object 5 f374:
     // expect ~11 spans at r=21, was crushed to 6).
-    if (settings.defaults.relativeDeviation) {
+    //
+    // Independent of per-face radial: cache raises keyed by chord tol.
+    {
+        const double chordTol = settings.defaults.chordTolerance;
+        auto applyDrumRaise = [&](int eid, int scaleNu) {
+            if (eid < 1 || eid > model.edgeCount()) return;
+            const int root = density.groups.find(eid);
+            if (density.pinnedRoots.count(root)) return;
+            auto it = density.groupCount.find(root);
+            if (it == density.groupCount.end()) {
+                density.groupCount[root] = scaleNu;
+                density.ownerByRoot[root] = "drum-scale-floor";
+            } else if (it->second < scaleNu) {
+                it->second = scaleNu;
+                density.ownerByRoot[root] = "drum-scale-floor";
+            }
+            solvedEdge[eid] = std::max(solvedEdge[eid], scaleNu);
+        };
+        if (cache && !cache->drumScalesDirty &&
+            std::abs(cache->drumScalesChordTol - chordTol) < 1e-15 &&
+            !cache->drumScaleEdgeFloors.empty() &&
+            settings.defaults.relativeDeviation) {
+            for (const auto& [eid, nu] : cache->drumScaleEdgeFloors) {
+                applyDrumRaise(eid, nu);
+            }
+            timingCheckpoint("drum scale floors (cached)");
+        } else if (settings.defaults.relativeDeviation) {
         Bnd_Box bb;
         double modelDiag = 0.0;
         try {
@@ -23007,6 +23033,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             }
         } catch (const Standard_Failure&) {
         }
+        std::vector<std::pair<int, int>> raised;
+        raised.reserve(128);
         if (modelDiag > 1e-9) {
             const double chord =
                 std::max(settings.defaults.chordTolerance * 0.01 * modelDiag,
@@ -23014,10 +23042,6 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             for (const auto& [fid, plan] : plans) {
                 if (fid < 1 || fid > model.faceCount()) continue;
                 const FaceInfo& dfi = analysis.faces[fid - 1];
-                // Skip tiny panels and ABC-scale multi-tooth drums (hundreds
-                // of edges) whose open-band densify owns circumferential
-                // count. Target mid-size IsoBand walls under-sampled by a
-                // short driver arc (mp9 object 5 f374: 37 edges, r≈21).
                 if (dfi.featureClass != FeatureClass::Drum ||
                     dfi.chartKind != ChartKind::IsoBand ||
                     dfi.radius < 1e-9 || dfi.edgeIds.size() < 16 ||
@@ -23039,15 +23063,17 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     if (eid < 1 || eid > model.edgeCount()) return;
                     const int root = density.groups.find(eid);
                     if (density.pinnedRoots.count(root)) return;
-                    auto it = density.groupCount.find(root);
-                    if (it == density.groupCount.end()) {
-                        density.groupCount[root] = scaleNu;
-                        density.ownerByRoot[root] = "drum-scale-floor";
-                    } else if (it->second < scaleNu) {
-                        it->second = scaleNu;
-                        density.ownerByRoot[root] = "drum-scale-floor";
+                    applyDrumRaise(eid, scaleNu);
+                    raised.push_back({eid, scaleNu});
+                    // Record density-group siblings so warm re-apply is
+                    // complete without an O(E) scan.
+                    for (int e = 1; e <= model.edgeCount(); ++e) {
+                        if (density.groups.find(e) != root) continue;
+                        if (solvedEdge[e] < scaleNu) {
+                            solvedEdge[e] = scaleNu;
+                        }
+                        raised.push_back({e, scaleNu});
                     }
-                    solvedEdge[eid] = std::max(solvedEdge[eid], scaleNu);
                 };
                 for (int eid : plan.uEdges) raise(eid);
                 if (plan.orthogonalDriverU > 0) raise(plan.orthogonalDriverU);
@@ -23056,8 +23082,19 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     fid, scaleNu, dfi.radius, wrap);
             }
         }
+        if (cache) {
+            std::sort(raised.begin(), raised.end());
+            raised.erase(std::unique(raised.begin(), raised.end()),
+                         raised.end());
+            cache->drumScaleEdgeFloors = std::move(raised);
+            cache->drumScalesChordTol = chordTol;
+            cache->drumScalesDirty = false;
+        }
+        timingCheckpoint("drum scale floors");
+        } else {
+            timingCheckpoint("drum scale floors");
+        }
     }
-    timingCheckpoint("drum scale floors");
     // Digon chord floor: micro-edge vertex unification can leave a face
     // with two (or more) non-micro edges that share the same endpoint
     // pair. At count=1 both chords collapse to one mesh segment, so the

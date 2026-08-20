@@ -443,6 +443,12 @@ struct GenerationCache {
     // per-face density edits. Compute once per model, re-apply on warm runs.
     bool digonsDirty = true;
     std::vector<std::pair<int, int>> digonEdgeFloors;  // (edgeId, minCount)
+    // IsoBand drum-scale floor depends on model diag + defaults chord tol +
+    // band wrap — not on per-face radial. Cache raises; invalidate on clear
+    // or when defaults.chordTolerance changes.
+    bool drumScalesDirty = true;
+    double drumScalesChordTol = -1.0;
+    std::vector<std::pair<int, int>> drumScaleEdgeFloors;  // (edgeId, minCount)
     void clear() {
         faces.clear();
         revolutionCovers.clear();
@@ -461,6 +467,9 @@ struct GenerationCache {
         cornerRepair.reset();
         digonsDirty = true;
         digonEdgeFloors.clear();
+        drumScalesDirty = true;
+        drumScalesChordTol = -1.0;
+        drumScaleEdgeFloors.clear();
     }
 };
 
