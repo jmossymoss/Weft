@@ -1,8 +1,17 @@
 // Optional STEP preprocess: heal/sew (already in healWithHistory) plus
 // tolerance-gated analytic recognition and BSpline restriction.
-// Accelerates generate() by turning near-analytic BSplines into Plane/
-// Cylinder/etc. before GeometryPool ETL — still the same weft::generate()
-// path (AD-1).
+//
+// Default: both experimental stages OFF (watertightness preserved).
+// Opt-in via environment:
+//   WEFT_ANALYTIC_FIT_REL=0.001   — ConvertToAnalytical (rel. to model diag)
+//   WEFT_ANALYTIC_FIT=0.1         — absolute mm tolerance
+//   WEFT_BSPLINE_RESTRICT=1       — degree/segment clamp on freeform
+//   WEFT_FULL_HEAL=1              — ShapeFix even on large assemblies
+//   WEFT_PROFILE_IMPORT=1         — print preprocess stage timings
+//
+// A/B on mp9_Edited (indicative): BSpline restrict can cut cold generate
+// ~16s→~4.5s but currently fails watertight/floor gates — keep opt-in
+// until pcurve rebuild + corpus gates are green.
 //
 #pragma once
 
