@@ -483,6 +483,10 @@ Analysis analyze(const Model& model) {
         f.priority = priorityFor(f.featureClass, f.type);
     }
 
+    // Flat CSR adjacency for generate() — no TopExp on the interactive path.
+    a.topology.buildFromAnalysis(a);
+    a.topology.fillFaceAreas(model);
+
     return a;
 }
 

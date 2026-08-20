@@ -1,6 +1,7 @@
 #pragma once
 
 #include "weft/model.hpp"
+#include "weft/topology_cache.hpp"
 
 #include <string>
 #include <vector>
@@ -102,6 +103,11 @@ struct Analysis {
     // part when the file has no solids). One entry per object, in
     // traversal order — what an outliner lists.
     std::vector<std::vector<int>> solidFaces;
+    // Flat CSR adjacency built once at analyze() — generate() hot path
+    // reads this instead of re-walking TopoDS with TopExp_Explorer.
+    // Dirty tags / edgeSegments are updated during interactive generates
+    // (mutable: Analysis is otherwise treated as immutable geometry).
+    mutable TopologyCache topology;
 };
 
 // Classify every face and edge and build the face-adjacency graph.

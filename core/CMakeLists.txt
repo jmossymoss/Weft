@@ -9,6 +9,7 @@ endif()
 add_library(weft_core
   src/model.cpp
   src/analysis.cpp
+  src/topology_cache.cpp
   src/mesh.cpp
   src/meshers.cpp
   src/mesher_sampling.cpp

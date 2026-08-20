@@ -14,6 +14,11 @@ target_link_libraries(bake_queue_tests PRIVATE weft_core)
 add_test(NAME bake_queue COMMAND bake_queue_tests)
 weft_deploy_occt_dlls(bake_queue_tests)
 
+add_executable(topology_cache_tests test_topology_cache.cpp)
+target_link_libraries(topology_cache_tests PRIVATE weft_core)
+add_test(NAME topology_cache COMMAND topology_cache_tests)
+weft_deploy_occt_dlls(topology_cache_tests)
+
 # Integration: emit signature twice via CLI and assert policy-equal.
 add_test(
   NAME topology_signature

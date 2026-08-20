@@ -22698,6 +22698,14 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     dbg("generate: begin (%d faces, %d edges, parallel=%d, conform=%d)",
         model.faceCount(), model.edgeCount(), settings.parallelMeshing ? 1 : 0,
         settings.conformBorders ? 1 : 0);
+    // Tag dirty faces from per-face overrides (and their border neighbors)
+    // for overlay / diagnostics. Remesh decisions still come from cache keys.
+    if (!analysis.topology.empty()) {
+        analysis.topology.clearDirty();
+        for (const auto& [fid, _] : settingsIn.perFace) {
+            if (fid >= 1) analysis.topology.markDirtyClosure(uint32_t(fid));
+        }
+    }
     std::shared_ptr<FacePlanCache> planCache;
     if (cache) {
         if (cache->facePlans) {
@@ -23019,18 +23027,16 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         };
         for (int fid = 1; fid <= model.faceCount(); ++fid) {
             std::map<std::pair<int, int>, std::set<int>> byEnds;
-            for (TopExp_Explorer ex(model.faces(fid), TopAbs_EDGE); ex.More();
-                 ex.Next()) {
-                const TopoDS_Edge e = TopoDS::Edge(ex.Current());
-                if (BRep_Tool::Degenerated(e)) continue;
-                const int eid = model.edges.FindIndex(e);
-                if (eid < 1) continue;
+            auto consider = [&](int eid) {
+                if (eid < 1) return;
+                const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
+                if (BRep_Tool::Degenerated(e)) return;
                 TopoDS_Vertex v1, v2;
                 TopExp::Vertices(e, v1, v2);
-                if (v1.IsNull() || v2.IsNull()) continue;
+                if (v1.IsNull() || v2.IsNull()) return;
                 const int ia = vmap.FindIndex(v1);
                 const int ib = vmap.FindIndex(v2);
-                if (ia < 1 || ib < 1) continue;
+                if (ia < 1 || ib < 1) return;
                 // Skip the collapsed micro sides — only the surviving
                 // parallel chords need midpoints.
                 if (BRep_Tool::Pnt(v1).Distance(BRep_Tool::Pnt(v2)) <
@@ -23038,16 +23044,30 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     try {
                         BRepAdaptor_Curve c(e);
                         if (GCPnts_AbscissaPoint::Length(c) < microTol) {
-                            continue;
+                            return;
                         }
                     } catch (const Standard_Failure&) {
-                        continue;
+                        return;
                     }
                 }
                 int a = vfind(ia), b = vfind(ib);
-                if (a == b) continue;
+                if (a == b) return;
                 if (a > b) std::swap(a, b);
                 byEnds[{a, b}].insert(eid);
+            };
+            if (!analysis.topology.empty() &&
+                fid <= analysis.topology.faceCount) {
+                for (const uint32_t* ep =
+                         analysis.topology.faceEdgesBegin(uint32_t(fid));
+                     ep != analysis.topology.faceEdgesEnd(uint32_t(fid));
+                     ++ep) {
+                    consider(int(*ep));
+                }
+            } else {
+                for (TopExp_Explorer ex(model.faces(fid), TopAbs_EDGE);
+                     ex.More(); ex.Next()) {
+                    consider(model.edges.FindIndex(ex.Current()));
+                }
             }
             for (const auto& [ends, eids] : byEnds) {
                 (void)ends;
@@ -23062,6 +23082,12 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         timingCheckpoint("digon floors");
     }
     auto geometryEdgeLength = [&](int eid) {
+        if (eid >= 1 && !analysis.topology.empty() &&
+            eid <= analysis.topology.edgeCount &&
+            size_t(eid) <= analysis.topology.edgeLength.size()) {
+            const double L = analysis.topology.edgeLength[size_t(eid) - 1];
+            if (L > 0.0) return L;
+        }
         if (cache) {
             auto it = cache->edgeLengths.find(eid);
             if (it != cache->edgeLengths.end()) return it->second;
@@ -24152,6 +24178,13 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     }
     dbg("generate: density solved");
     timingCheckpoint("density repairs");
+    if (!analysis.topology.empty() &&
+        int(analysis.topology.edgeSegments.size()) ==
+            model.edgeCount() + 1) {
+        for (int e = 1; e <= model.edgeCount(); ++e) {
+            analysis.topology.edgeSegments[size_t(e)] = solvedEdge[e];
+        }
+    }
 
     // Pin castellated rims' base arcs to their column azimuths (the
     // column-alignment contract): the notch band and the neighbour annulus
@@ -24160,9 +24193,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     PinnedEdges pinnedEdge(model.edgeCount() + 1);
     pinCastellatedRims(model, plans, settings, solvedEdge, density,
                        pinnedEdge);
+    timingCheckpoint("pin castellated");
     // Fillet flow-through: pin blend-chain cross-rails to the band columns
     // so columns run barrel -> fillet -> fillet -> lower band unbroken.
     pinFilletChains(model, plans, solvedEdge, pinnedEdge);
+    timingCheckpoint("pin fillet chains");
     // Support-loop hold changes the sampling fractions along a fillet's
     // across edges. Pin those fractions model-wide so fallback/planar
     // neighbours sample the same shared edge instead of staying uniform and
@@ -24727,10 +24762,26 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
         const double dsc = std::clamp(settings.densityScale, 0.05, 20.0);
         std::vector<double> faceArea(faceN + 1, 0.0);
         double modelArea = 0.0;
+        const bool topoAreas =
+            !analysis.topology.faceArea.empty() &&
+            int(analysis.topology.faceArea.size()) == faceN;
         const bool cachedAreas =
             cache && cache->modelArea >= 0.0 &&
             int(cache->faceAreas.size()) == faceN;
-        if (cachedAreas) {
+        if (topoAreas) {
+            modelArea = analysis.topology.modelArea;
+            for (int fid = 1; fid <= faceN; ++fid) {
+                faceArea[fid] =
+                    analysis.topology.faceArea[size_t(fid) - 1];
+            }
+            if (cache && !cachedAreas) {
+                cache->faceAreas.clear();
+                for (int fid = 1; fid <= faceN; ++fid) {
+                    cache->faceAreas[fid] = faceArea[fid];
+                }
+                cache->modelArea = modelArea;
+            }
+        } else if (cachedAreas) {
             modelArea = cache->modelArea;
             for (int fid = 1; fid <= faceN; ++fid) {
                 faceArea[fid] = cache->faceAreas.at(fid);
@@ -24766,6 +24817,7 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
 
     // Cache keys: everything that shapes a face's part. A hit skips the
     // (expensive) meshing entirely and reuses the stored part.
+    timingCheckpoint("resolve face counts");
     std::vector<std::string> cacheKey(faceN + 1);
     std::vector<bool> cached(faceN + 1, false);
     for (int fid = 1; fid <= faceN; ++fid) {
@@ -24822,41 +24874,67 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                 cacheKey[fid] += "c" + std::to_string(solvedEdge[eid]);
             }
         }
-        // Key EVERY border edge's solved count, for every kind: any
-        // mesher that walks its wires (minimal n-gons, plate webs, the
-        // floors) consumes counts that live in no plan list, and a
-        // density edit that reaches such an edge through group
-        // propagation must re-mesh the face — a stale part against a
-        // re-meshed neighbour is an open seam (observed: a mohne radial
-        // edit under the sweep's warm cache leaked exactly the edited
-        // count per side).
-        for (TopExp_Explorer ex(model.faces(fid), TopAbs_EDGE); ex.More();
-             ex.Next()) {
-            int eid = model.edges.FindIndex(ex.Current());
-            if (eid >= 1 && eid < int(solvedEdge.size())) {
-                cacheKey[fid] += "e" + std::to_string(solvedEdge[eid]);
+        // Fingerprint every border edge's solved count + pins via the
+        // static topology CSR. A rolling hash avoids O(E) string appends
+        // that dominated "counts + cache keys" on MP9 (~1.6s).
+        if (!analysis.topology.empty() &&
+            fid <= analysis.topology.faceCount) {
+            uint64_t edgeHash = 0xCBF29CE484222325ULL;
+            uint64_t pinHash = 0xCBF29CE484222325ULL;
+            for (const uint32_t* ep =
+                     analysis.topology.faceEdgesBegin(uint32_t(fid));
+                 ep != analysis.topology.faceEdgesEnd(uint32_t(fid)); ++ep) {
+                const int eid = int(*ep);
+                const int n =
+                    (eid >= 1 && eid < int(solvedEdge.size()))
+                        ? solvedEdge[eid]
+                        : 0;
+                edgeHash ^=
+                    (uint64_t(uint32_t(eid)) * 0x9E3779B97F4A7C15ULL) +
+                    uint64_t(uint32_t(n));
+                edgeHash *= 0x100000001B3ULL;
+                if (eid < 1 || eid >= int(pinnedEdge.size()) ||
+                    pinnedEdge[eid].empty()) {
+                    continue;
+                }
+                pinHash ^= uint64_t(pinnedEdge[eid].size()) *
+                               0x9E3779B97F4A7C15ULL +
+                           uint64_t(uint32_t(eid));
+                for (double t : pinnedEdge[eid]) {
+                    pinHash ^= uint64_t(llround(t * 1e6)) +
+                               0x9E3779B97F4A7C15ULL + (pinHash << 6) +
+                               (pinHash >> 2);
+                }
             }
-        }
-        // Pin fractions reshape border samples without changing the solved
-        // count (orthogonal-trim station crossings, fillet holds). A warm
-        // cache that keys counts alone reuses a stale lattice against a
-        // neighbour remeshed under a different pin set — open seams under
-        // weft sweep's per-face radial sequence. Fingerprint pin cardinality
-        // and a coarse fraction hash per bordered edge.
-        for (TopExp_Explorer ex(model.faces(fid), TopAbs_EDGE); ex.More();
-             ex.Next()) {
-            int eid = model.edges.FindIndex(ex.Current());
-            if (eid < 1 || eid >= int(pinnedEdge.size()) ||
-                pinnedEdge[eid].empty()) {
-                continue;
+            cacheKey[fid] += "E" + std::to_string(edgeHash);
+            cacheKey[fid] += "P" + std::to_string(pinHash);
+        } else if (fid >= 1 && fid <= int(analysis.faces.size())) {
+            uint64_t edgeHash = 0xCBF29CE484222325ULL;
+            uint64_t pinHash = 0xCBF29CE484222325ULL;
+            for (int eid : analysis.faces[size_t(fid) - 1].edgeIds) {
+                const int n =
+                    (eid >= 1 && eid < int(solvedEdge.size()))
+                        ? solvedEdge[eid]
+                        : 0;
+                edgeHash ^=
+                    (uint64_t(uint32_t(eid)) * 0x9E3779B97F4A7C15ULL) +
+                    uint64_t(uint32_t(n));
+                edgeHash *= 0x100000001B3ULL;
+                if (eid < 1 || eid >= int(pinnedEdge.size()) ||
+                    pinnedEdge[eid].empty()) {
+                    continue;
+                }
+                pinHash ^= uint64_t(pinnedEdge[eid].size()) *
+                               0x9E3779B97F4A7C15ULL +
+                           uint64_t(uint32_t(eid));
+                for (double t : pinnedEdge[eid]) {
+                    pinHash ^= uint64_t(llround(t * 1e6)) +
+                               0x9E3779B97F4A7C15ULL + (pinHash << 6) +
+                               (pinHash >> 2);
+                }
             }
-            uint64_t h = pinnedEdge[eid].size() * 0x9e3779b97f4a7c15ULL;
-            for (double t : pinnedEdge[eid]) {
-                h ^= uint64_t(llround(t * 1e6)) + 0x9e3779b97f4a7c15ULL +
-                     (h << 6) + (h >> 2);
-            }
-            cacheKey[fid] += "p" + std::to_string(eid) + ":" +
-                             std::to_string(h);
+            cacheKey[fid] += "E" + std::to_string(edgeHash);
+            cacheKey[fid] += "P" + std::to_string(pinHash);
         }
     }
 
