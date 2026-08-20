@@ -75,10 +75,18 @@ def parse_obj(path):
         for idx, g in polys:
             mapped = []
             for i in idx:
+                # A malformed/truncated OBJ can name vertices that do not
+                # exist; skip the polygon instead of wrapping onto whatever
+                # negative index addresses.
+                if i < 0 or i >= len(all_verts):
+                    mapped = []
+                    break
                 if i not in remap:
                     remap[i] = len(verts)
                     verts.append(all_verts[i])
                 mapped.append(remap[i])
+            if len(mapped) < 3:
+                continue
             faces.append(tuple(mapped))
             face_ids.append(g)
         result.append((name, verts, faces, face_ids))
