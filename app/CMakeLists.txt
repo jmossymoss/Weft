@@ -57,7 +57,7 @@ set(WEFT_BACKEND_SRC
   ${WEFT_IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
 )
 
-add_executable(weft_app main.cpp ${WEFT_BACKEND_SRC})
+add_executable(weft_app main.cpp bake_queue.cpp ${WEFT_BACKEND_SRC})
 
 target_include_directories(weft_app PRIVATE
   ${WEFT_IMGUI_INC}

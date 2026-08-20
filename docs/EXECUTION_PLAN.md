@@ -389,6 +389,12 @@ The removed decoupled-core rewrite is not an active direction. Do not restore
 it, port work from old branches, or begin another ground-up rewrite without a
 new architecture decision supported by release-corpus evidence.
 
+Interactive responsiveness in `weft_app` may schedule regenerate work through a
+per-face bake queue (FIFO, latest-wins dedupe, single worker). That queue is
+scheduling only: every bake still calls `weft::generate()` with a frozen
+settings snapshot. It is not a second mesher, not a parallel density solver,
+and not a decoupled-core rewrite.
+
 ### AD-2: stitch experiment
 
 `GenerationSettings::decoupleSeams` and CLI `--stitch` are quarantined

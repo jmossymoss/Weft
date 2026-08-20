@@ -43,6 +43,7 @@
 
 #include "weft/analysis.hpp"
 #include "weft/edit.hpp"
+#include "bake_queue.hpp"
 #include "weft/export_fbx.hpp"
 #include "weft/export_gltf.hpp"
 #include "weft/fixture.hpp"
@@ -623,6 +624,9 @@ struct App {
     weft::PolyMesh mesh;
     weft::GenerationReport report;
     weft::GenerationCache genCache;  // per-face reuse across regenerates
+    // Per-face bake queue (Phase 1): single worker, latest-wins dedupe,
+    // full-mesh adopt. Always calls weft::generate() (AD-1).
+    weft_app::FaceBakeQueue bakeQueue;
     std::vector<weft::EdgePolyline> brepEdges;
 
     // Selection: Blender-style modes. Face mode selects B-rep faces, edge
@@ -837,6 +841,25 @@ static std::array<float, 3> faceColor(const weft::FaceInfo& f, bool selected) {
     return c;
 }
 
+// Amber tint while a face is queued/baking so the artist sees which
+// regions the background worker is still resolving.
+static std::array<float, 3> faceColorWithFidelity(const weft::FaceInfo& f,
+                                                  bool selected,
+                                                  weft_app::FaceFidelity fid) {
+    auto c = faceColor(f, selected);
+    if (fid == weft_app::FaceFidelity::Baking) {
+        c[0] = 0.45f * c[0] + 0.55f * 0.95f;
+        c[1] = 0.45f * c[1] + 0.55f * 0.62f;
+        c[2] = 0.45f * c[2] + 0.55f * 0.18f;
+    } else if (fid == weft_app::FaceFidelity::Queued ||
+               fid == weft_app::FaceFidelity::LowPolyProxy) {
+        c[0] = 0.65f * c[0] + 0.35f * 0.85f;
+        c[1] = 0.65f * c[1] + 0.35f * 0.70f;
+        c[2] = 0.65f * c[2] + 0.35f * 0.35f;
+    }
+    return c;
+}
+
 // Worst corner angle of a polygon relative to its regular ideal: 1.0 is
 // perfectly regular, 0 collapses. Slivers and pinches score low.
 static double polyQuality(const weft::PolyMesh& m, size_t i) {
@@ -1045,7 +1068,10 @@ static void rebuildBuffers(App& app) {
         std::array<float, 3> col =
             app.qualityView
                 ? heatColor(polyQuality(m, i))
-                : faceColor(info, fid > 0 && app.selFaces.count(fid) > 0);
+                : faceColorWithFidelity(
+                      info, fid > 0 && app.selFaces.count(fid) > 0,
+                      fid > 0 ? app.bakeQueue.fidelity(uint32_t(fid))
+                              : weft_app::FaceFidelity::HighFidelity);
         std::array<float, 3> id{float(fid & 255) / 255.0f,
                                 float((fid >> 8) & 255) / 255.0f,
                                 170.0f / 255.0f};
@@ -1291,83 +1317,55 @@ static void updateProblems(App& app) {
 
 static void finishGenerate(App& app);
 
-// Kick the worker: the UI thread never blocks on meshing. Settings are
-// snapshotted so live slider edits during the run can't race the solver;
-// further edits leave `dirty` set and coalesce into the next run.
+// Snapshot recipe → bake queue. faceId 0 = model-wide (load / defaults).
+static void enqueueBake(App& app, uint32_t faceId) {
+    if (!app.hasModel) return;
+    weft::GenerationSettings s = app.recipe.settings;
+    s.finalizeMesh = app.forceFinalize || app.liveLink;
+    app.bakeQueue.enqueue(faceId, s, app.recipe.ops);
+    app.dirty = true;
+    app.genBusy = true;
+    app.genStartTime = glfwGetTime();
+    app.genProgress = 0;
+    app.genTotal = -1;
+}
+
+// Kick a bake: UI thread never blocks on meshing. Settings are snapshotted
+// inside the queue; further edits coalesce via latest-wins pending overwrite.
 static void startGenerate(App& app) {
-    if (!app.hasModel || app.genBusy) return;
+    if (!app.hasModel) return;
     logLine("regenerate: begin (%zu overrides, %zu edge pins, %zu ops)",
             app.recipe.settings.perFace.size(),
             app.recipe.settings.perEdge.size(), app.recipe.ops.size());
-    if (app.genThread.joinable()) app.genThread.join();
-    app.genSettings = app.recipe.settings;
-    // The viewport needs connected vertices for editing, but not the costly
-    // whole-model conformation/stitch/cleanup pass. Export regenerates from
-    // these cached face parts with finalization enabled. Screenshot /
-    // visual-QA runs set forceFinalize so captures match CLI export.
-    // Live-link OBJ is a delivery path (§3.3): write the finalized mesh,
-    // not the reduced interactive preview.
-    app.genSettings.finalizeMesh = app.forceFinalize || app.liveLink;
-    // Ops frozen like settings: the UI thread mutates them mid-run
-    // (weld, undo, grab drags) and a live read is a use-after-free
-    // in the worker.
-    app.genOps = app.recipe.ops;
-    app.genProgress = 0;
-    // Unknown until planning/density/cache lookup determines the affected
-    // border-connected set. Do not imply that every model face will remesh.
-    app.genTotal = -1;
-    app.genSettings.progressFaces = &app.genProgress;
-    app.genSettings.progressTotal = &app.genTotal;
     app.genError.clear();
-    app.genStartTime = glfwGetTime();
-    app.genBusy = true;
-    app.genReady = false;
     app.dirty = false;
-    App* a = &app;  // outlives the thread (owned by main)
-    app.genThread = std::thread([a] {
-        try {
-            weft::GenerationReport report;
-            weft::PolyMesh mesh =
-                weft::generate(a->model, a->analysis, a->genSettings,
-                               &report, &a->genCache);
-            weft::ApplyOpsReport ops =
-                weft::applyOps(mesh, a->model, a->genOps);
-            a->genOpsApplied = ops.applied;
-            a->genOpsFailed = ops.failed;
-            a->genMesh = std::move(mesh);
-            a->genReport = std::move(report);
-        } catch (const std::exception& e) {
-            a->genError = e.what();
-        } catch (...) {
-            a->genError = "unknown exception";
-        }
-        a->genReady = true;
-    });
+    enqueueBake(app, 0);  // model-wide trigger; pending faces still coalesce
 }
 
 // Worker finished: adopt its mesh on the UI thread and rebuild all the
 // GL-side derived state. Failures keep the previous mesh (ctrl+Z path).
 static void frameModel(App& app);
 
-static void finishGenerate(App& app) {
-    if (app.genThread.joinable()) app.genThread.join();
-    app.genBusy = false;
+static void adoptBakeResult(App& app, weft_app::FaceBakeResult& result) {
+    app.genBusy = app.bakeQueue.busy();
     app.genReady = false;
     const bool firstMesh = app.mesh.vertices.empty();
-    if (!app.genError.empty()) {
-        logLine("regenerate: FAILED: %s", app.genError.c_str());
-        app.status = "regenerate failed (ctrl+Z): " + app.genError;
+    if (!result.error.empty()) {
+        logLine("regenerate: FAILED: %s", result.error.c_str());
+        app.status = "regenerate failed (ctrl+Z): " + result.error;
         return;
     }
-    logLine("regenerate: generate took %.1f ms",
-            (glfwGetTime() - app.genStartTime) * 1000.0);
+    logLine("regenerate: generate took %.1f ms (triggers=%zu gen=%llu)",
+            (glfwGetTime() - app.genStartTime) * 1000.0,
+            result.triggerFaces.size(),
+            (unsigned long long)result.generation);
     {
-        app.mesh = std::move(app.genMesh);
-        app.meshFinalized = app.genSettings.finalizeMesh;
+        app.mesh = std::move(result.mesh);
+        app.meshFinalized = result.finalizeMesh;
         app.gpuProxyPending = app.dirty && app.activeFace > 0;
-        app.report = std::move(app.genReport);
-        app.exactNormalCache.clear();  // vert indices died with the mesh
-        app.selPolys.clear();  // mesh indices died with the old mesh
+        app.report = std::move(result.report);
+        app.exactNormalCache.clear();
+        app.selPolys.clear();
         app.selVerts.clear();
         app.selVertOrder.clear();
         app.selMeshEdges.clear();
@@ -1386,29 +1384,25 @@ static void finishGenerate(App& app) {
         }
     }
     logLine("regenerate: ops applied (%d ok, %d failed), rebuilding buffers",
-            app.genOpsApplied, app.genOpsFailed);
-    if (app.genOpsFailed > 0) {
-        app.status = "regen: " + std::to_string(app.genOpsFailed) +
+            result.opsApplied, result.opsFailed);
+    if (result.opsFailed > 0) {
+        app.status = "regen: " + std::to_string(result.opsFailed) +
                      " correction(s) did not apply — check recipe / undo";
     }
     updateProblems(app);
 
-    // Resample the B-rep edge overlay at the solved divisions so its
-    // chords coincide with the mesh instead of ghosting past it. The edge
-    // curve's parameter origin can be rotated against the surface's, so
-    // snap each sample onto the nearest generated vertex too.
     app.brepEdges = weft::sampleEdges(app.model, 28,
                                       app.report.edgeDivisions);
     const VertexKdTree meshVertices(app.mesh.vertices);
     for (weft::EdgePolyline& e : app.brepEdges) {
         if (!app.report.edgeDivisions.count(e.edgeId)) continue;
         if (e.points.size() < 2) continue;
-        double cl2 = 0;  // squared chord length as the snap radius
+        double cl2 = 0;
         {
             double dx = e.points[1][0] - e.points[0][0];
             double dy = e.points[1][1] - e.points[0][1];
             double dz = e.points[1][2] - e.points[0][2];
-            cl2 = (dx * dx + dy * dy + dz * dz) * 0.36;  // (0.6*chord)^2
+            cl2 = (dx * dx + dy * dy + dz * dz) * 0.36;
         }
         for (auto& p : e.points) {
             double best = cl2;
@@ -1419,8 +1413,6 @@ static void finishGenerate(App& app) {
         }
     }
 
-    // Open boundary loops (deleted faces leave them) for the bridge tool,
-    // each mapped to its nearest sampled B-rep edge for a stable op id.
     app.bLoops = weft::boundaryLoops(app.mesh);
     app.bLoopEdge.assign(app.bLoops.size(), 0);
     app.hoverLoop = -1;
@@ -1446,13 +1438,7 @@ static void finishGenerate(App& app) {
     }
 
     rebuildBuffers(app);
-    if (firstMesh) frameModel(app);  // async initial load framed late
-    // `dirty` is NOT cleared here: startGenerate cleared it when it froze
-    // this run's settings, so a set flag now means the user kept editing
-    // (or hit undo) WHILE the worker ran. Those edits must coalesce into
-    // the next run — clearing the flag here silently dropped them, so a
-    // drag's landed value never meshed and an undo during a run restored
-    // the recipe but left the stale mesh on screen.
+    if (firstMesh) frameModel(app);
     logLine("regenerate: done (%zu verts, %zu polys; %d remeshed, %d reused)",
             app.mesh.vertexCount(), app.mesh.polygonCount(),
             app.report.cacheMisses, app.report.cacheHits);
@@ -1462,9 +1448,6 @@ static void finishGenerate(App& app) {
                      std::to_string(app.report.cacheHits);
     }
 
-    // Blender live link: mirror every result to the watched OBJ. Written
-    // to a temp file and renamed into place, so the addon's mtime poll
-    // never reads a half-written export.
     if (app.liveLink && !app.livePath.empty()) {
         try {
             std::string tmp = app.livePath + ".tmp";
@@ -1476,20 +1459,31 @@ static void finishGenerate(App& app) {
     }
 }
 
+static void finishGenerate(App& app) {
+    // Legacy entry: drain bake-queue completions (genThread path retired).
+    for (auto& r : app.bakeQueue.pollCompleted()) {
+        adoptBakeResult(app, r);
+    }
+    app.genBusy = app.bakeQueue.busy();
+}
+
 // Synchronous regenerate for flows that need the fresh mesh in hand
-// (budget fitting, recipe remap, load-with-recipe): runs the same
-// worker and waits. The async dirty-flag path is the norm.
+// (budget fitting, recipe remap, load-with-recipe): drain the bake queue
+// and wait for one settled run.
 static void regenerate(App& app) {
     if (!app.hasModel) return;
-    while (app.genBusy && !app.genReady) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
-    if (app.genReady) finishGenerate(app);  // adopt any in-flight run
+    auto drain = [&] {
+        while (app.bakeQueue.busy() || app.bakeQueue.hasPending()) {
+            finishGenerate(app);
+            if (app.bakeQueue.busy() || app.bakeQueue.hasPending()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+        }
+        finishGenerate(app);
+    };
+    drain();
     startGenerate(app);
-    while (!app.genReady) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
-    finishGenerate(app);
+    drain();
 }
 
 // Frame the selection if there is one, else the whole model (F).
@@ -1625,6 +1619,8 @@ static void finishLoadModel(App& app) {
         app.recipe.settings.defaults.relativeDeviation = true;
         // Readable cylinders: never below 24 circumferential spans.
         app.recipe.settings.defaults.minCurvedSegments = 24;
+        app.bakeQueue.clearPending();
+        app.bakeQueue.bind(&app.model, &app.analysis, &app.genCache);
         frameModel(app);
         app.status = path + ": " + std::to_string(app.model.faceCount()) +
                      " faces, " + std::to_string(app.model.edgeCount()) +
@@ -1664,6 +1660,13 @@ static void loadModel(App& app, const std::string& path,
         app.status = "already loading " + app.loadPath;
         return;
     }
+    // Drain bake worker before the load thread prepares a replacement model.
+    while (app.bakeQueue.busy() || app.bakeQueue.hasPending()) {
+        finishGenerate(app);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    finishGenerate(app);
+    app.bakeQueue.clearPending();
     logLine("load: %s", path.c_str());
     if (app.loadThread.joinable()) app.loadThread.join();
     app.loadPath = path;
@@ -1703,12 +1706,13 @@ static void loadModel(App& app, const std::string& path,
 // same mapping. The undo stack refers to old ids, so it resets.
 static void reloadModel(App& app) {
     logLine("hot-reload: %s", app.sourcePath.c_str());
-    // Same rule as loadModel: never swap the model out from under a
-    // running worker (the file watcher can fire mid-run).
-    while (app.genBusy && !app.genReady) {
+    // Never swap the model out from under a running bake worker.
+    while (app.bakeQueue.busy() || app.bakeQueue.hasPending()) {
+        finishGenerate(app);
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
-    if (app.genReady) finishGenerate(app);
+    finishGenerate(app);
+    app.bakeQueue.clearPending();
     try {
         weft::Model fresh = weft::loadStep(app.sourcePath);
         weft::Analysis freshAnalysis = weft::analyze(fresh);
@@ -1719,6 +1723,7 @@ static void reloadModel(App& app) {
         app.model = std::move(fresh);
         app.analysis = std::move(freshAnalysis);
         app.recipe = std::move(remapped);
+        app.bakeQueue.bind(&app.model, &app.analysis, &app.genCache);
 
         auto mapSet = [](std::set<int>& ids, const std::map<int, int>& m) {
             std::set<int> out;
@@ -1972,12 +1977,12 @@ static std::string tempDir() {
 }
 
 static weft::PolyMesh finalizedMeshForExport(App& app) {
-    // The generation cache is shared with the preview worker, so drain it
-    // before reusing the cached face parts for the authoritative final pass.
-    while (app.genBusy && !app.genReady) {
+    // Drain the bake queue before a sync finalize generate (shared cache).
+    while (app.bakeQueue.busy() || app.bakeQueue.hasPending()) {
+        finishGenerate(app);
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
-    if (app.genReady) finishGenerate(app);
+    finishGenerate(app);
 
     weft::GenerationSettings settings = app.recipe.settings;
     settings.finalizeMesh = true;
@@ -2074,12 +2079,17 @@ static void loadFixture(App& app, const std::string& name) {
 
 // Every recipe mutation goes through this so the undo stack can snapshot
 // the pre-edit state once per gesture (see the frame bookkeeping in main).
+// Per-face fidelity flips to Queued immediately; the debounced main-loop
+// flush enqueues a latest-wins bake so camera stays free.
 static void markDirty(App& app) {
     app.dirty = true;
     app.mutatedThisFrame = true;
+    app.lastMutationTime = glfwGetTime();
     app.gpuProxyPending = app.activeFace > 0;
+    if (app.activeFace > 0) {
+        app.bakeQueue.noteQueued(uint32_t(app.activeFace));
+    }
 }
-
 
 // The solved subdivision total around a face's OUTER loop — the honest
 // seed when a pinned boundary total switches on (seeding from 0 or a
@@ -3852,7 +3862,8 @@ static void drawActiveFaceSettings(App& app) {
         app.recipe.settings.forFace(app.activeFace).forceMesher > 0;
     // The report lags the recipe until the pending regenerate lands —
     // annotate instead of listing last run's kind as if it were current.
-    const bool pending = app.dirty || app.genBusy;
+    const bool pending =
+        app.dirty || app.bakeQueue.busy() || app.bakeQueue.hasPending();
     ImGui::Text("mesher: %s%s%s", weft::mesherKindName(kind),
                 forced ? " (forced)" : "", pending ? "  updating..." : "");
     if (!pending) {
@@ -4161,11 +4172,13 @@ static void drawMesherDefaultTabs(App& app) {
 // anchor to it so they never sit under the docked panels.
 static ImVec2 gViewMin{0, 0}, gViewMax{0, 0};
 
-// While the worker meshes, a centred card shows a spinning hourglass
-// and the per-face progress — the app never just hangs.
+// While the bake-queue worker meshes, a centred card shows a spinning
+// hourglass and per-face progress — the app never just hangs.
 static void drawGenProgress(App& app) {
     const bool loading = app.loadBusy.load(std::memory_order_relaxed);
-    if (!loading && !app.genBusy) return;
+    const bool baking =
+        app.bakeQueue.busy() || app.bakeQueue.hasPending();
+    if (!loading && !baking) return;
     const double started = loading ? app.loadStartTime : app.genStartTime;
     if (glfwGetTime() - started < 0.2) return;  // no flicker
     ImGui::SetNextWindowPos({(gViewMin.x + gViewMax.x) * 0.5f,
@@ -4183,8 +4196,6 @@ static void drawGenProgress(App& app) {
     ImVec2 cur = ImGui::GetCursorScreenPos();
     ImVec2 ctr{cur.x + w * 0.5f, cur.y + r + 6.0f * gUiScale};
     const float spin = float(glfwGetTime()) * 3.0f;
-    // Spinning hourglass: two point-to-point triangles rotating inside
-    // a chasing arc.
     auto rot = [&](float x, float y) {
         const float cs = std::cos(spin), sn = std::sin(spin);
         return ImVec2{ctr.x + x * cs - y * sn, ctr.y + x * sn + y * cs};
@@ -4204,9 +4215,11 @@ static void drawGenProgress(App& app) {
         ImGui::TextDisabled("%.1f s elapsed; the app remains responsive",
                             glfwGetTime() - app.loadStartTime);
     } else {
-        const int done = app.genProgress.load(std::memory_order_relaxed);
-        const int total = app.genTotal.load(std::memory_order_relaxed);
-        char label[64];
+        const int done =
+            app.bakeQueue.progressFaces.load(std::memory_order_relaxed);
+        const int total =
+            app.bakeQueue.progressTotal.load(std::memory_order_relaxed);
+        char label[96];
         if (total < 0) {
             std::snprintf(label, sizeof label,
                           "planning affected faces...");
@@ -4223,11 +4236,17 @@ static void drawGenProgress(App& app) {
             total <= 0 ? (total == 0 ? 1.0f : 0.0f)
                        : std::min(1.0f, float(done) / float(total));
         ImGui::ProgressBar(fraction, {w, 0}, label);
-        // Edits made while this run was already meshing coalesce into a
-        // follow-up run — say so, so the value the user landed on is
-        // visibly still on its way rather than silently dropped.
-        if (app.dirty) {
-            ImGui::TextDisabled("newer edits queued for the next pass...");
+        const int pending = app.bakeQueue.pendingDepth();
+        const auto bakingFaces =
+            app.bakeQueue.facesInState(weft_app::FaceFidelity::Baking);
+        if (!bakingFaces.empty()) {
+            ImGui::TextDisabled("baking %zu face region(s)...",
+                                bakingFaces.size());
+        }
+        if (pending > 0 || app.dirty) {
+            ImGui::TextDisabled(
+                "newer edits queued (%d pending) — latest params win",
+                std::max(pending, app.dirty ? 1 : 0));
         }
     }
     ImGui::End();
@@ -5612,6 +5631,8 @@ int main(int argc, char** argv) {
     GLuint proxyProg = makeProgram(kProxyVS, kProxyFS);
 
     App app;
+    app.bakeQueue.start();
+    // Model/analysis rebound on each successful load.
     app.livePath = gDataDir + "/weft_live.obj";
     bool startupLoadPending = !startModel.empty();
     // Fixture loads are async too: face overrides / select / proxy must
@@ -6356,13 +6377,19 @@ int main(int argc, char** argv) {
         }
 
         if (app.mutatedThisFrame) logLine("frame: input handled, dirty");
-        if (app.genReady) {
-            finishGenerate(app);
-            if (startProxy && app.activeFace > 0) {
+        // Poll completed bakes every frame — camera never joins the worker.
+        {
+            auto done = app.bakeQueue.pollCompleted();
+            for (auto& r : done) adoptBakeResult(app, r);
+            app.genBusy = app.bakeQueue.busy();
+            if (!done.empty() && startProxy && app.activeFace > 0) {
                 app.gpuProxyPending = true;
             }
         }
-        if (app.loadReady && !app.genBusy) finishLoadModel(app);
+        if (app.loadReady && !app.bakeQueue.busy() &&
+            !app.bakeQueue.hasPending()) {
+            finishLoadModel(app);
+        }
         if ((startupLoadPending || startupApplyPending) && app.hasModel &&
             !app.loadBusy) {
             if (startStitch) app.recipe.settings.decoupleSeams = true;
@@ -6383,17 +6410,25 @@ int main(int argc, char** argv) {
             startupApplyPending = false;
             startGenerate(app);
         }
-        // Slider drags and wheel bursts can emit dozens of mutations. Wait
-        // briefly for the gesture to settle instead of launching a generation
-        // for each intermediate value and leaving a tail of stale jobs behind
-        // the pointer. Buttons/undo still feel immediate; continuous controls
-        // pay one small debounce and then one exact local remesh.
+        // Debounce continuous controls, then enqueue one latest-wins bake
+        // for the active face (0 = model-wide defaults).
         const bool editingTopology =
             app.mutatedThisFrame || ImGui::IsAnyItemActive() ||
             (glfwGetTime() - app.lastMutationTime < 0.08);
-        if (app.dirty && !app.genBusy && !app.loadBusy && !app.loadReady &&
-            !editingTopology) {
-            startGenerate(app);
+        if (app.dirty && !app.bakeQueue.busy() && !app.loadBusy &&
+            !app.loadReady && !editingTopology) {
+            const uint32_t fid =
+                app.activeFace > 0 ? uint32_t(app.activeFace) : 0u;
+            app.dirty = false;
+            enqueueBake(app, fid);
+        }
+        // If the worker is busy but newer edits arrived, keep them pending
+        // via noteQueued; when the worker finishes, dirty flush above runs.
+        if (app.dirty && app.bakeQueue.busy() && !editingTopology) {
+            const uint32_t fid =
+                app.activeFace > 0 ? uint32_t(app.activeFace) : 0u;
+            enqueueBake(app, fid);
+            app.dirty = false;
         }
 
         const float vpAspect = fbh > 0 ? float(fbw) / fbh : 1.6f;
@@ -7309,7 +7344,9 @@ int main(int argc, char** argv) {
         // glfwSwapBuffers captures the previous frame, which was commonly the
         // "welding + conforming" progress card rather than the finished mesh.
                 const bool meshReady = !app.loadBusy && !app.loadReady &&
-            !(app.hasModel && (app.genBusy || app.genReady));
+            !(app.hasModel &&
+              (app.bakeQueue.busy() || app.bakeQueue.hasPending() ||
+               app.dirty));
         if (objectShotArmed && meshReady && app.hasModel &&
             !app.analysis.solidFaces.empty()) {
             if (objectShotSettle == 0) {
@@ -7370,6 +7407,7 @@ glfwSwapBuffers(window);
     // A window close may arrive while either worker is active. Drain both so
     // their App pointer and OCCT objects remain alive through completion.
     if (app.loadThread.joinable()) app.loadThread.join();
+    app.bakeQueue.stop();
     if (app.genThread.joinable()) app.genThread.join();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
