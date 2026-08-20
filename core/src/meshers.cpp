@@ -22769,13 +22769,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     std::map<int, FacePlan> plans;
     {
         WEFT_PROFILE_SCOPE("1.face planning");
-        const int nFaces = model.faceCount();
-        std::vector<FacePlan> planned(size_t(nFaces) + 1);
-        std::vector<char> needPlan(size_t(nFaces) + 1, 1);
-        // Serial: pull reusable plans from cache (shared map).
-        for (int fid = 1; fid <= nFaces; ++fid) {
+        for (int fid = 1; fid <= model.faceCount(); ++fid) {
             const FaceMeshSettings& effective = settings.forFace(fid);
             const bool explicitFace = settings.perFace.count(fid) != 0;
+            FacePlan plan;
+            bool reusedPlan = false;
             if (planCache) {
                 auto it = planCache->faces.find(fid);
                 if (it != planCache->faces.end() &&
@@ -22783,72 +22781,23 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                     it->second.decoupleSeams == settings.decoupleSeams &&
                     sameFaceSettings(it->second.effective, effective) &&
                     sameFaceSettings(it->second.defaults, settings.defaults)) {
-                    planned[size_t(fid)] = it->second.plan;
-                    needPlan[size_t(fid)] = 0;
+                    plan = it->second.plan;
+                    reusedPlan = true;
                 }
             }
-        }
-        std::vector<int> todo;
-        todo.reserve(size_t(nFaces));
-        for (int fid = 1; fid <= nFaces; ++fid) {
-            if (needPlan[size_t(fid)]) todo.push_back(fid);
-        }
-        unsigned planThreads = 1;
-        if (settings.parallelMeshing && todo.size() > 32) {
-            planThreads = (std::min)(
-                (std::max)(1u, std::thread::hardware_concurrency()),
-                (std::max)(1u, static_cast<unsigned>(todo.size())));
-        }
-        // Single-thread warm UV/surface for todo faces before parallel
-        // planFace (OCCT lazy caches on TShape).
-        if (planThreads > 1) {
-            for (int fid : todo) {
-                try {
-                    const TopoDS_Face F = TopoDS::Face(model.faces(fid));
-                    Bnd_Box2d warm;
-                    BRepTools::AddUVBounds(F, warm);
-                    (void)BRep_Tool::Surface(F);
-                } catch (...) {
-                }
+            if (!reusedPlan) {
+                plan = planFace(fid, model, analysis, settings, cache);
             }
-        }
-        std::atomic<size_t> cursor{0};
-        std::mutex planCacheMu;
-        auto planOne = [&](int fid) {
-            const FaceMeshSettings& effective = settings.forFace(fid);
-            const bool explicitFace = settings.perFace.count(fid) != 0;
-            FacePlan plan = planFace(fid, model, analysis, settings, cache);
-            if (effective.exclude) {
+            if (!reusedPlan && effective.exclude) {
                 plan.kind = MesherKind::Fallback;
                 plan.constrains = false;
             }
-            planned[size_t(fid)] = std::move(plan);
-            if (planCache) {
-                std::lock_guard<std::mutex> lock(planCacheMu);
+            if (!reusedPlan && planCache) {
                 planCache->faces[fid] = {effective, settings.defaults,
                                          explicitFace, settings.decoupleSeams,
-                                         planned[size_t(fid)]};
+                                         plan};
             }
-        };
-        if (planThreads <= 1) {
-            for (int fid : todo) planOne(fid);
-        } else {
-            std::vector<std::thread> pool;
-            pool.reserve(planThreads);
-            for (unsigned t = 0; t < planThreads; ++t) {
-                pool.emplace_back([&] {
-                    for (;;) {
-                        const size_t i =
-                            cursor.fetch_add(1, std::memory_order_relaxed);
-                        if (i >= todo.size()) break;
-                        planOne(todo[i]);
-                    }
-                });
-            }
-            for (auto& th : pool) th.join();
-        }
-        for (int fid = 1; fid <= nFaces; ++fid) {
-            plans.emplace(fid, std::move(planned[size_t(fid)]));
+            plans.emplace(fid, std::move(plan));
         }
     }
     dbg("generate: plans done");
