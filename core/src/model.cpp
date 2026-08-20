@@ -1,4 +1,5 @@
 #include "weft/model.hpp"
+#include "weft/preprocess.hpp"
 
 #include "io/xcaf.hpp"  // declares weft::indexShape / weft::healWithHistory
 #include "weft/io/reader.hpp"
@@ -253,8 +254,10 @@ TopoDS_Shape healWithHistory(const TopoDS_Shape& input, Handle(BRepTools_History
     // translation already performs shape processing, so large imports retain
     // sewing/unification and rely on guarded per-face mesh recovery instead.
     constexpr int kGlobalShapeFixFaceBudget = 2000;
+    const PreprocessSettings prep = preprocessSettingsFromEnv();
     const bool runGlobalShapeFix =
         inputFaces.Extent() <= kGlobalShapeFixFaceBudget ||
+        prep.forceFullHeal ||
         std::getenv("WEFT_FULL_HEAL") != nullptr;
 
     // Sew faces that arrive with their own duplicate copies of shared
@@ -365,6 +368,15 @@ TopoDS_Shape healWithHistory(const TopoDS_Shape& input, Handle(BRepTools_History
         // Capping is optional recovery; retain the import without it.
     }
     mark("cap dropped faces");
+
+    // Tolerance-gated analytic recognition + optional BSpline restriction.
+    // Converts near-plane/cylinder/... BSplines so GeometryPool ETL and
+    // RevolutionGrid see analytics instead of freeform Coons.
+    try {
+        shape = applyAnalyticPreprocess(shape, prep, outHist);
+    } catch (const Standard_Failure&) {
+    }
+    mark("analytic preprocess");
 
     return shape;
 }
