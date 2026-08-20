@@ -1346,11 +1346,9 @@ inline bool edgeIsPinned(int eid, const PinnedEdges* pins) {
 std::vector<double> evenArcFractions(const Model& model, int eid, int n) {
     std::vector<double> out;
     if (n < 1 || eid < 1 || eid > model.edgeCount()) return out;
-    // Prefer CurvePool (lock-free, analyze-time ETL).
-    if (gActiveCurves &&
-        gActiveCurves->evenArcFractions(uint32_t(eid), n, out)) {
-        return out;
-    }
+    // CurvePool::evenArcFractions is available for diagnostics / future
+    // lock-free sampling, but GCPnts_UniformAbscissa remains the border
+    // contract oracle — pool chord tables must not diverge from it.
     const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
     double f = 0, l = 0;
     Handle(Geom_Curve) c3 = BRep_Tool::Curve(e, f, l);
