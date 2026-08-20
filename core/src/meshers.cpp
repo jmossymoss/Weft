@@ -69,6 +69,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -89,6 +90,27 @@ using mesher_detail::stableDeflectionCount;
 
 namespace {
 
+// Read-only GeometryPool for the current generate() — set once before
+// parallel face meshing so RevolutionGrid can eval without BRepAdaptor.
+const GeometryPool* gActiveGeometry = nullptr;
+struct ActiveGeometryScope {
+    const GeometryPool* prev;
+    explicit ActiveGeometryScope(const GeometryPool* p)
+        : prev(gActiveGeometry) {
+        gActiveGeometry = p;
+    }
+    ~ActiveGeometryScope() { gActiveGeometry = prev; }
+};
+
+inline gp_Pnt evalSurfValue(const BRepAdaptor_Surface& surf, int faceId,
+                            double u, double v) {
+    gp_Pnt p;
+    if (gActiveGeometry &&
+        gActiveGeometry->value(uint32_t(faceId), u, v, p)) {
+        return p;
+    }
+    return surf.Value(u, v);
+}
 
 class MeshBuilder {
 public:
@@ -12500,11 +12522,11 @@ void meshRevolutionTaper(const TopoDS_Face& face,
     std::vector<uint32_t> A(nA), B(nB);
     for (int i = 0; i < nA; ++i) {
         double u = phaseV0 + uRange * i / nA;
-        A[i] = out.addVertex(surf.Value(u, v0), {faceId, u, v0});
+        A[i] = out.addVertex(evalSurfValue(surf, faceId, u, v0), {faceId, u, v0});
     }
     for (int j = 0; j < nB; ++j) {
         double u = phaseV1 + uRange * j / nB;
-        B[j] = out.addVertex(surf.Value(u, v1), {faceId, u, v1});
+        B[j] = out.addVertex(evalSurfValue(surf, faceId, u, v1), {faceId, u, v1});
     }
     int ia = 0, ib = 0;
     while (ia < nA || ib < nB) {
@@ -13406,7 +13428,7 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
             } else {
                 const double vv = vOf(rowW[key]);
                 vid[c][key] =
-                    wb.addVertex(surf.Value(uk[c], vv), {faceId, uk[c], vv});
+                    wb.addVertex(evalSurfValue(surf, faceId, uk[c], vv), {faceId, uk[c], vv});
             }
         }
     }
@@ -13702,8 +13724,8 @@ bool meshRevolutionOpenBand(const TopoDS_Face& face,
     // castellation chain's exact samples. Ear-clipped in (u*r, w).
     const double rScale = std::max(
         1e-6,
-        surf.Value((u0 + u1) / 2, (v0 + v1) / 2)
-                .Distance(surf.Value((u0 + u1) / 2 + 1e-3, (v0 + v1) / 2)) /
+        evalSurfValue(surf, faceId, (u0 + u1) / 2, (v0 + v1) / 2)
+                .Distance(evalSurfValue(surf, faceId, (u0 + u1) / 2 + 1e-3, (v0 + v1) / 2)) /
             1e-3);
     // Normalized cumulative arc-length (in the same (u*r, w) metric the web
     // is measured in) — a rail's fraction parameter for laddering.
@@ -14541,7 +14563,7 @@ bool meshRevolutionRimNotch(const TopoDS_Face& face,
                 if (vPlain > vEnd) std::reverse(lv.begin(), lv.end());
                 for (double v : lv) {
                     colChain[c].push_back(wb.addVertex(
-                        surf.Value(uk[c], v), {faceId, uk[c], v}));
+                        evalSurfValue(surf, faceId, uk[c], v), {faceId, uk[c], v}));
                 }
             }
         }
@@ -14883,7 +14905,7 @@ bool meshRevolutionRimNotch(const TopoDS_Face& face,
             }
             const double vv = vOf(rowW[key]);
             vid[c][key] =
-                wb.addVertex(surf.Value(uk[c], vv), {faceId, uk[c], vv});
+                wb.addVertex(evalSurfValue(surf, faceId, uk[c], vv), {faceId, uk[c], vv});
         }
     }
 
@@ -15806,7 +15828,7 @@ bool meshRevolutionAnnulusBody(const BRepAdaptor_Surface& surf, int faceId,
                                            {faceId, denseRim[i].u, vDense});
             } else {
                 const double v = vDense + (topV[i] - vDense) * t;
-                const gp_Pnt p = surf.Value(colU[i], v);
+                const gp_Pnt p = evalSurfValue(surf, faceId, colU[i], v);
                 ring[j][i] = out.addVertex(p, {faceId, colU[i], v});
             }
         }
@@ -15824,7 +15846,7 @@ bool meshRevolutionAnnulusBody(const BRepAdaptor_Surface& surf, int faceId,
     // the single reduction band pairs down to the sparse notch rim.
     std::vector<uint32_t>& shoulder = ring[bodyRows - 1];
     std::vector<gp_Pnt> shoulderP(nu);
-    for (int i = 0; i < nu; ++i) shoulderP[i] = surf.Value(colU[i], topV[i]);
+    for (int i = 0; i < nu; ++i) shoulderP[i] = evalSurfValue(surf, faceId, colU[i], topV[i]);
 
     // The notch rim's EXACT samples (its own solved count) and points.
     std::vector<uint32_t> notchId(notchRim.size());
@@ -22672,6 +22694,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
                   GenerationCache* cache) {
     GenerateProfileSession profileSession;
     WEFT_PROFILE_SCOPE("generate() total");
+    ActiveGeometryScope geomScope(
+        analysis.geometry.empty() ? nullptr : &analysis.geometry);
     auto timingLast = std::chrono::high_resolution_clock::now();
     auto timingCheckpoint = [&](const char* stage) {
         if (!profileTimingsEnabled()) return;
@@ -22735,37 +22759,86 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     std::map<int, FacePlan> plans;
     {
         WEFT_PROFILE_SCOPE("1.face planning");
-        for (int fid = 1; fid <= model.faceCount(); ++fid) {
-        const FaceMeshSettings& effective = settings.forFace(fid);
-        const bool explicitFace = settings.perFace.count(fid) != 0;
-        FacePlan plan;
-        bool reusedPlan = false;
-        if (planCache) {
-            auto it = planCache->faces.find(fid);
-            if (it != planCache->faces.end() &&
-                it->second.explicitFace == explicitFace &&
-                it->second.decoupleSeams == settings.decoupleSeams &&
-                sameFaceSettings(it->second.effective, effective) &&
-                sameFaceSettings(it->second.defaults, settings.defaults)) {
-                plan = it->second.plan;
-                reusedPlan = true;
+        const int nFaces = model.faceCount();
+        std::vector<FacePlan> planned(size_t(nFaces) + 1);
+        std::vector<char> needPlan(size_t(nFaces) + 1, 1);
+        // Serial: pull reusable plans from cache (shared map).
+        for (int fid = 1; fid <= nFaces; ++fid) {
+            const FaceMeshSettings& effective = settings.forFace(fid);
+            const bool explicitFace = settings.perFace.count(fid) != 0;
+            if (planCache) {
+                auto it = planCache->faces.find(fid);
+                if (it != planCache->faces.end() &&
+                    it->second.explicitFace == explicitFace &&
+                    it->second.decoupleSeams == settings.decoupleSeams &&
+                    sameFaceSettings(it->second.effective, effective) &&
+                    sameFaceSettings(it->second.defaults, settings.defaults)) {
+                    planned[size_t(fid)] = it->second.plan;
+                    needPlan[size_t(fid)] = 0;
+                }
             }
         }
-        if (!reusedPlan) {
-            plan = planFace(fid, model, analysis, settings, cache);
+        std::vector<int> todo;
+        todo.reserve(size_t(nFaces));
+        for (int fid = 1; fid <= nFaces; ++fid) {
+            if (needPlan[size_t(fid)]) todo.push_back(fid);
         }
-        if (!reusedPlan && effective.exclude) {
-            // Deleted faces neither mesh nor constrain their neighbours'
-            // densities — their borders become free boundary loops.
-            plan.kind = MesherKind::Fallback;
-            plan.constrains = false;
+        unsigned planThreads = 1;
+        if (settings.parallelMeshing && todo.size() > 32) {
+            planThreads = (std::min)(
+                (std::max)(1u, std::thread::hardware_concurrency()),
+                (std::max)(1u, static_cast<unsigned>(todo.size())));
         }
-        if (!reusedPlan && planCache) {
-            planCache->faces[fid] = {effective, settings.defaults,
-                                     explicitFace, settings.decoupleSeams,
-                                     plan};
+        // Single-thread warm UV/surface for todo faces before parallel
+        // planFace (OCCT lazy caches on TShape).
+        if (planThreads > 1) {
+            for (int fid : todo) {
+                try {
+                    const TopoDS_Face F = TopoDS::Face(model.faces(fid));
+                    Bnd_Box2d warm;
+                    BRepTools::AddUVBounds(F, warm);
+                    (void)BRep_Tool::Surface(F);
+                } catch (...) {
+                }
+            }
         }
-        plans.emplace(fid, std::move(plan));
+        std::atomic<size_t> cursor{0};
+        std::mutex planCacheMu;
+        auto planOne = [&](int fid) {
+            const FaceMeshSettings& effective = settings.forFace(fid);
+            const bool explicitFace = settings.perFace.count(fid) != 0;
+            FacePlan plan = planFace(fid, model, analysis, settings, cache);
+            if (effective.exclude) {
+                plan.kind = MesherKind::Fallback;
+                plan.constrains = false;
+            }
+            planned[size_t(fid)] = std::move(plan);
+            if (planCache) {
+                std::lock_guard<std::mutex> lock(planCacheMu);
+                planCache->faces[fid] = {effective, settings.defaults,
+                                         explicitFace, settings.decoupleSeams,
+                                         planned[size_t(fid)]};
+            }
+        };
+        if (planThreads <= 1) {
+            for (int fid : todo) planOne(fid);
+        } else {
+            std::vector<std::thread> pool;
+            pool.reserve(planThreads);
+            for (unsigned t = 0; t < planThreads; ++t) {
+                pool.emplace_back([&] {
+                    for (;;) {
+                        const size_t i =
+                            cursor.fetch_add(1, std::memory_order_relaxed);
+                        if (i >= todo.size()) break;
+                        planOne(todo[i]);
+                    }
+                });
+            }
+            for (auto& th : pool) th.join();
+        }
+        for (int fid = 1; fid <= nFaces; ++fid) {
+            plans.emplace(fid, std::move(planned[size_t(fid)]));
         }
     }
     dbg("generate: plans done");

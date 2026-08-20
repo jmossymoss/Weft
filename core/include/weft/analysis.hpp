@@ -2,6 +2,7 @@
 
 #include "weft/model.hpp"
 #include "weft/topology_cache.hpp"
+#include "weft/geometry_pool.hpp"
 
 #include <string>
 #include <vector>
@@ -108,6 +109,8 @@ struct Analysis {
     // Dirty tags / edgeSegments are updated during interactive generates
     // (mutable: Analysis is otherwise treated as immutable geometry).
     mutable TopologyCache topology;
+    // Type-specific analytic/NURBS primitive pools (ETL at analyze).
+    mutable GeometryPool geometry;
 };
 
 // Classify every face and edge and build the face-adjacency graph.

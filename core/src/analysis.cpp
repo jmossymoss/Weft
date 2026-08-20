@@ -486,6 +486,9 @@ Analysis analyze(const Model& model) {
     // Flat CSR adjacency for generate() — no TopExp on the interactive path.
     a.topology.buildFromAnalysis(a);
     a.topology.fillFaceAreas(model);
+    // Type-specific primitives for lock-free analytic evaluation in
+    // RevolutionGrid / planning (AD-1: still the same generate() path).
+    a.geometry.extractFromModel(model, a);
 
     return a;
 }

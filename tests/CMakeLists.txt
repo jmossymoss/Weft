@@ -19,6 +19,11 @@ target_link_libraries(topology_cache_tests PRIVATE weft_core)
 add_test(NAME topology_cache COMMAND topology_cache_tests)
 weft_deploy_occt_dlls(topology_cache_tests)
 
+add_executable(geometry_pool_tests test_geometry_pool.cpp)
+target_link_libraries(geometry_pool_tests PRIVATE weft_core)
+add_test(NAME geometry_pool COMMAND geometry_pool_tests)
+weft_deploy_occt_dlls(geometry_pool_tests)
+
 # Integration: emit signature twice via CLI and assert policy-equal.
 add_test(
   NAME topology_signature
