@@ -5,6 +5,8 @@
 
 #include "weft/io/writer.hpp"
 
+#include "../out_file.hpp"
+
 #include "weft/export_fbx.hpp"
 #include "weft/export_gltf.hpp"
 #include "weft/mesh.hpp"
@@ -168,8 +170,8 @@ private:
 
     bool writeBinary(const std::string& path) const {
         std::vector<Tri> tris = triangles();
-        FILE* f = std::fopen(path.c_str(), "wb");
-        if (!f) throw std::runtime_error("cannot open for writing: " + path);
+        detail::OutFile out(path, "wb");
+        FILE* f = out.get();
         char header[80] = {0};
         std::snprintf(header, sizeof header, "weft binary STL");
         std::fwrite(header, 1, 80, f);
@@ -181,14 +183,14 @@ private:
             uint16_t attr = 0;
             std::fwrite(&attr, 2, 1, f);
         }
-        std::fclose(f);
+        out.finish();
         return true;
     }
 
     bool writeAscii(const std::string& path) const {
         std::vector<Tri> tris = triangles();
-        FILE* f = std::fopen(path.c_str(), "w");
-        if (!f) throw std::runtime_error("cannot open for writing: " + path);
+        detail::OutFile out(path, "w");
+        FILE* f = out.get();
         std::fprintf(f, "solid weft\n");
         for (const Tri& t : tris) {
             std::fprintf(f, "  facet normal %.6e %.6e %.6e\n", t.n[0], t.n[1], t.n[2]);
@@ -199,7 +201,7 @@ private:
             std::fprintf(f, "  endfacet\n");
         }
         std::fprintf(f, "endsolid weft\n");
-        std::fclose(f);
+        out.finish();
         return true;
     }
 

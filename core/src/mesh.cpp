@@ -1,6 +1,7 @@
 #include "weft/mesh.hpp"
 #include "weft/model.hpp"
 #include "normals.hpp"
+#include "out_file.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -283,8 +284,8 @@ std::vector<std::array<uint32_t, 3>> triangulatePoly(
 void writeObj(const PolyMesh& mesh, const std::string& path,
               const std::vector<std::vector<int>>* solidFaces,
               const ObjExportOptions* options) {
-    FILE* f = std::fopen(path.c_str(), "w");
-    if (!f) throw std::runtime_error("cannot open for writing: " + path);
+    detail::OutFile obj(path, "w");
+    FILE* f = obj.get();
 
     const ObjExportOptions opts = options ? *options : ObjExportOptions{};
 
@@ -474,18 +475,18 @@ void writeObj(const PolyMesh& mesh, const std::string& path,
     } else {
         for (size_t p = 0; p < mesh.polygons.size(); ++p) writeFacePolys(p);
     }
-    std::fclose(f);
+    obj.finish();
 
     // Sidecar .mtl: one newmtl per distinct source color.
     if (hasColors) {
-        FILE* mf = std::fopen(mtlPath.c_str(), "w");
-        if (!mf) throw std::runtime_error("cannot open for writing: " + mtlPath);
+        detail::OutFile mtl(mtlPath, "w");
+        FILE* mf = mtl.get();
         std::fprintf(mf, "# weft materials\n");
         for (const auto& [name, c] : materials) {
             std::fprintf(mf, "newmtl %s\n", name.c_str());
             std::fprintf(mf, "Kd %.6g %.6g %.6g\n", c[0], c[1], c[2]);
         }
-        std::fclose(mf);
+        mtl.finish();
     }
 }
 

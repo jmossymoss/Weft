@@ -1,6 +1,7 @@
 #include "weft/export_gltf.hpp"
 #include "weft/model.hpp"
 #include "normals.hpp"
+#include "out_file.hpp"
 
 #include <algorithm>
 #include <array>
@@ -408,8 +409,8 @@ void writeGlb(const PolyMesh& mesh, const std::string& path,
     std::vector<uint8_t> jsonChunk(json.begin(), json.end());
     pad4(jsonChunk, ' ');
 
-    FILE* f = std::fopen(path.c_str(), "wb");
-    if (!f) throw std::runtime_error("cannot open for writing: " + path);
+    detail::OutFile out(path, "wb");
+    FILE* f = out.get();
     auto u32 = [&](uint32_t v) { std::fwrite(&v, 4, 1, f); };
     u32(0x46546C67);  // "glTF"
     u32(2);
@@ -420,7 +421,7 @@ void writeGlb(const PolyMesh& mesh, const std::string& path,
     u32(static_cast<uint32_t>(bin.size()));
     u32(0x004E4942);  // "BIN"
     std::fwrite(bin.data(), 1, bin.size(), f);
-    std::fclose(f);
+    out.finish();
 }
 
 }  // namespace weft

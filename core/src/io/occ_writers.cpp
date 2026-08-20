@@ -186,11 +186,13 @@ PolyMesh tessellate(const Model& model) {
     if (model.shape.IsNull()) return mesh;
     BRepMesh_IncrementalMesh mesher(model.shape, 0.1, Standard_False, 0.5, Standard_True);
     mesher.Perform();
+    int triangulated = 0;
     for (int fid = 1; fid <= model.faces.Extent(); ++fid) {
         TopoDS_Face face = TopoDS::Face(model.faces(fid));
         TopLoc_Location loc;
         Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, loc);
         if (tri.IsNull()) continue;
+        ++triangulated;
         const gp_Trsf trsf = loc.Transformation();
         const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
         for (int i = 1; i <= tri->NbNodes(); ++i) {
@@ -208,6 +210,16 @@ PolyMesh tessellate(const Model& model) {
                                      base + static_cast<uint32_t>(c - 1)});
             mesh.polygonFaceId.push_back(fid);
         }
+    }
+    // BRepMesh reports per-face failure only by leaving the face without a
+    // triangulation. Skipping a few faces is a lossy-but-usable conversion;
+    // producing nothing at all is a failed one, and writing that as an empty
+    // mesh would report success for a file with no geometry in it.
+    if (triangulated == 0 && model.faces.Extent() > 0) {
+        throw std::runtime_error("tessellation produced no triangles for any "
+                                 "of the model's " +
+                                 std::to_string(model.faces.Extent()) +
+                                 " face(s)");
     }
     return mesh;
 }
