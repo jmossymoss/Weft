@@ -554,6 +554,42 @@ void testFillet() {
     CHECK(t1.back() == 1.0);
 }
 
+// A corrupt recipe line must fail loudly with its line number. Accepting it
+// silently used to bind the artist's override to face/edge 0 (or reset a
+// density scale) and regenerate a mesh that looked plausible but was not the
+// one the recipe described.
+void testRecipeLoadRejectsMalformedLines() {
+    std::printf("-- recipe load rejects malformed lines --\n");
+    const std::string path = tmpPath("weft_test_bad.recipe");
+    auto loadFails = [&](const std::string& body) {
+        {
+            std::ofstream out(path);
+            out << "weft-recipe 1\n" << body;
+        }
+        try {
+            weft::loadRecipe(path);
+        } catch (const std::exception& e) {
+            // Errors carry path:line so the artist can find the bad line.
+            return std::string(e.what()).find(":2:") != std::string::npos;
+        }
+        return false;
+    };
+    CHECK(loadFails("face oops radial=8\n"));
+    CHECK(loadFails("edge 4\n"));
+    CHECK(loadFails("scale wide\n"));
+    CHECK(loadFails("weld loose\n"));
+    CHECK(loadFails("default\n"));
+
+    // A well-formed override still loads (the checks reject only garbage).
+    {
+        std::ofstream out(path);
+        out << "weft-recipe 1\nedge 4 12\nscale 2\n";
+    }
+    weft::Recipe ok = weft::loadRecipe(path);
+    CHECK_EQ(ok.settings.perEdge.at(4), 12);
+    CHECK(std::abs(ok.settings.densityScale - 2.0) < 1e-12);
+}
+
 void testRecipeRoundTrip() {
     std::printf("-- recipe round trip --\n");
     weft::Recipe recipe;
@@ -3871,6 +3907,7 @@ int main() {
     RUN(testMinimalNGon);
     RUN(testSurfaceConstrainedEditing);
     RUN(testFillet);
+    RUN(testRecipeLoadRejectsMalformedLines);
     RUN(testRecipeRoundTrip);
     RUN(testBoss);
     RUN(testHolePlate);

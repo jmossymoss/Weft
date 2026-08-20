@@ -1,6 +1,7 @@
 #include "weft/export_fbx.hpp"
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <stdexcept>
@@ -260,6 +261,12 @@ void writeFbx(const PolyMesh& mesh, const std::string& path,
     std::ofstream f(path, std::ios::binary);
     if (!f) throw std::runtime_error("cannot write " + path);
     f.write(out.data(), std::streamsize(out.size()));
+    f.close();  // flush here, not in the destructor, so a failure is visible
+    if (!f) {
+        std::remove(path.c_str());  // never leave a truncated FBX behind
+        throw std::runtime_error("failed to write (disk full or I/O error): " +
+                                 path);
+    }
 }
 
 }  // namespace weft

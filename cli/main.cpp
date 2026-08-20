@@ -31,6 +31,17 @@
 
 namespace {
 
+// A recorded op that no longer finds its target replays as a no-op. The mesh
+// still exports, so say which ops were dropped instead of quietly delivering
+// an export that is missing the artist's edits.
+void reportOpFailures(const weft::ApplyOpsReport& ops, size_t total) {
+    if (ops.failed == 0) return;
+    std::fprintf(stderr,
+                 "warning: %d of %zu recorded op(s) did not replay onto this "
+                 "mesh; the export is missing them\n",
+                 ops.failed, total);
+}
+
 void usage() {
     std::printf(
         "weft — B-rep retopology CLI\n"
@@ -475,7 +486,8 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
             scaleSet(scaled.defaults);
             for (auto& [fid, fs] : scaled.perFace) scaleSet(fs);
             weft::PolyMesh lod = weft::generate(model, analysis, scaled);
-            weft::applyOps(lod, model, recipe.ops);
+            reportOpFailures(weft::applyOps(lod, model, recipe.ops),
+                             recipe.ops.size());
             size_t dot = output.rfind('.');
             std::string lodPath =
                 dot == std::string::npos
@@ -496,7 +508,8 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
 
     weft::GenerationReport report;
     weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
-    weft::applyOps(mesh, model, recipe.ops);
+    reportOpFailures(weft::applyOps(mesh, model, recipe.ops),
+                     recipe.ops.size());
     if (!output.empty()) {
         exportMesh(mesh, output);
         std::printf("%s -> %s\n", input.c_str(), output.c_str());
@@ -576,6 +589,12 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
                                      signatureOut);
         }
         out << text;
+        out.close();
+        if (!out) {
+            std::remove(signatureOut.c_str());  // no half-written signature
+            throw std::runtime_error("failed to write signature: " +
+                                     signatureOut);
+        }
         std::printf("  topology signature -> %s\n", signatureOut.c_str());
     }
     return rc;
@@ -589,8 +608,12 @@ int cmdSignatureCompare(const std::vector<std::string>& args) {
     auto readAll = [](const std::string& path) -> std::string {
         std::ifstream in(path);
         if (!in) throw std::runtime_error("cannot read " + path);
-        return std::string(std::istreambuf_iterator<char>(in),
-                           std::istreambuf_iterator<char>());
+        std::string text{std::istreambuf_iterator<char>(in),
+                         std::istreambuf_iterator<char>()};
+        // A read that dies part-way would otherwise be compared as if the
+        // signature simply ended there.
+        if (in.bad()) throw std::runtime_error("read failed: " + path);
+        return text;
     };
     const std::string a = readAll(args[0]);
     const std::string b = readAll(args[1]);

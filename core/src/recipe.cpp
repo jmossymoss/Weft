@@ -81,6 +81,9 @@ static std::string settingsToString(const FaceMeshSettings& s) {
 void saveRecipe(const Recipe& recipe, const std::string& path) {
     std::ofstream out(path);
     if (!out) throw std::runtime_error("cannot open for writing: " + path);
+    // A recipe is the artist's persisted decisions: a partial write must be
+    // an error, never a silently truncated file the next load half-applies.
+    // (Checked once at the end — ostream failure state is sticky.)
     out << "weft-recipe 1\n";
     out << "default " << settingsToString(recipe.settings.defaults) << "\n";
     if (recipe.settings.densityScale != 1.0) {
@@ -125,6 +128,12 @@ void saveRecipe(const Recipe& recipe, const std::string& path) {
                 << " " << op.t << "\n";
         }
     }
+    out.close();
+    if (!out) {
+        std::remove(path.c_str());
+        throw std::runtime_error("failed to write recipe (disk full or I/O "
+                                 "error): " + path);
+    }
 }
 
 Recipe loadRecipe(const std::string& path) {
@@ -152,24 +161,29 @@ Recipe loadRecipe(const std::string& path) {
             if (kind == "default") {
                 std::string list;
                 ss >> list;
+                if (!ss) throw std::runtime_error("malformed default");
                 applySettingsList(gs.defaults, list);
             } else if (kind == "face") {
-                int fid;
+                int fid = 0;
                 std::string list;
                 ss >> fid >> list;
+                if (!ss) throw std::runtime_error("malformed face override");
                 FaceMeshSettings s = gs.defaults;
                 applySettingsList(s, list);
                 gs.perFace[fid] = s;
             } else if (kind == "edge") {
-                int eid, count;
+                int eid = 0, count = 0;
                 ss >> eid >> count;
+                if (!ss) throw std::runtime_error("malformed edge pin");
                 gs.perEdge[eid] = count;
             } else if (kind == "scale") {
                 ss >> gs.densityScale;
-                if (!ss || gs.densityScale <= 0) gs.densityScale = 1.0;
+                if (!ss) throw std::runtime_error("malformed scale");
+                if (gs.densityScale <= 0) gs.densityScale = 1.0;
             } else if (kind == "weld") {
                 ss >> gs.weldTolerance;
-                if (!ss || gs.weldTolerance < 0) gs.weldTolerance = 1e-6;
+                if (!ss) throw std::runtime_error("malformed weld tolerance");
+                if (gs.weldTolerance < 0) gs.weldTolerance = 1e-6;
             } else if (kind == "op") {
                 std::string opKind;
                 ss >> opKind;
