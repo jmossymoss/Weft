@@ -3,6 +3,7 @@
 #include "weft/model.hpp"
 #include "weft/topology_cache.hpp"
 #include "weft/geometry_pool.hpp"
+#include "weft/curve_pool.hpp"
 
 #include <string>
 #include <vector>
@@ -111,6 +112,8 @@ struct Analysis {
     mutable TopologyCache topology;
     // Type-specific analytic/NURBS primitive pools (ETL at analyze).
     mutable GeometryPool geometry;
+    // 3D edge curves for lock-free border sampling (ETL at analyze).
+    mutable CurvePool curves;
 };
 
 // Classify every face and edge and build the face-adjacency graph.

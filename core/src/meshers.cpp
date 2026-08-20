@@ -90,16 +90,22 @@ using mesher_detail::stableDeflectionCount;
 
 namespace {
 
-// Read-only GeometryPool for the current generate() — set once before
-// parallel face meshing so RevolutionGrid can eval without BRepAdaptor.
+// Read-only GeometryPool / CurvePool for the current generate() — set once
+// before parallel face meshing so solvers can eval without OCCT adaptors.
 const GeometryPool* gActiveGeometry = nullptr;
+const CurvePool* gActiveCurves = nullptr;
 struct ActiveGeometryScope {
-    const GeometryPool* prev;
-    explicit ActiveGeometryScope(const GeometryPool* p)
-        : prev(gActiveGeometry) {
-        gActiveGeometry = p;
+    const GeometryPool* prevG;
+    const CurvePool* prevC;
+    explicit ActiveGeometryScope(const GeometryPool* g, const CurvePool* c)
+        : prevG(gActiveGeometry), prevC(gActiveCurves) {
+        gActiveGeometry = g;
+        gActiveCurves = c;
     }
-    ~ActiveGeometryScope() { gActiveGeometry = prev; }
+    ~ActiveGeometryScope() {
+        gActiveGeometry = prevG;
+        gActiveCurves = prevC;
+    }
 };
 
 inline gp_Pnt evalSurfValue(const BRepAdaptor_Surface& surf, int faceId,
@@ -1340,6 +1346,11 @@ inline bool edgeIsPinned(int eid, const PinnedEdges* pins) {
 std::vector<double> evenArcFractions(const Model& model, int eid, int n) {
     std::vector<double> out;
     if (n < 1 || eid < 1 || eid > model.edgeCount()) return out;
+    // Prefer CurvePool (lock-free, analyze-time ETL).
+    if (gActiveCurves &&
+        gActiveCurves->evenArcFractions(uint32_t(eid), n, out)) {
+        return out;
+    }
     const TopoDS_Edge e = TopoDS::Edge(model.edges(eid));
     double f = 0, l = 0;
     Handle(Geom_Curve) c3 = BRep_Tool::Curve(e, f, l);
@@ -22695,7 +22706,8 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     GenerateProfileSession profileSession;
     WEFT_PROFILE_SCOPE("generate() total");
     ActiveGeometryScope geomScope(
-        analysis.geometry.empty() ? nullptr : &analysis.geometry);
+        analysis.geometry.empty() ? nullptr : &analysis.geometry,
+        analysis.curves.empty() ? nullptr : &analysis.curves);
     auto timingLast = std::chrono::high_resolution_clock::now();
     auto timingCheckpoint = [&](const char* stage) {
         if (!profileTimingsEnabled()) return;
@@ -28293,24 +28305,36 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
     };
     auto meshFaceNeeded = [&](int fid) {
         meshFaceGuarded(fid);
-        if (settings.progressFaces) {
-            settings.progressFaces->fetch_add(1,
-                                               std::memory_order_relaxed);
-        }
     };
     if (threads <= 1) {
-        for (int fid : workFaces) meshFaceNeeded(fid);
+        for (int fid : workFaces) {
+            meshFaceNeeded(fid);
+            if (settings.progressFaces) {
+                settings.progressFaces->fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        }
     } else {
+        // Per-worker completion counters on separate cache lines — no
+        // false sharing, no shared atomic in the inner loop.
+        struct alignas(64) WorkerProg {
+            int done = 0;
+        };
+        std::vector<WorkerProg> prog(threads);
         std::atomic<size_t> nextFace{0};
         std::exception_ptr firstError;
         std::mutex errorMutex;
         std::vector<std::thread> pool;
         for (unsigned t = 0; t < threads; ++t) {
-            pool.emplace_back([&] {
+            pool.emplace_back([&, t] {
                 try {
-                    for (size_t wi = nextFace.fetch_add(1);
-                         wi < workFaces.size(); wi = nextFace.fetch_add(1)) {
+                    for (size_t wi =
+                             nextFace.fetch_add(1, std::memory_order_relaxed);
+                         wi < workFaces.size();
+                         wi = nextFace.fetch_add(1,
+                                                 std::memory_order_relaxed)) {
                         meshFaceNeeded(workFaces[wi]);
+                        prog[t].done++;
                     }
                 } catch (...) {
                     std::lock_guard<std::mutex> lock(errorMutex);
@@ -28319,6 +28343,11 @@ PolyMesh generate(const Model& model, const Analysis& analysis,
             });
         }
         for (std::thread& th : pool) th.join();
+        if (settings.progressFaces) {
+            int sum = 0;
+            for (const auto& p : prog) sum += p.done;
+            settings.progressFaces->store(sum, std::memory_order_relaxed);
+        }
         if (firstError) std::rethrow_exception(firstError);
     }
 

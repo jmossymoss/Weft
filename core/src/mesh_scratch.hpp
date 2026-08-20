@@ -1,12 +1,13 @@
 // Thread-isolated scratchpads for parallel face meshing.
 // No heap growth in the hot path once reserved: clear() keeps capacity.
+// alignas(64) prevents false sharing when an array of workspaces is used.
 //
 #pragma once
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <mutex>
+#include <new>
 #include <thread>
 #include <vector>
 
@@ -14,12 +15,21 @@
 
 namespace weft::mesher_detail {
 
-struct MeshScratch {
+#if defined(__cpp_lib_hardware_interference_size)
+constexpr std::size_t kCacheLine = std::hardware_destructive_interference_size;
+#else
+constexpr std::size_t kCacheLine = 64;
+#endif
+
+struct alignas(kCacheLine) MeshScratch {
     std::vector<uint32_t> verts;
     std::vector<gp_Pnt> pts;
     std::vector<std::array<int, 3>> tris;
     std::vector<std::array<double, 3>> normals;
     std::vector<uint32_t> polyScratch;
+    // Per-thread progress (merged after the parallel wave — no shared atomic
+    // in the inner loop).
+    int facesDone = 0;
 
     void ensureVerts(size_t n) {
         if (verts.capacity() < n) verts.reserve(n);
@@ -51,15 +61,8 @@ inline MeshScratch& threadMeshScratch() {
     return scratch;
 }
 
-// Pre-touch every worker slot before a parallel mesh wave so the first
-// face on each core does not pay the initial reserve under load.
-inline void warmMeshScratchPool(unsigned threadCount) {
-    static std::mutex mu;
-    static std::vector<MeshScratch*> slots;
-    std::lock_guard<std::mutex> lock(mu);
-    // Touch thread_local on this thread; workers touch their own on first use.
+inline void warmMeshScratchPool(unsigned /*threadCount*/) {
     (void)threadMeshScratch();
-    (void)threadCount;
 }
 
 }  // namespace weft::mesher_detail

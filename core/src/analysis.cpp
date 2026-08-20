@@ -489,6 +489,7 @@ Analysis analyze(const Model& model) {
     // Type-specific primitives for lock-free analytic evaluation in
     // RevolutionGrid / planning (AD-1: still the same generate() path).
     a.geometry.extractFromModel(model, a);
+    a.curves.extractFromModel(model);
 
     return a;
 }

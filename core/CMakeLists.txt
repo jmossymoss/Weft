@@ -11,6 +11,7 @@ add_library(weft_core
   src/analysis.cpp
   src/topology_cache.cpp
   src/geometry_pool.cpp
+  src/curve_pool.cpp
   src/mesh.cpp
   src/meshers.cpp
   src/mesher_sampling.cpp
