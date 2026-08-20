@@ -12,13 +12,14 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install OCCT
+      - name: Install OCCT and GLFW backend dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libocct-foundation-dev libocct-modeling-data-dev \
             libocct-modeling-algorithms-dev libocct-data-exchange-dev \
-            libocct-ocaf-dev libocct-visualization-dev ninja-build
+            libocct-ocaf-dev libocct-visualization-dev ninja-build \
+            libwayland-dev libwayland-bin wayland-protocols libxkbcommon-dev
       - name: Configure + build
         run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
