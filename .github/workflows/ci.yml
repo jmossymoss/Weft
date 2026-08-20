@@ -20,7 +20,7 @@ jobs:
             libocct-modeling-algorithms-dev libocct-data-exchange-dev \
             libocct-ocaf-dev libocct-visualization-dev ninja-build \
             libwayland-dev libwayland-bin wayland-protocols libxkbcommon-dev \
-            xorg-dev
+            xorg-dev libtbb-dev
       - name: Configure + build
         run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
