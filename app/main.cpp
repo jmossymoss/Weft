@@ -44,6 +44,7 @@
 #include "weft/analysis.hpp"
 #include "weft/edit.hpp"
 #include "bake_queue.hpp"
+#include "gpu_proxy.hpp"
 #include "weft/export_fbx.hpp"
 #include "weft/export_gltf.hpp"
 #include "weft/fixture.hpp"
@@ -765,6 +766,7 @@ struct App {
     std::atomic<int> genTotal{0};
     double genStartTime = 0.0;
     weft::GenerationSettings genSettings;
+    weft::GenerationSettings adoptedSettings;  // last bake that landed
     std::vector<weft::ManualOp> genOps;  // worker's frozen ops snapshot
     weft::PolyMesh genMesh;
     weft::GenerationReport genReport;
@@ -797,6 +799,7 @@ struct App {
     bool forceFinalize = false;
     bool gpuProxyPending = false;
     int gpuProxyFace = 0;
+    bool forceGpuProxy = false;  // --show-proxy: keep overlay for screenshots
     bool showProblems = true;
     // Quality heatmap: tint polys by worst corner angle vs the regular
     // polygon's — pinches and slivers glow before they reach the DCC.
@@ -1105,21 +1108,14 @@ static void rebuildBuffers(App& app) {
         app.polyFillRange[i][1] = int(fill.size() / 9) - app.polyFillRange[i][0];
     }
 
-    // Build UV-bearing triangles only for the active face. This buffer is
-    // stable for the life of the current exact mesh; density edits change two
-    // shader uniforms, never CPU geometry or GPU uploads.
+    // Build UV-bearing triangles for the active face using the trimmed
+    // face UV box. Density edits then change shader uniforms only.
     if (app.activeFace >= 1 && app.activeFace <= app.model.faceCount()) {
         try {
             const int fid = app.activeFace;
-            const TopoDS_Face face = TopoDS::Face(app.model.faces(fid));
-            BRepAdaptor_Surface surf(face);
-            const double u0 = surf.FirstUParameter();
-            const double u1 = surf.LastUParameter();
-            const double v0 = surf.FirstVParameter();
-            const double v1 = surf.LastVParameter();
-            const double du = u1 - u0, dv = v1 - v0;
-            if (std::isfinite(du) && std::isfinite(dv) &&
-                std::abs(du) > 1e-12 && std::abs(dv) > 1e-12) {
+            const weft_app::ProxyUvBox uvBox =
+                weft_app::faceProxyUvBox(app.model, fid);
+            if (uvBox.valid) {
                 std::map<uint32_t, std::array<double, 2>> uvCache;
                 auto uvOf = [&](uint32_t vi,
                                 std::array<double, 2>& uv) -> bool {
@@ -1134,7 +1130,7 @@ static void rebuildBuffers(App& app) {
                         std::array<double, 3> point = m.vertices[vi];
                         a = weft::snapToFace(app.model, fid, point);
                     }
-                    uv = {(a.u - u0) / du, (a.v - v0) / dv};
+                    uv = weft_app::normalizeProxyUv(uvBox, a.u, a.v);
                     uvCache[vi] = uv;
                     return a.faceId == fid && std::isfinite(uv[0]) &&
                            std::isfinite(uv[1]);
@@ -1148,8 +1144,8 @@ static void rebuildBuffers(App& app) {
                     // Keep periodic seam triangles local in UV space so the
                     // procedural grid does not streak across the full chart.
                     for (int axis = 0; axis < 2; ++axis) {
-                        const bool periodic = axis == 0 ? surf.IsUPeriodic()
-                                                        : surf.IsVPeriodic();
+                        const bool periodic = axis == 0 ? uvBox.uPeriodic
+                                                        : uvBox.vPeriodic;
                         if (!periodic) continue;
                         double lo = uv[0][axis], hi = lo;
                         for (int k = 1; k < 3; ++k) {
@@ -1323,6 +1319,11 @@ static void enqueueBake(App& app, uint32_t faceId) {
     weft::GenerationSettings s = app.recipe.settings;
     s.finalizeMesh = app.forceFinalize || app.liveLink;
     app.bakeQueue.enqueue(faceId, s, app.recipe.ops);
+    for (int fid : app.selFaces) {
+        if (fid > 0 && uint32_t(fid) != faceId) {
+            app.bakeQueue.noteQueued(uint32_t(fid));
+        }
+    }
     app.dirty = true;
     app.genBusy = true;
     app.genStartTime = glfwGetTime();
@@ -1362,7 +1363,7 @@ static void adoptBakeResult(App& app, weft_app::FaceBakeResult& result) {
     {
         app.mesh = std::move(result.mesh);
         app.meshFinalized = result.finalizeMesh;
-        app.gpuProxyPending = app.dirty && app.activeFace > 0;
+        app.adoptedSettings = std::move(result.settings);
         app.report = std::move(result.report);
         app.exactNormalCache.clear();
         app.selPolys.clear();
@@ -2085,9 +2086,14 @@ static void markDirty(App& app) {
     app.dirty = true;
     app.mutatedThisFrame = true;
     app.lastMutationTime = glfwGetTime();
-    app.gpuProxyPending = app.activeFace > 0;
-    if (app.activeFace > 0) {
-        app.bakeQueue.noteQueued(uint32_t(app.activeFace));
+    if (app.selFaces.empty()) {
+        if (app.activeFace > 0) {
+            app.bakeQueue.noteQueued(uint32_t(app.activeFace));
+        }
+    } else {
+        for (int fid : app.selFaces) {
+            if (fid > 0) app.bakeQueue.noteQueued(uint32_t(fid));
+        }
     }
 }
 
@@ -2195,19 +2201,10 @@ static void drawSelectedFacesRoster(App& app) {
     ImGui::EndChild();
 }
 
-static std::array<float, 2> gpuProxyCounts(App& app) {
-    const int fid = app.activeFace;
-    if (fid < 1) return {1.0f, 1.0f};
+static weft_app::GpuProxyGrid gpuProxyForFace(App& app, int fid) {
+    if (fid < 1) return {};
     const weft::FaceMeshSettings& s = app.recipe.settings.forFace(fid);
     const weft::MesherKind kind = effectiveKind(app, fid);
-    std::array<int, 2> n = faceSolvedCounts(app, fid);
-    auto manual = [&](int u, int v) {
-        n = {std::max(1, u), std::max(1, v)};
-    };
-    // Blend strips: semantic knobs → parametric U/V for the isoline
-    // overlay. faceAcross 1 = loops ride U; 2 = loops ride V. Without
-    // this remap the proxy densifies the wrong GPU axis when the artist
-    // scrubs along / fillet-loops (adaptive-off path).
     const bool filletFace =
         fid <= int(app.analysis.faces.size()) &&
         app.analysis.faces[fid - 1].isFillet;
@@ -2215,61 +2212,18 @@ static std::array<float, 2> gpuProxyCounts(App& app) {
     const int stripAcross =
         filletFace && axIt != app.report.faceAcross.end() ? axIt->second
                                                           : 0;
-    using MK = weft::MesherKind;
-    switch (kind) {
-        case MK::RevolutionGrid:
-        case MK::DomeCap:
-            if (stripAcross && kind == MK::RevolutionGrid) {
-                if (stripAcross == 1) {
-                    manual(s.filletLoops, s.radial);
-                } else {
-                    manual(s.radial, s.filletLoops);
-                }
-            } else {
-                manual(s.radial, s.axial);
-            }
-            break;
-        case MK::DiskCap:
-        case MK::AnnulusRing: manual(s.radial, 1); break;
-        case MK::RibbonSweep:
-        case MK::RailLadder: manual(s.radial, std::max(1, s.filletLoops)); break;
-        case MK::PlateWeb:
-            manual(s.boundary > 0 ? s.boundary : s.radial,
-                   std::max(1, s.junctionRings));
-            break;
-        case MK::MinimalNGon:
-            manual(s.boundary > 0 ? s.boundary : 1, 1);
-            break;
-        default:
-            if (stripAcross) {
-                if (stripAcross == 1) {
-                    manual(s.filletLoops, s.gridU);
-                } else {
-                    manual(s.gridU, s.filletLoops);
-                }
-            } else {
-                manual(s.gridU, s.gridV);
-            }
-            break;
-    }
-    if (s.adaptive) {
-        const std::array<int, 2> live = faceSolvedCounts(app, fid);
-        if (live[0] > 0) n[0] = live[0];
-        if (live[1] > 0) n[1] = live[1];
-        const weft::FaceMeshSettings& old = app.genSettings.forFace(fid);
-        const double chordScale = std::sqrt(std::clamp(
-            old.chordTolerance / std::max(1e-9, s.chordTolerance),
-            0.0625, 16.0));
-        const double angleScale = std::clamp(
-            old.angleToleranceDeg /
-                std::max(1.0, s.angleToleranceDeg),
-            0.25, 4.0);
-        const double scale = std::max(chordScale, angleScale);
-        n[0] = std::max(1, int(std::lround(n[0] * scale)));
-        n[1] = std::max(1, int(std::lround(n[1] * scale)));
-    }
-    return {float(std::clamp(n[0], 1, 256)),
-            float(std::clamp(n[1], 1, 256))};
+    return weft_app::gpuProxyGrid(kind, s, app.adoptedSettings.forFace(fid),
+                                  faceSolvedCounts(app, fid), stripAcross,
+                                  filletFace);
+}
+
+static bool faceWantsGpuProxy(const App& app, int fid) {
+    if (fid < 1) return false;
+    const bool edited =
+        app.dirty &&
+        (fid == app.activeFace || app.selFaces.count(fid) > 0);
+    return weft_app::gpuProxyActive(
+        app.bakeQueue.fidelity(uint32_t(fid)), edited, app.forceGpuProxy);
 }
 
 // Copy only the fields that CHANGED this frame onto a target. Panel and
@@ -4172,13 +4126,16 @@ static void drawMesherDefaultTabs(App& app) {
 // anchor to it so they never sit under the docked panels.
 static ImVec2 gViewMin{0, 0}, gViewMax{0, 0};
 
-// While the bake-queue worker meshes, a centred card shows a spinning
-// hourglass and per-face progress — the app never just hangs.
+// While the first mesh (or a STEP load) is still empty, a centred card
+// shows progress. Incremental density bakes stay in the corner overlay so
+// the artist can keep selecting and editing other faces.
 static void drawGenProgress(App& app) {
     const bool loading = app.loadBusy.load(std::memory_order_relaxed);
     const bool baking =
         app.bakeQueue.busy() || app.bakeQueue.hasPending();
-    if (!loading && !baking) return;
+    const bool blocking =
+        loading || (baking && app.mesh.vertices.empty());
+    if (!blocking) return;
     const double started = loading ? app.loadStartTime : app.genStartTime;
     if (glfwGetTime() - started < 0.2) return;  // no flicker
     ImGui::SetNextWindowPos({(gViewMin.x + gViewMax.x) * 0.5f,
@@ -4262,10 +4219,30 @@ static void drawOverlay(App& app) {
                      ImGuiWindowFlags_NoFocusOnAppearing |
                      ImGuiWindowFlags_NoNav);
     if (app.gpuProxyPending) {
-        const std::array<float, 2> n = gpuProxyCounts(app);
-        ImGui::TextColored({0.20f, 0.90f, 1.0f, 1.0f},
-                           "GPU PREVIEW  %.0f x %.0f", n[0], n[1]);
-        ImGui::TextDisabled("exact topology settling...");
+        const weft_app::GpuProxyGrid g =
+            gpuProxyForFace(app, app.activeFace);
+        if (g.drawLattice) {
+            ImGui::TextColored({0.20f, 0.90f, 1.0f, 1.0f},
+                               "GPU PREVIEW  %.0f x %.0f", g.u, g.v);
+            ImGui::TextDisabled("exact topology settling — keep editing");
+            ImGui::Separator();
+        }
+    }
+    const bool bakingLive =
+        !app.loadBusy &&
+        (app.bakeQueue.busy() || app.bakeQueue.hasPending() || app.dirty) &&
+        !app.mesh.vertices.empty();
+    if (bakingLive) {
+        const int done =
+            app.bakeQueue.progressFaces.load(std::memory_order_relaxed);
+        const int total =
+            app.bakeQueue.progressTotal.load(std::memory_order_relaxed);
+        if (total > 0) {
+            ImGui::TextDisabled("meshing %d / %d  — other faces stay editable",
+                                done, total);
+        } else {
+            ImGui::TextDisabled("updating topology — other faces stay editable");
+        }
         ImGui::Separator();
     }
     if (app.mode == Mode::LoopCut) {
@@ -5632,6 +5609,7 @@ int main(int argc, char** argv) {
 
     App app;
     app.bakeQueue.start();
+    app.forceGpuProxy = startProxy;
     // Model/analysis rebound on each successful load.
     app.livePath = gDataDir + "/weft_live.obj";
     bool startupLoadPending = !startModel.empty();
@@ -5695,7 +5673,7 @@ int main(int argc, char** argv) {
             app.activeFace = startSelect;
             frameModel(app);
         }
-        if (startProxy && app.activeFace > 0) app.gpuProxyPending = true;
+        if (startProxy && app.activeFace > 0) app.forceGpuProxy = true;
         regenerate(app);
         rebuildBuffers(app);
         startupApplyPending = false;
@@ -6382,9 +6360,6 @@ int main(int argc, char** argv) {
             auto done = app.bakeQueue.pollCompleted();
             for (auto& r : done) adoptBakeResult(app, r);
             app.genBusy = app.bakeQueue.busy();
-            if (!done.empty() && startProxy && app.activeFace > 0) {
-                app.gpuProxyPending = true;
-            }
         }
         if (app.loadReady && !app.bakeQueue.busy() &&
             !app.bakeQueue.hasPending()) {
@@ -6404,7 +6379,7 @@ int main(int argc, char** argv) {
                 frameModel(app);
             }
             if (startProxy && app.activeFace > 0) {
-                app.gpuProxyPending = true;
+                app.forceGpuProxy = true;
             }
             startupLoadPending = false;
             startupApplyPending = false;
@@ -6430,6 +6405,7 @@ int main(int argc, char** argv) {
             enqueueBake(app, fid);
             app.dirty = false;
         }
+        app.gpuProxyPending = faceWantsGpuProxy(app, app.activeFace);
 
         const float vpAspect = fbh > 0 ? float(fbw) / fbh : 1.6f;
         Mat4 proj =
@@ -7231,21 +7207,25 @@ int main(int argc, char** argv) {
         }
         if (app.hasModel && app.gpuProxyPending && app.gpuProxy.count > 0 &&
             app.gpuProxyFace == app.activeFace) {
-            const std::array<float, 2> count = gpuProxyCounts(app);
-            const float grid[3] = {count[0], count[1], 0.88f};
-            glUseProgram(proxyProg);
-            glUniformMatrix4fv(glGetUniformLocation(proxyProg, "uMVP"), 1,
-                               GL_FALSE, mvp.m);
-            glUniform3fv(glGetUniformLocation(proxyProg, "uGrid"), 1, grid);
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            glDepthMask(GL_FALSE);
-            glDepthFunc(GL_LEQUAL);
-            glBindVertexArray(app.gpuProxy.vao);
-            glDrawArrays(GL_TRIANGLES, 0, app.gpuProxy.count);
-            glDepthFunc(GL_LESS);
-            glDepthMask(GL_TRUE);
-            glDisable(GL_BLEND);
+            const weft_app::GpuProxyGrid g =
+                gpuProxyForFace(app, app.activeFace);
+            if (g.drawLattice) {
+                const float grid[3] = {g.u, g.v, 0.88f};
+                glUseProgram(proxyProg);
+                glUniformMatrix4fv(glGetUniformLocation(proxyProg, "uMVP"), 1,
+                                   GL_FALSE, mvp.m);
+                glUniform3fv(glGetUniformLocation(proxyProg, "uGrid"), 1,
+                             grid);
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                glDepthMask(GL_FALSE);
+                glDepthFunc(GL_LEQUAL);
+                glBindVertexArray(app.gpuProxy.vao);
+                glDrawArrays(GL_TRIANGLES, 0, app.gpuProxy.count);
+                glDepthFunc(GL_LESS);
+                glDepthMask(GL_TRUE);
+                glDisable(GL_BLEND);
+            }
         }
         glUseProgram(flatProg);
         glUniformMatrix4fv(glGetUniformLocation(flatProg, "uMVP"), 1, GL_FALSE,
