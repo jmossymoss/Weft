@@ -93,7 +93,10 @@ Details: [PRODUCTION_PATH.md](PRODUCTION_PATH.md).
 - A shared B-rep edge is sampled once. Both faces reuse that polyline.
 - Planar single-wire faces become one n-gon (quads count as four-gons).
 - Planar faces with inner wires tessellate the sheet and keep hole rims.
-- Curved faces use OCCT incremental mesh at the face's deflection / angle.
+- Simple full-period drums and spheres use a UV lattice. Four-sided
+  patches use a transfinite grid (zippered when opposite counts differ).
+- Other curved faces ear-clip the shared-sample loop in unwrapped UV.
+  OCCT incremental mesh is only the last resort.
 - Vertices fuse with `weldTolerance` (spatial, not combinatorial).
 
 ### 4.2 Feature spans

@@ -26,6 +26,11 @@ It tessellates each face from angle and chord, emits planar n-gons, welds
 spatially, and honors per-face span knobs as local edge requests. It does
 not run the density-group solver.
 
+Shared B-rep edges are sampled once. Planar faces become n-gons (keyhole
+when holed). Simple drums/spheres get a UV lattice. Four-sided patches
+use a transfinite grid. Remaining faces ear-clip the sample loop in UV.
+OCCT is last resort only.
+
 | Surface | Calls `meshIndependent()`? | Notes |
 | --- | --- | --- |
 | CLI `mesh` / `validate` with `--independent` | Yes | Opt-in; default remains `generate()` |
