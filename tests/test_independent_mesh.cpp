@@ -257,6 +257,32 @@ static void testBezierSlabWinding() {
     CHECK_EQ(vr.windingConflicts, size_t(0));
 }
 
+static void testTrimmedDrumKeepsSamples() {
+    std::printf("-- independent slotted: trimmed drums keep exact samples --\n");
+    weft::Model model = loadFixture("slotted");
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.independentMesh = true;
+    gs.defaults.minimal = true;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::meshIndependent(model, analysis, gs, &report);
+    int drums = 0, occtDrums = 0;
+    for (const auto& f : analysis.faces) {
+        if (f.type != weft::SurfaceType::Cylinder) continue;
+        ++drums;
+        auto it = report.faceMesher.find(f.id);
+        if (it != report.faceMesher.end() &&
+            it->second == weft::MesherKind::Fallback) {
+            ++occtDrums;
+        }
+    }
+    CHECK(drums >= 1);
+    CHECK_EQ(occtDrums, 0);
+    weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK_EQ(vr.openEdges, size_t(0));
+    CHECK_EQ(vr.nonManifoldEdges, size_t(0));
+}
+
 int main() {
     testBoxNgons();
     testCylinderCaps();
@@ -267,6 +293,7 @@ int main() {
     testTorusUvLattice();
     testEllipseWallIsTube();
     testBezierSlabWinding();
+    testTrimmedDrumKeepsSamples();
     if (gFails) {
         std::fprintf(stderr, "%d FAILURE(S)\n", gFails);
         return 1;
