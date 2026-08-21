@@ -1,106 +1,74 @@
 # Production generation path
 
-Authoritative MVP generation is a single call:
+This fork has two mesh entry points. They are not interchangeable.
+
+```text
+import STEP → analyze → weft::meshIndependent() → optional applyOps → export
+```
+
+That is the product path under test (execution plan T0–T4).
 
 ```text
 import STEP → analyze → weft::generate() → optional applyOps → export
 ```
 
-Architecture decision: [AD-1](EXECUTION_PLAN.md#ad-1-production-generation-path)
-in `docs/EXECUTION_PLAN.md`. Product roadmap and gates stay there; this note
-only records which entry points share that path.
+That is the legacy border-contract path. Keep it for A/B and for corpus
+goldens that were measured against `generate()`.
 
-## Authoritative API
+Architecture: [EXECUTION_PLAN.md](EXECUTION_PLAN.md).
 
-`weft::generate(model, analysis, settings, report?, cache?)` in
-`core/include/weft/meshers.hpp` owns planning, border-count contracts, per-face
-meshing, weld, and finalization. Face strategies (`MesherKind`) are internal
-routing inside that call, not alternate product pipelines.
+## Independent mesh (this fork)
 
-## Entry points (audit)
+`weft::meshIndependent(model, analysis, settings, report?)` in
+`core/include/weft/independent_mesh.hpp`.
+
+It tessellates each face from angle and chord, emits planar n-gons, welds
+spatially, and honors per-face span knobs as local edge requests. It does
+not run the density-group solver.
+
+| Surface | Calls `meshIndependent()`? | Notes |
+| --- | --- | --- |
+| CLI `mesh` / `validate` with `--independent` | Yes | Opt-in; default remains `generate()` |
+| `tests/test_independent_mesh.cpp` | Yes | Zoo fixtures |
+| App interactive / export | Not yet | T3 |
+| Corpus / release gates | No | Still `weft mesh` → `generate()` |
+| CLI `convert` | No | `weft::io::tessellate()` only (format conversion) |
+
+`--independent` is not persisted in recipes.
+
+## Legacy generate()
+
+Unchanged from mainline. Face strategies (`MesherKind`) stay internal to
+`generate()`. `--stitch` / `decoupleSeams` stay quarantined on that path and
+are unrelated to independent tessellation.
 
 | Surface | Calls `weft::generate()`? | Notes |
 | --- | --- | --- |
-| App interactive regen | Yes | `finalizeMesh = false` for responsive preview |
-| App live-link OBJ | Yes | `finalizeMesh = true` while live-link is on (§3.3) |
-| App export / finalized mesh | Yes | `finalizeMesh = true` (authoritative mesh) |
-| CLI `mesh` / `validate` / `sweep` / `cache-check` | Yes | Default `finalizeMesh = true` |
-| Corpus / release / public gates | Yes | Via `build/cli/weft mesh` (no `--stitch`) |
-| `tests/test_pipeline.cpp` | Yes | Direct API; stitch A/B only in quarantined tests |
-| Blender live-link add-on | N/A | Consumes exported OBJ; does not mesh |
-| CLI `convert` | No | Non-retopo import→export; mesh outputs use OCCT tessellation only |
+| CLI `mesh` / `validate` (default) | Yes | |
+| App (until T3) | Yes | |
+| Corpus / release / public gates | Yes | |
+| `tests/test_pipeline.cpp` | Yes | |
+| CLI `sweep` / `cache-check` | Yes | Contract-path harnesses |
 
-No second retopology architecture was found. Preview vs export differs only by
-`GenerationSettings::finalizeMesh` on the same `generate()` path.
+## Settings that matter on the independent path
 
-## Settings that matter on the default path
+| Setting | Role |
+| --- | --- |
+| `chordTolerance`, `angleToleranceDeg` | Default tessellation |
+| `relativeDeviation` | Scale chord by face size |
+| `minCurvedSegments` | Floor on closed curved edges |
+| `radial`, `axial` | Drum span requests |
+| `filletLoops` | Fillet-strip deflection |
+| `minimal` | Planar single-wire n-gons when true |
+| `weldTolerance` | Spatial weld |
+| `perFace` / `perEdge` | Local span / exact edge count |
+| `exclude` | Skip face |
 
-| Setting | Default | Role |
-| --- | --- | --- |
-| Density / profile (`radial`, `axial`, `--profile cad`, …) | product defaults | Border proposals and feature routing |
-| `perFace` / `perEdge` | empty | Local overrides and exact edge pins |
-| `densityScale` | `1.0` | Global budget multiplier (persisted in recipes) |
-| `weldTolerance` | `1e-6` | Seam fusion tolerance (persisted) |
-| `conformBorders` | `true` | Border conformation on finalized runs |
-| `finalizeMesh` | `true` | Full weld/conform/cleanup; app preview sets `false` |
-| `parallelMeshing` | `true` | Runtime parallelism; not a topology fork |
-| `decoupleSeams` | **`false`** | Quarantined experiment (AD-2) |
+`densityScale`, `decoupleSeams`, and the contract-path density solver are
+ignored by `meshIndependent()`.
 
-Recipes persist density, weld, per-face/per-edge settings, and manual ops.
-They do **not** persist `decoupleSeams`, `finalizeMesh`, or `conformBorders`.
+## What is not a second architecture on this fork
 
-## Stitch quarantine (AD-2)
-
-`GenerationSettings::decoupleSeams` and CLI/app `--stitch` are off by default
-and are not a second product architecture. They skip global count equalization
-and rely on post-weld seam splicing for diagnosis.
-
-Where the opt-in lives:
-
-- Default `false` in `GenerationSettings` (`core/include/weft/meshers.hpp`)
-- CLI: `--stitch` in `cli/main.cpp` (experiment flag on `mesh` / validate options)
-- App: `--stitch` for screenshot runs; optional ImGui “decoupled seams (stitch)”
-- Tests may force it for A/B; corpus and release gates do not.
-  Former `tools/probes` stitch dumps are retired (see
-  `docs/evidence/wp2-probe-retirement-2026-07-20.md`).
-
-Promote or remove only after the AD-2 A/B evidence criteria in the execution
-plan.
-
-## What is not a second architecture
-
-- **Per-face `MesherKind` backends** — strategies inside `generate()`, frozen
-  under AD-3 (do not add kinds during stabilization).
-- **`finalizeMesh` preview vs export** — same pipeline; export is authoritative.
-- **CLI `convert` tessellation** — format conversion without retopo; not a
-  competing mesher for MVP delivery.
-- **`--stitch` / `decoupleSeams`** — quarantined experiment (AD-2), not a
-  release pipeline.
-- **Removed decoupled-core rewrite** — historical; do not restore (AD-1).
-
-If a new entry point meshes without `weft::generate()`, treat that as a WP2
-blocker and document it here before landing it.
-
-## Cross-platform topology signature (§3.2)
-
-Machine-comparable artifact for Linux/Windows determinism. It captures face
-routing (`MesherKind` counts + per-face ids), raw/empty/floor status, polygon
-arity, connectivity/validity metrics, and an optional quantized UV anchor
-hash. Byte-identical OBJ floats are **not** required.
-
-```sh
-# Emit (runs generate + validate; writes policy + info lines)
-tools/topology_signature.sh emit model.step -o model.sig
-# or: build/cli/weft mesh model.step --validate --signature model.sig
-
-# Compare (exit 0 if policy-equal, 1 if not; ignores info.* lines)
-tools/topology_signature.sh compare a.sig b.sig
-
-# Same-platform smoke (cylinder / box / torture, twice each)
-tools/topology_signature.sh self-check
-
-# Small CI fixture set for later Windows comparison
-tools/topology_signature.sh fixture-set -o build/topology_signatures
-```
-
-Schema: `weft.topology_signature.v1` (`weft::formatTopologySignature`).
+- `weft::io::tessellate()` — convert-only OCCT dump, no n-gons, no spans.
+- `--stitch` — diagnostic inside `generate()`.
+- GPU isoline overlay — viewport hint only, not a mesher.

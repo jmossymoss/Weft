@@ -1,823 +1,256 @@
 # Weft execution plan
 
-This is the sole product and engineering roadmap for Weft. Historical plans and
-session handoffs are not authoritative. If code, comments, issues, or old
-branches disagree with this document, follow this document or revise it with
-new test evidence before changing direction.
+This is the sole product and engineering roadmap for this fork. Historical
+plans, the border-contract `generate()` path, old pull requests, and session
+handoffs do not override this document.
 
-Active work package: WP6 — validate real work.
+Active work package: T0 — independent tessellation core.
 
-`tests/STEP_Examples/mp9_Edited.stp` CAD defaults: watertight, winding
-consistent, foldedPolygons=0, raw=0, planned-floor=0, failed-floor=0,
-structure retention=1.0 (`testMp9EditedWatertight`). Original `MP9.stp`
-opens tightened in `tests/KNOWN_RED.tsv` (measured 7; ceiling 20). Release
-spot-check flaregun/foam/teleporter/iso14649-demo remain watertight at CAD
-defaults.
+This fork tests a MOI / Plasticity-style mesher: angle + chord tessellation,
+planar n-gons, and per-feature span knobs. It exists so that experiment does
+not disturb the previous border-contract pipeline. `weft::generate()` remains
+in the tree as a comparison baseline. It is not the product path on this fork.
 
-Change the active package only when its exit criteria pass at one revision. If
-a later failure invalidates an earlier gate, reopen the earliest affected
-package.
+Change the active package only when its exit criteria pass at one revision.
 
 ## 1. Mission
 
-Weft is a B-rep-native retopology bridge for hard-surface artists:
+Weft is a hard-surface CAD mesher for game and DCC work:
 
 ```text
-Plasticity STEP -> Weft -> editable game topology -> Blender
+Plasticity STEP -> Weft -> n-gon / quad mesh -> Blender
 ```
 
-Weft keeps the source B-rep live, generates a strong starting mesh, lets the
-artist correct local topology while constrained to the exact CAD surfaces, and
-persists those decisions so the mesh can be regenerated after density or CAD
-changes.
+The job is a fast, editable mesh that keeps cylinders, holes, slots, and
+fillets readable, with decent n-gon topology on flats. It is not organic
+remeshing and not a universal cross-field quadrangulator.
 
-The primary user is a Blender artist building game-ready hard-surface assets
-from Plasticity. The primary job is not universal automatic quadrangulation. It
-is obtaining a predictable, editable result faster than exporting a dead mesh
-and retopologizing it from scratch.
+Artists must be able to set spans on those features (the thing MOI's global
+tessellator does not offer) without a model-wide density solve.
 
 ### Product strategy
 
-- Manual-first assistance with strong automatic defaults.
-- Exact B-rep projection rather than shrinkwrap approximation.
-- Local, named controls for primitives and blends.
-- Route topology by feature priority: cylinder, sphere, hemisphere, box, torus,
-  general curves, then interior cuts. Lower-priority features adapt to the
-  dominant primitive instead of destroying its flow.
-- Watertightness and determinism before topology breadth.
-- Persist decisions in recipes; treat generated meshes as replaceable output.
-- One production generation pipeline, with experiments kept out of the release
-  path until evidence justifies changing the architecture.
+- Independent face tessellation from global angle and chord (MOI / Plasticity
+  mesh export).
+- Planar faces emit boundary n-gons. Holed plates keep inner loops as holes,
+  not fans.
+- Feature span knobs (cylinder around/along, fillet across, hole/slot rim)
+  request counts on that feature's edges. Neighbors are not re-solved.
+- Boolean shards of one feature share a span when they share an edge, and
+  later when they share axis + radius (or equivalent).
+- Spatial weld, not a global vertex-for-vertex border contract.
+- `weft::generate()` is legacy comparison only on this fork.
 
 ### Durable foundations
 
-Preserve these foundations while stabilizing the product:
-
-- The headless C++ geometry and meshing core.
-- OpenCASCADE B-rep import, healing, and analysis.
-- Stable face and edge identity where available.
-- Per-vertex `(faceId, u, v)` anchors.
-- Recipe serialization and geometric remapping.
-- Surface-constrained editing.
-- Per-face and per-edge density controls.
-- Validation, diagnostic overlays, and face-attributed reports.
-- Static export and the thin Blender live-link add-on.
-
-## 2. Active scope
-
-The active target is an artist-usable MVP. Work that does not help meet the MVP
-completion gate is deferred.
-
-### MVP includes
-
-- Reliable STEP import for the target asset class.
-- A clean automatic starting mesh for supported hard-surface geometry.
-- Safe per-face density and topology controls.
-- The existing constrained correction loop needed to repair local output.
-- Recipe save, reload, regeneration, and reasonable remapping after CAD edits.
-- OBJ delivery and Blender live-link delivery.
-- Actionable diagnostics for unsupported or invalid source geometry.
-- Reproducible Linux and Windows builds and tests.
-- Packaging and onboarding sufficient for an artist to complete the workflow.
-
-### Deferred until after MVP
-
-- A new global or decoupled meshing architecture.
-- Cross-field or fully automatic freeform quad layout.
-- Density painting.
-- A comprehensive knife, ring, radial, spin, and pole-editing suite.
-- UV seam generation, straightening, and packing.
-- USD export and additional nonessential formats.
-- Embedded Python or Lua scripting.
-- Asset-class presets and broad pipeline APIs.
-- Making every stress or research model release-perfect.
-
-Deferred work may be reconsidered only after work package 7 passes. It must not
-be inserted into an active package merely because adjacent code is being
-changed.
-
-## 3. Definition of completion
-
-MVP is complete only when every gate below passes at the same revision.
-
-### 3.1 Geometry correctness
-
-For every release model whose source is a valid closed solid:
-
-- 0 open mesh edges.
-- 0 non-manifold mesh edges.
-- 0 folded or inverted polygons.
-- 0 faces demoted to raw OpenCASCADE triangulation.
-- 0 faces emitting no output.
-- Consistent winding.
-- No crash, hang, or unbounded memory growth.
-
-Contract-floor output is allowed when it is watertight, local, reported, and
-visually editable. It is not equivalent to raw triangulation.
-
-Invalid, open, or deliberately adversarial source B-reps have an explicit
-expected outcome in the corpus manifest. The expected outcome must be one of:
-
-- healed to a valid closed result;
-- rejected with a specific diagnostic;
-- meshed with a documented, bounded defect for a research-only case.
-
-Do not claim that a mesher can repair arbitrary invalid input.
-
-### 3.2 Control safety
-
-- The supported density sweep passes without opens, non-manifold edges, folds,
-  raw fallback, or empty faces.
-- Per-face and per-edge overrides preserve shared-border compatibility.
-- A local edit does not silently demote an adjacent face.
-- Regeneration is deterministic for identical input, settings, and platform.
-- Linux and Windows satisfy the cross-platform policy below.
-
-Cross-platform policy:
-
-- face routing, raw/empty status, polygon arity counts, connectivity, and all
-  validity metrics are identical;
-- corresponding anchored vertices agree within the committed geometric
-  tolerance;
-- byte-identical OBJ text and floating-point formatting are not required;
-- Linux golden counts plus Windows `--no-golden` is a temporary bootstrap
-  check, not sufficient evidence for MVP completion;
-- WP2 must add a machine-comparable topology signature or equivalent artifact
-  comparison before cross-platform determinism can pass.
-
-### 3.3 Workflow
-
-- Load STEP, inspect/select a face, change its supported controls, regenerate,
-  save a recipe, reload it, and export successfully.
-- Existing constrained edits survive a density change when their anchors remain
-  valid.
-- A reasonable upstream CAD edit remaps surviving decisions and reports dropped
-  decisions rather than silently losing them.
-- OBJ import and Blender live link preserve the mesh and CAD face identity.
-- Export uses the fully finalized mesh, not the reduced interactive preview.
-
-### 3.4 Real-work validation
-
-- A versioned set of fresh Plasticity exports representative of expected work
-  passes the geometry and workflow gates.
-- Weft and Plasticity outputs are compared in Blender using the visual rubric in
-  section 7.
-- An artist can complete the tested workflow without an engineer changing code,
-  manually repairing files, or explaining undocumented controls.
-
-### 3.5 Delivery
-
-- Linux and Windows CI are green.
-- Clean build and package instructions work on both platforms.
-- The release contains the app, CLI, required runtime libraries, Blender add-on,
-  and concise onboarding.
-- Known limitations identify unsupported geometry classes and invalid-input
-  behavior without overstating readiness.
-
-## 4. Corpus architecture
-
-No single model can represent all possible B-reps. Trimmed B-spline geometry,
-topological combinations, and tolerance defects are unbounded. Coverage comes
-from several corpus layers with distinct purposes.
-
-### 4.1 Deterministic geometry zoo
-
-Generate small OpenCASCADE-authored fixtures for finite implementation
-categories. Each fixture isolates one behavior and records source validity,
-expected mesher family, expected output invariants, and visual intent.
-
-Surface coverage:
-
-- plane;
-- cylinder;
-- cone, including apex singularity;
-- sphere, including both poles;
-- torus, including periodic directions;
-- surface of extrusion;
-- surface of revolution;
-- Bezier surface;
-- B-spline surface;
-- offset surface;
-- supported combinations of trimmed and periodic surfaces.
-
-Curve and trim coverage:
-
-- line;
-- circle and circular arc;
-- ellipse;
-- parabola and hyperbola where supported by import and meshing;
-- Bezier curve;
-- B-spline curve;
-- offset curve;
-- closed and open wires;
-- inner wires and multiple holes;
-- seam edges;
-- degenerate pole edges;
-- reversed wire orientation;
-- unequal opposite-side sample counts.
-
-Interaction coverage:
-
-- cylinder-to-cap and cylinder-to-plate;
-- full and partial revolution bands;
-- holes and slots through planar and curved faces;
-- constant-radius fillet strips;
-- closed blend rings;
-- chamfers and tiny bevels;
-- planar plates with multiple holes;
-- notched and castellated rims;
-- ribbons and curved extrusion strips;
-- three-or-more-face junctions;
-- multiple solids, compounds, and assemblies.
-
-Use pairwise interaction coverage first. Do not attempt the full Cartesian
-product of every surface, curve, trim, and tolerance category.
-
-### 4.2 Adversarial geometry zoo
-
-Keep adversarial fixtures separate from valid canonical fixtures:
-
-- micro-edges and sliver faces;
-- near-coincident and duplicate vertices or edges;
-- gaps below, at, and above the configured healing tolerance;
-- reversed faces and inconsistent source orientation;
-- degenerate or duplicate trims;
-- self-intersecting wires;
-- tangent contacts and zero-width regions;
-- periodic seams intersected by holes or notches;
-- very small features on very large bodies;
-- high aspect-ratio and near-singular patches.
-
-Each case must say whether the expected behavior is healing, rejection, or
-bounded research-only output.
-
-### 4.3 Release set
-
-The release gate uses a small set representative of the intended product:
-
-- `tests/STEP_Examples/flaregun.stp`
-- `tests/STEP_Examples/iso14649-demo.stp`
-- the generated `torture` fixture
-- `tests/STEP_Examples/foam.stp`
-- `tests/STEP_Examples/teleporter.stp`
-
-This set covers a complex hard-surface asset, bores and common mechanical
-primitives, combined synthetic features, and two difficult real mechanical
-models. A model may be replaced only with a written justification that preserves
-or improves feature coverage.
-
-### 4.4 Stress and research set
-
-These remain visible and are run on an appropriate scheduled or manual cadence,
-but they do not silently expand MVP:
-
-- `tests/STEP_Examples/nasty_cheese.stp`
-- `tests/STEP_Examples/MP9.stp`
-- `tests/STEP_Examples/tork.stp`
-- the generated `slitdrill` fixture
-
-MP9 is a target-shaped integration and performance workload. It is not the
-geometry-coverage oracle. Research failures must be recorded, not hidden by
-weakening release assertions.
-
-### 4.5 Corpus authority and CI policy
-
-`tests/CAD_CORPUS.tsv` is the sole corpus inventory. CTest, corpus scripts,
-release gates, and scheduled public-corpus jobs must select cases from it rather
-than maintain separate hardcoded model lists.
-
-Corpus runners select from `tests/CAD_CORPUS.tsv` (and optional public
-manifests under `tests/public_corpus/`). Geometry coverage comes from the
-deterministic zoo and `tests/COVERAGE_MATRIX.tsv`. Public corpus authority is
-ABC (broad diversity), NIST/CAx-IF (interop), and MAMBO (meshing stress).
-Fusion 360 Gallery is optional supplemental smoke, not required or primary.
-Local `STEP_Examples` release models are the artist gate, not a public-corpus
-or geometry-coverage oracle. MP9 is `tier=performance` only.
-
-The manifest must distinguish:
-
-- release cases, which must eventually meet every strict completion invariant;
-- deterministic non-release fixtures, which must meet their declared valid or
-  invalid-input expectations;
-- dirty-step cases with explicit open/invalid expectations;
-- stress/research cases, which may retain explicit bounded known-red metrics but
-  may not regress;
-- performance cases (including MP9), which run on a scheduled or manual cadence
-  and never define geometry coverage.
-
-During WP0-WP2, record each reproducible release blocker in
-`tests/KNOWN_RED.tsv` with case, metric, observed ceiling, reproducer, owning
-work package, and removal condition. Regression CI may pass when actual results
-match that file exactly, allowing root-cause work to proceed without normalizing
-failures. The strict release gate ignores those allowances and remains red until
-WP3 removes every release entry.
-
-At MVP completion:
-
-- normal CI is green;
-- the strict release gate is green with no release allowances;
-- stress cases remain green against their validity-specific expectations or
-  bounded ceilings;
-- no model is silently exempted by filename in a runner.
-
-### 4.6 Public real-world corpus
-
-Use reproducible manifests with upstream URL, version, checksum, license note,
-selection rule, and expected local path. Do not commit an unbounded external
-dataset to this repository.
-
-Public corpus authority:
-
-- ABC STEP dataset: broad diversity and robustness. Select by surface and curve
-  types, face count, body count, and import result rather than taking an
-  unclassified random sample.
-  Source: [ABC Dataset](https://deep-geometry.github.io/abc-dataset/)
-- NIST and CAx-IF STEP models: interoperability corpus for AP203/AP242, units,
-  assemblies, and files produced by different kernels.
-  Source: [NIST CAD models and STEP files](https://www.nist.gov/ctl/smart-connected-systems-division/smart-connected-manufacturing-systems-group/mbe-pmi-0)
-- MAMBO: meshing-topology stress corpus for difficult blocking configurations.
-  Source: [MAMBO](https://gitlab.com/franck.ledoux/mambo)
-
-Fusion 360 Gallery Extended STEP may be used as optional stratified mechanical-
-feature smoke. It is not required and does not define public corpus authority.
-Source: [Fusion 360 Gallery Dataset](https://github.com/AutodeskAILab/Fusion360GalleryDataset)
-
-Start with a reviewable subset, then expand nightly breadth only after failures
-are classified automatically. Dataset volume is not a substitute for coverage.
-
-### 4.7 Fresh Plasticity set
-
-Maintain a private or appropriately licensed test set of current Plasticity
-exports matching the intended asset class. Record Plasticity version, export
-settings, source validity, and expected feature classes. Convert every reduced
-regression that can be shared into a deterministic fixture.
-
-## 5. Scoreboard
-
-`tests/CAD_CORPUS.tsv` is the sole machine-readable inventory. Generated result
-files may supplement it but must not define a competing case list. For each
-case record:
-
-- corpus tier and source validity;
-- source and license/provenance;
-- surface, curve, trim, and feature tags;
-- load result and elapsed time;
-- vertex and polygon counts;
-- quad, triangle, and n-gon counts;
-- open and non-manifold edge counts;
-- folded, degenerate, and sliver counts;
-- raw fallback and empty-face counts;
-- chord deviation;
-- density-sweep result;
-- recipe and remap result where relevant;
-- visual-review result and artifact;
-- last verified commit.
-
-Current measurements must come from scripts or test output. Do not put volatile
-“currently passing” narratives in this plan.
-
-## 6. Architecture decisions
-
-### AD-1: production generation path
-
-`weft::generate()` and its border-count contract are the only production
-generation path for MVP. Improve it incrementally behind corpus tests.
-Entry-point audit and settings summary:
-[PRODUCTION_PATH.md](PRODUCTION_PATH.md).
-
-The removed decoupled-core rewrite is not an active direction. Do not restore
-it, port work from old branches, or begin another ground-up rewrite without a
-new architecture decision supported by release-corpus evidence.
-
-Interactive responsiveness in `weft_app` may schedule regenerate work through a
-per-face bake queue (FIFO, latest-wins dedupe, single worker). That queue is
-scheduling only: every bake still calls `weft::generate()` with a frozen
-settings snapshot. It is not a second mesher, not a parallel density solver,
-and not a decoupled-core rewrite.
-
-### AD-2: stitch experiment
-
-`GenerationSettings::decoupleSeams` and CLI `--stitch` are quarantined
-experiments. They are off by default and are not a second product architecture.
-They may be used for controlled diagnosis. Promote or remove them only after an
-A/B report across the release set shows a consistent advantage and no new
-correctness failures. Evidence (keep quarantined):
-`docs/evidence/wp2-stitch-ab-2026-07-20.md` via `tools/stitch_ab.sh`.
-
-### AD-3: mesher breadth
-
-Do not add a new `MesherKind` during stabilization. First determine whether the
-case belongs to an existing conceptual backend:
-
-- revolution band;
-- fillet or blend band;
-- planar plate or hole web;
-- border-exact graceful floor.
-
-Specialized internal algorithms may remain, but fixes should reduce duplicated
-routing, density, and seam behavior rather than add another parallel family.
-
-### AD-4: monolith refactoring
-
-Split `core/src/meshers.cpp` only with behavior locked by tests. Keep mechanical
-extraction and topology changes in separate commits. Refactoring is not itself
-an MVP milestone.
-
-### AD-5: classify once, route from class
-
-Feature-class planning (WP5) lands before validating real Plasticity work
-(WP6). Fresh-model visual chasing without shared `FaceInfo` facts is how fixes
-transfer to one export and miss the next. Use feature-recognition style
-predicates, not more meshers and not face-id / filename specials.
-
-`analyze()` owns geometry facts once per face. `planFace` / density / self-heal
-consume those facts. Do not rediscover chart validity, hole/fillet/drum shape,
-or loop signatures inside every mesher escape hatch.
-
-Required face facts (names may vary; fields must be explicit on `FaceInfo` or a
-sidecar filled by `analyze()`):
-
-| Field | Meaning |
-| --- | --- |
-| `surfaceType` | Existing typed surface (plane/cylinder/sphere/…) |
-| `chartKind` | `pole` / `fullPeriod` / `isoBand` / `geometricCap` / `freeTrim` |
-| `loopSignature` | Wire count, real vs degenerate edges, roundness hints |
-| `featureClass` | `drum` / `sphereCap` / `filletStrip` / `holePlate` / `bossJunction` / `planarPanel` / `freeform` |
-| `priority` | Product order: cylinder → sphere → hemisphere → box → torus → curves → cuts |
-
-Routing rule:
+Keep these while changing the mesher:
+
+- Headless C++ core and OpenCASCADE B-rep import.
+- Stable face and edge identity.
+- `analyze()` feature classes (drum, fillet-strip, hole-plate, planar-panel).
+- Per-vertex `(faceId, u, v)` anchors where the mesher can fill them.
+- Recipes for span / angle / chord decisions.
+- OBJ / glTF / FBX export and the Blender live-link add-on.
+- Corpus inventory in `tests/CAD_CORPUS.tsv`.
+
+## 2. Why this fork exists
+
+The previous pipeline meshed every B-rep face through a shared-border density
+solver so neighboring faces met vertex-for-vertex. That produced accurate
+stacks, and it made load and density edits expensive (full-model plan, group
+solve, remesh of constraint closures, copy of cached parts, weld).
+
+CAD apps that feel instant do not do that on load. They tessellate each face
+from angle and chord. Matching rims happen because the same curve plus the
+same deflection law yields the same N, not because a global solver raised
+seventeen neighbors.
+
+This fork takes that default and adds Weft's missing piece: local span knobs
+on recognized hard-surface features.
+
+## 3. Authoritative path
 
 ```text
-featureClass × chartKind → existing MesherKind
+import STEP → analyze → weft::meshIndependent() → optional applyOps → export
 ```
 
-Keep AD-3: no new `MesherKind` families for screenshot classes. Reuse
-revolution, disk/cap, coons/ladder, plate-web/annulus, minimal-ngon, and the
-border-exact floor.
+`weft::meshIndependent()` owns this fork's mesh. CLI `weft mesh --independent`
+and tests for this experiment call it. `weft::generate()` stays callable for
+A/B timing and topology comparison. Corpus gates that do not pass
+`--independent` still exercise the legacy path so this branch cannot silently
+change golden contract counts.
 
-Density and self-heal are class-scoped:
+Details: [PRODUCTION_PATH.md](PRODUCTION_PATH.md).
 
-- closed curved rings share `minCurvedSegments`;
-- fillet opposite rails share station fractions;
-- plate/boss bores are not crushed by sparse plate `nu`/`nv`;
-- primitive neighbors adapt to the primitive, not the reverse;
-- fold / contract-floor demotion may not apply a policy from another
-  `featureClass` (sphere tip ≠ foam bowl).
+## 4. Meshing rules
 
-Body-scoped cylindrical continuity (hard rule):
+### 4.1 Default (no span override)
 
-- Within one solid/body, circumferential segment counts stay continuous along
-  a cylindrical stack: the same column count through every surface that
-  participates in that stack — analytic drums, fillets/blends on those
-  rails, planar caps/annuli, bosses/holes, and freeform/bspline walls that
-  inherit the same circular or co-axial seams.
-- Continuity means shared solved edge-group counts (and matching station
-  totals on split co-circular arcs), not “similar looking” densities per
-  face. Grids, coons, ribbons, and floors on that body must honor the same
-  circumferential contract on those seams.
-- A local override may raise a stack’s common count; it must not leave one
-  face on the stack at a different circumferential total than its co-axial
-  neighbors unless the artist explicitly decouples that seam (`linkRims` /
-  unlinked rims / per-edge pin with documented intent).
-- Axial / across-blend counts remain free to differ; this rule is about the
-  around-the-cylinder direction that carries silhouette continuity.
+- Every face meshes from `chordTolerance` and `angleToleranceDeg`.
+- Straight edges take 1 segment.
+- Closed curved edges take the deflection count (and the artist
+  `minCurvedSegments` floor when set).
+- A shared B-rep edge is sampled once. Both faces reuse that polyline.
+- Planar single-wire faces become one n-gon (quads count as four-gons).
+- Planar faces with inner wires tessellate the sheet and keep hole rims.
+- Curved faces use OCCT incremental mesh at the face's deflection / angle.
+- Vertices fuse with `weldTolerance` (spatial, not combinatorial).
 
-Fix gate for WP5 and WP6:
+### 4.2 Feature spans
 
-1. Name the `featureClass` + `chartKind` the bug violates.
-2. One positive reducer in the deterministic zoo.
-3. One counterexample from another corpus model (foam, teleporter, dimple, or
-   equivalent).
-4. Reject patches that only work on an extract or a hard-coded face id.
+A span override is a request on a feature, not a model-wide constraint.
 
-Steal recognition ideas from B-rep feature / blend literature (graph +
-convexity + radius + surface type). Do not import FEA “suppress fillets”
-pipelines; Weft keeps blend and primitive flow for game topology.
+| Feature class | Knobs | What they change |
+| --- | --- | --- |
+| Drum (cylinder / cone / revolution wall, including bore walls) | radial, axial | Circular edges and along-axis edges of that face |
+| Fillet strip | filletLoops | Deflection across the blend (sagitta from radius and loop count) |
+| Hole plate / boss junction | radial, boundary | Inner-wire rim counts when those wires are curved |
+| Planar panel | (none beyond global angle/chord) | Stays an n-gon |
 
-Early tip-class evidence (still applies under this AD):
-`docs/evidence/wp5-mp9-plasticity-failures-2026-07-21.md` (geometric sphere
-cap → quad-fill/disk rings; pole-chart spheres stay revolution). Parked MP9
-visual residuals from the former validate attempt feed WP5 class work and WP6
-sign-off, not ad hoc `planFace` branches.
+Changing a drum from 24 to 8 remeshes faces that own the affected edges.
+Unrelated faces keep their last mesh. Caps that share those circular edges
+pick up 8 because the edge was resampled, not because a stack solver ran.
 
-## 7. Visual acceptance rubric
+Do not propagate circumferential counts across an entire body by default.
+A later explicit "match around" op may copy a rim count. It is not the cost
+of opening a file.
 
-Numeric validity is necessary but insufficient. Review release and fresh
-Plasticity models in the Weft viewport and Blender:
+### 4.3 Booleans
 
-- primitive silhouette follows the exact CAD shape at the selected density;
-- cylinder and revolution columns are straight and intentional;
-- within one body, co-axial / cylindrical stacks keep one circumferential
-  segment count across drums, blends, caps, and freeform faces on those seams;
-- fillet strips run across and along the blend in understandable directions;
-- holes and slots receive local collars without global triangle fans;
-- flat regions remain sparse;
-- poles, triangles, and n-gons are deliberate and locally editable;
-- no folded, overlapping, spiraling, or hair-thin polygons;
-- normals and hard-surface shading are stable;
-- density transitions do not produce visible seam artifacts;
-- the result is easier to edit and bake than the Plasticity comparison export.
+Plasticity booleans split one cylinder into shards. Classification must still
+call those shards drums (already `FeatureClass::Drum`, including iso-bands
+and hole walls). Spans apply per face in T0/T1. T2 groups shards that share
+axis + radius so one knob drives the cut cylinder.
 
-Record one concise artifact per meaningful comparison. Do not approve a change
-only because polygon counts moved in the preferred direction.
+Slots are elongated hole wires or paired half-drums plus flats. Do not send
+them through an organic remesher. Keep the inner loop and the wall features.
 
-## 8. Ordered work packages
+### 4.4 What this is not
 
-Agents work on the first incomplete package only. A package is complete when
-all its exit criteria pass in the same revision.
+- Not `--stitch` / `decoupleSeams` (those skip contracts inside `generate()`).
+- Not a second `MesherKind` family bolted onto the density solver.
+- Not shrinkwrap / voxel remesh.
+- Not GPU isoline preview standing in for polygons.
 
-### WP0: restore truth
+## 5. Quality bar
 
-Goal: make repository status, tests, and corpus inventory trustworthy.
+For recognized hard-surface features on valid closed solids:
 
-Tasks:
+- Cylinders read as round at the chosen around-count, not as random tessellation.
+- Holes and slots keep a rim loop; no triangle fans filling the bore.
+- Fillets keep a visible across-span.
+- Flats are n-gons (or a small web when holed).
+- Output is usable in a DCC: mixed n-gon / quad / tri is acceptable.
+- Open edges at a span mismatch (32 drum against a default cap) are allowed
+  in interactive edits. Uniform global angle/chord on an unmodified model
+  should weld on the zoo fixtures.
 
-- Reconcile `tests/CAD_CORPUS.tsv` paths with fixture generation and committed
-  regression assets.
-- Replace hardcoded case lists in CTest and corpus scripts with manifest-driven
-  selection.
-- Ensure tests generate ephemeral fixtures before attempting to load them, or
-  commit deterministic fixtures when generation is not appropriate.
-- Separate release, stress, intentionally invalid, and performance cases.
-- Create `tests/KNOWN_RED.tsv` from reproduced baseline failures; every row must
-  name its owning work package and removal condition.
-- Add a strict release gate that never consumes known-red allowances.
-- Add or generate the scoreboard fields required for correctness triage.
-- Make Linux and Windows failures reproducible locally where practical.
-- Remove stale assertions and goldens only when replaced by correct,
-  evidence-backed expectations.
+Numeric watertightness of the legacy contract path is not the T0 gate.
+DCC-usable plus feature fidelity plus time is.
 
-Exit:
+## 6. Performance bar
 
-- Corpus paths and documented commands exist.
-- CTest runs the intended deterministic cases rather than failing on setup.
-- All runners consume `tests/CAD_CORPUS.tsv`; no independent fixture or
-  committed-STEP list remains.
-- Regression CI is green against exact validity-specific expectations and
-  `tests/KNOWN_RED.tsv`.
-- The strict release gate reports all remaining release blockers and is
-  expected to remain red until WP3.
-- No documentation claims a red gate is green.
+Targets for the independent path, CAD defaults, Release build:
 
-### WP1: build coverage
+- Zoo fixtures (cylinder, box, hole, fillet): mesh in well under a second.
+- MP9-class (~3k faces): first mesh much cheaper than legacy `generate()`
+  cold (~30 s class). Record the measured ratio; do not invent a budget
+  until T0 has numbers.
+- Editing one face's radial remeshes that face (and faces sharing its
+  edges), not the model.
 
-Goal: cover supported B-rep categories with small deterministic tests.
+## 7. Engineering discipline
+
+- Never special-case a filename, model name, or face ID.
+- Do not change legacy `generate()` behavior to make this experiment look
+  better. Do not refresh `tools/golden_*.txt` for `--independent` output.
+- Add a deterministic reproducer before changing non-trivial meshing.
+- `tests/CAD_CORPUS.tsv` remains the case inventory.
+- Do not append session diaries to this plan. Put measurements in
+  `docs/evidence/` or machine-readable reports.
+
+## 8. Work packages
+
+Agents work the first incomplete package only.
+
+### T0: independent tessellation core
+
+Goal: a callable `weft::meshIndependent()` that meshes a model without the
+density solver, with tests and a CLI flag.
 
 Tasks:
 
-- Implement the geometry and adversarial zoo from section 4.
-- Tag each fixture by surface, curve, topology, feature, and validity class.
-- Assert import, analysis classification, selected mesher family, geometry
-  invariants, and expected diagnostics.
-- Add reduced cases for current release failures before changing their meshers.
-- Add reproducible public-corpus manifests and a bounded smoke subset.
+- Per-face OCCT tessellation from chord / angle, isolated so the live B-rep
+  triangulation cache is not mutated.
+- Shared edge sampling so both sides of an unmodified edge use one polyline
+  intent (counts from deflection).
+- Planar single-wire n-gons.
+- Spatial weld.
+- `weft mesh --independent` and `weft validate --independent`.
+- Maintained tests on box, cylinder, and hole fixtures.
+- Timing print on the CLI path.
 
 Exit:
 
-- Every supported category in section 4.1 maps to at least one deterministic
-  fixture.
-- Every invalid-input policy has at least one adversarial test.
-- Coverage reports missing categories instead of relying on model count.
-- Fixture and smoke gates pass on Linux and Windows.
+- Box: one polygon per face, no interior triangulation on flats.
+- Cylinder: caps are n-gons / quads; the wall is tessellated; uniform
+  settings produce a DCC-usable mesh.
+- Hole fixture: the plate is not a triangle fan filling the bore.
+- `--independent` does not change default `weft mesh` (legacy generate).
+- Focused ctest for the new binary passes.
 
-### WP2: stabilize one production pipeline
+### T1: feature span knobs
 
-Goal: reduce architectural ambiguity and make fixes predictable.
-
-Tasks:
-
-- Freeze new mesher kinds and keep `generate()` authoritative.
-- Classify release failures by topology class and shared root cause.
-- Consolidate border sampling, density ownership, and fallback reporting.
-- Audit raw-demotion paths and make unsupported cases explicit.
-- A/B the stitch experiment; retain it only as a diagnostic unless it meets
-  AD-2 promotion criteria.
-- Add the cross-platform topology signature and comparison defined in section
-  3.2.
-- Convert useful probes into fixture assertions and retire superseded probes.
+Goal: radial / axial / filletLoops change only the edited feature.
 
 Exit:
 
-- One documented production path serves app, CLI, export, and tests.
-- Every release failure has a deterministic reduced reproducer.
-- Raw fallback and empty output are reliably attributed by face and cause.
-- No production behavior depends on a model filename or hard-coded face ID.
-- The default path remains deterministic under parallel and repeated runs.
+- `--face ID:radial=N` on a drum changes that drum's circular density.
+- A second run with a different face id does not remesh the first drum
+  unless they share the edited edges.
+- FilletLoops tightens blend deflection on fillet-strip faces.
 
-### WP3: pass the release set
+### T2: boolean feature groups
 
-Goal: meet geometry and control-safety gates on the five release models.
-
-Tasks:
-
-- Fix failures by topology class, smallest reproducer first.
-- Run default and CAD profiles plus supported density and override sweeps.
-- Check folds, slivers, winding, deviation, raw fallback, and empty output in
-  addition to watertightness.
-- Review affected visual regions after every intentional topology change.
-- Keep stress results visible and reject regressions caused by release fixes.
+Goal: shards of one cylinder / fillet / slot share a span knob.
 
 Exit:
 
-- All section 3.1 requirements pass for valid release models.
-- All section 3.2 requirements pass.
-- `tests/KNOWN_RED.tsv` contains no release-model allowances.
-- Intentional exceptions are limited to source-invalid cases with explicit
-  diagnostics and cannot be silently broadened.
-- Relevant visual rubric items pass with saved evidence.
+- Grouping uses geometry (axis + radius, rail + radius, inner-wire
+  signature), never face ids in source.
+- A notched or iso-band drum takes one around-count.
 
-### WP4: complete the artist correction loop
+### T3: interactive app
 
-Goal: let an artist correct supported local problems without engineering help.
-
-Tasks:
-
-- Show only settings that affect the selected face and name axes semantically.
-- Ensure density edits, existing loop insertion, constrained grab, bridge, weld,
-  undo, and regeneration preserve anchors and topology invariants where the
-  operation is supported.
-- Make unsupported edits fail clearly without corrupting the recipe.
-- Test recipe save/reload, density regeneration, CAD remap, dropped-operation
-  reporting, and fully finalized export.
-- Keep UI work limited to this correction and feedback loop.
+Goal: the app loads and edits on `meshIndependent()`, with span knobs.
 
 Exit:
 
-- End-to-end workflow tests in section 3.3 pass.
-- A new user can identify a problem face, apply a supported correction, undo or
-  save it, regenerate, and export using documented controls.
-- Correction operations cannot bypass the release geometry gate.
+- Open / density nudge does not call `generate()`.
+- Export dumps the independent mesh (see-what-you-get).
+- Optional comparison action still runs `generate()`.
 
-### WP5: feature-class planning foundation
+### T4: evidence vs legacy
 
-Goal: make automatic routing stable across models by classifying B-rep faces
-once, then planning, densifying, and self-healing from that class (AD-5).
-
-Do this before WP6 (validate real work). Do not treat fresh Plasticity
-screenshot passes as the primary exit while routing still rediscovers geometry
-inside mesher demotion paths. Parked MP9 classes (fillet/capsule spans, grip
-freeform, bullet body transition, residual opens) are inputs to this package:
-encode them as `featureClass` / `chartKind` rules and zoo reducers, not as
-one-off `planFace` branches.
-
-Tasks:
-
-- Extend `FaceInfo` (or an analyze-owned sidecar) with `chartKind`,
-  `loopSignature`, `featureClass`, and `priority` as in AD-5.
-- Move existing probes into `analyze()` where they are pure geometry:
-  sphere UV pole chart, geometric closed revolution, fillet-strip narrowness,
-  hole/boss bore hints, outer-wire roundness. `planFace` reads fields.
-- Replace the long auto ladder with a priority table:
-  `featureClass × chartKind → MesherKind` using only existing backends (AD-3).
-- Tie density solve rules to `featureClass` (mincurve rings, fillet stations,
-  plate/boss bore ownership, primitive-neighbor adaptation).
-- Enforce body-scoped cylindrical continuity (AD-5): one circumferential
-  count along each co-axial stack across analytic, blend, planar, and
-  bspline/freeform faces that share those circular seams; cover grids and
-  floors on the same contract, not only revolution rims.
-- Constrain fold / contract-floor self-heal so demotion cannot apply another
-  class’s policy.
-- Per AD-4, extract classify / density / plan-from-class phases behind tests;
-  do not rewrite `generate()` or add a second architecture (AD-1).
-- Keep the AD-5 fix gate: class name + positive reducer + other-model
-  counterexample; no filename or face-id specials.
-- Report `featureClass` / `chartKind` in inspect, topology signature, and the
-  selection roster so artists and agents debug classes, not only meshers.
+Goal: A/B time and feature visuals on the release set and MP9.
 
 Exit:
 
-- Sphere tip, sphere dimple, foam bowls, and teleporter stay green under the
-  same chart/feature rules (no model-specific branches).
-- Fillet strip, hole plate, and drum classes each have at least one zoo reducer
-  and one cross-model counterexample in tests.
-- A cylindrical-stack continuity test proves equal circumferential seam
-  counts across at least drum + blend + cap (or bspline wall) faces in one
-  body; a deliberate unlink/pin case documents the only allowed mismatch.
-- `planFace` no longer re-implements chart or fillet detection that `analyze()`
-  already provides (duplicated probes removed or thin wrappers).
-- Topology signature or inspect exposes `featureClass` and `chartKind` for
-  release and Plasticity samples.
-- AD-3 holds: no new `MesherKind` added for this package.
-- Parked MP9 visual classes either have class-level reducers or an explicit
-  WP6 follow-up row in `KNOWN_RED` / corpus notes (not silent folklore).
+- Written report under `docs/evidence/` with timings, open-edge counts,
+  and visual notes for cylinders / holes / fillets.
+- Promote or keep quarantined from that report. Do not promote on taste.
 
-### WP6: validate real work
+## 9. Corpus
 
-Goal: demonstrate that fixture success transfers to the target asset class,
-on top of the WP5 feature-class foundation.
+`tests/CAD_CORPUS.md` owns mechanics. This plan owns product intent.
 
-Tasks:
+Independent-mesh tests use generated zoo fixtures first. Release and MP9
+enter at T4. Do not treat MP9 as a geometry-coverage oracle.
 
-- Run ABC, NIST/CAx-IF, and MAMBO smoke subsets (optional Fusion sample allowed).
-- Run the fresh Plasticity set.
-- Classify every failure by input validity and `featureClass` / `chartKind`
-  (AD-5), not only by mesher name.
-- Reduce shareable failures and add them to the appropriate deterministic tier.
-- Compare Weft and Plasticity output in Blender with section 7.
-- Measure completion without engineering intervention, not just batch success.
-- If a fresh-model failure needs new analyze facts or routing-table rows, fix
-  them as WP5 reopen work (earliest affected package), not as WP6 special cases.
+## 10. Legacy generate()
 
-Exit:
-
-- Public smoke subsets meet their declared validity-specific expectations.
-- Fresh Plasticity samples pass the release geometry and workflow gates.
-- Visual comparison demonstrates a useful advantage or a materially faster
-  path to an acceptable editable result.
-- No new common failure class remains unrepresented in the deterministic zoo.
-- Failures reopen WP5 when they expose missing class facts or table gaps.
-
-### WP7: ship readiness
-
-Goal: produce a reproducible MVP release.
-
-Tasks:
-
-- Establish app and CLI performance budgets on the release set and MP9.
-- Build and package on clean Linux and Windows environments.
-- Bundle or document runtime dependencies and the Blender add-on.
-- Validate onboarding from STEP import through Blender delivery.
-- Write accurate limitations, troubleshooting, and release notes.
-- Run every completion gate on the release candidate revision.
-
-Exit:
-
-- Every requirement in section 3 passes.
-- A clean machine can install and complete the primary workflow.
-- CI, package smoke tests, and release-candidate artifacts are green.
-- Known limitations are explicit and do not contradict the completion claim.
-
-## 9. Autonomous agent protocol
-
-An autonomous agent must:
-
-1. Read `AGENTS.md`, this plan, `README.md`, and `tests/CAD_CORPUS.md`.
-2. Select the first incomplete work package and its highest-priority failing
-   exit criterion.
-3. Establish a reproducible baseline before editing behavior.
-4. For a non-trivial bug, reduce or instrument it and use runtime evidence to
-   identify the root cause.
-5. Make the smallest coherent change that addresses the failure class.
-6. Run the focused fixture, release-set checks, and broader gates proportional
-   to the change.
-7. Visually inspect topology changes where numeric tests cannot prove quality.
-8. Update machine-readable expectations and concise status only with evidence.
-9. Commit one logical change at a time.
-10. Stop expanding scope when the current package exit criterion is met and
-    continue to the next incomplete criterion.
-
-The agent must not:
-
-- special-case a filename, model name, or face ID;
-- add a parallel mesher architecture without revising AD-1;
-- add a mesher kind during WP0-WP3 without an approved plan revision;
-- weaken a gate, exempt a valid model, or update goldens simply to make CI pass;
-- treat compile success, application startup, or polygon counts alone as proof;
-- append session diaries, speculative directions, or stale pass claims here;
-- begin deferred work before WP7 passes;
-- land face-id / filename specials or a new `MesherKind` to clear a Plasticity
-  screenshot when AD-5 / WP5 class routing would address the class;
-- start WP6 fresh-model sign-off while WP5 class/table exit criteria are open.
-
-## 10. Verification commands
-
-Use the build configuration appropriate to the platform. The standard Linux
-sequence is:
-
-```sh
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-ctest --test-dir build --output-on-failure
-tools/corpus_gate.sh
-```
-
-Targeted validation:
-
-```sh
-build/cli/weft mesh model.step -o out.obj --profile cad --validate
-build/cli/weft sweep model.step
-```
-
-Use `tools/corpus_gate.sh --no-golden` only for an intentional
-cross-platform invariant check. It does not replace the normal golden gate.
-
-Before accepting a topology change:
-
-- run the smallest reproducer;
-- run affected geometry-zoo categories;
-- run all release models;
-- inspect affected visual output;
-- run CTest and the full corpus gate;
-- confirm required CI jobs.
-
-## 11. Plan maintenance
-
-This file defines targets, order, and policy. It is not a changelog.
-
-- Change a product boundary or architecture decision only in a dedicated,
-  evidence-backed revision.
-- Keep transient measurements in generated reports or the corpus scoreboard.
-- Mark work-package completion only when its exit criteria pass at one commit.
-- If a new failure invalidates a completion claim, reopen the earliest affected
-  package.
-- Keep post-MVP ideas in the deferred list until MVP ships.
+`weft::generate()` and AD notes from the previous mainline (border contract,
+stitch quarantine, MesherKind freeze) still describe that function. They are
+not the architecture of this fork's product path. Do not delete `generate()`
+while T4 still needs A/B. Do not route corpus goldens through
+`--independent` until T4 says to.
