@@ -196,7 +196,7 @@ static void testTorusUvLattice() {
     gs.defaults.minimal = true;
     weft::GenerationReport report;
     weft::PolyMesh mesh = weft::meshIndependent(model, analysis, gs, &report);
-    CHECK(mesh.countQuads() >= 8);
+    CHECK(mesh.countQuads() >= 64);
     CHECK(mesh.countQuads() > mesh.countTris());
     CHECK(report.faceMesher[1] == weft::MesherKind::RevolutionGrid);
     weft::ValidationReport vr = weft::validateMesh(mesh, &model);

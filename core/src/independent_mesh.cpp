@@ -721,8 +721,19 @@ bool meshDrumGrid(const TopoDS_Face& face, int faceId,
     if (drum || !sawU) nu = std::max(nu, std::max(3, s.radial));
     if (drum) nv = std::max(nv, std::max(1, s.axial));
     if (ty == GeomAbs_Sphere) nv = std::max(nv, std::max(4, nu / 2));
-    if (ty == GeomAbs_Torus && nv < 3) {
-        nv = std::max(nv, std::max(3, s.filletLoops));
+    if (ty == GeomAbs_Torus) {
+        std::vector<int> closedN;
+        for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+            const int eid = model.edges.FindIndex(ex.Current());
+            if (eid < 1 || eid >= int(edgeN.size())) continue;
+            if (edgeIsClosedCurve(TopoDS::Edge(model.edges(eid)))) {
+                closedN.push_back(edgeN[eid]);
+            }
+        }
+        std::sort(closedN.begin(), closedN.end());
+        if (!closedN.empty()) nu = std::max(nu, closedN.back());
+        if (closedN.size() >= 2) nv = std::max(nv, closedN[closedN.size() - 2]);
+        else nv = std::max(nv, std::max(8, nu / 2));
     }
     nu = std::max(1, nu);
     nv = std::max(1, nv);
@@ -761,7 +772,7 @@ bool meshDrumGrid(const TopoDS_Face& face, int faceId,
             edgeUvSpan(face, edge, dU, dV);
             if (!edgeIsClosedCurve(edge)) continue;
             if (dU + dV > 1e-16 && dV > dU && uWrap) continue;
-            auto ring = samples[eid];
+            auto ring = orientedEdgeSamples(edge, model, samples);
             if (ring.size() >= 2 &&
                 ring.front().SquareDistance(ring.back()) < 1e-16) {
                 ring.pop_back();
@@ -848,13 +859,21 @@ bool meshDrumGrid(const TopoDS_Face& face, int faceId,
                 lpts[size_t(j) * size_t(colsL) + size_t(i)] = p;
             }
         }
-        bool flip = face.Orientation() == TopAbs_REVERSED;
+        bool flip = false;
         std::vector<uint32_t> idx(lpts.size());
-        for (size_t k = 0; k < lpts.size(); ++k) {
-            idx[k] = uint32_t(mesh.vertices.size());
-            mesh.vertices.push_back(
-                {lpts[k].X(), lpts[k].Y(), lpts[k].Z()});
-            mesh.anchors.push_back(projectAnchor(face, faceId, lpts[k]));
+        for (int j = 0; j < rowsL; ++j) {
+            for (int i = 0; i < colsL; ++i) {
+                const size_t k = size_t(j) * size_t(colsL) + size_t(i);
+                idx[k] = uint32_t(mesh.vertices.size());
+                mesh.vertices.push_back(
+                    {lpts[k].X(), lpts[k].Y(), lpts[k].Z()});
+                const double fu = double(i) / double(std::max(1, nUloft));
+                const double fv = double(j) / double(std::max(1, nVloft));
+                const bool rev = face.Orientation() == TopAbs_REVERSED;
+                const double uu = rev ? u1 - (u1 - u0) * fu : u0 + (u1 - u0) * fu;
+                const double vv = v0 + (v1 - v0) * fv;
+                mesh.anchors.push_back({faceId, uu, vv});
+            }
         }
         const size_t before = mesh.polygonCount();
         for (int j = 0; j < nVloft; ++j) {
