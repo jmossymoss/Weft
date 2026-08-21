@@ -720,11 +720,22 @@ gp_Pnt nearestSample(const gp_Pnt& p,
     return best;
 }
 
+void meshFaceOcct(const TopoDS_Face& face, int faceId,
+                  const FaceMeshSettings& s, double radius,
+                  FeatureClass feature, const Model& model,
+                  const std::vector<int>& edgeN,
+                  const std::vector<std::vector<gp_Pnt>>& samples,
+                  PolyMesh& mesh);
+
 bool meshUvFill(const TopoDS_Face& face, int faceId, const FaceMeshSettings& s,
                 const Model& model,
                 const std::vector<std::vector<gp_Pnt>>& samples,
-                PolyMesh& mesh) {
-    (void)s;
+                const std::vector<int>& edgeN, double radius,
+                FeatureClass feature, PolyMesh& mesh) {
+    const size_t before3d = mesh.polygonCount();
+    meshFaceOcct(face, faceId, s, radius, feature, model, edgeN, samples, mesh);
+    if (mesh.polygonCount() > before3d) return true;
+
     TopoDS_Wire outerW = BRepTools::OuterWire(face);
     if (outerW.IsNull()) return false;
     SampleLoop outer = collectWireLoopUv(outerW, face, model, samples);
@@ -1533,7 +1544,8 @@ PolyMesh meshIndependent(const Model& model, const Analysis& analysis,
             }
             if (!ok) {
                 rollbackFace();
-                if (meshUvFill(face, fid, s, model, samples, mesh)) {
+                if (meshUvFill(face, fid, s, model, samples, edgeN, radius, fc,
+                               mesh)) {
                     kind = MesherKind::PlateWeb;
                     ok = true;
                 }

@@ -311,7 +311,7 @@ static void testNotchedWallNotFan() {
         for (int v : valence) maxVal = std::max(maxVal, v);
         // A fan from one rim vertex uses ~N-2 triangles. OCCT's polygon
         // CDT keeps valence bounded.
-        CHECK(maxVal < 24);
+        CHECK(maxVal < 12);
         CHECK(quads + tris > 0);
         auto it = report.faceMesher.find(f.id);
         CHECK(it != report.faceMesher.end());
