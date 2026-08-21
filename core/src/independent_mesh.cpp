@@ -200,14 +200,20 @@ std::vector<gp_Pnt> collectWireLoop(const TopoDS_Wire& wire,
 
 gp_Pnt2d unwrapUv(gp_Pnt2d uv, const gp_Pnt2d& prev,
                   const BRepAdaptor_Surface& surf) {
-    auto wrap = [](double x, double pref, bool periodic, double period) {
-        if (!periodic || !(period > 0.0)) return x;
-        while (x - pref > 0.5 * period) x -= period;
-        while (pref - x > 0.5 * period) x += period;
-        return x;
-    };
-    uv.SetX(wrap(uv.X(), prev.X(), surf.IsUPeriodic(), surf.UPeriod()));
-    uv.SetY(wrap(uv.Y(), prev.Y(), surf.IsVPeriodic(), surf.VPeriod()));
+    if (surf.IsUPeriodic()) {
+        const double period = surf.UPeriod();
+        if (period > 0.0) {
+            while (uv.X() - prev.X() > 0.5 * period) uv.SetX(uv.X() - period);
+            while (prev.X() - uv.X() > 0.5 * period) uv.SetX(uv.X() + period);
+        }
+    }
+    if (surf.IsVPeriodic()) {
+        const double period = surf.VPeriod();
+        if (period > 0.0) {
+            while (uv.Y() - prev.Y() > 0.5 * period) uv.SetY(uv.Y() - period);
+            while (prev.Y() - uv.Y() > 0.5 * period) uv.SetY(uv.Y() + period);
+        }
+    }
     return uv;
 }
 
@@ -1122,20 +1128,41 @@ PolyMesh meshIndependent(const Model& model, const Analysis& analysis,
             radius = analysis.faces[size_t(fid) - 1].radius;
         }
         const size_t polysBefore = mesh.polygonCount();
+        const size_t vertsBefore = mesh.vertices.size();
         MesherKind kind = MesherKind::Fallback;
         bool ngon = false;
-        if (s.minimal && meshSampledPlanar(face, fid, model, samples, mesh)) {
-            ngon = true;
-            kind = MesherKind::MinimalNGon;
-        } else if ((ck == ChartKind::FullPeriod || ck == ChartKind::Pole) &&
-                   meshDrumGrid(face, fid, s, edgeN, model, samples, mesh)) {
-            kind = MesherKind::RevolutionGrid;
-        } else if (meshTransfinite4(face, fid, model, samples, mesh)) {
-            kind = MesherKind::CoonsGrid;
-        } else if (meshUvFill(face, fid, s, model, samples, mesh)) {
-            kind = MesherKind::PlateWeb;
-        } else {
-            meshFaceOcct(face, fid, s, radius, fc, model, edgeN, samples, mesh);
+        auto rollbackFace = [&] {
+            mesh.vertices.resize(vertsBefore);
+            mesh.anchors.resize(vertsBefore);
+            mesh.polygons.resize(polysBefore);
+            mesh.polygonFaceId.resize(polysBefore);
+        };
+        try {
+            if (s.minimal &&
+                meshSampledPlanar(face, fid, model, samples, mesh)) {
+                ngon = true;
+                kind = MesherKind::MinimalNGon;
+            } else if ((ck == ChartKind::FullPeriod ||
+                        ck == ChartKind::Pole) &&
+                       meshDrumGrid(face, fid, s, edgeN, model, samples,
+                                    mesh)) {
+                kind = MesherKind::RevolutionGrid;
+            } else if (meshTransfinite4(face, fid, model, samples, mesh)) {
+                kind = MesherKind::CoonsGrid;
+            } else if (meshUvFill(face, fid, s, model, samples, mesh)) {
+                kind = MesherKind::PlateWeb;
+            } else {
+                meshFaceOcct(face, fid, s, radius, fc, model, edgeN, samples,
+                             mesh);
+            }
+        } catch (const Standard_Failure&) {
+            rollbackFace();
+            try {
+                meshFaceOcct(face, fid, s, radius, fc, model, edgeN, samples,
+                             mesh);
+            } catch (const Standard_Failure&) {
+                rollbackFace();
+            }
         }
         const bool empty = mesh.polygonCount() == polysBefore;
         if (report) {
