@@ -106,8 +106,11 @@ Common controls:
 Install `blender/weft_link.py` as a Blender add-on and use the Weft sidebar to
 watch the app's live-link OBJ.
 
-Interactive regeneration may defer expensive whole-model repairs for
-responsiveness unless live-link is on. Export always regenerates with
+Interactive regeneration runs on a background bake queue so orbit, selection,
+and density edits on other faces stay live while a face settles. A cyan UV
+lattice overlay shows requested segment counts on grid meshers (revolution,
+planar, coons); it uses the trimmed face UV box so the preview matches the
+mesh that `generate()` will emit. Export always regenerates with
 finalization enabled and is the authoritative mesh.
 
 Headless screenshots are available for visual checks:

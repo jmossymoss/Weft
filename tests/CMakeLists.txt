@@ -14,6 +14,17 @@ target_link_libraries(bake_queue_tests PRIVATE weft_core)
 add_test(NAME bake_queue COMMAND bake_queue_tests)
 weft_deploy_occt_dlls(bake_queue_tests)
 
+# GPU isoline mapping + trimmed-face UV box (matches viewport preview).
+add_executable(gpu_proxy_tests
+  test_gpu_proxy.cpp
+  ${CMAKE_SOURCE_DIR}/app/gpu_proxy.cpp)
+target_include_directories(gpu_proxy_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}/app
+  ${CMAKE_SOURCE_DIR}/core/include)
+target_link_libraries(gpu_proxy_tests PRIVATE weft_core)
+add_test(NAME gpu_proxy COMMAND gpu_proxy_tests)
+weft_deploy_occt_dlls(gpu_proxy_tests)
+
 add_executable(topology_cache_tests test_topology_cache.cpp)
 target_link_libraries(topology_cache_tests PRIVATE weft_core)
 add_test(NAME topology_cache COMMAND topology_cache_tests)
