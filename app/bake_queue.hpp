@@ -38,6 +38,7 @@ struct FaceBakeResult {
     std::vector<uint32_t> triggerFaces;  // faces that prompted this run
     weft::PolyMesh mesh;
     weft::GenerationReport report;
+    weft::GenerationSettings settings;
     int opsApplied = 0;
     int opsFailed = 0;
     bool finalizeMesh = false;

@@ -127,20 +127,24 @@ void FaceBakeQueue::markFidelityLocked(uint32_t faceId, FaceFidelity f) {
 
 void FaceBakeQueue::publish(FaceBakeResult&& r) {
     std::lock_guard<std::mutex> lock(mu_);
-    for (uint32_t fid : bakingFaces_) {
-        markFidelityLocked(fid, FaceFidelity::HighFidelity);
-    }
-    bakingFaces_.clear();
-    // Triggers that were not remeshed still go HighFidelity if no error;
-    // remeshedFaces from the report get the same treatment via triggers.
-    if (r.error.empty()) {
-        for (uint32_t fid : r.triggerFaces) {
-            if (fid != 0) markFidelityLocked(fid, FaceFidelity::HighFidelity);
+    // A face with newer pending work stays Queued. Settling it to
+    // HighFidelity here hid the GPU preview while the next generate()
+    // was still in the FIFO, so the overlay vanished (or showed the
+    // stale mesh) before the artist's latest counts landed.
+    auto settle = [&](uint32_t fid) {
+        if (fid == 0) return;
+        if (pendingByFace_.count(fid) != 0) {
+            markFidelityLocked(fid, FaceFidelity::Queued);
+            return;
         }
+        markFidelityLocked(fid, FaceFidelity::HighFidelity);
+    };
+    for (uint32_t fid : bakingFaces_) settle(fid);
+    bakingFaces_.clear();
+    if (r.error.empty()) {
+        for (uint32_t fid : r.triggerFaces) settle(fid);
         for (int fid : r.report.remeshedFaces) {
-            if (fid > 0) {
-                markFidelityLocked(uint32_t(fid), FaceFidelity::HighFidelity);
-            }
+            if (fid > 0) settle(uint32_t(fid));
         }
     }
     completed_.push_back(std::move(r));
@@ -230,6 +234,7 @@ void FaceBakeQueue::workerMain() {
                 result.opsApplied = ops.applied;
                 result.opsFailed = ops.failed;
                 result.finalizeMesh = settings.finalizeMesh;
+                result.settings = job.settings;
                 result.mesh = std::move(mesh);
                 result.report = std::move(report);
             }
