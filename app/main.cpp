@@ -1324,7 +1324,6 @@ static void enqueueBake(App& app, uint32_t faceId) {
             app.bakeQueue.noteQueued(uint32_t(fid));
         }
     }
-    app.dirty = true;
     app.genBusy = true;
     app.genStartTime = glfwGetTime();
     app.genProgress = 0;
@@ -4224,7 +4223,7 @@ static void drawOverlay(App& app) {
         if (g.drawLattice) {
             ImGui::TextColored({0.20f, 0.90f, 1.0f, 1.0f},
                                "GPU PREVIEW  %.0f x %.0f", g.u, g.v);
-            ImGui::TextDisabled("exact topology settling — keep editing");
+            ImGui::TextDisabled("exact topology settling; keep editing");
             ImGui::Separator();
         }
     }
@@ -4238,10 +4237,10 @@ static void drawOverlay(App& app) {
         const int total =
             app.bakeQueue.progressTotal.load(std::memory_order_relaxed);
         if (total > 0) {
-            ImGui::TextDisabled("meshing %d / %d  — other faces stay editable",
+            ImGui::TextDisabled("meshing %d / %d; other faces stay editable",
                                 done, total);
         } else {
-            ImGui::TextDisabled("updating topology — other faces stay editable");
+            ImGui::TextDisabled("updating topology; other faces stay editable");
         }
         ImGui::Separator();
     }
