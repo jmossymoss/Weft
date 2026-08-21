@@ -9,7 +9,9 @@
 2. Closed drums (cylinder, cone, elliptical tube, torus fillet ring) loft
    from shared rim samples so caps weld. Iso-band 4-sided fillets stay on
    exact-border transfinite.
-3. Failed UV ear-clip no longer fans (that filled holes). OCCT is last resort.
+3. Failed UV ear-clip no longer fans (that filled holes). Unholed rings
+   force-clip; holed faces Delaunay-web the exact sample loops in UV.
+   OCCT is last resort only.
 4. Four-sided freeform interiors blend in 3D, not UV, so slabs do not fold.
 
 ## Closed zoo at this revision (CAD defaults)
