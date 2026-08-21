@@ -35,7 +35,7 @@ OCCT is last resort only.
 | --- | --- | --- |
 | CLI `mesh` / `validate` with `--independent` | Yes | Opt-in; default remains `generate()` |
 | `tests/test_independent_mesh.cpp` | Yes | Zoo fixtures |
-| App interactive / export | Not yet | T3 |
+| App interactive / export | Opt-in | `weft_app --independent` / `independent.bat`; default still `generate()` until T3 completes |
 | Corpus / release gates | No | Still `weft mesh` → `generate()` |
 | CLI `convert` | No | `weft::io::tessellate()` only (format conversion) |
 
@@ -50,7 +50,7 @@ are unrelated to independent tessellation.
 | Surface | Calls `weft::generate()`? | Notes |
 | --- | --- | --- |
 | CLI `mesh` / `validate` (default) | Yes | |
-| App (until T3) | Yes | |
+| App without `--independent` | Yes | Default until T3 completes |
 | Corpus / release / public gates | Yes | |
 | `tests/test_pipeline.cpp` | Yes | |
 | CLI `sweep` / `cache-check` | Yes | Contract-path harnesses |

@@ -337,7 +337,11 @@ echo.
 echo   CLI:  build\bin\Release\weft.exe
 echo   App:  build\bin\Release\weft_app.exe   ^(if GUI deps were found^)
 echo.
-echo   App starts on the !DECOUPLED! mesher ^(toggle it live in the Topology panel^).
+echo   Start the GUI on independent tessellation:
+echo     independent.bat
+echo     independent.bat path\to\model.step
+echo   Or CLI:
+echo     independent.bat cli mesh demo.step -o demo.obj --validate
 echo.
 echo   Try it:
 echo     build\bin\Release\weft.exe fixture demo.step --shape demo

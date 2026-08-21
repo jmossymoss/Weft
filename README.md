@@ -45,6 +45,9 @@ build/cli/weft mesh /tmp/cyl.step -o /tmp/cyl.obj --independent \
 
 Without `--independent`, `weft mesh` still calls legacy `generate()`.
 
+On Windows after `build.bat`, `independent.bat` starts the GUI on this path
+(`weft_app --independent`). `independent.bat cli mesh …` injects the flag.
+
 ## Implemented foundation
 
 - STEP / IGES / BREP import through OpenCASCADE.

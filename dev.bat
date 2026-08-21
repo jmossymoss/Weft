@@ -11,6 +11,10 @@ REM   dev.bat tests          build + run weft_tests
 REM   dev.bat cli [args...]  build weft.exe, then run it with args
 REM   dev.bat build          build everything, don't run anything
 REM
+REM Independent tessellation (this fork's production path):
+REM   independent.bat                 GUI with --independent
+REM   independent.bat cli mesh ...    CLI mesh/validate with --independent
+REM
 REM Add -d for a Debug build (faster to compile, slower to run):
 REM   dev.bat -d app
 REM   dev.bat -d cli inspect demo.step

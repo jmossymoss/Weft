@@ -1,6 +1,7 @@
 #include "bake_queue.hpp"
 
 #include "weft/edit.hpp"
+#include "weft/independent_mesh.hpp"
 
 #include <algorithm>
 #include <utility>
@@ -153,7 +154,7 @@ bool FaceBakeQueue::waitForWork(Pending& out) {
     });
     if (stop_) return false;
     // Coalesce: take the newest pending snapshot (highest generation)
-    // and union all trigger face ids. One generate() applies the latest
+    // and union all trigger face ids. One bake applies the latest
     // cumulative recipe; older pending entries for other faces are
     // absorbed so we never stack latent full regenerates.
     uint64_t bestGen = 0;
@@ -223,8 +224,11 @@ void FaceBakeQueue::workerMain() {
                 settings.progressTotal = &progressTotal;
                 weft::GenerationReport report;
                 weft::PolyMesh mesh =
-                    weft::generate(*model, *analysis, settings, &report,
-                                   cache);
+                    settings.independentMesh
+                        ? weft::meshIndependent(*model, *analysis, settings,
+                                                &report)
+                        : weft::generate(*model, *analysis, settings, &report,
+                                         cache);
                 weft::ApplyOpsReport ops =
                     weft::applyOps(mesh, *model, job.ops);
                 result.opsApplied = ops.applied;
@@ -241,7 +245,7 @@ void FaceBakeQueue::workerMain() {
 
         // If newer work arrived while we ran, the result is still useful
         // as a stable intermediate (full-mesh adopt); pending will fire
-        // another generate with the latest snapshot immediately after.
+        // another bake with the latest snapshot immediately after.
         publish(std::move(result));
         busy_.store(false, std::memory_order_release);
         // Wake in case stop() is waiting, and so UI can notice hasPending.
