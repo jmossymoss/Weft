@@ -666,51 +666,6 @@ bool meshUvFill(const TopoDS_Face& face, int faceId, const FaceMeshSettings& s,
         }
     }
 
-    BRepAdaptor_Surface surf(face);
-    double uMin = 1e300, uMax = -1e300, vMin = 1e300, vMax = -1e300;
-    std::vector<double> edgeLen;
-    edgeLen.reserve(ringUv.size());
-    for (size_t i = 0; i < ringUv.size(); ++i) {
-        uMin = std::min(uMin, ringUv[i].X());
-        uMax = std::max(uMax, ringUv[i].X());
-        vMin = std::min(vMin, ringUv[i].Y());
-        vMax = std::max(vMax, ringUv[i].Y());
-        edgeLen.push_back(std::sqrt(
-            ringUv[i].SquareDistance(ringUv[(i + 1) % ringUv.size()])));
-    }
-    double step = 0;
-    if (!edgeLen.empty()) {
-        std::nth_element(edgeLen.begin(),
-                         edgeLen.begin() + long(edgeLen.size() / 2),
-                         edgeLen.end());
-        step = edgeLen[edgeLen.size() / 2];
-    }
-    const double area = std::abs(uvSignedArea(ringUv));
-    double peri = 0;
-    for (double l : edgeLen) peri += l;
-    const double thickness = peri > 1e-18 ? 2.0 * area / peri : 0.0;
-    if (step > 1e-18 && thickness > 1.5 * step) {
-        int nu = std::clamp(int(std::floor((uMax - uMin) / step) - 1.0), 0, 48);
-        int nv = std::clamp(int(std::floor((vMax - vMin) / step) - 1.0), 0, 48);
-        std::vector<gp_Pnt2d> outerUv = outer.uv;
-        auto insideFace = [&](double u, double v) {
-            if (uvWinding(outerUv, u, v) == 0) return false;
-            for (const SampleLoop& hole : holes) {
-                if (uvWinding(hole.uv, u, v) != 0) return false;
-            }
-            return true;
-        };
-        for (int j = 1; j <= nv; ++j) {
-            const double v = vMin + (vMax - vMin) * (double(j) / double(nv + 1));
-            for (int i = 1; i <= nu; ++i) {
-                const double u =
-                    uMin + (uMax - uMin) * (double(i) / double(nu + 1));
-                if (!insideFace(u, v)) continue;
-                insertUvPoint(mesh, faceId, surf, gp_Pnt2d(u, v), tris);
-            }
-        }
-    }
-
     const bool flip = face.Orientation() == TopAbs_REVERSED;
     emitUvTris(mesh, faceId, flip, tris);
     if (mesh.polygonCount() == p0) {
@@ -729,10 +684,12 @@ bool meshDrumGrid(const TopoDS_Face& face, int faceId,
     BRepAdaptor_Surface surf(face);
     const GeomAbs_SurfaceType ty = surf.GetType();
     if (ty != GeomAbs_Cylinder && ty != GeomAbs_Cone &&
-        ty != GeomAbs_SurfaceOfRevolution && ty != GeomAbs_Torus &&
-        ty != GeomAbs_Sphere) {
+        ty != GeomAbs_SurfaceOfRevolution && ty != GeomAbs_Sphere) {
         return false;
     }
+    int nEdges = 0;
+    for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) ++nEdges;
+    if (nEdges < 3 || nEdges > 4) return false;
     int nu = std::max(3, s.radial);
     int nv = std::max(1, s.axial);
     for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
@@ -845,10 +802,6 @@ bool meshTransfinite4(const TopoDS_Face& face, int faceId, const Model& model,
         sides.push_back(std::move(samp));
     }
     if (sides.size() != 4) return false;
-    if (sides[0].size() != sides[2].size() ||
-        sides[1].size() != sides[3].size()) {
-        return false;
-    }
     auto same3 = [](const gp_Pnt& a, const gp_Pnt& b) {
         return a.SquareDistance(b) < 1e-16;
     };
@@ -861,9 +814,15 @@ bool meshTransfinite4(const TopoDS_Face& face, int faceId, const Model& model,
     if (!same3(c2, c0) && !same3(c2, c1)) ++uniq;
     if (!same3(c3, c0) && !same3(c3, c1) && !same3(c3, c2)) ++uniq;
     if (uniq < 3) return false;
-    const int nu = int(sides[0].size()) - 1;
-    const int nv = int(sides[1].size()) - 1;
+    const int nu = std::max(int(sides[0].size()), int(sides[2].size())) - 1;
+    const int nv = std::max(int(sides[1].size()), int(sides[3].size())) - 1;
     if (nu < 1 || nv < 1) return false;
+    auto pickPnt = [](const std::vector<gp_Pnt>& side, int i, int nDst) {
+        const int nSrc = int(side.size()) - 1;
+        if (nSrc <= 0) return side.front();
+        const int j = nDst <= 0 ? 0 : (i * nSrc + nDst / 2) / nDst;
+        return side[size_t(std::clamp(j, 0, nSrc))];
+    };
     BRepAdaptor_Surface surf(face);
     auto uvOf = [&](const gp_Pnt& p) {
         try {
@@ -879,36 +838,42 @@ bool meshTransfinite4(const TopoDS_Face& face, int faceId, const Model& model,
         uv[s].reserve(sides[s].size());
         for (const gp_Pnt& p : sides[s]) uv[s].push_back(uvOf(p));
     }
+    auto pickUv = [](const std::vector<gp_Pnt2d>& side, int i, int nDst) {
+        const int nSrc = int(side.size()) - 1;
+        if (nSrc <= 0) return side.front();
+        const int j = nDst <= 0 ? 0 : (i * nSrc + nDst / 2) / nDst;
+        return side[size_t(std::clamp(j, 0, nSrc))];
+    };
     const bool flip = face.Orientation() == TopAbs_REVERSED;
     const int cols = nu + 1;
     const int rows = nv + 1;
     std::vector<uint32_t> idx(size_t(rows) * size_t(cols));
-    const gp_Pnt2d p00 = uv[0][0];
-    const gp_Pnt2d p10 = uv[0][nu];
-    const gp_Pnt2d p11 = uv[1][nv];
-    const gp_Pnt2d p01 = uv[2][nu];
+    const gp_Pnt2d p00 = pickUv(uv[0], 0, nu);
+    const gp_Pnt2d p10 = pickUv(uv[0], nu, nu);
+    const gp_Pnt2d p11 = pickUv(uv[1], nv, nv);
+    const gp_Pnt2d p01 = pickUv(uv[2], nu, nu);
     for (int j = 0; j < rows; ++j) {
         const double t = double(j) / double(nv);
         for (int i = 0; i < cols; ++i) {
             const double s = double(i) / double(nu);
             gp_Pnt p;
-            if (j == 0) p = sides[0][i];
-            else if (i == nu) p = sides[1][j];
-            else if (j == nv) p = sides[2][nu - i];
-            else if (i == 0) p = sides[3][nv - j];
+            if (j == 0) p = pickPnt(sides[0], i, nu);
+            else if (i == nu) p = pickPnt(sides[1], j, nv);
+            else if (j == nv) p = pickPnt(sides[2], nu - i, nu);
+            else if (i == 0) p = pickPnt(sides[3], nv - j, nv);
             else {
-                const gp_Pnt2d c0 = uv[0][i];
-                const gp_Pnt2d c1 = uv[2][nu - i];
-                const gp_Pnt2d d0 = uv[3][nv - j];
-                const gp_Pnt2d d1 = uv[1][j];
+                const gp_Pnt2d c0u = pickUv(uv[0], i, nu);
+                const gp_Pnt2d c1u = pickUv(uv[2], nu - i, nu);
+                const gp_Pnt2d d0u = pickUv(uv[3], nv - j, nv);
+                const gp_Pnt2d d1u = pickUv(uv[1], j, nv);
                 const double uu =
-                    (1 - t) * c0.X() + t * c1.X() + (1 - s) * d0.X() +
-                    s * d1.X() - (1 - s) * (1 - t) * p00.X() -
+                    (1 - t) * c0u.X() + t * c1u.X() + (1 - s) * d0u.X() +
+                    s * d1u.X() - (1 - s) * (1 - t) * p00.X() -
                     s * (1 - t) * p10.X() - (1 - s) * t * p01.X() -
                     s * t * p11.X();
                 const double vv =
-                    (1 - t) * c0.Y() + t * c1.Y() + (1 - s) * d0.Y() +
-                    s * d1.Y() - (1 - s) * (1 - t) * p00.Y() -
+                    (1 - t) * c0u.Y() + t * c1u.Y() + (1 - s) * d0u.Y() +
+                    s * d1u.Y() - (1 - s) * (1 - t) * p00.Y() -
                     s * (1 - t) * p10.Y() - (1 - s) * t * p01.Y() -
                     s * t * p11.Y();
                 try {
