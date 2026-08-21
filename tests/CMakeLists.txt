@@ -30,11 +30,26 @@ add_test(NAME geometry_pool COMMAND geometry_pool_tests)
 weft_deploy_occt_dlls(geometry_pool_tests)
 
 # Integration: emit signature twice via CLI and assert policy-equal.
-add_test(
-  NAME topology_signature
-  COMMAND ${CMAKE_COMMAND} -E env "WEFT=$<TARGET_FILE:weft>"
-          ${CMAKE_SOURCE_DIR}/tools/topology_signature.sh self-check
-)
-set_tests_properties(topology_signature PROPERTIES
-  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-)
+# On Windows, ctest cannot CreateProcess a .sh file ("inappropriate file
+# type or format"). Run it through bash when available (Git Bash on CI).
+find_program(WEFT_BASH NAMES bash bash.exe)
+if(WEFT_BASH)
+  add_test(
+    NAME topology_signature
+    COMMAND ${CMAKE_COMMAND} -E env "WEFT=$<TARGET_FILE:weft>"
+            "${WEFT_BASH}"
+            "${CMAKE_SOURCE_DIR}/tools/topology_signature.sh" self-check
+  )
+  set_tests_properties(topology_signature PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  )
+elseif(NOT WIN32)
+  add_test(
+    NAME topology_signature
+    COMMAND ${CMAKE_COMMAND} -E env "WEFT=$<TARGET_FILE:weft>"
+            ${CMAKE_SOURCE_DIR}/tools/topology_signature.sh self-check
+  )
+  set_tests_properties(topology_signature PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  )
+endif()
